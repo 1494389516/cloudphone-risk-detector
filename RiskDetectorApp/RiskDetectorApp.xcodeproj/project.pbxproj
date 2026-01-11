@@ -1,0 +1,420 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0AFBA4C93CB42EF36F235C3C /* JSONTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F122700AF4487064C43D5A26 /* JSONTextView.swift */; };
+		2B03C19AF9B27CD84112F0C0 /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 712221BDAFCF54247F7DF807 /* HistoryView.swift */; };
+		35227729D62B5C8E41B1858E /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A3E4EC6427C6C650C3B1ADD /* SettingsView.swift */; };
+		3D7419B2D3E663698F729C5F /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 531A1768F2F153A02E0C7D73 /* ContentView.swift */; };
+		466C716ACFB34E58BA136C3D /* RiskGaugeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EA595A34F27736C533461B6 /* RiskGaugeView.swift */; };
+		4C14492CA727814792C09D3A /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A087EC82DBDA65A07B21344B /* SettingsViewModel.swift */; };
+		51E093489AF3E8CDA9276CF5 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41E5A393FB92AF0CB59ECEF4 /* DashboardView.swift */; };
+		5DB74DF056EBA9015ADA15BB /* ResultsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A80CAAB554D2C859E899FDC /* ResultsView.swift */; };
+		5F16D37AFAEB881265210F5F /* HistoryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 698C3C44E735A10FF92C8983 /* HistoryViewModel.swift */; };
+		5F3F2612522A94E6891BA3F2 /* CloudPhoneRiskAppCore in Frameworks */ = {isa = PBXBuildFile; productRef = D34F6AE5C4E0319547182CBC /* CloudPhoneRiskAppCore */; };
+		924F9265427DBB1A0832F4C0 /* RiskDetectorAppApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4B412448EA04BD2B3489174 /* RiskDetectorAppApp.swift */; };
+		9E8FCDBABD0E44933EEE8908 /* CloudPhoneRiskKit in Frameworks */ = {isa = PBXBuildFile; productRef = 7EB5EB801CAB076729C5031C /* CloudPhoneRiskKit */; };
+		B0AE4B9538BA842166DBB25C /* DetectionViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F212856003CC3E5DFF042B1 /* DetectionViewModel.swift */; };
+		D98CCB96D2F671CCD4A514CE /* SignalRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65DCD293ABF49742766B10F1 /* SignalRowView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		1A80CAAB554D2C859E899FDC /* ResultsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultsView.swift; sourceTree = "<group>"; };
+		2A3E4EC6427C6C650C3B1ADD /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		2EA595A34F27736C533461B6 /* RiskGaugeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskGaugeView.swift; sourceTree = "<group>"; };
+		3F212856003CC3E5DFF042B1 /* DetectionViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetectionViewModel.swift; sourceTree = "<group>"; };
+		41E5A393FB92AF0CB59ECEF4 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
+		531A1768F2F153A02E0C7D73 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		5EBD1207845662CBBFB45F2F /* RiskDetectorApp */ = {isa = PBXFileReference; lastKnownFileType = folder; name = RiskDetectorApp; path = .; sourceTree = SOURCE_ROOT; };
+		65DCD293ABF49742766B10F1 /* SignalRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignalRowView.swift; sourceTree = "<group>"; };
+		698C3C44E735A10FF92C8983 /* HistoryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryViewModel.swift; sourceTree = "<group>"; };
+		712221BDAFCF54247F7DF807 /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
+		85F797EBC0F59AF96A5B3C24 /* RiskDetectorApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = RiskDetectorApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A087EC82DBDA65A07B21344B /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
+		A4B412448EA04BD2B3489174 /* RiskDetectorAppApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskDetectorAppApp.swift; sourceTree = "<group>"; };
+		BE6EB08AABF071A7808460B7 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		F122700AF4487064C43D5A26 /* JSONTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONTextView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		9186A67757FFACE74AB10A65 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9E8FCDBABD0E44933EEE8908 /* CloudPhoneRiskKit in Frameworks */,
+				5F3F2612522A94E6891BA3F2 /* CloudPhoneRiskAppCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		371953C6189416888B9166BB = {
+			isa = PBXGroup;
+			children = (
+				984D6E35A66F19DECB489580 /* App */,
+				3BE99003650BB46F9AD68455 /* Packages */,
+				F69D1E96602FB8C85C11E51D /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		3BE99003650BB46F9AD68455 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				5EBD1207845662CBBFB45F2F /* RiskDetectorApp */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		571E62450A18B12181483CFC /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				41E5A393FB92AF0CB59ECEF4 /* DashboardView.swift */,
+				712221BDAFCF54247F7DF807 /* HistoryView.swift */,
+				1A80CAAB554D2C859E899FDC /* ResultsView.swift */,
+				2A3E4EC6427C6C650C3B1ADD /* SettingsView.swift */,
+				E521293DE4F8298FC620140D /* Components */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		984D6E35A66F19DECB489580 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				531A1768F2F153A02E0C7D73 /* ContentView.swift */,
+				BE6EB08AABF071A7808460B7 /* Info.plist */,
+				A4B412448EA04BD2B3489174 /* RiskDetectorAppApp.swift */,
+				B54404C4ECEEFDC3B0135401 /* Resources */,
+				D570565301A4395C839E85CE /* ViewModels */,
+				571E62450A18B12181483CFC /* Views */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		B54404C4ECEEFDC3B0135401 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		D570565301A4395C839E85CE /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				3F212856003CC3E5DFF042B1 /* DetectionViewModel.swift */,
+				698C3C44E735A10FF92C8983 /* HistoryViewModel.swift */,
+				A087EC82DBDA65A07B21344B /* SettingsViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		E521293DE4F8298FC620140D /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				F122700AF4487064C43D5A26 /* JSONTextView.swift */,
+				2EA595A34F27736C533461B6 /* RiskGaugeView.swift */,
+				65DCD293ABF49742766B10F1 /* SignalRowView.swift */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
+		F69D1E96602FB8C85C11E51D /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				85F797EBC0F59AF96A5B3C24 /* RiskDetectorApp.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		0A929522C0809190966ED02B /* RiskDetectorApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 39211A05123E12535D7E27C8 /* Build configuration list for PBXNativeTarget "RiskDetectorApp" */;
+			buildPhases = (
+				C4B83FE55BD25F814A031D80 /* Sources */,
+				9186A67757FFACE74AB10A65 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = RiskDetectorApp;
+			packageProductDependencies = (
+				7EB5EB801CAB076729C5031C /* CloudPhoneRiskKit */,
+				D34F6AE5C4E0319547182CBC /* CloudPhoneRiskAppCore */,
+			);
+			productName = RiskDetectorApp;
+			productReference = 85F797EBC0F59AF96A5B3C24 /* RiskDetectorApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		D024DAD1632183985148A6A9 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					0A929522C0809190966ED02B = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = FCF141EC144BE5AD7DAEC1F5 /* Build configuration list for PBXProject "RiskDetectorApp" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 371953C6189416888B9166BB;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				9F32B454F66AF678CE030842 /* XCLocalSwiftPackageReference "." */,
+			);
+			preferredProjectObjectVersion = 77;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				0A929522C0809190966ED02B /* RiskDetectorApp */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		C4B83FE55BD25F814A031D80 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3D7419B2D3E663698F729C5F /* ContentView.swift in Sources */,
+				51E093489AF3E8CDA9276CF5 /* DashboardView.swift in Sources */,
+				B0AE4B9538BA842166DBB25C /* DetectionViewModel.swift in Sources */,
+				2B03C19AF9B27CD84112F0C0 /* HistoryView.swift in Sources */,
+				5F16D37AFAEB881265210F5F /* HistoryViewModel.swift in Sources */,
+				0AFBA4C93CB42EF36F235C3C /* JSONTextView.swift in Sources */,
+				5DB74DF056EBA9015ADA15BB /* ResultsView.swift in Sources */,
+				924F9265427DBB1A0832F4C0 /* RiskDetectorAppApp.swift in Sources */,
+				466C716ACFB34E58BA136C3D /* RiskGaugeView.swift in Sources */,
+				35227729D62B5C8E41B1858E /* SettingsView.swift in Sources */,
+				4C14492CA727814792C09D3A /* SettingsViewModel.swift in Sources */,
+				D98CCB96D2F671CCD4A514CE /* SignalRowView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		2F74C14F5232768C151A0763 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "";
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.cloudphonerisk.riskdetector;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		BAB01525BD1E44A277559119 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "";
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.cloudphonerisk.riskdetector;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		CCCD254E46D6F15FF27CF087 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+		F20453A1D1A1A4865415F056 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		39211A05123E12535D7E27C8 /* Build configuration list for PBXNativeTarget "RiskDetectorApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BAB01525BD1E44A277559119 /* Debug */,
+				2F74C14F5232768C151A0763 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		FCF141EC144BE5AD7DAEC1F5 /* Build configuration list for PBXProject "RiskDetectorApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F20453A1D1A1A4865415F056 /* Debug */,
+				CCCD254E46D6F15FF27CF087 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		9F32B454F66AF678CE030842 /* XCLocalSwiftPackageReference "." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = .;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		7EB5EB801CAB076729C5031C /* CloudPhoneRiskKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CloudPhoneRiskKit;
+		};
+		D34F6AE5C4E0319547182CBC /* CloudPhoneRiskAppCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CloudPhoneRiskAppCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = D024DAD1632183985148A6A9 /* Project object */;
+}

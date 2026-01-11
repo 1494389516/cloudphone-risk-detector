@@ -1,0 +1,20 @@
+.DS_Store
+
+# Xcode
+DerivedData/
+*.xcworkspace
+*.xcuserdata/
+*.xcuserstate
+
+# SwiftPM
+.build/
+.swiftpm/
+
+# App-specific generated dirs (in-repo)
+RiskDetectorApp/.build/
+RiskDetectorApp/.swiftpm/
+RiskDetectorApp/.derivedData/
+
+# Logs
+*.log
+
