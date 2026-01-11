@@ -15,6 +15,8 @@ RiskDetectorApp/.build/
 RiskDetectorApp/.swiftpm/
 RiskDetectorApp/.derivedData/
 
+# Old/legacy copies (not part of shipping app)
+RiskDetectorApp/Legacy/
+
 # Logs
 *.log
-

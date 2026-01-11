@@ -703,7 +703,7 @@ struct DetectionResult {
 
 ## 许可证
 
-MIT License
+未指定（内部项目）。
 
 ---
 
