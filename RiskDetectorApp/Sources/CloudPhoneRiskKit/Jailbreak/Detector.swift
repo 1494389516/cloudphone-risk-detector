@@ -3,7 +3,7 @@ import Foundation
 // MARK: - 检测器协议
 /// 所有检测模块必须实现此协议
 /// 这是"面向协议编程"的体现
-protocol Detector {
+public protocol Detector {
 
     /// 执行检测
     /// - Returns: 检测结果（分数 + 命中方法）

@@ -81,22 +81,22 @@ enum RiskScorer {
         var total: Double = 0
         var signals: [RiskSignal] = []
 
-        if let spread = behavior.touch.coordinateSpread, spread < 2.0, behavior.touch.tapCount >= 6 {
+        if let spread = behavior.touch.coordinateSpread, spread < 2.0 {
             total += 12
             signals.append(RiskSignal(id: "touch_spread_low", category: "behavior", score: 12, evidence: ["spread": "\(spread)"]))
         }
 
-        if let spread = behavior.touch.coordinateSpread, spread > 10.0, behavior.touch.tapCount >= 6 {
+        if let spread = behavior.touch.coordinateSpread, spread > 10.0 {
             total += 4
             signals.append(RiskSignal(id: "touch_spread_high", category: "behavior", score: 4, evidence: ["spread": "\(spread)"]))
         }
 
-        if let cv = behavior.touch.intervalCV, cv < 0.2, behavior.touch.tapCount >= 6 {
+        if let cv = behavior.touch.intervalCV, cv < 0.2 {
             total += 10
             signals.append(RiskSignal(id: "touch_interval_too_regular", category: "behavior", score: 10, evidence: ["cv": "\(cv)"]))
         }
 
-        if let cv = behavior.touch.intervalCV, cv > 0.6, behavior.touch.tapCount >= 6 {
+        if let cv = behavior.touch.intervalCV, cv > 0.6 {
             total += 4
             signals.append(RiskSignal(id: "touch_interval_too_chaotic", category: "behavior", score: 4, evidence: ["cv": "\(cv)"]))
         }

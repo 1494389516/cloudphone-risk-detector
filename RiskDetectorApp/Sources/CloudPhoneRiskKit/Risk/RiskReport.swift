@@ -1,6 +1,6 @@
 import Foundation
 
-struct RiskContext: Sendable {
+public struct RiskContext: Sendable {
     var device: DeviceFingerprint
     var deviceID: String
     var network: NetworkSignals

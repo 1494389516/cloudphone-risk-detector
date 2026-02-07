@@ -49,6 +49,23 @@ public final class CPRiskConfig: NSObject {
     @objc public var jailbreakEnableHookDetect: Bool = true
     @objc public var jailbreakThreshold: Double = 50
 
+    // MARK: - 2.0 新增配置
+
+    /// 是否启用远程配置
+    @objc public var enableRemoteConfig: Bool = true
+
+    /// 默认评估场景
+    @objc public var defaultScenario: RiskScenario = .default
+
+    /// 是否启用时序分析（预留开关）
+    @objc public var enableTemporalAnalysis: Bool = true
+
+    /// 是否启用反篡改检测（预留开关）
+    @objc public var enableAntiTamper: Bool = true
+
+    /// 远程配置地址（可选）
+    @objc public var remoteConfigURLString: String = ""
+
     @objc public static let `default` = CPRiskConfig()
 
     func toSwift() -> RiskConfig {

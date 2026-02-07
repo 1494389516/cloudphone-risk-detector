@@ -30,6 +30,12 @@ public final class RiskHistoryStore {
     public func append(_ event: RiskHistoryEvent) {
         lock.lock()
         defer { lock.unlock() }
+
+        if event.score == 0, event.summary == "clear", !event.isHighRisk {
+            saveLocked([])
+            return
+        }
+
         var events = loadLocked()
         events.append(event)
         events = pruneLocked(events)
