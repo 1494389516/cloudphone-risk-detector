@@ -86,6 +86,22 @@ public final class CPRiskKit: NSObject {
         ExternalServerAggregateProvider.shared.set(nil)
     }
 
+    /// 注入服务端策略（JSON 字符串）。
+    /// 支持离线缓存，重启后仍可生效。
+    @objc(setServerRiskPolicyJSON:)
+    @discardableResult
+    public func setServerRiskPolicyJSON(_ json: String) -> Bool {
+        let ok = PolicyManager.shared.update(fromJSON: json)
+        Logger.log("server_policy.update_json: \(ok ? "success" : "failed")")
+        return ok
+    }
+
+    /// 清空服务端策略缓存，回退本地默认策略。
+    @objc public func clearServerRiskPolicy() {
+        PolicyManager.shared.clear()
+        Logger.log("server_policy.clear_cache")
+    }
+
     /// Register a custom signal provider (Swift only).
     public static func register(provider: RiskSignalProvider) {
         RiskSignalProviderRegistry.shared.register(provider)
@@ -183,10 +199,12 @@ public final class CPRiskKit: NSObject {
         )
         let extraSignals = RiskSignalProviderRegistry.shared.signals(snapshot: snapshot)
 
+        let serverPolicy = PolicyManager.shared.activePolicy
         let policy = buildEnginePolicy(
             runtimeConfig: runtimeConfig,
             remoteConfig: remoteConfig,
-            enableTemporalAnalysis: config.enableTemporalAnalysis
+            enableTemporalAnalysis: config.enableTemporalAnalysis,
+            serverPolicy: serverPolicy
         )
         let decisionEngine = RiskDetectionEngine(policy: policy, enableLogging: Logger.isEnabled)
         let verdict = decisionEngine.evaluate(
@@ -278,6 +296,8 @@ public final class CPRiskKit: NSObject {
         RiskSignalProviderRegistry.shared.register(ExternalServerAggregateProvider.shared)
         RiskSignalProviderRegistry.shared.register(DeviceHardwareProvider.shared)
         RiskSignalProviderRegistry.shared.register(DeviceAgeProvider.shared)
+        RiskSignalProviderRegistry.shared.register(VPhoneHardwareProvider.shared)
+        RiskSignalProviderRegistry.shared.register(LayeredConsistencyProvider.shared)
 
         if config.enableTemporalAnalysis {
             RiskSignalProviderRegistry.shared.register(TimePatternProvider.shared)
@@ -366,7 +386,8 @@ public final class CPRiskKit: NSObject {
     private func buildEnginePolicy(
         runtimeConfig: RiskConfig,
         remoteConfig: RemoteConfig?,
-        enableTemporalAnalysis: Bool
+        enableTemporalAnalysis: Bool,
+        serverPolicy: ServerRiskPolicy?
     ) -> EnginePolicy {
         let remoteWeights = remoteConfig.map { config in
             SignalWeights(
@@ -378,15 +399,20 @@ public final class CPRiskKit: NSObject {
             )
         }
 
-        let highThreshold = max(1, min(100, runtimeConfig.threshold))
+        let serverHigh = serverPolicy?.thresholds.challenge
+        let highThreshold = max(1, min(100, serverHigh ?? runtimeConfig.threshold))
         let remoteMedium = remoteConfig?.policy.mediumThreshold
 
         var scenarioPolicies: [RiskScenario: ScenarioPolicy] = [:]
         for scenario in RiskScenario.allCases {
             let base = ScenarioPolicy.policy(for: scenario)
-            let rawMedium = remoteMedium ?? base.mediumThreshold
+            let rawMedium = serverPolicy?.thresholds.monitor ?? remoteMedium ?? base.mediumThreshold
             let mediumThreshold = max(0, min(highThreshold - 1, rawMedium))
-            let criticalThreshold = min(100, max(highThreshold + 1, max(base.criticalThreshold, highThreshold + 20)))
+            let serverCritical = serverPolicy?.thresholds.block
+            let criticalThreshold = min(
+                100,
+                max(highThreshold + 1, serverCritical ?? max(base.criticalThreshold, highThreshold + 20))
+            )
 
             let effectiveWeights: SignalWeights
             if let remoteWeights {
@@ -414,13 +440,46 @@ public final class CPRiskKit: NSObject {
             )
         }
 
+        let mutationStrategy = serverPolicy?.mutation.map { mutation in
+            MutationStrategy(
+                seed: mutation.seed,
+                shuffleChecks: mutation.shuffleChecks,
+                thresholdJitterBps: mutation.thresholdJitterBps,
+                scoreJitterBps: mutation.scoreJitterBps
+            )
+        }
+
+        let blindChallengePolicy = serverPolicy?.blindChallenge.map { challenge in
+            BlindChallengePolicy(
+                enabled: challenge.enabled,
+                challengeSalt: challenge.challengeSalt,
+                windowSeconds: challenge.windowSeconds,
+                rules: challenge.rules.map { rule in
+                    BlindChallengeRule(
+                        id: rule.id,
+                        allOfSignalIDs: rule.allOfSignalIDs,
+                        anyOfSignalIDs: rule.anyOfSignalIDs,
+                        minTamperedCount: rule.minTamperedCount,
+                        minDistinctRiskLayers: rule.minDistinctRiskLayers,
+                        requireCrossLayerInconsistency: rule.requireCrossLayerInconsistency,
+                        weight: rule.weight
+                    )
+                }
+            )
+        }
+
         return EnginePolicy(
-            name: remoteConfig.map { "remote_\($0.version)" } ?? "local_sdk2",
-            version: remoteConfig.map { String($0.version) } ?? "2.0-local",
+            name: remoteConfig.map { "remote_\($0.version)" } ?? "local_sdk3",
+            version: remoteConfig.map { String($0.version) } ?? "3.0-local",
             enableNetworkSignals: runtimeConfig.enableNetworkSignals,
             enableBehaviorDetection: runtimeConfig.enableBehaviorDetect,
             enableDeviceFingerprint: true,
             forceActionOnJailbreak: .block,
+            signalWeightOverrides: serverPolicy?.signalWeights ?? [:],
+            mutationStrategy: mutationStrategy,
+            blindChallengePolicy: blindChallengePolicy,
+            serverBlocklist: serverPolicy?.blocklist,
+            blocklistAction: (serverPolicy?.blocklist.isEmpty == false) ? .block : nil,
             scenarioPolicies: scenarioPolicies
         )
     }

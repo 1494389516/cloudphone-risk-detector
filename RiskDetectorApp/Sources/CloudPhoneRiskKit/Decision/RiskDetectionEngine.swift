@@ -63,49 +63,94 @@ public struct RiskDetectionEngine: Sendable {
         log("Scenario: \(scenario.rawValue)")
         log("Policy: \(policy.name)")
 
-        // 1. 获取场景策略
-        let scenarioPolicy = policy.scenarioPolicy(for: scenario)
+        // 1. 获取场景策略（带版本变形）
+        let planner = MutationPlanner(
+            strategy: policy.mutationStrategy,
+            scope: scenario.identifier,
+            deviceID: context.deviceID
+        )
+        let scenarioPolicy = mutatedScenarioPolicy(
+            base: policy.scenarioPolicy(for: scenario),
+            planner: planner
+        )
         log("Scenario policy - medium: \(scenarioPolicy.mediumThreshold), high: \(scenarioPolicy.highThreshold), critical: \(scenarioPolicy.criticalThreshold)")
 
         // 2. 收集所有风险信号
         var allSignals = collectSignals(
             context: context,
             scenarioPolicy: scenarioPolicy,
-            extraSignals: extraSignals
+            extraSignals: extraSignals,
+            planner: planner
         )
+
+        // 2.1 跨层一致性约束（Layer1/2/3）
+        let crossLayerSignals = deriveCrossLayerSignals(from: allSignals)
+        if !crossLayerSignals.isEmpty {
+            allSignals.append(contentsOf: crossLayerSignals)
+            log("Cross-layer inconsistency hit: +\(crossLayerSignals.count) signals")
+        }
+
+        // 2.2 服务端黑名单命中（Layer4）
+        let blocklistSignals = deriveBlocklistSignals(from: allSignals)
+        if !blocklistSignals.isEmpty {
+            allSignals.append(contentsOf: blocklistSignals)
+            log("Server blocklist hit: +\(blocklistSignals.count) signals")
+        }
+
+        // 2.3 每版本变形：打乱信号顺序，提升脚本复用成本
+        allSignals = planner.maybeShuffle(allSignals, salt: "signal_order")
         log("Collected \(allSignals.count) signals")
 
         // 3. 应用组合规则
+        let comboRules = planner.maybeShuffle(scenarioPolicy.comboRules, salt: "combo_rules")
         let comboBonus = applyComboRules(
             signals: allSignals,
-            comboRules: scenarioPolicy.comboRules
+            comboRules: comboRules
         )
         if comboBonus > 0 {
             log("Combo rules bonus: +\(comboBonus)")
         }
 
         // 4. 计算基础分数
-        let baseScore = calculateBaseScore(
+        let scoreComponents = calculateBaseScore(
             signals: allSignals,
-            weights: scenarioPolicy.signalWeights
+            weights: scenarioPolicy.signalWeights,
+            weightOverrides: policy.signalWeightOverrides,
+            planner: planner
         )
-        log("Base score: \(baseScore)")
+        let baseScore = scoreComponents.total
+        log(
+            "Base score: \(baseScore) " +
+            "(legacy=\(scoreComponents.legacyComponent), hard=\(scoreComponents.hardComponent), " +
+            "soft=\(scoreComponents.softComponent), tampered=\(scoreComponents.tamperedCount))"
+        )
 
-        // 5. 应用组合规则加成
-        let finalScore = min(baseScore + comboBonus, 100)
+        // 5. 服务端盲挑战（不暴露规则细节）
+        let blindBonus = evaluateBlindChallengeBonus(
+            signals: allSignals,
+            scenario: scenario,
+            deviceID: context.deviceID
+        )
+        if blindBonus > 0 {
+            log("Blind challenge bonus applied")
+        }
+
+        // 6. 应用组合规则加成
+        let finalScore = min(baseScore + comboBonus + blindBonus, 100)
         log("Final score: \(finalScore)")
 
-        // 6. 应用强制规则
+        // 7. 应用强制规则
         let (adjustedScore, forcedAction) = applyForceRules(
             score: finalScore,
             context: context,
+            signals: allSignals,
             scenarioPolicy: scenarioPolicy
         )
         if forcedAction != nil {
             log("Force rule applied, action: \(forcedAction!.rawValue)")
         }
 
-        // 7. 使用决策树确定最终动作
+        // 8. 使用决策树确定最终动作
         let evaluationContext = EvaluationContext(
             score: adjustedScore,
             signals: allSignals,
@@ -118,10 +163,10 @@ public struct RiskDetectionEngine: Sendable {
         let treeAction = decisionTree.decide(context: evaluationContext)
         log("Decision tree action: \(treeAction.rawValue)")
 
-        // 8. 强制动作优先级高于决策树
+        // 9. 强制动作优先级高于决策树
         let finalAction = forcedAction ?? treeAction
 
-        // 9. 创建判决结果
+        // 10. 创建判决结果
         let verdict = RiskVerdict(
             score: adjustedScore,
             internalLevel: InternalRiskLevel.from(score: adjustedScore),
@@ -148,7 +193,8 @@ public struct RiskDetectionEngine: Sendable {
     private func collectSignals(
         context: RiskContext,
         scenarioPolicy: ScenarioPolicy,
-        extraSignals: [RiskSignal]
+        extraSignals: [RiskSignal],
+        planner: MutationPlanner
     ) -> [RiskSignal] {
         var signals: [RiskSignal] = []
 
@@ -207,14 +253,16 @@ public struct RiskDetectionEngine: Sendable {
         signals.append(contentsOf: deviceSignals)
 
         // 5. 自定义提供者信号
-        for (_, provider) in customProviders {
+        let providerKeys = planner.maybeShuffle(customProviders.keys.sorted(), salt: "custom_provider_order")
+        for key in providerKeys {
+            guard let provider = customProviders[key] else { continue }
             signals.append(contentsOf: provider(context))
         }
 
         // 6. 额外信号
-        signals.append(contentsOf: extraSignals)
+        signals.append(contentsOf: planner.maybeShuffle(extraSignals, salt: "extra_signal_order"))
 
-        return signals
+        return planner.maybeShuffle(signals, salt: "collect_signal_order")
     }
 
     /// 提取行为信号
@@ -366,16 +414,79 @@ public struct RiskDetectionEngine: Sendable {
     /// 计算基础风险分数（应用权重）
     private func calculateBaseScore(
         signals: [RiskSignal],
-        weights: SignalWeights
-    ) -> Double {
-        var total: Double = 0
+        weights: SignalWeights,
+        weightOverrides: [String: Double],
+        planner: MutationPlanner
+    ) -> ScoreComponents {
+        var legacyScore: Double = 0
+        var hardScore: Double = 0
+        var softScore: Double = 0
+        var tamperedCount = 0
+        let softGate = planner.softConfidenceGate(default: 0.3)
+        let tamperedBase = planner.tamperedBase(default: 60)
 
         for signal in signals {
-            let weight = weights.weight(for: signal.category)
-            total += signal.score * weight
+            if let state = signal.state {
+                let weight = signalWeight(for: signal, overrides: weightOverrides, planner: planner)
+                switch state {
+                case .hard(let detected):
+                    if detected {
+                        hardScore = max(hardScore, weight)
+                    }
+                case .soft(let confidence):
+                    let normalized = min(max(confidence, 0), 1)
+                    if normalized > softGate {
+                        softScore += weight * normalized * 0.3
+                    }
+                case .tampered:
+                    tamperedCount += 1
+                    softScore += tamperedBase
+                case .serverRequired, .unavailable:
+                    break
+                }
+                continue
+            }
+
+            let categoryWeight = planner.jitter(
+                base: weights.weight(for: signal.category),
+                maxBps: policy.mutationStrategy?.scoreJitterBps ?? 0
+            )
+            legacyScore += signal.score * categoryWeight
         }
 
-        return min(total, 100)
+        let tamperedMultiplier = 1.0 + Double(tamperedCount) * 0.5
+        let v3Component = (hardScore + softScore) * tamperedMultiplier
+        let total = min(100, legacyScore + v3Component)
+
+        return ScoreComponents(
+            total: total,
+            legacyComponent: legacyScore,
+            hardComponent: hardScore,
+            softComponent: softScore,
+            tamperedCount: tamperedCount
+        )
+    }
+
+    private func signalWeight(
+        for signal: RiskSignal,
+        overrides: [String: Double],
+        planner: MutationPlanner
+    ) -> Double {
+        let baseWeight: Double
+        if signal.weightHint > 0 {
+            baseWeight = signal.weightHint
+            return planner.jitter(base: baseWeight, maxBps: policy.mutationStrategy?.scoreJitterBps ?? 0)
+        }
+        if let override = overrides[signal.id], override > 0 {
+            baseWeight = override
+            return planner.jitter(base: baseWeight, maxBps: policy.mutationStrategy?.scoreJitterBps ?? 0)
+        }
+        if let fallback = Self.defaultV3SignalWeights[signal.id], fallback > 0 {
+            baseWeight = fallback
+            return planner.jitter(base: baseWeight, maxBps: policy.mutationStrategy?.scoreJitterBps ?? 0)
+        }
+        baseWeight = max(signal.score, 0)
+        return planner.jitter(base: baseWeight, maxBps: policy.mutationStrategy?.scoreJitterBps ?? 0)
     }
 
     /// 应用组合规则
@@ -399,6 +510,7 @@ public struct RiskDetectionEngine: Sendable {
     private func applyForceRules(
         score: Double,
         context: RiskContext,
+        signals: [RiskSignal],
         scenarioPolicy: ScenarioPolicy
     ) -> (Double, RiskAction?) {
         var adjustedScore = score
@@ -408,16 +520,41 @@ public struct RiskDetectionEngine: Sendable {
             return (adjustedScore, forcedAction)
         }
 
+        // 服务端黑名单强制规则
+        let blocklistHit = signals.contains(where: { $0.id == "blocklist_hit" })
+        if blocklistHit, let blocklistAction = policy.blocklistAction {
+            forcedAction = strictestAction(forcedAction, blocklistAction)
+            adjustedScore = max(adjustedScore, minScore(for: blocklistAction, scenarioPolicy: scenarioPolicy))
+        }
+
         // 越狱设备强制规则
         if context.jailbreak.isJailbroken {
-            if policy.forceActionOnJailbreak != nil {
-                forcedAction = policy.forceActionOnJailbreak
+            if let jailbreakAction = policy.forceActionOnJailbreak {
+                forcedAction = strictestAction(forcedAction, jailbreakAction)
+                adjustedScore = max(adjustedScore, minScore(for: jailbreakAction, scenarioPolicy: scenarioPolicy))
+            } else {
+                // 保持向后兼容：即使没有强制动作，越狱分数也不低于高风险阈值。
+                adjustedScore = max(adjustedScore, scenarioPolicy.highThreshold)
             }
-            // 确保分数不低于高阈值
-            adjustedScore = max(adjustedScore, scenarioPolicy.highThreshold)
         }
 
         return (adjustedScore, forcedAction)
+    }
+
+    private func strictestAction(_ lhs: RiskAction?, _ rhs: RiskAction) -> RiskAction {
+        guard let lhs else { return rhs }
+        return lhs.severity >= rhs.severity ? lhs : rhs
+    }
+
+    private func minScore(for action: RiskAction, scenarioPolicy: ScenarioPolicy) -> Double {
+        switch action {
+        case .allow:
+            return scenarioPolicy.mediumThreshold
+        case .challenge:
+            return scenarioPolicy.highThreshold
+        case .stepUpAuth, .block:
+            return scenarioPolicy.criticalThreshold
+        }
     }
 
     // MARK: - 置信度计算
@@ -465,6 +602,241 @@ public struct RiskDetectionEngine: Sendable {
             }
     }
 
+    private func mutatedScenarioPolicy(base: ScenarioPolicy, planner: MutationPlanner) -> ScenarioPolicy {
+        let jitterBps = policy.mutationStrategy?.thresholdJitterBps ?? 0
+        guard jitterBps > 0 else { return base }
+
+        var medium = planner.jitter(base: base.mediumThreshold, maxBps: jitterBps)
+        var high = planner.jitter(base: base.highThreshold, maxBps: jitterBps)
+        var critical = planner.jitter(base: base.criticalThreshold, maxBps: jitterBps)
+
+        medium = min(max(0, medium), 98)
+        high = min(max(medium + 1, high), 99)
+        critical = min(max(high + 1, critical), 100)
+
+        return ScenarioPolicy(
+            mediumThreshold: medium,
+            highThreshold: high,
+            criticalThreshold: critical,
+            actionMapping: base.actionMapping,
+            signalWeights: base.signalWeights,
+            comboRules: base.comboRules,
+            enableForceRules: base.enableForceRules
+        )
+    }
+
+    private func deriveBlocklistSignals(from signals: [RiskSignal]) -> [RiskSignal] {
+        guard let configured = policy.serverBlocklist, !configured.isEmpty else { return [] }
+        let normalizedBlocklist = Set(configured.flatMap { blocklistTokens(from: $0) })
+        guard !normalizedBlocklist.isEmpty else { return [] }
+
+        var matchedTokens = Set<String>()
+        var matchedSources = Set<String>()
+
+        for signal in signals {
+            let isServerSignal = signal.category == "server" || signal.id.hasPrefix("server_")
+            guard isServerSignal else { continue }
+
+            for (token, source) in blocklistCandidates(for: signal) where normalizedBlocklist.contains(token) {
+                matchedTokens.insert(token)
+                matchedSources.insert(source)
+            }
+        }
+
+        guard !matchedTokens.isEmpty else { return [] }
+        return [
+            RiskSignal(
+                id: "blocklist_hit",
+                category: "server",
+                score: 0,
+                evidence: [
+                    "matched": matchedTokens.sorted().joined(separator: ","),
+                    "sources": matchedSources.sorted().joined(separator: ","),
+                ],
+                state: .hard(detected: true),
+                layer: 4,
+                weightHint: 100
+            ),
+        ]
+    }
+
+    private func blocklistCandidates(for signal: RiskSignal) -> [(token: String, source: String)] {
+        var out: [(token: String, source: String)] = []
+        for token in blocklistTokens(from: signal.id) {
+            out.append((token: token, source: "id:\(signal.id)"))
+        }
+        for (key, value) in signal.evidence {
+            for token in blocklistTokens(from: value) {
+                out.append((token: token, source: "\(signal.id).\(key)"))
+            }
+        }
+        return out
+    }
+
+    private func blocklistTokens(from raw: String) -> [String] {
+        let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return [] }
+
+        var set = Set<String>()
+        set.insert(normalized)
+        normalized
+            .split(whereSeparator: { $0 == "," || $0 == ";" || $0 == "|" || $0.isWhitespace })
+            .map(String.init)
+            .filter { !$0.isEmpty }
+            .forEach { set.insert($0) }
+
+        for item in Array(set) {
+            if let host = stripPort(from: item) {
+                set.insert(host)
+            }
+        }
+        return Array(set)
+    }
+
+    private func stripPort(from value: String) -> String? {
+        if value.hasPrefix("["),
+           let endBracket = value.firstIndex(of: "]"),
+           value.index(after: endBracket) < value.endIndex,
+           value[value.index(after: endBracket)] == ":" {
+            let host = value[value.index(after: value.startIndex)..<endBracket]
+            return host.isEmpty ? nil : String(host)
+        }
+
+        let colonCount = value.reduce(into: 0) { count, char in
+            if char == ":" { count += 1 }
+        }
+        guard colonCount == 1, let idx = value.lastIndex(of: ":") else { return nil }
+
+        let suffix = value[value.index(after: idx)...]
+        guard !suffix.isEmpty, suffix.allSatisfy(\.isNumber) else { return nil }
+        let host = value[..<idx]
+        return host.isEmpty ? nil : String(host)
+    }
+
+    private func deriveCrossLayerSignals(from signals: [RiskSignal]) -> [RiskSignal] {
+        let hasLayer2Tampered = signals.contains(where: { $0.layer == 2 && $0.state == .tampered }) ||
+            signals.contains(where: { $0.id == "hook_detected" && $0.state == .hard(detected: true) })
+
+        let l1GPUReal = signals.contains(where: { $0.id == "gpu_virtual" && $0.state == .hard(detected: false) })
+        let l1HardwareReal = signals.contains(where: { $0.id == "vphone_hardware" && $0.state == .hard(detected: false) })
+
+        let l1Suspicious = signals.contains(where: { $0.id == "vphone_hardware" && $0.state == .hard(detected: true) }) ||
+            signals.contains(where: { $0.id == "gpu_virtual" && $0.state == .hard(detected: true) }) ||
+            signals.contains(where: { $0.id == "hardware_inconsistency" && confidence(of: $0.state) >= 0.8 })
+
+        let l3Virtual = signals.contains(where: { ($0.id == "sensor_entropy" || $0.id == "touch_entropy") && confidence(of: $0.state) >= 0.65 })
+        let l3UnavailableCount = signals.filter {
+            ($0.id == "sensor_entropy" || $0.id == "touch_entropy") && $0.state == .unavailable
+        }.count
+
+        var reasons: [String] = []
+        if l1GPUReal && l1HardwareReal && hasLayer2Tampered {
+            reasons.append("l1_clean_vs_l2_tampered")
+        }
+        if l1Suspicious && hasLayer2Tampered && l3UnavailableCount >= 2 {
+            reasons.append("l1_risky_l2_tampered_l3_absent")
+        }
+        if l1GPUReal && l1HardwareReal && l3Virtual {
+            reasons.append("l1_clean_vs_l3_virtual")
+        }
+
+        guard !reasons.isEmpty else { return [] }
+        return [
+            RiskSignal(
+                id: "cross_layer_inconsistency",
+                category: "anti_tamper",
+                score: 0,
+                evidence: [
+                    "reasons": reasons.joined(separator: ","),
+                    "layer2_tampered": "\(hasLayer2Tampered)",
+                    "layer3_virtual": "\(l3Virtual)",
+                ],
+                state: .tampered,
+                layer: 2,
+                weightHint: 92
+            ),
+        ]
+    }
+
+    private func evaluateBlindChallengeBonus(
+        signals: [RiskSignal],
+        scenario: RiskScenario,
+        deviceID: String
+    ) -> Double {
+        guard let policy = policy.blindChallengePolicy, policy.enabled else { return 0 }
+        guard !policy.rules.isEmpty else { return 0 }
+
+        let activeRule = activeBlindRule(policy: policy, scenario: scenario, deviceID: deviceID)
+        guard blindRuleMatches(activeRule, signals: signals) else { return 0 }
+        return max(0, activeRule.weight)
+    }
+
+    private func activeBlindRule(
+        policy: BlindChallengePolicy,
+        scenario: RiskScenario,
+        deviceID: String
+    ) -> BlindChallengeRule {
+        if policy.rules.count == 1 {
+            return policy.rules[0]
+        }
+        let bucket = Int(Date().timeIntervalSince1970) / max(1, policy.windowSeconds)
+        let seedText = "\(policy.challengeSalt)|\(scenario.identifier)|\(deviceID)|\(bucket)"
+        let hash = fnv1a64(seedText)
+        let idx = Int(hash % UInt64(policy.rules.count))
+        return policy.rules[idx]
+    }
+
+    private func blindRuleMatches(_ rule: BlindChallengeRule, signals: [RiskSignal]) -> Bool {
+        let ids = Set(signals.map(\.id))
+        let allOfOK = rule.allOfSignalIDs.allSatisfy { ids.contains($0) }
+        guard allOfOK else { return false }
+
+        if !rule.anyOfSignalIDs.isEmpty {
+            let anyOfOK = rule.anyOfSignalIDs.contains(where: { ids.contains($0) })
+            guard anyOfOK else { return false }
+        }
+
+        let tamperedCount = signals.filter { $0.state == .tampered }.count
+        guard tamperedCount >= rule.minTamperedCount else { return false }
+
+        let distinctLayers = Set(signals.compactMap { signal -> Int? in
+            guard signal.layer != nil else { return nil }
+            guard signal.state != .unavailable else { return nil }
+            if signal.state == .serverRequired { return nil }
+            return signal.layer
+        }).count
+        guard distinctLayers >= rule.minDistinctRiskLayers else { return false }
+
+        if rule.requireCrossLayerInconsistency {
+            guard ids.contains("cross_layer_inconsistency") else { return false }
+        }
+
+        return true
+    }
+
+    private func confidence(of state: RiskSignalState?) -> Double {
+        guard let state else { return 0 }
+        switch state {
+        case .soft(let confidence):
+            return confidence
+        case .hard(let detected):
+            return detected ? 1 : 0
+        case .tampered:
+            return 1
+        case .serverRequired, .unavailable:
+            return 0
+        }
+    }
+
+    private func fnv1a64(_ text: String) -> UInt64 {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for b in text.utf8 {
+            hash ^= UInt64(b)
+            hash &*= 0x100000001b3
+        }
+        return hash
+    }
+
     // MARK: - 日志辅助
 
     private func log(_ message: String) {
@@ -472,6 +844,38 @@ public struct RiskDetectionEngine: Sendable {
             Logger.log("[RiskDetectionEngine] \(message)")
         }
     }
+}
+
+private struct ScoreComponents: Sendable {
+    let total: Double
+    let legacyComponent: Double
+    let hardComponent: Double
+    let softComponent: Double
+    let tamperedCount: Int
+}
+
+private extension RiskDetectionEngine {
+    static let defaultV3SignalWeights: [String: Double] = [
+        "vphone_hardware": 100,
+        "board_id_virtual": 88,
+        "gpu_virtual": 95,
+        "hardware_inconsistency": 90,
+        "cross_layer_inconsistency": 92,
+        "blocklist_hit": 100,
+        "hook_detected": 80,
+        "tampering_detected": 85,
+        "jailbreak_file": 70,
+        "dyld_injection": 65,
+        "jailbreak_scheme": 40,
+        "sensor_entropy": 60,
+        "touch_entropy": 50,
+        "timing_anomaly": 45,
+        "vpn_active": 30,
+        "proxy_enabled": 25,
+        "datacenter_ip": 55,
+        "ip_device_agg": 70,
+        "cloud_phone_tag": 90,
+    ]
 }
 
 // MARK: - 引擎策略配置
@@ -499,6 +903,23 @@ public struct EnginePolicy: Codable, Sendable {
     /// 各场景的默认策略映射
     public let scenarioPolicies: [RiskScenario: ScenarioPolicy]
 
+    /// 单信号权重覆盖（3.0）
+    /// key = signal.id, value = weight
+    public let signalWeightOverrides: [String: Double]
+
+    /// 每版本变形策略（3.0）
+    public let mutationStrategy: MutationStrategy?
+
+    /// 服务端盲挑战策略（3.0）
+    public let blindChallengePolicy: BlindChallengePolicy?
+
+    /// 服务端黑名单条目（3.0）
+    /// 支持 IP / ASN / AS-ORG / 风险标签等匹配。
+    public let serverBlocklist: [String]?
+
+    /// 命中服务端黑名单时的强制动作（3.0）
+    public let blocklistAction: RiskAction?
+
     // MARK: - 元数据
 
     /// 策略名称
@@ -516,6 +937,11 @@ public struct EnginePolicy: Codable, Sendable {
         enableBehaviorDetection: Bool = true,
         enableDeviceFingerprint: Bool = true,
         forceActionOnJailbreak: RiskAction? = nil,
+        signalWeightOverrides: [String: Double] = [:],
+        mutationStrategy: MutationStrategy? = nil,
+        blindChallengePolicy: BlindChallengePolicy? = nil,
+        serverBlocklist: [String]? = nil,
+        blocklistAction: RiskAction? = nil,
         scenarioPolicies: [RiskScenario: ScenarioPolicy] = [:]
     ) {
         self.name = name
@@ -524,6 +950,11 @@ public struct EnginePolicy: Codable, Sendable {
         self.enableBehaviorDetection = enableBehaviorDetection
         self.enableDeviceFingerprint = enableDeviceFingerprint
         self.forceActionOnJailbreak = forceActionOnJailbreak
+        self.signalWeightOverrides = signalWeightOverrides
+        self.mutationStrategy = mutationStrategy
+        self.blindChallengePolicy = blindChallengePolicy
+        self.serverBlocklist = serverBlocklist
+        self.blocklistAction = blocklistAction
         self.scenarioPolicies = scenarioPolicies
     }
 
@@ -576,6 +1007,72 @@ public struct EnginePolicy: Codable, Sendable {
             .sensitiveAction: .sensitiveAction
         ]
     )
+}
+
+public struct MutationStrategy: Codable, Sendable {
+    public let seed: String
+    public let shuffleChecks: Bool
+    public let thresholdJitterBps: Int
+    public let scoreJitterBps: Int
+
+    public init(
+        seed: String,
+        shuffleChecks: Bool = true,
+        thresholdJitterBps: Int = 0,
+        scoreJitterBps: Int = 0
+    ) {
+        self.seed = seed
+        self.shuffleChecks = shuffleChecks
+        self.thresholdJitterBps = thresholdJitterBps
+        self.scoreJitterBps = scoreJitterBps
+    }
+}
+
+public struct BlindChallengePolicy: Codable, Sendable {
+    public let enabled: Bool
+    public let challengeSalt: String
+    public let windowSeconds: Int
+    public let rules: [BlindChallengeRule]
+
+    public init(
+        enabled: Bool = true,
+        challengeSalt: String,
+        windowSeconds: Int = 300,
+        rules: [BlindChallengeRule]
+    ) {
+        self.enabled = enabled
+        self.challengeSalt = challengeSalt
+        self.windowSeconds = windowSeconds
+        self.rules = rules
+    }
+}
+
+public struct BlindChallengeRule: Codable, Sendable {
+    public let id: String
+    public let allOfSignalIDs: [String]
+    public let anyOfSignalIDs: [String]
+    public let minTamperedCount: Int
+    public let minDistinctRiskLayers: Int
+    public let requireCrossLayerInconsistency: Bool
+    public let weight: Double
+
+    public init(
+        id: String,
+        allOfSignalIDs: [String] = [],
+        anyOfSignalIDs: [String] = [],
+        minTamperedCount: Int = 0,
+        minDistinctRiskLayers: Int = 0,
+        requireCrossLayerInconsistency: Bool = false,
+        weight: Double = 75
+    ) {
+        self.id = id
+        self.allOfSignalIDs = allOfSignalIDs
+        self.anyOfSignalIDs = anyOfSignalIDs
+        self.minTamperedCount = minTamperedCount
+        self.minDistinctRiskLayers = minDistinctRiskLayers
+        self.requireCrossLayerInconsistency = requireCrossLayerInconsistency
+        self.weight = weight
+    }
 }
 
 // MARK: - 向后兼容扩展

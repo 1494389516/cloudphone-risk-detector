@@ -111,7 +111,10 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                     evidence: [
                         "methods": result.methods.joined(separator: ","),
                         "detector": "AntiTamperingDetector"
-                    ]
+                    ],
+                    state: .tampered,
+                    layer: 2,
+                    weightHint: 85
                 )
             )
             
@@ -149,7 +152,10 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                     evidence: [
                         "methods": result.methods.joined(separator: ","),
                         "detector": "DebuggerDetector"
-                    ]
+                    ],
+                    state: .soft(confidence: 0.7),
+                    layer: 2,
+                    weightHint: 50
                 )
             )
             
@@ -203,7 +209,10 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                         "methods": result.methods.joined(separator: ","),
                         "detector": "FridaDetector",
                         "severity": "high"
-                    ]
+                    ],
+                    state: .tampered,
+                    layer: 2,
+                    weightHint: 85
                 )
             )
             
@@ -253,7 +262,10 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                     evidence: [
                         "methods": result.methods.joined(separator: ","),
                         "detector": "CodeSignatureValidator"
-                    ]
+                    ],
+                    state: .soft(confidence: 0.8),
+                    layer: 2,
+                    weightHint: 60
                 )
             )
             
@@ -312,7 +324,10 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                     evidence: [
                         "methods": result.methods.joined(separator: ","),
                         "detector": "MemoryIntegrityChecker"
-                    ]
+                    ],
+                    state: .tampered,
+                    layer: 2,
+                    weightHint: 75
                 )
             )
             

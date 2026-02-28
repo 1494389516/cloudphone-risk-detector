@@ -3,18 +3,28 @@ import Foundation
 
 public struct RiskReportDTO: Codable, Sendable {
     public var sdkVersion: String?
+    public var reportId: String?
+    public var timestamp: Double?
     public var generatedAt: String
     public var deviceID: String
 
     public var score: Double
     public var isHighRisk: Bool
     public var summary: String
+    public var tamperedCount: Int?
 
     public var jailbreak: JailbreakDTO
     public var network: NetworkSignals
     public var behavior: BehaviorSignals
     public var server: ServerSignals?
     public var local: LocalSignals?
+
+    public var gpuName: String?
+    public var kernelBuild: String?
+    public var deviceModel: String?
+    public var imuMagnitude: Double?
+    public var imuVariance: Double?
+    public var touchForceVar: Double?
 
     public var signals: [RiskSignal]
 
@@ -23,31 +33,49 @@ public struct RiskReportDTO: Codable, Sendable {
 
     public init(
         sdkVersion: String?,
+        reportId: String? = nil,
+        timestamp: Double? = nil,
         generatedAt: String,
         deviceID: String,
         score: Double,
         isHighRisk: Bool,
         summary: String,
+        tamperedCount: Int? = nil,
         jailbreak: JailbreakDTO,
         network: NetworkSignals,
         behavior: BehaviorSignals,
         server: ServerSignals?,
         local: LocalSignals?,
+        gpuName: String? = nil,
+        kernelBuild: String? = nil,
+        deviceModel: String? = nil,
+        imuMagnitude: Double? = nil,
+        imuVariance: Double? = nil,
+        touchForceVar: Double? = nil,
         signals: [RiskSignal],
         hardSignals: [SignalItemDTO],
         softSignals: [SignalItemDTO]
     ) {
         self.sdkVersion = sdkVersion
+        self.reportId = reportId
+        self.timestamp = timestamp
         self.generatedAt = generatedAt
         self.deviceID = deviceID
         self.score = score
         self.isHighRisk = isHighRisk
         self.summary = summary
+        self.tamperedCount = tamperedCount
         self.jailbreak = jailbreak
         self.network = network
         self.behavior = behavior
         self.server = server
         self.local = local
+        self.gpuName = gpuName
+        self.kernelBuild = kernelBuild
+        self.deviceModel = deviceModel
+        self.imuMagnitude = imuMagnitude
+        self.imuVariance = imuVariance
+        self.touchForceVar = touchForceVar
         self.signals = signals
         self.hardSignals = hardSignals
         self.softSignals = softSignals
@@ -107,7 +135,7 @@ public enum RiskReportMapper {
             details: payload.jailbreak.details
         )
 
-        let hard = [
+        var hard = [
             SignalItemDTO(
                 id: "jailbreak",
                 title: "越狱",
@@ -295,18 +323,29 @@ public enum RiskReportMapper {
             )
         }
 
+        appendV3Signals(from: payload.signals, hard: &hard, soft: &soft)
+
         return RiskReportDTO(
             sdkVersion: payload.sdkVersion,
+            reportId: payload.reportId,
+            timestamp: payload.timestamp,
             generatedAt: payload.generatedAt,
             deviceID: payload.deviceID,
             score: payload.score,
             isHighRisk: payload.isHighRisk,
             summary: payload.summary,
+            tamperedCount: payload.tamperedCount,
             jailbreak: jailbreak,
             network: payload.network,
             behavior: payload.behavior,
             server: payload.server,
             local: payload.local,
+            gpuName: payload.gpuName,
+            kernelBuild: payload.kernelBuild,
+            deviceModel: payload.deviceModel,
+            imuMagnitude: payload.imuMagnitude,
+            imuVariance: payload.imuVariance,
+            touchForceVar: payload.touchForceVar,
             signals: payload.signals,
             hardSignals: hard,
             softSignals: soft
@@ -386,10 +425,114 @@ public enum RiskReportMapper {
             .map { "\($0.key)=\($0.value)" }
             .joined(separator: ",")
     }
+
+    private static func appendV3Signals(
+        from signals: [RiskSignal],
+        hard: inout [SignalItemDTO],
+        soft: inout [SignalItemDTO]
+    ) {
+        var hardIDs = Set(hard.map(\.id))
+        var softIDs = Set(soft.map(\.id))
+
+        for signal in signals {
+            guard let state = signal.state else { continue }
+            let title = signal.id
+                .split(separator: "_")
+                .map { $0.capitalized }
+                .joined(separator: " ")
+            let evidenceSummary = summarizeEvidence(signal.evidence)
+
+            switch state {
+            case .hard(let detected):
+                guard !hardIDs.contains(signal.id) else { continue }
+                hardIDs.insert(signal.id)
+                hard.append(
+                    SignalItemDTO(
+                        id: signal.id,
+                        title: title,
+                        kind: .hard,
+                        detected: detected,
+                        confidence: detected ? .strong : .weak,
+                        method: "layer\(signal.layer ?? 0)",
+                        evidenceSummary: evidenceSummary
+                    )
+                )
+            case .soft(let confidence):
+                guard !softIDs.contains(signal.id) else { continue }
+                softIDs.insert(signal.id)
+                soft.append(
+                    SignalItemDTO(
+                        id: signal.id,
+                        title: title,
+                        kind: .soft,
+                        detected: confidence > 0.3,
+                        confidence: confidenceBucket(confidence),
+                        method: "layer\(signal.layer ?? 0)",
+                        evidenceSummary: evidenceSummary
+                    )
+                )
+            case .tampered:
+                guard !hardIDs.contains(signal.id) else { continue }
+                hardIDs.insert(signal.id)
+                hard.append(
+                    SignalItemDTO(
+                        id: signal.id,
+                        title: "检测干扰",
+                        kind: .hard,
+                        detected: true,
+                        confidence: .strong,
+                        method: "layer\(signal.layer ?? 0)",
+                        evidenceSummary: evidenceSummary
+                    )
+                )
+            case .serverRequired:
+                guard !softIDs.contains(signal.id) else { continue }
+                softIDs.insert(signal.id)
+                soft.append(
+                    SignalItemDTO(
+                        id: signal.id,
+                        title: title,
+                        kind: .soft,
+                        detected: false,
+                        confidence: nil,
+                        method: "server_required",
+                        evidenceSummary: evidenceSummary
+                    )
+                )
+            case .unavailable:
+                guard !softIDs.contains(signal.id) else { continue }
+                softIDs.insert(signal.id)
+                soft.append(
+                    SignalItemDTO(
+                        id: signal.id,
+                        title: title,
+                        kind: .soft,
+                        detected: false,
+                        confidence: nil,
+                        method: "unavailable",
+                        evidenceSummary: evidenceSummary
+                    )
+                )
+            }
+        }
+    }
+
+    private static func confidenceBucket(_ confidence: Double) -> SignalConfidence {
+        switch confidence {
+        case ..<0.35:
+            return .weak
+        case ..<0.75:
+            return .medium
+        default:
+            return .strong
+        }
+    }
 }
 
 private struct PayloadMirror: Decodable {
     var sdkVersion: String?
+    var reportId: String?
+    var timestamp: Double?
     var generatedAt: String
     var deviceID: String
     var network: NetworkSignals
@@ -398,6 +541,13 @@ private struct PayloadMirror: Decodable {
     var score: Double
     var isHighRisk: Bool
     var summary: String
+    var tamperedCount: Int?
+    var gpuName: String?
+    var kernelBuild: String?
+    var deviceModel: String?
+    var imuMagnitude: Double?
+    var imuVariance: Double?
+    var touchForceVar: Double?
     var signals: [RiskSignal]
     var server: ServerSignals?
     var local: LocalSignals?

@@ -35,6 +35,45 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
 
         var out: [RiskSignal] = []
 
+        if let ip = s.publicIP, !ip.isEmpty {
+            out.append(
+                RiskSignal(
+                    id: "server_public_ip",
+                    category: "server",
+                    score: 0,
+                    evidence: ["public_ip": ip],
+                    state: .serverRequired,
+                    layer: 4
+                )
+            )
+        }
+
+        if let asn = s.asn, !asn.isEmpty {
+            out.append(
+                RiskSignal(
+                    id: "server_asn",
+                    category: "server",
+                    score: 0,
+                    evidence: ["asn": asn],
+                    state: .serverRequired,
+                    layer: 4
+                )
+            )
+        }
+
+        if let asOrg = s.asOrg, !asOrg.isEmpty {
+            out.append(
+                RiskSignal(
+                    id: "server_as_org",
+                    category: "server",
+                    score: 0,
+                    evidence: ["as_org": asOrg],
+                    state: .serverRequired,
+                    layer: 4
+                )
+            )
+        }
+
         if s.isDatacenter == true {
             out.append(RiskSignal(id: "datacenter_ip", category: "server", score: 20, evidence: ["is_datacenter": "true"]))
         }
@@ -62,10 +101,18 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
         }
 
         if let tags = s.riskTags, !tags.isEmpty {
-            out.append(RiskSignal(id: "risk_tags", category: "server", score: 0, evidence: ["tags": tags.joined(separator: ",")]))
+            out.append(
+                RiskSignal(
+                    id: "risk_tags",
+                    category: "server",
+                    score: 0,
+                    evidence: ["tags": tags.joined(separator: ",")],
+                    state: .serverRequired,
+                    layer: 4
+                )
+            )
         }
 
         return out
     }
 }
-

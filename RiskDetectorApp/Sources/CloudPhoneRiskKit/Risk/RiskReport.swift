@@ -15,11 +15,89 @@ public struct RiskScoreReport: Sendable {
     public var summary: String
 }
 
+public enum RiskSignalState: Sendable, Codable, Equatable {
+    case hard(detected: Bool)
+    case soft(confidence: Double)
+    case serverRequired
+    case unavailable
+    case tampered
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case detected
+        case confidence
+    }
+
+    private enum StateType: String, Codable {
+        case hard
+        case soft
+        case serverRequired
+        case unavailable
+        case tampered
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let type = try container.decode(StateType.self, forKey: .type)
+        switch type {
+        case .hard:
+            self = .hard(detected: try container.decode(Bool.self, forKey: .detected))
+        case .soft:
+            self = .soft(confidence: try container.decode(Double.self, forKey: .confidence))
+        case .serverRequired:
+            self = .serverRequired
+        case .unavailable:
+            self = .unavailable
+        case .tampered:
+            self = .tampered
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .hard(let detected):
+            try container.encode(StateType.hard, forKey: .type)
+            try container.encode(detected, forKey: .detected)
+        case .soft(let confidence):
+            try container.encode(StateType.soft, forKey: .type)
+            try container.encode(confidence, forKey: .confidence)
+        case .serverRequired:
+            try container.encode(StateType.serverRequired, forKey: .type)
+        case .unavailable:
+            try container.encode(StateType.unavailable, forKey: .type)
+        case .tampered:
+            try container.encode(StateType.tampered, forKey: .type)
+        }
+    }
+}
+
 public struct RiskSignal: Sendable, Codable {
     public var id: String
     public var category: String
     public var score: Double
     public var evidence: [String: String]
+    public var state: RiskSignalState?
+    public var layer: Int?
+    public var weightHint: Double
+
+    public init(
+        id: String,
+        category: String,
+        score: Double,
+        evidence: [String: String],
+        state: RiskSignalState? = nil,
+        layer: Int? = nil,
+        weightHint: Double = 0
+    ) {
+        self.id = id
+        self.category = category
+        self.score = score
+        self.evidence = evidence
+        self.state = state
+        self.layer = layer
+        self.weightHint = weightHint
+    }
 }
 
 @objc(CPRiskSignal)
@@ -120,6 +198,8 @@ public final class CPRiskReport: NSObject {
 
 private struct Payload: Codable {
     var sdkVersion: String
+    var reportId: String
+    var timestamp: Double
     var generatedAt: String
     var deviceID: String
     var device: DeviceFingerprint
@@ -130,6 +210,7 @@ private struct Payload: Codable {
     var isHighRisk: Bool
     var summary: String
     var signals: [RiskSignal]
+    var tamperedCount: Int
 
     // 预留：未来服务端/云端聚合信号（IP 聚合度、ASN、机房属性等）
     var server: ServerSignals?
@@ -137,8 +218,18 @@ private struct Payload: Codable {
     // 本地聚合信号（不依赖云端）
     var local: LocalSignals?
 
+    // 3.0 增量字段
+    var gpuName: String?
+    var kernelBuild: String?
+    var deviceModel: String?
+    var imuMagnitude: Double?
+    var imuVariance: Double?
+    var touchForceVar: Double?
+
     init(context: RiskContext, report: RiskScoreReport) {
         self.sdkVersion = Version.current
+        self.reportId = UUID().uuidString
+        self.timestamp = Date().timeIntervalSince1970
         self.generatedAt = ISO8601.nowString()
         self.deviceID = context.deviceID
         self.device = context.device
@@ -149,8 +240,15 @@ private struct Payload: Codable {
         self.isHighRisk = report.isHighRisk
         self.summary = report.summary
         self.signals = report.signals
+        self.tamperedCount = report.signals.filter { $0.state == .tampered }.count
         self.server = nil
         self.local = nil
+        self.gpuName = report.signals.first(where: { $0.id == "gpu_virtual" })?.evidence["gpu_name"]
+        self.kernelBuild = report.signals.first(where: { $0.id == "vphone_hardware" })?.evidence["kernel"]
+        self.deviceModel = context.device.hardwareMachine ?? context.device.model
+        self.imuMagnitude = nil
+        self.imuVariance = nil
+        self.touchForceVar = context.behavior.touch.forceVariance
     }
 }
 
@@ -213,5 +311,5 @@ private struct DetectionResultPayload: Codable {
 }
 
 enum Version {
-    static let current = "0.1.0"
+    static let current = "3.0.0-beta.1"
 }
