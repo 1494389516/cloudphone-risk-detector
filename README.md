@@ -5,7 +5,7 @@
   <img src="https://img.shields.io/badge/SwiftUI-✓-green?style=flat-square" alt="SwiftUI">
 </p>
 
-# RiskDetectorApp（基于 CloudPhoneRiskKit SDK 3.0）
+# Risk-detector sdk 3.0
 
 面向 iOS 设备环境风险检测的研究型项目，聚焦以下三类信号：
 
