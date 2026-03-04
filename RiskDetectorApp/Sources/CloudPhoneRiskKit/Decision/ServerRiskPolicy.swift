@@ -71,6 +71,8 @@ public struct ServerRiskPolicy: Codable, Sendable {
         public let minTamperedCount: Int
         public let minDistinctRiskLayers: Int
         public let requireCrossLayerInconsistency: Bool
+        /// 最小能力探针异常数（beta.2 新增）
+        public let minCapabilityAnomalyCount: Int
         public let weight: Double
 
         public init(
@@ -80,6 +82,7 @@ public struct ServerRiskPolicy: Codable, Sendable {
             minTamperedCount: Int = 0,
             minDistinctRiskLayers: Int = 0,
             requireCrossLayerInconsistency: Bool = false,
+            minCapabilityAnomalyCount: Int = 0,
             weight: Double = 75
         ) {
             self.id = id
@@ -88,6 +91,7 @@ public struct ServerRiskPolicy: Codable, Sendable {
             self.minTamperedCount = minTamperedCount
             self.minDistinctRiskLayers = minDistinctRiskLayers
             self.requireCrossLayerInconsistency = requireCrossLayerInconsistency
+            self.minCapabilityAnomalyCount = minCapabilityAnomalyCount
             self.weight = weight
         }
     }

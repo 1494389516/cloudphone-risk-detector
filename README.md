@@ -1,21 +1,65 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-blue?style=flat-square" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-orange?style=flat-square" alt="Swift">
+  <img src="https://img.shields.io/badge/SDK-3.1%20Update-red?style=flat-square" alt="SDK">
   <img src="https://img.shields.io/badge/SwiftUI-✓-green?style=flat-square" alt="SwiftUI">
 </p>
 
-# RiskDetectorApp
+# RiskDetectorApp（基于 CloudPhoneRiskKit SDK 3.1 小更新）
 
-iOS 设备风险检测应用，用于检测越狱状态、VPN/代理、云手机环境等风险信号。
+面向 iOS 设备环境风险检测的研究型项目，聚焦以下三类信号：
+
+- 设备完整性与越狱（硬信号）
+- 网络与行为异常（软信号）
+- 云手机/机房环境（本地推断 + 服务端聚合）
+
+当前代码基线已包含 **SDK 3.0 增量能力 + 3.1 小版本加固更新**。  
+说明：当前运行时版本常量仍为 `3.0.0-beta.1`，本次为 `3.1` 级别的增量增强（无 breaking change）。
+
+## SDK 3.1 小更新（2026-03-01）
+
+### 3.1 更新摘要
+
+- **无破坏升级**：保留 3.0 API 入口，`evaluate()` / `evaluate(config:)` / `evaluate(config:scenario:)` 兼容。
+- **检测面扩展**：关键符号覆盖扩展到 `openat`、`fopen`、`dlopen`、`syscall`、`__syscall`、`posix_spawn` 等。
+- **反绕过增强**：补齐 `LDR literal + BR/BLR` trampoline 识别，覆盖现代 Frida 常见注入样式。
+- **路径判定强化**：从弱 `contains` 规则升级为“系统前缀白名单 + 可疑 token 黑名单”。
+- **基线测试提升**：测试集扩展到 **159** 项，新增多组 detector 针对性回归测试。
+
+### 3.0 基线能力（保留）
+
+### 核心升级
+
+- **场景化风控决策**：支持 `login/payment/register/accountChange/sensitiveAction/apiAccess` 等场景。
+- **策略动态化**：支持远程配置与服务端策略注入（JSON），可动态调整阈值、权重与动作。
+- **抗绕过增强**：引入跨层一致性检查、信号变形（mutation jitter）、盲挑战（blind challenge）、服务端黑名单强制动作。
+- **信号状态升级**：`RiskSignalState` 支持 `hard/soft/serverRequired/unavailable/tampered`，便于表达“需要服务端/不可用/疑似篡改”。
+- **报告字段增强**：`RiskReportDTO` 与 JSON payload 增加 3.0 字段（如 `tamperedCount`、`gpuName`、`kernelBuild`、`deviceModel` 等）。
+
+### 向后兼容
+
+- 保留 `evaluate()` / `evaluate(config:)` 等旧入口。
+- 新增 `evaluate(config:scenario:)` 与 async/await API，便于平滑迁移。
 
 ## 功能特性
 
-- **越狱检测** - 多维度检测：文件探测、dyld 分析、环境变量、系统调用、Hook 检测
-- **网络信号** - VPN 隧道检测、系统代理检测
-- **云手机识别** - 支持服务端信号接入：机房 IP、IP 聚合度、风险标签
-- **行为采集** - 触摸轨迹 + 陀螺仪数据采集
-- **安全存储** - AES-GCM 加密存储检测报告
-- **美观 UI** - 现代化 SwiftUI 界面，支持信号三态展示
+### 设备与安全信号
+
+- **越狱检测**：文件、dyld、环境变量、sysctl、URL Scheme、Hook、ObjC IMP、函数入口跳转等多检测器组合。
+- **反篡改检测**：调试器、Frida、代码签名与内存完整性等对抗检测（可按配置开关）。
+- **抗绕过策略**：信号变形、跨层一致性校验、黑名单命中硬阻断。
+
+### 网络与云手机信号
+
+- **网络信号**：VPN/代理检测。
+- **本地云手机线索**：硬件、行为、时序特征联合推断。
+- **服务端聚合信号注入**：公网 IP、ASN、机房属性、IP 聚合度、风险标签等。
+
+### 决策与输出
+
+- **场景化决策树**：按业务场景切分阈值、权重、动作映射。
+- **统一 DTO 输出**：`RiskReportDTO` 同时提供 `hardSignals` / `softSignals` 供 UI 直接渲染。
+- **安全存储**：AES-GCM 加密保存报告，密钥存放 Keychain。
 
 ## 页面预览
 
@@ -24,25 +68,32 @@ iOS 设备风险检测应用，用于检测越狱状态、VPN/代理、云手机
 | 风险仪表盘 | 检测结果 | 历史记录 | 配置管理 |
 | 一键检测 | 信号详情 | 加密存储 | 调试开关 |
 
-## 信号分类
+## 信号分类与状态
 
 ### 硬信号（Hard Signals）
-本地可独立判定，检测到即可定性：
-- 越狱状态
+
+本地可独立判定，检测到即可触发高风险路径：
+
+- 越狱
+- 篡改/干预（`tampered`）
+- 黑名单命中（由策略决定是否强制阻断）
 
 ### 软信号（Soft Signals）
-仅作为风险参考：
-- VPN 检测
-- 代理检测
-- 云手机信号（需服务端）
 
-### 三态展示
+用于风险加权，需要结合场景与策略综合判断：
+
+- VPN / 代理
+- 行为异常与时序模式
+- 云手机本地线索与服务端聚合信号
+
+### UI 状态（四态）
+
 | 状态 | 颜色 | 说明 |
 |------|------|------|
-| 检测到 | 🔴 红色 | 发现风险信号 |
-| 未检测到 | 🟢 绿色 | 正常状态 |
-| 不可用 | ⚪ 灰色 | 模拟器环境 |
-| 需服务端 | 🟣 紫色 | 等待服务端数据 |
+| 检测到 | 红色 | 发现风险信号 |
+| 未检测到 | 绿色 | 正常状态 |
+| 不可用 | 灰色 | 运行环境限制（如模拟器） |
+| 需服务端 | 紫色 | 需外部聚合信号参与 |
 
 ## 快速开始
 
@@ -51,164 +102,277 @@ iOS 设备风险检测应用，用于检测越狱状态、VPN/代理、云手机
 - macOS 13.0+
 - Xcode 15.0+
 - iOS 14.0+
+- Swift 5.9+
 
 ### 方式 1：使用 XcodeGen（推荐）
 
 ```bash
+# 进入项目
+cd /path/to/cloudphone-risk-detector/RiskDetectorApp
+
 # 安装 XcodeGen
 brew install xcodegen
 
-# 克隆项目
-git clone https://github.com/your-repo/RiskDetectorApp.git
-cd RiskDetectorApp
-
-# 生成 Xcode 项目
+# 生成 Xcode 工程
 xcodegen generate
 
-# 打开项目
+# 打开工程
 open RiskDetectorApp.xcodeproj
 ```
 
-### 方式 2：直接打开
+### 方式 2：直接打开已有工程
 
 ```bash
-# 克隆项目
-git clone https://github.com/your-repo/RiskDetectorApp.git
-cd RiskDetectorApp
-
-# 打开项目
+cd /path/to/cloudphone-risk-detector/RiskDetectorApp
 open RiskDetectorApp.xcodeproj
 ```
 
 ### 运行
 
-1. 选择目标设备（推荐真机，模拟器部分检测功能受限）
-2. `Cmd + R` 运行
+1. 选择目标设备（推荐真机；模拟器下部分信号会显示不可用）。
+2. `Cmd + R` 运行。
 
 ## 项目结构
 
-```
-RiskDetectorApp/
-├── App/                          # 应用层
-│   ├── Views/                    # SwiftUI 视图
-│   │   ├── DashboardView.swift   # 主仪表盘
-│   │   ├── ResultsView.swift     # 检测结果
-│   │   ├── HistoryView.swift     # 历史记录
-│   │   ├── SettingsView.swift    # 设置页面
-│   │   └── Components/           # 可复用组件
-│   └── ViewModels/               # MVVM ViewModel
-├── Sources/
-│   ├── CloudPhoneRiskKit/        # 核心检测库
-│   │   ├── Jailbreak/            # 越狱检测（10+ 检测器）
-│   │   ├── Network/              # 网络信号检测
-│   │   ├── Behavior/             # 行为数据采集
-│   │   └── Util/                 # 工具类（加密等）
-│   └── CloudPhoneRiskAppCore/    # 应用核心层
-│       ├── RiskDetectionService  # 检测服务
-│       └── RiskReportDTO         # 数据传输对象
-├── Tests/                        # 单元测试
-├── Package.swift                 # SwiftPM 配置
-└── project.yml                   # XcodeGen 配置
+```text
+cloudphone-risk-detector/
+├── README.md
+├── CloudPhoneRiskKit_使用说明.md
+└── RiskDetectorApp/
+    ├── App/                               # SwiftUI 应用层
+    │   ├── Views/
+    │   └── ViewModels/
+    ├── Sources/
+    │   ├── CloudPhoneRiskKit/             # SDK 核心
+    │   │   ├── Jailbreak/                 # 越狱检测引擎与检测器
+    │   │   ├── Detection/                 # 反篡改/抗绕过适配
+    │   │   ├── Decision/                  # 场景策略、决策树、3.x 风险引擎
+    │   │   ├── Providers/                 # 设备/云手机/服务端信号 Provider
+    │   │   ├── Config/                    # 远程配置模型与拉取
+    │   │   ├── Risk/                      # 报告模型与评分
+    │   │   └── Storage/                   # 本地安全存储
+    │   └── CloudPhoneRiskAppCore/         # App Core 封装层
+    │       ├── RiskDetectionService.swift
+    │       ├── RiskReportDTO.swift
+    │       └── RiskAppConfig.swift
+    ├── Tests/CloudPhoneRiskKitTests/      # 单元测试（含 V3UpgradeTests）
+    ├── Package.swift
+    └── project.yml
 ```
 
-## 核心 API
+## 核心 API（SDK 3.1）
 
-### 执行检测
+### 1) AppCore 一体化检测
 
 ```swift
-// ViewModel
-@MainActor
-class DetectionViewModel: ObservableObject {
-    @Published var lastDTO: RiskReportDTO?
+import CloudPhoneRiskAppCore
 
-    func detect(config: RiskAppConfig) {
-        // 执行检测并更新 lastDTO
-    }
-}
+let config = RiskAppConfig(
+    enableBehaviorDetect: true,
+    enableNetworkSignals: true,
+    threshold: 60,
+    storeEncryptionEnabled: true
+)
 
-// 使用
-detectionVM.detect(config: settingsVM.currentConfig())
-```
+RiskDetectionService.shared.start()
 
-### 检测结果
-
-```swift
-public struct RiskReportDTO: Codable {
-    var score: Double           // 风险分数 0-100
-    var isHighRisk: Bool
-    var jailbreak: JailbreakDTO
-    var network: NetworkSignals
-    var hardSignals: [SignalItemDTO]  // 硬信号
-    var softSignals: [SignalItemDTO]  // 软信号
+RiskDetectionService.shared.runAsync(config: config, save: true) { result in
+    print("score:", result.dto.score)
+    print("highRisk:", result.dto.isHighRisk)
+    print("sdkVersion:", result.dto.sdkVersion ?? "nil")
+    print("savedPath:", result.savedPath ?? "not saved")
 }
 ```
 
-### 服务端信号注入
+### 2) 场景化评估（SDK 原生入口）
 
 ```swift
-// 注入服务端数据（用于云手机检测等）
-RiskDetectionService.shared.setExternalServerSignals(
+import CloudPhoneRiskKit
+
+let cfg = CPRiskConfig.default
+cfg.defaultScenario = .payment
+cfg.enableTemporalAnalysis = true
+cfg.enableAntiTamper = true
+
+let report = CPRiskKit.shared.evaluate(config: cfg, scenario: .payment)
+print(report.score, report.summary)
+```
+
+### 3) async/await（避免阻塞主线程）
+
+```swift
+import CloudPhoneRiskKit
+
+let cfg = CPRiskConfig.default
+let report = await CPRiskKit.shared.evaluateAsync(config: cfg, scenario: .login)
+print(report.jsonString(prettyPrinted: true))
+```
+
+### 4) 服务端聚合信号注入
+
+```swift
+import CloudPhoneRiskKit
+
+CPRiskKit.setExternalServerSignals(
     publicIP: "203.0.113.10",
     asn: "AS64500",
     asOrg: "Cloud-DC",
-    isDatacenter: true,
-    ipDeviceAgg: 260,
-    ipAccountAgg: 800,
-    riskTags: ["cloud_phone"]
+    isDatacenter: NSNumber(value: true),
+    ipDeviceAgg: NSNumber(value: 260),
+    ipAccountAgg: NSNumber(value: 800),
+    geoCountry: "CN",
+    geoRegion: "BJ",
+    riskTags: ["cloud_phone", "dc_ip"]
 )
+```
+
+### 5) 3.x 服务端策略注入（JSON）
+
+```swift
+import CloudPhoneRiskKit
+
+let policyJSON = """
+{
+  "version": 3,
+  "signalWeights": {
+    "jailbreak": 1.4,
+    "vpn_active": 1.1,
+    "proxy_enabled": 1.1
+  },
+  "thresholds": {
+    "block": 85,
+    "challenge": 60,
+    "monitor": 40
+  },
+  "newVPhonePatterns": ["kernel:virtual", "gpu:swiftshader"],
+  "blocklist": ["AS9009", "cloud_phone_sim"],
+  "mutation": {
+    "seed": "sdk3.0-2026Q1",
+    "shuffleChecks": true,
+    "thresholdJitterBps": 500,
+    "scoreJitterBps": 300
+  },
+  "blindChallenge": {
+    "enabled": true,
+    "challengeSalt": "server-secret-salt",
+    "windowSeconds": 300,
+    "rules": [
+      {
+        "id": "tamper_combo",
+        "allOfSignalIDs": ["cross_layer_inconsistency"],
+        "anyOfSignalIDs": ["vpn_active", "proxy_enabled"],
+        "minTamperedCount": 1,
+        "minDistinctRiskLayers": 2,
+        "requireCrossLayerInconsistency": true,
+        "weight": 80
+      }
+    ]
+  }
+}
+"""
+
+let ok = CPRiskKit.shared.setServerRiskPolicyJSON(policyJSON)
+print("policy loaded:", ok)
+```
+
+### 6) 远程配置更新
+
+```swift
+import CloudPhoneRiskKit
+
+_ = CPRiskKit.shared.setRemoteConfigEndpoint("https://example.com/risk-config.json")
+CPRiskKit.shared.updateRemoteConfig { success in
+    print("remote config updated:", success)
+}
+```
+
+## 数据模型（节选）
+
+```swift
+public struct RiskReportDTO: Codable, Sendable {
+    public var sdkVersion: String?
+    public var reportId: String?
+    public var generatedAt: String
+    public var deviceID: String
+
+    public var score: Double
+    public var isHighRisk: Bool
+    public var summary: String
+    public var tamperedCount: Int?
+
+    public var hardSignals: [SignalItemDTO]
+    public var softSignals: [SignalItemDTO]
+
+    // SDK 3.x 增量字段
+    public var gpuName: String?
+    public var kernelBuild: String?
+    public var deviceModel: String?
+}
 ```
 
 ## 配置选项
 
+### AppCore (`RiskAppConfig`)
+
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| `enableBehaviorDetect` | `true` | 行为数据采集 |
-| `enableNetworkSignals` | `true` | 网络信号检测 |
-| `threshold` | `60` | 风险阈值 |
-| `storeEncryptionEnabled` | `true` | 加密存储 |
-| `debugShowDetailedSignals` | `false` | 显示检测详情 |
+| `enableBehaviorDetect` | `true` | 行为采集开关 |
+| `enableNetworkSignals` | `true` | 网络信号开关 |
+| `threshold` | `60` | 总风险阈值 |
+| `jailbreakThreshold` | `50` | 越狱判定阈值 |
+| `storeEncryptionEnabled` | `true` | 报告加密存储 |
+| `storeMaxFiles` | `50` | 本地报告文件上限 |
 
-## 越狱检测器
+### SDK (`CPRiskConfig`)
 
-| 检测器 | 检测目标 |
-|--------|----------|
-| FileDetector | Cydia.app、MobileSubstrate 等文件 |
-| DyldDetector | 加载的越狱动态库 |
-| EnvDetector | DYLD_INSERT_LIBRARIES 等环境变量 |
-| SysctlDetector | 进程信息、调试状态 |
-| SchemeDetector | cydia://、sileo:// 等 URL Scheme |
-| HookDetector | 关键函数 Hook 检测 |
-| ObjCIMPDetector | ObjC 方法实现地址验证 |
-| PrologueBranchDetector | 函数入口跳转指令检测 |
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `enableRemoteConfig` | `true` | 启用远程配置 |
+| `defaultScenario` | `.default` | 默认业务场景 |
+| `enableTemporalAnalysis` | `true` | 启用时序分析 |
+| `enableAntiTamper` | `true` | 启用反篡改检测 |
+| `remoteConfigURLString` | `""` | 远程配置地址 |
 
-## 技术栈
+## 主要检测器
 
-- **语言**: Swift 5.9+
-- **UI**: SwiftUI
-- **架构**: MVVM
-- **加密**: CryptoKit (AES-GCM)
-- **存储**: Keychain + FileManager
-- **包管理**: Swift Package Manager
+| 类别 | 组件 | 说明 |
+|------|------|------|
+| 越狱检测 | `FileDetector` | 越狱文件路径探测 |
+| 越狱检测 | `DyldDetector` | 越狱动态库加载检测 |
+| 越狱检测 | `EnvDetector` | 环境变量异常检测 |
+| 越狱检测 | `SysctlDetector` | 调试状态与进程信息检测 |
+| 越狱检测 | `SchemeDetector` | 越狱 App URL Scheme 探测 |
+| 越狱检测 | `HookDetector` / `ObjCIMPDetector` / `PrologueBranchDetector` | Hook 与函数入口完整性检测 |
+| 反篡改 | `AntiTamperingDetector` / `DebuggerDetector` / `FridaDetector` / `MemoryIntegrityChecker` | 对抗动态调试与注入 |
+| 抗绕过 | `SDKIntegrityChecker` / `RandomizedDetection` / `FingerprintDeobfuscation` | SDK 完整性与反脚本化 |
 
 ## 测试
 
-```bash
-# 运行单元测试
-swift test
+已在本仓库执行通过：
 
-# 或在 Xcode 中
-Cmd + U
+```bash
+cd /path/to/cloudphone-risk-detector/RiskDetectorApp
+swift test
 ```
+
+当前测试集规模为 **159** 项，包含 `V3UpgradeTests`、`PrologueBranchDetectorTests`、`MemoryIntegrityCheckerTests`、`PointerValidationDetectorTests`、`RiskReportDTOTests` 等，覆盖 3.1 加固链路。
+
+## 文档索引
+
+- `CloudPhoneRiskKit_使用说明.md`：SDK 接入与调用说明
+- `RiskDetectorApp/RiskDetectorApp项目文档.md`：项目技术文档
+- `RiskDetectorApp/docs/architecture-design.md`：架构设计
+- `RiskDetectorApp/docs/api-design.md`：API 设计
 
 ## 贡献
 
-欢迎提交 Issue 和 Pull Request！
+欢迎提交 Issue 和 Pull Request。
 
 1. Fork 本项目
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 提交 Pull Request
+2. 创建特性分支（`git checkout -b feature/AmazingFeature`）
+3. 提交更改（`git commit -m 'Add some AmazingFeature'`）
+4. 推送分支（`git push origin feature/AmazingFeature`）
+5. 发起 Pull Request
 
 ## 许可证
 
@@ -216,7 +380,7 @@ Cmd + U
 
 ## 免责声明
 
-本项目仅供学习和研究目的。请遵守当地法律法规，不要将本工具用于任何非法用途。
+本项目仅供学习与安全研究。请遵守当地法律法规，不得用于任何非法用途。
 
 ---
 

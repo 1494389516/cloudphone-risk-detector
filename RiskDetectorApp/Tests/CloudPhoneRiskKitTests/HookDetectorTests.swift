@@ -86,6 +86,36 @@ final class HookDetectorTests: XCTestCase {
         
         XCTAssertEqual(score, 0, "未找到符号不应加分")
     }
+
+    func testSymbolImageChecksCoverCriticalSymbols() {
+        let detector = HookDetector()
+        let names = Set(detector.symbolImageChecks.map(\.symbol))
+
+        XCTAssertTrue(names.contains("open"), "应覆盖 open")
+        XCTAssertTrue(names.contains("openat"), "应覆盖 openat")
+        XCTAssertTrue(names.contains("dlopen"), "应覆盖 dlopen")
+        XCTAssertTrue(names.contains("syscall"), "应覆盖 syscall")
+        XCTAssertTrue(names.contains("__syscall"), "应覆盖 __syscall")
+    }
+
+    func testTrustedPathValidationUsesPrefixSemantics() {
+        let detector = HookDetector()
+
+        let trusted = "/usr/lib/system/libsystem_kernel.dylib"
+        XCTAssertTrue(detector.isTrustedSystemImagePath(trusted, for: "open"))
+
+        // 仅包含子串但不是系统前缀，不应被误判为可信。
+        let fakeContainsOnly = "/var/mobile/Containers/Data/usr/lib/system/fake.dylib"
+        XCTAssertFalse(detector.isTrustedSystemImagePath(fakeContainsOnly, for: "open"))
+    }
+
+    func testSuspiciousImagePathTokenMatching() {
+        let detector = HookDetector()
+
+        XCTAssertTrue(detector.isSuspiciousImagePath("/usr/lib/frida/frida-agent.dylib"))
+        XCTAssertTrue(detector.isSuspiciousImagePath("/Library/MobileSubstrate/DynamicLibraries/ellekit.dylib"))
+        XCTAssertFalse(detector.isSuspiciousImagePath("/usr/lib/system/libsystem_kernel.dylib"))
+    }
     
     // MARK: - 子检测器调用测试
     

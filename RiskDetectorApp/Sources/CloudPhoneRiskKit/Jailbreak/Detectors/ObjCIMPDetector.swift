@@ -11,6 +11,25 @@ struct ObjCIMPDetector: Detector {
         var score: Double
     }
 
+    let trustedPathPrefixes: [String] = [
+        "/system/library/",
+        "/usr/lib/system/",
+        "/usr/lib/libsystem",
+        "/usr/lib/libobjc.",
+    ]
+
+    let suspiciousImageTokens: [String] = [
+        "frida",
+        "gadget",
+        "gum",
+        "substrate",
+        "substitute",
+        "libhooker",
+        "ellekit",
+        "tweak",
+        "hook",
+    ]
+
     func detect() -> DetectorResult {
         var targets: [Target] = []
 
@@ -44,7 +63,7 @@ struct ObjCIMPDetector: Detector {
             guard dladdr(p, &info) != 0, let cPath = info.dli_fname else { continue }
             let path = String(cString: cPath)
 
-            if !(path.hasPrefix("/System/Library/") || path.hasPrefix("/usr/lib/")) {
+            if !isTrustedImpImagePath(path) {
                 score += t.score
                 methods.append("objc_imp:\(t.id)")
                 Logger.log("jailbreak.objcimp.hit: \(t.id) path=\(path) (+\(t.score))")
@@ -53,5 +72,13 @@ struct ObjCIMPDetector: Detector {
 
         if score > 40 { score = 40 }
         return DetectorResult(score: score, methods: methods)
+    }
+
+    func isTrustedImpImagePath(_ path: String) -> Bool {
+        let normalized = path.lowercased()
+        if suspiciousImageTokens.contains(where: { normalized.contains($0) }) {
+            return false
+        }
+        return trustedPathPrefixes.contains(where: { normalized.hasPrefix($0) })
     }
 }

@@ -6,13 +6,32 @@ import MachO
 /// Best-effort: focuses on a small watchlist and only flags when the resolved pointer
 /// points to a non-system image.
 struct IndirectSymbolPointerDetector: Detector {
-    private let watch: [(symbol: String, score: Double)] = [
+    let watch: [(symbol: String, score: Double)] = [
         ("open", 12),
+        ("openat", 12),
+        ("fopen", 10),
         ("stat", 12),
         ("lstat", 12),
+        ("statfs", 10),
         ("access", 12),
+        ("faccessat", 10),
         ("sysctl", 12),
         ("getenv", 10),
+        ("dlopen", 12),
+        ("syscall", 14),
+        ("__syscall", 14),
+        ("objc_msgSend", 14),
+    ]
+
+    let suspiciousImageTokens: [String] = [
+        "frida",
+        "gadget",
+        "substrate",
+        "substitute",
+        "libhooker",
+        "ellekit",
+        "tweak",
+        "hook",
     ]
 
     func detect() -> DetectorResult {
@@ -22,7 +41,7 @@ struct IndirectSymbolPointerDetector: Detector {
         let needles = Dictionary(uniqueKeysWithValues: watch.map { ($0.symbol, $0.score) })
 
         let imageCount = Int(_dyld_image_count())
-        let maxImages = min(imageCount, 40)
+        let maxImages = min(imageCount, 80)
         for i in 0..<maxImages {
             guard let header = _dyld_get_image_header(UInt32(i)) else { continue }
             let slide = Int64(_dyld_get_image_vmaddr_slide(UInt32(i)))
@@ -123,7 +142,7 @@ struct IndirectSymbolPointerDetector: Detector {
 
                 let target = ptrs[j]
                 guard target != 0 else { continue }
-                if isSystemAddress(target) { continue }
+                if isTrustedSystemAddress(target) { continue }
 
                 score += s
                 methods.append("indirect_ptr:\(name)")
@@ -134,13 +153,20 @@ struct IndirectSymbolPointerDetector: Detector {
         return DetectorResult(score: score, methods: methods)
     }
 
-    private func isSystemAddress(_ addr: UInt64) -> Bool {
+    func isTrustedSystemAddress(_ addr: UInt64) -> Bool {
         let p = UnsafeRawPointer(bitPattern: UInt(addr))
         guard let p else { return false }
         var info = Dl_info()
         guard dladdr(p, &info) != 0, let cPath = info.dli_fname else { return false }
-        let path = String(cString: cPath)
-        return path.hasPrefix("/usr/lib/") || path.hasPrefix("/System/Library/")
+        return isTrustedSystemPath(String(cString: cPath))
+    }
+
+    func isTrustedSystemPath(_ path: String) -> Bool {
+        let normalized = path.lowercased()
+        if suspiciousImageTokens.contains(where: { normalized.contains($0) }) { return false }
+        return normalized.hasPrefix("/usr/lib/system/")
+            || normalized.hasPrefix("/usr/lib/libsystem")
+            || normalized.hasPrefix("/usr/lib/libobjc.")
+            || normalized.hasPrefix("/system/library/")
     }
 }
-

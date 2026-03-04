@@ -2,7 +2,7 @@ import Foundation
 import MachO
 
 struct DyldDetector: Detector {
-    private let suspiciousLibraries = [
+    let suspiciousLibraries = [
         "frida",
         "gadget",
         "gum",
@@ -31,6 +31,8 @@ struct DyldDetector: Detector {
     func detect() -> DetectorResult {
         var score: Double = 0
         var methods: [String] = []
+        var hitTokens = Set<String>()
+        var hitImageCount = 0
 
         let count = _dyld_image_count()
         if count > 500 {
@@ -42,14 +44,25 @@ struct DyldDetector: Detector {
         for i in 0..<count {
             guard let name = _dyld_get_image_name(i) else { continue }
             let path = String(cString: name).lowercased()
-            for needle in suspiciousLibraries where path.contains(needle) {
+            guard let token = firstSuspiciousToken(in: path) else { continue }
+            hitImageCount += 1
+            if hitTokens.insert(token).inserted {
                 score += 25
-                methods.append("dylib:\(needle)")
-                Logger.log("jailbreak.dyld.hit: \(needle) (+25) from=\(path)")
-                break
+                methods.append("dylib:\(token)")
+                Logger.log("jailbreak.dyld.hit: \(token) (+25) from=\(path)")
             }
         }
 
-        return DetectorResult(score: score, methods: methods)
+        if hitImageCount >= 3 {
+            score += 10
+            methods.append("dylib_multi_hit:\(hitImageCount)")
+        }
+
+        return DetectorResult(score: min(score, 90), methods: methods)
+    }
+
+    func firstSuspiciousToken(in imagePath: String) -> String? {
+        let normalized = imagePath.lowercased()
+        return suspiciousLibraries.first(where: { normalized.contains($0) })
     }
 }

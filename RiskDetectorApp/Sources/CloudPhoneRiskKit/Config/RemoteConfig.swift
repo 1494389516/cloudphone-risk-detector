@@ -71,6 +71,11 @@ public struct RemoteConfig: Codable, Sendable {
     /// 高级配置选项
     public let advanced: AdvancedConfig?
 
+    // MARK: - 探针配置（beta.2 新增）
+
+    /// 探针配置
+    public let probeConfig: ProbeConfig?
+
     // MARK: - 初始化
 
     public init(
@@ -82,7 +87,8 @@ public struct RemoteConfig: Codable, Sendable {
         detector: RemoteDetectorConfig,
         whitelist: WhitelistRules,
         experiments: ExperimentConfig,
-        advanced: AdvancedConfig? = nil
+        advanced: AdvancedConfig? = nil,
+        probeConfig: ProbeConfig? = nil
     ) {
         self.version = version
         self.timestamp = timestamp
@@ -93,6 +99,7 @@ public struct RemoteConfig: Codable, Sendable {
         self.whitelist = whitelist
         self.experiments = experiments
         self.advanced = advanced
+        self.probeConfig = probeConfig
     }
 
     // MARK: - 默认配置
@@ -107,7 +114,8 @@ public struct RemoteConfig: Codable, Sendable {
         detector: RemoteDetectorConfig.default,
         whitelist: WhitelistRules.default,
         experiments: ExperimentConfig.default,
-        advanced: AdvancedConfig.default
+        advanced: AdvancedConfig.default,
+        probeConfig: nil
     )
 
     /// 开发环境配置
@@ -120,7 +128,8 @@ public struct RemoteConfig: Codable, Sendable {
         detector: RemoteDetectorConfig.development,
         whitelist: WhitelistRules.default,
         experiments: ExperimentConfig.default,
-        advanced: AdvancedConfig.default
+        advanced: AdvancedConfig.default,
+        probeConfig: nil
     )
 
     // MARK: - 验证
@@ -776,6 +785,46 @@ public struct AdvancedConfig: Codable, Sendable {
     public static let `default` = AdvancedConfig()
 }
 
+// MARK: - 探针配置
+
+/// 探针配置（beta.2 新增）
+public struct ProbeConfig: Codable, Sendable {
+
+    /// 探针版本（对应 iOS 版本）
+    public let version: String
+
+    /// 探针列表
+    public let probes: [ProbeConfigItem]
+
+    public init(version: String, probes: [ProbeConfigItem]) {
+        self.version = version
+        self.probes = probes
+    }
+}
+
+/// 探针配置项
+public struct ProbeConfigItem: Codable, Sendable {
+
+    /// 探针 ID
+    public let id: String
+
+    /// 期望结果："fail" 或 "pass"
+    public let expectedOutcome: String
+
+    /// 最大耗时（微秒）
+    public let maxElapsedUs: Int
+
+    /// 权重
+    public let weight: Int
+
+    public init(id: String, expectedOutcome: String, maxElapsedUs: Int, weight: Int) {
+        self.id = id
+        self.expectedOutcome = expectedOutcome
+        self.maxElapsedUs = maxElapsedUs
+        self.weight = weight
+    }
+}
+
 // MARK: - RemoteConfig 扩展
 
 extension RemoteConfig {
@@ -907,7 +956,8 @@ extension RemoteConfig {
                 "reportEndpoint": null,
                 "reportBatchSize": 10,
                 "reportInterval": 60
-            }
+            },
+            "probeConfig": null
         }
         """
     }

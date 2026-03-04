@@ -3,8 +3,15 @@ import Foundation
 import MachO
 
 struct FridaDetector: Detector {
-    private let knownPorts: [Int] = [27042, 27043]
-    private let markers: [String] = ["frida", "gadget", "gum", "frida-server"]
+    let knownPorts: [Int] = [27042, 27043, 23946]
+    let markers: [String] = ["frida", "frida-agent", "frida-server", "gadget", "gum", "gum-js-loop"]
+    let knownServerPaths: [String] = [
+        "/usr/sbin/frida-server",
+        "/usr/bin/frida-server",
+        "/usr/local/bin/frida-server",
+        "/var/jb/usr/sbin/frida-server",
+        "/var/jb/usr/bin/frida-server",
+    ]
 
     func detect() -> DetectorResult {
 #if targetEnvironment(simulator)
@@ -28,7 +35,7 @@ struct FridaDetector: Detector {
             methods.append("frida:port:\(port)")
         }
 
-        if fileExists(path: "/usr/sbin/frida-server") || fileExists(path: "/var/jb/usr/sbin/frida-server") {
+        if detectFridaFileArtifact() {
             score += 20
             methods.append("frida:file:server")
         }
@@ -59,6 +66,13 @@ struct FridaDetector: Detector {
             }
         }
         return nil
+    }
+
+    func detectFridaFileArtifact() -> Bool {
+        for path in knownServerPaths where fileExists(path: path) {
+            return true
+        }
+        return false
     }
 
     private func detectOpenFridaPort() -> Int? {

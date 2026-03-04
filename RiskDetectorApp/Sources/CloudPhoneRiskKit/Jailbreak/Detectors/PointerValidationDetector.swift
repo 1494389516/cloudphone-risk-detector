@@ -9,18 +9,36 @@ struct PointerValidationDetector: Detector {
         var score: Double
     }
 
-    private let checks: [Check] = [
-        .init(symbol: "open", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libSystem.B.dylib"], score: 8),
-        .init(symbol: "stat", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libSystem.B.dylib"], score: 8),
-        .init(symbol: "lstat", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libSystem.B.dylib"], score: 8),
-        .init(symbol: "access", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libSystem.B.dylib"], score: 8),
-        .init(symbol: "sysctl", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libSystem.B.dylib"], score: 8),
-        .init(symbol: "getenv", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libSystem.B.dylib"], score: 6),
-        .init(symbol: "dlopen", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libSystem.B.dylib"], score: 6),
-        .init(symbol: "dlsym", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libSystem.B.dylib"], score: 6),
-        .init(symbol: "dladdr", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libSystem.B.dylib"], score: 6),
-        .init(symbol: "objc_msgSend", expectedPathPrefixes: ["/usr/lib/libobjc.A.dylib", "/usr/lib/system/"], score: 10),
-        .init(symbol: "objc_getClass", expectedPathPrefixes: ["/usr/lib/libobjc.A.dylib", "/usr/lib/system/"], score: 8),
+    let checks: [Check] = [
+        .init(symbol: "open", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 8),
+        .init(symbol: "openat", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 10),
+        .init(symbol: "fopen", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 8),
+        .init(symbol: "stat", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 8),
+        .init(symbol: "lstat", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 8),
+        .init(symbol: "statfs", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 8),
+        .init(symbol: "access", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 8),
+        .init(symbol: "faccessat", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 8),
+        .init(symbol: "sysctl", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 8),
+        .init(symbol: "getenv", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 6),
+        .init(symbol: "dlopen", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 8),
+        .init(symbol: "dlsym", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 6),
+        .init(symbol: "dladdr", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 6),
+        .init(symbol: "syscall", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 10),
+        .init(symbol: "__syscall", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 10),
+        .init(symbol: "posix_spawn", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 8),
+        .init(symbol: "objc_msgSend", expectedPathPrefixes: ["/usr/lib/libobjc.", "/usr/lib/system/"], score: 10),
+        .init(symbol: "objc_getClass", expectedPathPrefixes: ["/usr/lib/libobjc.", "/usr/lib/system/"], score: 8),
+    ]
+
+    let suspiciousImageTokens: [String] = [
+        "frida",
+        "gadget",
+        "substrate",
+        "substitute",
+        "libhooker",
+        "ellekit",
+        "tweak",
+        "hook",
     ]
 
     func detect() -> DetectorResult {
@@ -32,7 +50,14 @@ struct PointerValidationDetector: Detector {
             guard let info = dlInfo(addr) else { continue }
 
             let imagePath = info.path
-            let isPathOK = check.expectedPathPrefixes.contains(where: { imagePath.hasPrefix($0) })
+            if isSuspiciousImagePath(imagePath) {
+                score += check.score
+                methods.append("ptr_suspicious:\(check.symbol)")
+                Logger.log("jailbreak.ptr.hit: \(check.symbol) suspicious_image=\(imagePath) (+\(check.score))")
+                continue
+            }
+
+            let isPathOK = isExpectedPath(imagePath, expectedPrefixes: check.expectedPathPrefixes)
             if !isPathOK {
                 score += check.score
                 methods.append("ptr_path:\(check.symbol)")
@@ -51,6 +76,16 @@ struct PointerValidationDetector: Detector {
         }
 
         return DetectorResult(score: score, methods: methods)
+    }
+
+    func isSuspiciousImagePath(_ path: String) -> Bool {
+        let normalized = path.lowercased()
+        return suspiciousImageTokens.contains(where: { normalized.contains($0) })
+    }
+
+    func isExpectedPath(_ path: String, expectedPrefixes: [String]) -> Bool {
+        let normalized = path.lowercased()
+        return expectedPrefixes.contains(where: { normalized.hasPrefix($0) })
     }
 
     private func resolve(symbol: String) -> UnsafeMutableRawPointer? {
@@ -91,4 +126,3 @@ enum MachOTextRange {
         return nil
     }
 }
-

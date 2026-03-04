@@ -2,6 +2,24 @@ import Darwin
 import Foundation
 
 struct AntiTamperingDetector: Detector {
+    let suspiciousParentNeedles: [String] = [
+        "lldb",
+        "gdb",
+        "debugserver",
+        "frida",
+        "hopper",
+        "ida",
+        "cycript",
+    ]
+
+    let debugEnvironmentKeys: [String] = [
+        "DYLD_INSERT_LIBRARIES",
+        "DYLD_FORCE_FLAT_NAMESPACE",
+        "MallocStackLogging",
+        "NSUnbufferedIO",
+        "OS_ACTIVITY_DT_MODE",
+    ]
+
     func detect() -> DetectorResult {
 #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["unavailable_simulator"])
@@ -29,7 +47,7 @@ struct AntiTamperingDetector: Detector {
             methods.append("anti_tampering:timing")
         }
 
-        return DetectorResult(score: score, methods: methods)
+        return DetectorResult(score: min(score, 90), methods: methods)
 #endif
     }
 
@@ -43,10 +61,9 @@ struct AntiTamperingDetector: Detector {
 
     private func hasSuspiciousParent() -> Bool {
         let ppid = getppid()
-        guard ppid > 1 else { return true }
-        guard let parentPath = parentProcessPath(ppid)?.lowercased() else { return false }
-        let suspicious = ["lldb", "gdb", "debugserver", "frida", "hopper", "ida"]
-        return suspicious.contains { parentPath.contains($0) }
+        guard ppid > 1 else { return false }
+        guard let parentPath = parentProcessPath(ppid) else { return false }
+        return firstSuspiciousParentToken(in: parentPath) != nil
     }
 
     private func parentProcessPath(_ pid: pid_t) -> String? {
@@ -61,12 +78,7 @@ struct AntiTamperingDetector: Detector {
     }
 
     private func hasDebugEnvironment() -> Bool {
-        let keys = [
-            "DYLD_INSERT_LIBRARIES",
-            "MallocStackLogging",
-            "NSUnbufferedIO"
-        ]
-        return keys.contains { getenv($0) != nil }
+        debugEnvironmentKeys.contains { getenv($0) != nil }
     }
 
     private func hasTimingAnomaly() -> Bool {
@@ -78,6 +90,11 @@ struct AntiTamperingDetector: Detector {
         _ = value
         let elapsedMs = (DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
         return elapsedMs > 50
+    }
+
+    func firstSuspiciousParentToken(in parentProcessPath: String) -> String? {
+        let normalized = parentProcessPath.lowercased()
+        return suspiciousParentNeedles.first(where: { normalized.contains($0) })
     }
 }
 

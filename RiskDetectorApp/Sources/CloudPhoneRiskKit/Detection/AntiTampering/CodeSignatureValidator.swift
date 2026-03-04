@@ -3,6 +3,23 @@ import Foundation
 import MachO
 
 struct CodeSignatureValidator: Detector {
+    let suspiciousInjectedLibraryTokens: [String] = [
+        "frida",
+        "gadget",
+        "gum",
+        "substrate",
+        "substitute",
+        "libhooker",
+        "ellekit",
+        "tweak",
+        "hook",
+    ]
+
+    let suspiciousEnvKeys: [String] = [
+        "DYLD_INSERT_LIBRARIES",
+        "DYLD_FORCE_FLAT_NAMESPACE",
+    ]
+
     func detect() -> DetectorResult {
 #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["unavailable_simulator"])
@@ -20,9 +37,9 @@ struct CodeSignatureValidator: Detector {
             methods.append("code_signature:suspicious_dylib")
         }
 
-        if getenv("DYLD_INSERT_LIBRARIES") != nil {
+        if let envKey = suspiciousEnvKeys.first(where: { getenv($0) != nil }) {
             score += 20
-            methods.append("code_signature:dyld_insert")
+            methods.append("code_signature:env:\(envKey.lowercased())")
         }
 
         return DetectorResult(score: score, methods: methods)
@@ -69,11 +86,16 @@ struct CodeSignatureValidator: Detector {
         let imageCount = _dyld_image_count()
         for index in 0..<imageCount {
             guard let name = _dyld_get_image_name(index) else { continue }
-            let path = String(cString: name).lowercased()
-            if path.contains("frida") || path.contains("substrate") || path.contains("libhooker") {
+            let path = String(cString: name)
+            if isSuspiciousInjectedLibraryPath(path) {
                 return true
             }
         }
         return false
+    }
+
+    func isSuspiciousInjectedLibraryPath(_ path: String) -> Bool {
+        let normalized = path.lowercased()
+        return suspiciousInjectedLibraryTokens.contains(where: { normalized.contains($0) })
     }
 }

@@ -34,6 +34,32 @@ struct HookDetector: Detector {
         "HBLOptionsController",
     ]
 
+    let symbolImageChecks: [(symbol: String, score: Double)] = [
+        ("open", 25),
+        ("openat", 22),
+        ("fopen", 18),
+        ("stat", 16),
+        ("lstat", 16),
+        ("access", 16),
+        ("dlopen", 20),
+        ("sysctl", 16),
+        ("syscall", 20),
+        ("__syscall", 20),
+        ("objc_msgSend", 18),
+    ]
+
+    let suspiciousImageTokens: [String] = [
+        "frida",
+        "gadget",
+        "substrate",
+        "substitute",
+        "libhooker",
+        "ellekit",
+        "tweak",
+        "xposed",
+        "hook",
+    ]
+
     func detect() -> DetectorResult {
         var score: Double = 0
         var methods: [String] = []
@@ -44,10 +70,22 @@ struct HookDetector: Detector {
             Logger.log("jailbreak.hook.hit: objc_class=\(name) (+15)")
         }
 
-        if let path = imagePath(of: "open"), !path.contains("/usr/lib/system") {
-            score += 25
-            methods.append("symbol_open_image:\(path)")
-            Logger.log("jailbreak.hook.hit: symbol_open_image=\(path) (+25)")
+        for check in symbolImageChecks {
+            guard let path = imagePath(of: check.symbol) else { continue }
+
+            if isSuspiciousImagePath(path) {
+                score += check.score
+                methods.append("symbol_image_suspicious:\(check.symbol):\(path)")
+                Logger.log("jailbreak.hook.hit: symbol_image_suspicious \(check.symbol)=\(path) (+\(check.score))")
+                continue
+            }
+
+            if !isTrustedSystemImagePath(path, for: check.symbol) {
+                let penalty = min(18, max(8, check.score * 0.7))
+                score += penalty
+                methods.append("symbol_image_untrusted:\(check.symbol):\(path)")
+                Logger.log("jailbreak.hook.hit: symbol_image_untrusted \(check.symbol)=\(path) (+\(penalty))")
+            }
         }
 
         // Advanced checks
@@ -76,6 +114,25 @@ struct HookDetector: Detector {
         methods.append(contentsOf: meta.methods)
 
         return DetectorResult(score: score, methods: methods)
+    }
+
+    func isSuspiciousImagePath(_ path: String) -> Bool {
+        let normalized = path.lowercased()
+        return suspiciousImageTokens.contains { normalized.contains($0) }
+    }
+
+    func isTrustedSystemImagePath(_ path: String, for symbol: String) -> Bool {
+        let normalized = path.lowercased()
+        let baseTrustedPrefixes = [
+            "/usr/lib/system/",
+            "/usr/lib/libsystem_",
+            "/system/library/",
+        ]
+        let objcTrustedPrefixes = baseTrustedPrefixes + [
+            "/usr/lib/libobjc.",
+        ]
+        let trustedPrefixes = symbol == "objc_msgSend" ? objcTrustedPrefixes : baseTrustedPrefixes
+        return trustedPrefixes.contains(where: { normalized.hasPrefix($0) })
     }
 
     private func imagePath(of symbol: String) -> String? {

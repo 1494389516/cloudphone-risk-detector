@@ -2,6 +2,32 @@ import Darwin
 import Foundation
 
 struct SysctlDetector: Detector {
+    let suspiciousProcessNeedles: [String] = [
+        "cydia",
+        "sileo",
+        "filza",
+        "sshd",
+        "dropbear",
+        "frida",
+        "debugserver",
+        "cycript",
+        "substrated",
+        "substitute",
+        "ellekit",
+        "apt",
+        "dpkg",
+    ]
+
+    let suspiciousParentNeedles: [String] = [
+        "cydia",
+        "sileo",
+        "filza",
+        "frida",
+        "debugserver",
+        "lldb",
+        "gdb",
+    ]
+
     func detect() -> DetectorResult {
 #if targetEnvironment(simulator)
         // Simulator behavior differs from real iOS devices and can false-positive.
@@ -43,7 +69,7 @@ struct SysctlDetector: Detector {
             Logger.log("jailbreak.sysctl.hit: debugger_attached (+10)")
         }
 
-        return DetectorResult(score: score, methods: methods)
+        return DetectorResult(score: min(score, 85), methods: methods)
 #endif
     }
 
@@ -67,25 +93,12 @@ struct SysctlDetector: Detector {
     }
 
     private func suspiciousProcessesFound(infos: [kinfo_proc]) -> [String] {
-        let suspicious = [
-            "cydia",
-            "sileo",
-            "filza",
-            "sshd",
-            "dropbear",
-            "frida",
-            "debugserver",
-            "cycript",
-            "substrated",
-            "apt",
-            "dpkg",
-        ]
         var found: [String] = []
         found.reserveCapacity(3)
 
         for info in infos {
-            let n = processComm(info).lowercased()
-            if let hit = suspicious.first(where: { n.contains($0) }) {
+            let n = processComm(info)
+            if let hit = firstSuspiciousProcessToken(in: n) {
                 found.append(hit)
                 if found.count >= 3 { break }
             }
@@ -109,9 +122,7 @@ struct SysctlDetector: Detector {
     }
 
     private func isSuspiciousParent(_ name: String) -> Bool {
-        let needles = ["cydia", "sileo", "filza", "frida", "debugserver"]
-        let n = name.lowercased()
-        return needles.contains(where: { n.contains($0) })
+        firstSuspiciousParentToken(in: name) != nil
     }
 
     private func readProcessInfo(pid: Int32) -> kinfo_proc? {
@@ -129,5 +140,19 @@ struct SysctlDetector: Detector {
         let sysctlResult = sysctl(&mib, 4, &info, &size, nil, 0)
         guard sysctlResult == 0 else { return false }
         return (info.kp_proc.p_flag & P_TRACED) != 0
+    }
+
+    func firstSuspiciousProcessToken(in processName: String) -> String? {
+        let normalized = normalizeProcessName(processName)
+        return suspiciousProcessNeedles.first(where: { normalized.contains($0) })
+    }
+
+    func firstSuspiciousParentToken(in parentProcessName: String) -> String? {
+        let normalized = normalizeProcessName(parentProcessName)
+        return suspiciousParentNeedles.first(where: { normalized.contains($0) })
+    }
+
+    func normalizeProcessName(_ name: String) -> String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 }

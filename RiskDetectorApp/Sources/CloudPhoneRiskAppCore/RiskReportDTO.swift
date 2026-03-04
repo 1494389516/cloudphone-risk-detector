@@ -31,6 +31,9 @@ public struct RiskReportDTO: Codable, Sendable {
     public var hardSignals: [SignalItemDTO]
     public var softSignals: [SignalItemDTO]
 
+    /// 图算法载荷
+    public var graphPayload: GraphPayload?
+
     public init(
         sdkVersion: String?,
         reportId: String? = nil,
@@ -54,7 +57,8 @@ public struct RiskReportDTO: Codable, Sendable {
         touchForceVar: Double? = nil,
         signals: [RiskSignal],
         hardSignals: [SignalItemDTO],
-        softSignals: [SignalItemDTO]
+        softSignals: [SignalItemDTO],
+        graphPayload: GraphPayload? = nil
     ) {
         self.sdkVersion = sdkVersion
         self.reportId = reportId
@@ -79,6 +83,7 @@ public struct RiskReportDTO: Codable, Sendable {
         self.signals = signals
         self.hardSignals = hardSignals
         self.softSignals = softSignals
+        self.graphPayload = graphPayload
     }
 }
 

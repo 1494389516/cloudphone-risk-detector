@@ -2,6 +2,25 @@ import Darwin
 import Foundation
 
 struct DebuggerDetector: Detector {
+    let debuggerParentNeedles: [String] = [
+        "lldb",
+        "debugserver",
+        "gdb",
+        "xcode",
+        "frida",
+        "hopper",
+        "ida",
+    ]
+
+    let debuggerEnvKeys: [String] = [
+        "DYLD_INSERT_LIBRARIES",
+        "OS_ACTIVITY_DT_MODE",
+        "NSZombieEnabled",
+        "MallocStackLogging",
+    ]
+
+    let debuggerPorts: [Int] = [12345, 2345, 27042, 27043, 23946]
+
     func detect() -> DetectorResult {
 #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["unavailable_simulator"])
@@ -29,7 +48,7 @@ struct DebuggerDetector: Detector {
             methods.append("debugger:port")
         }
 
-        return DetectorResult(score: score, methods: methods)
+        return DetectorResult(score: min(score, 85), methods: methods)
 #endif
     }
 
@@ -42,8 +61,8 @@ struct DebuggerDetector: Detector {
     }
 
     private func hasDebuggerParent() -> Bool {
-        guard let name = parentProcessPath(getppid())?.lowercased() else { return false }
-        return ["lldb", "debugserver", "gdb", "xcode"].contains { name.contains($0) }
+        guard let name = parentProcessPath(getppid()) else { return false }
+        return firstDebuggerParentToken(in: name) != nil
     }
 
     private func parentProcessPath(_ pid: pid_t) -> String? {
@@ -58,8 +77,7 @@ struct DebuggerDetector: Detector {
     }
 
     private func hasDebuggerEnv() -> Bool {
-        let keys = ["DYLD_INSERT_LIBRARIES", "OS_ACTIVITY_DT_MODE", "NSZombieEnabled"]
-        for key in keys {
+        for key in debuggerEnvKeys {
             if key.withCString({ getenv($0) != nil }) {
                 return true
             }
@@ -68,8 +86,7 @@ struct DebuggerDetector: Detector {
     }
 
     private func hasDebuggerPort() -> Bool {
-        let ports = [12345, 2345, 27042]
-        return ports.contains(where: isPortOpen)
+        debuggerPorts.contains(where: isPortOpen)
     }
 
     private func isPortOpen(_ port: Int) -> Bool {
@@ -89,6 +106,11 @@ struct DebuggerDetector: Detector {
             }
         }
         return result == 0
+    }
+
+    func firstDebuggerParentToken(in parentProcessPath: String) -> String? {
+        let normalized = parentProcessPath.lowercased()
+        return debuggerParentNeedles.first(where: { normalized.contains($0) })
     }
 }
 
