@@ -1,11 +1,19 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-blue?style=flat-square" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-orange?style=flat-square" alt="Swift">
+<<<<<<< HEAD
   <img src="https://img.shields.io/badge/SDK-3.1%20Update-red?style=flat-square" alt="SDK">
   <img src="https://img.shields.io/badge/SwiftUI-✓-green?style=flat-square" alt="SwiftUI">
 </p>
 
 # RiskDetectorApp（基于 CloudPhoneRiskKit SDK 3.1 小更新）
+=======
+  <img src="https://img.shields.io/badge/SDK-3.0.0--beta.1-red?style=flat-square" alt="SDK">
+  <img src="https://img.shields.io/badge/SwiftUI-✓-green?style=flat-square" alt="SwiftUI">
+</p>
+
+# Risk-detector sdk 3.0
+>>>>>>> e9c45a544ee1f293cc85c9cce2be2c1a98c42264
 
 面向 iOS 设备环境风险检测的研究型项目，聚焦以下三类信号：
 
@@ -13,6 +21,7 @@
 - 网络与行为异常（软信号）
 - 云手机/机房环境（本地推断 + 服务端聚合）
 
+<<<<<<< HEAD
 当前代码基线已包含 **SDK 3.0 增量能力 + 3.1 小版本加固更新**。  
 说明：当前运行时版本常量仍为 `3.0.0-beta.1`，本次为 `3.1` 级别的增量增强（无 breaking change）。
 
@@ -27,6 +36,11 @@
 - **基线测试提升**：测试集扩展到 **159** 项，新增多组 detector 针对性回归测试。
 
 ### 3.0 基线能力（保留）
+=======
+当前代码基线已包含 **SDK 3.0 增量能力**，版本常量为 `3.0.0-beta.1`。
+
+## SDK 3.0 版本说明
+>>>>>>> e9c45a544ee1f293cc85c9cce2be2c1a98c42264
 
 ### 核心升级
 
@@ -146,7 +160,11 @@ cloudphone-risk-detector/
     │   ├── CloudPhoneRiskKit/             # SDK 核心
     │   │   ├── Jailbreak/                 # 越狱检测引擎与检测器
     │   │   ├── Detection/                 # 反篡改/抗绕过适配
+<<<<<<< HEAD
     │   │   ├── Decision/                  # 场景策略、决策树、3.x 风险引擎
+=======
+    │   │   ├── Decision/                  # 场景策略、决策树、3.0 风险引擎
+>>>>>>> e9c45a544ee1f293cc85c9cce2be2c1a98c42264
     │   │   ├── Providers/                 # 设备/云手机/服务端信号 Provider
     │   │   ├── Config/                    # 远程配置模型与拉取
     │   │   ├── Risk/                      # 报告模型与评分
@@ -160,7 +178,11 @@ cloudphone-risk-detector/
     └── project.yml
 ```
 
+<<<<<<< HEAD
 ## 核心 API（SDK 3.1）
+=======
+## 核心 API（SDK 3.0）
+>>>>>>> e9c45a544ee1f293cc85c9cce2be2c1a98c42264
 
 ### 1) AppCore 一体化检测
 
@@ -226,7 +248,11 @@ CPRiskKit.setExternalServerSignals(
 )
 ```
 
+<<<<<<< HEAD
 ### 5) 3.x 服务端策略注入（JSON）
+=======
+### 5) 3.0 服务端策略注入（JSON）
+>>>>>>> e9c45a544ee1f293cc85c9cce2be2c1a98c42264
 
 ```swift
 import CloudPhoneRiskKit
@@ -303,7 +329,11 @@ public struct RiskReportDTO: Codable, Sendable {
     public var hardSignals: [SignalItemDTO]
     public var softSignals: [SignalItemDTO]
 
+<<<<<<< HEAD
     // SDK 3.x 增量字段
+=======
+    // SDK 3.0 增量字段
+>>>>>>> e9c45a544ee1f293cc85c9cce2be2c1a98c42264
     public var gpuName: String?
     public var kernelBuild: String?
     public var deviceModel: String?
@@ -355,7 +385,11 @@ cd /path/to/cloudphone-risk-detector/RiskDetectorApp
 swift test
 ```
 
+<<<<<<< HEAD
 当前测试集规模为 **159** 项，包含 `V3UpgradeTests`、`PrologueBranchDetectorTests`、`MemoryIntegrityCheckerTests`、`PointerValidationDetectorTests`、`RiskReportDTOTests` 等，覆盖 3.1 加固链路。
+=======
+当前测试集包含 `V3UpgradeTests`、`EvaluateAsyncTests`、`RiskReportDTOTests` 等，覆盖 3.0 关键链路。
+>>>>>>> e9c45a544ee1f293cc85c9cce2be2c1a98c42264
 
 ## 文档索引
 
