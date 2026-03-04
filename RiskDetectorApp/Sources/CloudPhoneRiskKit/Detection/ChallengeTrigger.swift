@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 // MARK: - Challenge Trigger
@@ -5,6 +6,26 @@ import Foundation
 /// Challenge 触发器
 /// 用于检查是否需要触发 blindChallenge
 public struct ChallengeTrigger: Sendable {
+
+    /// 服务端下发的一次性 challenge
+    public struct BlindChallenge: Codable, Sendable {
+        public let challengeId: String
+        public let probeIds: [String]
+        public let seed: String
+        public let expiresAt: Int64
+
+        public init(
+            challengeId: String,
+            probeIds: [String],
+            seed: String,
+            expiresAt: Int64
+        ) {
+            self.challengeId = challengeId
+            self.probeIds = probeIds
+            self.seed = seed
+            self.expiresAt = expiresAt
+        }
+    }
 
     // MARK: - 触发结果
 
@@ -45,11 +66,6 @@ public struct ChallengeTrigger: Sendable {
         tamperedCount: Int,
         existingRules: [ServerRiskPolicy.BlindRule]
     ) -> TriggerResult {
-        // 如果没有配置规则，不触发
-        guard !existingRules.isEmpty else {
-            return .noTrigger
-        }
-
         // 遍历所有规则，检查是否有匹配的
         for rule in existingRules {
             // 检查能力探针异常数是否满足规则要求
@@ -148,6 +164,18 @@ public struct ChallengeTrigger: Sendable {
 
 extension ChallengeTrigger {
 
+    public static func nowMillis() -> Int64 {
+        Int64(Date().timeIntervalSince1970 * 1000)
+    }
+
+    private static func canonicalJSONString(_ object: [String: Any]) -> String? {
+        guard JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
     /// 生成 blindChallenge 验证请求的数据
     ///
     /// - Parameters:
@@ -172,6 +200,84 @@ extension ChallengeTrigger {
             // 探针原始数据（供服务端重新验证）
             "probeRiskContribution": capabilityScore.riskContribution
         ]
+    }
+
+    /// 生成带 challenge 绑定的 payload（beta.4）
+    /// 返回值中包含 challengeId/probeIds/seed/expiresAt，可用于服务端防重放核验。
+    public static func buildChallengePayload(
+        challenge: BlindChallenge,
+        capabilityScore: CapabilityScore,
+        tamperedCount: Int,
+        executedProbeIDs: [String],
+        timestamp: Int64 = nowMillis()
+    ) -> [String: Any] {
+        [
+            "challengeId": challenge.challengeId,
+            "seed": challenge.seed,
+            "probeIds": challenge.probeIds,
+            "executedProbeIds": executedProbeIDs,
+            "expiresAt": challenge.expiresAt,
+            "timestamp": timestamp,
+            "capabilityAnomalyCount": capabilityScore.basicAnomalyCount,
+            "qualitySuspicion": capabilityScore.qualitySuspicion,
+            "totalProbes": capabilityScore.totalProbes,
+            "tamperedCount": tamperedCount,
+            "probeRiskContribution": capabilityScore.riskContribution,
+        ]
+    }
+
+    /// 生成强类型 challenge 绑定载荷，可直接写入 CPRiskReport payload。
+    public static func buildChallengeBindingPayload(
+        challenge: BlindChallenge,
+        capabilityScore: CapabilityScore,
+        tamperedCount: Int,
+        executedProbeIDs: [String],
+        triggerReason: String?,
+        timestamp: Int64 = nowMillis()
+    ) -> ChallengeBindingPayload {
+        ChallengeBindingPayload(
+            challengeId: challenge.challengeId,
+            seed: challenge.seed,
+            probeIds: challenge.probeIds,
+            executedProbeIds: executedProbeIDs,
+            expiresAt: challenge.expiresAt,
+            timestamp: timestamp,
+            capabilityAnomalyCount: capabilityScore.basicAnomalyCount,
+            qualitySuspicion: capabilityScore.qualitySuspicion,
+            totalProbes: capabilityScore.totalProbes,
+            tamperedCount: tamperedCount,
+            probeRiskContribution: capabilityScore.riskContribution,
+            triggerReason: triggerReason
+        )
+    }
+
+    /// challenge 是否在有效期内
+    public static func isChallengeValid(_ challenge: BlindChallenge, timestamp: Int64 = nowMillis()) -> Bool {
+        timestamp <= challenge.expiresAt
+    }
+
+    /// 客户端生成 challenge 绑定签名
+    public static func signChallengePayload(payload: [String: Any], signingKey: String) -> String? {
+        guard let canonical = canonicalJSONString(payload),
+              let keyData = signingKey.data(using: .utf8),
+              let messageData = canonical.data(using: .utf8) else {
+            return nil
+        }
+        let key = SymmetricKey(data: keyData)
+        let digest = HMAC<SHA256>.authenticationCode(for: messageData, using: key)
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// challenge 绑定签名校验
+    public static func verifyChallengePayloadSignature(
+        payload: [String: Any],
+        signature: String,
+        signingKey: String
+    ) -> Bool {
+        guard let expected = signChallengePayload(payload: payload, signingKey: signingKey) else {
+            return false
+        }
+        return expected == signature.lowercased()
     }
 
     /// 验证客户端上报的数据是否与服务端规则匹配

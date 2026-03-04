@@ -33,6 +33,8 @@ public struct RiskReportDTO: Codable, Sendable {
 
     /// 图算法载荷
     public var graphPayload: GraphPayload?
+    /// blind challenge 绑定载荷（beta.4）
+    public var challengeBinding: ChallengeBindingPayload?
 
     public init(
         sdkVersion: String?,
@@ -58,7 +60,8 @@ public struct RiskReportDTO: Codable, Sendable {
         signals: [RiskSignal],
         hardSignals: [SignalItemDTO],
         softSignals: [SignalItemDTO],
-        graphPayload: GraphPayload? = nil
+        graphPayload: GraphPayload? = nil,
+        challengeBinding: ChallengeBindingPayload? = nil
     ) {
         self.sdkVersion = sdkVersion
         self.reportId = reportId
@@ -84,6 +87,7 @@ public struct RiskReportDTO: Codable, Sendable {
         self.hardSignals = hardSignals
         self.softSignals = softSignals
         self.graphPayload = graphPayload
+        self.challengeBinding = challengeBinding
     }
 }
 
@@ -353,7 +357,8 @@ public enum RiskReportMapper {
             touchForceVar: payload.touchForceVar,
             signals: payload.signals,
             hardSignals: hard,
-            softSignals: soft
+            softSignals: soft,
+            challengeBinding: payload.challengeBinding
         )
     }
 
@@ -390,7 +395,8 @@ public enum RiskReportMapper {
                     method: "need_backend",
                     evidenceSummary: "no_server_signals"
                 ),
-            ]
+            ],
+            challengeBinding: nil
         )
     }
 
@@ -556,6 +562,7 @@ private struct PayloadMirror: Decodable {
     var signals: [RiskSignal]
     var server: ServerSignals?
     var local: LocalSignals?
+    var challengeBinding: ChallengeBindingPayload?
 }
 
 private struct JailbreakMirror: Decodable {

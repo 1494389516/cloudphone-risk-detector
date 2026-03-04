@@ -76,6 +76,16 @@ public struct RemoteConfig: Codable, Sendable {
     /// 探针配置
     public let probeConfig: ProbeConfig?
 
+    // MARK: - 字段混淆配置（beta.4 新增）
+
+    /// 上报字段混淆映射
+    public let payloadFieldMapping: PayloadFieldMapping?
+
+    // MARK: - 安全加固开关（beta.4 新增）
+
+    /// 安全加固开关
+    public let securityHardening: SecurityHardeningConfig?
+
     // MARK: - 初始化
 
     public init(
@@ -88,7 +98,9 @@ public struct RemoteConfig: Codable, Sendable {
         whitelist: WhitelistRules,
         experiments: ExperimentConfig,
         advanced: AdvancedConfig? = nil,
-        probeConfig: ProbeConfig? = nil
+        probeConfig: ProbeConfig? = nil,
+        payloadFieldMapping: PayloadFieldMapping? = nil,
+        securityHardening: SecurityHardeningConfig? = nil
     ) {
         self.version = version
         self.timestamp = timestamp
@@ -100,6 +112,8 @@ public struct RemoteConfig: Codable, Sendable {
         self.experiments = experiments
         self.advanced = advanced
         self.probeConfig = probeConfig
+        self.payloadFieldMapping = payloadFieldMapping
+        self.securityHardening = securityHardening
     }
 
     // MARK: - 默认配置
@@ -115,7 +129,9 @@ public struct RemoteConfig: Codable, Sendable {
         whitelist: WhitelistRules.default,
         experiments: ExperimentConfig.default,
         advanced: AdvancedConfig.default,
-        probeConfig: nil
+        probeConfig: nil,
+        payloadFieldMapping: nil,
+        securityHardening: .default
     )
 
     /// 开发环境配置
@@ -129,7 +145,9 @@ public struct RemoteConfig: Codable, Sendable {
         whitelist: WhitelistRules.default,
         experiments: ExperimentConfig.default,
         advanced: AdvancedConfig.default,
-        probeConfig: nil
+        probeConfig: nil,
+        payloadFieldMapping: nil,
+        securityHardening: .default
     )
 
     // MARK: - 验证
@@ -157,6 +175,18 @@ public struct RemoteConfig: Codable, Sendable {
         // 验证实验配置
         if let trafficWarning = experiments.validateTraffic() {
             warnings.append(trafficWarning)
+        }
+
+        if securityHardening?.enforcePayloadFieldMapping == true, payloadFieldMapping == nil {
+            errors.append("开启 enforcePayloadFieldMapping 时，payloadFieldMapping 不能为空")
+        }
+
+        if let mapping = payloadFieldMapping, mapping.isExpired() {
+            warnings.append("payloadFieldMapping 已过期，请刷新映射配置")
+        }
+
+        if securityHardening?.killSwitchEnabled == true {
+            warnings.append("killSwitchEnabled 为 true，当前策略处于降级保护模式")
         }
 
         return ValidationResult(
@@ -825,6 +855,36 @@ public struct ProbeConfigItem: Codable, Sendable {
     }
 }
 
+// MARK: - 安全加固配置（beta.4）
+
+public struct SecurityHardeningConfig: Codable, Sendable {
+    /// 是否启用 v2 上报签名
+    public let enableEnvelopeSignatureV2: Bool
+
+    /// 是否强制字段混淆映射
+    public let enforcePayloadFieldMapping: Bool
+
+    /// 是否启用 blind challenge 绑定校验
+    public let enableChallengeBinding: Bool
+
+    /// kill switch：紧急关闭高风险拦截
+    public let killSwitchEnabled: Bool
+
+    public init(
+        enableEnvelopeSignatureV2: Bool = true,
+        enforcePayloadFieldMapping: Bool = false,
+        enableChallengeBinding: Bool = true,
+        killSwitchEnabled: Bool = false
+    ) {
+        self.enableEnvelopeSignatureV2 = enableEnvelopeSignatureV2
+        self.enforcePayloadFieldMapping = enforcePayloadFieldMapping
+        self.enableChallengeBinding = enableChallengeBinding
+        self.killSwitchEnabled = killSwitchEnabled
+    }
+
+    public static let `default` = SecurityHardeningConfig()
+}
+
 // MARK: - RemoteConfig 扩展
 
 extension RemoteConfig {
@@ -957,7 +1017,14 @@ extension RemoteConfig {
                 "reportBatchSize": 10,
                 "reportInterval": 60
             },
-            "probeConfig": null
+            "probeConfig": null,
+            "payloadFieldMapping": null,
+            "securityHardening": {
+                "enableEnvelopeSignatureV2": true,
+                "enforcePayloadFieldMapping": false,
+                "enableChallengeBinding": true,
+                "killSwitchEnabled": false
+            }
         }
         """
     }

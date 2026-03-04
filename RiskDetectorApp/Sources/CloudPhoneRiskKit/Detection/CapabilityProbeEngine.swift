@@ -14,6 +14,10 @@ public struct ProbeResult: Codable, Sendable {
     public let elapsedMicros: UInt64
     /// errno 值
     public let errnoValue: Int32
+    /// 期望结果（用于判断是否为异常）
+    public let expectedOutcome: CapabilityProbeEngine.ProbeExpectation?
+    /// 单探针耗时阈值（微秒）
+    public let maxElapsedMicros: UInt64?
     /// 调用栈帧（用于 B 类探针分析）
     public let callerFrame: String?
 
@@ -22,12 +26,16 @@ public struct ProbeResult: Codable, Sendable {
         succeeded: Bool,
         elapsedMicros: UInt64,
         errnoValue: Int32,
+        expectedOutcome: CapabilityProbeEngine.ProbeExpectation? = nil,
+        maxElapsedMicros: UInt64? = nil,
         callerFrame: String? = nil
     ) {
         self.id = id
         self.succeeded = succeeded
         self.elapsedMicros = elapsedMicros
         self.errnoValue = errnoValue
+        self.expectedOutcome = expectedOutcome
+        self.maxElapsedMicros = maxElapsedMicros
         self.callerFrame = callerFrame
     }
 }
@@ -148,16 +156,16 @@ public final class CapabilityProbeEngine: @unchecked Sendable {
 
     /// 运行基础探针
     public func runBasicProbes() -> [ProbeResult] {
-        return [
-            probe("stat_bash")    { self.statFile("/bin/bash") },
-            probe("stat_apt")     { self.statFile("/etc/apt") },
-            probe("dyld_frida")   { self.dlopenFrida() },
-            probe("sock_27042")   { self.canConnect(port: 27042) },
-            probe("sock_27043")   { self.canConnect(port: 27043) },
-            probe("sock_23946")   { self.canConnect(port: 23946) },
-            probe("fork_ability") { self.canFork() },
-            probe("dyld_insert")  { self.getEnvDYLD() }
-        ]
+        let definitions = config.customProbes ?? defaultProbeDefinitions()
+        return definitions.map { definition in
+            probe(
+                definition.id,
+                expectedOutcome: definition.expectedOutcome,
+                maxElapsedMicros: definition.maxElapsedMicros
+            ) {
+                self.executeProbe(id: definition.id)
+            }
+        }
     }
 
     // MARK: - B 类探针：质量探针
@@ -167,17 +175,16 @@ public final class CapabilityProbeEngine: @unchecked Sendable {
         var suspicion = 0
 
         for result in basics where !result.succeeded {
+            let threshold = result.maxElapsedMicros ?? config.maxElapsedMicros
+
             // ① 时序异常：伪造失败比真实失败慢
-            if result.elapsedMicros > config.maxElapsedMicros {
+            if result.elapsedMicros > threshold {
                 suspicion += 2
             }
 
             // ② errno 不一致：懒得设置或设置错误
-            if result.id.contains("stat") {
-                // stat 失败应该是 ENOENT 或 EACCES
-                if result.errnoValue != ENOENT && result.errnoValue != EACCES {
-                    suspicion += 2
-                }
+            if let expectedErrnos = expectedFailureErrnos[result.id], !expectedErrnos.contains(result.errnoValue) {
+                suspicion += 3
             }
 
             // ③ 调用栈出现陌生帧（Hook 框架特征）
@@ -198,10 +205,10 @@ public final class CapabilityProbeEngine: @unchecked Sendable {
     public func evaluate() -> CapabilityScore {
         let basics = runBasicProbes()
         let quality = config.enableQualityProbes ? runQualityProbes(basics) : 0
-        let passed = basics.filter { $0.succeeded }.count
+        let anomalyCount = basics.filter { isAnomalous($0) }.count
 
         return CapabilityScore(
-            basicAnomalyCount: passed,
+            basicAnomalyCount: anomalyCount,
             qualitySuspicion: quality,
             totalProbes: basics.count
         )
@@ -211,10 +218,10 @@ public final class CapabilityProbeEngine: @unchecked Sendable {
     public func evaluateDetailed() -> (score: CapabilityScore, probes: [ProbeResult]) {
         let basics = runBasicProbes()
         let quality = config.enableQualityProbes ? runQualityProbes(basics) : 0
-        let passed = basics.filter { $0.succeeded }.count
+        let anomalyCount = basics.filter { isAnomalous($0) }.count
 
         let score = CapabilityScore(
-            basicAnomalyCount: passed,
+            basicAnomalyCount: anomalyCount,
             qualitySuspicion: quality,
             totalProbes: basics.count
         )
@@ -225,7 +232,12 @@ public final class CapabilityProbeEngine: @unchecked Sendable {
     // MARK: - 私有方法
 
     /// 通用探针执行器
-    private func probe(_ id: String, block: () -> Bool) -> ProbeResult {
+    private func probe(
+        _ id: String,
+        expectedOutcome: ProbeExpectation? = nil,
+        maxElapsedMicros: UInt64? = nil,
+        block: () -> Bool
+    ) -> ProbeResult {
         let start = mach_absolute_time()
         let succeeded = block()
         let end = mach_absolute_time()
@@ -240,9 +252,72 @@ public final class CapabilityProbeEngine: @unchecked Sendable {
             id: id,
             succeeded: succeeded,
             elapsedMicros: elapsedMicros,
-            errnoValue: errno
+            errnoValue: errno,
+            expectedOutcome: expectedOutcome,
+            maxElapsedMicros: maxElapsedMicros
         )
     }
+
+    /// 默认探针定义（A 类探针都应失败）
+    private func defaultProbeDefinitions() -> [ProbeDefinition] {
+        [
+            ProbeDefinition(id: "stat_bash", expectedOutcome: .fail, maxElapsedMicros: config.maxElapsedMicros),
+            ProbeDefinition(id: "stat_apt", expectedOutcome: .fail, maxElapsedMicros: config.maxElapsedMicros),
+            ProbeDefinition(id: "dyld_frida", expectedOutcome: .fail, maxElapsedMicros: config.maxElapsedMicros),
+            ProbeDefinition(id: "sock_27042", expectedOutcome: .fail, maxElapsedMicros: config.maxElapsedMicros),
+            ProbeDefinition(id: "sock_27043", expectedOutcome: .fail, maxElapsedMicros: config.maxElapsedMicros),
+            ProbeDefinition(id: "sock_23946", expectedOutcome: .fail, maxElapsedMicros: config.maxElapsedMicros),
+            ProbeDefinition(id: "fork_ability", expectedOutcome: .fail, maxElapsedMicros: config.maxElapsedMicros),
+            ProbeDefinition(id: "dyld_insert", expectedOutcome: .fail, maxElapsedMicros: config.maxElapsedMicros),
+        ]
+    }
+
+    private func executeProbe(id: String) -> Bool {
+        switch id {
+        case "stat_bash":
+            return statFile("/bin/bash")
+        case "stat_apt":
+            return statFile("/etc/apt")
+        case "dyld_frida":
+            return dlopenFrida()
+        case "sock_27042":
+            return canConnect(port: 27042)
+        case "sock_27043":
+            return canConnect(port: 27043)
+        case "sock_23946":
+            return canConnect(port: 23946)
+        case "fork_ability":
+            return canFork()
+        case "dyld_insert":
+            return getEnvDYLD()
+        default:
+            // 未知探针默认失败，避免被“任意探针ID”绕过
+            return false
+        }
+    }
+
+    private func isAnomalous(_ result: ProbeResult) -> Bool {
+        guard let expected = result.expectedOutcome else {
+            // 向后兼容：无 expectedOutcome 时，沿用“成功=异常”
+            return result.succeeded
+        }
+        switch expected {
+        case .fail:
+            return result.succeeded
+        case .pass:
+            return !result.succeeded
+        }
+    }
+
+    /// 不同探针失败时应出现的 errno 值，超出集合可视作伪造失败信号
+    private let expectedFailureErrnos: [String: Set<Int32>] = [
+        "stat_bash": [ENOENT, EACCES, EPERM],
+        "stat_apt": [ENOENT, EACCES, EPERM],
+        "fork_ability": [EPERM, EAGAIN],
+        "sock_27042": [ECONNREFUSED, ETIMEDOUT, EHOSTUNREACH, ENETUNREACH],
+        "sock_27043": [ECONNREFUSED, ETIMEDOUT, EHOSTUNREACH, ENETUNREACH],
+        "sock_23946": [ECONNREFUSED, ETIMEDOUT, EHOSTUNREACH, ENETUNREACH],
+    ]
 
     /// stat 文件探针
     private func statFile(_ path: String) -> Bool {

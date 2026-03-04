@@ -7,6 +7,23 @@ import UIKit
 public final class CPRiskKit: NSObject {
     @objc public static let shared = CPRiskKit()
 
+    public enum SecureUploadError: Error, LocalizedError {
+        case payloadFieldMappingRequired
+        case payloadFieldMappingExpired(version: String)
+        case invalidPayloadShape
+
+        public var errorDescription: String? {
+            switch self {
+            case .payloadFieldMappingRequired:
+                return "当前策略要求字段混淆，但 payloadFieldMapping 未下发"
+            case .payloadFieldMappingExpired(let version):
+                return "payloadFieldMapping 已过期（version=\(version)）"
+            case .invalidPayloadShape:
+                return "上报 payload 结构无效，无法构建安全信封"
+            }
+        }
+    }
+
 #if canImport(UIKit)
     private let touchCapture = TouchCapture.shared
     private let motionSampler = MotionSampler.shared
@@ -23,6 +40,25 @@ public final class CPRiskKit: NSObject {
     private var latestRemoteConfig: RemoteConfig?
 
     private static let remoteConfigEndpointKey = "com.cloudphone.riskkit.remote.endpoint"
+    private static let localPolicyInjectionAllowed: Bool = {
+#if DEBUG
+        return true
+#else
+        return false
+#endif
+    }()
+    private static let localRemoteConfigRollbackAllowed: Bool = {
+#if DEBUG
+        return ProcessInfo.processInfo.environment["CPRISKKIT_ALLOW_CONFIG_ROLLBACK"] == "1"
+#else
+        return false
+#endif
+    }()
+
+    private struct CapabilityProbeRuntimeResult {
+        let score: CapabilityScore
+        let probes: [ProbeResult]
+    }
 
     private override init() {
         super.init()
@@ -91,6 +127,11 @@ public final class CPRiskKit: NSObject {
     @objc(setServerRiskPolicyJSON:)
     @discardableResult
     public func setServerRiskPolicyJSON(_ json: String) -> Bool {
+        guard Self.localPolicyInjectionAllowed else {
+            Logger.log("server_policy.update_json rejected: local injection disabled in release build")
+            return false
+        }
+
         let ok = PolicyManager.shared.update(fromJSON: json)
         Logger.log("server_policy.update_json: \(ok ? "success" : "failed")")
         return ok
@@ -138,6 +179,29 @@ public final class CPRiskKit: NSObject {
         Logger.log("remote_config.endpoint cleared")
     }
 
+    /// 直接注入远程配置 JSON（用于灰度联调、离线测试和回归）。
+    /// 成功后会覆盖内存中的 latestRemoteConfig，但不会写入 endpoint。
+    @discardableResult
+    @objc(setRemoteConfigJSON:)
+    public func setRemoteConfigJSON(_ json: String) -> Bool {
+        guard Self.localPolicyInjectionAllowed else {
+            Logger.log("remote_config.inject rejected: local injection disabled in release build")
+            return false
+        }
+
+        guard let config = RemoteConfig.from(jsonString: json) else {
+            Logger.log("remote_config.inject failed: invalid json")
+            return false
+        }
+
+        guard applyRemoteConfigIfAccepted(config, source: "inject_json", validateStrictly: false) else {
+            return false
+        }
+
+        Logger.log("remote_config.inject success: version=\(config.version)")
+        return true
+    }
+
     /// 更新远程配置（2.0 API）。
     @objc(updateRemoteConfigWithCompletion:)
     public func updateRemoteConfig(completion: @escaping (Bool) -> Void) {
@@ -150,12 +214,17 @@ public final class CPRiskKit: NSObject {
         provider.fetchLatest { [weak self] result in
             switch result {
             case .success(let config):
-                self?.stateLock.lock()
-                self?.latestRemoteConfig = config
-                self?.stateLock.unlock()
-
-                Logger.log("remote_config.update success: version=\(config.version)")
-                DispatchQueue.main.async { completion(true) }
+                guard let self else {
+                    DispatchQueue.main.async { completion(false) }
+                    return
+                }
+                let accepted = self.applyRemoteConfigIfAccepted(config, source: "fetch_latest")
+                if accepted {
+                    Logger.log("remote_config.update success: version=\(config.version)")
+                } else {
+                    Logger.log("remote_config.update rejected: version=\(config.version)")
+                }
+                DispatchQueue.main.async { completion(accepted) }
             case .failure(let error):
                 Logger.log("remote_config.update failed: \(error.localizedDescription)")
                 DispatchQueue.main.async { completion(false) }
@@ -197,7 +266,9 @@ public final class CPRiskKit: NSObject {
             behavior: context.behavior,
             jailbreak: context.jailbreak
         )
-        let extraSignals = RiskSignalProviderRegistry.shared.signals(snapshot: snapshot)
+        let capabilityRuntime = runCapabilityProbe(remoteConfig: remoteConfig)
+        var extraSignals = RiskSignalProviderRegistry.shared.signals(snapshot: snapshot)
+        extraSignals.append(capabilityRuntime.score.toSignal())
 
         let serverPolicy = PolicyManager.shared.activePolicy
         let policy = buildEnginePolicy(
@@ -249,7 +320,82 @@ public final class CPRiskKit: NSObject {
             )
         )
 
+        if let challengeBinding = buildChallengeBindingIfNeeded(
+            remoteConfig: remoteConfig,
+            serverPolicy: serverPolicy,
+            capabilityRuntime: capabilityRuntime,
+            signals: verdict.signals,
+            deviceID: context.deviceID
+        ) {
+            out.setChallengeBinding(challengeBinding)
+            Logger.log(
+                "challenge.binding: challengeId=\(challengeBinding.challengeId) " +
+                "probes=\(challengeBinding.probeIds.count) reason=\(challengeBinding.triggerReason ?? "n/a")"
+            )
+        }
+
         return out
+    }
+
+    /// 构建安全上报信封（签名 + nonce + 可选字段混淆）。
+    ///
+    /// 默认读取当前 `RemoteConfig.securityHardening` 与 `payloadFieldMapping`：
+    /// - `enforcePayloadFieldMapping=true` 且映射缺失/过期时会抛错。
+    /// - `enableEnvelopeSignatureV2=false` 时自动降级为 v1 签名串格式。
+    public func buildSecureReportEnvelope(
+        report: CPRiskReport,
+        sessionToken: String,
+        signingKey: String,
+        keyId: String = "k1"
+    ) throws -> ReportEnvelope {
+        let remoteConfig = currentRemoteConfig()
+        let hardening = remoteConfig?.securityHardening ?? .default
+
+        var mapping = remoteConfig?.payloadFieldMapping
+        if let currentMapping = mapping, currentMapping.isExpired() {
+            if hardening.enforcePayloadFieldMapping {
+                throw SecureUploadError.payloadFieldMappingExpired(version: currentMapping.version)
+            }
+            mapping = nil
+        }
+
+        if hardening.enforcePayloadFieldMapping, mapping == nil {
+            throw SecureUploadError.payloadFieldMappingRequired
+        }
+
+        var payloadData = report.jsonData(prettyPrinted: false)
+        if !hardening.enableChallengeBinding {
+            payloadData = try removingPayloadKey("challengeBinding", from: payloadData)
+        }
+
+        let signatureVersion = hardening.enableEnvelopeSignatureV2 ? "v2" : "v1"
+        let envelopeConfig = ReportEnvelope.Config(signatureVersion: signatureVersion)
+
+        return try ReportEnvelope.create(
+            payloadData: payloadData,
+            reportId: report.reportID,
+            sessionToken: sessionToken,
+            signingKey: signingKey,
+            keyId: keyId,
+            fieldMapping: mapping,
+            config: envelopeConfig
+        )
+    }
+
+    public func buildSecureReportEnvelopeJSON(
+        report: CPRiskReport,
+        sessionToken: String,
+        signingKey: String,
+        keyId: String = "k1",
+        prettyPrinted: Bool = false
+    ) throws -> String {
+        let envelope = try buildSecureReportEnvelope(
+            report: report,
+            sessionToken: sessionToken,
+            signingKey: signingKey,
+            keyId: keyId
+        )
+        return try envelope.toJSONString(prettyPrinted: prettyPrinted)
     }
 
     /// 异步生成报告（避免在主线程做重活）。
@@ -310,6 +456,141 @@ public final class CPRiskKit: NSObject {
         } else {
             RiskSignalProviderRegistry.shared.unregister(id: "anti_tampering")
         }
+    }
+
+    private func runCapabilityProbe(remoteConfig: RemoteConfig?) -> CapabilityProbeRuntimeResult {
+        let engine: CapabilityProbeEngine
+        if let probeConfig = remoteConfig?.probeConfig {
+            engine = CapabilityProbeEngine.fromRemoteConfig(probeConfig)
+        } else {
+            engine = CapabilityProbeEngine()
+        }
+
+        let detailed = engine.evaluateDetailed()
+        Logger.log(
+            "capability.probe: anomaly=\(detailed.score.basicAnomalyCount) " +
+            "quality=\(detailed.score.qualitySuspicion) total=\(detailed.score.totalProbes)"
+        )
+
+        return CapabilityProbeRuntimeResult(score: detailed.score, probes: detailed.probes)
+    }
+
+    private func buildChallengeBindingIfNeeded(
+        remoteConfig: RemoteConfig?,
+        serverPolicy: ServerRiskPolicy?,
+        capabilityRuntime: CapabilityProbeRuntimeResult,
+        signals: [RiskSignal],
+        deviceID: String
+    ) -> ChallengeBindingPayload? {
+        let hardening = remoteConfig?.securityHardening ?? .default
+        guard hardening.enableChallengeBinding else {
+            return nil
+        }
+
+        guard let blindConfig = serverPolicy?.blindChallenge, blindConfig.enabled else {
+            Logger.log("challenge.binding skipped: missing server blindChallenge context")
+            return nil
+        }
+
+        if blindConfig.probePool.isEmpty {
+            Logger.log("challenge.binding skipped: probePool is empty")
+            return nil
+        }
+
+        let tamperedCount = signals.reduce(into: 0) { partialResult, signal in
+            if case .tampered? = signal.state {
+                partialResult += 1
+            }
+        }
+
+        let blindRules = blindConfig.rules
+        let trigger = ChallengeTrigger.shouldTriggerBlindChallenge(
+            capabilityScore: capabilityRuntime.score,
+            tamperedCount: tamperedCount,
+            existingRules: blindRules
+        )
+        guard trigger.triggered else {
+            return nil
+        }
+
+        guard let challenge = buildBlindChallenge(config: blindConfig, deviceID: deviceID) else {
+            Logger.log("challenge.binding skipped: failed to build challenge from server config")
+            return nil
+        }
+        guard ChallengeTrigger.isChallengeValid(challenge) else {
+            return nil
+        }
+
+        return ChallengeTrigger.buildChallengeBindingPayload(
+            challenge: challenge,
+            capabilityScore: capabilityRuntime.score,
+            tamperedCount: tamperedCount,
+            executedProbeIDs: capabilityRuntime.probes.map(\.id),
+            triggerReason: trigger.reason
+        )
+    }
+
+    private func buildBlindChallenge(
+        config: ServerRiskPolicy.BlindChallengeConfig,
+        deviceID: String
+    ) -> ChallengeTrigger.BlindChallenge? {
+        let now = ChallengeTrigger.nowMillis()
+        let ttl = max(10_000, config.challengeTTLMillis)
+        let salt = config.challengeSalt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !salt.isEmpty else {
+            return nil
+        }
+
+        let seedSource = "\(salt)|\(deviceID)|\(now)"
+        let selectedProbeIDs = selectChallengeProbeIDs(
+            source: config.probePool,
+            seedSource: seedSource
+        )
+        guard !selectedProbeIDs.isEmpty else {
+            return nil
+        }
+
+        let challengeSeed = "\(salt):\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        return ChallengeTrigger.BlindChallenge(
+            challengeId: UUID().uuidString,
+            probeIds: selectedProbeIDs,
+            seed: challengeSeed,
+            expiresAt: now + ttl
+        )
+    }
+
+    private func selectChallengeProbeIDs(
+        source: [String],
+        seedSource: String,
+        maxCount: Int = 3
+    ) -> [String] {
+        let normalized = Array(Set(source.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
+        guard !normalized.isEmpty else {
+            return []
+        }
+
+        let rolling = seedSource.utf8.reduce(0) { partial, byte in
+            ((partial &* 31) &+ Int(byte)) & 0x7fffffff
+        }
+        let start = rolling % normalized.count
+
+        var selected: [String] = []
+        selected.reserveCapacity(min(maxCount, normalized.count))
+        for index in 0..<min(maxCount, normalized.count) {
+            selected.append(normalized[(start + index) % normalized.count])
+        }
+        return selected
+    }
+
+    private func removingPayloadKey(_ key: String, from payloadData: Data) throws -> Data {
+        guard var object = try JSONSerialization.jsonObject(with: payloadData, options: []) as? [String: Any] else {
+            throw SecureUploadError.invalidPayloadShape
+        }
+        object.removeValue(forKey: key)
+        guard JSONSerialization.isValidJSONObject(object) else {
+            throw SecureUploadError.invalidPayloadShape
+        }
+        return try JSONSerialization.data(withJSONObject: object, options: [])
     }
 
     private func resolveRuntimeConfig(from config: CPRiskConfig) -> RiskConfig {
@@ -534,22 +815,66 @@ public final class CPRiskKit: NSObject {
         }
 
         stateLock.lock()
-        defer { stateLock.unlock() }
+        let sameEndpoint = (remoteConfigEndpoint == url)
+        let existingProvider = remoteConfigProvider
+        let hasCachedConfig = (latestRemoteConfig != nil)
+        stateLock.unlock()
 
-        if remoteConfigEndpoint == url, let existingProvider = remoteConfigProvider {
-            if latestRemoteConfig == nil {
-                latestRemoteConfig = existingProvider.currentConfig
+        if sameEndpoint, let existingProvider {
+            if !hasCachedConfig {
+                _ = applyRemoteConfigIfAccepted(existingProvider.currentConfig, source: "provider_reuse")
             }
             return true
         }
 
-        remoteConfigEndpoint = url
         let provider = RemoteConfigProvider(configURL: url)
+        stateLock.lock()
+        remoteConfigEndpoint = url
         remoteConfigProvider = provider
-        latestRemoteConfig = provider.currentConfig
+        stateLock.unlock()
+
+        _ = applyRemoteConfigIfAccepted(provider.currentConfig, source: "provider_init")
         UserDefaults.standard.set(rawURL, forKey: Self.remoteConfigEndpointKey)
 
         Logger.log("remote_config.endpoint set: \(url.absoluteString)")
+        return true
+    }
+
+    @discardableResult
+    private func applyRemoteConfigIfAccepted(
+        _ config: RemoteConfig,
+        source: String,
+        validateStrictly: Bool = true
+    ) -> Bool {
+        let validation = config.validate()
+        if !validation.isValid, validateStrictly {
+            let detail = validation.errors.joined(separator: " | ")
+            Logger.log("remote_config.\(source) rejected: invalid config, errors=\(detail)")
+            return false
+        }
+        if !validation.isValid {
+            let detail = validation.errors.joined(separator: " | ")
+            Logger.log("remote_config.\(source) warning: invalid config accepted for local testing, errors=\(detail)")
+        }
+        if !validation.warnings.isEmpty {
+            let warning = validation.warnings.joined(separator: " | ")
+            Logger.log("remote_config.\(source) warning: \(warning)")
+        }
+
+        stateLock.lock()
+        defer { stateLock.unlock() }
+
+        if let currentVersion = latestRemoteConfig?.version,
+           config.version < currentVersion,
+           !Self.localRemoteConfigRollbackAllowed {
+            Logger.log(
+                "remote_config.\(source) rejected: rollback detected " +
+                "incoming=\(config.version) < current=\(currentVersion)"
+            )
+            return false
+        }
+
+        latestRemoteConfig = config
         return true
     }
 }

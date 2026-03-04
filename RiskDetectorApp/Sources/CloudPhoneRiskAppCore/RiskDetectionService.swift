@@ -20,6 +20,12 @@ public final class RiskDetectionService {
         CPRiskKit.setLogEnabled(enabled)
     }
 
+    /// 注入远程配置 JSON（离线联调/测试）。
+    @discardableResult
+    public func setRemoteConfigJSON(_ json: String) -> Bool {
+        CPRiskKit.shared.setRemoteConfigJSON(json)
+    }
+
     /// 生成一次报告（同步）。
     public func evaluate(config: RiskAppConfig = .default) -> CPRiskReport {
         CPRiskKit.shared.evaluate(config: config.toCPRiskConfig())
@@ -80,6 +86,76 @@ public final class RiskDetectionService {
 #else
         RiskReportStorage.loadJSONString(atPath: path)
 #endif
+    }
+
+    /// 生成可直接上报的安全信封。
+    public func buildSecureReportEnvelope(
+        report: CPRiskReport,
+        sessionToken: String,
+        signingKey: String,
+        keyId: String = "k1"
+    ) throws -> ReportEnvelope {
+        try CPRiskKit.shared.buildSecureReportEnvelope(
+            report: report,
+            sessionToken: sessionToken,
+            signingKey: signingKey,
+            keyId: keyId
+        )
+    }
+
+    /// 生成可直接上传的安全信封 JSON 字符串。
+    public func buildSecureReportEnvelopeJSON(
+        report: CPRiskReport,
+        sessionToken: String,
+        signingKey: String,
+        keyId: String = "k1",
+        prettyPrinted: Bool = false
+    ) throws -> String {
+        try CPRiskKit.shared.buildSecureReportEnvelopeJSON(
+            report: report,
+            sessionToken: sessionToken,
+            signingKey: signingKey,
+            keyId: keyId,
+            prettyPrinted: prettyPrinted
+        )
+    }
+
+    /// 本地校验安全信封（用于 SDK 联调与回归验证）。
+    public func validateSecureReportEnvelope(
+        _ envelope: ReportEnvelope,
+        signingKey: String,
+        allowedSignatureVersions: Set<String> = ["v2"],
+        enableReplayProtection: Bool = true,
+        nonceStore: NonceReplayProtecting? = nil,
+        config: ReportEnvelope.Config = ReportEnvelope.Config()
+    ) -> Result<Void, SecureEnvelopeValidationError> {
+        CPRiskKit.shared.validateSecureReportEnvelope(
+            envelope,
+            signingKey: signingKey,
+            allowedSignatureVersions: allowedSignatureVersions,
+            enableReplayProtection: enableReplayProtection,
+            nonceStore: nonceStore,
+            config: config
+        )
+    }
+
+    /// 本地解析并校验安全信封 JSON。
+    public func validateSecureReportEnvelopeJSON(
+        _ json: String,
+        signingKey: String,
+        allowedSignatureVersions: Set<String> = ["v2"],
+        enableReplayProtection: Bool = true,
+        nonceStore: NonceReplayProtecting? = nil,
+        config: ReportEnvelope.Config = ReportEnvelope.Config()
+    ) -> Result<ReportEnvelope, SecureEnvelopeValidationError> {
+        CPRiskKit.shared.validateSecureReportEnvelopeJSON(
+            json,
+            signingKey: signingKey,
+            allowedSignatureVersions: allowedSignatureVersions,
+            enableReplayProtection: enableReplayProtection,
+            nonceStore: nonceStore,
+            config: config
+        )
     }
 
     /// 注入“未来云端聚合信号”（用于调试验证 JSON/server 节点与 provider 评分链路）。

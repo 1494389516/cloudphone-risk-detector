@@ -118,6 +118,7 @@ public final class CPRiskSignal: NSObject {
 @objc(CPRiskReport)
 public final class CPRiskReport: NSObject {
     @objc public let deviceID: String
+    @objc public let reportID: String
     @objc public let score: Double
     @objc public let isHighRisk: Bool
     @objc public let summary: String
@@ -129,7 +130,9 @@ public final class CPRiskReport: NSObject {
     private var payload: Payload
 
     init(context: RiskContext, report: RiskScoreReport) {
+        let builtPayload = Payload(context: context, report: report)
         self.deviceID = context.deviceID
+        self.reportID = builtPayload.reportId
         self.score = report.score
         self.isHighRisk = report.isHighRisk
         self.summary = report.summary
@@ -137,7 +140,7 @@ public final class CPRiskReport: NSObject {
         self.jailbreakIsJailbroken = context.jailbreak.isJailbroken
         self.detectedMethods = context.jailbreak.detectedMethods
         self.signals = report.signals.map(CPRiskSignal.init)
-        self.payload = Payload(context: context, report: report)
+        self.payload = builtPayload
     }
 
     /// 用于上报的 JSON（未加密）。
@@ -194,6 +197,14 @@ public final class CPRiskReport: NSObject {
     func setLocalSignals(_ signals: LocalSignals?) {
         payload.local = signals
     }
+
+    func setChallengeBinding(_ challengeBinding: ChallengeBindingPayload?) {
+        payload.challengeBinding = challengeBinding
+    }
+
+    public func challengeBinding() -> ChallengeBindingPayload? {
+        payload.challengeBinding
+    }
 }
 
 private struct Payload: Codable {
@@ -217,6 +228,9 @@ private struct Payload: Codable {
 
     // 本地聚合信号（不依赖云端）
     var local: LocalSignals?
+
+    // blind challenge 绑定载荷（beta.4）
+    var challengeBinding: ChallengeBindingPayload?
 
     // 3.0 增量字段
     var gpuName: String?
@@ -243,12 +257,56 @@ private struct Payload: Codable {
         self.tamperedCount = report.signals.filter { $0.state == .tampered }.count
         self.server = nil
         self.local = nil
+        self.challengeBinding = nil
         self.gpuName = report.signals.first(where: { $0.id == "gpu_virtual" })?.evidence["gpu_name"]
         self.kernelBuild = report.signals.first(where: { $0.id == "vphone_hardware" })?.evidence["kernel"]
         self.deviceModel = context.device.hardwareMachine ?? context.device.model
         self.imuMagnitude = nil
         self.imuVariance = nil
         self.touchForceVar = context.behavior.touch.forceVariance
+    }
+}
+
+public struct ChallengeBindingPayload: Codable, Sendable {
+    public var challengeId: String
+    public var seed: String
+    public var probeIds: [String]
+    public var executedProbeIds: [String]
+    public var expiresAt: Int64
+    public var timestamp: Int64
+    public var capabilityAnomalyCount: Int
+    public var qualitySuspicion: Int
+    public var totalProbes: Int
+    public var tamperedCount: Int
+    public var probeRiskContribution: Int
+    public var triggerReason: String?
+
+    public init(
+        challengeId: String,
+        seed: String,
+        probeIds: [String],
+        executedProbeIds: [String],
+        expiresAt: Int64,
+        timestamp: Int64,
+        capabilityAnomalyCount: Int,
+        qualitySuspicion: Int,
+        totalProbes: Int,
+        tamperedCount: Int,
+        probeRiskContribution: Int,
+        triggerReason: String? = nil
+    ) {
+        self.challengeId = challengeId
+        self.seed = seed
+        self.probeIds = probeIds
+        self.executedProbeIds = executedProbeIds
+        self.expiresAt = expiresAt
+        self.timestamp = timestamp
+        self.capabilityAnomalyCount = capabilityAnomalyCount
+        self.qualitySuspicion = qualitySuspicion
+        self.totalProbes = totalProbes
+        self.tamperedCount = tamperedCount
+        self.probeRiskContribution = probeRiskContribution
+        self.triggerReason = triggerReason
     }
 }
 

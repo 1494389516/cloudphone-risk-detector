@@ -48,17 +48,25 @@ public struct ServerRiskPolicy: Codable, Sendable {
         public let enabled: Bool
         public let challengeSalt: String
         public let windowSeconds: Int
+        /// 现场 challenge 可选探针池（beta.4）
+        public let probePool: [String]
+        /// challenge 有效期（毫秒）
+        public let challengeTTLMillis: Int64
         public let rules: [BlindRule]
 
         public init(
             enabled: Bool = true,
             challengeSalt: String,
             windowSeconds: Int = 300,
+            probePool: [String] = [],
+            challengeTTLMillis: Int64 = 300_000,
             rules: [BlindRule]
         ) {
             self.enabled = enabled
             self.challengeSalt = challengeSalt
             self.windowSeconds = windowSeconds
+            self.probePool = probePool
+            self.challengeTTLMillis = challengeTTLMillis
             self.rules = rules
         }
     }

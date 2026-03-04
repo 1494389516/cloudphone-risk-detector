@@ -20,7 +20,10 @@ let package = Package(
     targets: [
         .target(
             name: "CloudPhoneRiskKit",
-            dependencies: []
+            dependencies: [],
+            resources: [
+                .copy("Resources/PrivacyInfo.xcprivacy"),
+            ]
         ),
         .target(
             name: "CloudPhoneRiskAppCore",
