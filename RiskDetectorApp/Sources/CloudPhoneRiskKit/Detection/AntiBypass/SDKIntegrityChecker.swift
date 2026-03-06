@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import MachO
+import Security
 
 struct SDKIntegrityChecker: Detector {
     func detect() -> DetectorResult {
@@ -27,7 +28,7 @@ struct SDKIntegrityChecker: Detector {
             methods.append("integrity:missing_code_signature")
         }
 
-        let baseline = PLTIntegrityGuard.captureBaseline()
+        let baseline = PLTIntegrityGuard.captureOrLoadBaseline()
         let pltResult = PLTIntegrityGuard.verify(baseline: baseline)
         if !pltResult.isIntact {
             score += 30
@@ -108,6 +109,9 @@ struct PLTIntegrityGuard {
         let moduleSize: UInt64
     }
 
+    private static let keychainService = "CloudPhoneRiskKit"
+    private static let keychainBaselineAccount = "plt_baseline_v1"
+
     static func captureBaseline() -> [FunctionRecord] {
         var records: [FunctionRecord] = []
         for name in criticalFunctions {
@@ -119,6 +123,94 @@ struct PLTIntegrityGuard {
             records.append(FunctionRecord(name: name, address: addr, moduleBase: base, moduleSize: size))
         }
         return records
+    }
+
+    static func captureOrLoadBaseline() -> [FunctionRecord] {
+        if let persisted = loadPersistedBaseline() {
+            return persisted
+        }
+        let fresh = captureBaseline()
+        persistBaseline(fresh)
+        return fresh
+    }
+
+    static func verifyWithPersistedBaseline() -> PLTIntegrityResult {
+        guard let persisted = loadPersistedBaseline() else {
+            let fresh = captureBaseline()
+            persistBaseline(fresh)
+            return PLTIntegrityResult(isIntact: true, hookedFunctions: [], details: ["status": "baseline_established"])
+        }
+        var hooked: [String] = []
+        var details: [String: String] = [:]
+        for record in persisted {
+            guard let ptr = dlsym(UnsafeMutableRawPointer(bitPattern: -2), record.name) else {
+                hooked.append(record.name)
+                details[record.name] = "dlsym_failed"
+                continue
+            }
+            var info = Dl_info()
+            guard dladdr(ptr, &info) != 0, let imageHeader = info.dli_fbase else {
+                hooked.append(record.name)
+                details[record.name] = "dladdr_failed"
+                continue
+            }
+            let currentBase = UInt64(bitPattern: Int64(Int(bitPattern: imageHeader)))
+            if currentBase != record.moduleBase {
+                hooked.append(record.name)
+                let currentAddr = UInt64(bitPattern: Int64(Int(bitPattern: ptr)))
+                details[record.name] = "module_changed:0x\(String(currentAddr, radix: 16))"
+            }
+        }
+        return PLTIntegrityResult(isIntact: hooked.isEmpty, hookedFunctions: hooked, details: details)
+    }
+
+    private static func loadPersistedBaseline() -> [FunctionRecord]? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainBaselineAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return nil
+        }
+        return json.compactMap { dict -> FunctionRecord? in
+            guard let name = dict["name"] as? String,
+                  let addr = dict["address"] as? UInt64,
+                  let base = dict["moduleBase"] as? UInt64,
+                  let size = dict["moduleSize"] as? UInt64 else { return nil }
+            return FunctionRecord(name: name, address: addr, moduleBase: base, moduleSize: size)
+        }
+    }
+
+    private static func persistBaseline(_ records: [FunctionRecord]) {
+        let json: [[String: Any]] = records.map { [
+            "name": $0.name,
+            "address": $0.address,
+            "moduleBase": $0.moduleBase,
+            "moduleSize": $0.moduleSize,
+        ] }
+        guard let data = try? JSONSerialization.data(withJSONObject: json) else { return }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainBaselineAccount,
+        ]
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            var addQuery = query
+            addQuery[kSecValueData as String] = data
+            addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            SecItemAdd(addQuery as CFDictionary, nil)
+        }
     }
 
     static func verify(baseline: [FunctionRecord]) -> PLTIntegrityResult {

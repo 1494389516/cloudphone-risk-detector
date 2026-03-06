@@ -38,15 +38,42 @@ final class KeychainDeviceID {
             kSecAttrAccount as String: account,
         ]
 
+        // Create access control with device passcode protection (ACL)
+        var aclError: Unmanaged<CFError>?
+        guard let accessControl = SecAccessControlCreateWithFlags(
+            kCFAllocatorDefault,
+            kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            [],
+            &aclError
+        ) else {
+            return saveFallback(data: data, query: query)
+        }
+
         let attributes: [String: Any] = [
             kSecValueData as String: data,
-            kSecAttrAccessible as String: accessible,
+            kSecAttrAccessControl as String: accessControl,
         ]
 
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if status == errSecSuccess { return true }
-        if status != errSecItemNotFound { return false }
+        if status != errSecItemNotFound { return saveFallback(data: data, query: query) }
 
+        var addQuery = query
+        addQuery[kSecValueData as String] = data
+        addQuery[kSecAttrAccessControl as String] = accessControl
+        let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+        if addStatus == errSecSuccess { return true }
+        return saveFallback(data: data, query: query)
+    }
+
+    private func saveFallback(data: Data, query: [String: Any]) -> Bool {
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: accessible,
+        ]
+        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecSuccess { return true }
+        if status != errSecItemNotFound { return false }
         var addQuery = query
         addQuery[kSecValueData as String] = data
         addQuery[kSecAttrAccessible as String] = accessible

@@ -34,6 +34,9 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         var enableFingerprintDeobfuscation: Bool = true
         var enableDyldInterposeDetect: Bool = true
         var enableSDKBinaryIntegrity: Bool = true
+        var enableSensorReplayDetect: Bool = true
+        var enableGPURenderProbe: Bool = true
+        var enableIsaSwizzleDetect: Bool = true
         var minScoreThreshold: Double = 0
         
         public static let `default` = Configuration()
@@ -235,10 +238,25 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
             signals.append(contentsOf: DyldInterposeDetector().asSignals())
         }
 
-        // 17. SDK 二进制自身完整性校验（3.6 新增）
+        // 17. SDK 二进制自身完整性校验（3.7 新增）
         if configuration.enableSDKBinaryIntegrity {
             let binResult = SDKBinaryIntegrityChecker.verify()
             signals.append(contentsOf: SDKBinaryIntegrityChecker.asSignals(result: binResult))
+        }
+
+        // 18. 传感器数据回放检测（3.7 新增）
+        if configuration.enableSensorReplayDetect {
+            signals.append(contentsOf: SensorReplayDetector().asSignals())
+        }
+
+        // 19. GPU 渲染能力深度探测（3.7 新增）
+        if configuration.enableGPURenderProbe {
+            signals.append(contentsOf: GPURenderProbe().asSignals())
+        }
+
+        // 20. isa swizzling / 消息转发劫持（3.7 新增）
+        if configuration.enableIsaSwizzleDetect {
+            signals.append(contentsOf: IsaSwizzleDetector().asSignals())
         }
 
         return signals.filter { $0.score >= configuration.minScoreThreshold }

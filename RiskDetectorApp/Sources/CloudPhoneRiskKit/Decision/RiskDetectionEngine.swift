@@ -916,6 +916,12 @@ private extension RiskDetectionEngine {
         "sdk_binary_replaced": 95,
         "sdk_segment_tampered": 85,
         "sdk_binary_size_anomaly": 70,
+        // 3.7 深度加固信号权重
+        "sensor_replay_detected": 72,
+        "gpu_render_anomaly": 75,
+        "isa_swizzle_detected": 82,
+        "msg_forward_hijack": 85,
+        "method_count_anomaly": 50,
     ]
 }
 
