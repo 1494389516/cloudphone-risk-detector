@@ -24,6 +24,11 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         var enableMemoryIntegrity: Bool = true
         var enableRWXMemoryScan: Bool = true
         var enablePLTIntegrity: Bool = true
+        var enableTextSegmentHash: Bool = true
+        var enableFridaThreadDetect: Bool = true
+        var enableFridaHeapDetect: Bool = true
+        var enableObjCSwizzleDetect: Bool = true
+        var enableFridaSocketDetect: Bool = true
         var minScoreThreshold: Double = 0
         
         public static let `default` = Configuration()
@@ -91,7 +96,33 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
             let pltResult = PLTIntegrityGuard.verify(baseline: baseline)
             signals.append(contentsOf: PLTIntegrityGuard.asSignals(result: pltResult))
         }
-        
+
+        // 8. __TEXT.__text 代码段哈希完整性（3.5 新增）
+        if configuration.enableTextSegmentHash {
+            let hashResult = TextSegmentIntegrityChecker.verify()
+            signals.append(contentsOf: TextSegmentIntegrityChecker.asSignals(result: hashResult))
+        }
+
+        // 9. Frida 线程枚举 + 异常端口劫持（3.5.1 新增）
+        if configuration.enableFridaThreadDetect {
+            signals.append(contentsOf: FridaThreadDetector().asSignals())
+        }
+
+        // 10. V8/QuickJS 堆特征 + Stalker JIT 代码页（3.5.1 新增）
+        if configuration.enableFridaHeapDetect {
+            signals.append(contentsOf: FridaHeapDetector().asSignals())
+        }
+
+        // 11. ObjC 方法劫持 + Dispatch Queue 名称扫描（3.5.1 新增）
+        if configuration.enableObjCSwizzleDetect {
+            signals.append(contentsOf: ObjCSwizzleDetector().asSignals())
+        }
+
+        // 12. Unix Socket + 时序侧信道（3.5.1 新增）
+        if configuration.enableFridaSocketDetect {
+            signals.append(contentsOf: FridaSocketDetector().asSignals())
+        }
+
         return signals.filter { $0.score >= configuration.minScoreThreshold }
     }
     

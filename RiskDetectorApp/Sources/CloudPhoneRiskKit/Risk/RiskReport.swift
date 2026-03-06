@@ -127,6 +127,8 @@ public final class CPRiskReport: NSObject {
     @objc public let detectedMethods: [String]
     @objc public let signals: [CPRiskSignal]
     @objc public let tampered: Bool
+    @objc public private(set) var accountId: String?
+    @objc public private(set) var sessionId: String?
 
     private var payload: Payload
 
@@ -143,6 +145,14 @@ public final class CPRiskReport: NSObject {
         self.signals = report.signals.map(CPRiskSignal.init)
         self.tampered = builtPayload.tamperedCount > 0
         self.payload = builtPayload
+    }
+
+    func setGraphBindings(accountId: String?, sessionId: String?, sceneTag: String?) {
+        self.accountId = accountId
+        self.sessionId = sessionId
+        payload.accountId = accountId
+        payload.sessionId = sessionId
+        payload.sceneTag = sceneTag
     }
 
     /// 用于上报的 JSON（未加密）。
@@ -242,6 +252,12 @@ private struct Payload: Codable {
     var imuVariance: Double?
     var touchForceVar: Double?
 
+    // 3.5 图算法绑定字段
+    var accountId: String?
+    var sessionId: String?
+    var sceneTag: String?
+    var behaviorVector: [Double]?
+
     init(context: RiskContext, report: RiskScoreReport) {
         self.sdkVersion = Version.current
         self.reportId = UUID().uuidString
@@ -266,6 +282,22 @@ private struct Payload: Codable {
         self.imuMagnitude = nil
         self.imuVariance = nil
         self.touchForceVar = context.behavior.touch.forceVariance
+        self.accountId = nil
+        self.sessionId = nil
+        self.sceneTag = nil
+        self.behaviorVector = Self.computeBehaviorVector(from: context.behavior)
+    }
+
+    private static func computeBehaviorVector(from behavior: BehaviorSignals) -> [Double]? {
+        guard behavior.touch.sampleCount > 0 || behavior.motion.sampleCount > 0 else { return nil }
+        return [
+            min((behavior.touch.coordinateSpread ?? 0) / 20.0, 1.0),
+            min(behavior.touch.intervalCV ?? 0, 1.0),
+            behavior.touch.averageLinearity ?? 0,
+            min((behavior.touch.forceVariance ?? 0) / 5.0, 1.0),
+            behavior.motion.stillnessRatio ?? 0,
+            min((behavior.motion.motionEnergy ?? 0) / 100.0, 1.0)
+        ]
     }
 }
 
@@ -333,6 +365,13 @@ public struct ServerSignals: Codable, Sendable {
     public var geoRegion: String?
     public var riskTags: [String]?
 
+    // 图算法反哺字段
+    public var communityId: String?
+    public var communityRiskDensity: Double?
+    public var hwProfileDegree: Int?
+    public var devicePageRank: Double?
+    public var isInDenseSubgraph: Bool?
+
     public init(
         publicIP: String? = nil,
         asn: String? = nil,
@@ -342,7 +381,12 @@ public struct ServerSignals: Codable, Sendable {
         ipAccountAgg: Int? = nil,
         geoCountry: String? = nil,
         geoRegion: String? = nil,
-        riskTags: [String]? = nil
+        riskTags: [String]? = nil,
+        communityId: String? = nil,
+        communityRiskDensity: Double? = nil,
+        hwProfileDegree: Int? = nil,
+        devicePageRank: Double? = nil,
+        isInDenseSubgraph: Bool? = nil
     ) {
         self.publicIP = publicIP
         self.asn = asn
@@ -353,6 +397,11 @@ public struct ServerSignals: Codable, Sendable {
         self.geoCountry = geoCountry
         self.geoRegion = geoRegion
         self.riskTags = riskTags
+        self.communityId = communityId
+        self.communityRiskDensity = communityRiskDensity
+        self.hwProfileDegree = hwProfileDegree
+        self.devicePageRank = devicePageRank
+        self.isInDenseSubgraph = isInDenseSubgraph
     }
 }
 

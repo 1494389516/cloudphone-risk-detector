@@ -39,6 +39,10 @@ public final class CPRiskKit: NSObject {
     private var remoteConfigEndpoint: URL?
     private var latestRemoteConfig: RemoteConfig?
 
+    private var boundAccountId: String?
+    private var boundSceneTag: String?
+    private var currentSessionId: String?
+
     private static let remoteConfigEndpointKey = "com.cloudphone.riskkit.remote.endpoint"
     private static let localPolicyInjectionAllowed: Bool = {
 #if DEBUG
@@ -71,7 +75,10 @@ public final class CPRiskKit: NSObject {
     /// 建议在 `application(_:didFinishLaunchingWithOptions:)` 里尽早调用。
     @objc public func start() {
         BuildConfig.configureForRelease()
-        Logger.log("start()")
+        stateLock.lock()
+        currentSessionId = UUID().uuidString
+        stateLock.unlock()
+        Logger.log("start() sessionId=\(currentSessionId ?? "")")
         registerProviders(for: .default)
 #if canImport(UIKit)
         touchCapture.start()
@@ -119,8 +126,50 @@ public final class CPRiskKit: NSObject {
         )
     }
 
+    /// 注入图算法反哺的特征（社区 ID、风险密度、PageRank 等）。
+    /// 服务端图分析完成后回传给 SDK，用于增强本地评分。
+    @objc(setGraphFeaturesWithCommunityId:communityRiskDensity:hwProfileDegree:devicePageRank:isInDenseSubgraph:riskTags:)
+    public static func setGraphFeatures(
+        communityId: String?,
+        communityRiskDensity: NSNumber?,
+        hwProfileDegree: NSNumber?,
+        devicePageRank: NSNumber?,
+        isInDenseSubgraph: NSNumber?,
+        riskTags: [String]?
+    ) {
+        ExternalServerAggregateProvider.shared.setGraphFeatures(
+            communityId: communityId,
+            communityRiskDensity: communityRiskDensity?.doubleValue,
+            hwProfileDegree: hwProfileDegree?.intValue,
+            devicePageRank: devicePageRank?.doubleValue,
+            isInDenseSubgraph: isInDenseSubgraph?.boolValue,
+            riskTags: riskTags
+        )
+    }
+
     @objc public static func clearExternalServerSignals() {
         ExternalServerAggregateProvider.shared.set(nil)
+    }
+
+    /// 绑定业务账号 ID，用于设备-账号关联图构建。
+    /// - Parameters:
+    ///   - accountId: 业务侧的用户/账号唯一标识
+    ///   - scene: 当前业务场景标签（如 "login", "register", "payment"）
+    @objc public func bindAccount(_ accountId: String, scene: String? = nil) {
+        stateLock.lock()
+        boundAccountId = accountId
+        boundSceneTag = scene
+        stateLock.unlock()
+        Logger.log("account.bind: accountId=\(accountId) scene=\(scene ?? "nil")")
+    }
+
+    /// 解绑业务账号（用户登出时调用）。
+    @objc public func unbindAccount() {
+        stateLock.lock()
+        boundAccountId = nil
+        boundSceneTag = nil
+        stateLock.unlock()
+        Logger.log("account.unbind")
     }
 
     /// 注入服务端策略（JSON 字符串）。
@@ -299,6 +348,12 @@ public final class CPRiskKit: NSObject {
 
         let out = CPRiskReport(context: context, report: scoreReport)
         out.setServerSignals(RiskSignalProviderRegistry.shared.serverSignals(snapshot: snapshot))
+        stateLock.lock()
+        let acctId = boundAccountId
+        let sessId = currentSessionId
+        let scnTag = boundSceneTag
+        stateLock.unlock()
+        out.setGraphBindings(accountId: acctId, sessionId: sessId, sceneTag: scnTag)
 
         RiskHistoryStore.shared.append(
             RiskHistoryEvent(

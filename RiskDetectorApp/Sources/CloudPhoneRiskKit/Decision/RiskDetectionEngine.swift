@@ -887,6 +887,20 @@ private extension RiskDetectionEngine {
         "rwx_anonymous": 90,
         "rwx_multiple": 60,
         "plt_integrity_tampered": 92,
+        // 3.5 图算法反哺信号权重
+        "graph_community_risk": 65,
+        "graph_hw_profile_cluster": 70,
+        "graph_dense_subgraph": 60,
+        "text_segment_tampered": 88,
+        // 3.5.1 Frida 深度检测信号权重
+        "frida_thread_anomaly": 75,
+        "frida_exception_port": 85,
+        "frida_js_engine_heap": 80,
+        "frida_stalker_jit": 78,
+        "objc_method_swizzled": 80,
+        "frida_dispatch_queue": 70,
+        "frida_unix_socket": 75,
+        "frida_timing_anomaly": 65,
     ]
 }
 

@@ -12,6 +12,16 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
 
     private let lock = NSLock()
     private var current: ServerSignals?
+    private var graphFeatures: GraphFeatures?
+
+    struct GraphFeatures {
+        var communityId: String?
+        var communityRiskDensity: Double?
+        var hwProfileDegree: Int?
+        var devicePageRank: Double?
+        var isInDenseSubgraph: Bool?
+        var riskTags: [String]?
+    }
 
     func set(_ signals: ServerSignals?) {
         lock.lock()
@@ -20,21 +30,59 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
         Logger.log("server_aggregate.set: \(signals == nil ? "nil" : "set")")
     }
 
+    func setGraphFeatures(
+        communityId: String?,
+        communityRiskDensity: Double?,
+        hwProfileDegree: Int?,
+        devicePageRank: Double?,
+        isInDenseSubgraph: Bool?,
+        riskTags: [String]?
+    ) {
+        lock.lock()
+        graphFeatures = GraphFeatures(
+            communityId: communityId,
+            communityRiskDensity: communityRiskDensity,
+            hwProfileDegree: hwProfileDegree,
+            devicePageRank: devicePageRank,
+            isInDenseSubgraph: isInDenseSubgraph,
+            riskTags: riskTags
+        )
+        lock.unlock()
+        Logger.log("server_aggregate.setGraphFeatures: community=\(communityId ?? "nil")")
+    }
+
     func serverSignals(snapshot: RiskSnapshot) -> ServerSignals? {
         lock.lock()
         let s = current
+        let gf = graphFeatures
         lock.unlock()
-        return s
+        guard s != nil || gf != nil else { return nil }
+        var merged = s ?? ServerSignals()
+        if let gf {
+            merged.communityId = gf.communityId
+            merged.communityRiskDensity = gf.communityRiskDensity
+            merged.hwProfileDegree = gf.hwProfileDegree
+            merged.devicePageRank = gf.devicePageRank
+            merged.isInDenseSubgraph = gf.isInDenseSubgraph
+            if let tags = gf.riskTags, !tags.isEmpty {
+                var existing = merged.riskTags ?? []
+                existing.append(contentsOf: tags)
+                merged.riskTags = existing
+            }
+        }
+        return merged
     }
 
     func signals(snapshot: RiskSnapshot) -> [RiskSignal] {
         lock.lock()
         let s = current
+        let gf = graphFeatures
         lock.unlock()
-        guard let s else { return [] }
+        guard s != nil || gf != nil else { return [] }
 
         var out: [RiskSignal] = []
 
+        if let s {
         if let ip = s.publicIP, !ip.isEmpty {
             out.append(
                 RiskSignal(
@@ -111,6 +159,47 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
                     layer: 4
                 )
             )
+        }
+        }
+
+        if let gf {
+            if let density = gf.communityRiskDensity, density > 50 {
+                let score: Double = density > 80 ? 20 : (density > 65 ? 12 : 5)
+                out.append(RiskSignal(
+                    id: "graph_community_risk",
+                    category: "server",
+                    score: score,
+                    evidence: [
+                        "community_id": gf.communityId ?? "unknown",
+                        "risk_density": "\(density)"
+                    ],
+                    state: .serverRequired,
+                    layer: 4
+                ))
+            }
+
+            if let degree = gf.hwProfileDegree, degree >= 10 {
+                let score: Double = degree >= 100 ? 20 : (degree >= 50 ? 15 : 8)
+                out.append(RiskSignal(
+                    id: "graph_hw_profile_cluster",
+                    category: "server",
+                    score: score,
+                    evidence: ["hw_profile_degree": "\(degree)"],
+                    state: .serverRequired,
+                    layer: 4
+                ))
+            }
+
+            if gf.isInDenseSubgraph == true {
+                out.append(RiskSignal(
+                    id: "graph_dense_subgraph",
+                    category: "server",
+                    score: 15,
+                    evidence: ["in_dense_subgraph": "true"],
+                    state: .serverRequired,
+                    layer: 4
+                ))
+            }
         }
 
         return out

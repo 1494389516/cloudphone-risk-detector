@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
-  <img src="https://img.shields.io/badge/SDK-3.5.0-FF3B30?style=for-the-badge" alt="SDK">
+  <img src="https://img.shields.io/badge/SDK-3.6-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
   <img src="https://img.shields.io/badge/License-Proprietary-8E8E93?style=for-the-badge" alt="License">
 </p>
@@ -26,6 +26,8 @@
 | 3.0 | 架构重建 | 四层检测体系、场景化决策树、信号状态模型 |
 | 3.1 | 检测补强 | 关键符号扩展、trampoline 识别、路径判定强化 |
 | 3.5 | **安全加固 + 检测能力补强** | DRM 等级检测、电池物理熵、RWX 内存扫描、字符串混淆、SVC 直调、PLT 完整性校验、HMAC 签名 |
+| 3.5.1 | **图算法对接 + 代码段完整性** | 账号/会话绑定、行为向量导出、图特征反哺、__TEXT 段哈希校验 |
+| 3.6 | **Frida 深度对抗** | 线程枚举异常、异常端口劫持、V8 堆特征、Stalker JIT 检测、ObjC Swizzle、Dispatch Queue 扫描、Unix Socket、时序侧信道（8 维全覆盖） |
 
 ## 架构概览
 
@@ -43,8 +45,15 @@
 │ GPU 名称  │ PLT/GOT   │ 触摸熵    │  公网 IP / ASN    │
 │ DRM 等级  │ RWX 内存   │ 传感器熵   │  机房属性         │
 │ 设备型号  │ Hook 检测  │ 电压方差   │  IP 聚合度        │
-│ 电池计数器 │ 挂载点     │ 时序模式   │  风险标签         │
-│ Board ID │ SVC 双路   │ 耦合分析   │  黑名单           │
+│ 电池计数器 │ 挂载点     │ 时序模式   │  图特征反哺       │
+│ Board ID │ SVC 双路   │ 耦合分析   │  风险标签         │
+│          │ 代码段哈希  │           │  黑名单           │
+│          │ 线程枚举   │           │                   │
+│          │ 异常端口   │           │                   │
+│          │ V8 堆检测  │           │                   │
+│          │ ObjC Swizzle│          │                   │
+│          │ Socket 检测 │          │                   │
+│          │ 时序侧信道  │           │                   │
 └──────────┴───────────┴───────────┴───────────────────┘
 ```
 
@@ -52,9 +61,9 @@
 
 | 类型 | 判定方式 | 典型信号 | 权重 |
 |------|----------|----------|------|
-| **硬信号** | 本地独立判定，单点即可触发 | 越狱、DRM 降级、ChargeCounter 异常、PLT 篡改 | 80-100 |
-| **软信号** | 需结合场景综合评分 | VPN、行为异常、电压方差低、挂载点异常 | 30-75 |
-| **服务端信号** | 依赖外部聚合 | 机房 IP、ASN 黑名单、IP 设备聚合度 | 55-100 |
+| **硬信号** | 本地独立判定，单点即可触发 | 越狱、DRM 降级、ChargeCounter 异常、PLT 篡改、ObjC Swizzle、异常端口劫持 | 80-100 |
+| **软信号** | 需结合场景综合评分 | VPN、行为异常、电压方差低、挂载点异常、时序侧信道、线程枚举异常 | 30-75 |
+| **服务端信号** | 依赖外部聚合 | 机房 IP、ASN 黑名单、IP 设备聚合度、图社区风险、硬件画像聚集 | 55-100 |
 
 ## 3.5 新增能力
 
@@ -79,6 +88,70 @@
 | **上报语义混淆** | P1 | 字段名运行时映射 + 10-15 个诱饵字段注入，攻击者无法区分真伪 |
 | **HMAC 结论签名** | P1 | HKDF-SHA256 派生设备密钥 + HMAC-SHA256 签名，服务端验签防篡改 |
 | **Release 日志禁用** | P0 | 生产构建自动禁用所有日志输出，避免 panic 路径泄露信息 |
+| **代码段哈希校验** | P0 | 首次运行建立 __TEXT.__text SHA-256 基线，后续校验检测 inline hook，LC_UUID 跟踪版本变更 |
+
+## 3.5.1 新增能力
+
+### 图算法数据对接
+
+| 能力 | 说明 |
+|------|------|
+| **账号/会话绑定** | `bindAccount` / `unbindAccount` 将业务账号 ID 写入上报 Payload，打通设备-账号关联图 |
+| **行为向量导出** | 6 维归一化行为向量（触摸扩散/间隔CV/线性度/力方差/静止比/运动能量）自动写入 Payload，用于行为相似度计算 |
+| **图特征反哺** | `setGraphFeatures` 接收服务端图分析结果（社区 ID、风险密度、硬件画像聚集度、PageRank、密集子图标记），自动生成 `graph_community_risk` / `graph_hw_profile_cluster` / `graph_dense_subgraph` 信号参与评分 |
+
+### 代码段完整性校验
+
+| 能力 | 优先级 | 层级 | 原理 |
+|------|--------|------|------|
+| **__TEXT.__text 哈希** | P0 | Layer 2 | 首次运行建立 SHA-256 基线，后续校验检测 inline hook / 指令替换。通过 `LC_UUID` 跟踪二进制版本变更，`LC_ENCRYPTION_INFO` 处理 FairPlay 加密 |
+
+## 3.6 新增能力 — Frida 深度对抗（8 维全覆盖）
+
+3.6 版本从 **进程、内存、运行时、网络、时序** 五个维度构建 Frida 检测纵深，将检测绕过成本从"改一行脚本"提升到"重写注入框架"。
+
+### 检测器矩阵
+
+| 检测器 | 检测维度 | 优先级 | 绕过难度 | 原理 |
+|--------|----------|--------|----------|------|
+| `FridaThreadDetector` | 线程枚举异常 | P0 | 高 | `task_threads()` + `pthread_getname_np()` 检测 gum-js-loop / gmain / gdbus 等 Frida 线程；线程数 > 25 辅助判定 |
+| `FridaThreadDetector` | 异常端口劫持 | P0 | 极高 | `task_get_exception_ports()` 检测非空异常处理端口，Frida 必须接管异常才能实现 Interceptor |
+| `FridaHeapDetector` | V8/QuickJS 堆特征 | P0 | 高 | `vm_region_64` 扫描匿名 rw- 大内存段（> 15MB），V8 引擎典型产生 20-100MB 匿名堆 |
+| `FridaHeapDetector` | Stalker JIT 代码页 | P1 | 极高 | 检测匿名 r-x 页（不属于任何 dylib），Stalker 代码追踪必须 JIT 编译 |
+| `ObjCSwizzleDetector` | ObjC 方法劫持 | P0 | 高 | `method_getImplementation()` + `dladdr()` 验证 IMP 是否在预期框架镜像内，检测 NSFileManager / UIDevice 等关键类 |
+| `ObjCSwizzleDetector` | Dispatch Queue 扫描 | P1 | 中 | 线程关联队列标签匹配 frida / gum-js / linjector 等特征 |
+| `FridaSocketDetector` | Unix 域套接字 | P1 | 中 | `/tmp/frida-*` 路径探测 + `getsockname()` FD 扫描 + 目录遍历 |
+| `FridaSocketDetector` | 时序侧信道 | P1 | 极高 | `mach_absolute_time()` 纳秒级计时 `getpid()` / `stat()`，Interceptor 注入增加 5-50μs 延迟，p95 > 3μs 即可判定 |
+
+### 信号 ID 与权重
+
+| 信号 ID | 权重 | 触发条件 |
+|---------|------|----------|
+| `frida_thread_anomaly` | 75 | 发现 Frida 特征线程名 |
+| `frida_exception_port` | 85 | 检测到非空异常处理端口 |
+| `frida_js_engine_heap` | 80 | 匿名 rw- 堆超过阈值 |
+| `frida_stalker_jit` | 78 | 发现匿名 r-x JIT 代码页 |
+| `objc_method_swizzled` | 80 | 关键 ObjC 方法 IMP 被重定向 |
+| `frida_dispatch_queue` | 70 | 发现 Frida 特征队列标签 |
+| `frida_unix_socket` | 75 | 发现 Frida IPC 套接字 |
+| `frida_timing_anomaly` | 65 | 系统调用延迟异常 |
+
+### 对抗纵深设计
+
+```
+┌─────────────────────────────────────────────────────────┐
+│               Frida 深度对抗 — 五维检测矩阵               │
+├──────────┬──────────┬──────────┬──────────┬──────────────┤
+│  进程层   │  内存层   │ 运行时层  │  网络层   │   时序层     │
+├──────────┼──────────┼──────────┼──────────┼──────────────┤
+│ 线程枚举  │ V8 堆    │ ObjC IMP │ Unix Socket│ getpid 计时 │
+│ 异常端口  │ Stalker  │ Swizzle  │ /tmp 扫描  │ stat 计时   │
+│ 线程名匹配 │ JIT 代码页│ 队列标签  │ FD 遍历   │ p95 判定   │
+└──────────┴──────────┴──────────┴──────────┴──────────────┘
+攻击者绕过单层 → 其余 4 层仍然触发
+全部绕过需要：重写线程管理 + 隐藏内存 + 替换 IMP 检查 + 清理 Socket + 消除延迟
+→ 等价于重写一个 Frida
+```
 
 ## 快速开始
 
@@ -154,6 +227,31 @@ let report = CPRiskKit.shared.evaluate(config: cfg, scenario: .payment)
 ```
 
 支持场景：`login` / `payment` / `register` / `accountChange` / `sensitiveAction` / `apiAccess`
+
+### 账号绑定与图算法对接（3.5.1）
+
+```swift
+// 用户登录后绑定账号
+CPRiskKit.shared.bindAccount("user_12345", scene: "login")
+
+// 评估时自动写入 accountId / sessionId / behaviorVector
+let report = CPRiskKit.shared.evaluate()
+// report.accountId  → "user_12345"
+// report.sessionId  → 自动生成的会话 UUID
+
+// 注入图算法反哺特征
+CPRiskKit.setGraphFeatures(
+    communityId: "comm_42",
+    communityRiskDensity: 78.5,
+    hwProfileDegree: 120,
+    devicePageRank: 0.0023,
+    isInDenseSubgraph: true,
+    riskTags: ["cloud_farm_suspect"]
+)
+
+// 登出时解绑
+CPRiskKit.shared.unbindAccount()
+```
 
 ### 服务端信号注入
 
@@ -281,6 +379,11 @@ RiskDetectorApp/
 | `MemoryIntegrityChecker` | 内存完整性校验 |
 | `SDKIntegrityChecker` | DYLD 注入 / 可疑镜像 / Bundle 路径 / 代码签名 |
 | `PLTIntegrityGuard` | 10 个关键函数的 PLT 地址基线校验 **(3.5)** |
+| `TextSegmentIntegrityChecker` | __TEXT.__text SHA-256 代码段哈希基线校验 **(3.5.1)** |
+| `FridaThreadDetector` | 线程枚举异常 + Mach 异常端口劫持检测 **(3.6)** |
+| `FridaHeapDetector` | V8/QuickJS 堆特征 + Stalker JIT 代码页检测 **(3.6)** |
+| `ObjCSwizzleDetector` | ObjC 方法 IMP 劫持 + Dispatch Queue 名称扫描 **(3.6)** |
+| `FridaSocketDetector` | Unix 域套接字检测 + 时序侧信道分析 **(3.6)** |
 
 ### 设备 & 环境信号
 
@@ -345,6 +448,35 @@ RiskDetectorApp/
 服务端：验签失败 → 反而暴露攻击行为
 ```
 
+### 代码段完整性校验
+
+```
+首次运行：SHA-256(__TEXT.__text) → 存储基线（keyed by LC_UUID）
+后续运行：重新计算哈希 → 与基线对比
+哈希一致 → 代码未被修改
+哈希不一致 → inline hook / 指令替换 → tampered 信号触发
+版本更新（UUID 变化）→ 自动重建基线
+FairPlay 加密（cryptid ≠ 0）→ 安全跳过
+```
+
+### 图特征闭环
+
+```
+SDK 上报 → 服务端存储 → 图构建（Device/Account/IP/ASN/HWProfile）
+  → 社区发现 + 中心性分析 → 图特征提取
+  → setGraphFeatures() 回传 SDK → 增强本地评分
+```
+
+### Frida 五维对抗
+
+```
+进程层：task_threads → 线程名/数量异常 → 不可隐藏（Frida 核心线程无法关闭）
+内存层：vm_region_64 → V8 堆 / JIT 代码页 → 无法避免（JS 引擎必须分配内存）
+运行时层：method_getImplementation + dladdr → IMP 重定向 → 无法绕过（hook 本质就是改 IMP）
+网络层：getsockname / 目录遍历 → Unix Socket → 可绕过但需修改 Frida 源码
+时序层：mach_absolute_time → 纳秒级延迟 → 物理定律无法绕过（额外指令必然消耗时间）
+```
+
 ## 文档索引
 
 | 文档 | 路径 |
@@ -370,4 +502,4 @@ swift build
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 3.5.0 — Security Hardening + Detection Enhancement</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 3.6 — Frida Deep Countermeasures + Full Detection Enhancement</sub></p>
