@@ -70,6 +70,7 @@ public final class CPRiskKit: NSObject {
     /// 启动自动采集（全局触摸 + 传感器）。
     /// 建议在 `application(_:didFinishLaunchingWithOptions:)` 里尽早调用。
     @objc public func start() {
+        BuildConfig.configureForRelease()
         Logger.log("start()")
         registerProviders(for: .default)
 #if canImport(UIKit)
@@ -444,6 +445,9 @@ public final class CPRiskKit: NSObject {
         RiskSignalProviderRegistry.shared.register(DeviceAgeProvider.shared)
         RiskSignalProviderRegistry.shared.register(VPhoneHardwareProvider.shared)
         RiskSignalProviderRegistry.shared.register(LayeredConsistencyProvider.shared)
+        RiskSignalProviderRegistry.shared.register(MountPointProvider.shared)
+        RiskSignalProviderRegistry.shared.register(DRMCapabilityProvider.shared)
+        RiskSignalProviderRegistry.shared.register(BatteryEntropyProvider.shared)
 
         if config.enableTemporalAnalysis {
             RiskSignalProviderRegistry.shared.register(TimePatternProvider.shared)

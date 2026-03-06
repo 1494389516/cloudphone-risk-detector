@@ -126,6 +126,7 @@ public final class CPRiskReport: NSObject {
     @objc public let jailbreakIsJailbroken: Bool
     @objc public let detectedMethods: [String]
     @objc public let signals: [CPRiskSignal]
+    @objc public let tampered: Bool
 
     private var payload: Payload
 
@@ -140,6 +141,7 @@ public final class CPRiskReport: NSObject {
         self.jailbreakIsJailbroken = context.jailbreak.isJailbroken
         self.detectedMethods = context.jailbreak.detectedMethods
         self.signals = report.signals.map(CPRiskSignal.init)
+        self.tampered = builtPayload.tamperedCount > 0
         self.payload = builtPayload
     }
 
@@ -369,5 +371,5 @@ private struct DetectionResultPayload: Codable {
 }
 
 enum Version {
-    static let current = "3.0.0-beta.1"
+    static let current = "3.5.0"
 }

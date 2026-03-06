@@ -17,22 +17,13 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
     
     /// 配置选项
     public struct Configuration: Sendable {
-        /// 是否启用反调试检测
         var enableAntiTampering: Bool = true
-        
-        /// 是否启用调试器检测
         var enableDebugger: Bool = true
-        
-        /// 是否启用 Frida 检测
         var enableFrida: Bool = true
-        
-        /// 是否启用代码签名验证
         var enableCodeSignature: Bool = true
-        
-        /// 是否启用内存完整性检查
         var enableMemoryIntegrity: Bool = true
-        
-        /// 最低风险分数阈值（低于此分数的信号不会上报）
+        var enableRWXMemoryScan: Bool = true
+        var enablePLTIntegrity: Bool = true
         var minScoreThreshold: Double = 0
         
         public static let `default` = Configuration()
@@ -88,8 +79,19 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
             let memorySignals = detectMemoryIntegrityIssues(baseScore: baseJailbreakScore)
             signals.append(contentsOf: memorySignals)
         }
+
+        // 6. 匿名 RWX 内存段扫描（3.5 新增）
+        if configuration.enableRWXMemoryScan {
+            signals.append(contentsOf: RWXMemoryScanner().asSignals())
+        }
+
+        // 7. PLT/GOT 完整性校验（3.5 新增）
+        if configuration.enablePLTIntegrity {
+            let baseline = PLTIntegrityGuard.captureBaseline()
+            let pltResult = PLTIntegrityGuard.verify(baseline: baseline)
+            signals.append(contentsOf: PLTIntegrityGuard.asSignals(result: pltResult))
+        }
         
-        // 过滤低分信号
         return signals.filter { $0.score >= configuration.minScoreThreshold }
     }
     

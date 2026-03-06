@@ -875,6 +875,18 @@ private extension RiskDetectionEngine {
         "datacenter_ip": 55,
         "ip_device_agg": 70,
         "cloud_phone_tag": 90,
+        // 3.5 新增信号权重
+        "drm_capability": 85,
+        "drm_device_mismatch": 100,
+        "battery_charge_counter": 95,
+        "battery_voltage_entropy": 55,
+        "battery_energy_counter": 85,
+        "mount_virtual_fs": 75,
+        "mount_missing_required": 60,
+        "mount_count_anomaly": 45,
+        "rwx_anonymous": 90,
+        "rwx_multiple": 60,
+        "plt_integrity_tampered": 92,
     ]
 }
 
