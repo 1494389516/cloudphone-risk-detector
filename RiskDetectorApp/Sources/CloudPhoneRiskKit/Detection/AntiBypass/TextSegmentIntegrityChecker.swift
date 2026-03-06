@@ -2,6 +2,7 @@ import CryptoKit
 import Darwin
 import Foundation
 import MachO
+import Security
 
 /// __TEXT.__text 代码段哈希完整性校验
 ///
@@ -23,8 +24,8 @@ enum TextSegmentIntegrityChecker {
         let detail: String
     }
 
-    private static let baselineKey = "com.cpriskkit.text_hash_baseline"
-    private static let baselineVersionKey = "com.cpriskkit.text_hash_version"
+    private static let baselineAccount = "text_hash_baseline_v1"
+    private static let versionAccount = "text_hash_version_v1"
 
     /// Main entry: verify text segment integrity
     static func verify() -> IntegrityResult {
@@ -68,9 +69,8 @@ enum TextSegmentIntegrityChecker {
 
         let uuid = binaryUUID(header: header) ?? "unknown"
         let storedBaseline = loadBaseline()
-        let storedVersion = UserDefaults.standard.string(forKey: baselineVersionKey)
 
-        if let stored = storedBaseline, storedVersion == uuid {
+        if let stored = storedBaseline, stored.version == uuid {
             let match = stored.hash == hash
             return IntegrityResult(
                 isIntact: match,
@@ -82,7 +82,7 @@ enum TextSegmentIntegrityChecker {
             )
         }
 
-        if storedVersion != nil && storedVersion != uuid {
+        if let stored = storedBaseline, stored.version != uuid {
             saveBaseline(hash: hash, version: uuid)
             return IntegrityResult(
                 isIntact: true,
@@ -220,8 +220,8 @@ enum TextSegmentIntegrityChecker {
     }
 
     static func loadBaseline() -> (hash: String, version: String)? {
-        guard let hash = UserDefaults.standard.string(forKey: baselineKey),
-              let version = UserDefaults.standard.string(forKey: baselineVersionKey),
+        guard let hash = keychainRead(account: baselineAccount),
+              let version = keychainRead(account: versionAccount),
               !hash.isEmpty, !version.isEmpty
         else {
             return nil
@@ -230,8 +230,45 @@ enum TextSegmentIntegrityChecker {
     }
 
     static func saveBaseline(hash: String, version: String) {
-        UserDefaults.standard.set(hash, forKey: baselineKey)
-        UserDefaults.standard.set(version, forKey: baselineVersionKey)
+        _ = keychainSave(account: baselineAccount, value: hash)
+        _ = keychainSave(account: versionAccount, value: version)
+    }
+
+    private static let keychainService = "CloudPhoneRiskKit"
+    private static let keychainAccessible = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+
+    private static func keychainRead(account: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess, let data = item as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func keychainSave(account: String, value: String) -> Bool {
+        let data = Data(value.utf8)
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: account,
+        ]
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: keychainAccessible,
+        ]
+        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecSuccess { return true }
+        if status != errSecItemNotFound { return false }
+        var addQuery = query
+        addQuery[kSecValueData as String] = data
+        addQuery[kSecAttrAccessible as String] = keychainAccessible
+        return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
     }
 
     /// Extract LC_UUID for version tracking

@@ -1,10 +1,49 @@
 import Darwin
 import Foundation
+import Security
 #if canImport(UIKit)
 import UIKit
 #endif
 
 struct FingerprintDeobfuscation: Detector {
+
+    private static let keychainService = "CloudPhoneRiskKit"
+    private static let keychainAccount = "fingerprint_signature_v1"
+    private static let keychainAccessible = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+
+    private static func keychainRead() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func keychainWrite(value: String) {
+        let data = Data(value.utf8)
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount,
+        ]
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: keychainAccessible,
+        ]
+        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            var addQuery = query
+            addQuery[kSecValueData as String] = data
+            addQuery[kSecAttrAccessible as String] = keychainAccessible
+            SecItemAdd(addQuery as CFDictionary, nil)
+        }
+    }
     func detect() -> DetectorResult {
         var score: Double = 0
         var methods: [String] = []
@@ -65,18 +104,16 @@ struct FingerprintDeobfuscation: Detector {
 
     private func hasFingerprintMutation() -> Bool {
         let fingerprint = collectFingerprintSignature()
-        let key = "CPRisk_FingerprintSignature"
-        let defaults = UserDefaults.standard
 
-        if let old = defaults.string(forKey: key) {
+        if let old = Self.keychainRead() {
             if old != fingerprint {
-                defaults.set(fingerprint, forKey: key)
+                Self.keychainWrite(value: fingerprint)
                 return true
             }
             return false
         }
 
-        defaults.set(fingerprint, forKey: key)
+        Self.keychainWrite(value: fingerprint)
         return false
     }
 

@@ -5,8 +5,10 @@ final class JailbreakEngine {
 #if targetEnvironment(simulator)
         // iOS Simulator runs as a macOS process and shares host filesystem/dyld state.
         // Most jailbreak heuristics will false-positive here (e.g. dylib count, /bin/bash).
-        let simulate = (ProcessInfo.processInfo.environment["CPRISK_SIMULATE_JAILBREAK"] == "1")
-            || UserDefaults.standard.bool(forKey: "cloudphone_risk_debug_simulate_jailbreak")
+        var simulate = ProcessInfo.processInfo.environment["CPRISK_SIMULATE_JAILBREAK"] == "1"
+        #if DEBUG
+        simulate = simulate || UserDefaults.standard.bool(forKey: "cloudphone_risk_debug_simulate_jailbreak")
+        #endif
         if simulate {
             Logger.log("jailbreak: simulator -> simulated_jailbreak")
             return DetectionResult(

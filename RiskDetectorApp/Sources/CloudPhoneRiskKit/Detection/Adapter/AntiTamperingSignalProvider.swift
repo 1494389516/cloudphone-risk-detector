@@ -29,6 +29,11 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         var enableFridaHeapDetect: Bool = true
         var enableObjCSwizzleDetect: Bool = true
         var enableFridaSocketDetect: Bool = true
+        var enableMultiPathFileDetect: Bool = true
+        var enableRandomizedDetection: Bool = true
+        var enableFingerprintDeobfuscation: Bool = true
+        var enableDyldInterposeDetect: Bool = true
+        var enableSDKBinaryIntegrity: Bool = true
         var minScoreThreshold: Double = 0
         
         public static let `default` = Configuration()
@@ -121,6 +126,119 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         // 12. Unix Socket + 时序侧信道（3.5.1 新增）
         if configuration.enableFridaSocketDetect {
             signals.append(contentsOf: FridaSocketDetector().asSignals())
+        }
+
+        // 13. 多路径文件一致性检测（3.6 新增）
+        if configuration.enableMultiPathFileDetect {
+            let mpResult = MultiPathFileDetector().detect()
+            if mpResult.score > 0 {
+                var mpSignals: [RiskSignal] = []
+                let hookMethods = mpResult.methods.filter { $0.hasPrefix("multipart_hook:") }
+                if !hookMethods.isEmpty {
+                    mpSignals.append(RiskSignal(
+                        id: "multipath_hook_detected",
+                        category: "anti_tamper",
+                        score: min(Double(hookMethods.count) * 15, 30),
+                        evidence: ["methods": hookMethods.joined(separator: ",")],
+                        state: .tampered,
+                        layer: 2,
+                        weightHint: 82
+                    ))
+                }
+                let pathMethods = mpResult.methods.filter { $0.hasPrefix("multipart:") && !$0.contains("hook") }
+                if !pathMethods.isEmpty {
+                    mpSignals.append(RiskSignal(
+                        id: "multipath_jailbreak_file",
+                        category: "jailbreak",
+                        score: min(Double(pathMethods.count) * 12, 25),
+                        evidence: ["paths": pathMethods.joined(separator: ",")],
+                        state: .hard(detected: true),
+                        layer: 2,
+                        weightHint: 70
+                    ))
+                }
+                signals.append(contentsOf: mpSignals)
+            }
+        }
+
+        // 14. 随机化检测 — 时序异常 + 环境检查（3.6 新增）
+        if configuration.enableRandomizedDetection {
+            let randResult = RandomizedDetection().detect()
+            if randResult.score > 0 {
+                signals.append(RiskSignal(
+                    id: "randomized_env_anomaly",
+                    category: "anti_tamper",
+                    score: randResult.score,
+                    evidence: ["methods": randResult.methods.joined(separator: ",")],
+                    state: .soft(confidence: min(randResult.score / 50.0, 1.0)),
+                    layer: 2,
+                    weightHint: 60
+                ))
+            }
+        }
+
+        // 15. 指纹反混淆 — 模拟器 / 虚拟化 / 指纹突变（3.6 新增）
+        if configuration.enableFingerprintDeobfuscation {
+            let fpResult = FingerprintDeobfuscation().detect()
+            if fpResult.score > 0 {
+                var fpSignals: [RiskSignal] = []
+                if fpResult.methods.contains(where: { $0.contains("simulator") }) {
+                    fpSignals.append(RiskSignal(
+                        id: "fingerprint_simulator",
+                        category: "device",
+                        score: 30,
+                        evidence: ["type": "simulator_like_environment"],
+                        state: .hard(detected: true),
+                        layer: 1,
+                        weightHint: 90
+                    ))
+                }
+                if fpResult.methods.contains(where: { $0.contains("virtualization") }) {
+                    fpSignals.append(RiskSignal(
+                        id: "fingerprint_virtualization",
+                        category: "device",
+                        score: 25,
+                        evidence: ["type": "virtualization_artifacts"],
+                        state: .hard(detected: true),
+                        layer: 1,
+                        weightHint: 85
+                    ))
+                }
+                if fpResult.methods.contains(where: { $0.contains("fingerprint_changed") }) {
+                    fpSignals.append(RiskSignal(
+                        id: "fingerprint_mutation",
+                        category: "device",
+                        score: 12,
+                        evidence: ["type": "device_fingerprint_changed"],
+                        state: .soft(confidence: 0.6),
+                        layer: 1,
+                        weightHint: 55
+                    ))
+                }
+                if fpResult.methods.contains(where: { $0.contains("suspicious_hw") }) {
+                    fpSignals.append(RiskSignal(
+                        id: "fingerprint_suspicious_hw",
+                        category: "device",
+                        score: 20,
+                        evidence: ["type": "suspicious_hardware_model"],
+                        state: .hard(detected: true),
+                        layer: 1,
+                        weightHint: 80
+                    ))
+                }
+                signals.append(contentsOf: fpSignals)
+            }
+        }
+
+        // 16. DYLD_INTERPOSE section + 环境变量滥用（3.6 新增）
+        if configuration.enableDyldInterposeDetect {
+            signals.append(contentsOf: DyldInterposeDetector().asSignals())
+        }
+
+        // 17. SDK 二进制自身完整性校验（3.6 新增）
+        if configuration.enableSDKBinaryIntegrity {
+            let binResult = SDKBinaryIntegrityChecker.verify()
+            signals.append(contentsOf: SDKBinaryIntegrityChecker.asSignals(result: binResult))
         }
 
         return signals.filter { $0.score >= configuration.minScoreThreshold }

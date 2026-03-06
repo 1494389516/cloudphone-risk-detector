@@ -42,10 +42,9 @@ struct FridaSocketDetector: Detector {
             "/private/tmp/.frida-",
         ]
 
-        // Method 1: Check known paths using stat()
+        // Method 1: Check known paths using access()
         for prefix in suspiciousPaths {
-            var st = stat()
-            if Darwin.stat(prefix, &st) == 0 {
+            if access(prefix, F_OK) == 0 {
                 score += 12
                 methods.append("frida_socket:path:\(prefix)")
             }
@@ -135,9 +134,8 @@ struct FridaSocketDetector: Detector {
         let testPath = "/usr/lib/dyld"
 
         for _ in 0..<iterations {
-            var st = stat()
             let start = mach_absolute_time()
-            _ = testPath.withCString { Darwin.stat($0, &st) }
+            _ = access(testPath, F_OK)
             let end = mach_absolute_time()
             statTimes.append(end - start)
         }

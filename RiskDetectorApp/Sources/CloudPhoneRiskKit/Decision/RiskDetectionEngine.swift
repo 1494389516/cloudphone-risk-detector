@@ -901,6 +901,21 @@ private extension RiskDetectionEngine {
         "frida_dispatch_queue": 70,
         "frida_unix_socket": 75,
         "frida_timing_anomaly": 65,
+        // 3.6 加固信号权重
+        "multipath_hook_detected": 82,
+        "multipath_jailbreak_file": 70,
+        "randomized_env_anomaly": 60,
+        "fingerprint_simulator": 90,
+        "fingerprint_virtualization": 85,
+        "fingerprint_mutation": 55,
+        "fingerprint_suspicious_hw": 80,
+        "dyld_interpose_detected": 88,
+        "dyld_env_abuse": 78,
+        "dyld_image_overload": 45,
+        "sdk_code_signature_missing": 90,
+        "sdk_binary_replaced": 95,
+        "sdk_segment_tampered": 85,
+        "sdk_binary_size_anomaly": 70,
     ]
 }
 

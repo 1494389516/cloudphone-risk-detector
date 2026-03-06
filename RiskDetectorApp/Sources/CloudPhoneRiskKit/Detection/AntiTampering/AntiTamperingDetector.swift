@@ -47,6 +47,10 @@ struct AntiTamperingDetector: Detector {
             methods.append("anti_tampering:timing")
         }
 
+        let ptraceResult = denyDebuggerAttach()
+        score += ptraceResult.score
+        methods.append(contentsOf: ptraceResult.methods)
+
         return DetectorResult(score: min(score, 90), methods: methods)
 #endif
     }
@@ -79,6 +83,25 @@ struct AntiTamperingDetector: Detector {
 
     private func hasDebugEnvironment() -> Bool {
         debugEnvironmentKeys.contains { getenv($0) != nil }
+    }
+
+    private func denyDebuggerAttach() -> (score: Double, methods: [String]) {
+        #if targetEnvironment(simulator) || DEBUG
+        return (0, [])
+        #else
+        typealias PtraceFunc = @convention(c) (CInt, pid_t, UnsafeRawPointer?, CInt) -> CInt
+        guard let ptracePtr = dlsym(UnsafeRawPointer(bitPattern: -2), "ptrace") else {
+            return (5, ["ptrace:dlsym_failed"])
+        }
+        let ptraceFn = unsafeBitCast(ptracePtr, to: PtraceFunc.self)
+        let PT_DENY_ATTACH: CInt = 31
+        let result = ptraceFn(PT_DENY_ATTACH, 0, nil, 0)
+        if result != 0 && errno == ENOTSUP {
+            // If PT_DENY_ATTACH fails with ENOTSUP, a debugger is already attached
+            return (25, ["ptrace:debugger_already_attached"])
+        }
+        return (0, [])
+        #endif
     }
 
     private func hasTimingAnomaly() -> Bool {
