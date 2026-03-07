@@ -367,6 +367,25 @@ public struct RiskDetectionEngine: Sendable {
             )
         }
 
+        let totalActions = behavior.touch.tapCount + behavior.touch.swipeCount
+        if totalActions < 3, behavior.touch.sampleCount < 5 {
+            signals.append(
+                RiskSignal(
+                    id: "insufficient_behavior_data",
+                    category: "behavior",
+                    score: 5,
+                    evidence: [
+                        "tapCount": "\(behavior.touch.tapCount)",
+                        "swipeCount": "\(behavior.touch.swipeCount)",
+                        "sampleCount": "\(behavior.touch.sampleCount)"
+                    ],
+                    state: .soft(confidence: 0.4),
+                    layer: 3,
+                    weightHint: 15
+                )
+            )
+        }
+
         return signals
     }
 
@@ -467,25 +486,40 @@ public struct RiskDetectionEngine: Sendable {
         )
     }
 
+    private static let criticalSignalMinWeights: [String: Double] = [
+        "vphone_hardware": 50,
+        "gpu_virtual": 50,
+        "hook_detected": 40,
+        "jailbreak": 30,
+        "blocklist_hit": 50,
+        "cross_layer_inconsistency": 40,
+        "sdk_binary_replaced": 50,
+        "plt_integrity_tampered": 40,
+        "frida_thread_anomaly": 30,
+        "frida_js_engine_heap": 30,
+        "dyld_interpose_detected": 40,
+    ]
+
     private func signalWeight(
         for signal: RiskSignal,
         overrides: [String: Double],
         planner: MutationPlanner
     ) -> Double {
+        let minWeight = Self.criticalSignalMinWeights[signal.id] ?? 0
         let baseWeight: Double
         if signal.weightHint > 0 {
             baseWeight = signal.weightHint
             return planner.jitter(base: baseWeight, maxBps: policy.mutationStrategy?.scoreJitterBps ?? 0)
         }
         if let override = overrides[signal.id], override > 0 {
-            baseWeight = override
+            baseWeight = max(override, minWeight)
             return planner.jitter(base: baseWeight, maxBps: policy.mutationStrategy?.scoreJitterBps ?? 0)
         }
         if let fallback = Self.defaultV3SignalWeights[signal.id], fallback > 0 {
-            baseWeight = fallback
+            baseWeight = max(fallback, minWeight)
             return planner.jitter(base: baseWeight, maxBps: policy.mutationStrategy?.scoreJitterBps ?? 0)
         }
-        baseWeight = max(signal.score, 0)
+        baseWeight = max(max(signal.score, 0), minWeight)
         return planner.jitter(base: baseWeight, maxBps: policy.mutationStrategy?.scoreJitterBps ?? 0)
     }
 

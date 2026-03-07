@@ -142,7 +142,12 @@ enum BuildConfig {
         #endif
     }()
 
+    private(set) static var isConfigured = false
+
     static func configureForRelease() {
+        guard !isConfigured else { return }
+        isConfigured = true
+
         if isRelease {
             Logger.isEnabled = false
         }

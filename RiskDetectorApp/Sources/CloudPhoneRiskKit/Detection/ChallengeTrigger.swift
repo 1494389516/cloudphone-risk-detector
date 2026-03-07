@@ -277,7 +277,18 @@ extension ChallengeTrigger {
         guard let expected = signChallengePayload(payload: payload, signingKey: signingKey) else {
             return false
         }
-        return expected == signature.lowercased()
+        return timingSafeCompare(expected, signature.lowercased())
+    }
+
+    private static func timingSafeCompare(_ lhs: String, _ rhs: String) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        let lhsBytes = Array(lhs.utf8)
+        let rhsBytes = Array(rhs.utf8)
+        var result: UInt8 = 0
+        for i in 0..<lhsBytes.count {
+            result |= lhsBytes[i] ^ rhsBytes[i]
+        }
+        return result == 0
     }
 
     /// 验证客户端上报的数据是否与服务端规则匹配

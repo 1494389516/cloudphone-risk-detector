@@ -261,6 +261,13 @@ public struct DecisionTree: Codable, Sendable {
     public func decide(context: EvaluationContext) -> RiskAction {
         switch evaluate(context: context) {
         case .next, .branch:
+            if context.score >= context.policy.criticalThreshold {
+                return .block
+            } else if context.score >= context.policy.highThreshold {
+                return .stepUpAuth
+            } else if context.score >= context.policy.mediumThreshold {
+                return .challenge
+            }
             return .allow
         case .terminate(let action, _):
             return action

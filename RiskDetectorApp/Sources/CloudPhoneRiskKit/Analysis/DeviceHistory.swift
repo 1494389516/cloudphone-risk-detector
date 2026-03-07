@@ -127,8 +127,9 @@ public final class DeviceHistory {
     private let lock = NSLock()
     private let fileManager = FileManager.default
     private let storeURL: URL
+    private let hmacURL: URL
+    private let hmacPurpose = "device_history"
 
-    /// 最大存储快照数量
     private let maxSnapshots = 500
 
     /// 快照最大保留时间（30天）
@@ -144,6 +145,7 @@ public final class DeviceHistory {
         let paths = fileManager.urls(for: .documentDirectory, in: .userDomainMask)
         let documentsDirectory = paths[0]
         self.storeURL = documentsDirectory.appendingPathComponent("cloudphone_device_history_v1.json")
+        self.hmacURL = documentsDirectory.appendingPathComponent("cloudphone_device_history_v1.json.hmac")
         loadFromDisk()
     }
 
@@ -334,6 +336,14 @@ public final class DeviceHistory {
             return
         }
 
+        guard let signature = try? Data(contentsOf: hmacURL),
+              StorageIntegrityGuard.verify(data, signature: signature, purpose: hmacPurpose) else {
+            try? fileManager.removeItem(at: storeURL)
+            try? fileManager.removeItem(at: hmacURL)
+            cachedSnapshots = []
+            return
+        }
+
         guard let decoded = try? JSONDecoder().decode([DeviceDetectionSnapshot].self, from: data) else {
             cachedSnapshots = []
             return
@@ -356,6 +366,8 @@ public final class DeviceHistory {
         do {
             let data = try JSONEncoder().encode(cachedSnapshots)
             try data.write(to: storeURL, options: .atomic)
+            let signature = StorageIntegrityGuard.sign(data, purpose: hmacPurpose)
+            try signature.write(to: hmacURL, options: .atomic)
             Logger.log("DeviceHistory: persisted \(cachedSnapshots.count) snapshots")
         } catch {
             Logger.log("DeviceHistory: failed to persist - \(error.localizedDescription)")

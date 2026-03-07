@@ -31,9 +31,8 @@ public final class CertificatePinningSessionDelegate: NSObject, URLSessionDelega
             return
         }
 
-        // If no pins configured, fall back to default
         guard !pinnedHashes.isEmpty else {
-            completionHandler(.performDefaultHandling, nil)
+            completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }
 

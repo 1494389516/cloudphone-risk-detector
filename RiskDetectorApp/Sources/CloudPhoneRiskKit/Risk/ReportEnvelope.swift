@@ -406,8 +406,9 @@ public final class InMemoryNonceReplayStore: NonceReplayProtecting {
 
 // MARK: - Convenience
 
+#if DEBUG
 extension ReportEnvelope {
-    /// 快速创建方法（仅用于测试）
+    /// Test-only convenience; excluded from Release builds.
     @available(*, deprecated, message: "仅用于测试，请使用带 signingKey 参数的方法")
     public static func createForTesting(
         payloadData: Data,
@@ -421,3 +422,4 @@ extension ReportEnvelope {
         )
     }
 }
+#endif

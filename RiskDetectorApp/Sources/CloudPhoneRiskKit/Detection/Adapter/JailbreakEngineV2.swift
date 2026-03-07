@@ -173,49 +173,66 @@ public final class JailbreakEngineV2 {
     }
     
     // MARK: - 私有方法
-    
+
+    private var detectionTimeoutSeconds: TimeInterval {
+        Double(v2Config.detectionTimeout) / 1000.0
+    }
+
+    private func runDetectorWithTimeout<T>(_ work: @escaping () -> T, timeout: TimeInterval, fallback: T) -> T {
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: T = fallback
+        let queue = DispatchQueue(label: "detector.timeout", qos: .userInitiated)
+        queue.async {
+            result = work()
+            semaphore.signal()
+        }
+        let waitResult = semaphore.wait(timeout: .now() + timeout)
+        if waitResult == .timedOut {
+            Logger.log("detector timeout after \(timeout)s")
+        }
+        return result
+    }
+
+    private static let emptyDetectorResult = DetectorResult.empty
+
 #if !targetEnvironment(simulator)
     
     /// 执行 V2 新增检测
     private func detectV2(baseScore: Double) -> V2DetectionResult {
         var score: Double = 0
         var methods: [String] = []
+        let timeout = detectionTimeoutSeconds
         
-        // 1. 反调试检测
         if v2Config.enableAntiTampering {
-            let result = AntiTamperingDetector().detect()
+            let result = runDetectorWithTimeout({ AntiTamperingDetector().detect() }, timeout: timeout, fallback: Self.emptyDetectorResult)
             score += result.score
             methods.append(contentsOf: result.methods)
             logV2("AntiTamperingDetector", result.score, result.methods.count)
         }
         
-        // 2. 调试器检测
         if v2Config.enableDebugger {
-            let result = DebuggerDetector().detect()
+            let result = runDetectorWithTimeout({ DebuggerDetector().detect() }, timeout: timeout, fallback: Self.emptyDetectorResult)
             score += result.score
             methods.append(contentsOf: result.methods)
             logV2("DebuggerDetector", result.score, result.methods.count)
         }
         
-        // 3. Frida 检测
         if v2Config.enableFrida {
-            let result = FridaDetector().detect()
+            let result = runDetectorWithTimeout({ FridaDetector().detect() }, timeout: timeout, fallback: Self.emptyDetectorResult)
             score += result.score
             methods.append(contentsOf: result.methods)
             logV2("FridaDetector", result.score, result.methods.count)
         }
         
-        // 4. 代码签名验证
         if v2Config.enableCodeSignature {
-            let result = CodeSignatureValidator().detect()
+            let result = runDetectorWithTimeout({ CodeSignatureValidator().detect() }, timeout: timeout, fallback: Self.emptyDetectorResult)
             score += result.score
             methods.append(contentsOf: result.methods)
             logV2("CodeSignatureValidator", result.score, result.methods.count)
         }
         
-        // 5. 内存完整性检查
         if v2Config.enableMemoryIntegrity {
-            let result = MemoryIntegrityChecker().detect()
+            let result = runDetectorWithTimeout({ MemoryIntegrityChecker().detect() }, timeout: timeout, fallback: Self.emptyDetectorResult)
             score += result.score
             methods.append(contentsOf: result.methods)
             logV2("MemoryIntegrityChecker", result.score, result.methods.count)

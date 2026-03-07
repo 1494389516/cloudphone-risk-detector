@@ -34,47 +34,29 @@ final class JailbreakEngine {
         Logger.log("jailbreak: start(threshold=\(config.threshold))")
 
         if config.enableFileDetect {
-            let result = FileDetector().detect()
-            Logger.log("jailbreak.file: score=\(result.score) hits=\(result.methods.count)")
-            score += result.score
-            methods.append(contentsOf: result.methods)
+            accumulateDetector("file", &score, &methods) { FileDetector().detect() }
         }
 
         if config.enableDyldDetect {
-            let result = DyldDetector().detect()
-            Logger.log("jailbreak.dyld: score=\(result.score) hits=\(result.methods.count)")
-            score += result.score
-            methods.append(contentsOf: result.methods)
+            accumulateDetector("dyld", &score, &methods) { DyldDetector().detect() }
         }
 
         if config.enableEnvDetect {
-            let result = EnvDetector().detect()
-            Logger.log("jailbreak.env: score=\(result.score) hits=\(result.methods.count)")
-            score += result.score
-            methods.append(contentsOf: result.methods)
+            accumulateDetector("env", &score, &methods) { EnvDetector().detect() }
         }
 
         if config.enableSysctlDetect {
-            let result = SysctlDetector().detect()
-            Logger.log("jailbreak.sysctl: score=\(result.score) hits=\(result.methods.count)")
-            score += result.score
-            methods.append(contentsOf: result.methods)
+            accumulateDetector("sysctl", &score, &methods) { SysctlDetector().detect() }
         }
 
         #if canImport(UIKit)
         if config.enableSchemeDetect {
-            let result = SchemeDetector().detect()
-            Logger.log("jailbreak.scheme: score=\(result.score) hits=\(result.methods.count)")
-            score += result.score
-            methods.append(contentsOf: result.methods)
+            accumulateDetector("scheme", &score, &methods) { SchemeDetector().detect() }
         }
         #endif
 
         if config.enableHookDetect {
-            let result = HookDetector().detect()
-            Logger.log("jailbreak.hook: score=\(result.score) hits=\(result.methods.count)")
-            score += result.score
-            methods.append(contentsOf: result.methods)
+            accumulateDetector("hook", &score, &methods) { HookDetector().detect() }
         }
 
         methods = Array(Set(methods)).sorted()
@@ -86,6 +68,30 @@ final class JailbreakEngine {
             detectedMethods: methods,
             details: details(methods: methods, score: score)
         )
+    }
+
+    private func accumulateDetector(
+        _ label: String,
+        _ score: inout Double,
+        _ methods: inout [String],
+        _ block: () throws -> DetectorResult
+    ) {
+        do {
+            let result = try block()
+            if result.score < 0 {
+                Logger.log("jailbreak.\(label): negative score(\(result.score)), treating as suspicious")
+                score += 5
+                methods.append("jailbreak_anomaly:\(label):negative_score")
+            } else {
+                Logger.log("jailbreak.\(label): score=\(result.score) hits=\(result.methods.count)")
+                score += result.score
+                methods.append(contentsOf: result.methods)
+            }
+        } catch {
+            Logger.log("jailbreak.\(label): detector threw error(\(error)), treating as suspicious")
+            score += 5
+            methods.append("jailbreak_anomaly:\(label):threw")
+        }
     }
 
     private func details(methods: [String], score: Double) -> String {

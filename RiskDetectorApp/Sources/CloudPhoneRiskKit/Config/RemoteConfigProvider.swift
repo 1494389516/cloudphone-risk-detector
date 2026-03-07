@@ -13,6 +13,7 @@ public final class RemoteConfigProvider: @unchecked Sendable {
     private var _currentConfig: RemoteConfig
     private var _isFetching = false
     private let cache: ConfigCaching
+    private let urlSession: URLSession
     private var updateHandlers: [UUID: ConfigUpdateHandler] = [:]
     private var errorHandlers: [UUID: ConfigErrorHandler] = [:]
     private var timer: Timer?
@@ -35,13 +36,18 @@ public final class RemoteConfigProvider: @unchecked Sendable {
         cacheValidityDuration: TimeInterval = 86400,
         remoteEnabled: Bool = true,
         cache: ConfigCaching = ConfigCache.shared,
-        fallbackConfig: RemoteConfig = .default
+        fallbackConfig: RemoteConfig = .default,
+        pinnedCertificateHashes: Set<String> = []
     ) {
         self.configURL = configURL
         self.updateInterval = updateInterval
         self.cacheValidityDuration = cacheValidityDuration
         self.remoteEnabled = remoteEnabled
         self.cache = cache
+        self.urlSession = CertificatePinningSessionDelegate.pinnedSession(
+            hashes: pinnedCertificateHashes,
+            allowsSystemCA: false
+        )
 
         if let cached = cache.load(), !cached.isExpired(duration: cacheValidityDuration) {
             self._currentConfig = cached.config
@@ -80,7 +86,7 @@ public final class RemoteConfigProvider: @unchecked Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("CloudPhoneRiskKit/2.0", forHTTPHeaderField: "User-Agent")
 
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+        urlSession.dataTask(with: request) { [weak self] data, response, error in
             guard let self else {
                 completion(.failure(.providerDeallocated))
                 return
@@ -116,6 +122,17 @@ public final class RemoteConfigProvider: @unchecked Sendable {
                 self.handleError(ConfigError.emptyResponse)
                 completion(.failure(.emptyResponse))
                 return
+            }
+
+            if ConfigSignatureVerifier.isConfigured {
+                let signatureHex = httpResponse.value(forHTTPHeaderField: "X-Config-Signature") ?? ""
+                let result = ConfigSignatureVerifier.verify(payload: data, signatureHex: signatureHex)
+                if !result.isValid {
+                    let wrapped = ConfigError.signatureVerificationFailed(reason: result.reason ?? "unknown")
+                    self.handleError(wrapped)
+                    completion(.failure(wrapped))
+                    return
+                }
             }
 
             do {
@@ -276,6 +293,7 @@ public enum ConfigError: Error, LocalizedError {
     case invalidRange(field: String, value: Any)
     case validationFailed(underlying: Error)
     case cacheError(underlying: Error)
+    case signatureVerificationFailed(reason: String)
 
     public var errorDescription: String? {
         switch self {
@@ -301,6 +319,8 @@ public enum ConfigError: Error, LocalizedError {
             return "配置验证失败: \(error.localizedDescription)"
         case .cacheError(let error):
             return "缓存错误: \(error.localizedDescription)"
+        case .signatureVerificationFailed(let reason):
+            return "配置签名验证失败: \(reason)"
         }
     }
 }

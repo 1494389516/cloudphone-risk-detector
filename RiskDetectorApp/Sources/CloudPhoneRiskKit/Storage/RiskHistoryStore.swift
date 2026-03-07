@@ -20,6 +20,8 @@ public final class RiskHistoryStore {
     private let lock = NSLock()
     private let defaults: UserDefaults
     private let key = "cloudphone_risk_history_v1"
+    private let hmacKey = "cloudphone_risk_history_v1_hmac"
+    private let hmacPurpose = "risk_history"
     private let maxEvents = 200
     private let maxAgeSeconds: TimeInterval = 7 * 24 * 3600
 
@@ -30,11 +32,6 @@ public final class RiskHistoryStore {
     public func append(_ event: RiskHistoryEvent) {
         lock.lock()
         defer { lock.unlock() }
-
-        if event.score == 0, event.summary == "clear", !event.isHighRisk {
-            saveLocked([])
-            return
-        }
 
         var events = loadLocked()
         events.append(event)
@@ -82,14 +79,27 @@ public final class RiskHistoryStore {
     }
 
     private func loadLocked() -> [RiskHistoryEvent] {
-        guard let data = defaults.data(forKey: key) else { return [] }
+        guard let stored = defaults.data(forKey: key) else { return [] }
+        guard let signature = defaults.data(forKey: hmacKey),
+              StorageIntegrityGuard.verify(stored, signature: signature, purpose: hmacPurpose) else {
+            defaults.removeObject(forKey: key)
+            defaults.removeObject(forKey: hmacKey)
+            return []
+        }
+        let data: Data
+        if let decrypted = try? PayloadCrypto.decrypt(stored) {
+            data = decrypted
+        } else {
+            data = stored
+        }
         return (try? JSONDecoder().decode([RiskHistoryEvent].self, from: data)) ?? []
     }
 
     private func saveLocked(_ events: [RiskHistoryEvent]) {
-        if let data = try? JSONEncoder().encode(events) {
-            defaults.set(data, forKey: key)
-        }
+        guard let encoded = try? JSONEncoder().encode(events) else { return }
+        let stored = (try? PayloadCrypto.encrypt(encoded)) ?? encoded
+        defaults.set(stored, forKey: key)
+        defaults.set(StorageIntegrityGuard.sign(stored, purpose: hmacPurpose), forKey: hmacKey)
     }
 
     private func pruneLocked(_ events: [RiskHistoryEvent]) -> [RiskHistoryEvent] {

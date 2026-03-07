@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 #if canImport(UIKit)
 import UIKit
@@ -80,6 +81,7 @@ public final class CPRiskKit: NSObject {
         stateLock.unlock()
         Logger.log("start() sessionId=\(currentSessionId ?? "")")
         registerProviders(for: .default)
+        RiskSignalProviderRegistry.shared.seal()
 #if canImport(UIKit)
         touchCapture.start()
         motionSampler.start()
@@ -95,8 +97,10 @@ public final class CPRiskKit: NSObject {
     }
 
     @objc public static func setLogEnabled(_ enabled: Bool) {
+#if DEBUG
         Logger.isEnabled = enabled
         Logger.log("Logger.isEnabled=\(enabled)")
+#endif
     }
 
     @objc(setExternalServerSignalsPublicIP:asn:asOrg:isDatacenter:ipDeviceAgg:ipAccountAgg:geoCountry:geoRegion:riskTags:)
@@ -145,6 +149,11 @@ public final class CPRiskKit: NSObject {
             isInDenseSubgraph: isInDenseSubgraph?.boolValue,
             riskTags: riskTags
         )
+    }
+
+    @objc public static func configureServerSigningKey(_ key: String) {
+        ConfigSignatureVerifier.configure(serverSigningKey: key)
+        Logger.log("server_signing_key configured")
     }
 
     @objc public static func clearExternalServerSignals() {
@@ -297,7 +306,8 @@ public final class CPRiskKit: NSObject {
     /// 同步场景化评估（2.0 核心入口，Swift/ObjC 可用）。
     @objc(evaluateWithConfig:scenario:)
     public func evaluate(config: CPRiskConfig, scenario: RiskScenario) -> CPRiskReport {
-        let runtimeConfig = resolveRuntimeConfig(from: config)
+        var runtimeConfig = resolveRuntimeConfig(from: config)
+        enforceSecurityFloor(&runtimeConfig)
         let remoteConfig = config.enableRemoteConfig ? currentRemoteConfig() : nil
 
         Logger.log(
@@ -510,11 +520,7 @@ public final class CPRiskKit: NSObject {
             RiskSignalProviderRegistry.shared.unregister(id: TimePatternProvider.shared.id)
         }
 
-        if config.enableAntiTamper {
-            RiskSignalProviderRegistry.shared.register(AntiTamperingSignalProvider())
-        } else {
-            RiskSignalProviderRegistry.shared.unregister(id: "anti_tampering")
-        }
+        RiskSignalProviderRegistry.shared.register(AntiTamperingSignalProvider())
     }
 
     private func runCapabilityProbe(remoteConfig: RemoteConfig?) -> CapabilityProbeRuntimeResult {
@@ -650,6 +656,18 @@ public final class CPRiskKit: NSObject {
             throw SecureUploadError.invalidPayloadShape
         }
         return try JSONSerialization.data(withJSONObject: object, options: [])
+    }
+
+    private func enforceSecurityFloor(_ config: inout RiskConfig) {
+        config.jailbreak.enableFileDetect = true
+        config.jailbreak.enableDyldDetect = true
+        config.jailbreak.enableSysctlDetect = true
+        if config.jailbreak.threshold > 100 {
+            config.jailbreak.threshold = 50
+        }
+        if config.threshold > 100 {
+            config.threshold = 55
+        }
     }
 
     private func resolveRuntimeConfig(from config: CPRiskConfig) -> RiskConfig {
@@ -923,14 +941,25 @@ public final class CPRiskKit: NSObject {
         stateLock.lock()
         defer { stateLock.unlock() }
 
-        if let currentVersion = latestRemoteConfig?.version,
-           config.version < currentVersion,
-           !Self.localRemoteConfigRollbackAllowed {
-            Logger.log(
-                "remote_config.\(source) rejected: rollback detected " +
-                "incoming=\(config.version) < current=\(currentVersion)"
-            )
-            return false
+        if let currentVersion = latestRemoteConfig?.version {
+            if config.version < currentVersion, !Self.localRemoteConfigRollbackAllowed {
+                Logger.log(
+                    "remote_config.\(source) rejected: rollback detected " +
+                    "incoming=\(config.version) < current=\(currentVersion)"
+                )
+                return false
+            }
+            if config.version == currentVersion {
+                let currentHash = latestRemoteConfig.map {
+                    SHA256.hash(data: (try? JSONEncoder().encode($0)) ?? Data())
+                }
+                let newHash = SHA256.hash(data: (try? JSONEncoder().encode(config)) ?? Data())
+                if let currentHash, Data(currentHash) == Data(newHash) {
+                    return true
+                }
+                Logger.log("remote_config.\(source) rejected: same version but different content hash")
+                return false
+            }
         }
 
         latestRemoteConfig = config

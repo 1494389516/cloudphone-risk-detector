@@ -19,6 +19,7 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
     private let lock = NSLock()
     private var memoryCache: CacheEntry?
     private let diskKey: String
+    private let hmacDiskKey: String
     private let versionKey: String
     private let maxDiskEntries: Int
     private let persistToDisk: Bool
@@ -30,9 +31,11 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
     ) {
         if let namespace, !namespace.isEmpty {
             self.diskKey = "com.cloudphone.riskkit.remote_config_cache.\(namespace)"
+            self.hmacDiskKey = "com.cloudphone.riskkit.remote_config_cache.\(namespace)_hmac"
             self.versionKey = "com.cloudphone.riskkit.config_version.\(namespace)"
         } else {
             self.diskKey = "com.cloudphone.riskkit.remote_config_cache"
+            self.hmacDiskKey = "com.cloudphone.riskkit.remote_config_cache_hmac"
             self.versionKey = "com.cloudphone.riskkit.config_version"
         }
         self.persistToDisk = persistToDisk
@@ -94,6 +97,7 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         memoryCache = nil
         guard persistToDisk else { return }
         UserDefaults.standard.removeObject(forKey: diskKey)
+        UserDefaults.standard.removeObject(forKey: hmacDiskKey)
         UserDefaults.standard.removeObject(forKey: versionKey)
     }
 
@@ -186,18 +190,32 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
 
     private func loadAllDiskEntries() -> [CacheEntry] {
         guard persistToDisk,
-              let data = UserDefaults.standard.data(forKey: diskKey) else {
+              let stored = UserDefaults.standard.data(forKey: diskKey) else {
             return []
+        }
+        guard let signature = UserDefaults.standard.data(forKey: hmacDiskKey),
+              StorageIntegrityGuard.verify(stored, signature: signature, purpose: "config_cache") else {
+            UserDefaults.standard.removeObject(forKey: diskKey)
+            UserDefaults.standard.removeObject(forKey: hmacDiskKey)
+            return []
+        }
+        let data: Data
+        if let decrypted = try? PayloadCrypto.decrypt(stored) {
+            data = decrypted
+        } else {
+            data = stored
         }
         return (try? JSONDecoder().decode([CacheEntry].self, from: data)) ?? []
     }
 
     private func saveDiskEntries(_ entries: [CacheEntry]) {
         guard persistToDisk,
-              let data = try? JSONEncoder().encode(entries) else {
+              let encoded = try? JSONEncoder().encode(entries) else {
             return
         }
-        UserDefaults.standard.set(data, forKey: diskKey)
+        let stored = (try? PayloadCrypto.encrypt(encoded)) ?? encoded
+        UserDefaults.standard.set(stored, forKey: diskKey)
+        UserDefaults.standard.set(StorageIntegrityGuard.sign(stored, purpose: "config_cache"), forKey: hmacDiskKey)
     }
 
     private func cacheSizeUnlocked() -> Int {

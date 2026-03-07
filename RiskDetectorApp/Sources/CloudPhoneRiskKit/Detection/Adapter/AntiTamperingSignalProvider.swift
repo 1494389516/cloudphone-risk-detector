@@ -60,81 +60,87 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
     public func signals(snapshot: RiskSnapshot) -> [RiskSignal] {
         var signals: [RiskSignal] = []
         
-        // 越狱检测结果作为基础
         let baseJailbreakScore = snapshot.jailbreak.confidence
         
-        // 1. 反调试检测
         if configuration.enableAntiTampering {
-            let antiTamperSignals = detectAntiTampering(baseScore: baseJailbreakScore)
-            signals.append(contentsOf: antiTamperSignals)
+            isolatedAppend("anti_tampering", &signals) {
+                detectAntiTampering(baseScore: baseJailbreakScore)
+            }
         }
         
-        // 2. 调试器检测
         if configuration.enableDebugger {
-            let debuggerSignals = detectDebugger(baseScore: baseJailbreakScore)
-            signals.append(contentsOf: debuggerSignals)
+            isolatedAppend("debugger", &signals) {
+                detectDebugger(baseScore: baseJailbreakScore)
+            }
         }
         
-        // 3. Frida 检测
         if configuration.enableFrida {
-            let fridaSignals = detectFrida(baseScore: baseJailbreakScore)
-            signals.append(contentsOf: fridaSignals)
+            isolatedAppend("frida", &signals) {
+                detectFrida(baseScore: baseJailbreakScore)
+            }
         }
         
-        // 4. 代码签名验证
         if configuration.enableCodeSignature {
-            let signatureSignals = detectCodeSignatureIssues(baseScore: baseJailbreakScore)
-            signals.append(contentsOf: signatureSignals)
+            isolatedAppend("code_signature", &signals) {
+                detectCodeSignatureIssues(baseScore: baseJailbreakScore)
+            }
         }
         
-        // 5. 内存完整性检查
         if configuration.enableMemoryIntegrity {
-            let memorySignals = detectMemoryIntegrityIssues(baseScore: baseJailbreakScore)
-            signals.append(contentsOf: memorySignals)
+            isolatedAppend("memory_integrity", &signals) {
+                detectMemoryIntegrityIssues(baseScore: baseJailbreakScore)
+            }
         }
 
-        // 6. 匿名 RWX 内存段扫描（3.5 新增）
         if configuration.enableRWXMemoryScan {
-            signals.append(contentsOf: RWXMemoryScanner().asSignals())
+            isolatedAppend("rwx_memory", &signals) {
+                RWXMemoryScanner().asSignals()
+            }
         }
 
-        // 7. PLT/GOT 完整性校验（3.5 新增）
         if configuration.enablePLTIntegrity {
-            let baseline = PLTIntegrityGuard.captureBaseline()
-            let pltResult = PLTIntegrityGuard.verify(baseline: baseline)
-            signals.append(contentsOf: PLTIntegrityGuard.asSignals(result: pltResult))
+            isolatedAppend("plt_integrity", &signals) {
+                let baseline = PLTIntegrityGuard.captureBaseline()
+                let pltResult = PLTIntegrityGuard.verify(baseline: baseline)
+                return PLTIntegrityGuard.asSignals(result: pltResult)
+            }
         }
 
-        // 8. __TEXT.__text 代码段哈希完整性（3.5 新增）
         if configuration.enableTextSegmentHash {
-            let hashResult = TextSegmentIntegrityChecker.verify()
-            signals.append(contentsOf: TextSegmentIntegrityChecker.asSignals(result: hashResult))
+            isolatedAppend("text_segment", &signals) {
+                let hashResult = TextSegmentIntegrityChecker.verify()
+                return TextSegmentIntegrityChecker.asSignals(result: hashResult)
+            }
         }
 
-        // 9. Frida 线程枚举 + 异常端口劫持（3.5.1 新增）
         if configuration.enableFridaThreadDetect {
-            signals.append(contentsOf: FridaThreadDetector().asSignals())
+            isolatedAppend("frida_thread", &signals) {
+                FridaThreadDetector().asSignals()
+            }
         }
 
-        // 10. V8/QuickJS 堆特征 + Stalker JIT 代码页（3.5.1 新增）
         if configuration.enableFridaHeapDetect {
-            signals.append(contentsOf: FridaHeapDetector().asSignals())
+            isolatedAppend("frida_heap", &signals) {
+                FridaHeapDetector().asSignals()
+            }
         }
 
-        // 11. ObjC 方法劫持 + Dispatch Queue 名称扫描（3.5.1 新增）
         if configuration.enableObjCSwizzleDetect {
-            signals.append(contentsOf: ObjCSwizzleDetector().asSignals())
+            isolatedAppend("objc_swizzle", &signals) {
+                ObjCSwizzleDetector().asSignals()
+            }
         }
 
-        // 12. Unix Socket + 时序侧信道（3.5.1 新增）
         if configuration.enableFridaSocketDetect {
-            signals.append(contentsOf: FridaSocketDetector().asSignals())
+            isolatedAppend("frida_socket", &signals) {
+                FridaSocketDetector().asSignals()
+            }
         }
 
-        // 13. 多路径文件一致性检测（3.6 新增）
         if configuration.enableMultiPathFileDetect {
-            let mpResult = MultiPathFileDetector().detect()
-            if mpResult.score > 0 {
+            isolatedAppend("multipath_file", &signals) {
+                let mpResult = MultiPathFileDetector().detect()
+                guard mpResult.score > 0 else { return [] }
                 var mpSignals: [RiskSignal] = []
                 let hookMethods = mpResult.methods.filter { $0.hasPrefix("multipart_hook:") }
                 if !hookMethods.isEmpty {
@@ -160,15 +166,15 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                         weightHint: 70
                     ))
                 }
-                signals.append(contentsOf: mpSignals)
+                return mpSignals
             }
         }
 
-        // 14. 随机化检测 — 时序异常 + 环境检查（3.6 新增）
         if configuration.enableRandomizedDetection {
-            let randResult = RandomizedDetection().detect()
-            if randResult.score > 0 {
-                signals.append(RiskSignal(
+            isolatedAppend("randomized", &signals) {
+                let randResult = RandomizedDetection().detect()
+                guard randResult.score > 0 else { return [] }
+                return [RiskSignal(
                     id: "randomized_env_anomaly",
                     category: "anti_tamper",
                     score: randResult.score,
@@ -176,14 +182,14 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                     state: .soft(confidence: min(randResult.score / 50.0, 1.0)),
                     layer: 2,
                     weightHint: 60
-                ))
+                )]
             }
         }
 
-        // 15. 指纹反混淆 — 模拟器 / 虚拟化 / 指纹突变（3.6 新增）
         if configuration.enableFingerprintDeobfuscation {
-            let fpResult = FingerprintDeobfuscation().detect()
-            if fpResult.score > 0 {
+            isolatedAppend("fingerprint", &signals) {
+                let fpResult = FingerprintDeobfuscation().detect()
+                guard fpResult.score > 0 else { return [] }
                 var fpSignals: [RiskSignal] = []
                 if fpResult.methods.contains(where: { $0.contains("simulator") }) {
                     fpSignals.append(RiskSignal(
@@ -229,37 +235,64 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                         weightHint: 80
                     ))
                 }
-                signals.append(contentsOf: fpSignals)
+                return fpSignals
             }
         }
 
-        // 16. DYLD_INTERPOSE section + 环境变量滥用（3.6 新增）
         if configuration.enableDyldInterposeDetect {
-            signals.append(contentsOf: DyldInterposeDetector().asSignals())
+            isolatedAppend("dyld_interpose", &signals) {
+                DyldInterposeDetector().asSignals()
+            }
         }
 
-        // 17. SDK 二进制自身完整性校验（3.7 新增）
         if configuration.enableSDKBinaryIntegrity {
-            let binResult = SDKBinaryIntegrityChecker.verify()
-            signals.append(contentsOf: SDKBinaryIntegrityChecker.asSignals(result: binResult))
+            isolatedAppend("sdk_binary", &signals) {
+                let binResult = SDKBinaryIntegrityChecker.verify()
+                return SDKBinaryIntegrityChecker.asSignals(result: binResult)
+            }
         }
 
-        // 18. 传感器数据回放检测（3.7 新增）
         if configuration.enableSensorReplayDetect {
-            signals.append(contentsOf: SensorReplayDetector().asSignals())
+            isolatedAppend("sensor_replay", &signals) {
+                SensorReplayDetector().asSignals()
+            }
         }
 
-        // 19. GPU 渲染能力深度探测（3.7 新增）
         if configuration.enableGPURenderProbe {
-            signals.append(contentsOf: GPURenderProbe().asSignals())
+            isolatedAppend("gpu_render", &signals) {
+                GPURenderProbe().asSignals()
+            }
         }
 
-        // 20. isa swizzling / 消息转发劫持（3.7 新增）
         if configuration.enableIsaSwizzleDetect {
-            signals.append(contentsOf: IsaSwizzleDetector().asSignals())
+            isolatedAppend("isa_swizzle", &signals) {
+                IsaSwizzleDetector().asSignals()
+            }
         }
 
         return signals.filter { $0.score >= configuration.minScoreThreshold }
+    }
+
+    private func isolatedAppend(
+        _ label: String,
+        _ signals: inout [RiskSignal],
+        _ block: () throws -> [RiskSignal]
+    ) {
+        do {
+            let result = try block()
+            signals.append(contentsOf: result)
+        } catch {
+            Logger.log("[AntiTamperingSignalProvider] \(label) threw error(\(error)), treating as suspicious")
+            signals.append(RiskSignal(
+                id: "detector_anomaly_\(label)",
+                category: "anti_tamper",
+                score: 5,
+                evidence: ["error": "\(error)", "detector": label],
+                state: .tampered,
+                layer: 2,
+                weightHint: 10
+            ))
+        }
     }
     
     // MARK: - 检测方法

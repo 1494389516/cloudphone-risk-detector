@@ -126,6 +126,21 @@ enum RiskScorer {
             signals.append(RiskSignal(id: "touch_motion_weak_coupling", category: "behavior", score: 8, evidence: ["corr": "\(corr)"]))
         }
 
+        let totalActions = behavior.touch.tapCount + behavior.touch.swipeCount
+        if totalActions < 3, behavior.touch.sampleCount < 5 {
+            total += 5
+            signals.append(RiskSignal(
+                id: "insufficient_behavior_data",
+                category: "behavior",
+                score: 5,
+                evidence: [
+                    "tapCount": "\(behavior.touch.tapCount)",
+                    "swipeCount": "\(behavior.touch.swipeCount)",
+                    "sampleCount": "\(behavior.touch.sampleCount)"
+                ]
+            ))
+        }
+
         return (min(total, 30), signals)
     }
 

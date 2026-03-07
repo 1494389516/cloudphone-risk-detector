@@ -5,7 +5,8 @@ import Security
 enum PayloadCrypto {
     private static let keyService = "CloudPhoneRiskKit"
     private static let keyAccount = "aes_gcm_key_v1"
-    private static let accessible = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+    private static let accessible = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+    private static let lock = NSLock()
 
     static func encrypt(_ plaintext: Data) throws -> Data {
         let key = try symmetricKey()
@@ -38,6 +39,9 @@ enum PayloadCrypto {
     }
 
     private static func symmetricKey() throws -> SymmetricKey {
+        lock.lock()
+        defer { lock.unlock() }
+
         if let data = readKey() {
             return SymmetricKey(data: data)
         }
@@ -47,7 +51,9 @@ enum PayloadCrypto {
             throw NSError(domain: "CloudPhoneRiskKit", code: 3, userInfo: [NSLocalizedDescriptionKey: "SecRandomCopyBytes failed (\(status))"])
         }
         let data = Data(bytes)
-        _ = saveKey(data)
+        if let existing = saveKey(data) {
+            return SymmetricKey(data: existing)
+        }
         return SymmetricKey(data: data)
     }
 
@@ -65,26 +71,23 @@ enum PayloadCrypto {
         return data
     }
 
-    private static func saveKey(_ data: Data) -> Bool {
-        let query: [String: Any] = [
+    private static func saveKey(_ data: Data) -> Data? {
+        let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keyService,
             kSecAttrAccount as String: keyAccount,
-        ]
-
-        let attributes: [String: Any] = [
             kSecValueData as String: data,
             kSecAttrAccessible as String: accessible,
         ]
 
-        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        if status == errSecSuccess { return true }
-        if status != errSecItemNotFound { return false }
+        let status = SecItemAdd(addQuery as CFDictionary, nil)
+        if status == errSecSuccess { return nil }
 
-        var addQuery = query
-        addQuery[kSecValueData as String] = data
-        addQuery[kSecAttrAccessible as String] = accessible
-        return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+        if status == errSecDuplicateItem, let existing = readKey() {
+            return existing
+        }
+
+        return nil
     }
 }
 

@@ -129,9 +129,25 @@ public final class PolicyManager: @unchecked Sendable {
     private let lock = NSLock()
     private var cachedPolicy: ServerRiskPolicy?
     private let cacheKey = "com.cloudphone.riskkit.policy.v3"
+    private let hmacCacheKey = "com.cloudphone.riskkit.policy.v3_hmac"
+    private let hmacPurpose = "policy_cache"
+    private var urlSession: URLSession
 
     private init() {
+        self.urlSession = CertificatePinningSessionDelegate.pinnedSession(
+            hashes: [],
+            allowsSystemCA: false
+        )
         self.cachedPolicy = loadFromCache()
+    }
+
+    public func configurePinning(hashes: Set<String>) {
+        lock.lock()
+        defer { lock.unlock() }
+        urlSession = CertificatePinningSessionDelegate.pinnedSession(
+            hashes: hashes,
+            allowsSystemCA: false
+        )
     }
 
     public var activePolicy: ServerRiskPolicy? {
@@ -152,6 +168,7 @@ public final class PolicyManager: @unchecked Sendable {
         cachedPolicy = nil
         lock.unlock()
         UserDefaults.standard.removeObject(forKey: cacheKey)
+        UserDefaults.standard.removeObject(forKey: hmacCacheKey)
     }
 
     @discardableResult
@@ -166,19 +183,43 @@ public final class PolicyManager: @unchecked Sendable {
 
     @available(iOS 13.0, macOS 10.15, *)
     public func fetchLatestPolicy(from url: URL) async throws -> ServerRiskPolicy {
-        let (data, _) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await urlSession.data(from: url)
+
+        if ConfigSignatureVerifier.isConfigured {
+            let signatureHex = (response as? HTTPURLResponse)?
+                .value(forHTTPHeaderField: "X-Policy-Signature") ?? ""
+            let result = ConfigSignatureVerifier.verify(payload: data, signatureHex: signatureHex)
+            if !result.isValid {
+                throw ConfigError.signatureVerificationFailed(reason: result.reason ?? "unknown")
+            }
+        }
+
         let policy = try JSONDecoder().decode(ServerRiskPolicy.self, from: data)
         update(policy: policy)
         return policy
     }
 
     private func persist(policy: ServerRiskPolicy) {
-        guard let data = try? JSONEncoder().encode(policy) else { return }
-        UserDefaults.standard.set(data, forKey: cacheKey)
+        guard let encoded = try? JSONEncoder().encode(policy) else { return }
+        let stored = (try? PayloadCrypto.encrypt(encoded)) ?? encoded
+        UserDefaults.standard.set(stored, forKey: cacheKey)
+        UserDefaults.standard.set(StorageIntegrityGuard.sign(stored, purpose: hmacPurpose), forKey: hmacCacheKey)
     }
 
     private func loadFromCache() -> ServerRiskPolicy? {
-        guard let data = UserDefaults.standard.data(forKey: cacheKey) else { return nil }
+        guard let stored = UserDefaults.standard.data(forKey: cacheKey) else { return nil }
+        guard let signature = UserDefaults.standard.data(forKey: hmacCacheKey),
+              StorageIntegrityGuard.verify(stored, signature: signature, purpose: hmacPurpose) else {
+            UserDefaults.standard.removeObject(forKey: cacheKey)
+            UserDefaults.standard.removeObject(forKey: hmacCacheKey)
+            return nil
+        }
+        let data: Data
+        if let decrypted = try? PayloadCrypto.decrypt(stored) {
+            data = decrypted
+        } else {
+            data = stored
+        }
         return try? JSONDecoder().decode(ServerRiskPolicy.self, from: data)
     }
 }

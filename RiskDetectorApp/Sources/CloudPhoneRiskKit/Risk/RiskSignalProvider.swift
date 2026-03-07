@@ -24,10 +24,47 @@ final class RiskSignalProviderRegistry {
 
     private let lock = NSLock()
     private var providers: [RiskSignalProvider] = []
+    private(set) var isSealed = false
+    private var sealedProviderTypes: [String: ObjectIdentifier] = [:]
+    private var activeProviderIDs: Set<String> = []
+    private(set) var tamperedUnregisterAttempts: Int = 0
+
+    private static let internalProviderIDs: Set<String> = [
+        "server_aggregate",
+        "device_hardware",
+        "device_age",
+        "vphone_hardware",
+        "layered_consistency",
+        "mount_point",
+        "drm_capability",
+        "battery_entropy",
+        "time_pattern",
+        "anti_tampering",
+    ]
+
+    func seal() {
+        lock.lock()
+        defer { lock.unlock() }
+        isSealed = true
+        for provider in providers {
+            sealedProviderTypes[provider.id] = ObjectIdentifier(type(of: provider))
+        }
+    }
 
     func register(_ provider: RiskSignalProvider) {
         lock.lock()
         defer { lock.unlock() }
+        if isSealed {
+            if !Self.internalProviderIDs.contains(provider.id) {
+                Logger.log("provider.register rejected (sealed): id=\(provider.id)")
+                return
+            }
+            if let expectedType = sealedProviderTypes[provider.id],
+               ObjectIdentifier(type(of: provider)) != expectedType {
+                Logger.log("provider.register rejected (type mismatch): id=\(provider.id)")
+                return
+            }
+        }
         providers.removeAll { $0.id == provider.id }
         providers.append(provider)
     }
@@ -35,6 +72,11 @@ final class RiskSignalProviderRegistry {
     func unregister(id: String) {
         lock.lock()
         defer { lock.unlock() }
+        if isSealed, Self.internalProviderIDs.contains(id) {
+            tamperedUnregisterAttempts += 1
+            Logger.log("provider.unregister rejected (sealed internal): id=\(id) attempts=\(tamperedUnregisterAttempts)")
+            return
+        }
         providers.removeAll { $0.id == id }
     }
 
@@ -47,20 +89,53 @@ final class RiskSignalProviderRegistry {
     func signals(snapshot: RiskSnapshot) -> [RiskSignal] {
         lock.lock()
         let current = providers
+        let knownActive = activeProviderIDs
+        let unregisterAttempts = tamperedUnregisterAttempts
         lock.unlock()
 
         var out: [RiskSignal] = []
+        var newlyActive: Set<String> = []
+
+        if unregisterAttempts > 0 {
+            out.append(RiskSignal(
+                id: "provider_tamper_attempt",
+                category: "anti_tamper",
+                score: 0,
+                evidence: ["attempts": "\(unregisterAttempts)"],
+                state: .tampered,
+                layer: 2,
+                weightHint: 85
+            ))
+        }
+
         for provider in current {
-            let signals = provider.signals(snapshot: snapshot)
-            if !signals.isEmpty {
-                Logger.log("provider[\(provider.id)]: signals=\(signals.count)")
-                for s in signals where s.score > 0 {
+            let collected: [RiskSignal] = autoreleasepool {
+                provider.signals(snapshot: snapshot)
+            }
+
+            if !collected.isEmpty {
+                newlyActive.insert(provider.id)
+                Logger.log("provider[\(provider.id)]: signals=\(collected.count)")
+                for s in collected where s.score > 0 {
                     let keys = s.evidence.keys.sorted().joined(separator: ",")
                     Logger.log("provider.signal: provider=\(provider.id) category=\(s.category) id=\(s.id) score=\(s.score) evidenceKeys=\(keys)")
                 }
+                out.append(contentsOf: collected)
+            } else if knownActive.contains(provider.id) {
+                Logger.log("provider[\(provider.id)]: unexpectedly empty — injecting tamper signal")
+                out.append(RiskSignal(
+                    id: "signalCollectionFailed",
+                    category: "tampering",
+                    score: 80,
+                    evidence: ["provider": provider.id, "reason": "previously_active_now_empty"]
+                ))
             }
-            out.append(contentsOf: signals)
         }
+
+        lock.lock()
+        activeProviderIDs.formUnion(newlyActive)
+        lock.unlock()
+
         return out
     }
 
