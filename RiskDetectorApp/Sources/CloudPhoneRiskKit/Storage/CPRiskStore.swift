@@ -6,7 +6,17 @@ public final class CPRiskStore: NSObject {
     @objc public static let shared = CPRiskStore()
 
     /// 是否启用本地加密存储（AES-GCM + Keychain key）。
-    @objc public var encryptionEnabled: Bool = true
+    /// Release 构建下不允许关闭加密：setter 赋值 false 会被自动回退为 true。
+    @objc public var encryptionEnabled: Bool = true {
+        didSet {
+            #if !DEBUG
+            if !encryptionEnabled {
+                Logger.log("CPRiskStore: encryptionEnabled=false rejected in release build")
+                encryptionEnabled = true
+            }
+            #endif
+        }
+    }
 
     /// 最多保留多少份报告（超过会删除最旧的）。
     @objc public var maxFiles: Int = 50
@@ -53,7 +63,19 @@ public final class CPRiskStore: NSObject {
             let data = try Data(contentsOf: url)
             let plaintext: Data
             if path.hasSuffix(".json") {
+                #if DEBUG
                 plaintext = data
+                #else
+                // Release 下不允许直接读取明文报告，防止攻击者通过公开 API 获取敏感数据
+                Logger.log("store.decrypt: plaintext report access rejected in release build path=\(path)")
+                let e = NSError(
+                    domain: "CloudPhoneRiskKit",
+                    code: 403,
+                    userInfo: [NSLocalizedDescriptionKey: "Plaintext report access not allowed in release build"]
+                )
+                error?.pointee = e
+                return nil
+                #endif
             } else {
                 plaintext = try PayloadCrypto.decrypt(data)
             }

@@ -13,7 +13,8 @@ public final class RemoteConfigProvider: @unchecked Sendable {
     private var _currentConfig: RemoteConfig
     private var _isFetching = false
     private let cache: ConfigCaching
-    private let urlSession: URLSession
+    private let fallbackConfig: RemoteConfig
+    private var urlSession: URLSession
     private var updateHandlers: [UUID: ConfigUpdateHandler] = [:]
     private var errorHandlers: [UUID: ConfigErrorHandler] = [:]
     private var timer: Timer?
@@ -44,13 +45,14 @@ public final class RemoteConfigProvider: @unchecked Sendable {
         self.cacheValidityDuration = cacheValidityDuration
         self.remoteEnabled = remoteEnabled
         self.cache = cache
+        self.fallbackConfig = fallbackConfig
         self.urlSession = CertificatePinningSessionDelegate.pinnedSession(
             hashes: pinnedCertificateHashes,
             allowsSystemCA: false
         )
 
         if let cached = cache.load(), !cached.isExpired(duration: cacheValidityDuration) {
-            self._currentConfig = cached.config
+            self._currentConfig = Self.releaseHardenedConfig(cached.config)
         } else {
             self._currentConfig = fallbackConfig
         }
@@ -62,6 +64,23 @@ public final class RemoteConfigProvider: @unchecked Sendable {
 
     deinit {
         timer?.invalidate()
+    }
+
+    public func configurePinning(hashes: Set<String>) {
+        lock.lock()
+        urlSession = CertificatePinningSessionDelegate.pinnedSession(
+            hashes: hashes,
+            allowsSystemCA: false
+        )
+        lock.unlock()
+    }
+
+    public func reloadCachedConfigTrustState() {
+        if let cached = cache.load(), !cached.isExpired(duration: cacheValidityDuration) {
+            applyConfig(Self.releaseHardenedConfig(cached.config))
+        } else {
+            applyConfig(fallbackConfig)
+        }
     }
 
     public func fetchLatest(completion: @escaping @Sendable (Result<RemoteConfig, ConfigError>) -> Void) {
@@ -124,21 +143,19 @@ public final class RemoteConfigProvider: @unchecked Sendable {
                 return
             }
 
-            if ConfigSignatureVerifier.isConfigured {
-                let signatureHex = httpResponse.value(forHTTPHeaderField: "X-Config-Signature") ?? ""
-                let result = ConfigSignatureVerifier.verify(payload: data, signatureHex: signatureHex)
-                if !result.isValid {
-                    let wrapped = ConfigError.signatureVerificationFailed(reason: result.reason ?? "unknown")
-                    self.handleError(wrapped)
-                    completion(.failure(wrapped))
-                    return
-                }
+            let signatureHex = httpResponse.value(forHTTPHeaderField: "X-Config-Signature") ?? ""
+            let verification = ConfigSignatureVerifier.verify(payload: data, signatureHex: signatureHex)
+            if !verification.isValid {
+                let wrapped = ConfigError.signatureVerificationFailed(reason: verification.reason ?? "unknown")
+                self.handleError(wrapped)
+                completion(.failure(wrapped))
+                return
             }
 
             do {
-                let config = try self.parseAndValidate(data: data)
+                let config = Self.releaseHardenedConfig(try self.parseAndValidate(data: data))
                 self.applyConfig(config)
-                let verifiedByServer = ConfigSignatureVerifier.isConfigured
+                let verifiedByServer = ConfigSignatureVerifier.isConfigured && verification.isValid
                 if !verifiedByServer {
                     Logger.log("remote_config: server signing key not configured, cache entry will be marked unverified")
                 }
@@ -182,7 +199,7 @@ public final class RemoteConfigProvider: @unchecked Sendable {
     }
 
     public func resetToFallback() {
-        applyConfig(.default)
+        applyConfig(fallbackConfig)
     }
 
     public func experimentConfig(for experimentKey: String, deviceID: String) -> ExperimentVariant? {
@@ -212,6 +229,14 @@ public final class RemoteConfigProvider: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         _currentConfig = config
+    }
+
+    private static func releaseHardenedConfig(_ config: RemoteConfig) -> RemoteConfig {
+#if DEBUG
+        return config
+#else
+        return config.enforcingReleaseSecurityFloor()
+#endif
     }
 
     private func notifyUpdate(_ config: RemoteConfig) {

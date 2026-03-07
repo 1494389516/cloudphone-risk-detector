@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
-  <img src="https://img.shields.io/badge/SDK-4.1-FF3B30?style=for-the-badge" alt="SDK">
+  <img src="https://img.shields.io/badge/SDK-4.2-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
   <img src="https://img.shields.io/badge/License-Proprietary-8E8E93?style=for-the-badge" alt="License">
 </p>
@@ -31,6 +31,7 @@
 | 3.7 | **SDK 自保护加固 + 全面纵深** | 基线迁移 Keychain、TLS 证书固定、PLT 持久化、ptrace 反调试、DYLD Interpose、SDK 二进制校验、传感器回放检测、GPU 深度探测、isa swizzling、消息转发检测、Keychain ACL、多路径一致性、指纹突变、随机化检测 |
 | **4.0** | **双轮红队审计 + 全栈安全加固** | 竞态条件修复、时序侧信道消除、存储加密、配置签名验证、Provider 注册表强化、决策引擎加固、行为信号增强、检测超时机制（22 项安全漏洞全修复） |
 || **4.1** | **第三轮红队审计 + 攻击链纵深封堵** | 配置缓存来源验签、HTTPS 强制、Provider 实例锁定、首跑基线防投毒、存储加密 Fail-Closed、DeviceHistory 迁移加密、ReportEnvelope 元数据入签名域、DetectorRegistry 封印（10 项结构性漏洞全修复） |
+|| **4.2** | **第四轮红队审计 + 信任根全面收紧** | 配置/策略双链 Release 禁 unverified fallback、安全地板扩展覆盖行为与越狱关键检测开关、DualPathValidator 接入核心 Detector、anti_tamper 结论消除分裂、基线首跑软信号化、deviceID 漂移修复、历史时钟回拨防御、CPRiskStore 暴露面收紧、EnvelopeSignature Release 强制 v2（8 项漏洞全修复） |
 
 ## 架构概览
 
@@ -72,6 +73,72 @@
 | **硬信号** | 本地独立判定，单点即可触发 | 越狱、DRM 降级、ChargeCounter 异常、PLT 篡改、ObjC Swizzle、异常端口劫持、SDK 二进制替换、DYLD Interpose | 80-100 |
 | **软信号** | 需结合场景综合评分 | VPN、行为异常、电压方差低、挂载点异常、时序侧信道、线程枚举异常、指纹突变、随机化检测、行为数据不足 | 30-75 |
 | **服务端信号** | 依赖外部聚合 | 机房 IP、ASN 黑名单、IP 设备聚合度、图社区风险、硬件画像聚集 | 55-100 |
+
+---
+
+## 4.2 新增能力 — 第四轮红队审计信任根全面收紧
+
+4.2 版本基于第四轮红队审计，聚焦于 4.1 修复后仍存在的**信任根薄弱点与检测结论分裂**问题，共修复 **8 个漏洞**（2 个 P0-Critical、2 个 P1-High×2、3 个 P1-High、1 个 P2-Medium），覆盖配置信任链、运行时检测统一性、存储健壮性、上报边界四个维度。
+
+### 4.2 安全加固全景
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  4.2 信任根收紧矩阵                               │
+├──────────────┬──────────────┬──────────────┬────────────────────┤
+│  配置信任链   │  运行时统一性  │   存储健壮性   │    上报边界         │
+├──────────────┼──────────────┼──────────────┼────────────────────┤
+│ Release禁止  │ DualPath接入  │ deviceID漂移  │ encryptionEnabled  │
+│ unverified   │ FileDetector  │ Keychain重试  │ Release强制true    │
+│ fallback     │ SysctlDetect  │ ephemeral前缀  │ 明文报告访问禁止   │
+│ Policy同步   │ anti_tamper   │ 历史时钟回拨   │ (Release 403)      │
+│ verified标志  │ 结论补强      │ 检测清除保护   │                   │
+│ EnvelopeSig  │ 基线首跑      │ 未来时间戳检测  │                   │
+│ Release强制v2 │ 软信号化      │               │                   │
+└──────────────┴──────────────┴──────────────┴────────────────────┘
+```
+
+### 配置与策略信任链（P0-1 / P0-2）
+
+| 修复项 | 漏洞 | 修复方式 |
+|--------|------|----------|
+| **ConfigCache Release 禁 unverified fallback** | `loadLatestFromDisk()` 无验签条目时静默 fallback 未验签缓存，攻击者可注入旧配置 | Release 下无 verified 条目时返回 `nil`，不 fallback；DEBUG 保留 fallback 并打印日志 |
+| **PolicyManager verified 标志** | `PolicyManager` 缓存无 verified/freshness 元数据，恢复时不区分来源 | 新增 `verifiedKey`；fetch 成功后写入 `isVerifiedByServer` 标志；Release 下 `loadFromCache()` 检查标志，未验签时返回 `nil` |
+| **enforceSecurityFloor 扩展** | `enforceSecurityFloor()` 未覆盖 `enableBehaviorDetect`、`enableNetworkSignals` 及越狱关键开关，远程配置可将其关闭 | Release 下强制 `enableBehaviorDetect = true`、`enableNetworkSignals = true`、`enableFileDetect/DyldDetect/SysctlDetect/HookDetect = true` |
+| **EnvelopeSignature Release 强制 v2** | 远程 `enableEnvelopeSignatureV2=false` 可将签名降级为 v1 | Release 下忽略远程配置，硬编码 `signatureVersion = "v2"`；DEBUG 保留可降级能力 |
+
+### 运行时检测统一性（P0-3 / P1-4 / P1-5）
+
+| 修复项 | 漏洞 | 修复方式 |
+|--------|------|----------|
+| **FileDetector 接入 DualPathValidator** | 越狱文件检测依赖 `stat/access`，易被 Hook 统一致盲 | 对 5 个高价值越狱路径额外做 `stat/lstat/access` 三路比对；不一致记录 `dual_path_mismatch:<name>` + 每条 +20 分 |
+| **SysctlDetector 接入 DualPathValidator** | `sysctlbyname` 可被 Hook 替换返回值，单路检测结果不可信 | 对 `hw.machine`、`hw.model`、`kern.osversion` 做双路（标准调用 vs RTLD_NEXT 下一跳）比对；不一致记录 `sysctl_dual_path_mismatch:<key>` + 每条 +25 分 |
+| **anti_tamper 结论分裂修复** | `AntiTamperingSignalProvider` 结果仅作为 extraSignal，不反映到 `CPRiskReport.jailbreakIsJailbroken` / `jailbreakConfidence` / `detectedMethods` | `evaluate()` 末尾：过滤出 `category == "anti_tamper"/"integrity"` 的 `.tampered` 信号；若 `jailbreak.isJailbroken == false` 则加权补强 confidence 并追加 `anti_tamper:<id>` 到 `detectedMethods` |
+| **基线首跑软信号化** | `SDKBinaryIntegrityChecker` 首次运行无 Keychain 记录时静默返回 `isIntact: true`，基线投毒窗口零感知 | 首次建基线时 `detail = "baseline_established"`；`asSignals()` 产出 `sdk_integrity_first_run` 软信号（score:0, confidence:0.3），服务端可感知安装/重装事件 |
+
+### 存储健壮性（P1-6）
+
+| 修复项 | 漏洞 | 修复方式 |
+|--------|------|----------|
+| **KeychainDeviceID 漂移修复** | Keychain 保存失败时静默返回新 UUID，deviceID 在每次安装/重装时漂移 | 保存失败后先重试 `read()`（处理并发竞争）；仍失败则返回 `"ephemeral:<uuid>"` 前缀 ID，服务端可识别并限制高信任请求 |
+| **RiskHistoryStore 时钟回拨防御** | 历史记录无新鲜度约束，可被整体回放；时钟回拨攻击可注入未来时间戳 | `loadStateLocked()` decode 后检测最新事件时间戳是否超出当前时钟 60s，超出则清除缓存并返回空，防时钟回拨 + 旧快照回放 |
+
+### 上报边界（P2-8）
+
+| 修复项 | 漏洞 | 修复方式 |
+|--------|------|----------|
+| **CPRiskStore 暴露面收紧** | `encryptionEnabled` 公开可切换；`decryptReport(atPath:)` 允许直接读取明文 `.json` 报告 | `encryptionEnabled` 增加 `didSet`，Release 下强制回退 `true`；`decryptReport(atPath:)` 在 Release 下拒绝明文 `.json` 访问，返回 403 error |
+
+### 4.2 新增信号 ID
+
+| 信号 ID | 权重提示 | 触发条件 |
+|---------|----------|----------|
+| `dual_path_mismatch:<name>` | 80 | 越狱关键路径 stat/lstat/access 三路比对不一致（每条 +20 分） |
+| `sysctl_dual_path_mismatch:<key>` | 85 | sysctl 双路结果不一致（每条 +25 分） |
+| `anti_tamper:<signal_id>` | 85 | anti_tamper/integrity 信号触发，补强到 jailbreak 结论字段 |
+| `sdk_integrity_first_run` | 30 | SDK 首次运行建立基线（软信号，score:0，服务端感知安装事件） |
+
+> **接入注意**：4.2 `evaluate()` 在 anti_tamper 命中时会自动更新 `CPRiskReport.jailbreakIsJailbroken` 字段，请确保业务层判断逻辑已覆盖此字段。
 
 ---
 
@@ -699,4 +766,4 @@ swift build
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 4.1 — Triple Red Team Audit + Attack-Chain Defense in Depth</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 4.2 — Quad Red Team Audit + Trust Root Hardening</sub></p>

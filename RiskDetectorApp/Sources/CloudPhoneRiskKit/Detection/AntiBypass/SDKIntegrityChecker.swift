@@ -28,13 +28,23 @@ struct SDKIntegrityChecker: Detector {
             methods.append("integrity:missing_code_signature")
         }
 
-        let baseline = PLTIntegrityGuard.captureOrLoadBaseline()
-        let pltResult = PLTIntegrityGuard.verify(baseline: baseline)
+        let pltResult = PLTIntegrityGuard.verifyWithPersistedBaseline()
         if !pltResult.isIntact {
             score += 30
             for fn in pltResult.hookedFunctions {
                 methods.append("integrity:plt_hooked:\(fn)")
             }
+        }
+
+        switch pltResult.baselineTrustState {
+        case .trusted:
+            break
+        case .firstObservation:
+            score += 8
+            methods.append("integrity:plt_baseline_pending")
+        case .versionChanged:
+            score += 12
+            methods.append("integrity:plt_version_changed")
         }
 
         return DetectorResult(score: score, methods: methods)
@@ -82,10 +92,17 @@ struct SDKIntegrityChecker: Detector {
     }
 }
 
+enum BaselineTrustState: String {
+    case trusted
+    case firstObservation
+    case versionChanged
+}
+
 struct PLTIntegrityResult {
     var isIntact: Bool
     var hookedFunctions: [String]
     var details: [String: String]
+    var baselineTrustState: BaselineTrustState
 }
 
 struct PLTIntegrityGuard {
@@ -110,7 +127,12 @@ struct PLTIntegrityGuard {
     }
 
     private static let keychainService = "CloudPhoneRiskKit"
-    private static let keychainBaselineAccount = "plt_baseline_v1"
+    private static let keychainBaselineAccount = "plt_baseline_v2"
+
+    private struct PersistedBaseline {
+        let versionToken: String
+        let records: [FunctionRecord]
+    }
 
     static func captureBaseline() -> [FunctionRecord] {
         var records: [FunctionRecord] = []
@@ -126,45 +148,50 @@ struct PLTIntegrityGuard {
     }
 
     static func captureOrLoadBaseline() -> [FunctionRecord] {
-        if let persisted = loadPersistedBaseline() {
-            return persisted
+        let versionToken = runtimeVersionToken()
+        if let persisted = loadPersistedBaseline(), persisted.versionToken == versionToken {
+            return persisted.records
         }
         let fresh = captureBaseline()
-        persistBaseline(fresh)
+        persistBaseline(fresh, versionToken: versionToken)
         return fresh
     }
 
     static func verifyWithPersistedBaseline() -> PLTIntegrityResult {
+        let versionToken = runtimeVersionToken()
         guard let persisted = loadPersistedBaseline() else {
             let fresh = captureBaseline()
-            persistBaseline(fresh)
-            return PLTIntegrityResult(isIntact: true, hookedFunctions: [], details: ["status": "baseline_established"])
+            persistBaseline(fresh, versionToken: versionToken)
+            return PLTIntegrityResult(
+                isIntact: true,
+                hookedFunctions: [],
+                details: [
+                    "status": "baseline_established",
+                    "version_token": versionToken,
+                ],
+                baselineTrustState: .firstObservation
+            )
         }
-        var hooked: [String] = []
-        var details: [String: String] = [:]
-        for record in persisted {
-            guard let ptr = dlsym(UnsafeMutableRawPointer(bitPattern: -2), record.name) else {
-                hooked.append(record.name)
-                details[record.name] = "dlsym_failed"
-                continue
-            }
-            var info = Dl_info()
-            guard dladdr(ptr, &info) != 0, let imageHeader = info.dli_fbase else {
-                hooked.append(record.name)
-                details[record.name] = "dladdr_failed"
-                continue
-            }
-            let currentBase = UInt64(bitPattern: Int64(Int(bitPattern: imageHeader)))
-            if currentBase != record.moduleBase {
-                hooked.append(record.name)
-                let currentAddr = UInt64(bitPattern: Int64(Int(bitPattern: ptr)))
-                details[record.name] = "module_changed:0x\(String(currentAddr, radix: 16))"
-            }
+
+        if persisted.versionToken != versionToken {
+            let fresh = captureBaseline()
+            persistBaseline(fresh, versionToken: versionToken)
+            return PLTIntegrityResult(
+                isIntact: true,
+                hookedFunctions: [],
+                details: [
+                    "status": "version_changed",
+                    "previous_version_token": persisted.versionToken,
+                    "version_token": versionToken,
+                ],
+                baselineTrustState: .versionChanged
+            )
         }
-        return PLTIntegrityResult(isIntact: hooked.isEmpty, hookedFunctions: hooked, details: details)
+
+        return verify(baseline: persisted.records)
     }
 
-    private static func loadPersistedBaseline() -> [FunctionRecord]? {
+    private static func loadPersistedBaseline() -> PersistedBaseline? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -175,25 +202,32 @@ struct PLTIntegrityGuard {
         var item: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
               let data = item as? Data,
-              let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let versionToken = json["versionToken"] as? String,
+              let rawRecords = json["records"] as? [[String: Any]] else {
             return nil
         }
-        return json.compactMap { dict -> FunctionRecord? in
+        let records = rawRecords.compactMap { dict -> FunctionRecord? in
             guard let name = dict["name"] as? String,
                   let addr = dict["address"] as? UInt64,
                   let base = dict["moduleBase"] as? UInt64,
                   let size = dict["moduleSize"] as? UInt64 else { return nil }
             return FunctionRecord(name: name, address: addr, moduleBase: base, moduleSize: size)
         }
+        return PersistedBaseline(versionToken: versionToken, records: records)
     }
 
-    private static func persistBaseline(_ records: [FunctionRecord]) {
-        let json: [[String: Any]] = records.map { [
+    private static func persistBaseline(_ records: [FunctionRecord], versionToken: String) {
+        let rawRecords: [[String: Any]] = records.map { [
             "name": $0.name,
             "address": $0.address,
             "moduleBase": $0.moduleBase,
             "moduleSize": $0.moduleSize,
         ] }
+        let json: [String: Any] = [
+            "versionToken": versionToken,
+            "records": rawRecords,
+        ]
         guard let data = try? JSONSerialization.data(withJSONObject: json) else { return }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -240,7 +274,8 @@ struct PLTIntegrityGuard {
         return PLTIntegrityResult(
             isIntact: hooked.isEmpty,
             hookedFunctions: hooked,
-            details: details
+            details: details,
+            baselineTrustState: .trusted
         )
     }
 
@@ -268,6 +303,41 @@ struct PLTIntegrityGuard {
         }
         return (0, 0)
     }
+
+    private static func runtimeVersionToken() -> String {
+        if let uuid = currentSDKBinaryUUID() {
+            return "\(Version.current):\(uuid)"
+        }
+        return "\(Version.current):unknown"
+    }
+
+    private static func currentSDKBinaryUUID() -> String? {
+        let count = _dyld_image_count()
+        for index in 0..<count {
+            guard let rawPath = _dyld_get_image_name(index) else { continue }
+            let path = String(cString: rawPath).lowercased()
+            guard path.contains("cloudphoneriskkit"),
+                  let header = _dyld_get_image_header(index)
+            else {
+                continue
+            }
+
+            let headerPtr = UnsafeRawPointer(header).assumingMemoryBound(to: mach_header_64.self)
+            guard headerPtr.pointee.magic == MH_MAGIC_64 else { continue }
+
+            var cmd = UnsafeRawPointer(headerPtr).advanced(by: MemoryLayout<mach_header_64>.size)
+            for _ in 0..<headerPtr.pointee.ncmds {
+                let load = cmd.assumingMemoryBound(to: load_command.self).pointee
+                if load.cmd == LC_UUID {
+                    let uuidCmd = cmd.assumingMemoryBound(to: uuid_command.self).pointee
+                    let bytes = withUnsafeBytes(of: uuidCmd.uuid) { Array($0) }
+                    return bytes.map { String(format: "%02x", $0) }.joined()
+                }
+                cmd = cmd.advanced(by: Int(load.cmdsize))
+            }
+        }
+        return nil
+    }
 }
 
 private func tupleStringEquals<T>(_ tuple: T, _ target: String) -> Bool {
@@ -290,6 +360,34 @@ extension PLTIntegrityGuard {
                     state: .tampered,
                     layer: 2,
                     weightHint: 92
+                )
+            ]
+        }
+        switch result.baselineTrustState {
+        case .trusted:
+            break
+        case .firstObservation:
+            return [
+                RiskSignal(
+                    id: "plt_integrity_baseline_pending",
+                    category: "integrity",
+                    score: 8,
+                    evidence: result.details,
+                    state: .soft(confidence: 0.55),
+                    layer: 2,
+                    weightHint: 45
+                )
+            ]
+        case .versionChanged:
+            return [
+                RiskSignal(
+                    id: "plt_integrity_version_changed",
+                    category: "integrity",
+                    score: 12,
+                    evidence: result.details,
+                    state: .soft(confidence: 0.72),
+                    layer: 2,
+                    weightHint: 58
                 )
             ]
         }

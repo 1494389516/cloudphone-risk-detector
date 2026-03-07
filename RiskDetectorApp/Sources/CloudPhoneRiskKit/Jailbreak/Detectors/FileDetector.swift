@@ -64,6 +64,7 @@ struct FileDetector: Detector {
         var score: Double = 0
         var methods: [String] = []
         var fileExistsMismatchCount = 0
+        var lowLevelMismatchCount = 0
 
         for item in suspiciousPaths {
             let exists = existsAnyWay(item.path)
@@ -79,6 +80,34 @@ struct FileDetector: Detector {
                 methods.append("hook:fileExists_mismatch:\(item.path)")
                 Logger.log("jailbreak.file.hit: fileExists_mismatch path=\(item.path) (+8)")
             }
+
+            if exists.lowLevelPrimitiveMismatch, lowLevelMismatchCount < 4 {
+                lowLevelMismatchCount += 1
+                score += 12
+                methods.append("hook:file_primitive_mismatch:\(item.path)")
+                Logger.log("jailbreak.file.hit: file_primitive_mismatch path=\(item.path) (+12)")
+            }
+        }
+
+        // 双路验证关键路径，检测 stat hook
+        let criticalPaths = [
+            "/etc/apt",
+            "/Applications/Cydia.app",
+            "/var/jb",
+            "/usr/lib/ElleKit.dylib",
+            "/Library/MobileSubstrate/MobileSubstrate.dylib",
+        ]
+        var mismatchCount = 0
+        for path in criticalPaths {
+            let (_, tampered) = DualPathValidator.validateFileStat(path: path)
+            if tampered {
+                mismatchCount += 1
+                methods.append("dual_path_mismatch:\(path.components(separatedBy: "/").last ?? path)")
+                Logger.log("jailbreak.file.hit: dual_path_mismatch path=\(path) (+20)")
+            }
+        }
+        if mismatchCount > 0 {
+            score += Double(mismatchCount) * 20
         }
 
         // System configuration / integrity signals.
@@ -112,23 +141,24 @@ struct FileDetector: Detector {
     private struct ExistenceResult {
         var exists: Bool
         var fileManagerMismatch: Bool
+        var lowLevelPrimitiveMismatch: Bool
     }
 
     private func existsAnyWay(_ path: String) -> ExistenceResult {
         let fm = FileManager.default.fileExists(atPath: path)
-        let low = existsLowLevel(path)
+        let low = DualPathValidator.validateFileStat(path: path)
 
         // If high-level API says NO but low-level says YES, a common bypass is hooking NSFileManager.
-        let mismatch = (!fm && low)
-        return ExistenceResult(exists: fm || low, fileManagerMismatch: mismatch)
+        let mismatch = (!fm && low.exists)
+        return ExistenceResult(
+            exists: fm || low.exists,
+            fileManagerMismatch: mismatch,
+            lowLevelPrimitiveMismatch: low.tampered
+        )
     }
 
     private func existsLowLevel(_ path: String) -> Bool {
-        // lstat covers both files and symlinks.
-        var st = stat()
-        if lstat(path, &st) == 0 { return true }
-        // access(F_OK) is another common primitive.
-        return access(path, F_OK) == 0
+        DualPathValidator.validateFileStat(path: path).exists
     }
 
     private func listApplicationsShowsJailbreakApps() -> Bool {
@@ -242,8 +272,7 @@ private struct SystemConfigDetector: Detector {
         ]
 
         for path in paths {
-            var st = stat()
-            if stat(path, &st) == 0 {
+            if DualPathValidator.validateFileStat(path: path).exists {
                 return true
             }
             if let content = try? String(contentsOfFile: path, encoding: .utf8), !content.isEmpty {
@@ -319,8 +348,7 @@ private struct SystemConfigDetector: Detector {
         ]
 
         for path in aptPaths {
-            var st = stat()
-            if stat(path, &st) == 0 { return true }
+            if DualPathValidator.validateFileStat(path: path).exists { return true }
         }
 
         if let sourcesList = try? String(contentsOfFile: "/etc/apt/sources.list", encoding: .utf8), !sourcesList.isEmpty {

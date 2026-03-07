@@ -16,6 +16,7 @@ struct IndirectSymbolPointerDetector: Detector {
         ("access", 12),
         ("faccessat", 10),
         ("sysctl", 12),
+        ("sysctlbyname", 12),
         ("getenv", 10),
         ("dlopen", 12),
         ("syscall", 14),

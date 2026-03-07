@@ -4,7 +4,8 @@ import Foundation
 // MARK: - Challenge Trigger
 
 /// Challenge 触发器
-/// 用于检查是否需要触发 blindChallenge
+/// 用于检查是否需要触发 blindChallenge。
+/// 注意：SDK 内的“本地合成 challenge”仅用于联调与回归，不代表服务端下发的一次性生产挑战。
 public struct ChallengeTrigger: Sendable {
 
     /// 服务端下发的一次性 challenge
@@ -66,6 +67,25 @@ public struct ChallengeTrigger: Sendable {
         tamperedCount: Int,
         existingRules: [ServerRiskPolicy.BlindRule]
     ) -> TriggerResult {
+        guard !existingRules.isEmpty else {
+            #if DEBUG
+            if capabilityAnomalyCount >= defaultCapabilityAnomalyThreshold && tamperedCount > 0 {
+                let defaultRule = ServerRiskPolicy.BlindRule(
+                    id: "debug_local_auto_trigger",
+                    minTamperedCount: 1,
+                    minCapabilityAnomalyCount: defaultCapabilityAnomalyThreshold,
+                    weight: 75
+                )
+                return TriggerResult(
+                    triggered: true,
+                    matchedRule: defaultRule,
+                    reason: "DEBUG local-only trigger: capabilityAnomalyCount(\(capabilityAnomalyCount)) >= \(defaultCapabilityAnomalyThreshold) && tamperedCount(\(tamperedCount)) > 0"
+                )
+            }
+            #endif
+            return .noTrigger
+        }
+
         // 遍历所有规则，检查是否有匹配的
         for rule in existingRules {
             // 检查能力探针异常数是否满足规则要求
@@ -87,22 +107,6 @@ public struct ChallengeTrigger: Sendable {
                     reason: reason
                 )
             }
-        }
-
-        // 没有匹配到任何规则，检查是否满足默认触发条件
-        // 当 capabilityAnomalyCount >= 2 时自动触发（不依赖具体规则）
-        if capabilityAnomalyCount >= defaultCapabilityAnomalyThreshold && tamperedCount > 0 {
-            let defaultRule = ServerRiskPolicy.BlindRule(
-                id: "auto_capability_trigger",
-                minTamperedCount: 1,
-                minCapabilityAnomalyCount: defaultCapabilityAnomalyThreshold,
-                weight: 75
-            )
-            return TriggerResult(
-                triggered: true,
-                matchedRule: defaultRule,
-                reason: "Auto-trigger: capabilityAnomalyCount(\(capabilityAnomalyCount)) >= \(defaultCapabilityAnomalyThreshold) && tamperedCount(\(tamperedCount)) > 0"
-            )
         }
 
         return .noTrigger

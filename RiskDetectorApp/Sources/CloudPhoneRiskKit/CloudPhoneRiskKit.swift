@@ -45,6 +45,8 @@ public final class CPRiskKit: NSObject {
     private var currentSessionId: String?
 
     private static let remoteConfigEndpointKey = "com.cloudphone.riskkit.remote.endpoint"
+    private static let remoteTrustLock = NSLock()
+    private static var pinnedCertificateHashes: Set<String> = []
     private static let localPolicyInjectionAllowed: Bool = {
 #if DEBUG
         return true
@@ -55,6 +57,13 @@ public final class CPRiskKit: NSObject {
     private static let localRemoteConfigRollbackAllowed: Bool = {
 #if DEBUG
         return ProcessInfo.processInfo.environment["CPRISKKIT_ALLOW_CONFIG_ROLLBACK"] == "1"
+#else
+        return false
+#endif
+    }()
+    private static let localSynthesizedChallengeBindingAllowed: Bool = {
+#if DEBUG
+        return true
 #else
         return false
 #endif
@@ -153,7 +162,19 @@ public final class CPRiskKit: NSObject {
 
     @objc public static func configureServerSigningKey(_ key: String) {
         ConfigSignatureVerifier.configure(serverSigningKey: key)
+        shared.refreshRemoteTrustState()
         Logger.log("server_signing_key configured")
+    }
+
+    @objc public static func configurePinnedCertificateHashes(_ hashes: [String]) {
+        let normalized = normalizedPinnedCertificateHashes(from: hashes)
+        remoteTrustLock.lock()
+        pinnedCertificateHashes = normalized
+        remoteTrustLock.unlock()
+
+        PolicyManager.shared.configurePinning(hashes: normalized)
+        shared.applyPinnedCertificateHashes(normalized)
+        Logger.log("remote_transport_pinning configured: pins=\(normalized.count)")
     }
 
     @objc public static func clearExternalServerSignals() {
@@ -356,7 +377,34 @@ public final class CPRiskKit: NSObject {
             "signals=\(scoreReport.signals.count) summary=\(scoreReport.summary)"
         )
 
-        let out = CPRiskReport(context: context, report: scoreReport)
+        // 如果 anti_tamper 信号触发，补强 legacy jailbreak 结论以避免分裂
+        let tamperedSignals = extraSignals.filter {
+            if case .tampered? = $0.state { return true }
+            return false
+        }
+        let antiTamperHit = tamperedSignals.contains { $0.category == "anti_tamper" || $0.category == "integrity" }
+        var mergedJailbreak = context.jailbreak
+        if antiTamperHit && !mergedJailbreak.isJailbroken {
+            let antiTamperMethods = tamperedSignals
+                .filter { $0.category == "anti_tamper" || $0.category == "integrity" }
+                .map { "anti_tamper:\($0.id)" }
+            let boostedConfidence = max(mergedJailbreak.confidence, tamperedSignals.map { $0.score }.reduce(0, +) * 0.5)
+            mergedJailbreak = DetectionResult(
+                isJailbroken: boostedConfidence >= 50,
+                confidence: min(100, boostedConfidence),
+                detectedMethods: mergedJailbreak.detectedMethods + antiTamperMethods,
+                details: mergedJailbreak.details
+            )
+        }
+        let finalContext = RiskContext(
+            device: context.device,
+            deviceID: context.deviceID,
+            network: context.network,
+            behavior: context.behavior,
+            jailbreak: mergedJailbreak
+        )
+
+        let out = CPRiskReport(context: finalContext, report: scoreReport)
         out.setServerSignals(RiskSignalProviderRegistry.shared.serverSignals(snapshot: snapshot))
         stateLock.lock()
         let acctId = boundAccountId
@@ -408,6 +456,7 @@ public final class CPRiskKit: NSObject {
     /// 默认读取当前 `RemoteConfig.securityHardening` 与 `payloadFieldMapping`：
     /// - `enforcePayloadFieldMapping=true` 且映射缺失/过期时会抛错。
     /// - `enableEnvelopeSignatureV2=false` 时自动降级为 v1 签名串格式。
+    /// - `challengeBinding` 仅是 SDK 本地联调字段；Release 默认不会生成本地合成 challenge。
     public func buildSecureReportEnvelope(
         report: CPRiskReport,
         sessionToken: String,
@@ -434,7 +483,11 @@ public final class CPRiskKit: NSObject {
             payloadData = try removingPayloadKey("challengeBinding", from: payloadData)
         }
 
+        #if DEBUG
         let signatureVersion = hardening.enableEnvelopeSignatureV2 ? "v2" : "v1"
+        #else
+        let signatureVersion = "v2"  // Release 下忽略远程配置，始终强制 v2
+        #endif
         let envelopeConfig = ReportEnvelope.Config(signatureVersion: signatureVersion)
 
         return try ReportEnvelope.create(
@@ -547,6 +600,11 @@ public final class CPRiskKit: NSObject {
         signals: [RiskSignal],
         deviceID: String
     ) -> ChallengeBindingPayload? {
+        guard Self.localSynthesizedChallengeBindingAllowed else {
+            Logger.log("challenge.binding skipped: local synthesized binding disabled in release; require server-issued challenge")
+            return nil
+        }
+
         let hardening = remoteConfig?.securityHardening ?? .default
         guard hardening.enableChallengeBinding else {
             return nil
@@ -591,7 +649,7 @@ public final class CPRiskKit: NSObject {
             capabilityScore: capabilityRuntime.score,
             tamperedCount: tamperedCount,
             executedProbeIDs: capabilityRuntime.probes.map(\.id),
-            triggerReason: trigger.reason
+            triggerReason: "local_sdk_synthesized/\(trigger.reason)"
         )
     }
 
@@ -662,12 +720,32 @@ public final class CPRiskKit: NSObject {
         config.jailbreak.enableFileDetect = true
         config.jailbreak.enableDyldDetect = true
         config.jailbreak.enableSysctlDetect = true
-        if config.jailbreak.threshold > 100 {
+#if !DEBUG
+        config.jailbreak.enableEnvDetect = true
+        config.jailbreak.enableSchemeDetect = true
+        config.jailbreak.enableHookDetect = true
+        config.enableBehaviorDetect = true
+        config.enableNetworkSignals = true
+        if config.jailbreak.threshold > 50 {
             config.jailbreak.threshold = 50
         }
         if config.threshold > 100 {
             config.threshold = 55
         }
+#else
+        if config.jailbreak.threshold > 100 {
+            config.jailbreak.threshold = 50
+        }
+#endif
+        // Release 下：关键检测开关不允许被远程配置或调用方关闭（最终强制覆盖）
+#if !DEBUG
+        config.enableBehaviorDetect = true
+        config.enableNetworkSignals = true
+        config.jailbreak.enableFileDetect = true
+        config.jailbreak.enableDyldDetect = true
+        config.jailbreak.enableSysctlDetect = true
+        config.jailbreak.enableHookDetect = true
+#endif
     }
 
     private func resolveRuntimeConfig(from config: CPRiskConfig) -> RiskConfig {
@@ -905,13 +983,18 @@ public final class CPRiskKit: NSObject {
         stateLock.unlock()
 
         if sameEndpoint, let existingProvider {
+            existingProvider.configurePinning(hashes: Self.currentPinnedCertificateHashes())
+            existingProvider.reloadCachedConfigTrustState()
             if !hasCachedConfig {
                 _ = applyRemoteConfigIfAccepted(existingProvider.currentConfig, source: "provider_reuse")
             }
             return true
         }
 
-        let provider = RemoteConfigProvider(configURL: url)
+        let provider = RemoteConfigProvider(
+            configURL: url,
+            pinnedCertificateHashes: Self.currentPinnedCertificateHashes()
+        )
         stateLock.lock()
         remoteConfigEndpoint = url
         remoteConfigProvider = provider
@@ -930,7 +1013,8 @@ public final class CPRiskKit: NSObject {
         source: String,
         validateStrictly: Bool = true
     ) -> Bool {
-        let validation = config.validate()
+        let effectiveConfig = Self.releaseHardenedRemoteConfig(config)
+        let validation = effectiveConfig.validate()
         if !validation.isValid, validateStrictly {
             let detail = validation.errors.joined(separator: " | ")
             Logger.log("remote_config.\(source) rejected: invalid config, errors=\(detail)")
@@ -949,19 +1033,17 @@ public final class CPRiskKit: NSObject {
         defer { stateLock.unlock() }
 
         if let currentVersion = latestRemoteConfig?.version {
-            if config.version < currentVersion, !Self.localRemoteConfigRollbackAllowed {
+            if effectiveConfig.version < currentVersion, !Self.localRemoteConfigRollbackAllowed {
                 Logger.log(
                     "remote_config.\(source) rejected: rollback detected " +
-                    "incoming=\(config.version) < current=\(currentVersion)"
+                    "incoming=\(effectiveConfig.version) < current=\(currentVersion)"
                 )
                 return false
             }
-            if config.version == currentVersion {
-                let currentHash = latestRemoteConfig.map {
-                    SHA256.hash(data: (try? JSONEncoder().encode($0)) ?? Data())
-                }
-                let newHash = SHA256.hash(data: (try? JSONEncoder().encode(config)) ?? Data())
-                if let currentHash, Data(currentHash) == Data(newHash) {
+            if effectiveConfig.version == currentVersion {
+                let currentHash = latestRemoteConfig.flatMap(Self.stableConfigHash)
+                let newHash = Self.stableConfigHash(effectiveConfig)
+                if let currentHash, currentHash == newHash {
                     return true
                 }
                 Logger.log("remote_config.\(source) rejected: same version but different content hash")
@@ -969,8 +1051,53 @@ public final class CPRiskKit: NSObject {
             }
         }
 
-        latestRemoteConfig = config
+        latestRemoteConfig = effectiveConfig
         return true
+    }
+
+    private func applyPinnedCertificateHashes(_ hashes: Set<String>) {
+        currentRemoteConfigProvider()?.configurePinning(hashes: hashes)
+    }
+
+    private func refreshRemoteTrustState() {
+        if let provider = currentRemoteConfigProvider() {
+            provider.reloadCachedConfigTrustState()
+            _ = applyRemoteConfigIfAccepted(provider.currentConfig, source: "trust_refresh", validateStrictly: false)
+        } else {
+            stateLock.lock()
+            latestRemoteConfig = nil
+            stateLock.unlock()
+        }
+        PolicyManager.shared.reloadTrustedCacheState()
+    }
+
+    private static func normalizedPinnedCertificateHashes(from hashes: [String]) -> Set<String> {
+        Set(
+            hashes
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        )
+    }
+
+    private static func currentPinnedCertificateHashes() -> Set<String> {
+        remoteTrustLock.lock()
+        defer { remoteTrustLock.unlock() }
+        return pinnedCertificateHashes
+    }
+
+    private static func releaseHardenedRemoteConfig(_ config: RemoteConfig) -> RemoteConfig {
+#if DEBUG
+        return config
+#else
+        return config.enforcingReleaseSecurityFloor()
+#endif
+    }
+
+    private static func stableConfigHash(_ config: RemoteConfig) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(config) else { return nil }
+        return SHA256.hash(data: data).compactMap { String(format: "%02x", $0) }.joined()
     }
 }
 

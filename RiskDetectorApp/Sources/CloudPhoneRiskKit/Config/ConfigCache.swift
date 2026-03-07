@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public protocol ConfigCaching: Sendable {
@@ -22,19 +23,29 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         let config: RemoteConfig
         let cachedAt: TimeInterval
         let isVerifiedByServer: Bool
+        let contentHash: String?
 
-        init(config: RemoteConfig, cachedAt: TimeInterval, isVerifiedByServer: Bool = false) {
+        init(config: RemoteConfig, cachedAt: TimeInterval, isVerifiedByServer: Bool = false, contentHash: String? = nil) {
             self.config = config
             self.cachedAt = cachedAt
             self.isVerifiedByServer = isVerifiedByServer
+            self.contentHash = contentHash ?? Self.computeContentHash(for: config)
         }
 
-        // 向后兼容：旧磁盘缓存无此字段时默认为 false
+        // 向后兼容：旧磁盘缓存无可信元数据时降级为 nil/false，由上层按构建类型决定是否接受
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             config = try container.decode(RemoteConfig.self, forKey: .config)
             cachedAt = try container.decode(TimeInterval.self, forKey: .cachedAt)
             isVerifiedByServer = (try? container.decodeIfPresent(Bool.self, forKey: .isVerifiedByServer)) ?? false
+            contentHash = try? container.decodeIfPresent(String.self, forKey: .contentHash)
+        }
+
+        fileprivate static func computeContentHash(for config: RemoteConfig) -> String? {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            guard let data = try? encoder.encode(config) else { return nil }
+            return SHA256.hash(data: data).compactMap { String(format: "%02x", $0) }.joined()
         }
     }
 
@@ -78,13 +89,24 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         lock.lock()
         defer { lock.unlock() }
 
-        if let memoryCache {
-            return CachedConfig(config: memoryCache.config, cachedAt: memoryCache.cachedAt)
+        if let memoryCache, isUsableTrustedEntry(memoryCache, source: "memory_cache") {
+            return CachedConfig(
+                config: memoryCache.config,
+                cachedAt: memoryCache.cachedAt,
+                isVerifiedByServer: memoryCache.isVerifiedByServer,
+                contentHash: memoryCache.contentHash
+            )
         }
+        memoryCache = nil
 
         if let latest = loadLatestFromDisk() {
             memoryCache = latest
-            return CachedConfig(config: latest.config, cachedAt: latest.cachedAt)
+            return CachedConfig(
+                config: latest.config,
+                cachedAt: latest.cachedAt,
+                isVerifiedByServer: latest.isVerifiedByServer,
+                contentHash: latest.contentHash
+            )
         }
 
         return nil
@@ -94,7 +116,11 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         lock.lock()
         defer { lock.unlock() }
 
-        let entry = CacheEntry(config: config, cachedAt: Date().timeIntervalSince1970, isVerifiedByServer: verifiedByServer)
+        let entry = CacheEntry(
+            config: config,
+            cachedAt: Date().timeIntervalSince1970,
+            isVerifiedByServer: verifiedByServer
+        )
         memoryCache = entry
 
         guard persistToDisk else { return }
@@ -217,16 +243,21 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
 
     private func loadLatestFromDisk() -> CacheEntry? {
         guard persistToDisk else { return nil }
-        let all = loadAllDiskEntries()
-        // 优先返回已通过服务端验签的最新版本
-        if let verified = all.filter({ $0.isVerifiedByServer }).max(by: { $0.config.version < $1.config.version }) {
+        let all = loadAllDiskEntries().filter { isUsableTrustedEntry($0, source: "disk_cache") }
+        if let verified = all
+            .filter({ $0.isVerifiedByServer })
+            .max(by: { $0.config.version < $1.config.version }) {
             return verified
         }
-        // fallback 到未验签条目，记录日志以便排查
+
+#if DEBUG
         if let fallback = all.max(by: { $0.config.version < $1.config.version }) {
-            Logger.log("ConfigCache.loadLatestFromDisk: using unverified cache entry version=\(fallback.config.version)")
+            Logger.log("ConfigCache.loadLatestFromDisk: [DEBUG] using unverified cache entry version=\(fallback.config.version)")
             return fallback
         }
+#else
+        Logger.log("ConfigCache.loadLatestFromDisk: no verified cache entry in release build, returning nil")
+#endif
         return nil
     }
 
@@ -276,6 +307,32 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         UserDefaults.standard.set(StorageIntegrityGuard.sign(stored, purpose: "config_cache"), forKey: hmacDiskKey)
     }
 
+    private func isUsableTrustedEntry(_ entry: CacheEntry, source: String) -> Bool {
+        guard entry.contentHash == CacheEntry.computeContentHash(for: entry.config) else {
+#if DEBUG
+            Logger.log("ConfigCache.\(source): content hash missing or mismatch, allowing only in debug")
+            return true
+#else
+            Logger.log("ConfigCache.\(source): rejecting cache entry due to missing or mismatched content hash")
+            return false
+#endif
+        }
+
+#if DEBUG
+        return true
+#else
+        guard ConfigSignatureVerifier.isConfigured else {
+            Logger.log("ConfigCache.\(source): rejecting cache entry because signing key is not configured")
+            return false
+        }
+        guard entry.isVerifiedByServer else {
+            Logger.log("ConfigCache.\(source): rejecting unverified cache entry version=\(entry.config.version)")
+            return false
+        }
+        return true
+#endif
+    }
+
     private func cacheSizeUnlocked() -> Int {
         guard persistToDisk,
               let data = UserDefaults.standard.data(forKey: diskKey) else {
@@ -288,6 +345,8 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
 public struct CachedConfig: Sendable {
     public let config: RemoteConfig
     public let cachedAt: TimeInterval
+    public let isVerifiedByServer: Bool
+    public let contentHash: String?
 
     public func isExpired(duration: TimeInterval) -> Bool {
         Date().timeIntervalSince1970 - cachedAt > duration

@@ -55,7 +55,10 @@ enum SDKBinaryIntegrityChecker {
         if !sizeCheck { allPassed = false }
         
         let detail: String
-        if allPassed {
+        if uuidCheck.isFirstRun {
+            // 首次运行建基线：产出软信号而非静默通过，防止基线投毒窗口
+            detail = "baseline_established"
+        } else if allPassed {
             detail = "intact"
         } else {
             let failed = checks.filter { !$0.value }.map { $0.key }
@@ -67,6 +70,19 @@ enum SDKBinaryIntegrityChecker {
     }
     
     static func asSignals(result: IntegrityResult) -> [RiskSignal] {
+        // 首次运行建基线：产出低权重软信号，让服务端感知到安装/重装事件
+        if result.detail == "baseline_established" {
+            return [RiskSignal(
+                id: "sdk_integrity_first_run",
+                category: "integrity",
+                score: 0,
+                evidence: ["detail": "baseline_established_on_first_run"],
+                state: .soft(confidence: 0.3),
+                layer: 2,
+                weightHint: 30
+            )]
+        }
+
         guard !result.isIntact else { return [] }
         
         var signals: [RiskSignal] = []
@@ -152,14 +168,14 @@ enum SDKBinaryIntegrityChecker {
         return false
     }
     
-    private static func checkUUIDConsistency(header: UnsafeRawPointer) -> (consistent: Bool, uuid: String?) {
+    private static func checkUUIDConsistency(header: UnsafeRawPointer) -> (consistent: Bool, uuid: String?, isFirstRun: Bool) {
         guard let currentUUID = extractUUID(header: header) else {
-            return (true, nil)
+            return (true, nil, false)
         }
         
         if let storedUUID = keychainRead(account: keychainUUIDAcc) {
             if storedUUID == currentUUID {
-                return (true, currentUUID)
+                return (true, currentUUID, false)
             }
             // UUID changed — could be an update or a replacement
             // Store new UUID but flag as inconsistent on first detection
@@ -167,12 +183,12 @@ enum SDKBinaryIntegrityChecker {
             // handles version changes via LC_UUID, so if BOTH change simultaneously,
             // it's likely an update. If only this changes, suspicious.
             keychainWrite(account: keychainUUIDAcc, value: currentUUID)
-            return (false, currentUUID)
+            return (false, currentUUID, false)
         }
         
-        // First run — establish baseline
+        // First run — establish baseline; report as first-run rather than silently passing
         keychainWrite(account: keychainUUIDAcc, value: currentUUID)
-        return (true, currentUUID)
+        return (true, currentUUID, true)
     }
     
     private static func extractUUID(header: UnsafeRawPointer) -> String? {

@@ -888,6 +888,22 @@ public struct SecurityHardeningConfig: Codable, Sendable {
 // MARK: - RemoteConfig 扩展
 
 extension RemoteConfig {
+    func enforcingReleaseSecurityFloor() -> RemoteConfig {
+        RemoteConfig(
+            version: version,
+            timestamp: timestamp,
+            environment: environment,
+            description: description,
+            policy: policy,
+            detector: detector.enforcingReleaseSecurityFloor(),
+            whitelist: whitelist,
+            experiments: experiments,
+            advanced: advanced,
+            probeConfig: probeConfig,
+            payloadFieldMapping: payloadFieldMapping,
+            securityHardening: (securityHardening ?? .default).enforcingReleaseSecurityFloor()
+        )
+    }
 
     /// 转换为 RiskConfig（兼容现有接口）
     public func toRiskConfig() -> RiskConfig {
@@ -919,6 +935,41 @@ extension RemoteConfig {
     public static func from(jsonString: String) -> RemoteConfig? {
         guard let data = jsonString.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(RemoteConfig.self, from: data)
+    }
+}
+
+extension RemoteDetectorConfig {
+    func enforcingReleaseSecurityFloor() -> RemoteDetectorConfig {
+        RemoteDetectorConfig(
+            jailbreakThreshold: min(jailbreakThreshold, 50),
+            jailbreakEnableFileDetect: true,
+            jailbreakEnableDyldDetect: true,
+            jailbreakEnableEnvDetect: true,
+            jailbreakEnableSysctlDetect: true,
+            jailbreakEnableSchemeDetect: true,
+            jailbreakEnableHookDetect: true,
+            enableBehaviorDetect: true,
+            behaviorSampleWindow: behaviorSampleWindow,
+            touchMinSampleCount: touchMinSampleCount,
+            motionMinSampleCount: motionMinSampleCount,
+            enableNetworkSignals: true,
+            detectVPN: detectVPN,
+            detectProxy: detectProxy,
+            enableCloudPhoneDetect: enableCloudPhoneDetect,
+            maxDetectionDuration: maxDetectionDuration,
+            enableAsyncDetection: enableAsyncDetection
+        )
+    }
+}
+
+extension SecurityHardeningConfig {
+    func enforcingReleaseSecurityFloor() -> SecurityHardeningConfig {
+        SecurityHardeningConfig(
+            enableEnvelopeSignatureV2: true,
+            enforcePayloadFieldMapping: enforcePayloadFieldMapping,
+            enableChallengeBinding: true,
+            killSwitchEnabled: killSwitchEnabled
+        )
     }
 }
 

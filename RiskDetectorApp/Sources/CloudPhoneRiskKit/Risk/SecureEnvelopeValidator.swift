@@ -25,18 +25,207 @@ public enum SecureEnvelopeValidationError: Error, LocalizedError, Sendable {
 public final class LocalEnvelopeReplayStore: NonceReplayProtecting, @unchecked Sendable {
     public static let shared = LocalEnvelopeReplayStore()
 
-    private let backend = InMemoryNonceReplayStore()
+    private struct StoredEnvelope: Codable {
+        var schemaVersion: Int
+        var entries: [String: Int64]
+        var latestExpiryMillis: Int64
+        var sequence: UInt64
+    }
 
-    private init() {}
+    private let defaults = UserDefaults.standard
+    private let lock = NSLock()
+    private let key = "cloudphone_envelope_replay_v2"
+    private let hmacKey = "cloudphone_envelope_replay_v2_hmac"
+    private let hmacPurpose = "envelope_replay"
+    private let freshnessAnchor = FreshnessAnchor(account: "envelope_replay_v2_freshness")
+    private let maxEntries = 2048
+    private var storage: [String: Int64] = [:]
+    private var freshness: FreshnessState = .zero
+    private var failClosed = false
+
+    private init() {
+        lock.lock()
+        defer { lock.unlock() }
+        loadLocked()
+    }
 
     public func consumeIfNew(sessionToken: String, nonce: String, expiresAtMillis: Int64) -> Bool {
-        backend.consumeIfNew(sessionToken: sessionToken, nonce: nonce, expiresAtMillis: expiresAtMillis)
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard !failClosed else {
+            Logger.log("LocalEnvelopeReplayStore: fail-closed active, rejecting nonce consumption")
+            return false
+        }
+
+        pruneExpiredLocked(nowMillis: nowMillis())
+
+        let key = replayKey(sessionToken: sessionToken, nonce: nonce)
+        if storage[key] != nil {
+            return false
+        }
+
+        storage[key] = expiresAtMillis
+        trimToLimitLocked()
+        guard persistLocked() else {
+            storage.removeValue(forKey: key)
+            return false
+        }
+        return true
+    }
+
+    private func loadLocked() {
+        let anchor = freshnessAnchor.read() ?? .zero
+        guard let stored = defaults.data(forKey: key) else {
+            storage = [:]
+            freshness = anchor
+            failClosed = false
+            return
+        }
+        guard let signature = defaults.data(forKey: hmacKey),
+              StorageIntegrityGuard.verify(stored, signature: signature, purpose: hmacPurpose) else {
+            handleCorruptedStateLocked(reason: "signature verification failed", anchor: anchor)
+            return
+        }
+
+        let plaintext: Data
+        #if DEBUG
+        if let decrypted = try? PayloadCrypto.decrypt(stored) {
+            plaintext = decrypted
+        } else {
+            plaintext = stored
+        }
+        #else
+        guard let decrypted = try? PayloadCrypto.decrypt(stored) else {
+            handleCorruptedStateLocked(reason: "decrypt failed in release build", anchor: anchor)
+            return
+        }
+        plaintext = decrypted
+        #endif
+
+        guard let envelope = try? JSONDecoder().decode(StoredEnvelope.self, from: plaintext) else {
+            handleCorruptedStateLocked(reason: "json decode failed", anchor: anchor)
+            return
+        }
+
+        let diskFreshness = FreshnessState(
+            latestTimestamp: Double(envelope.latestExpiryMillis),
+            sequence: envelope.sequence
+        )
+        if diskFreshness.sequence < anchor.sequence || diskFreshness.latestTimestamp < anchor.latestTimestamp {
+            handleCorruptedStateLocked(reason: "freshness rollback detected", anchor: anchor)
+            return
+        }
+
+        storage = envelope.entries
+        freshness = FreshnessState(
+            latestTimestamp: max(anchor.latestTimestamp, diskFreshness.latestTimestamp),
+            sequence: max(anchor.sequence, diskFreshness.sequence)
+        )
+        pruneExpiredLocked(nowMillis: nowMillis())
+        failClosed = false
+
+        if diskFreshness.sequence > anchor.sequence || diskFreshness.latestTimestamp > anchor.latestTimestamp {
+            _ = freshnessAnchor.write(diskFreshness)
+        }
+    }
+
+    private func persistLocked() -> Bool {
+        let anchor = freshnessAnchor.read() ?? .zero
+        let latestExpiry = storage.values.max() ?? Int64(anchor.latestTimestamp)
+        let nextFreshness = FreshnessState(
+            latestTimestamp: max(Double(latestExpiry), max(anchor.latestTimestamp, freshness.latestTimestamp)),
+            sequence: max(anchor.sequence, freshness.sequence) + 1
+        )
+        let envelope = StoredEnvelope(
+            schemaVersion: 2,
+            entries: storage,
+            latestExpiryMillis: Int64(nextFreshness.latestTimestamp),
+            sequence: nextFreshness.sequence
+        )
+        guard let raw = try? JSONEncoder().encode(envelope) else {
+            activateFailClosedLocked(reason: "encode failed")
+            return false
+        }
+
+        let stored: Data
+        #if DEBUG
+        stored = (try? PayloadCrypto.encrypt(raw)) ?? raw
+        #else
+        guard let encrypted = try? PayloadCrypto.encrypt(raw) else {
+            activateFailClosedLocked(reason: "encrypt failed in release build")
+            return false
+        }
+        stored = encrypted
+        #endif
+
+        defaults.set(stored, forKey: key)
+        defaults.set(StorageIntegrityGuard.sign(stored, purpose: hmacPurpose), forKey: hmacKey)
+        guard freshnessAnchor.write(nextFreshness) else {
+            activateFailClosedLocked(reason: "freshness anchor update failed")
+            return false
+        }
+
+        freshness = nextFreshness
+        return true
+    }
+
+    private func handleCorruptedStateLocked(reason: String, anchor: FreshnessState) {
+        Logger.log("LocalEnvelopeReplayStore: \(reason)")
+        clearPersistedStateLocked(resetAnchor: false)
+        storage = [:]
+        freshness = anchor
+        #if DEBUG
+        failClosed = false
+        #else
+        failClosed = true
+        #endif
+    }
+
+    private func activateFailClosedLocked(reason: String) {
+        Logger.log("LocalEnvelopeReplayStore: \(reason)")
+        #if DEBUG
+        failClosed = false
+        #else
+        failClosed = true
+        #endif
+        if failClosed {
+            clearPersistedStateLocked(resetAnchor: false)
+        }
+    }
+
+    private func clearPersistedStateLocked(resetAnchor: Bool) {
+        defaults.removeObject(forKey: key)
+        defaults.removeObject(forKey: hmacKey)
+        if resetAnchor {
+            freshnessAnchor.remove()
+        }
+    }
+
+    private func pruneExpiredLocked(nowMillis: Int64) {
+        storage = storage.filter { $0.value > nowMillis }
+    }
+
+    private func trimToLimitLocked() {
+        guard storage.count > maxEntries else { return }
+        let sorted = storage.sorted { $0.value < $1.value }
+        for item in sorted.prefix(storage.count - maxEntries) {
+            storage.removeValue(forKey: item.key)
+        }
+    }
+
+    private func replayKey(sessionToken: String, nonce: String) -> String {
+        "\(sessionToken):\(nonce)"
+    }
+
+    private func nowMillis() -> Int64 {
+        Int64(Date().timeIntervalSince1970 * 1000)
     }
 }
 
 extension CPRiskKit {
     /// 本地校验安全信封（用于 SDK 回归验证链路）。
-    /// 默认仅接受 v2 签名，并启用重放保护。
+    /// 默认仅接受 v2 签名，并启用持久化重放保护。
     public func validateSecureReportEnvelope(
         _ envelope: ReportEnvelope,
         signingKey: String,

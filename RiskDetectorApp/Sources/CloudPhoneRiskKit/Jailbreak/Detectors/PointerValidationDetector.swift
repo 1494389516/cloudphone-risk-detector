@@ -19,6 +19,7 @@ struct PointerValidationDetector: Detector {
         .init(symbol: "access", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 8),
         .init(symbol: "faccessat", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 8),
         .init(symbol: "sysctl", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 8),
+        .init(symbol: "sysctlbyname", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 8),
         .init(symbol: "getenv", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 6),
         .init(symbol: "dlopen", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 8),
         .init(symbol: "dlsym", expectedPathPrefixes: ["/usr/lib/system/", "/usr/lib/libsystem"], score: 6),

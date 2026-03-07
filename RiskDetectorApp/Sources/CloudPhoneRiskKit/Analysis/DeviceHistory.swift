@@ -124,11 +124,19 @@ public struct HistoryQueryResult: Sendable {
 public final class DeviceHistory {
     public static let shared = DeviceHistory()
 
+    private struct StoredEnvelope: Codable {
+        var schemaVersion: Int
+        var snapshots: [DeviceDetectionSnapshot]
+        var latestTimestamp: Double
+        var sequence: UInt64
+    }
+
     private let lock = NSLock()
     private let fileManager = FileManager.default
     private let storeURL: URL
     private let hmacURL: URL
     private let hmacPurpose = "device_history"
+    private let freshnessAnchor = FreshnessAnchor(account: "device_history_v2_freshness")
 
     private let maxSnapshots = 500
 
@@ -137,6 +145,7 @@ public final class DeviceHistory {
 
     /// 内存缓存
     private var cachedSnapshots: [DeviceDetectionSnapshot] = []
+    private var cachedFreshness: FreshnessState = .zero
 
     /// 缓存是否脏（需要持久化）
     private var isDirty = false
@@ -332,8 +341,9 @@ public final class DeviceHistory {
         defer { lock.unlock() }
 
         cachedSnapshots.removeAll()
+        cachedFreshness = .zero
         isDirty = true
-        persistToDiskLocked()
+        persistToDiskLocked(resetAnchor: true)
     }
 
     // MARK: - 持久化
@@ -342,8 +352,11 @@ public final class DeviceHistory {
         lock.lock()
         defer { lock.unlock() }
 
+        let anchor = freshnessAnchor.read() ?? .zero
         guard fileManager.fileExists(atPath: storeURL.path) else {
             cachedSnapshots = []
+            cachedFreshness = anchor
+            isDirty = false
             return
         }
 
@@ -354,9 +367,9 @@ public final class DeviceHistory {
 
         guard let signature = try? Data(contentsOf: hmacURL),
               StorageIntegrityGuard.verify(data, signature: signature, purpose: hmacPurpose) else {
-            try? fileManager.removeItem(at: storeURL)
-            try? fileManager.removeItem(at: hmacURL)
+            clearPersistedFilesLocked(resetAnchor: false)
             cachedSnapshots = []
+            cachedFreshness = anchor
             return
         }
 
@@ -370,21 +383,51 @@ public final class DeviceHistory {
         #else
         guard let dec = try? PayloadCrypto.decrypt(data) else {
             Logger.log("DeviceHistory: decrypt failed, clearing corrupted data in release build")
-            try? fileManager.removeItem(at: storeURL)
-            try? fileManager.removeItem(at: hmacURL)
+            clearPersistedFilesLocked(resetAnchor: false)
             cachedSnapshots = []
+            cachedFreshness = anchor
             return
         }
         decryptedData = dec
         #endif
 
-        guard let decoded = try? JSONDecoder().decode([DeviceDetectionSnapshot].self, from: decryptedData) else {
+        let decodedSnapshots: [DeviceDetectionSnapshot]
+        let diskFreshness: FreshnessState
+        if let envelope = try? JSONDecoder().decode(StoredEnvelope.self, from: decryptedData) {
+            decodedSnapshots = envelope.snapshots
+            diskFreshness = FreshnessState(
+                latestTimestamp: envelope.latestTimestamp,
+                sequence: envelope.sequence
+            )
+        } else if let legacy = try? JSONDecoder().decode([DeviceDetectionSnapshot].self, from: decryptedData) {
+            decodedSnapshots = legacy
+            diskFreshness = FreshnessState(
+                latestTimestamp: legacy.map(\.timestamp).max() ?? 0,
+                sequence: 0
+            )
+        } else {
             cachedSnapshots = []
+            cachedFreshness = anchor
             return
         }
 
-        cachedSnapshots = decoded
-        isDirty = false
+        if diskFreshness.sequence < anchor.sequence || diskFreshness.latestTimestamp < anchor.latestTimestamp {
+            Logger.log("DeviceHistory: freshness rollback detected")
+            clearPersistedFilesLocked(resetAnchor: false)
+            cachedSnapshots = []
+            cachedFreshness = anchor
+            isDirty = false
+            return
+        }
+
+        let cleaned = pruneSnapshotsLocked(decodedSnapshots)
+        cachedSnapshots = cleaned.snapshots
+        cachedFreshness = maxFreshness(anchor, diskFreshness)
+        isDirty = cleaned.didPrune
+
+        if diskFreshness.sequence > anchor.sequence || diskFreshness.latestTimestamp > anchor.latestTimestamp {
+            _ = freshnessAnchor.write(diskFreshness)
+        }
     }
 
     private func persistIfDirty() {
@@ -392,13 +435,30 @@ public final class DeviceHistory {
         defer { lock.unlock() }
 
         guard isDirty else { return }
-        persistToDiskLocked()
+        persistToDiskLocked(resetAnchor: false)
         isDirty = false
     }
 
-    private func persistToDiskLocked() {
+    private func persistToDiskLocked(resetAnchor: Bool) {
+        if resetAnchor {
+            clearPersistedFilesLocked(resetAnchor: true)
+            return
+        }
+
         do {
-            let rawData = try JSONEncoder().encode(cachedSnapshots)
+            let anchor = freshnessAnchor.read() ?? .zero
+            let latestSnapshotTimestamp = cachedSnapshots.map(\.timestamp).max() ?? 0
+            let freshness = FreshnessState(
+                latestTimestamp: max(latestSnapshotTimestamp, max(anchor.latestTimestamp, cachedFreshness.latestTimestamp)),
+                sequence: max(anchor.sequence, cachedFreshness.sequence) + 1
+            )
+            let envelope = StoredEnvelope(
+                schemaVersion: 2,
+                snapshots: cachedSnapshots,
+                latestTimestamp: freshness.latestTimestamp,
+                sequence: freshness.sequence
+            )
+            let rawData = try JSONEncoder().encode(envelope)
             let dataToWrite: Data
             #if DEBUG
             dataToWrite = (try? PayloadCrypto.encrypt(rawData)) ?? rawData
@@ -416,6 +476,14 @@ public final class DeviceHistory {
                 [FileAttributeKey.protectionKey: FileProtectionType.complete],
                 ofItemAtPath: hmacURL.path
             )
+            guard freshnessAnchor.write(freshness) else {
+                Logger.log("DeviceHistory: failed to update freshness anchor")
+                if BuildConfig.isRelease {
+                    clearPersistedFilesLocked(resetAnchor: false)
+                }
+                return
+            }
+            cachedFreshness = freshness
             Logger.log("DeviceHistory: persisted \(cachedSnapshots.count) snapshots (encrypted)")
         } catch {
             Logger.log("DeviceHistory: failed to persist - \(error.localizedDescription)")
@@ -431,19 +499,36 @@ public final class DeviceHistory {
     }
 
     private func cleanAndReturnLocked() -> [DeviceDetectionSnapshot] {
-        let now = Date().timeIntervalSince1970
-        let minTimestamp = now - maxAgeSeconds
-
-        // 移除过期的快照
-        let before = cachedSnapshots.count
-        cachedSnapshots = cachedSnapshots.filter { $0.timestamp >= minTimestamp }
-        let after = cachedSnapshots.count
-
-        if before != after {
+        let pruned = pruneSnapshotsLocked(cachedSnapshots)
+        cachedSnapshots = pruned.snapshots
+        if pruned.didPrune {
             isDirty = true
         }
 
         // 按时间戳排序
         return cachedSnapshots.sorted { $0.timestamp < $1.timestamp }
+    }
+
+    private func pruneSnapshotsLocked(_ snapshots: [DeviceDetectionSnapshot]) -> (snapshots: [DeviceDetectionSnapshot], didPrune: Bool) {
+        let now = Date().timeIntervalSince1970
+        let minTimestamp = now - maxAgeSeconds
+        let timeFiltered = snapshots.filter { $0.timestamp >= minTimestamp }
+        let limited = timeFiltered.count > maxSnapshots ? Array(timeFiltered.suffix(maxSnapshots)) : timeFiltered
+        return (limited, limited.count != snapshots.count)
+    }
+
+    private func clearPersistedFilesLocked(resetAnchor: Bool) {
+        try? fileManager.removeItem(at: storeURL)
+        try? fileManager.removeItem(at: hmacURL)
+        if resetAnchor {
+            freshnessAnchor.remove()
+        }
+    }
+
+    private func maxFreshness(_ lhs: FreshnessState, _ rhs: FreshnessState) -> FreshnessState {
+        FreshnessState(
+            latestTimestamp: max(lhs.latestTimestamp, rhs.latestTimestamp),
+            sequence: max(lhs.sequence, rhs.sequence)
+        )
     }
 }
