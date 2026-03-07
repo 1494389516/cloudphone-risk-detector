@@ -108,8 +108,28 @@ enum TextSegmentIntegrityChecker {
     /// Convert result to RiskSignals
     static func asSignals(result: IntegrityResult) -> [RiskSignal] {
         switch result.detail {
-        case "encrypted_skip", "sdk_image_not_found", "hash_failed":
+        case "encrypted_skip":
             return []
+        case "sdk_image_not_found":
+            return [RiskSignal(
+                id: "sdk_image_missing",
+                category: "integrity",
+                score: 15,
+                evidence: ["detail": "sdk_image_not_found"],
+                state: .soft(confidence: 0.6),
+                layer: 2,
+                weightHint: 70
+            )]
+        case "hash_failed":
+            return [RiskSignal(
+                id: "text_segment_hash_failed",
+                category: "integrity",
+                score: 10,
+                evidence: ["detail": "hash_computation_failed"],
+                state: .soft(confidence: 0.5),
+                layer: 2,
+                weightHint: 60
+            )]
         case "tampered":
             return [
                 RiskSignal(

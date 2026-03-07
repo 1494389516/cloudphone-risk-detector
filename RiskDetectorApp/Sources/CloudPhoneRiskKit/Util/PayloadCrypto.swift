@@ -8,18 +8,31 @@ enum PayloadCrypto {
     private static let accessible = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
     private static let lock = NSLock()
 
+    /// 加密载荷的 magic 标识字节，用于区分密文与明文，防止静默降级
+    static let encryptedMagic: UInt8 = 0xAE
+
     static func encrypt(_ plaintext: Data) throws -> Data {
         let key = try symmetricKey()
         let sealed = try AES.GCM.seal(plaintext, using: key)
         guard let combined = sealed.combined else {
             throw NSError(domain: "CloudPhoneRiskKit", code: 2, userInfo: [NSLocalizedDescriptionKey: "AES.GCM combined unavailable"])
         }
-        return combined
+        var result = Data([encryptedMagic])
+        result.append(combined)
+        return result
     }
 
     static func decrypt(_ combined: Data) throws -> Data {
+        guard !combined.isEmpty, combined[combined.startIndex] == encryptedMagic else {
+            throw NSError(
+                domain: "CloudPhoneRiskKit",
+                code: 4,
+                userInfo: [NSLocalizedDescriptionKey: "Not an encrypted payload (missing magic header)"]
+            )
+        }
         let key = try symmetricKey()
-        let box = try AES.GCM.SealedBox(combined: combined)
+        let cipherData = combined.dropFirst()
+        let box = try AES.GCM.SealedBox(combined: cipherData)
         return try AES.GCM.open(box, using: key)
     }
 

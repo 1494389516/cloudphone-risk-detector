@@ -3,9 +3,16 @@ import Foundation
 public protocol ConfigCaching: Sendable {
     func load() -> CachedConfig?
     func save(_ config: RemoteConfig)
+    func save(_ config: RemoteConfig, verifiedByServer: Bool)
     func clear()
     func cacheSize() -> Int
     func cacheStats() -> CacheStats
+}
+
+extension ConfigCaching {
+    public func save(_ config: RemoteConfig) {
+        save(config, verifiedByServer: false)
+    }
 }
 
 public final class ConfigCache: @unchecked Sendable, ConfigCaching {
@@ -14,6 +21,21 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
     private struct CacheEntry: Codable {
         let config: RemoteConfig
         let cachedAt: TimeInterval
+        let isVerifiedByServer: Bool
+
+        init(config: RemoteConfig, cachedAt: TimeInterval, isVerifiedByServer: Bool = false) {
+            self.config = config
+            self.cachedAt = cachedAt
+            self.isVerifiedByServer = isVerifiedByServer
+        }
+
+        // 向后兼容：旧磁盘缓存无此字段时默认为 false
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            config = try container.decode(RemoteConfig.self, forKey: .config)
+            cachedAt = try container.decode(TimeInterval.self, forKey: .cachedAt)
+            isVerifiedByServer = (try? container.decodeIfPresent(Bool.self, forKey: .isVerifiedByServer)) ?? false
+        }
     }
 
     private let lock = NSLock()
@@ -68,11 +90,11 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         return nil
     }
 
-    public func save(_ config: RemoteConfig) {
+    public func save(_ config: RemoteConfig, verifiedByServer: Bool = false) {
         lock.lock()
         defer { lock.unlock() }
 
-        let entry = CacheEntry(config: config, cachedAt: Date().timeIntervalSince1970)
+        let entry = CacheEntry(config: config, cachedAt: Date().timeIntervalSince1970, isVerifiedByServer: verifiedByServer)
         memoryCache = entry
 
         guard persistToDisk else { return }
@@ -124,6 +146,7 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
     }
 
     public func rollback(to version: Int) -> RemoteConfig? {
+#if DEBUG
         lock.lock()
         defer { lock.unlock() }
 
@@ -133,6 +156,10 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
 
         memoryCache = target
         return target.config
+#else
+        Logger.log("ConfigCache.rollback rejected: not allowed in release build")
+        return nil
+#endif
     }
 
     public func availableVersions() -> [Int] {
@@ -172,10 +199,15 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
     }
 
     public func importCache(from data: Data) throws {
+#if DEBUG
         let decoded = try JSONDecoder().decode(CacheExport.self, from: data)
         for entry in decoded.entries {
-            save(entry.config)
+            save(entry.config, verifiedByServer: false)
         }
+#else
+        Logger.log("ConfigCache.importCache rejected: not allowed in release build")
+        throw ConfigError.importFailed(reason: "importCache not allowed in release build")
+#endif
     }
 
     private struct CacheExport: Codable {
@@ -185,7 +217,17 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
 
     private func loadLatestFromDisk() -> CacheEntry? {
         guard persistToDisk else { return nil }
-        return loadAllDiskEntries().max { $0.config.version < $1.config.version }
+        let all = loadAllDiskEntries()
+        // 优先返回已通过服务端验签的最新版本
+        if let verified = all.filter({ $0.isVerifiedByServer }).max(by: { $0.config.version < $1.config.version }) {
+            return verified
+        }
+        // fallback 到未验签条目，记录日志以便排查
+        if let fallback = all.max(by: { $0.config.version < $1.config.version }) {
+            Logger.log("ConfigCache.loadLatestFromDisk: using unverified cache entry version=\(fallback.config.version)")
+            return fallback
+        }
+        return nil
     }
 
     private func loadAllDiskEntries() -> [CacheEntry] {
@@ -199,12 +241,21 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
             UserDefaults.standard.removeObject(forKey: hmacDiskKey)
             return []
         }
+        #if DEBUG
         let data: Data
         if let decrypted = try? PayloadCrypto.decrypt(stored) {
             data = decrypted
         } else {
             data = stored
         }
+        #else
+        guard let data = try? PayloadCrypto.decrypt(stored) else {
+            Logger.log("ConfigCache: decrypt failed, clearing cache in release build")
+            UserDefaults.standard.removeObject(forKey: diskKey)
+            UserDefaults.standard.removeObject(forKey: hmacDiskKey)
+            return []
+        }
+        #endif
         return (try? JSONDecoder().decode([CacheEntry].self, from: data)) ?? []
     }
 
@@ -213,7 +264,14 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
               let encoded = try? JSONEncoder().encode(entries) else {
             return
         }
+        #if DEBUG
         let stored = (try? PayloadCrypto.encrypt(encoded)) ?? encoded
+        #else
+        guard let stored = try? PayloadCrypto.encrypt(encoded) else {
+            Logger.log("ConfigCache: encrypt failed, skipping save in release build")
+            return
+        }
+        #endif
         UserDefaults.standard.set(stored, forKey: diskKey)
         UserDefaults.standard.set(StorageIntegrityGuard.sign(stored, purpose: "config_cache"), forKey: hmacDiskKey)
     }

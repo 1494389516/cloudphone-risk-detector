@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
-  <img src="https://img.shields.io/badge/SDK-4.0-FF3B30?style=for-the-badge" alt="SDK">
+  <img src="https://img.shields.io/badge/SDK-4.1-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
   <img src="https://img.shields.io/badge/License-Proprietary-8E8E93?style=for-the-badge" alt="License">
 </p>
@@ -30,6 +30,7 @@
 | 3.6 | **Frida 深度对抗** | 线程枚举异常、异常端口劫持、V8 堆特征、Stalker JIT 检测、ObjC Swizzle、Dispatch Queue 扫描、Unix Socket、时序侧信道（8 维全覆盖） |
 | 3.7 | **SDK 自保护加固 + 全面纵深** | 基线迁移 Keychain、TLS 证书固定、PLT 持久化、ptrace 反调试、DYLD Interpose、SDK 二进制校验、传感器回放检测、GPU 深度探测、isa swizzling、消息转发检测、Keychain ACL、多路径一致性、指纹突变、随机化检测 |
 | **4.0** | **双轮红队审计 + 全栈安全加固** | 竞态条件修复、时序侧信道消除、存储加密、配置签名验证、Provider 注册表强化、决策引擎加固、行为信号增强、检测超时机制（22 项安全漏洞全修复） |
+|| **4.1** | **第三轮红队审计 + 攻击链纵深封堵** | 配置缓存来源验签、HTTPS 强制、Provider 实例锁定、首跑基线防投毒、存储加密 Fail-Closed、DeviceHistory 迁移加密、ReportEnvelope 元数据入签名域、DetectorRegistry 封印（10 项结构性漏洞全修复） |
 
 ## 架构概览
 
@@ -71,6 +72,69 @@
 | **硬信号** | 本地独立判定，单点即可触发 | 越狱、DRM 降级、ChargeCounter 异常、PLT 篡改、ObjC Swizzle、异常端口劫持、SDK 二进制替换、DYLD Interpose | 80-100 |
 | **软信号** | 需结合场景综合评分 | VPN、行为异常、电压方差低、挂载点异常、时序侧信道、线程枚举异常、指纹突变、随机化检测、行为数据不足 | 30-75 |
 | **服务端信号** | 依赖外部聚合 | 机房 IP、ASN 黑名单、IP 设备聚合度、图社区风险、硬件画像聚集 | 55-100 |
+
+---
+
+## 4.1 新增能力 — 第三轮红队审计攻击链封堵
+
+4.1 版本基于第三轮红队审计，聚焦于 4.0 修复后仍存在的**结构性攻击链**，共修复 **10 个漏洞**（4 个 Critical、4 个 High、2 个 Medium），从配置来源验证、运行时实例防护、存储加密健壮性、上报签名完备性四个维度全面加固。
+
+### 4.1 安全加固全景
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  4.1 攻击链纵深封堵矩阵                           │
+├──────────────┬──────────────┬──────────────┬────────────────────┤
+│  配置信任链   │   运行时防护  │   存储安全    │    签名完备性        │
+├──────────────┼──────────────┼──────────────┼────────────────────┤
+│ 缓存来源验签  │ Provider实例  │ 加密Fail-Close│ Envelope元数据签名  │
+│ HTTPS强制    │ 指针锁定      │ Magic Header  │ reportId/keyId覆盖  │
+│ 签名Fail-Close│ 首跑基线防毒  │ DeviceHistory │ DetectorRegistry   │
+│ 导入/回滚禁用 │ 异常→软信号   │ 加密+文件保护  │ 封印加锁            │
+│ JSON注入禁用  │ 实例替换告警  │ App Support迁移│ enabledTypes生效   │
+└──────────────┴──────────────┴──────────────┴────────────────────┘
+```
+
+### 配置信任链（P0-1 / P0-2）
+
+| 修复项 | 漏洞 | 修复方式 |
+|--------|------|----------|
+| **缓存来源真实性** | 本地恢复只验 HMAC，不验服务端签名来源；一次恶意写入可跨重启持久生效 | `CacheEntry` 新增 `isVerifiedByServer` 标志；`loadLatestFromDisk()` 优先已验签条目 |
+| **危险写入路径禁用** | `rollback()` / `importCache()` / `update(fromJSON:)` 可注入旧配置 | Release 下完全禁用这三个路径，只在 DEBUG 保留 |
+| **HTTPS 强制** | `configureRemoteConfigProvider()` 允许 HTTP，集成方漏配即退化为明文信任 | Release 下拒绝 `http://` 开头 URL，只允许 `https://` |
+| **签名未配置警告** | 未配置 signing key 时无任何警告，配置面等同无验证 | 未配置时缓存条目标记 `isVerifiedByServer: false` 并打印明确告警日志 |
+
+### 运行时防护（P0-3 / P0-4）
+
+| 修复项 | 漏洞 | 修复方式 |
+|--------|------|----------|
+| **Provider 实例指针锁定** | `seal()` 只锁类型，攻击者可注册同类型但配置更弱的实例替换真实 Provider | `seal()` 额外快照内部 Provider 实例指针（`ObjectIdentifier`）；后续 `register()` 同时校验类型 + 实例指针，替换时注入 `provider_instance_replaced` 信号（weightHint: 85） |
+| **PLT 首跑基线防投毒** | `captureBaseline()` + `verify(baseline:)` 在同次运行内建基线，Hook 注入的脏状态会被写成可信基线 | 改为 `PLTIntegrityGuard.verifyWithPersistedBaseline()`，基线持久化到 Keychain，消除自基线化漏洞 |
+| **完整性检测 Fail-Open** | `sdk_image_not_found` / `hash_failed` 静默返回空，攻击者可故意触发绕过完整性检测 | 两种异常路径均注入软信号，参与引擎加权评分 |
+
+### 存储安全（P1-6 / P1-7）
+
+| 修复项 | 漏洞 | 修复方式 |
+|--------|------|----------|
+| **加密 Fail-Closed** | `(try? encrypt()) ?? plaintext` 加密失败回退明文；解密失败继续明文解析 | 引入 `0xAE` magic header 区分密文与明文；Release 下加密失败不写入、解密失败清除缓存 |
+| **DeviceHistory 加密迁移** | 历史文件存于 `Documents`（可被外部访问），只有 HMAC 无加密 | 迁移到 `Application Support`；`NSFileProtectionComplete` 文件保护；`PayloadCrypto` 加密写入；自动清理旧 Documents 文件 |
+
+### 签名完备性（P1-8 / P2-10）
+
+| 修复项 | 漏洞 | 修复方式 |
+|--------|------|----------|
+| **ReportEnvelope 元数据入签名域** | `reportId` / `keyId` / `fieldMappingVersion` 不参与签名，可被篡改而签名不失效 | 签名格式扩展为 `sigVer｜nonce｜ts｜sessionToken｜reportId｜keyId｜fieldMappingVersion｜canonicalPayload` |
+| **DetectorRegistry 封印** | 无锁、无 seal；`enabledTypes` 形参存在但实际未生效 | 新增 `NSLock` + `isSealed`；`register` / `unregister` 加锁加封印保护；`detectAll(enabledTypes:)` 真正按传入集合过滤 |
+
+### 4.1 新增信号 ID
+
+| 信号 ID | 权重提示 | 触发条件 |
+|---------|----------|----------|
+| `provider_instance_replaced` | 85 | sealed 后检测到内部 Provider 被同类型弱实例替换 |
+| `sdk_image_missing` | 70 | SDK 动态库镜像在运行时消失（score=15, confidence=0.6） |
+| `text_segment_hash_failed` | 60 | 代码段哈希计算失败（score=10, confidence=0.5） |
+
+> **服务端注意**：4.1 `ReportEnvelope` 签名格式为 Breaking Change，服务端验签需同步更新，新增 `reportId｜keyId｜fieldMappingVersion` 三段，`fieldMappingVersion` 为空时填 `""`。
 
 ---
 
@@ -518,20 +582,28 @@ RiskDetectorApp/
 验签实现：HMAC.isValidAuthenticationCode（常量时间，4.0 修复时序侧信道）
 ```
 
-### 存储安全（4.0 加固）
+### 存储安全（4.0 + 4.1 加固）
 
 ```
 UserDefaults 写入流程：
-  原始 JSON → PayloadCrypto.encrypt(AES-GCM) → 密文
+  原始 JSON → PayloadCrypto.encrypt(AES-GCM) → [0xAE magic | 密文]  ← 4.1：magic header 区分密文
   密文 → StorageIntegrityGuard.sign(HMAC-SHA256, purpose+len前缀) → 签名
   {密文, 签名} → UserDefaults
 
 UserDefaults 读取流程：
   UserDefaults → {密文, 签名}
   StorageIntegrityGuard.verify() → 失败则清除并返回空（fail-closed）
-  PayloadCrypto.decrypt() → 原始 JSON
+  PayloadCrypto.decrypt()：检查 0xAE magic header → 不匹配直接 throw  ← 4.1：防明文误读
+    Release：解密失败 → 清除缓存，不 fallback 明文                    ← 4.1：Fail-Closed
+    Debug：解密失败 → fallback 到明文（兼容旧数据）
 
-目的：越狱设备直接读 plist 只能看到 AES-GCM 密文；即使解密，篡改后签名失效
+DeviceHistory（4.1 迁移）：
+  存储路径：Documents → Application Support（防外部访问）
+  文件保护：NSFileProtectionComplete（锁屏后密钥清除）
+  数据加密：PayloadCrypto.encrypt，只有 HMAC 不够
+
+目的：越狱设备直接读 plist 只能看到 AES-GCM 密文；即使解密，篡改后签名失效；
+      加密失败不再静默降级为明文，防止对手主动破坏加密路径
 ```
 
 ### 配置信任链（4.0 新增）
@@ -556,7 +628,7 @@ SDK：收到响应 → ConfigSignatureVerifier.verify(body, header)
 FairPlay 加密（cryptid ≠ 0）→ 安全跳过
 ```
 
-### Provider 注册表安全（4.0 加固）
+### Provider 注册表安全（4.0 + 4.1 加固）
 
 ```
 start() 调用后 → seal() 封锁注册表
@@ -564,6 +636,9 @@ sealed 状态下：
   register(id: "anti_tampering", type: EvilProvider)
     → ObjectIdentifier(EvilProvider) ≠ ObjectIdentifier(AntiTamperingSignalProvider)
     → 拒绝注册
+  register(id: "anti_tampering", type: AntiTamperingSignalProvider) ← 同类型弱实例
+    → ObjectIdentifier(弱实例) ≠ ObjectIdentifier(原实例)         ← 4.1 新增
+    → 拒绝注册，注入 provider_instance_replaced 信号（weightHint: 85）
   unregister(id: "vphone_hardware")
     → id 在 internalProviderIDs → 拒绝，注入 provider_tamper_attempt 信号
   Provider.signals() 崩溃
@@ -624,4 +699,4 @@ swift build
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 4.0 — Dual Red Team Audit + Full-Stack Security Hardening</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 4.1 — Triple Red Team Audit + Attack-Chain Defense in Depth</sub></p>

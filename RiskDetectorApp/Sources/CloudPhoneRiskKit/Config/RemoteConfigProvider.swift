@@ -138,7 +138,11 @@ public final class RemoteConfigProvider: @unchecked Sendable {
             do {
                 let config = try self.parseAndValidate(data: data)
                 self.applyConfig(config)
-                self.cache.save(config)
+                let verifiedByServer = ConfigSignatureVerifier.isConfigured
+                if !verifiedByServer {
+                    Logger.log("remote_config: server signing key not configured, cache entry will be marked unverified")
+                }
+                self.cache.save(config, verifiedByServer: verifiedByServer)
                 self.notifyUpdate(config)
                 completion(.success(config))
             } catch let configError as ConfigError {

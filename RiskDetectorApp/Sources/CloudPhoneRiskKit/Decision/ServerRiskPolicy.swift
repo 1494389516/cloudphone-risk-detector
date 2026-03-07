@@ -173,12 +173,17 @@ public final class PolicyManager: @unchecked Sendable {
 
     @discardableResult
     public func update(fromJSON json: String) -> Bool {
+#if DEBUG
         guard let data = json.data(using: .utf8) else { return false }
         guard let decoded = try? JSONDecoder().decode(ServerRiskPolicy.self, from: data) else {
             return false
         }
         update(policy: decoded)
         return true
+#else
+        Logger.log("PolicyManager.update(fromJSON:) rejected: not allowed in release build")
+        return false
+#endif
     }
 
     @available(iOS 13.0, macOS 10.15, *)
@@ -201,7 +206,14 @@ public final class PolicyManager: @unchecked Sendable {
 
     private func persist(policy: ServerRiskPolicy) {
         guard let encoded = try? JSONEncoder().encode(policy) else { return }
+        #if DEBUG
         let stored = (try? PayloadCrypto.encrypt(encoded)) ?? encoded
+        #else
+        guard let stored = try? PayloadCrypto.encrypt(encoded) else {
+            Logger.log("PolicyManager: encrypt failed, skipping save in release build")
+            return
+        }
+        #endif
         UserDefaults.standard.set(stored, forKey: cacheKey)
         UserDefaults.standard.set(StorageIntegrityGuard.sign(stored, purpose: hmacPurpose), forKey: hmacCacheKey)
     }
@@ -214,12 +226,21 @@ public final class PolicyManager: @unchecked Sendable {
             UserDefaults.standard.removeObject(forKey: hmacCacheKey)
             return nil
         }
+        #if DEBUG
         let data: Data
         if let decrypted = try? PayloadCrypto.decrypt(stored) {
             data = decrypted
         } else {
             data = stored
         }
+        #else
+        guard let data = try? PayloadCrypto.decrypt(stored) else {
+            Logger.log("PolicyManager: decrypt failed, clearing cache in release build")
+            UserDefaults.standard.removeObject(forKey: cacheKey)
+            UserDefaults.standard.removeObject(forKey: hmacCacheKey)
+            return nil
+        }
+        #endif
         return try? JSONDecoder().decode(ServerRiskPolicy.self, from: data)
     }
 }

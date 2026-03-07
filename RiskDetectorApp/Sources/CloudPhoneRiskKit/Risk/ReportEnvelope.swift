@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 
 /// 上报信封，用于防止重放和篡改
-/// v2 签名输入：sigVer|nonce|ts(ms)|sessionToken|payloadCanonical
+/// v2 签名输入：sigVer|nonce|ts(ms)|sessionToken|reportId|keyId|fieldMappingVersion|payloadCanonical
 public struct ReportEnvelope: Codable, Sendable {
 
     // MARK: - Properties
@@ -173,6 +173,9 @@ public struct ReportEnvelope: Codable, Sendable {
             nonce: nonce,
             ts: ts,
             sessionToken: sessionToken,
+            reportId: reportId,
+            keyId: keyId,
+            fieldMappingVersion: fieldMapping?.version,
             canonicalPayload: canonicalPayload
         )
 
@@ -225,6 +228,9 @@ public struct ReportEnvelope: Codable, Sendable {
             nonce: nonce,
             ts: ts,
             sessionToken: sessionToken,
+            reportId: reportId,
+            keyId: keyId,
+            fieldMappingVersion: fieldMappingVersion,
             canonicalPayload: canonicalPayload
         )
         guard let signatureData = signatureInput.data(using: .utf8) else {
@@ -329,9 +335,13 @@ public struct ReportEnvelope: Codable, Sendable {
         nonce: String,
         ts: Int64,
         sessionToken: String,
+        reportId: String,
+        keyId: String,
+        fieldMappingVersion: String?,
         canonicalPayload: String
     ) -> String {
-        "\(sigVer)|\(nonce)|\(ts)|\(sessionToken)|\(canonicalPayload)"
+        let fmv = fieldMappingVersion ?? ""
+        return "\(sigVer)|\(nonce)|\(ts)|\(sessionToken)|\(reportId)|\(keyId)|\(fmv)|\(canonicalPayload)"
     }
 
     private static func hmacHex(message: Data, keyData: Data) -> String {

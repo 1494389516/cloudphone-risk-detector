@@ -86,18 +86,34 @@ public final class RiskHistoryStore {
             defaults.removeObject(forKey: hmacKey)
             return []
         }
+        #if DEBUG
         let data: Data
         if let decrypted = try? PayloadCrypto.decrypt(stored) {
             data = decrypted
         } else {
             data = stored
         }
+        #else
+        guard let data = try? PayloadCrypto.decrypt(stored) else {
+            Logger.log("RiskHistoryStore: decrypt failed, clearing cache in release build")
+            defaults.removeObject(forKey: key)
+            defaults.removeObject(forKey: hmacKey)
+            return []
+        }
+        #endif
         return (try? JSONDecoder().decode([RiskHistoryEvent].self, from: data)) ?? []
     }
 
     private func saveLocked(_ events: [RiskHistoryEvent]) {
         guard let encoded = try? JSONEncoder().encode(events) else { return }
+        #if DEBUG
         let stored = (try? PayloadCrypto.encrypt(encoded)) ?? encoded
+        #else
+        guard let stored = try? PayloadCrypto.encrypt(encoded) else {
+            Logger.log("RiskHistoryStore: encrypt failed, skipping save in release build")
+            return
+        }
+        #endif
         defaults.set(stored, forKey: key)
         defaults.set(StorageIntegrityGuard.sign(stored, purpose: hmacPurpose), forKey: hmacKey)
     }

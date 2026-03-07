@@ -43,6 +43,13 @@ public final class DetectorRegistry {
         case integrity = "integrity"
     }
     
+    // MARK: - 线程安全与封印
+
+    private let lock = NSLock()
+
+    /// 封印后拒绝一切 register/unregister 操作
+    public private(set) var isSealed = false
+
     // MARK: - 注册表
     
     /// 检测器工厂类型
@@ -80,6 +87,12 @@ public final class DetectorRegistry {
     ///   - type: 检测器类型
     ///   - factory: 检测器工厂闭包
     public func register(type: DetectorType, factory: @escaping DetectorFactory) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isSealed else {
+            Logger.log("DetectorRegistry.register rejected (sealed): \(type.rawValue)")
+            return
+        }
         registry[type] = factory
         Logger.log("DetectorRegistry.register: \(type.rawValue)")
     }
@@ -87,15 +100,32 @@ public final class DetectorRegistry {
     /// 注销检测器
     /// - Parameter type: 检测器类型
     public func unregister(type: DetectorType) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isSealed else {
+            Logger.log("DetectorRegistry.unregister rejected (sealed): \(type.rawValue)")
+            return
+        }
         registry.removeValue(forKey: type)
         Logger.log("DetectorRegistry.unregister: \(type.rawValue)")
+    }
+
+    /// 封印注册表，调用后拒绝一切 register/unregister 操作
+    public func seal() {
+        lock.lock()
+        defer { lock.unlock() }
+        isSealed = true
+        Logger.log("DetectorRegistry.sealed")
     }
     
     /// 创建检测器实例
     /// - Parameter type: 检测器类型
     /// - Returns: 检测器实例，如果类型未注册则返回 nil
     public func createDetector(type: DetectorType) -> Detector? {
-        guard let factory = registry[type] else {
+        lock.lock()
+        let factory = registry[type]
+        lock.unlock()
+        guard let factory else {
             Logger.log("DetectorRegistry.createDetector: \(type.rawValue) not found")
             return nil
         }
@@ -143,15 +173,29 @@ public final class DetectorRegistry {
         var groupResults: [DetectorGroup: GroupDetectionResult] = [:]
         var totalScore: Double = 0
         var allMethods: [String] = []
-        
-        // 按分组执行检测
+
         for group in DetectorGroup.allCases {
-            let result = detect(group: group)
-            groupResults[group] = result
-            totalScore += result.score
-            allMethods.append(contentsOf: result.methods)
+            // 取该分组下与 enabledTypes 的交集，实际过滤未启用的检测器
+            let groupTypes = types(in: group).intersection(enabledTypes)
+
+            var groupScore: Double = 0
+            var groupMethods: [String] = []
+            for detectorType in groupTypes {
+                let result = detect(type: detectorType)
+                groupScore += result.score
+                groupMethods.append(contentsOf: result.methods)
+            }
+
+            let groupResult = GroupDetectionResult(
+                score: groupScore,
+                methods: Array(Set(groupMethods)).sorted(),
+                details: "\(group.rawValue)_group"
+            )
+            groupResults[group] = groupResult
+            totalScore += groupScore
+            allMethods.append(contentsOf: groupMethods)
         }
-        
+
         return ComprehensiveDetectionResult(
             totalScore: totalScore,
             groupResults: groupResults,

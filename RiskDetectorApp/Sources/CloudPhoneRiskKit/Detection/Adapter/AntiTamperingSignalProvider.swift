@@ -100,8 +100,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
 
         if configuration.enablePLTIntegrity {
             isolatedAppend("plt_integrity", &signals) {
-                let baseline = PLTIntegrityGuard.captureBaseline()
-                let pltResult = PLTIntegrityGuard.verify(baseline: baseline)
+                let pltResult = PLTIntegrityGuard.verifyWithPersistedBaseline()
                 return PLTIntegrityGuard.asSignals(result: pltResult)
             }
         }

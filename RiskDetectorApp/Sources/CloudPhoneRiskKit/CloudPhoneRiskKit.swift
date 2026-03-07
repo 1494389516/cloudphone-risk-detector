@@ -891,6 +891,13 @@ public final class CPRiskKit: NSObject {
             return false
         }
 
+#if !DEBUG
+        if scheme == "http" {
+            Logger.log("remote_config.endpoint rejected: http not allowed in release build, use https")
+            return false
+        }
+#endif
+
         stateLock.lock()
         let sameEndpoint = (remoteConfigEndpoint == url)
         let existingProvider = remoteConfigProvider

@@ -26,6 +26,8 @@ final class RiskSignalProviderRegistry {
     private var providers: [RiskSignalProvider] = []
     private(set) var isSealed = false
     private var sealedProviderTypes: [String: ObjectIdentifier] = [:]
+    private var sealedProviderInstances: [String: ObjectIdentifier] = [:]
+    private var instanceReplacedProviderIDs: Set<String> = []
     private var activeProviderIDs: Set<String> = []
     private(set) var tamperedUnregisterAttempts: Int = 0
 
@@ -48,6 +50,9 @@ final class RiskSignalProviderRegistry {
         isSealed = true
         for provider in providers {
             sealedProviderTypes[provider.id] = ObjectIdentifier(type(of: provider))
+            if Self.internalProviderIDs.contains(provider.id) {
+                sealedProviderInstances[provider.id] = ObjectIdentifier(provider)
+            }
         }
     }
 
@@ -62,6 +67,12 @@ final class RiskSignalProviderRegistry {
             if let expectedType = sealedProviderTypes[provider.id],
                ObjectIdentifier(type(of: provider)) != expectedType {
                 Logger.log("provider.register rejected (type mismatch): id=\(provider.id)")
+                return
+            }
+            if let expectedInstance = sealedProviderInstances[provider.id],
+               ObjectIdentifier(provider) != expectedInstance {
+                instanceReplacedProviderIDs.insert(provider.id)
+                Logger.log("provider.register rejected (instance mismatch): id=\(provider.id)")
                 return
             }
         }
@@ -91,6 +102,7 @@ final class RiskSignalProviderRegistry {
         let current = providers
         let knownActive = activeProviderIDs
         let unregisterAttempts = tamperedUnregisterAttempts
+        let replacedIDs = instanceReplacedProviderIDs
         lock.unlock()
 
         var out: [RiskSignal] = []
@@ -102,6 +114,19 @@ final class RiskSignalProviderRegistry {
                 category: "anti_tamper",
                 score: 0,
                 evidence: ["attempts": "\(unregisterAttempts)"],
+                state: .tampered,
+                layer: 2,
+                weightHint: 85
+            ))
+        }
+
+        if !replacedIDs.isEmpty {
+            let ids = replacedIDs.sorted().joined(separator: ",")
+            out.append(RiskSignal(
+                id: "provider_instance_replaced",
+                category: "anti_tamper",
+                score: 0,
+                evidence: ["providers": ids],
                 state: .tampered,
                 layer: 2,
                 weightHint: 85

@@ -142,11 +142,27 @@ public final class DeviceHistory {
     private var isDirty = false
 
     private init() {
-        let paths = fileManager.urls(for: .documentDirectory, in: .userDomainMask)
-        let documentsDirectory = paths[0]
-        self.storeURL = documentsDirectory.appendingPathComponent("cloudphone_device_history_v1.json")
-        self.hmacURL = documentsDirectory.appendingPathComponent("cloudphone_device_history_v1.json.hmac")
+        let paths = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+        let appSupportDirectory = paths[0]
+        try? fileManager.createDirectory(
+            at: appSupportDirectory,
+            withIntermediateDirectories: true,
+            attributes: [FileAttributeKey.protectionKey: FileProtectionType.complete]
+        )
+        self.storeURL = appSupportDirectory.appendingPathComponent("cloudphone_device_history_v2.json")
+        self.hmacURL = appSupportDirectory.appendingPathComponent("cloudphone_device_history_v2.json.hmac")
+        migrateFromDocumentsIfNeeded()
         loadFromDisk()
+    }
+
+    private func migrateFromDocumentsIfNeeded() {
+        let oldPaths = fileManager.urls(for: .documentDirectory, in: .userDomainMask)
+        let oldStore = oldPaths[0].appendingPathComponent("cloudphone_device_history_v1.json")
+        guard fileManager.fileExists(atPath: oldStore.path) else { return }
+        try? fileManager.removeItem(at: oldStore)
+        let oldHmac = oldPaths[0].appendingPathComponent("cloudphone_device_history_v1.json.hmac")
+        try? fileManager.removeItem(at: oldHmac)
+        Logger.log("DeviceHistory: migrated from Documents to ApplicationSupport")
     }
 
     // MARK: - 添加快照
@@ -344,7 +360,25 @@ public final class DeviceHistory {
             return
         }
 
-        guard let decoded = try? JSONDecoder().decode([DeviceDetectionSnapshot].self, from: data) else {
+        let decryptedData: Data
+        #if DEBUG
+        if let dec = try? PayloadCrypto.decrypt(data) {
+            decryptedData = dec
+        } else {
+            decryptedData = data
+        }
+        #else
+        guard let dec = try? PayloadCrypto.decrypt(data) else {
+            Logger.log("DeviceHistory: decrypt failed, clearing corrupted data in release build")
+            try? fileManager.removeItem(at: storeURL)
+            try? fileManager.removeItem(at: hmacURL)
+            cachedSnapshots = []
+            return
+        }
+        decryptedData = dec
+        #endif
+
+        guard let decoded = try? JSONDecoder().decode([DeviceDetectionSnapshot].self, from: decryptedData) else {
             cachedSnapshots = []
             return
         }
@@ -364,11 +398,25 @@ public final class DeviceHistory {
 
     private func persistToDiskLocked() {
         do {
-            let data = try JSONEncoder().encode(cachedSnapshots)
-            try data.write(to: storeURL, options: .atomic)
-            let signature = StorageIntegrityGuard.sign(data, purpose: hmacPurpose)
+            let rawData = try JSONEncoder().encode(cachedSnapshots)
+            let dataToWrite: Data
+            #if DEBUG
+            dataToWrite = (try? PayloadCrypto.encrypt(rawData)) ?? rawData
+            #else
+            dataToWrite = try PayloadCrypto.encrypt(rawData)
+            #endif
+            try dataToWrite.write(to: storeURL, options: .atomic)
+            try fileManager.setAttributes(
+                [FileAttributeKey.protectionKey: FileProtectionType.complete],
+                ofItemAtPath: storeURL.path
+            )
+            let signature = StorageIntegrityGuard.sign(dataToWrite, purpose: hmacPurpose)
             try signature.write(to: hmacURL, options: .atomic)
-            Logger.log("DeviceHistory: persisted \(cachedSnapshots.count) snapshots")
+            try fileManager.setAttributes(
+                [FileAttributeKey.protectionKey: FileProtectionType.complete],
+                ofItemAtPath: hmacURL.path
+            )
+            Logger.log("DeviceHistory: persisted \(cachedSnapshots.count) snapshots (encrypted)")
         } catch {
             Logger.log("DeviceHistory: failed to persist - \(error.localizedDescription)")
         }
