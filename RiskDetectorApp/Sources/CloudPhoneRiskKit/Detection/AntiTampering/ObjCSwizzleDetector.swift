@@ -89,6 +89,16 @@ struct ObjCSwizzleDetector: Detector {
     }
 
     private func checkIMP(_ imp: IMP, check: MethodCheck, score: inout Double, methods: inout [String]) {
+#if arch(arm64)
+        let impPtr = unsafeBitCast(imp, to: UnsafePointer<UInt32>.self)
+        let firstInstruction = impPtr.pointee
+        if firstInstruction >= 0x14000000 && firstInstruction <= 0x17FFFFFF {
+            score += 50
+            methods.append("objc_inline_hook_detected:\(check.className).\(check.selector)")
+            return
+        }
+#endif
+
         var info = Dl_info()
         let found = dladdr(unsafeBitCast(imp, to: UnsafeRawPointer.self), &info)
 
@@ -176,6 +186,22 @@ extension ObjCSwizzleDetector {
                 state: .tampered,
                 layer: 2,
                 weightHint: 80
+            ))
+        }
+
+        let inlineHookMethods = result.methods.filter { $0.hasPrefix("objc_inline_hook_detected") }
+        if !inlineHookMethods.isEmpty {
+            signals.append(RiskSignal(
+                id: "objc_inline_hook_detected",
+                category: "anti_tamper",
+                score: 50,
+                evidence: [
+                    "methods": inlineHookMethods.joined(separator: ","),
+                    "count": "\(inlineHookMethods.count)"
+                ],
+                state: .tampered,
+                layer: 2,
+                weightHint: 90
             ))
         }
 

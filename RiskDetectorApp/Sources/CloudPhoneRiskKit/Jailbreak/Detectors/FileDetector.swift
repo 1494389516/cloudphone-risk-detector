@@ -66,6 +66,13 @@ struct FileDetector: Detector {
         var fileExistsMismatchCount = 0
         var lowLevelMismatchCount = 0
 
+        // 沙盒视图隔离（Bind Mount 平行宇宙）防范
+        if detectSandboxMountIsolation() {
+            score += 30
+            methods.append("sandbox_mount_isolation_detected")
+            Logger.log("jailbreak.file.hit: sandbox_mount_isolation_detected (+30)")
+        }
+
         for item in suspiciousPaths {
             let exists = existsAnyWay(item.path)
             if exists.exists {
@@ -87,6 +94,12 @@ struct FileDetector: Detector {
                 methods.append("hook:file_primitive_mismatch:\(item.path)")
                 Logger.log("jailbreak.file.hit: file_primitive_mismatch path=\(item.path) (+12)")
             }
+
+            if exists.bypassed {
+                score += 20
+                methods.append("syscall_bypassed:\(item.path)")
+                Logger.log("jailbreak.file.hit: syscall_bypassed path=\(item.path) (+20)")
+            }
         }
 
         // 双路验证关键路径，检测 stat hook
@@ -98,16 +111,25 @@ struct FileDetector: Detector {
             "/Library/MobileSubstrate/MobileSubstrate.dylib",
         ]
         var mismatchCount = 0
+        var bypassCount = 0
         for path in criticalPaths {
-            let (_, tampered) = DualPathValidator.validateFileStat(path: path)
+            let (_, tampered, bypassed) = DualPathValidator.validateFileStat(path: path)
             if tampered {
                 mismatchCount += 1
                 methods.append("dual_path_mismatch:\(path.components(separatedBy: "/").last ?? path)")
                 Logger.log("jailbreak.file.hit: dual_path_mismatch path=\(path) (+20)")
             }
+            if bypassed {
+                bypassCount += 1
+                methods.append("syscall_bypassed:\(path.components(separatedBy: "/").last ?? path)")
+                Logger.log("jailbreak.file.hit: syscall_bypassed path=\(path) (+20)")
+            }
         }
         if mismatchCount > 0 {
             score += Double(mismatchCount) * 20
+        }
+        if bypassCount > 0 {
+            score += Double(bypassCount) * 20
         }
 
         // System configuration / integrity signals.
@@ -142,6 +164,29 @@ struct FileDetector: Detector {
         var exists: Bool
         var fileManagerMismatch: Bool
         var lowLevelPrimitiveMismatch: Bool
+        var bypassed: Bool
+    }
+
+    private func detectSandboxMountIsolation() -> Bool {
+#if targetEnvironment(simulator)
+        return false
+#else
+        var rootStat = stat()
+        var usrStat = stat()
+        var appStat = stat()
+        
+        guard stat("/", &rootStat) == 0,
+              stat("/usr", &usrStat) == 0,
+              stat("/Applications", &appStat) == 0 else {
+            return false
+        }
+        
+        if appStat.st_dev != rootStat.st_dev && appStat.st_dev != usrStat.st_dev {
+            return true
+        }
+        
+        return false
+#endif
     }
 
     private func existsAnyWay(_ path: String) -> ExistenceResult {
@@ -153,7 +198,8 @@ struct FileDetector: Detector {
         return ExistenceResult(
             exists: fm || low.exists,
             fileManagerMismatch: mismatch,
-            lowLevelPrimitiveMismatch: low.tampered
+            lowLevelPrimitiveMismatch: low.tampered,
+            bypassed: low.bypassed
         )
     }
 

@@ -92,11 +92,16 @@ struct SysctlDetector: Detector {
 
         let criticalSysctlKeys = ["hw.machine", "hw.model", "kern.osversion"]
         for key in criticalSysctlKeys {
-            let (_, tampered) = DualPathValidator.validateSysctl(key: key)
+            let (_, tampered, bypassed) = DualPathValidator.validateSysctl(key: key)
             if tampered {
                 score += 25
                 methods.append("sysctl_dual_path_mismatch:\(key)")
                 Logger.log("jailbreak.sysctl.hit: dual_path_mismatch key=\(key) (+25)")
+            }
+            if bypassed {
+                score += 20
+                methods.append("sysctl_short_circuit_hook:\(key)")
+                Logger.log("jailbreak.sysctl.hit: short_circuit hook key=\(key) (+20)")
             }
         }
 

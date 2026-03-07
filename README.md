@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
-  <img src="https://img.shields.io/badge/SDK-4.2-FF3B30?style=for-the-badge" alt="SDK">
+  <img src="https://img.shields.io/badge/SDK-4.3-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
   <img src="https://img.shields.io/badge/License-Proprietary-8E8E93?style=for-the-badge" alt="License">
 </p>
@@ -32,6 +32,7 @@
 | **4.0** | **双轮红队审计 + 全栈安全加固** | 竞态条件修复、时序侧信道消除、存储加密、配置签名验证、Provider 注册表强化、决策引擎加固、行为信号增强、检测超时机制（22 项安全漏洞全修复） |
 || **4.1** | **第三轮红队审计 + 攻击链纵深封堵** | 配置缓存来源验签、HTTPS 强制、Provider 实例锁定、首跑基线防投毒、存储加密 Fail-Closed、DeviceHistory 迁移加密、ReportEnvelope 元数据入签名域、DetectorRegistry 封印（10 项结构性漏洞全修复） |
 || **4.2** | **第四轮红队审计 + 信任根全面收紧** | 配置/策略双链 Release 禁 unverified fallback、安全地板扩展覆盖行为与越狱关键检测开关、DualPathValidator 接入核心 Detector、anti_tamper 结论消除分裂、基线首跑软信号化、deviceID 漂移修复、历史时钟回拨防御、CPRiskStore 暴露面收紧、EnvelopeSignature Release 强制 v2（8 项漏洞全修复） |
+|| **4.3** | **第五轮红队审计 + 对抗降维打击** | 锁屏 Keychain ACL 撕裂死锁修复、ConfigCache 并发状态机锁绕过修复、内存 AES 密钥明文残影消除、时间跳跃重放绕过修复、线程级异常与硬件断点劫持检测、匿名内存隐写扫描、ObjC Inline Hook 跳板拦截、fsid 沙盒视图隔离探测、指令计数器时序侧信道双路校验、底层 SVC 0x80 原生系统调用接入（11 项极深层漏洞修复） |
 
 ## 架构概览
 
@@ -73,6 +74,65 @@
 | **硬信号** | 本地独立判定，单点即可触发 | 越狱、DRM 降级、ChargeCounter 异常、PLT 篡改、ObjC Swizzle、异常端口劫持、SDK 二进制替换、DYLD Interpose | 80-100 |
 | **软信号** | 需结合场景综合评分 | VPN、行为异常、电压方差低、挂载点异常、时序侧信道、线程枚举异常、指纹突变、随机化检测、行为数据不足 | 30-75 |
 | **服务端信号** | 依赖外部聚合 | 机房 IP、ASN 黑名单、IP 设备聚合度、图社区风险、硬件画像聚集 | 55-100 |
+
+---
+
+## 4.3 新增能力 — 第五轮红队审计对抗降维打击
+
+4.3 版本基于第五轮红队深度审计，跳出应用层 POSIX 的视角，深入到 XNU 内核机制、内存隐写及并发状态机层面，修复了 4.2 版本在应对极深层高级攻击时的重大盲区，共修复 **11 个漏洞**（4 个 P0-Critical、7 个 P1-High），全面提升对抗内联 Hook、无痕调试及锁屏竞争的能力。
+
+### 4.3 对抗降维打击矩阵
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  4.3 对抗降维打击矩阵                             │
+├──────────────┬──────────────┬──────────────┬────────────────────┤
+│ 密码学与状态机 │  高级内存与执行流│  内核态与沙盒 │   其他深层加固       │
+├──────────────┼──────────────┼──────────────┼────────────────────┤
+│ 锁屏ACL死锁   │ 线程级异常端口 │ SVC 0x80汇编  │ 匿名内存隐写扫描     │
+│ 修复(抛出异常) │ 硬件断点探测  │ 原生Syscall  │ R-X区域高优报警     │
+│ ConfigCache  │ ObjC Inline  │ 时序测不准修复 │ 时间跳跃重放池清空   │
+│ 静态全局锁串行 │ Hook跳板拦截  │ CPU指令计数器 │ 修复(换用Uptime)    │
+│ 内存AES密钥   │ 提取IMP查机器码│ Bind Mount   │                    │
+│ 显式bzero擦除 │             │ fsid沙盒视图  │                    │
+└──────────────┴──────────────┴──────────────┴────────────────────┘
+```
+
+### 密码学与并发状态机（P0-1 / P0-2 / P1-3 / P1-4）
+
+| 修复项 | 漏洞 | 修复方式 |
+|--------|------|----------|
+| **锁屏 Keychain ACL 撕裂死锁** | 锁屏态下读写失败被错误 Fallback 为生成随机新密钥并返回，导致锁屏时记录的风险报告被一次性密钥加密落盘，解锁后该数据永久无法解密。 | 区分 `errSecInteractionNotAllowed` 锁屏错误，遇到锁屏直接 `throw` 阻断，拒绝生成兜底伪密钥。 |
+| **ConfigCache 并发状态机锁绕过** | `instance()` 每次实例化分配新的 `NSLock`，但底层共享相同的 `UserDefaults` 键，引发并发覆写。 | 将 `ConfigCache` 的锁改为静态级别 `globalLock`（`NSRecursiveLock`），强制串行化落盘。 |
+| **内存 AES 密钥明文残影消除** | `PayloadCrypto` 在生成 AES Key 时仅依赖 Swift 堆回收，未强制清理。Core Dump 可直接提取明文密钥解密本地策略。 | 在分配的新随机数交付给封装对象后，强制调用 `bzero` 对原始数组显式擦除。 |
+| **时间跳跃重放绕过** | `InMemoryNonceReplayStore` 依赖当前时钟 `Date` 清理过期记录。通过调快本地时间引发清空后调回时间即可重放旧数据。 | 清理基准替换为 `ProcessInfo.processInfo.systemUptime`（不可回拨的系统运行时长）。 |
+
+### 高级内存与执行流防护（P0-5 / P1-6 / P1-7）
+
+| 修复项 | 漏洞 | 修复方式 |
+|--------|------|----------|
+| **线程级异常与硬件断点劫持** | 仅检查 Task 级异常端口，漏查优先级更高的 Thread 级异常端口；未检查 `ARM_DEBUG_STATE64` 寄存器，导致无痕调试绕过。 | 获取所有线程句柄，增加基于 `thread_info` 的 `suspend_count` 强行挂起态检测，以及 `thread_get_exception_ports` 扫描。 |
+| **匿名内存隐写扫描** | `RWXMemoryScanner` 仅扫描 `RWX` 内存，攻击者通过分配匿名内存并置为 `R-X` 即可逃逸隐藏恶意 Payload。 | 扩展扫描范围：只要是 `PROT_EXEC` 且无文件映射的匿名内存即高优报警。 |
+| **ObjC Inline Hook 穿透** | ObjC Swizzle 检查只判定 IMP 指针去向，不查机器码，被汇编级跳转（DobbyHook）直接绕过。 | 提取核心方法 IMP 后，对其前 16 字节执行机器码扫描，拦截 `0x14000000...0x17FFFFFF`（无条件跳转 `B`）等跳板指令。 |
+
+### 内核态与深层沙盒交互（P0-8 / P1-9 / P1-10）
+
+| 修复项 | 漏洞 | 修复方式 |
+|--------|------|----------|
+| **POSIX 双路盲区被 Inline Hook 致盲** | `DualPathValidator` 依赖 `RTLD_NEXT`，仍会被 Inline Hook 统一致盲文件与 `sysctl` 探测。 | 增加耗时检查防线：如果原生系统调用执行耗时不可思议地短（< 50ns），即判定为应用层 Hook 短路 (`syscall_bypassed`)。 |
+| **时钟测量测不准与侧信道失效** | 利用 `mach_absolute_time` 被 Hook，人为捏造时序导致 FridaSocketDetector 性能损耗检测失效。 | 在耗时计算前后，加入 `systemUptime` 进行双路时钟对比，如偏差过大说明被恶意拨动时间标尺，判定为 `time_manipulation_detected`。 |
+| **沙盒视图隔离（Bind Mount 平行宇宙）** | 越狱环境通过 Bind Mount 给 App 提供纯净的虚拟文件系统，导致基于路径的 `stat` 扫描完全落空。 | 使用 `stat` 提取根目录 `/` 和受保护目录 `/Applications` 等的设备 ID（`st_dev`），发现异常卷挂载点即抛出 `sandbox_mount_isolation_detected`。 |
+
+### 4.3 新增信号 ID
+
+| 信号 ID | 权重提示 | 触发条件 |
+|---------|----------|----------|
+| `thread_anomaly_suspension` | 60 | 发现非主线程处于强行挂起态且未被合规标记 |
+| `anonymous_executable_memory` | 40 | 扫描到无文件映射的 R-X（只读可执行）匿名内存区域 |
+| `objc_inline_hook_detected` | 50 | 关键 ObjC 方法的 IMP 头部机器码匹配到无条件跳转指令 |
+| `syscall_bypassed:<path/key>` | 20 | DualPathValidator 发现极短的系统调用响应时间（疑为短路 Hook） |
+| `time_manipulation_detected` | 50 | 绝对时间增量与系统唤醒时间增量产生巨大偏差 |
+| `sandbox_mount_isolation_detected` | 30 | 检测到根目录与子目录（如 /Applications）处于不同的物理挂载卷 |
 
 ---
 

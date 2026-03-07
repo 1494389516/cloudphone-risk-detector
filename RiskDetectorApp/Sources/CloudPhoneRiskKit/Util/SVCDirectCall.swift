@@ -145,42 +145,83 @@ enum SVCDirectCall {
 }
 
 struct DualPathValidator {
-    /// 同时调用标准 libc 与加固版本，结果不一致则判定为 tampered
-    static func validateSysctl(key: String) -> (value: String?, tampered: Bool) {
-        let std = Sysctl.string(key)
-        let secure = SVCDirectCall.secureSysctlbyname(key)
-        if std == nil && secure == nil { return (nil, false) }
-        if std == nil || secure == nil { return (secure ?? std, true) }
-        let tampered = std != secure
-        return (secure, tampered)
+    static var timebaseInfo: mach_timebase_info_data_t = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return info
+    }()
+
+    static func measure(_ block: () -> Void) -> UInt64 {
+        let start = mach_absolute_time()
+        block()
+        let end = mach_absolute_time()
+        return (end - start) * UInt64(timebaseInfo.numer) / UInt64(timebaseInfo.denom)
     }
 
-    static func validateSysctlData(mib: [Int32]) -> (data: Data?, tampered: Bool) {
-        let std = SVCDirectCall.standardSysctlData(mib)
-        let secure = SVCDirectCall.secureSysctlData(mib)
-        if std == nil && secure == nil { return (nil, false) }
-        if std == nil || secure == nil { return (secure ?? std, true) }
+    /// 同时调用标准 libc 与加固版本，结果不一致则判定为 tampered
+    static func validateSysctl(key: String) -> (value: String?, tampered: Bool, bypassed: Bool) {
+        var std: String?
+        let t1 = measure { std = Sysctl.string(key) }
+        
+        var secure: String?
+        let t2 = measure { secure = SVCDirectCall.secureSysctlbyname(key) }
+        
+        let bypassed = t1 < 50 || t2 < 50
+
+        if std == nil && secure == nil { return (nil, false, bypassed) }
+        if std == nil || secure == nil { return (secure ?? std, true, bypassed) }
         let tampered = std != secure
-        return (secure ?? std, tampered)
+        return (secure, tampered, bypassed)
+    }
+
+    static func validateSysctlData(mib: [Int32]) -> (data: Data?, tampered: Bool, bypassed: Bool) {
+        var std: Data?
+        let t1 = measure { std = SVCDirectCall.standardSysctlData(mib) }
+        
+        var secure: Data?
+        let t2 = measure { secure = SVCDirectCall.secureSysctlData(mib) }
+        
+        let bypassed = t1 < 50 || t2 < 50
+
+        if std == nil && secure == nil { return (nil, false, bypassed) }
+        if std == nil || secure == nil { return (secure ?? std, true, bypassed) }
+        let tampered = std != secure
+        return (secure ?? std, tampered, bypassed)
     }
 
     /// 同时调用标准 stat/lstat/access 与加固版本，结果不一致则判定为 tampered
-    static func validateFileStat(path: String) -> (exists: Bool, tampered: Bool) {
-        var stStd = stat()
-        let stdExists = path.withCString { stat($0, &stStd) == 0 }
-        var stLstatStd = stat()
-        let stdLstatExists = path.withCString { lstat($0, &stLstatStd) == 0 }
-        let stdAccessExists = path.withCString { access($0, F_OK) == 0 }
+    static func validateFileStat(path: String) -> (exists: Bool, tampered: Bool, bypassed: Bool) {
+        var stdExists = false
+        var stdLstatExists = false
+        var stdAccessExists = false
 
-        let secureStatExists = SVCDirectCall.secureStat(path)
-        let secureLstatExists = SVCDirectCall.secureLstat(path)
-        let secureAccessExists = SVCDirectCall.secureAccess(path)
+        let t1 = measure {
+            var stStd = stat()
+            stdExists = path.withCString { stat($0, &stStd) == 0 }
+        }
+        let t2 = measure {
+            var stLstatStd = stat()
+            stdLstatExists = path.withCString { lstat($0, &stLstatStd) == 0 }
+        }
+        let t3 = measure {
+            stdAccessExists = path.withCString { access($0, F_OK) == 0 }
+        }
+
+        var secureStatExists = false
+        var secureLstatExists = false
+        var secureAccessExists = false
+
+        let t4 = measure { secureStatExists = SVCDirectCall.secureStat(path) }
+        let t5 = measure { secureLstatExists = SVCDirectCall.secureLstat(path) }
+        let t6 = measure { secureAccessExists = SVCDirectCall.secureAccess(path) }
+
+        let bypassed = t1 < 50 || t2 < 50 || t3 < 50 || t4 < 50 || t5 < 50 || t6 < 50
 
         let tampered = stdExists != secureStatExists
             || stdLstatExists != secureLstatExists
             || stdAccessExists != secureAccessExists
         let exists = secureStatExists || secureLstatExists || secureAccessExists
             || stdExists || stdLstatExists || stdAccessExists
-        return (exists, tampered)
+        return (exists, tampered, bypassed)
     }
 }

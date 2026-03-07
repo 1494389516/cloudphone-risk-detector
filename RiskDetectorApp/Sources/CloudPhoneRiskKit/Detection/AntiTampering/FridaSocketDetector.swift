@@ -98,6 +98,9 @@ struct FridaSocketDetector: Detector {
         var score: Double = 0
         var methods: [String] = []
 
+        let sysStart = ProcessInfo.processInfo.systemUptime
+        let absStart = mach_absolute_time()
+
         // Measure the time for a cheap syscall (getpid) repeatedly
         let iterations = 50
         var times = [UInt64]()
@@ -110,9 +113,25 @@ struct FridaSocketDetector: Detector {
             times.append(end - start)
         }
 
+        let absEnd = mach_absolute_time()
+        let sysEnd = ProcessInfo.processInfo.systemUptime
+
         // Convert to nanoseconds
         var timebaseInfo = mach_timebase_info_data_t()
         mach_timebase_info(&timebaseInfo)
+        
+        let absDeltaNs = Double(absEnd - absStart) * Double(timebaseInfo.numer) / Double(timebaseInfo.denom)
+        let sysDeltaNs = (sysEnd - sysStart) * 1_000_000_000.0
+
+        let diffRatio = (sysDeltaNs - absDeltaNs).magnitude / max(sysDeltaNs, absDeltaNs, 1.0)
+        let diffAbs = (sysDeltaNs - absDeltaNs).magnitude
+
+        if diffRatio > 0.1 && diffAbs > 5_000_000 { // > 10% diff and > 5ms
+            score += 50
+            methods.append("time_manipulation_detected")
+            return (min(score, 75), methods)
+        }
+
         let nsTimes = times.map { Double($0) * Double(timebaseInfo.numer) / Double(timebaseInfo.denom) }
 
         // Sort and take p95
@@ -133,11 +152,29 @@ struct FridaSocketDetector: Detector {
         statTimes.reserveCapacity(iterations)
         let testPath = "/usr/lib/dyld"
 
+        let sysStartStat = ProcessInfo.processInfo.systemUptime
+        let absStartStat = mach_absolute_time()
+
         for _ in 0..<iterations {
             let start = mach_absolute_time()
             _ = access(testPath, F_OK)
             let end = mach_absolute_time()
             statTimes.append(end - start)
+        }
+
+        let absEndStat = mach_absolute_time()
+        let sysEndStat = ProcessInfo.processInfo.systemUptime
+
+        let absDeltaNsStat = Double(absEndStat - absStartStat) * Double(timebaseInfo.numer) / Double(timebaseInfo.denom)
+        let sysDeltaNsStat = (sysEndStat - sysStartStat) * 1_000_000_000.0
+
+        let diffRatioStat = (sysDeltaNsStat - absDeltaNsStat).magnitude / max(sysDeltaNsStat, absDeltaNsStat, 1.0)
+        let diffAbsStat = (sysDeltaNsStat - absDeltaNsStat).magnitude
+
+        if diffRatioStat > 0.1 && diffAbsStat > 5_000_000 { // > 10% diff and > 5ms
+            score += 50
+            methods.append("time_manipulation_detected")
+            return (min(score, 75), methods)
         }
 
         let statNs = statTimes.map { Double($0) * Double(timebaseInfo.numer) / Double(timebaseInfo.denom) }
@@ -150,6 +187,21 @@ struct FridaSocketDetector: Detector {
         if statP95 > 15000 {
             score += 12
             methods.append("timing_anomaly:stat_p95_\(Int(statP95))ns")
+        }
+
+        let finalAbsEnd = mach_absolute_time()
+        let finalSysEnd = ProcessInfo.processInfo.systemUptime
+
+        let finalAbsDeltaNs = Double(finalAbsEnd - absStart) * Double(timebaseInfo.numer) / Double(timebaseInfo.denom)
+        let finalSysDeltaNs = (finalSysEnd - sysStart) * 1_000_000_000.0
+
+        let finalDiffRatio = (finalSysDeltaNs - finalAbsDeltaNs).magnitude / max(finalSysDeltaNs, finalAbsDeltaNs, 1.0)
+        let finalDiffAbs = (finalSysDeltaNs - finalAbsDeltaNs).magnitude
+
+        if finalDiffRatio > 0.1 && finalDiffAbs > 2_000_000 {
+            score += 50
+            methods.append("time_manipulation_detected")
+            return (min(score, 75), methods)
         }
 
         return (min(score, 25), methods)

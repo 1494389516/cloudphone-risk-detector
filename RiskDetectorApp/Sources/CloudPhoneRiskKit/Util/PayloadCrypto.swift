@@ -55,7 +55,7 @@ enum PayloadCrypto {
         lock.lock()
         defer { lock.unlock() }
 
-        if let data = readKey() {
+        if let data = try readKey() {
             return SymmetricKey(data: data)
         }
         var bytes = [UInt8](repeating: 0, count: 32)
@@ -64,13 +64,14 @@ enum PayloadCrypto {
             throw NSError(domain: "CloudPhoneRiskKit", code: 3, userInfo: [NSLocalizedDescriptionKey: "SecRandomCopyBytes failed (\(status))"])
         }
         let data = Data(bytes)
-        if let existing = saveKey(data) {
+        bzero(&bytes, bytes.count)
+        if let existing = try saveKey(data) {
             return SymmetricKey(data: existing)
         }
         return SymmetricKey(data: data)
     }
 
-    private static func readKey() -> Data? {
+    private static func readKey() throws -> Data? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keyService,
@@ -80,11 +81,14 @@ enum PayloadCrypto {
         ]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecInteractionNotAllowed {
+            throw NSError(domain: "PayloadCrypto", code: Int(errSecInteractionNotAllowed))
+        }
         guard status == errSecSuccess, let data = item as? Data else { return nil }
         return data
     }
 
-    private static func saveKey(_ data: Data) -> Data? {
+    private static func saveKey(_ data: Data) throws -> Data? {
         let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keyService,
@@ -94,9 +98,12 @@ enum PayloadCrypto {
         ]
 
         let status = SecItemAdd(addQuery as CFDictionary, nil)
+        if status == errSecInteractionNotAllowed {
+            throw NSError(domain: "PayloadCrypto", code: Int(errSecInteractionNotAllowed))
+        }
         if status == errSecSuccess { return nil }
 
-        if status == errSecDuplicateItem, let existing = readKey() {
+        if status == errSecDuplicateItem, let existing = try readKey() {
             return existing
         }
 

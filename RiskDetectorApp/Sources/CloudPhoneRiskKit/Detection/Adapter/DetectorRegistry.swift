@@ -295,7 +295,7 @@ extension JailbreakConfig {
         enableAntiTamper: Bool = true,
         enableIntegrity: Bool = true
     ) -> JailbreakConfig {
-        var config = JailbreakConfig(
+        let config = JailbreakConfig(
             enableFileDetect: enableJailbreak,
             enableDyldDetect: enableJailbreak,
             enableEnvDetect: enableJailbreak,

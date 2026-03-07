@@ -49,7 +49,7 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         }
     }
 
-    private let lock = NSLock()
+    private static let globalLock = NSRecursiveLock()
     private var memoryCache: CacheEntry?
     private let diskKey: String
     private let hmacDiskKey: String
@@ -86,8 +86,8 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
     }
 
     public func load() -> CachedConfig? {
-        lock.lock()
-        defer { lock.unlock() }
+        ConfigCache.globalLock.lock()
+        defer { ConfigCache.globalLock.unlock() }
 
         if let memoryCache, isUsableTrustedEntry(memoryCache, source: "memory_cache") {
             return CachedConfig(
@@ -113,8 +113,8 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
     }
 
     public func save(_ config: RemoteConfig, verifiedByServer: Bool = false) {
-        lock.lock()
-        defer { lock.unlock() }
+        ConfigCache.globalLock.lock()
+        defer { ConfigCache.globalLock.unlock() }
 
         let entry = CacheEntry(
             config: config,
@@ -139,8 +139,8 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
     }
 
     public func clear() {
-        lock.lock()
-        defer { lock.unlock() }
+        ConfigCache.globalLock.lock()
+        defer { ConfigCache.globalLock.unlock() }
 
         memoryCache = nil
         guard persistToDisk else { return }
@@ -150,8 +150,8 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
     }
 
     public func cacheSize() -> Int {
-        lock.lock()
-        defer { lock.unlock() }
+        ConfigCache.globalLock.lock()
+        defer { ConfigCache.globalLock.unlock() }
 
         guard persistToDisk,
               let data = UserDefaults.standard.data(forKey: diskKey) else {
@@ -161,8 +161,8 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
     }
 
     public func cacheStats() -> CacheStats {
-        lock.lock()
-        defer { lock.unlock() }
+        ConfigCache.globalLock.lock()
+        defer { ConfigCache.globalLock.unlock() }
 
         return CacheStats(
             hasMemoryCache: memoryCache != nil,
@@ -173,8 +173,8 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
 
     public func rollback(to version: Int) -> RemoteConfig? {
 #if DEBUG
-        lock.lock()
-        defer { lock.unlock() }
+        ConfigCache.globalLock.lock()
+        defer { ConfigCache.globalLock.unlock() }
 
         guard let target = loadAllDiskEntries().first(where: { $0.config.version == version }) else {
             return nil
@@ -189,14 +189,14 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
     }
 
     public func availableVersions() -> [Int] {
-        lock.lock()
-        defer { lock.unlock() }
+        ConfigCache.globalLock.lock()
+        defer { ConfigCache.globalLock.unlock() }
         return loadAllDiskEntries().map { $0.config.version }.sorted(by: >)
     }
 
     public func versionHistory() -> [VersionHistoryEntry] {
-        lock.lock()
-        defer { lock.unlock() }
+        ConfigCache.globalLock.lock()
+        defer { ConfigCache.globalLock.unlock() }
 
         return loadAllDiskEntries()
             .sorted { $0.cachedAt > $1.cachedAt }
@@ -216,8 +216,8 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
     }
 
     public func exportCache() -> Data? {
-        lock.lock()
-        defer { lock.unlock() }
+        ConfigCache.globalLock.lock()
+        defer { ConfigCache.globalLock.unlock() }
 
         let entries = loadAllDiskEntries()
         let payload = CacheExport(exportedAt: Date().timeIntervalSince1970, entries: entries)

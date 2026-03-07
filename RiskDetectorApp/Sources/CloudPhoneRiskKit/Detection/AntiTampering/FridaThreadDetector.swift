@@ -52,6 +52,52 @@ struct FridaThreadDetector: Detector {
 
         for i in 0..<Int(threadCount) {
             let thread = threads[i]
+            
+            // 1a. 异常挂起检测 (thread_info: suspend_count)
+            var thInfo = thread_basic_info_data_t()
+            var thInfoCount = mach_msg_type_number_t(MemoryLayout<thread_basic_info_data_t>.stride / MemoryLayout<integer_t>.stride)
+            let infoResult = withUnsafeMutablePointer(to: &thInfo) { ptr in
+                ptr.withMemoryRebound(to: integer_t.self, capacity: Int(thInfoCount)) { rebound in
+                    thread_info(thread, thread_flavor_t(THREAD_BASIC_INFO), rebound, &thInfoCount)
+                }
+            }
+            if infoResult == KERN_SUCCESS {
+                // 启发式：假定 index 0 为主线程，其他为非主线程
+                if i > 0 && thInfo.suspend_count > 0 {
+                    score += 20
+                    methods.append("thread_anomaly_suspension:\(thInfo.suspend_count)")
+                }
+            }
+
+            // 1b. 线程级异常端口检测
+            var masks = [exception_mask_t](repeating: 0, count: Int(EXC_TYPES_COUNT))
+            var ports = [mach_port_t](repeating: 0, count: Int(EXC_TYPES_COUNT))
+            var behaviors = [exception_behavior_t](repeating: 0, count: Int(EXC_TYPES_COUNT))
+            var flavors = [thread_state_flavor_t](repeating: 0, count: Int(EXC_TYPES_COUNT))
+            var count = mach_msg_type_number_t(EXC_TYPES_COUNT)
+
+            let excMask = EXC_MASK_BAD_ACCESS | EXC_MASK_BAD_INSTRUCTION | EXC_MASK_BREAKPOINT | EXC_MASK_SOFTWARE
+            let excResult = thread_get_exception_ports(
+                thread,
+                exception_mask_t(excMask),
+                &masks,
+                &count,
+                &ports,
+                &behaviors,
+                &flavors
+            )
+
+            if excResult == KERN_SUCCESS {
+                for j in 0..<Int(count) {
+                    let port = ports[j]
+                    if port != MACH_PORT_NULL && port != mach_port_t(bitPattern: -1) {
+                        score += 30
+                        methods.append("frida_exception_port:thread_mask_\(masks[j])")
+                        break
+                    }
+                }
+            }
+
             guard let pt = pthread_from_mach_thread_np(thread) else { continue }
 
             var name = [CChar](repeating: 0, count: 256)
@@ -128,10 +174,10 @@ extension FridaThreadDetector {
 
         var signals: [RiskSignal] = []
 
-        let threadMethods = result.methods.filter { $0.hasPrefix("frida_thread") }
+        let threadMethods = result.methods.filter { $0.hasPrefix("frida_thread") || $0.hasPrefix("thread_anomaly") }
         if !threadMethods.isEmpty {
             signals.append(RiskSignal(
-                id: "frida_thread_anomaly",
+                id: "thread_anomaly",
                 category: "anti_tamper",
                 score: min(Double(threadMethods.count) * 10, 30),
                 evidence: [

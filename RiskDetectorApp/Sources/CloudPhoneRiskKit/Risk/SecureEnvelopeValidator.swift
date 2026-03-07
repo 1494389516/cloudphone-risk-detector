@@ -219,7 +219,7 @@ public final class LocalEnvelopeReplayStore: NonceReplayProtecting, @unchecked S
     }
 
     private func nowMillis() -> Int64 {
-        Int64(Date().timeIntervalSince1970 * 1000)
+        Int64(ProcessInfo.processInfo.systemUptime * 1000)
     }
 }
 
