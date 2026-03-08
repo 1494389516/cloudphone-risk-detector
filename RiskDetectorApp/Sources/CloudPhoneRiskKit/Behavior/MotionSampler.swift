@@ -97,7 +97,11 @@ final class MotionSampler {
 
 #else
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 final class MotionSampler {
     static let shared = MotionSampler()
     private init() {}
