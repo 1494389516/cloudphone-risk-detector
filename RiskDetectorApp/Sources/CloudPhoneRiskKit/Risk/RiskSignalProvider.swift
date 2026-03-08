@@ -1,5 +1,23 @@
 import Foundation
 
+// MARK: - Signal Provider System
+//
+// Extension point for injecting custom risk signals into the evaluation pipeline.
+//
+// Built-in Providers (auto-registered by CPRiskKit.start()):
+//   server_aggregate   → IP/ASN/datacenter signals from server injection
+//   device_hardware    → hw.machine, simulator detection
+//   device_age         → old model heuristic risk scoring
+//   time_pattern       → 24h activity pattern analysis
+//   vphone_hardware    → GPU/BoardID/kernel cloud phone indicators
+//   battery_entropy    → ChargeCounter/voltage variance
+//   drm_capability     → FairPlay DRM level
+//   mount_point        → filesystem mount anomalies
+//   layered_consistency→ cross-layer signal coherence
+//
+// Security: registry is sealed after start() — attempts to replace internal
+// providers inject tamper signals (provider_tamper_attempt / provider_instance_replaced)
+
 /// Pluggable signal provider (B2).
 /// Register providers with `CPRiskKit.register(provider:)`.
 public protocol RiskSignalProvider: AnyObject {

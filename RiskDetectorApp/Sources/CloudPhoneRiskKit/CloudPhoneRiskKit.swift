@@ -1,3 +1,34 @@
+// MARK: - CloudPhoneRiskKit — Main Entry Point
+//
+// Architecture Overview:
+//
+//   ┌─────────────────────────────────────────────────────────────┐
+//   │                     CPRiskKit (this file)                   │
+//   │  Singleton orchestrator: start/stop, evaluate, config       │
+//   ├────────────┬──────────────┬─────────────┬──────────────────┤
+//   │ Jailbreak  │ AntiTamper   │  Providers  │   Decision       │
+//   │ Engine     │ + AntiBypass │  (Signals)  │   Engine         │
+//   ├────────────┼──────────────┼─────────────┼──────────────────┤
+//   │ 11 Detectors│ FridaThread │ DRM/Battery │ DecisionTree     │
+//   │ (File,Dyld, │ FridaHeap   │ MountPoint  │ ScenarioPolicy   │
+//   │  Sysctl,..) │ ObjCSwizzle │ Hardware    │ ComboRules       │
+//   │            │ RWXMemory   │ Behavior    │ SignalWeights     │
+//   ├────────────┴──────────────┴─────────────┴──────────────────┤
+//   │         RiskScorer  →  RiskVerdict  →  CPRiskReport        │
+//   ├────────────────────────────────────────────────────────────┤
+//   │  Storage (AES-GCM) │ Config (Remote+Signed) │ Network     │
+//   └────────────────────────────────────────────────────────────┘
+//
+// Data Flow:
+//   1. start() → begins touch/motion sampling + registers providers
+//   2. evaluate() → snapshot context → run detectors → score → decide → report
+//   3. stop() → halt sampling
+//
+// Thread Safety:
+//   - All mutable state guarded by NSLock
+//   - Provider registry sealed after start() to prevent runtime injection
+//   - Keychain operations use per-key locks to avoid TOCTOU races
+
 import CryptoKit
 import Foundation
 #if canImport(UIKit)

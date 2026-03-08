@@ -1,5 +1,27 @@
 import Foundation
 
+// MARK: - Jailbreak Detection Engine
+//
+// Runs a configurable chain of 11 detectors, each returning a DetectorResult
+// with a score and list of detected methods. The engine aggregates scores and
+// applies a confidence threshold to produce a final DetectionResult.
+//
+// Detector Chain (each independently toggleable via JailbreakConfig):
+//   FileDetector      → stat/access on known jailbreak paths
+//   DyldDetector      → _dyld_image_count / image name scanning
+//   EnvDetector       → DYLD_INSERT_LIBRARIES and related env vars
+//   SysctlDetector    → kern.proc P_TRACED flag, process list
+//   SchemeDetector    → canOpenURL for Cydia/Sileo/Filza schemes
+//   HookDetector      → function prologue integrity checks
+//   HookFramework..   → dlsym for Substrate/fishhook/Frida symbols
+//   ObjCIMPDetector   → method_getImplementation + dladdr validation
+//   PrologueBranch..  → ARM64 branch instruction at function entry
+//   PointerValid..    → pointer authentication checks
+//   IndirectSymbol..  → indirect symbol table integrity
+//
+// Simulator: returns unavailable by default (set CPRISK_SIMULATE_JAILBREAK=1
+// to enable simulated jailbreak for testing)
+
 final class JailbreakEngine {
     func detect(config: JailbreakConfig) -> DetectionResult {
 #if targetEnvironment(simulator)

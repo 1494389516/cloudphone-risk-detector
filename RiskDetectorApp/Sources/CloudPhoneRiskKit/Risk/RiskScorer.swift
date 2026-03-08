@@ -1,5 +1,19 @@
 import Foundation
 
+// MARK: - Risk Scorer
+//
+// Stateless scoring engine that converts a RiskContext into a RiskScoreReport.
+//
+// Scoring Pipeline:
+//   1. Jailbreak confidence → ×0.6 weight (capped at 100)
+//   2. Network signals      → VPN +10, Proxy +8 (if enabled)
+//   3. Behavior analysis    → up to +30 from 8 heuristics (capped)
+//   4. Extra signals        → up to +20 from providers (de-duped)
+//   5. Total capped at 100
+//
+// Hard Verdict: if isJailbroken && score < threshold → bumps score to threshold
+// isHighRisk  = score >= threshold || isJailbroken
+
 enum RiskScorer {
     static func score(context: RiskContext, config: RiskConfig, extraSignals: [RiskSignal] = []) -> RiskScoreReport {
         var total: Double = 0
