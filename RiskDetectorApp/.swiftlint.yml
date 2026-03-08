@@ -1,0 +1,82 @@
+# SwiftLint Configuration for CloudPhoneRiskKit
+# Tailored for a security SDK with intentionally complex detection logic
+
+# ─── Included / Excluded Paths ───────────────────────────────────────────────
+included:
+  - Sources
+  - App
+  - Tests
+
+excluded:
+  - .build
+  - DerivedData
+  - Package.swift
+
+# ─── Disabled Rules ──────────────────────────────────────────────────────────
+# Rules disabled with justification for a security detection SDK
+disabled_rules:
+  # Short names like `fd`, `ip`, `vm` are domain-standard in systems programming
+  - identifier_name
+  # Trailing commas are a style preference; the codebase consistently uses them
+  - trailing_comma
+  # Detection logic and decision trees inherently require deep nesting
+  - cyclomatic_complexity
+  # Security-critical code benefits from explicit enum raw values for auditability
+  - redundant_string_enum_value
+  # Multi-closure trailing syntax is acceptable in SwiftUI view builders
+  - multiple_closures_with_trailing_closure
+  # "whitelist/blacklist" are used as API terms matching server-side contracts
+  - inclusive_language
+
+# ─── Opt-in Rules ────────────────────────────────────────────────────────────
+opt_in_rules:
+  - closure_spacing
+  - contains_over_first_not_nil
+  - fatal_error_message
+  - first_where
+  - implicitly_unwrapped_optional
+  - overridden_super_call
+  - private_outlet
+  - redundant_nil_coalescing
+  - sorted_first_last
+  - yoda_condition
+
+# ─── Rule Configuration ─────────────────────────────────────────────────────
+
+line_length:
+  warning: 150
+  error: 250
+  ignores_comments: true
+  ignores_urls: true
+  ignores_interpolated_strings: true
+
+file_length:
+  warning: 600
+  error: 1200
+  ignore_comment_only_lines: true
+
+type_body_length:
+  warning: 400
+  error: 1000
+
+function_body_length:
+  warning: 80
+  error: 250
+
+function_parameter_count:
+  warning: 8
+  error: 12
+
+large_tuple:
+  warning: 4
+  error: 6
+
+trailing_whitespace:
+  ignores_empty_lines: true
+
+nesting:
+  type_level: 3
+  function_level: 5
+
+# ─── Reporter ────────────────────────────────────────────────────────────────
+reporter: "xcode"
