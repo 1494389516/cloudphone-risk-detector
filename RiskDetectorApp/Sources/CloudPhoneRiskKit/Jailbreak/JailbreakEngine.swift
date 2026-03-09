@@ -23,6 +23,11 @@ import Foundation
 // to enable simulated jailbreak for testing)
 
 final class JailbreakEngine {
+    /// 置信度上限
+    private static let confidenceCap: Double = 100
+    /// 检测器异常（负分/抛异常）时的惩罚分
+    private static let detectorAnomalyPenalty: Double = 5
+
     func detect(config: JailbreakConfig) -> DetectionResult {
 #if targetEnvironment(simulator)
         // iOS Simulator runs as a macOS process and shares host filesystem/dyld state.
@@ -35,7 +40,7 @@ final class JailbreakEngine {
             Logger.log("jailbreak: simulator -> simulated_jailbreak")
             return DetectionResult(
                 isJailbroken: true,
-                confidence: 100,
+                confidence: Self.confidenceCap,
                 detectedMethods: ["simulated:targetEnvironment(simulator)"],
                 details: "simulated_jailbreak_simulator"
             )
@@ -83,10 +88,10 @@ final class JailbreakEngine {
 
         methods = Array(Set(methods)).sorted()
         let isJailbroken = score >= config.threshold
-        Logger.log("jailbreak: done(score=\(min(score, 100)) isJailbroken=\(isJailbroken) methods=\(methods.joined(separator: ",")))")
+        Logger.log("jailbreak: done(score=\(min(score, Self.confidenceCap)) isJailbroken=\(isJailbroken) methods=\(methods.joined(separator: ",")))")
         return DetectionResult(
             isJailbroken: isJailbroken,
-            confidence: min(score, 100),
+            confidence: min(score, Self.confidenceCap),
             detectedMethods: methods,
             details: details(methods: methods, score: score)
         )
@@ -102,7 +107,7 @@ final class JailbreakEngine {
             let result = try block()
             if result.score < 0 {
                 Logger.log("jailbreak.\(label): negative score(\(result.score)), treating as suspicious")
-                score += 5
+                score += Self.detectorAnomalyPenalty
                 methods.append("jailbreak_anomaly:\(label):negative_score")
             } else {
                 Logger.log("jailbreak.\(label): score=\(result.score) hits=\(result.methods.count)")
@@ -111,14 +116,14 @@ final class JailbreakEngine {
             }
         } catch {
             Logger.log("jailbreak.\(label): detector threw error(\(error)), treating as suspicious")
-            score += 5
+            score += Self.detectorAnomalyPenalty
             methods.append("jailbreak_anomaly:\(label):threw")
         }
     }
 
     private func details(methods: [String], score: Double) -> String {
         """
-        jailbreak_score=\(min(score, 100))
+        jailbreak_score=\(min(score, Self.confidenceCap))
         hits=\(methods.count)
         methods=\(methods.joined(separator: ","))
         """

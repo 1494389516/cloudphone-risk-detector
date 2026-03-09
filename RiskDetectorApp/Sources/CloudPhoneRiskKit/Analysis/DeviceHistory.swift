@@ -153,11 +153,15 @@ public final class DeviceHistory {
     private init() {
         let paths = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
         let appSupportDirectory = paths[0]
-        try? fileManager.createDirectory(
-            at: appSupportDirectory,
-            withIntermediateDirectories: true,
-            attributes: [FileAttributeKey.protectionKey: FileProtectionType.complete]
-        )
+        do {
+            try fileManager.createDirectory(
+                at: appSupportDirectory,
+                withIntermediateDirectories: true,
+                attributes: [FileAttributeKey.protectionKey: FileProtectionType.complete]
+            )
+        } catch {
+            Logger.log("DeviceHistory: failed to create storage directory - \(error.localizedDescription)")
+        }
         self.storeURL = appSupportDirectory.appendingPathComponent("cloudphone_device_history_v2.json")
         self.hmacURL = appSupportDirectory.appendingPathComponent("cloudphone_device_history_v2.json.hmac")
         migrateFromDocumentsIfNeeded()
@@ -168,9 +172,17 @@ public final class DeviceHistory {
         let oldPaths = fileManager.urls(for: .documentDirectory, in: .userDomainMask)
         let oldStore = oldPaths[0].appendingPathComponent("cloudphone_device_history_v1.json")
         guard fileManager.fileExists(atPath: oldStore.path) else { return }
-        try? fileManager.removeItem(at: oldStore)
+        do {
+            try fileManager.removeItem(at: oldStore)
+        } catch {
+            Logger.log("DeviceHistory: failed to remove legacy store - \(error.localizedDescription)")
+        }
         let oldHmac = oldPaths[0].appendingPathComponent("cloudphone_device_history_v1.json.hmac")
-        try? fileManager.removeItem(at: oldHmac)
+        do {
+            try fileManager.removeItem(at: oldHmac)
+        } catch {
+            Logger.log("DeviceHistory: failed to remove legacy hmac - \(error.localizedDescription)")
+        }
         Logger.log("DeviceHistory: migrated from Documents to ApplicationSupport")
     }
 
@@ -360,12 +372,17 @@ public final class DeviceHistory {
             return
         }
 
-        guard let data = try? Data(contentsOf: storeURL) else {
+        let data: Data
+        do {
+            data = try Data(contentsOf: storeURL)
+        } catch {
+            Logger.log("DeviceHistory: failed to read store file - \(error.localizedDescription)")
             cachedSnapshots = []
+            cachedFreshness = anchor
             return
         }
 
-        guard let signature = try? Data(contentsOf: hmacURL),
+        guard let signature = (try? Data(contentsOf: hmacURL)),
               StorageIntegrityGuard.verify(data, signature: signature, purpose: hmacPurpose) else {
             clearPersistedFilesLocked(resetAnchor: false)
             cachedSnapshots = []
@@ -518,8 +535,20 @@ public final class DeviceHistory {
     }
 
     private func clearPersistedFilesLocked(resetAnchor: Bool) {
-        try? fileManager.removeItem(at: storeURL)
-        try? fileManager.removeItem(at: hmacURL)
+        do {
+            try fileManager.removeItem(at: storeURL)
+        } catch {
+            if (error as NSError).code != NSFileNoSuchFileError {
+                Logger.log("DeviceHistory: failed to remove store file - \(error.localizedDescription)")
+            }
+        }
+        do {
+            try fileManager.removeItem(at: hmacURL)
+        } catch {
+            if (error as NSError).code != NSFileNoSuchFileError {
+                Logger.log("DeviceHistory: failed to remove hmac file - \(error.localizedDescription)")
+            }
+        }
         if resetAnchor {
             freshnessAnchor.remove()
         }

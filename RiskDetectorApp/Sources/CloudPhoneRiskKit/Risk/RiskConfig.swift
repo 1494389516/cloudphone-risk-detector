@@ -1,6 +1,15 @@
 import Foundation
 
 public struct RiskConfig: Sendable {
+    /// 默认风险阈值
+    public static let defaultThreshold: Double = 60
+    /// 轻量模式风险阈值
+    public static let lightThreshold: Double = 70
+    /// 完整模式风险阈值
+    public static let fullThreshold: Double = 55
+    /// 默认越狱检测阈值
+    public static let defaultJailbreakThreshold: Double = 50
+
     public var jailbreak: JailbreakConfig
     public var enableBehaviorDetect: Bool
     public var enableNetworkSignals: Bool
@@ -10,7 +19,7 @@ public struct RiskConfig: Sendable {
         jailbreak: JailbreakConfig = .default,
         enableBehaviorDetect: Bool = true,
         enableNetworkSignals: Bool = true,
-        threshold: Double = 60
+        threshold: Double = RiskConfig.defaultThreshold
     ) {
         self.jailbreak = jailbreak
         self.enableBehaviorDetect = enableBehaviorDetect
@@ -24,14 +33,14 @@ public struct RiskConfig: Sendable {
         jailbreak: .light,
         enableBehaviorDetect: true,
         enableNetworkSignals: true,
-        threshold: 70
+        threshold: lightThreshold
     )
 
     public static let full = RiskConfig(
         jailbreak: .full,
         enableBehaviorDetect: true,
         enableNetworkSignals: true,
-        threshold: 55
+        threshold: fullThreshold
     )
 }
 
@@ -39,7 +48,7 @@ public struct RiskConfig: Sendable {
 public final class CPRiskConfig: NSObject {
     @objc public var enableBehaviorDetect: Bool = true
     @objc public var enableNetworkSignals: Bool = true
-    @objc public var threshold: Double = 60
+    @objc public var threshold: Double = RiskConfig.defaultThreshold
 
     @objc public var jailbreakEnableFileDetect: Bool = true
     @objc public var jailbreakEnableDyldDetect: Bool = true
@@ -47,7 +56,7 @@ public final class CPRiskConfig: NSObject {
     @objc public var jailbreakEnableSysctlDetect: Bool = true
     @objc public var jailbreakEnableSchemeDetect: Bool = true
     @objc public var jailbreakEnableHookDetect: Bool = true
-    @objc public var jailbreakThreshold: Double = 50
+    @objc public var jailbreakThreshold: Double = RiskConfig.defaultJailbreakThreshold
 
     // MARK: - 2.0 新增配置
 

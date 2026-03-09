@@ -123,7 +123,7 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
         }
 
         if s.isDatacenter == true {
-            out.append(RiskSignal(id: "datacenter_ip", category: "server", score: 20, evidence: ["is_datacenter": "true"]))
+            out.append(RiskSignal(id: SignalID.datacenterIP, category: SignalCategory.server, score: 20, evidence: ["is_datacenter": "true"]))
         }
 
         if let n = s.ipDeviceAgg {
@@ -133,7 +133,7 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
             else if n >= 20 { score = 8 }
             else { score = 0 }
             if score > 0 {
-                out.append(RiskSignal(id: "ip_device_agg", category: "server", score: score, evidence: ["ip_device_agg": "\(n)"]))
+                out.append(RiskSignal(id: SignalID.ipDeviceAgg, category: SignalCategory.server, score: score, evidence: ["ip_device_agg": "\(n)"]))
             }
         }
 
@@ -144,7 +144,7 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
             else if n >= 30 { score = 8 }
             else { score = 0 }
             if score > 0 {
-                out.append(RiskSignal(id: "ip_account_agg", category: "server", score: score, evidence: ["ip_account_agg": "\(n)"]))
+                out.append(RiskSignal(id: SignalID.ipAccountAgg, category: SignalCategory.server, score: score, evidence: ["ip_account_agg": "\(n)"]))
             }
         }
 

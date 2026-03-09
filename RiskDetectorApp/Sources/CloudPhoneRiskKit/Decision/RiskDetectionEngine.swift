@@ -555,7 +555,7 @@ public struct RiskDetectionEngine: Sendable {
         }
 
         // 服务端黑名单强制规则
-        let blocklistHit = signals.contains(where: { $0.id == "blocklist_hit" })
+        let blocklistHit = signals.contains(where: { $0.id == SignalID.blocklistHit })
         if blocklistHit, let blocklistAction = policy.blocklistAction {
             forcedAction = strictestAction(forcedAction, blocklistAction)
             adjustedScore = max(adjustedScore, minScore(for: blocklistAction, scenarioPolicy: scenarioPolicy))
@@ -749,18 +749,18 @@ public struct RiskDetectionEngine: Sendable {
 
     private func deriveCrossLayerSignals(from signals: [RiskSignal]) -> [RiskSignal] {
         let hasLayer2Tampered = signals.contains(where: { $0.layer == 2 && $0.state == .tampered }) ||
-            signals.contains(where: { $0.id == "hook_detected" && $0.state == .hard(detected: true) })
+            signals.contains(where: { $0.id == SignalID.hookDetected && $0.state == .hard(detected: true) })
 
-        let l1GPUReal = signals.contains(where: { $0.id == "gpu_virtual" && $0.state == .hard(detected: false) })
-        let l1HardwareReal = signals.contains(where: { $0.id == "vphone_hardware" && $0.state == .hard(detected: false) })
+        let l1GPUReal = signals.contains(where: { $0.id == SignalID.gpuVirtual && $0.state == .hard(detected: false) })
+        let l1HardwareReal = signals.contains(where: { $0.id == SignalID.vphoneHardware && $0.state == .hard(detected: false) })
 
-        let l1Suspicious = signals.contains(where: { $0.id == "vphone_hardware" && $0.state == .hard(detected: true) }) ||
-            signals.contains(where: { $0.id == "gpu_virtual" && $0.state == .hard(detected: true) }) ||
-            signals.contains(where: { $0.id == "hardware_inconsistency" && confidence(of: $0.state) >= 0.8 })
+        let l1Suspicious = signals.contains(where: { $0.id == SignalID.vphoneHardware && $0.state == .hard(detected: true) }) ||
+            signals.contains(where: { $0.id == SignalID.gpuVirtual && $0.state == .hard(detected: true) }) ||
+            signals.contains(where: { $0.id == SignalID.hardwareInconsistency && confidence(of: $0.state) >= 0.8 })
 
-        let l3Virtual = signals.contains(where: { ($0.id == "sensor_entropy" || $0.id == "touch_entropy") && confidence(of: $0.state) >= 0.65 })
+        let l3Virtual = signals.contains(where: { ($0.id == SignalID.sensorEntropy || $0.id == SignalID.touchEntropy) && confidence(of: $0.state) >= 0.65 })
         let l3UnavailableCount = signals.filter {
-            ($0.id == "sensor_entropy" || $0.id == "touch_entropy") && $0.state == .unavailable
+            ($0.id == SignalID.sensorEntropy || $0.id == SignalID.touchEntropy) && $0.state == .unavailable
         }.count
 
         var reasons: [String] = []
