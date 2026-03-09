@@ -1,5 +1,61 @@
 import Foundation
 
+// MARK: - Signal Identifiers
+
+/// 统一管理所有 RiskSignal 的 ID，避免字符串散落各处导致拼写错误和维护困难
+public enum SignalID {
+    // Jailbreak
+    static let jailbreak = "jailbreak"
+
+    // Network
+    static let vpnActive = "vpn_active"
+    static let proxyEnabled = "proxy_enabled"
+
+    // Behavior
+    static let touchSpreadLow = "touch_spread_low"
+    static let touchSpreadHigh = "touch_spread_high"
+    static let touchIntervalTooRegular = "touch_interval_too_regular"
+    static let touchIntervalTooChaotic = "touch_interval_too_chaotic"
+    static let swipeTooLinear = "swipe_too_linear"
+    static let swipeTooCurvy = "swipe_too_curvy"
+    static let motionTooStill = "motion_too_still"
+    static let touchMotionWeakCoupling = "touch_motion_weak_coupling"
+    static let insufficientBehaviorData = "insufficient_behavior_data"
+
+    // Time Pattern
+    static let highVolume24h = "high_volume_24h"
+    static let mediumVolume24h = "medium_volume_24h"
+    static let wideHourCoverage = "wide_hour_coverage"
+    static let nightActivityHigh = "night_activity_high"
+    static let highFrequency = "high_frequency"
+
+    // Server Aggregation
+    static let datacenterIP = "datacenter_ip"
+    static let ipDeviceAgg = "ip_device_agg"
+    static let ipAccountAgg = "ip_account_agg"
+
+    // Cloud Phone / Hardware
+    static let gpuVirtual = "gpu_virtual"
+    static let vphoneHardware = "vphone_hardware"
+    static let hardwareInconsistency = "hardware_inconsistency"
+    static let sensorEntropy = "sensor_entropy"
+    static let touchEntropy = "touch_entropy"
+    static let hookDetected = "hook_detected"
+    static let blocklistHit = "blocklist_hit"
+}
+
+// MARK: - Signal Categories
+
+/// 统一管理所有 RiskSignal 的 category
+public enum SignalCategory {
+    static let jailbreak = "jailbreak"
+    static let network = "network"
+    static let behavior = "behavior"
+    static let time = "time"
+    static let server = "server"
+    static let cloudphone = "cloudphone"
+}
+
 public struct RiskContext: Sendable {
     var device: DeviceFingerprint
     var deviceID: String
@@ -286,8 +342,8 @@ private struct Payload: Codable {
         self.server = nil
         self.local = nil
         self.challengeBinding = nil
-        self.gpuName = report.signals.first(where: { $0.id == "gpu_virtual" })?.evidence["gpu_name"]
-        self.kernelBuild = report.signals.first(where: { $0.id == "vphone_hardware" })?.evidence["kernel"]
+        self.gpuName = report.signals.first(where: { $0.id == SignalID.gpuVirtual })?.evidence["gpu_name"]
+        self.kernelBuild = report.signals.first(where: { $0.id == SignalID.vphoneHardware })?.evidence["kernel"]
         self.deviceModel = context.device.hardwareMachine ?? context.device.model
         self.imuMagnitude = nil
         self.imuVariance = nil

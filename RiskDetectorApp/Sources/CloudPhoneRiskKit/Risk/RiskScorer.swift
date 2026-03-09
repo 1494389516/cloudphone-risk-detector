@@ -67,8 +67,8 @@ enum RiskScorer {
             total += jbContribution
             signals.append(
                 RiskSignal(
-                    id: "jailbreak",
-                    category: "jailbreak",
+                    id: SignalID.jailbreak,
+                    category: SignalCategory.jailbreak,
                     score: jbScore,
                     evidence: [
                         "is_jailbroken": "\(context.jailbreak.isJailbroken)",
@@ -82,12 +82,12 @@ enum RiskScorer {
         if config.enableNetworkSignals {
             if context.network.isVPNActive {
                 total += vpnScore
-                signals.append(RiskSignal(id: "vpn_active", category: "network", score: vpnScore, evidence: [:]))
+                signals.append(RiskSignal(id: SignalID.vpnActive, category: SignalCategory.network, score: vpnScore, evidence: [:]))
                 Logger.log("score +\(vpnScore) from vpn_active")
             }
             if context.network.proxyEnabled {
                 total += proxyScore
-                signals.append(RiskSignal(id: "proxy_enabled", category: "network", score: proxyScore, evidence: [:]))
+                signals.append(RiskSignal(id: SignalID.proxyEnabled, category: SignalCategory.network, score: proxyScore, evidence: [:]))
                 Logger.log("score +\(proxyScore) from proxy_enabled")
             }
         }
@@ -137,37 +137,37 @@ enum RiskScorer {
 
         if let spread = behavior.touch.coordinateSpread, spread < touchSpreadLowThreshold {
             total += touchSpreadLowScore
-            signals.append(RiskSignal(id: "touch_spread_low", category: "behavior", score: touchSpreadLowScore, evidence: ["spread": "\(spread)"]))
+            signals.append(RiskSignal(id: SignalID.touchSpreadLow, category: SignalCategory.behavior, score: touchSpreadLowScore, evidence: ["spread": "\(spread)"]))
         }
 
         if let spread = behavior.touch.coordinateSpread, spread > touchSpreadHighThreshold {
             total += touchSpreadHighScore
-            signals.append(RiskSignal(id: "touch_spread_high", category: "behavior", score: touchSpreadHighScore, evidence: ["spread": "\(spread)"]))
+            signals.append(RiskSignal(id: SignalID.touchSpreadHigh, category: SignalCategory.behavior, score: touchSpreadHighScore, evidence: ["spread": "\(spread)"]))
         }
 
         if let cv = behavior.touch.intervalCV, cv < touchIntervalCVLowThreshold {
             total += touchIntervalRegularScore
-            signals.append(RiskSignal(id: "touch_interval_too_regular", category: "behavior", score: touchIntervalRegularScore, evidence: ["cv": "\(cv)"]))
+            signals.append(RiskSignal(id: SignalID.touchIntervalTooRegular, category: SignalCategory.behavior, score: touchIntervalRegularScore, evidence: ["cv": "\(cv)"]))
         }
 
         if let cv = behavior.touch.intervalCV, cv > touchIntervalCVHighThreshold {
             total += touchIntervalChaoticScore
-            signals.append(RiskSignal(id: "touch_interval_too_chaotic", category: "behavior", score: touchIntervalChaoticScore, evidence: ["cv": "\(cv)"]))
+            signals.append(RiskSignal(id: SignalID.touchIntervalTooChaotic, category: SignalCategory.behavior, score: touchIntervalChaoticScore, evidence: ["cv": "\(cv)"]))
         }
 
         if let lin = behavior.touch.averageLinearity, lin > swipeLinearityHighThreshold, behavior.touch.swipeCount >= minSwipesForLinearity {
             total += swipeTooLinearScore
-            signals.append(RiskSignal(id: "swipe_too_linear", category: "behavior", score: swipeTooLinearScore, evidence: ["avg_linearity": "\(lin)"]))
+            signals.append(RiskSignal(id: SignalID.swipeTooLinear, category: SignalCategory.behavior, score: swipeTooLinearScore, evidence: ["avg_linearity": "\(lin)"]))
         }
 
         if let lin = behavior.touch.averageLinearity, lin < swipeLinearityLowThreshold, behavior.touch.swipeCount >= minSwipesForLinearity {
             total += swipeTooCurvyScore
-            signals.append(RiskSignal(id: "swipe_too_curvy", category: "behavior", score: swipeTooCurvyScore, evidence: ["avg_linearity": "\(lin)"]))
+            signals.append(RiskSignal(id: SignalID.swipeTooCurvy, category: SignalCategory.behavior, score: swipeTooCurvyScore, evidence: ["avg_linearity": "\(lin)"]))
         }
 
         if let still = behavior.motion.stillnessRatio, still > motionStillnessThreshold, (behavior.touch.tapCount + behavior.touch.swipeCount) >= minActionsForStillness {
             total += motionTooStillScore
-            signals.append(RiskSignal(id: "motion_too_still", category: "behavior", score: motionTooStillScore, evidence: ["stillness": "\(still)"]))
+            signals.append(RiskSignal(id: SignalID.motionTooStill, category: SignalCategory.behavior, score: motionTooStillScore, evidence: ["stillness": "\(still)"]))
         }
 
         if
@@ -177,15 +177,15 @@ enum RiskScorer {
             (behavior.motion.stillnessRatio ?? 0) > minStillnessForCorrelation
         {
             total += touchMotionWeakCouplingScore
-            signals.append(RiskSignal(id: "touch_motion_weak_coupling", category: "behavior", score: touchMotionWeakCouplingScore, evidence: ["corr": "\(corr)"]))
+            signals.append(RiskSignal(id: SignalID.touchMotionWeakCoupling, category: SignalCategory.behavior, score: touchMotionWeakCouplingScore, evidence: ["corr": "\(corr)"]))
         }
 
         let totalActions = behavior.touch.tapCount + behavior.touch.swipeCount
         if totalActions < minTotalActions, behavior.touch.sampleCount < minSampleCount {
             total += insufficientDataScore
             signals.append(RiskSignal(
-                id: "insufficient_behavior_data",
-                category: "behavior",
+                id: SignalID.insufficientBehaviorData,
+                category: SignalCategory.behavior,
                 score: insufficientDataScore,
                 evidence: [
                     "tapCount": "\(behavior.touch.tapCount)",
