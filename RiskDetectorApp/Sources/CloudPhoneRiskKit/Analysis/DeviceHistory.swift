@@ -452,14 +452,17 @@ public final class DeviceHistory {
         defer { lock.unlock() }
 
         guard isDirty else { return }
-        persistToDiskLocked(resetAnchor: false)
-        isDirty = false
+        let persisted = persistToDiskLocked(resetAnchor: false)
+        if persisted {
+            isDirty = false
+        }
     }
 
-    private func persistToDiskLocked(resetAnchor: Bool) {
+    @discardableResult
+    private func persistToDiskLocked(resetAnchor: Bool) -> Bool {
         if resetAnchor {
             clearPersistedFilesLocked(resetAnchor: true)
-            return
+            return true
         }
 
         do {
@@ -498,12 +501,14 @@ public final class DeviceHistory {
                 if BuildConfig.isRelease {
                     clearPersistedFilesLocked(resetAnchor: false)
                 }
-                return
+                return false
             }
             cachedFreshness = freshness
             Logger.log("DeviceHistory: persisted \(cachedSnapshots.count) snapshots (encrypted)")
+            return true
         } catch {
             Logger.log("DeviceHistory: failed to persist - \(error.localizedDescription)")
+            return false
         }
     }
 
