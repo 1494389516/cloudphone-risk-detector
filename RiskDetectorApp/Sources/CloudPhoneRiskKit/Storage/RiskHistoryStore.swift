@@ -38,6 +38,15 @@ public final class RiskHistoryStore {
     private let maxEvents = 200
     private let maxAgeSeconds: TimeInterval = 7 * 24 * 3600
 
+    /// 时序模式分析的时间窗口（24 小时）
+    private static let patternWindowSeconds: TimeInterval = 24 * 3600
+    /// 夜间时段起始小时（含）
+    private static let nightHoursStart = 0
+    /// 夜间时段结束小时（含）
+    private static let nightHoursEnd = 5
+    /// 时钟回拨容忍阈值（秒）
+    private static let clockRollbackToleranceSeconds: TimeInterval = 60
+
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
     }
@@ -57,7 +66,7 @@ public final class RiskHistoryStore {
         let events = loadStateLocked().events
         lock.unlock()
 
-        let windowStart = now - 24 * 3600
+        let windowStart = now - Self.patternWindowSeconds
         let recent = events.filter { $0.t >= windowStart && $0.t <= now }.sorted { $0.t < $1.t }
         let events24h = recent.count
 
@@ -70,7 +79,7 @@ public final class RiskHistoryStore {
             let date = Date(timeIntervalSince1970: e.t)
             let hour = cal.component(.hour, from: date)
             hours.insert(hour)
-            if hour >= 0 && hour <= 5 { nightCount += 1 }
+            if hour >= Self.nightHoursStart && hour <= Self.nightHoursEnd { nightCount += 1 }
         }
 
         if recent.count >= 2 {
@@ -143,7 +152,7 @@ public final class RiskHistoryStore {
 
         // 防时钟回拨/回放攻击：最新事件时间戳不允许超过当前时间 60s
         let wallNow = Date().timeIntervalSince1970
-        if let newest = state.events.max(by: { $0.t < $1.t }), newest.t > wallNow + 60 {
+        if let newest = state.events.max(by: { $0.t < $1.t }), newest.t > wallNow + Self.clockRollbackToleranceSeconds {
             Logger.log("RiskHistoryStore: future timestamp detected (newest=\(newest.t) now=\(wallNow)), possible replay/clock attack, clearing cache")
             clearPersistedDataLocked(resetAnchor: false)
             return LoadedState(events: [], freshness: anchor)
