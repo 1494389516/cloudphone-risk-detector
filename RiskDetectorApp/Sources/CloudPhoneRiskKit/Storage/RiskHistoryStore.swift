@@ -184,7 +184,13 @@ public final class RiskHistoryStore {
             latestTimestamp: freshness.latestTimestamp,
             sequence: freshness.sequence
         )
-        guard let encoded = try? JSONEncoder().encode(envelope) else { return }
+        let encoded: Data
+        do {
+            encoded = try JSONEncoder().encode(envelope)
+        } catch {
+            Logger.log("RiskHistoryStore: JSON encode failed - \(error.localizedDescription)")
+            return
+        }
         #if DEBUG
         let stored = (try? PayloadCrypto.encrypt(encoded)) ?? encoded
         #else

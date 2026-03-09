@@ -111,7 +111,12 @@ public final class CPRiskSignal: NSObject {
         self.id = signal.id
         self.category = signal.category
         self.score = signal.score
-        self.evidenceJSON = (try? JSON.stringify(signal.evidence)) ?? "{}"
+        do {
+            self.evidenceJSON = try JSON.stringify(signal.evidence)
+        } catch {
+            Logger.log("CPRiskSignal: evidence JSON stringify failed - \(error.localizedDescription)")
+            self.evidenceJSON = "{}"
+        }
     }
 }
 
@@ -157,7 +162,12 @@ public final class CPRiskReport: NSObject {
 
     /// 用于上报的 JSON（未加密）。
     @objc public func jsonData(prettyPrinted: Bool = false) -> Data {
-        (try? JSON.encode(payload, prettyPrinted: prettyPrinted)) ?? Data()
+        do {
+            return try JSON.encode(payload, prettyPrinted: prettyPrinted)
+        } catch {
+            Logger.log("CPRiskReport: payload JSON encode failed - \(error.localizedDescription)")
+            return Data()
+        }
     }
 
     @objc public func jsonString(prettyPrinted: Bool = false) -> String {

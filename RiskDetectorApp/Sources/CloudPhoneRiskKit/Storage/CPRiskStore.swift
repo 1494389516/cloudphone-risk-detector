@@ -114,7 +114,11 @@ public final class CPRiskStore: NSObject {
         }
         if sorted.count <= maxFiles { return }
         for url in sorted.prefix(sorted.count - maxFiles) {
-            try? fm.removeItem(at: url)
+            do {
+                try fm.removeItem(at: url)
+            } catch {
+                Logger.log("store.retention: failed to remove \(url.lastPathComponent) error=\(error.localizedDescription)")
+            }
         }
     }
 }
