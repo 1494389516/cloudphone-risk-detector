@@ -40,6 +40,11 @@ final class RiskSignalProviderRegistry {
     static let shared = RiskSignalProviderRegistry()
     private init() {}
 
+    /// 单个 Provider 执行超时时间（秒）
+    private static let providerTimeoutSeconds: Double = 3.0
+    /// 连续失败阈值，超过后跳过该 provider
+    private static let maxConsecutiveFailures = 3
+
     private let lock = NSLock()
     private var providers: [RiskSignalProvider] = []
     private(set) var isSealed = false
@@ -48,6 +53,7 @@ final class RiskSignalProviderRegistry {
     private var instanceReplacedProviderIDs: Set<String> = []
     private var activeProviderIDs: Set<String> = []
     private(set) var tamperedUnregisterAttempts: Int = 0
+    private var consecutiveFailures: [String: Int] = [:]
 
     private static let internalProviderIDs: Set<String> = [
         "server_aggregate",
@@ -152,12 +158,22 @@ final class RiskSignalProviderRegistry {
         }
 
         for provider in current {
-            let collected: [RiskSignal] = autoreleasepool {
-                provider.signals(snapshot: snapshot)
+            // 跳过连续失败过多的 provider
+            lock.lock()
+            let failures = consecutiveFailures[provider.id] ?? 0
+            lock.unlock()
+            if failures >= Self.maxConsecutiveFailures {
+                Logger.log("provider[\(provider.id)]: skipped (consecutive failures=\(failures))")
+                continue
             }
+
+            let collected: [RiskSignal] = collectWithTimeout(provider: provider, snapshot: snapshot)
 
             if !collected.isEmpty {
                 newlyActive.insert(provider.id)
+                lock.lock()
+                consecutiveFailures[provider.id] = 0
+                lock.unlock()
                 Logger.log("provider[\(provider.id)]: signals=\(collected.count)")
                 for s in collected where s.score > 0 {
                     let keys = s.evidence.keys.sorted().joined(separator: ",")
@@ -197,6 +213,31 @@ final class RiskSignalProviderRegistry {
             Logger.log("provider.serverSignals: merged")
         }
         return merged
+    }
+
+    /// 带超时和崩溃隔离地收集 provider 信号
+    private func collectWithTimeout(provider: RiskSignalProvider, snapshot: RiskSnapshot) -> [RiskSignal] {
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: [RiskSignal] = []
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let collected: [RiskSignal] = autoreleasepool {
+                provider.signals(snapshot: snapshot)
+            }
+            result = collected
+            semaphore.signal()
+        }
+
+        let timeout = DispatchTime.now() + Self.providerTimeoutSeconds
+        if semaphore.wait(timeout: timeout) == .timedOut {
+            Logger.log("provider[\(provider.id)]: timed out after \(Self.providerTimeoutSeconds)s")
+            lock.lock()
+            consecutiveFailures[provider.id, default: 0] += 1
+            lock.unlock()
+            return []
+        }
+
+        return result
     }
 
     private func merge(_ a: ServerSignals, _ b: ServerSignals) -> ServerSignals {

@@ -15,6 +15,9 @@ public struct RiskConfig: Sendable {
     public var enableNetworkSignals: Bool
     public var threshold: Double
 
+    /// 阈值合法范围
+    public static let thresholdRange: ClosedRange<Double> = 0...100
+
     public init(
         jailbreak: JailbreakConfig = .default,
         enableBehaviorDetect: Bool = true,
@@ -24,7 +27,11 @@ public struct RiskConfig: Sendable {
         self.jailbreak = jailbreak
         self.enableBehaviorDetect = enableBehaviorDetect
         self.enableNetworkSignals = enableNetworkSignals
-        self.threshold = threshold
+        let clampedThreshold = min(max(threshold, Self.thresholdRange.lowerBound), Self.thresholdRange.upperBound)
+        self.threshold = clampedThreshold
+        if threshold != clampedThreshold {
+            Logger.log("RiskConfig: threshold \(threshold) clamped to \(clampedThreshold)")
+        }
     }
 
     public static let `default` = RiskConfig()
@@ -85,7 +92,11 @@ public final class CPRiskConfig: NSObject {
         jb.enableSysctlDetect = jailbreakEnableSysctlDetect
         jb.enableSchemeDetect = jailbreakEnableSchemeDetect
         jb.enableHookDetect = jailbreakEnableHookDetect
-        jb.threshold = jailbreakThreshold
+        let clampedJBThreshold = min(max(jailbreakThreshold, RiskConfig.thresholdRange.lowerBound), RiskConfig.thresholdRange.upperBound)
+        if jailbreakThreshold != clampedJBThreshold {
+            Logger.log("CPRiskConfig: jailbreakThreshold \(jailbreakThreshold) clamped to \(clampedJBThreshold)")
+        }
+        jb.threshold = clampedJBThreshold
 
         return RiskConfig(
             jailbreak: jb,
