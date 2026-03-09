@@ -98,11 +98,10 @@ public class DetectionViewModel: ObservableObject {
             }
         }
         #else
-        // Mock for preview
+        // 非 iOS / 无 AppCore 场景：优雅降级，不触发崩溃
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            self?.lastDTO = Self.mockDTO()
-            self?.state = .completed
-            self?.showResults = true
+            self?.state = .error("CloudPhoneRiskAppCore unavailable in current build target")
+            self?.showResults = false
         }
         #endif
     }
@@ -133,11 +132,4 @@ public class DetectionViewModel: ObservableObject {
         #endif
     }
 
-    // MARK: - Mock for Preview
-    #if !canImport(CloudPhoneRiskAppCore)
-    private static func mockDTO() -> RiskReportDTO {
-        // Minimal mock for SwiftUI preview
-        fatalError("Mock DTO not implemented for non-iOS")
-    }
-    #endif
 }
