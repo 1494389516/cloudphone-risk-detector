@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 // MARK: - 远程配置模型
 ///
@@ -580,9 +585,111 @@ public struct WhitelistRules: Codable, Sendable {
 
     /// 检查 IP 是否在白名单中
     public func contains(ip: String) -> Bool {
-        // 简单实现：精确匹配
-        // TODO: 支持 CIDR 格式
-        return ipWhitelist.contains(ip)
+        let target = ip.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return false }
+
+        // 快速路径：精确匹配
+        if ipWhitelist.contains(target) {
+            return true
+        }
+
+        guard let targetAddress = ParsedIPAddress.parse(target) else {
+            return false
+        }
+
+        // 兼容路径：纯 IP（非 CIDR）按数值比较，避免不同字符串表示造成漏匹配。
+        for entry in ipWhitelist {
+            if let entryAddress = ParsedIPAddress.parse(entry), entryAddress == targetAddress {
+                return true
+            }
+        }
+
+        // 兜底：CIDR 匹配
+        for entry in ipWhitelist {
+            guard let cidr = ParsedCIDR.parse(entry) else { continue }
+            if cidr.contains(targetAddress) {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+private enum ParsedIPAddress {
+    case v4(UInt32)
+    case v6([UInt8])
+
+    static func parse(_ raw: String) -> ParsedIPAddress? {
+        var addr4 = in_addr()
+        if raw.withCString({ inet_pton(AF_INET, $0, &addr4) }) == 1 {
+            return .v4(addr4.s_addr.bigEndian)
+        }
+
+        var addr6 = in6_addr()
+        if raw.withCString({ inet_pton(AF_INET6, $0, &addr6) }) == 1 {
+            let bytes = withUnsafeBytes(of: &addr6) { Array($0) }
+            return .v6(bytes)
+        }
+
+        return nil
+    }
+}
+
+extension ParsedIPAddress: Equatable {}
+
+private struct ParsedCIDR {
+    let network: ParsedIPAddress
+    let prefix: Int
+
+    static func parse(_ raw: String) -> ParsedCIDR? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = trimmed.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 2,
+              let prefix = Int(parts[1]) else {
+            return nil
+        }
+
+        guard let network = ParsedIPAddress.parse(String(parts[0])) else {
+            return nil
+        }
+
+        switch network {
+        case .v4:
+            guard (0...32).contains(prefix) else { return nil }
+        case .v6:
+            guard (0...128).contains(prefix) else { return nil }
+        }
+
+        return ParsedCIDR(network: network, prefix: prefix)
+    }
+
+    func contains(_ candidate: ParsedIPAddress) -> Bool {
+        switch (network, candidate) {
+        case let (.v4(networkV4), .v4(candidateV4)):
+            if prefix == 0 { return true }
+            let shift = UInt32(32 - prefix)
+            let mask = ~UInt32(0) << shift
+            return (networkV4 & mask) == (candidateV4 & mask)
+
+        case let (.v6(networkV6), .v6(candidateV6)):
+            if prefix == 0 { return true }
+
+            let fullBytes = prefix / 8
+            let remBits = prefix % 8
+            if networkV6.prefix(fullBytes) != candidateV6.prefix(fullBytes) {
+                return false
+            }
+
+            if remBits == 0 {
+                return true
+            }
+
+            let mask = UInt8(0xFF) << UInt8(8 - remBits)
+            return (networkV6[fullBytes] & mask) == (candidateV6[fullBytes] & mask)
+
+        default:
+            return false
+        }
     }
 }
 
