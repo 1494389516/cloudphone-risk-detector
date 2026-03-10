@@ -92,7 +92,10 @@ private final class NetworkPathSnapshot {
 
     func snapshot() -> (interfaceType: String, isExpensive: Bool, isConstrained: Bool) {
         startIfNeeded()
-        guard let path = latest else {
+        lock.lock()
+        let path = latest
+        lock.unlock()
+        guard let path else {
             return ("unknown", false, false)
         }
 
@@ -113,7 +116,10 @@ private final class NetworkPathSnapshot {
         lock.unlock()
         guard shouldStart else { return }
         monitor.pathUpdateHandler = { [weak self] path in
-            self?.latest = path
+            guard let self else { return }
+            self.lock.lock()
+            self.latest = path
+            self.lock.unlock()
         }
         monitor.start(queue: queue)
     }

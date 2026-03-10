@@ -75,15 +75,12 @@ final class MotionSampler {
     }
 
     private func consume(motion: CMDeviceMotion) {
-        lock.lock()
-        let isEnabled = started
-        lock.unlock()
-        guard isEnabled else { return }
-
         let user = motion.userAcceleration
         let magnitude = sqrt(user.x * user.x + user.y * user.y + user.z * user.z)
 
         lock.lock()
+        defer { lock.unlock() }
+        guard started else { return }
         sampleCount += 1
         energySum += magnitude
         if magnitude < 0.02 { stillCount += 1 }
@@ -91,7 +88,6 @@ final class MotionSampler {
         if series.count > seriesMax {
             series.removeFirst(series.count - seriesMax)
         }
-        lock.unlock()
     }
 }
 
