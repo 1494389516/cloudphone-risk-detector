@@ -107,7 +107,12 @@ enum PayloadCrypto {
             return existing
         }
 
-        return nil
+        Logger.log("PayloadCrypto: saveKey failed with unexpected status \(status) — key will not be persisted")
+        throw NSError(
+            domain: "PayloadCrypto",
+            code: Int(status),
+            userInfo: [NSLocalizedDescriptionKey: "SecItemAdd failed with status \(status)"]
+        )
     }
 }
 
