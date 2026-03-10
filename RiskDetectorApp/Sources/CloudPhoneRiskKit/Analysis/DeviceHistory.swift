@@ -343,7 +343,7 @@ public final class DeviceHistory {
 
         if before != after {
             isDirty = true
-            persistIfDirty()
+            persistIfDirtyLocked()
         }
     }
 
@@ -450,7 +450,11 @@ public final class DeviceHistory {
     private func persistIfDirty() {
         lock.lock()
         defer { lock.unlock() }
+        persistIfDirtyLocked()
+    }
 
+    /// Must be called with `lock` already held.
+    private func persistIfDirtyLocked() {
         guard isDirty else { return }
         persistToDiskLocked(resetAnchor: false)
         isDirty = false
