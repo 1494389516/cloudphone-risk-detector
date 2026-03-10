@@ -218,7 +218,11 @@ public final class BehaviorBaselineBuilder {
     public func getBaseline(for deviceID: String, forceRebuild: Bool = false) -> BehaviorBaseline {
         lock.lock()
         defer { lock.unlock() }
+        return getBaselineLocked(for: deviceID, forceRebuild: forceRebuild)
+    }
 
+    /// Must be called with `lock` already held.
+    private func getBaselineLocked(for deviceID: String, forceRebuild: Bool = false) -> BehaviorBaseline {
         let now = Date().timeIntervalSince1970
 
         // 检查缓存
@@ -241,8 +245,8 @@ public final class BehaviorBaselineBuilder {
         lock.lock()
         defer { lock.unlock() }
 
-        // 获取当前基线
-        let currentBaseline = getBaseline(for: deviceID)
+        // 获取当前基线（复用已持有的锁，避免递归锁死）
+        let currentBaseline = getBaselineLocked(for: deviceID)
 
         // 如果基线为空，直接重建
         guard currentBaseline.sampleCount >= minSampleCount else {

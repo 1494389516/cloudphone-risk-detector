@@ -35,12 +35,10 @@ final class TouchCapture {
     }
 
     func process(event: UIEvent) {
-        lock.lock()
-        let isEnabled = started
-        lock.unlock()
-        guard isEnabled else { return }
-
         guard let touches = event.allTouches, !touches.isEmpty else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        guard started else { return }
         for touch in touches {
             record(touch: touch)
         }

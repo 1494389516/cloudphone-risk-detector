@@ -178,7 +178,7 @@ public final class AnomalyDetector {
         let q2Index = count / 2
         let q3Index = (3 * count) / 4
 
-        let q1 = sorted[q1Index]
+        let q1 = sorted[min(q1Index, count - 1)]
         let q3 = sorted[min(q3Index, count - 1)]
         let iqr = q3 - q1
 
