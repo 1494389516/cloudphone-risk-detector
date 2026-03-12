@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
-  <img src="https://img.shields.io/badge/SDK-4.6-FF3B30?style=for-the-badge" alt="SDK">
+  <img src="https://img.shields.io/badge/SDK-4.7-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
   <img src="https://img.shields.io/badge/License-Proprietary-8E8E93?style=for-the-badge" alt="License">
 </p>
@@ -46,6 +46,7 @@
 | **4.3** | **第五轮红队审计 + 对抗降维打击** | 锁屏 Keychain ACL 撕裂死锁修复、ConfigCache 并发状态机锁绕过修复、内存 AES 密钥明文残影消除、时间跳跃重放绕过修复、线程级异常与硬件断点劫持检测、匿名内存隐写扫描、ObjC Inline Hook 跳板拦截、fsid 沙盒视图隔离探测、指令计数器时序侧信道双路校验、底层 SVC 0x80 原生系统调用接入（11 项极深层漏洞修复） |
 | **4.4** | **硬件信任根 + 执行流锁定 + 内存蜜罐反制** | Apple App Attest / Secure Enclave 硬件绑定签名、调用栈回溯 ROP/JOP 链检测、Syscall Canary 探针致盲感知、蜜罐内存页 SIGBUS 反 Dump、iOS 版本动态基线自适应、gRPC 传输层升级（7 项硬件级 + 执行流级深度加固） |
 | **4.6** | **第六轮红队审计 + 硬件信任根全链加固** | App Attest TOCTOU 竞态消除 + attestation 入签名域、CallStack RTLD_NEXT 双路 + vm_region 交叉校验、蜜罐三页分散 + handler/保护位自检、金丝雀 DualPath 双路 + 随机探针池、ExpectedBaseline sysctl 双路版本、payload_sha256 上下文绑定、PAC vm_read_overwrite 安全读取（12 项漏洞全修复） |
+| **4.7** | **Inline Hook 穿透 + 内核 Hook 侧信道 + 探针纵深** | LibcPrologueGuard 机器码入口校验（mach_vm_read_overwrite 检测 Dobby/Substrate 跳板）、KernelHookSideChannel 四策略内核 Hook 检测（时序分布 / inode 一致性 / 时钟交叉 / 返回值熵）、金丝雀探针池 5→16 + 动态路径 3 条 + 子集 6 选、DualPathValidator 三路验证（标准 / RTLD_NEXT / 入口完整性）、修正 SVC 0x80 声称为 Prologue Guard 实际机制（6 项深层加固） |
 
 ## 架构概览
 
@@ -246,6 +247,77 @@
 | `suspicious_permission_denied:<path>` | 15/次（软信号） | 特定路径返回 EPERM，累加上限 75 |
 
 > **Breaking Change**：4.6 `ReportEnvelope` 签名域新增 `attestationKeyId` 字段，服务端验签需同步更新。`payload_sha256` 计算方式从 `SHA256(payload)` 变为 `SHA256(nonce|ts|reportId|payload)`，服务端完整性校验需同步适配。
+
+
+## 4.7 新增能力 — Inline Hook 穿透、内核 Hook 侧信道与探针纵深
+
+4.7 版本针对前序版本的关键实现缺口进行深度补强：**修正 RTLD_NEXT 无法抵御 Inline Hook 的根本性弱点**，新增 libc 函数入口机器码校验；引入统计性内核 Hook 侧信道检测器；将金丝雀探针池从 5 条扩充至 16 条静态 + 3 条动态路径，共 **6 项深层加固**。
+
+### 4.7 对抗纵深矩阵
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  4.7 Inline Hook 穿透 · 内核侧信道矩阵            │
+├──────────────┬──────────────┬──────────────┬────────────────────┤
+│  入口完整性   │  内核侧信道   │  探针纵深     │    验证路径升级      │
+├──────────────┼──────────────┼──────────────┼────────────────────┤
+│LibcPrologue  │ Timing       │ 16条静态金丝雀 │ DualPath 三路      │
+│Guard 机器码  │ Distribution │ 3条动态路径    │ 标准/RTLD_NEXT/    │
+│入口扫描      │ Analysis     │ 6选子集       │ 入口完整性          │
+│mach_vm_read  │ Inode        │ App自身路径    │                    │
+│_overwrite    │ Consistency  │ 容器UUID路径   │ SVC 0x80 声称      │
+│7符号全覆盖   │ Time Desync  │ 可执行文件路径  │ 修正为Prologue     │
+│B/BL/BR/ADRP  │ PID/UID      │              │ Guard机制          │
+│跳板模式      │ Entropy      │              │                    │
+└──────────────┴──────────────┴──────────────┴────────────────────┘
+```
+
+### Inline Hook 穿透 — libc 函数入口机器码校验（`LibcPrologueGuard`）
+
+| 机制 | 说明 |
+|------|------|
+| **mach_vm_read_overwrite 安全读取** | 通过 Mach VM API 读取 libc 函数入口前 16 字节，避免直接解引用 PAC 签名指针导致的 SIGBUS。 |
+| **ARM64 跳板指令模式匹配** | 检测 9 种 Inline Hook 特征码：B（无条件跳转）、BL（带链接跳转）、BR X16/X17（寄存器跳转）、BLR X16/X17、LDR X16/X17 literal（Dobby 远跳蹦床）、ADRP（长距离跳转前序）。 |
+| **双指令蹦床检测** | 识别 ADRP+BR、LDR+BR 组合蹦床，覆盖 Dobby / frida-gum / Substrate 三大主流 Hook 框架的代码生成模式。 |
+| **7 符号全覆盖** | 扫描 `stat`、`lstat`、`access`、`sysctlbyname`、`sysctl`、`dladdr`、`backtrace` 七个 SDK 核心依赖的 libc 函数。 |
+| **缓存与性能** | 首次调用后通过 `static let` 缓存结果，后续调用零开销。 |
+
+### 内核 Hook 侧信道检测（`KernelHookSideChannel`）
+
+| 策略 | 信号 ID | 权重 | 原理 |
+|------|---------|------|------|
+| **时序分布分析** | `kernel_hook_timing_anomaly` | 40（软信号） | 对比 `getpid()` 与 `stat()` 的中位延迟比值，内核 Hook 引入的额外处理逻辑必然增加 syscall 耗时；比值 > 15x 或 stat p95 > 50μs 触发。 |
+| **inode 配对一致性** | `kernel_hook_inode_mismatch` | 70（硬信号） | 用标准 `stat` 与 RTLD_NEXT `stat` 两条路径访问同一文件，比较 `st_ino` / `st_dev`；内核 Hook 的选择性过滤可能导致不一致。 |
+| **时钟交叉校验** | `kernel_hook_time_desync` | 50（软信号） | 交叉比对 `ProcessInfo.systemUptime` 与 `mach_absolute_time()` 的增量差异，> 15% 且 > 10ms 判定时间源被篡改。 |
+| **返回值熵校验** | `kernel_hook_pid_unstable` | 80（硬信号） | 连续 10 次 `getpid()` / `getuid()` 应返回相同值，任何不一致说明 syscall 返回值被操纵。 |
+
+### 金丝雀探针纵深（`CanaryFileProbe` 增强）
+
+| 机制 | 说明 |
+|------|------|
+| **静态探针池 5→16** | 新增 `libc++`、`libobjc`、`Foundation`/`UIKit`/`Security`/`CoreFoundation` framework 二进制、`localtime`、`libz`、`libsqlite3`、`/dev/urandom`、`SpringBoard.app/Info.plist` 等系统必存路径。 |
+| **动态探针 3 条** | 运行时构造 App 自身 `Info.plist`、应用容器 `Library` 目录（路径含 UUID）、当前可执行文件路径——攻击者的内核 Hook 无法预测这些路径。 |
+| **子集随机化 3→6** | 每次执行从 16 条中随机抽取 6 条 + 3 条动态，总共 9 条探针并行校验。 |
+
+### DualPathValidator 验证路径升级
+
+| 机制 | 说明 |
+|------|------|
+| **三路验证** | 标准 libc 调用 → RTLD_NEXT 下一跳 → LibcPrologueGuard 入口完整性，三路独立结果返回。 |
+| **`inlineHooked` 字段** | 所有验证方法新增第四个返回字段 `inlineHooked: Bool`，下游可据此直接判定 Inline Hook 存在。 |
+| **SVC 0x80 声称修正** | 此前 README 声称"底层 SVC 0x80 原生系统调用接入"，实际实现为 RTLD_NEXT；4.7 明确修正为 LibcPrologueGuard 机器码校验机制，消除文档与代码的不一致。 |
+
+### 4.7 新增信号 ID
+
+| 信号 ID | 权重 | 触发条件 |
+|---------|------|----------|
+| `libc_inline_hook_detected` | 95（硬信号） | LibcPrologueGuard 发现 stat/sysctl/dladdr 等 libc 函数入口被 Dobby/Substrate/frida-gum 跳板指令篡改 |
+| `kernel_hook_timing_anomaly` | 40（软信号） | syscall 时序分布分析发现 stat 中位延迟与 getpid 比值异常偏高 |
+| `kernel_hook_inode_mismatch` | 70（硬信号） | 同一文件双路 stat 返回不同 inode 或 device ID |
+| `kernel_hook_time_desync` | 50（软信号） | mach_absolute_time 与 systemUptime 增量偏差超过 15% |
+| `kernel_hook_pid_unstable` | 80（硬信号） | 连续 getpid()/getuid() 返回值不一致，syscall 返回值被操纵 |
+
+> **Breaking Change**：4.7 `DualPathValidator` 的 `validateSysctl`、`validateSysctlData`、`validateFileStat` 返回元组新增第四个字段 `inlineHooked: Bool`。直接使用 `.exists` / `.tampered` 等命名访问的代码不受影响；使用位置解构的代码需增加第四个占位。
 
 ---
 
@@ -998,4 +1070,4 @@ swift build
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 4.6 — Round 6 Red Team Hardening: Trust Root Full-Chain + Execution Flow + Honeypot + Probe Fortification</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 4.7 — Inline Hook Penetration + Kernel Hook Side-Channel + Probe Depth Enhancement</sub></p>

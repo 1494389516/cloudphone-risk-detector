@@ -14,12 +14,39 @@ enum CanaryFileProbe {
         ["usr", "lib", "libSystem.B.dylib"],
         ["etc", "passwd"],
         ["dev", "null"],
+        ["usr", "lib", "libc++.1.dylib"],
+        ["usr", "lib", "libobjc.A.dylib"],
+        ["System", "Library", "Frameworks", "Foundation.framework", "Foundation"],
+        ["System", "Library", "Frameworks", "UIKit.framework", "UIKit"],
+        ["System", "Library", "Frameworks", "Security.framework", "Security"],
+        ["System", "Library", "Frameworks", "CoreFoundation.framework", "CoreFoundation"],
+        ["private", "var", "db", "timezone", "localtime"],
+        ["usr", "lib", "libz.1.dylib"],
+        ["usr", "lib", "libsqlite3.dylib"],
+        ["dev", "urandom"],
+        ["System", "Library", "CoreServices", "SpringBoard.app", "Info.plist"],
     ]
 
-    private static let subsetSize = 3
+    private static let subsetSize = 6
 
     private static func buildPath(_ components: [String]) -> String {
         "/" + components.joined(separator: "/")
+    }
+
+    private static func dynamicCanaryPaths() -> [String] {
+        var paths: [String] = []
+
+        let infoPlist = Bundle.main.bundlePath + "/Info.plist"
+        paths.append(infoPlist)
+
+        let libraryDir = NSHomeDirectory() + "/Library"
+        paths.append(libraryDir)
+
+        if let executablePath = Bundle.main.executablePath {
+            paths.append(executablePath)
+        }
+
+        return paths
     }
 
     /// 金丝雀探针权重
@@ -46,6 +73,26 @@ enum CanaryFileProbe {
                 return DetectorResult(score: canaryDeadWeight, methods: ["canary_stat_tampered"])
             }
         }
+
+        for path in dynamicCanaryPaths() {
+            let validation = DualPathValidator.validateFileStat(path: path)
+
+            if !validation.exists {
+                Logger.log("jailbreak.canary.hit: syscall_blinded_canary_dead path=\(path) (+\(Int(canaryDeadWeight)))")
+                return DetectorResult(score: canaryDeadWeight, methods: ["syscall_blinded_canary_dead"])
+            }
+
+            if validation.tampered {
+                Logger.log("jailbreak.canary.hit: canary_stat_tampered path=\(path) (+\(Int(canaryDeadWeight)))")
+                return DetectorResult(score: canaryDeadWeight, methods: ["canary_stat_tampered"])
+            }
+        }
+
+        if DualPathValidator.inlineHookDetected {
+            Logger.log("jailbreak.canary.hit: libc_inline_hook_detected (+95)")
+            return DetectorResult(score: 95, methods: ["libc_inline_hook_detected"])
+        }
+
         return nil
 #endif
     }

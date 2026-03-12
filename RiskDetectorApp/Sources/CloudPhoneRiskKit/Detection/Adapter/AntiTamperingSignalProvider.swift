@@ -39,6 +39,8 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         var enableIsaSwizzleDetect: Bool = true
         var enableCallStackValidate: Bool = true
         var enableHoneypotMemory: Bool = true
+        var enableKernelHookSideChannel: Bool = true
+        var enableLibcPrologueGuard: Bool = true
         var minScoreThreshold: Double = 0
         
         public static let `default` = Configuration()
@@ -283,6 +285,30 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         if configuration.enableHoneypotMemory {
             isolatedAppend("honeypot_memory", &signals) {
                 HoneypotMemoryDetector().asSignals()
+            }
+        }
+
+        if configuration.enableKernelHookSideChannel {
+            isolatedAppend("kernel_hook_sc", &signals) {
+                KernelHookSideChannel().asSignals()
+            }
+        }
+
+        if configuration.enableLibcPrologueGuard {
+            isolatedAppend("libc_prologue", &signals) {
+                guard LibcPrologueGuard.checkAllCritical() else { return [] }
+                return [RiskSignal(
+                    id: "libc_inline_hook_detected",
+                    category: "anti_tamper",
+                    score: 95,
+                    evidence: [
+                        "mechanism": "mach_vm_read_overwrite_prologue_scan",
+                        "detail": "critical_libc_function_entry_patched_with_branch_trampoline",
+                    ],
+                    state: .tampered,
+                    layer: 2,
+                    weightHint: 98
+                )]
             }
         }
 

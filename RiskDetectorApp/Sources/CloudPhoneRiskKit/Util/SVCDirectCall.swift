@@ -1,7 +1,9 @@
 import Darwin
+import Darwin.Mach
 import Foundation
 
 private let rtldNext = UnsafeMutableRawPointer(bitPattern: -1)
+private let rtldDefault = UnsafeMutableRawPointer(bitPattern: -2)
 
 typealias SysctlbynameFn = @convention(c) (
     UnsafePointer<CChar>?,
@@ -23,6 +25,88 @@ typealias SysctlFn = @convention(c) (
 typealias StatFn = @convention(c) (UnsafePointer<CChar>, UnsafeMutablePointer<stat>?) -> Int32
 typealias LstatFn = @convention(c) (UnsafePointer<CChar>, UnsafeMutablePointer<stat>?) -> Int32
 typealias AccessFn = @convention(c) (UnsafePointer<CChar>, CInt) -> Int32
+
+enum LibcPrologueGuard {
+    private static let criticalSymbols = [
+        "stat", "lstat", "access", "sysctlbyname", "sysctl", "dladdr", "backtrace"
+    ]
+
+    private static let cachedResult: Bool = {
+        for sym in criticalSymbols {
+            if isInlineHooked(symbol: sym) {
+                return true
+            }
+        }
+        return false
+    }()
+
+    static func checkAllCritical() -> Bool {
+        cachedResult
+    }
+
+    static func isInlineHooked(symbol: String) -> Bool {
+        guard let ptr = dlsym(rtldDefault, symbol) else { return false }
+        let addr = UInt(bitPattern: ptr)
+
+        var buf = [UInt8](repeating: 0, count: 16)
+        var outSize: mach_vm_size_t = 0
+
+        let kr = buf.withUnsafeMutableBufferPointer { bufPtr -> kern_return_t in
+            guard let base = bufPtr.baseAddress else { return KERN_FAILURE }
+            return mach_vm_read_overwrite(
+                mach_task_self_,
+                mach_vm_address_t(addr),
+                mach_vm_size_t(16),
+                mach_vm_address_t(UInt(bitPattern: base)),
+                &outSize
+            )
+        }
+
+        guard kr == KERN_SUCCESS, outSize >= 8 else { return false }
+
+        let insn0 = UInt32(buf[0])
+            | (UInt32(buf[1]) << 8)
+            | (UInt32(buf[2]) << 16)
+            | (UInt32(buf[3]) << 24)
+
+        let insn1 = UInt32(buf[4])
+            | (UInt32(buf[5]) << 8)
+            | (UInt32(buf[6]) << 16)
+            | (UInt32(buf[7]) << 24)
+
+        if isSuspiciousFirstInstruction(insn0) { return true }
+
+        if isAdrpOrLdrLiteral(insn0) && isBranchRegister(insn1) { return true }
+
+        return false
+    }
+
+    private static func isSuspiciousFirstInstruction(_ insn: UInt32) -> Bool {
+        if insn & 0xFC00_0000 == 0x1400_0000 { return true }
+        if insn & 0xFC00_0000 == 0x9400_0000 { return true }
+        if insn == 0xD61F_0200 { return true }
+        if insn == 0xD61F_0220 { return true }
+        if insn == 0xD63F_0200 { return true }
+        if insn == 0xD63F_0220 { return true }
+        if insn & 0xFF00_0000 == 0x5800_0000 && insn & 0x1F == 0x10 { return true }
+        if insn & 0xFF00_0000 == 0x5800_0000 && insn & 0x1F == 0x11 { return true }
+        if insn & 0x9F00_0000 == 0x9000_0000 { return true }
+        return false
+    }
+
+    private static func isAdrpOrLdrLiteral(_ insn: UInt32) -> Bool {
+        if insn & 0x9F00_0000 == 0x9000_0000 { return true }
+        if insn & 0xFF00_0000 == 0x5800_0000 {
+            let rd = insn & 0x1F
+            if rd == 0x10 || rd == 0x11 { return true }
+        }
+        return false
+    }
+
+    private static func isBranchRegister(_ insn: UInt32) -> Bool {
+        insn == 0xD61F_0200 || insn == 0xD61F_0220
+    }
+}
 
 enum SVCDirectCall {
     private static func originalSysctlbyname() -> SysctlbynameFn? {
@@ -158,8 +242,14 @@ struct DualPathValidator {
         return (end - start) * UInt64(timebaseInfo.numer) / UInt64(timebaseInfo.denom)
     }
 
+    static var inlineHookDetected: Bool {
+        LibcPrologueGuard.checkAllCritical()
+    }
+
     /// 同时调用标准 libc 与加固版本，结果不一致则判定为 tampered
-    static func validateSysctl(key: String) -> (value: String?, tampered: Bool, bypassed: Bool) {
+    static func validateSysctl(key: String) -> (value: String?, tampered: Bool, bypassed: Bool, inlineHooked: Bool) {
+        let hooked = inlineHookDetected
+
         var std: String?
         let t1 = measure { std = Sysctl.string(key) }
         
@@ -168,13 +258,15 @@ struct DualPathValidator {
         
         let bypassed = t1 < 50 || t2 < 50
 
-        if std == nil && secure == nil { return (nil, false, bypassed) }
-        if std == nil || secure == nil { return (secure ?? std, true, bypassed) }
+        if std == nil && secure == nil { return (nil, false, bypassed, hooked) }
+        if std == nil || secure == nil { return (secure ?? std, true, bypassed, hooked) }
         let tampered = std != secure
-        return (secure, tampered, bypassed)
+        return (secure, tampered, bypassed, hooked)
     }
 
-    static func validateSysctlData(mib: [Int32]) -> (data: Data?, tampered: Bool, bypassed: Bool) {
+    static func validateSysctlData(mib: [Int32]) -> (data: Data?, tampered: Bool, bypassed: Bool, inlineHooked: Bool) {
+        let hooked = inlineHookDetected
+
         var std: Data?
         let t1 = measure { std = SVCDirectCall.standardSysctlData(mib) }
         
@@ -183,14 +275,16 @@ struct DualPathValidator {
         
         let bypassed = t1 < 50 || t2 < 50
 
-        if std == nil && secure == nil { return (nil, false, bypassed) }
-        if std == nil || secure == nil { return (secure ?? std, true, bypassed) }
+        if std == nil && secure == nil { return (nil, false, bypassed, hooked) }
+        if std == nil || secure == nil { return (secure ?? std, true, bypassed, hooked) }
         let tampered = std != secure
-        return (secure ?? std, tampered, bypassed)
+        return (secure ?? std, tampered, bypassed, hooked)
     }
 
     /// 同时调用标准 stat/lstat/access 与加固版本，结果不一致则判定为 tampered
-    static func validateFileStat(path: String) -> (exists: Bool, tampered: Bool, bypassed: Bool) {
+    static func validateFileStat(path: String) -> (exists: Bool, tampered: Bool, bypassed: Bool, inlineHooked: Bool) {
+        let hooked = inlineHookDetected
+
         var stdExists = false
         var stdLstatExists = false
         var stdAccessExists = false
@@ -222,6 +316,6 @@ struct DualPathValidator {
             || stdAccessExists != secureAccessExists
         let exists = secureStatExists || secureLstatExists || secureAccessExists
             || stdExists || stdLstatExists || stdAccessExists
-        return (exists, tampered, bypassed)
+        return (exists, tampered, bypassed, hooked)
     }
 }

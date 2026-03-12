@@ -135,7 +135,7 @@ struct FileDetector: Detector {
         var mismatchCount = 0
         var bypassCount = 0
         for path in criticalPaths {
-            let (_, tampered, bypassed) = DualPathValidator.validateFileStat(path: path)
+            let (_, tampered, bypassed, _) = DualPathValidator.validateFileStat(path: path)
             if tampered {
                 mismatchCount += 1
                 methods.append("dual_path_mismatch:\(path.components(separatedBy: "/").last ?? path)")
