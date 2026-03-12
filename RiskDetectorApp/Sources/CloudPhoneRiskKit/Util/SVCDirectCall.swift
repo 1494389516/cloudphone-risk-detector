@@ -98,7 +98,15 @@ enum LibcPrologueGuard {
     }
 
     private static func isAdrpOrLdrLiteral(_ insn: UInt32) -> Bool {
-        if insn & 0x9F00_0000 == 0x9000_0000 { return true }
+        // ADRP: only flag when destination is x16 (IP0) or x17 (IP1).
+        // The caller pairs this with isBranchRegister (BR x16/x17), so the
+        // destination must match the branch register to form a valid trampoline.
+        // Accepting any ADRP destination caused false positives when normal code
+        // happened to have ADRP Xn + BR x16/x17 with n ≠ 16/17.
+        if insn & 0x9F00_0000 == 0x9000_0000 {
+            let rd = insn & 0x1F
+            return rd == 0x10 || rd == 0x11
+        }
         if insn & 0xFF00_0000 == 0x5800_0000 {
             let rd = insn & 0x1F
             if rd == 0x10 || rd == 0x11 { return true }
