@@ -206,8 +206,8 @@ struct HoneypotMemoryDetector: Detector {
         var regionSize: vm_size_t = 0
         var info = vm_region_basic_info_data_64_t()
         var count = mach_msg_type_number_t(
-            MemoryLayout<vm_region_basic_info_data_64_t>.size
-                / MemoryLayout<natural_t>.size
+            MemoryLayout<vm_region_basic_info_data_64_t>.stride
+                / MemoryLayout<natural_t>.stride
         )
         var objectName: mach_port_t = 0
 
