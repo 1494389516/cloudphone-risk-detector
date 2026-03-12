@@ -88,28 +88,57 @@ struct ObjCSwizzleDetector: Detector {
         return (min(score, 45), methods)
     }
 
+    /// 校验 IMP 是否被劫持
+    ///
+    /// ## [4.4.8] PAC 旁路支持 (Swift-only)
+    /// 在 A12+ (PAC) 设备上，直接解引用 IMP 指针读取机器码会导致 EXC_BAD_ACCESS。
+    /// 策略：先用 dladdr 验证 IMP 是否落在已知镜像内（不涉及指针解引用）；
+    /// 仅在非 PAC 环境下才进行首条指令的机器码扫描。
+    /// - Note: 内联 Hook 检测在 PAC 设备上为 best-effort，主要依赖 dladdr 的镜像归属校验。
     private func checkIMP(_ imp: IMP, check: MethodCheck, score: inout Double, methods: inout [String]) {
-#if arch(arm64)
-        let impPtr = unsafeBitCast(imp, to: UnsafePointer<UInt32>.self)
-        let firstInstruction = impPtr.pointee
-        if firstInstruction >= 0x14000000 && firstInstruction <= 0x17FFFFFF {
-            score += 50
-            methods.append("objc_inline_hook_detected:\(check.className).\(check.selector)")
-            return
-        }
-#endif
-
         var info = Dl_info()
-        let found = dladdr(unsafeBitCast(imp, to: UnsafeRawPointer.self), &info)
+        let impRaw = unsafeBitCast(imp, to: UnsafeRawPointer.self)
+        let found = dladdr(impRaw, &info)
 
+        // 先做 dladdr 校验，避免任何对 IMP 的裸读（PAC 安全）
         if found == 0 {
-            // IMP is in anonymous memory (not in any loaded image) — very suspicious
+            // IMP 不在任何已加载镜像中（匿名内存或 PAC 导致 dladdr 失败）— 视为可疑
             score += check.score
             methods.append("objc_swizzle:\(check.className).\(check.selector):anonymous")
             return
         }
 
-        // Check if the image path contains the expected framework name
+        // 仅在非 PAC 环境下进行机器码扫描，否则跳过（防止 EXC_BAD_ACCESS）
+        let shouldSkipMachineCodeCheck: Bool
+        #if arch(arm64)
+        if #available(iOS 14.0, macOS 11.0, *) {
+            // M1 Mac 或 iOS 14+：PAC 启用，跳过裸读以防 EXC_BAD_ACCESS
+            shouldSkipMachineCodeCheck = true
+        } else {
+            // iOS < 14：可尝试机器码扫描（A11 及更早设备无 PAC）
+            shouldSkipMachineCodeCheck = false
+        }
+        #else
+        shouldSkipMachineCodeCheck = true  // 非 arm64 无 B/BL 指令模式
+        #endif
+
+        if !shouldSkipMachineCodeCheck {
+            #if arch(arm64)
+            var inlineHookDetected = false
+            autoreleasepool {
+                let impPtr = impRaw.assumingMemoryBound(to: UInt32.self)
+                let firstInstruction = impPtr.pointee
+                if firstInstruction >= 0x14000000 && firstInstruction <= 0x17FFFFFF {
+                    score += 50
+                    methods.append("objc_inline_hook_detected:\(check.className).\(check.selector)")
+                    inlineHookDetected = true
+                }
+            }
+            if inlineHookDetected { return }
+            #endif
+        }
+
+        // 校验 IMP 所在镜像是否与预期框架一致
         if let imagePath = info.dli_fname {
             let path = String(cString: imagePath)
             if !path.contains(check.expectedFramework) {

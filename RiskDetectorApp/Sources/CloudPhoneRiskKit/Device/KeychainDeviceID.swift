@@ -1,12 +1,32 @@
 import Foundation
 import Security
 
+/// 设备 ID 持久化（Keychain + UserDefaults 降级）
+///
+/// ## Keychain 可访问性（SDK 4.4 Phase 6）
+/// - 使用 `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` 实现设备绑定
+/// - 不使用 `kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly`，避免无密码设备兼容性问题
+/// - 多 App 共享：仅在需要跨 App 共享时添加 `kSecAttrAccessGroup`，默认不添加
+///
+/// ## App Store 换号场景（同一设备、不同 Apple ID 重装）
+/// 用户更换 Apple ID 后通过 App Store 重装 App，系统可能清除该 App 的 Keychain 数据。
+/// 此时：
+/// - `read()` 返回 nil，`readFallback()` 若 UserDefaults 也被清除则返回 nil
+/// - 会生成新的 UUID，并尝试写入 Keychain
+/// - 若 Keychain 写入失败，返回 `ephemeral:<uuid>` 前缀 ID，服务端可识别并限制高信任请求
+/// - 所有依赖 Keychain 的基线（SDKBinaryIntegrityChecker、TextSegmentIntegrityChecker 等）
+///   在 Keychain 被清除后会自动重建，视为首次运行
+///
+/// ## ephemeral: 前缀
+/// 当 Keychain 与 UserDefaults 两层存储均无法持久化时，返回 `ephemeral:<uuid>`。
+/// 服务端可通过此前缀识别设备身份不可靠，限制高信任操作。
 final class KeychainDeviceID {
     static let shared = KeychainDeviceID()
     private init() {}
 
     private let service = "CloudPhoneRiskKit"
     private let account = "device_id"
+    /// SDK 4.4 Phase 6: 设备绑定，兼容无密码设备；避免 kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly
     private let accessible = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
     private let defaults = UserDefaults.standard
     private let fallbackKey = "cloudphone_device_id_fallback_v1"
@@ -65,7 +85,7 @@ final class KeychainDeviceID {
             kSecAttrAccount as String: account,
         ]
 
-        // Create access control with device passcode protection (ACL)
+        // SDK 4.4 Phase 6: ACL 使用 AfterFirstUnlockThisDeviceOnly，兼容无密码设备
         var aclError: Unmanaged<CFError>?
         guard let accessControl = SecAccessControlCreateWithFlags(
             kCFAllocatorDefault,

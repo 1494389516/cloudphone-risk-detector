@@ -63,6 +63,19 @@ public struct RiskDetectionEngine: Sendable {
         log("Scenario: \(scenario.rawValue)")
         log("Policy: \(policy.name)")
 
+        // 0. SDK 4.4 执行流栈回溯：关键节点校验调用栈
+        if let stackSignal = CallStackUnwinder.validateCallStackAsSignal() {
+            return RiskVerdict(
+                score: 100,
+                internalLevel: .critical,
+                internalAction: .block,
+                confidence: 1.0,
+                primaryReasons: [stackSignal.id],
+                signals: [stackSignal],
+                scenario: scenario
+            )
+        }
+
         // 1. 获取场景策略（带版本变形）
         let planner = MutationPlanner(
             strategy: policy.mutationStrategy,
@@ -498,6 +511,7 @@ public struct RiskDetectionEngine: Sendable {
         "frida_thread_anomaly": 30,
         "frida_js_engine_heap": 30,
         "dyld_interpose_detected": 40,
+        "rop_chain_detected": 90,
     ]
 
     private func signalWeight(
@@ -956,6 +970,8 @@ private extension RiskDetectionEngine {
         "isa_swizzle_detected": 82,
         "msg_forward_hijack": 85,
         "method_count_anomaly": 50,
+        // 4.4 执行流栈回溯
+        "rop_chain_detected": 90,
     ]
 }
 

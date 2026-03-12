@@ -12,6 +12,7 @@ struct FreshnessState: Codable, Sendable {
     }
 }
 
+/// 新鲜度锚点。SDK 4.4 Phase 6: Keychain 用 kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly。
 final class FreshnessAnchor {
     private let service = "CloudPhoneRiskKit.FreshnessAnchor"
     private let account: String

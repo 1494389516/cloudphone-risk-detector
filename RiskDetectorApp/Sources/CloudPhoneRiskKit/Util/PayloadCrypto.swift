@@ -2,6 +2,8 @@ import CryptoKit
 import Foundation
 import Security
 
+/// AES-GCM 载荷加解密，密钥存 Keychain。
+/// SDK 4.4 Phase 6: kSecAttrAccessibleWhenUnlockedThisDeviceOnly（设备绑定，兼容无密码设备）
 enum PayloadCrypto {
     private static let keyService = "CloudPhoneRiskKit"
     private static let keyAccount = "aes_gcm_key_v1"
@@ -12,6 +14,10 @@ enum PayloadCrypto {
     static let encryptedMagic: UInt8 = 0xAE
 
     static func encrypt(_ plaintext: Data) throws -> Data {
+        let (malicious, _) = CallStackUnwinder.validateCallStack()
+        if malicious {
+            throw NSError(domain: "CloudPhoneRiskKit", code: 10, userInfo: [NSLocalizedDescriptionKey: "Call stack validation failed (rop_chain_detected)"])
+        }
         let key = try symmetricKey()
         let sealed = try AES.GCM.seal(plaintext, using: key)
         guard let combined = sealed.combined else {
@@ -23,6 +29,10 @@ enum PayloadCrypto {
     }
 
     static func decrypt(_ combined: Data) throws -> Data {
+        let (malicious, _) = CallStackUnwinder.validateCallStack()
+        if malicious {
+            throw NSError(domain: "CloudPhoneRiskKit", code: 11, userInfo: [NSLocalizedDescriptionKey: "Call stack validation failed (rop_chain_detected)"])
+        }
         guard !combined.isEmpty, combined[combined.startIndex] == encryptedMagic else {
             throw NSError(
                 domain: "CloudPhoneRiskKit",

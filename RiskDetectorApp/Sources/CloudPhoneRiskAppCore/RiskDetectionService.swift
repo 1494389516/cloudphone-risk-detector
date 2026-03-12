@@ -120,6 +120,22 @@ public final class RiskDetectionService {
         )
     }
 
+    /// 生成带 App Attest 硬件信任根的安全信封（SDK 4.4）。
+    @available(iOS 14.0, macOS 11.0, *)
+    public func buildSecureReportEnvelopeWithAttestation(
+        report: CPRiskReport,
+        sessionToken: String,
+        signingKey: String,
+        keyId: String = "k1"
+    ) async throws -> ReportEnvelope {
+        try await CPRiskKit.shared.buildSecureReportEnvelopeWithAttestation(
+            report: report,
+            sessionToken: sessionToken,
+            signingKey: signingKey,
+            keyId: keyId
+        )
+    }
+
     /// 本地校验安全信封（用于 SDK 联调与回归验证）。
     public func validateSecureReportEnvelope(
         _ envelope: ReportEnvelope,

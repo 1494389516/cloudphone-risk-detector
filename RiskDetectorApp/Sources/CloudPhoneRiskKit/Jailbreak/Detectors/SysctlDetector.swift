@@ -36,11 +36,18 @@ struct SysctlDetector: Detector {
         var score: Double = 0
         var methods: [String] = []
 
+        // [4.4.7] ExpectedBaseline: 低版本上空进程列表视为被 Hook
         if let processList = readProcessList() {
             let infos = processList.infos
             score += 20
             methods.append("sysctl:process_list_access")
             Logger.log("jailbreak.sysctl.hit: process_list_access (+20)")
+
+            if infos.isEmpty && ExpectedBaseline.emptyProcessListIsSuspicious {
+                score += 20
+                methods.append("hook:empty_process_list_suspicious")
+                Logger.log("jailbreak.sysctl.hit: empty_process_list_suspicious (+20)")
+            }
 
             if processList.tampered {
                 score += 18
@@ -62,6 +69,11 @@ struct SysctlDetector: Detector {
                 }
                 Logger.log("jailbreak.sysctl.hit: suspicious_processes=\(suspicious.joined(separator: ",")) (+22)")
             }
+        } else if ExpectedBaseline.emptyProcessListIsSuspicious {
+            // [4.4.7] 无法读取进程列表（nil）在低版本上视为被 Hook
+            score += 20
+            methods.append("hook:empty_process_list_suspicious")
+            Logger.log("jailbreak.sysctl.hit: empty_process_list_suspicious (nil) (+20)")
         }
 
         let parentLookup = parentProcessName()

@@ -5,6 +5,7 @@ import Security
 import UIKit
 #endif
 
+/// 指纹突变检测。SDK 4.4 Phase 6: Keychain 用 kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly。
 struct FingerprintDeobfuscation: Detector {
 
     private static let keychainService = "CloudPhoneRiskKit"

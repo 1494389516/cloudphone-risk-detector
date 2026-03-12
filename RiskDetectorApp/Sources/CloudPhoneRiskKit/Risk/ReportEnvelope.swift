@@ -34,6 +34,12 @@ public struct ReportEnvelope: Codable, Sendable {
     /// HMAC-SHA256 签名（hex）
     public let signature: String
 
+    /// App Attest 密钥标识（base64，可选；SDK 4.4 硬件信任根）
+    public let attestationKeyId: String?
+
+    /// App Attest 断言数据（可选；Secure Enclave 对 payload 摘要的硬件签名）
+    public let attestationAssertion: Data?
+
     // MARK: - Configuration
 
     public struct Config: Sendable {
@@ -100,6 +106,8 @@ public struct ReportEnvelope: Codable, Sendable {
         case keyId
         case fieldMappingVersion
         case signature
+        case attestationKeyId
+        case attestationAssertion
     }
 
     public init(
@@ -111,7 +119,9 @@ public struct ReportEnvelope: Codable, Sendable {
         sigVer: String,
         keyId: String,
         fieldMappingVersion: String? = nil,
-        signature: String
+        signature: String,
+        attestationKeyId: String? = nil,
+        attestationAssertion: Data? = nil
     ) {
         self.nonce = nonce
         self.ts = ts
@@ -122,6 +132,8 @@ public struct ReportEnvelope: Codable, Sendable {
         self.keyId = keyId
         self.fieldMappingVersion = fieldMappingVersion
         self.signature = signature
+        self.attestationKeyId = attestationKeyId
+        self.attestationAssertion = attestationAssertion
     }
 
     public init(from decoder: Decoder) throws {
@@ -135,6 +147,8 @@ public struct ReportEnvelope: Codable, Sendable {
         keyId = try container.decodeIfPresent(String.self, forKey: .keyId) ?? "k1"
         fieldMappingVersion = try container.decodeIfPresent(String.self, forKey: .fieldMappingVersion)
         signature = try container.decode(String.self, forKey: .signature)
+        attestationKeyId = try container.decodeIfPresent(String.self, forKey: .attestationKeyId)
+        attestationAssertion = try container.decodeIfPresent(Data.self, forKey: .attestationAssertion)
     }
 
     // MARK: - Factory
@@ -195,7 +209,26 @@ public struct ReportEnvelope: Codable, Sendable {
             sigVer: config.signatureVersion,
             keyId: keyId,
             fieldMappingVersion: fieldMapping?.version,
-            signature: signatureHex
+            signature: signatureHex,
+            attestationKeyId: nil,
+            attestationAssertion: nil
+        )
+    }
+
+    /// 返回带 App Attest 断言的副本（SDK 4.4）
+    public func withAttestation(keyId: String, assertion: Data) -> ReportEnvelope {
+        ReportEnvelope(
+            nonce: nonce,
+            ts: ts,
+            sessionToken: sessionToken,
+            payload: payload,
+            reportId: reportId,
+            sigVer: sigVer,
+            keyId: keyId,
+            fieldMappingVersion: fieldMappingVersion,
+            signature: signature,
+            attestationKeyId: keyId,
+            attestationAssertion: assertion
         )
     }
 

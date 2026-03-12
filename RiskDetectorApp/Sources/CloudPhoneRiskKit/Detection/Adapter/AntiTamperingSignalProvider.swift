@@ -37,6 +37,8 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         var enableSensorReplayDetect: Bool = true
         var enableGPURenderProbe: Bool = true
         var enableIsaSwizzleDetect: Bool = true
+        var enableCallStackValidate: Bool = true
+        var enableHoneypotMemory: Bool = true
         var minScoreThreshold: Double = 0
         
         public static let `default` = Configuration()
@@ -266,6 +268,21 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         if configuration.enableIsaSwizzleDetect {
             isolatedAppend("isa_swizzle", &signals) {
                 IsaSwizzleDetector().asSignals()
+            }
+        }
+
+        if configuration.enableCallStackValidate {
+            isolatedAppend("call_stack", &signals) {
+                if let s = CallStackUnwinder.validateCallStackAsSignal() {
+                    return [s]
+                }
+                return []
+            }
+        }
+
+        if configuration.enableHoneypotMemory {
+            isolatedAppend("honeypot_memory", &signals) {
+                HoneypotMemoryDetector().asSignals()
             }
         }
 

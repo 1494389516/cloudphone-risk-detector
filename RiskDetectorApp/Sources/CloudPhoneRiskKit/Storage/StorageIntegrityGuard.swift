@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 
+/// HMAC 签名/校验，密钥存 Keychain。SDK 4.4 Phase 6: kSecAttrAccessibleWhenUnlockedThisDeviceOnly。
 enum StorageIntegrityGuard {
     private static let keychainService = "CloudPhoneRiskKit.StorageHMAC"
     private static let keychainAccount = "hmac_key_v1"

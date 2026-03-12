@@ -66,6 +66,7 @@ final class RiskSignalProviderRegistry {
         "battery_entropy",
         "time_pattern",
         "anti_tampering",
+        "app_attest",
     ]
 
     func seal() {

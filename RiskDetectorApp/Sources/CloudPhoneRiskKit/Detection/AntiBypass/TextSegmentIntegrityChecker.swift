@@ -6,6 +6,8 @@ import Security
 
 /// __TEXT.__text 代码段哈希完整性校验
 ///
+/// SDK 4.4 Phase 6: Keychain 用 kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly；换号重装后基线自动重建。
+///
 /// 自包含方案：首次运行时计算 SDK 镜像 __TEXT.__text 段的 SHA-256 摘要作为基线，
 /// 后续每次校验对比。哈希不一致 = 代码被 inline patch（函数替换、指令修改）。
 ///

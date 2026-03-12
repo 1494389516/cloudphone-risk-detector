@@ -6,6 +6,7 @@ import Security
 /// SDK 二进制自身完整性校验
 ///
 /// 防止攻击者直接替换 SDK framework 的 Mach-O 二进制。
+/// SDK 4.4 Phase 6: Keychain 用 kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly；换号重装后基线自动重建。
 /// 检测手段：
 /// 1. 验证 SDK 镜像的 LC_CODE_SIGNATURE 是否存在且有效
 /// 2. 检查 SDK 的 LC_UUID 是否在运行期间被篡改（对比 Keychain 存储）

@@ -66,6 +66,14 @@ struct FileDetector: Detector {
         var fileExistsMismatchCount = 0
         var lowLevelMismatchCount = 0
 
+        // [4.4.5] 金丝雀探针：在检查越狱文件前执行，若 syscall 被致盲则直接告警
+        if let canaryResult = CanaryFileProbe.probe() {
+            score += canaryResult.score
+            methods.append(contentsOf: canaryResult.methods)
+        }
+
+        var suspiciousPermissionDenied = false
+
         // 沙盒视图隔离（Bind Mount 平行宇宙）防范
         if detectSandboxMountIsolation() {
             score += 30
@@ -74,6 +82,12 @@ struct FileDetector: Detector {
         }
 
         for item in suspiciousPaths {
+            // [4.4.6] EPERM 异常化：path 理应 ENOENT 却返回 EPERM/EACCES (iOS 16+)
+            let (statExists, statErrno) = statWithErrno(item.path)
+            if !statExists && ExpectedBaseline.epermOnProtectedPathIsSuspicious && ExpectedBaseline.isPermissionDeniedErrno(statErrno) {
+                suspiciousPermissionDenied = true
+            }
+
             let exists = existsAnyWay(item.path)
             if exists.exists {
                 score += item.score
@@ -100,6 +114,12 @@ struct FileDetector: Detector {
                 methods.append("syscall_bypassed:\(item.path)")
                 Logger.log("jailbreak.file.hit: syscall_bypassed path=\(item.path) (+20)")
             }
+        }
+
+        if suspiciousPermissionDenied {
+            score += 75
+            methods.append("suspicious_permission_denied")
+            Logger.log("jailbreak.file.hit: suspicious_permission_denied (+75)")
         }
 
         // 双路验证关键路径，检测 stat hook
@@ -158,6 +178,18 @@ struct FileDetector: Detector {
         }
 
         return DetectorResult(score: score, methods: methods)
+    }
+
+    /// stat 并返回 errno（用于 [4.4.6] EPERM 异常化）
+    private func statWithErrno(_ path: String) -> (exists: Bool, errno: Int32) {
+        path.withCString { cPath in
+            var st = stat()
+            let result = stat(cPath, &st)
+            if result == 0 {
+                return (true, 0)
+            }
+            return (false, errno)
+        }
     }
 
     private struct ExistenceResult {

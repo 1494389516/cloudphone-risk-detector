@@ -105,6 +105,7 @@ struct PLTIntegrityResult {
     var baselineTrustState: BaselineTrustState
 }
 
+/// PLT 基线持久化。SDK 4.4 Phase 6: Keychain 用 kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly。
 struct PLTIntegrityGuard {
     private static let criticalFunctions: [String] = [
         "sysctlbyname",

@@ -1,0 +1,29 @@
+// CloudPhoneRiskKit 4.4 - gRPC/JSON 上报协议
+// 用于 HTTP/2 或 gRPC 传输层，内层 JSON 作为业务载荷。
+// 不依赖 grpc-swift，客户端使用手动 JSON 编码发送。
+
+syntax = "proto3";
+
+package cloudphone.risk.v1;
+
+// 风险报告上报请求（顶层强类型头 + payload_json 业务载荷）
+message UploadRiskReportRequest {
+  string app_id = 1;
+  string sdk_version = 2;
+  string report_id = 3;
+  int64 ts = 4;
+  string nonce = 5;
+  string session_token = 6;
+  string sig_ver = 7;
+  string key_id = 8;
+  string field_mapping_version = 9;
+  string device_id = 10;
+  string scene = 11;
+  bytes payload_json = 12;
+  string signature = 13;
+  bytes payload_sha256 = 14;
+}
+
+// 签名语义（不变）：sigVer|nonce|ts|sessionToken|reportId|keyId|fieldMappingVersion|canonicalPayloadJSON
+// payload_json 使用 bytes：JSON 传输时可用 base64 编码；避免 UTF-8/转义/空白差异影响签名。
+// 服务端验签顺序：ts -> nonce -> session_token -> canonical -> signature -> device_id/scene 一致性

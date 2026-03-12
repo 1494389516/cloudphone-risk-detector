@@ -65,6 +65,7 @@ public enum DeviceKeyDeriver {
     }
 }
 
+/// DeviceKey 派生盐，存 Keychain。SDK 4.4 Phase 6: kSecAttrAccessibleWhenUnlockedThisDeviceOnly。
 private final class KeychainSalt {
     static let shared = KeychainSalt()
     private init() {}

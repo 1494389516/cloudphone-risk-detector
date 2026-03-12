@@ -120,6 +120,9 @@ public final class CPRiskKit: NSObject {
         currentSessionId = UUID().uuidString
         stateLock.unlock()
         Logger.log("start() sessionId=\(currentSessionId ?? "")")
+        if !AppAttestSignalProvider.isHardwareTrustSupported {
+            Logger.log("app_attest: hardware_trust_unsupported (evaluate will emit signal weight=95)")
+        }
         registerProviders(for: .default)
         RiskSignalProviderRegistry.shared.seal()
 #if canImport(UIKit)
@@ -548,6 +551,99 @@ public final class CPRiskKit: NSObject {
         return try envelope.toJSONString(prettyPrinted: prettyPrinted)
     }
 
+    /// 构建 gRPC/JSON 兼容的上报载荷（SDK 4.4）。
+    /// 返回与 `UploadRiskReportRequest` proto 结构匹配的 JSON，供 HTTP/2 或 gRPC 客户端发送。
+    /// - Parameters:
+    ///   - report: 风险报告
+    ///   - sessionToken: 服务端下发会话 token
+    ///   - signingKey: HMAC 签名密钥
+    ///   - keyId: 密钥标识
+    ///   - appId: 应用标识（可选，用于网关索引）
+    ///   - prettyPrinted: 是否格式化 JSON（调试用）
+    /// - Returns: 与 proto 结构匹配的 JSON 字符串
+    public func buildSecureReportEnvelopeGrpcCompatibleJSON(
+        report: CPRiskReport,
+        sessionToken: String,
+        signingKey: String,
+        keyId: String = "k1",
+        appId: String = "",
+        prettyPrinted: Bool = false
+    ) throws -> String {
+        let envelope = try buildSecureReportEnvelope(
+            report: report,
+            sessionToken: sessionToken,
+            signingKey: signingKey,
+            keyId: keyId
+        )
+        stateLock.lock()
+        let sceneTag = boundSceneTag
+        stateLock.unlock()
+        let context = GrpcReportContext(
+            appId: appId,
+            deviceId: report.deviceID,
+            scene: sceneTag ?? ""
+        )
+        return try envelope.toGrpcCompatibleJSON(context: context, prettyPrinted: prettyPrinted)
+    }
+
+    /// 构建 gRPC/JSON 兼容的上报载荷（SDK 4.4）。
+    /// 返回与 `UploadRiskReportRequest` proto 结构匹配的 JSON Data，供 HTTP/2 或 gRPC 客户端发送。
+    public func buildSecureReportEnvelopeGrpcRequestBytes(
+        report: CPRiskReport,
+        sessionToken: String,
+        signingKey: String,
+        keyId: String = "k1",
+        appId: String = ""
+    ) throws -> Data {
+        let envelope = try buildSecureReportEnvelope(
+            report: report,
+            sessionToken: sessionToken,
+            signingKey: signingKey,
+            keyId: keyId
+        )
+        stateLock.lock()
+        let sceneTag = boundSceneTag
+        stateLock.unlock()
+        let context = GrpcReportContext(
+            appId: appId,
+            deviceId: report.deviceID,
+            scene: sceneTag ?? ""
+        )
+        return try envelope.toGrpcRequestBytes(context: context)
+    }
+
+    /// 构建带 App Attest 硬件信任根的安全信封（SDK 4.4）
+    /// 当 DCAppAttestService.isSupported 为 true 时，自动附加 attestationKeyId 与 attestationAssertion。
+    @available(iOS 14.0, macOS 11.0, *)
+    public func buildSecureReportEnvelopeWithAttestation(
+        report: CPRiskReport,
+        sessionToken: String,
+        signingKey: String,
+        keyId: String = "k1"
+    ) async throws -> ReportEnvelope {
+        var envelope = try buildSecureReportEnvelope(
+            report: report,
+            sessionToken: sessionToken,
+            signingKey: signingKey,
+            keyId: keyId
+        )
+        guard AppAttestSigner.isSupported else {
+            return envelope
+        }
+        do {
+            let canonicalPayload = try envelope.canonicalPayloadString()
+            guard let payloadData = canonicalPayload.data(using: .utf8) else {
+                return envelope
+            }
+            let (attestKeyId, assertion) = try await AppAttestSigner.generateAssertion(for: payloadData)
+            envelope = envelope.withAttestation(keyId: attestKeyId, assertion: assertion)
+            Logger.log("app_attest: envelope augmented with hardware assertion")
+        } catch {
+            Logger.log("app_attest: failed to generate assertion, envelope without attestation: \(error.localizedDescription)")
+        }
+        return envelope
+    }
+
     /// 异步生成报告（避免在主线程做重活）。
     /// completion 始终回到主线程。
     @objc(evaluateAsyncWithCompletion:)
@@ -592,6 +688,7 @@ public final class CPRiskKit: NSObject {
         RiskSignalProviderRegistry.shared.register(ExternalServerAggregateProvider.shared)
         RiskSignalProviderRegistry.shared.register(DeviceHardwareProvider.shared)
         RiskSignalProviderRegistry.shared.register(DeviceAgeProvider.shared)
+        RiskSignalProviderRegistry.shared.register(AppAttestSignalProvider.shared)
         RiskSignalProviderRegistry.shared.register(VPhoneHardwareProvider.shared)
         RiskSignalProviderRegistry.shared.register(LayeredConsistencyProvider.shared)
         RiskSignalProviderRegistry.shared.register(MountPointProvider.shared)
