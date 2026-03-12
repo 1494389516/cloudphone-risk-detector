@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
-  <img src="https://img.shields.io/badge/SDK-4.3-FF3B30?style=for-the-badge" alt="SDK">
+  <img src="https://img.shields.io/badge/SDK-4.4-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
   <img src="https://img.shields.io/badge/License-Proprietary-8E8E93?style=for-the-badge" alt="License">
 </p>
@@ -44,6 +44,7 @@
 | **4.1** | **第三轮红队审计 + 攻击链纵深封堵** | 配置缓存来源验签、HTTPS 强制、Provider 实例锁定、首跑基线防投毒、存储加密 Fail-Closed、DeviceHistory 迁移加密、ReportEnvelope 元数据入签名域、DetectorRegistry 封印（10 项结构性漏洞全修复） |
 | **4.2** | **第四轮红队审计 + 信任根全面收紧** | 配置/策略双链 Release 禁 unverified fallback、安全地板扩展覆盖行为与越狱关键检测开关、DualPathValidator 接入核心 Detector、anti_tamper 结论消除分裂、基线首跑软信号化、deviceID 漂移修复、历史时钟回拨防御、CPRiskStore 暴露面收紧、EnvelopeSignature Release 强制 v2（8 项漏洞全修复） |
 | **4.3** | **第五轮红队审计 + 对抗降维打击** | 锁屏 Keychain ACL 撕裂死锁修复、ConfigCache 并发状态机锁绕过修复、内存 AES 密钥明文残影消除、时间跳跃重放绕过修复、线程级异常与硬件断点劫持检测、匿名内存隐写扫描、ObjC Inline Hook 跳板拦截、fsid 沙盒视图隔离探测、指令计数器时序侧信道双路校验、底层 SVC 0x80 原生系统调用接入（11 项极深层漏洞修复） |
+| **4.4** | **硬件信任根 + 执行流锁定 + 内存蜜罐反制** | Apple App Attest / Secure Enclave 硬件绑定签名、调用栈回溯 ROP/JOP 链检测、Syscall Canary 探针致盲感知、蜜罐内存页 SIGBUS 反 Dump、iOS 版本动态基线自适应、gRPC 传输层升级（7 项硬件级 + 执行流级深度加固） |
 
 ## 架构概览
 
@@ -85,6 +86,90 @@
 | **硬信号** | 本地独立判定，单点即可触发 | 越狱、DRM 降级、ChargeCounter 异常、PLT 篡改、ObjC Swizzle、异常端口劫持、SDK 二进制替换、DYLD Interpose | 80-100 |
 | **软信号** | 需结合场景综合评分 | VPN、行为异常、电压方差低、挂载点异常、时序侧信道、线程枚举异常、指纹突变、随机化检测、行为数据不足 | 30-75 |
 | **服务端信号** | 依赖外部聚合 | 机房 IP、ASN 黑名单、IP 设备聚合度、图社区风险、硬件画像聚集 | 55-100 |
+
+---
+
+## 4.4 新增能力 — 硬件信任根、执行流锁定与内存蜜罐反制
+
+4.4 版本将防护维度从**纯软件运行时层**跃升至**硬件飞地**与**CPU 执行流**层，引入 Apple Secure Enclave、调用栈回溯、内存蜜罐及 gRPC 传输升级，共新增/深度改造 **7 个核心机制**，形成 4.3 之后新一代降维打击壁垒。
+
+### 4.4 能力升级矩阵
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  4.4 硬件级 · 执行流锁定矩阵                      │
+├──────────────┬──────────────┬──────────────┬────────────────────┤
+│  硬件信任根   │  执行流锁定   │  内存蜜罐反制 │    传输与基线        │
+├──────────────┼──────────────┼──────────────┼────────────────────┤
+│App Attest    │ CallStack    │ HoneypotMem  │ gRPC 传输层升级     │
+│Secure Enclave│ Unwinding    │ mmap PROT_NONE│ Proto 强类型 Header│
+│DeviceCheck   │ ROP/JOP链检测│ SIGBUS Handler│ JSON payload 分离  │
+│硬件绑定签名  │ Mach-O TEXT  │ si_addr 反Dump│ iOS版本动态基线     │
+│hardware_trust│ 段范围校验   │ memory_dump  │ ExpectedBaseline   │
+│_unsupported  │ dladdr 辅验  │ _detected    │ 自适应行为阈值       │
+│keyId Keychain│ rop_chain    │              │ CanaryFile Probe   │
+│存储续用       │ _detected    │              │ syscall_blinded    │
+└──────────────┴──────────────┴──────────────┴────────────────────┘
+```
+
+### 硬件信任根 — Apple App Attest（`AppAttestSigner` / `AppAttestSignalProvider`）
+
+| 机制 | 说明 |
+|------|------|
+| **Secure Enclave 硬件绑定签名** | 调用 `DCAppAttestService.shared.generateKey()` 在 SE 内生成不可导出私钥，`keyId` 持久化到 Keychain；报告负载经 `SHA-256` 摘要后由 SE 完成 ECDSA 签名，私钥永不离开芯片。 |
+| **硬件不可伪造 Assertion** | `generateAssertion(for:)` 每次签名均调用 SE，即使在完全 Root 的魔改内核设备上，私钥也无法被 dump，断绝全量模拟器伪造报告的可能性。 |
+| **graceful fallback** | 模拟器 / 不支持 App Attest 的设备上 `isSupported = false`，自动产出软信号 `hardware_trust_unsupported`，业务层可据此提高风险权重而非崩溃。 |
+
+### 执行流锁定 — 调用栈回溯（`CallStackUnwinder`）
+
+| 机制 | 说明 |
+|------|------|
+| **`backtrace` + `dladdr` 联合校验** | 在 SDK 触发高危判定瞬间，捕获当前线程全部返回地址；对每个地址调用 `dladdr` 反查符号信息，验证是否落在主 App 或 SDK 自身的 `__TEXT` 段范围内。 |
+| **ROP/JOP 链检测** | 发现任意返回地址指向匿名内存或非可信镜像区域，立即产出硬信号 `rop_chain_detected`（score: 90），一击穿透 ROP/JOP 链注入攻击。 |
+| **Mach-O 段范围动态解析** | 通过 `_dyld_get_image_header` + `LC_SEGMENT_64` 动态读取各镜像 `__TEXT` 边界，适配运行时 ASLR 偏移，无需硬编码地址。 |
+
+### Syscall Canary 探针（`CanaryFileProbe`）
+
+| 机制 | 说明 |
+|------|------|
+| **已知可信路径活体探测** | 持续对 `/usr/lib/dyld`、`/System/Library/CoreServices/SystemVersion.plist` 等系统核心文件执行 `stat()`；正常系统下这些路径必然可访问。 |
+| **Syscall 致盲感知** | 探测失败且 `errno == ENOENT \|\| EPERM` 则判定 Syscall 层被 Hook 致盲，产出硬信号 `syscall_blinded_canary_dead`（score: 85）。 |
+| **与 `ExpectedBaseline` 联动** | `EPERM` 的可疑程度依据 iOS 主版本号动态判断（iOS 16+ 系统保护路径返回 EPERM 本身即异常），消除不同系统版本的误报。 |
+
+### 内存蜜罐反制（`HoneypotMemoryDetector`）
+
+| 机制 | 说明 |
+|------|------|
+| **`mmap` + `PROT_NONE` 蜜罐页** | 在进程启动时分配一块含伪造安全敏感字符串（如 `AES-256-Key-CloudPhone-Secure`）的内存页，随即 `mprotect(PROT_NONE)` 使其不可读写。 |
+| **`SIGBUS` 陷阱** | 注册自定义 `SIGBUS` handler；任何试图读取该蜜罐页的工具（内存 dump、内存搜索）都会触发 `SIGBUS`，handler 检查 `si_addr` 是否落在蜜罐范围，是则设置全局标志。 |
+| **异步感知上报** | `detect()` 轮询全局 `honeypotTriggered` 标志，触发后立即输出硬信号 `memory_dump_attempt_detected`（score: 95），提供记录 dump 行为的高置信度证据。 |
+
+### iOS 版本动态基线（`ExpectedBaseline`）
+
+| 机制 | 说明 |
+|------|------|
+| **版本自适应** | 根据 `ProcessInfo.processInfo.operatingSystemVersion.majorVersion` 动态调整行为阈值：iOS < 17 下空进程列表为可疑；iOS ≥ 16 下保护路径 `EPERM` 即为异常。 |
+| **消除版本噪音** | 不同 iOS 版本对系统调用的限制策略差异显著，静态阈值会导致大量误报；动态基线让检测在 iOS 14 ～ 18+ 全版本范围内保持精准。 |
+
+### gRPC 传输层（`GrpcReportPayload` / `risk_report.proto`）
+
+| 机制 | 说明 |
+|------|------|
+| **Protobuf 强类型 Header** | 报告传输升级为 gRPC + Proto，Header 字段强类型定义（`device_id`、`sdk_version`、`report_time` 等），杜绝 JSON 字段注入。 |
+| **业务 JSON payload 隔离** | `bytes payload_json` 字段承载业务信号 JSON，与传输控制字段物理隔离，服务端可独立验签 payload 而不影响传输层完整性。 |
+
+### 4.4 新增信号 ID
+
+| 信号 ID | 权重 | 触发条件 |
+|---------|------|----------|
+| `rop_chain_detected` | 90（硬信号） | 调用栈中发现返回地址指向非可信镜像区域（ROP/JOP 链） |
+| `malicious_call_stack` | 85（硬信号） | 调用栈帧无法通过 `dladdr` 解析到合法符号 |
+| `syscall_blinded_canary_dead` | 85（硬信号） | Canary 探针文件 `stat` 失败，Syscall 层疑被 Hook 致盲 |
+| `memory_dump_attempt_detected` | 95（硬信号） | 蜜罐内存页被触碰，检测到 dump / 内存搜索工具 |
+| `hardware_trust_unsupported` | 40（软信号） | 设备不支持 App Attest，无硬件信任锚点 |
+| `suspicious_permission_denied` | 30（软信号） | 保护路径返回 `EPERM`，结合 iOS 版本基线判定为可疑 |
+
+> **接入注意**：`AppAttestSigner` 需在 Xcode 工程 Capabilities 中开启 **App Attest**，并在 App Store Connect 完成 attestation key 注册；模拟器构建可安全跳过（自动降级为软信号）。`HoneypotMemoryDetector` 的 `SIGBUS` handler 会覆盖同信号的原有处理器，若业务代码本身有自定义 `SIGBUS` handler，请在接入前评估冲突风险。
 
 ---
 
@@ -837,4 +922,4 @@ swift build
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 4.2 — Quad Red Team Audit + Trust Root Hardening</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 4.4 — Hardware Trust Root + Execution Flow Locking + Memory Honeypot</sub></p>
