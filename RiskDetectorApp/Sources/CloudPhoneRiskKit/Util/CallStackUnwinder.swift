@@ -304,13 +304,12 @@ public enum CallStackUnwinder {
             return AddressValidation(legitimate: true, dladdrHooked: false)
         }
 
-        // Layer 5: vm_region cross-validation for unknown/suspicious paths
+        // Layer 5: vm_region cross-validation for unknown/suspicious paths.
+        // fileMapped  → address backed by a file on disk (legitimate late-loaded framework)
+        // anonymousExecutable → shellcode / ROP gadget page (malicious)
+        // unknown     → vm_region failed or ambiguous → treat as suspect
         let vmClass = vmRegionClassify(addr)
-        if vmClass == .anonymousExecutable {
-            return AddressValidation(legitimate: false, dladdrHooked: false)
-        }
-
-        return AddressValidation(legitimate: false, dladdrHooked: false)
+        return AddressValidation(legitimate: vmClass == .fileMapped, dladdrHooked: false)
     }
 
     // MARK: - vm_region_64 cross-validation
