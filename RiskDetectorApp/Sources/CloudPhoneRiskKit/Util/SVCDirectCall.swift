@@ -82,15 +82,18 @@ enum LibcPrologueGuard {
     }
 
     private static func isSuspiciousFirstInstruction(_ insn: UInt32) -> Bool {
-        if insn & 0xFC00_0000 == 0x1400_0000 { return true }
-        if insn & 0xFC00_0000 == 0x9400_0000 { return true }
-        if insn == 0xD61F_0200 { return true }
-        if insn == 0xD61F_0220 { return true }
-        if insn == 0xD63F_0200 { return true }
-        if insn == 0xD63F_0220 { return true }
-        if insn & 0xFF00_0000 == 0x5800_0000 && insn & 0x1F == 0x10 { return true }
-        if insn & 0xFF00_0000 == 0x5800_0000 && insn & 0x1F == 0x11 { return true }
-        if insn & 0x9F00_0000 == 0x9000_0000 { return true }
+        if insn & 0xFC00_0000 == 0x1400_0000 { return true }  // B (unconditional)
+        if insn & 0xFC00_0000 == 0x9400_0000 { return true }  // BL
+        if insn == 0xD61F_0200 { return true }                 // BR  x16
+        if insn == 0xD61F_0220 { return true }                 // BR  x17
+        if insn == 0xD63F_0200 { return true }                 // BLR x16
+        if insn == 0xD63F_0220 { return true }                 // BLR x17
+        if insn & 0xFF00_0000 == 0x5800_0000 && insn & 0x1F == 0x10 { return true }  // LDR x16
+        if insn & 0xFF00_0000 == 0x5800_0000 && insn & 0x1F == 0x11 { return true }  // LDR x17
+        // ADRP alone is NOT flagged here: complex library functions (dladdr, backtrace)
+        // routinely start with ADRP for PC-relative addressing, producing false positives.
+        // The ADRP+BR-register two-instruction pattern is handled by isInlineHooked's
+        // second check (isAdrpOrLdrLiteral && isBranchRegister).
         return false
     }
 
