@@ -130,10 +130,15 @@ struct PLTIntegrityGuard {
         let address: UInt64
         let moduleBase: UInt64
         let moduleSize: UInt64
+        /// Absolute path of the image that owns this function (e.g. /usr/lib/libSystem.B.dylib).
+        /// Unlike moduleBase, paths are ASLR-invariant and survive reboots without false positives.
+        let modulePath: String
     }
 
     private static let keychainService = "CloudPhoneRiskKit"
-    private static let keychainBaselineAccount = "plt_baseline_v2"
+    // Bumped v2→v3: v2 stored wrong moduleBase (imageBase+sect.addr instead of ASLR-corrected
+    // address), causing sameModule mismatch on every reboot. v3 validates by modulePath instead.
+    private static let keychainBaselineAccount = "plt_baseline_v3"
 
     private struct PersistedBaseline {
         let versionToken: String
@@ -148,7 +153,8 @@ struct PLTIntegrityGuard {
             guard dladdr(ptr, &info) != 0, let imageHeader = info.dli_fbase else { continue }
             let (base, size) = textSegmentRange(header: imageHeader)
             let addr = UInt64(bitPattern: Int64(Int(bitPattern: ptr)))
-            records.append(FunctionRecord(name: name, address: addr, moduleBase: base, moduleSize: size))
+            let path = info.dli_fname.map { String(cString: $0) } ?? ""
+            records.append(FunctionRecord(name: name, address: addr, moduleBase: base, moduleSize: size, modulePath: path))
         }
         return records
     }
@@ -247,7 +253,8 @@ struct PLTIntegrityGuard {
                   let addr = dict["address"] as? UInt64,
                   let base = dict["moduleBase"] as? UInt64,
                   let size = dict["moduleSize"] as? UInt64 else { return nil }
-            return FunctionRecord(name: name, address: addr, moduleBase: base, moduleSize: size)
+            let path = dict["modulePath"] as? String ?? ""
+            return FunctionRecord(name: name, address: addr, moduleBase: base, moduleSize: size, modulePath: path)
         }
         return PersistedBaseline(versionToken: versionToken, records: records)
     }
@@ -258,6 +265,7 @@ struct PLTIntegrityGuard {
             "address": $0.address,
             "moduleBase": $0.moduleBase,
             "moduleSize": $0.moduleSize,
+            "modulePath": $0.modulePath,
         ] }
         let json: [String: Any] = [
             "versionToken": versionToken,
@@ -298,12 +306,16 @@ struct PLTIntegrityGuard {
                 details[record.name] = "dladdr_failed"
                 continue
             }
+            // Compare by image path (ASLR-invariant). moduleBase is the absolute runtime address
+            // of the __text section and differs across reboots due to ASLR, making it unsuitable
+            // for cross-session comparison.
+            let currentPath = info.dli_fname.map { String(cString: $0) } ?? ""
+            let sameModule = !record.modulePath.isEmpty && currentPath == record.modulePath
             let (base, size) = textSegmentRange(header: imageHeader)
-            let inRange = currentAddr >= base && currentAddr < base + size
-            let sameModule = base == record.moduleBase
+            let inRange = size > 0 && currentAddr >= base && currentAddr < base + size
             if !inRange || !sameModule {
                 hooked.append(record.name)
-                details[record.name] = "addr=0x\(String(currentAddr, radix: 16)) expected_base=0x\(String(record.moduleBase, radix: 16))"
+                details[record.name] = "addr=0x\(String(currentAddr, radix: 16)) expected_path=\(record.modulePath) current_path=\(currentPath)"
             }
         }
         return PLTIntegrityResult(
@@ -317,6 +329,7 @@ struct PLTIntegrityGuard {
     private static func textSegmentRange(header: UnsafeRawPointer) -> (base: UInt64, size: UInt64) {
         let ptr = header.assumingMemoryBound(to: mach_header_64.self)
         guard ptr.pointee.magic == MH_MAGIC_64 else { return (0, 0) }
+        // imageBase is the RUNTIME address of the Mach-O header (== start of __TEXT after ASLR).
         let imageBase = UInt64(bitPattern: Int64(Int(bitPattern: header)))
         var cmd = UnsafeRawPointer(ptr).advanced(by: MemoryLayout<mach_header_64>.size)
         for _ in 0..<ptr.pointee.ncmds {
@@ -324,11 +337,17 @@ struct PLTIntegrityGuard {
             if load.cmd == LC_SEGMENT_64 {
                 let seg = cmd.assumingMemoryBound(to: segment_command_64.self).pointee
                 if tupleStringEquals(seg.segname, "__TEXT") {
+                    // slide = runtime __TEXT base - linked __TEXT vmaddr.
+                    // For system libraries in the dyld shared cache, seg.vmaddr is large (e.g.
+                    // 0x1920000xx), not zero.  Using (imageBase + sect.addr) was wrong: it added
+                    // the runtime address ON TOP of the already-absolute linked address.
+                    // Correct formula: sect.addr + slide = sect.addr + (imageBase - seg.vmaddr).
+                    let slide = imageBase &- seg.vmaddr
                     var sect = cmd.advanced(by: MemoryLayout<segment_command_64>.size)
                         .assumingMemoryBound(to: section_64.self)
                     for _ in 0..<seg.nsects {
                         if tupleStringEquals(sect.pointee.sectname, "__text") {
-                            return (imageBase + sect.pointee.addr, sect.pointee.size)
+                            return (sect.pointee.addr &+ slide, sect.pointee.size)
                         }
                         sect = sect.advanced(by: 1)
                     }
