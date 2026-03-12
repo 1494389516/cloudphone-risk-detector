@@ -35,18 +35,20 @@ enum LibcPrologueGuard {
     private static let rescanProbabilityPercent = 30
 
     static func checkAllCritical() -> Bool {
-        let shouldRescan = arc4random_uniform(100) < UInt32(rescanProbabilityPercent)
-        if shouldRescan || lastScannedResult == nil {
+        // Read lastScannedResult under lock to avoid data race with concurrent writers.
+        lock.lock()
+        let current = lastScannedResult
+        lock.unlock()
+
+        let shouldRescan = current == nil || arc4random_uniform(100) < UInt32(rescanProbabilityPercent)
+        if shouldRescan {
             let result = performFullScan()
             lock.lock()
             lastScannedResult = result
             lock.unlock()
             return result
         }
-        lock.lock()
-        let cached = lastScannedResult ?? false
-        lock.unlock()
-        return cached
+        return current!  // Safe: current != nil when shouldRescan is false
     }
 
     private static func performFullScan() -> Bool {
