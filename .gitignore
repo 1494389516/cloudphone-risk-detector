@@ -20,3 +20,7 @@ RiskDetectorApp/Legacy/
 
 # Logs
 *.log
+
+# Red team analysis notes & SDK spec (local only)
+RED_TEAM_ANALYSIS_ROUND*.md
+sdk 4.4 .txt
