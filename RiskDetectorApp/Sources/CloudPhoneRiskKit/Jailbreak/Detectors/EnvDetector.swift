@@ -1,26 +1,11 @@
 import Foundation
 
 struct EnvDetector: Detector {
-    private let suspiciousVars: [(name: String, score: Double)] = [
-        ("DYLD_INSERT_LIBRARIES", 50),
-        ("DYLD_LIBRARY_PATH", 25),
-        ("DYLD_FALLBACK_LIBRARY_PATH", 20),
-        ("DYLD_PRINT_LIBRARIES", 15),
-        ("DYLD_PRINT_SEGMENTS", 12),
-        ("DYLD_PRINT_INITIALIZERS", 12),
-        ("DYLD_PRINT_DOFS", 10),
-        ("DYLD_PRINT_APIS", 10),
-        ("DYLD_PRINT_STATISTICS", 10),
-        ("DYLD_PRINT_WARNINGS", 10),
-        ("DYLD_VERBOSE", 10),
-        ("DYLD_BIND_AT_LAUNCH", 10),
-        ("LD_LIBRARY_PATH", 20),
-        ("LD_PRELOAD", 25),
-        ("DYLD_NO_PIE", 12),
-        ("DYLD_DISABLE_PREFETCH", 10),
-    ]
+    private var suspiciousVars: [(name: String, score: Double)] {
+        ObfuscatedConstants.envSuspiciousVars
+    }
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
         var score: Double = 0
         var methods: [String] = []
         let envMap = readEnvironMap()

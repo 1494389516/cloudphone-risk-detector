@@ -140,10 +140,15 @@ public final class JailbreakEngineV2 {
         ]
         
         for (category, detector) in quickDetectors {
-            let result = detector.detect()
-            if result.score > 0 {
+            do {
+                let result = try detector.detect()
+                if result.score > 0 {
+                    detectedCategories.append(category)
+                    totalScore += result.score
+                }
+            } catch {
                 detectedCategories.append(category)
-                totalScore += result.score
+                totalScore += 80
             }
         }
         
@@ -178,17 +183,23 @@ public final class JailbreakEngineV2 {
         Double(v2Config.detectionTimeout) / 1000.0
     }
 
-    private func runDetectorWithTimeout<T>(_ work: @escaping () -> T, timeout: TimeInterval, fallback: T) -> T {
+    private func runDetectorWithTimeout(_ work: @escaping () throws -> DetectorResult, detectorName: String, timeout: TimeInterval) -> DetectorResult {
         let semaphore = DispatchSemaphore(value: 0)
-        var result: T = fallback
+        var result: DetectorResult = Self.emptyDetectorResult
         let queue = DispatchQueue(label: "detector.timeout", qos: .userInitiated)
         queue.async {
-            result = work()
+            do {
+                result = try work()
+            } catch {
+                Logger.log("detector \(detectorName) threw: \(error)")
+                result = DetectorResult(score: 80, methods: ["detector_anomaly_\(detectorName)"])
+            }
             semaphore.signal()
         }
         let waitResult = semaphore.wait(timeout: .now() + timeout)
         if waitResult == .timedOut {
-            Logger.log("detector timeout after \(timeout)s")
+            Logger.log("detector \(detectorName) timeout after \(timeout)s")
+            return DetectorResult(score: 80, methods: ["detector_timeout_\(detectorName)"])
         }
         return result
     }
@@ -204,35 +215,35 @@ public final class JailbreakEngineV2 {
         let timeout = detectionTimeoutSeconds
         
         if v2Config.enableAntiTampering {
-            let result = runDetectorWithTimeout({ AntiTamperingDetector().detect() }, timeout: timeout, fallback: Self.emptyDetectorResult)
+            let result = runDetectorWithTimeout({ try AntiTamperingDetector().detect() }, detectorName: "AntiTamperingDetector", timeout: timeout)
             score += result.score
             methods.append(contentsOf: result.methods)
             logV2("AntiTamperingDetector", result.score, result.methods.count)
         }
         
         if v2Config.enableDebugger {
-            let result = runDetectorWithTimeout({ DebuggerDetector().detect() }, timeout: timeout, fallback: Self.emptyDetectorResult)
+            let result = runDetectorWithTimeout({ try DebuggerDetector().detect() }, detectorName: "DebuggerDetector", timeout: timeout)
             score += result.score
             methods.append(contentsOf: result.methods)
             logV2("DebuggerDetector", result.score, result.methods.count)
         }
         
         if v2Config.enableFrida {
-            let result = runDetectorWithTimeout({ FridaDetector().detect() }, timeout: timeout, fallback: Self.emptyDetectorResult)
+            let result = runDetectorWithTimeout({ try FridaDetector().detect() }, detectorName: "FridaDetector", timeout: timeout)
             score += result.score
             methods.append(contentsOf: result.methods)
             logV2("FridaDetector", result.score, result.methods.count)
         }
         
         if v2Config.enableCodeSignature {
-            let result = runDetectorWithTimeout({ CodeSignatureValidator().detect() }, timeout: timeout, fallback: Self.emptyDetectorResult)
+            let result = runDetectorWithTimeout({ try CodeSignatureValidator().detect() }, detectorName: "CodeSignatureValidator", timeout: timeout)
             score += result.score
             methods.append(contentsOf: result.methods)
             logV2("CodeSignatureValidator", result.score, result.methods.count)
         }
         
         if v2Config.enableMemoryIntegrity {
-            let result = runDetectorWithTimeout({ MemoryIntegrityChecker().detect() }, timeout: timeout, fallback: Self.emptyDetectorResult)
+            let result = runDetectorWithTimeout({ try MemoryIntegrityChecker().detect() }, detectorName: "MemoryIntegrityChecker", timeout: timeout)
             score += result.score
             methods.append(contentsOf: result.methods)
             logV2("MemoryIntegrityChecker", result.score, result.methods.count)

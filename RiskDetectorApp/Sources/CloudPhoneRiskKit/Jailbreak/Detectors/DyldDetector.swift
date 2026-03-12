@@ -28,7 +28,7 @@ struct DyldDetector: Detector {
         "dopamine",
     ]
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
         var score: Double = 0
         var methods: [String] = []
         var hitTokens = Set<String>()

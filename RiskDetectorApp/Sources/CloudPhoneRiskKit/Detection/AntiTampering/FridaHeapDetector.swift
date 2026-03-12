@@ -7,7 +7,7 @@ private let anonymousUserTags: Set<UInt32> = [240, 241, 242, 243, 244, 245]
 
 struct FridaHeapDetector: Detector {
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["frida:unavailable_simulator"])
 #else
@@ -190,8 +190,8 @@ struct FridaHeapDetector: Detector {
 // MARK: - Signal Conversion
 
 extension FridaHeapDetector {
-    func asSignals() -> [RiskSignal] {
-        let result = detect()
+    func asSignals() throws -> [RiskSignal] {
+        let result = try detect()
         guard result.score > 0 else { return [] }
 
         var signals: [RiskSignal] = []

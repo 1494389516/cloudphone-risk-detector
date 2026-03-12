@@ -67,6 +67,20 @@ private func secureZero(_ buffer: inout [UInt8]) {
     }
 }
 
+internal func secureZeroBytes(_ buffer: inout [UInt8]) {
+    buffer.withUnsafeMutableBytes { ptr in
+        guard let base = ptr.baseAddress else { return }
+        memset_s(base, ptr.count, 0, ptr.count)
+    }
+}
+
+internal func secureZeroData(_ data: inout Data) {
+    data.withUnsafeMutableBytes { ptr in
+        guard let base = ptr.baseAddress else { return }
+        memset_s(base, ptr.count, 0, ptr.count)
+    }
+}
+
 /// 作用域内创建临时敏感值，闭包结束自动清零
 enum SecureScope {
     static func withSecureValue<T>(_ value: String, _ body: (String) -> T) -> T {

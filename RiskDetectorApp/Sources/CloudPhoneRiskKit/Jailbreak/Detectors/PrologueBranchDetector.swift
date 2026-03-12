@@ -24,7 +24,7 @@ struct PrologueBranchDetector: Detector {
         ("vm_protect", 8),
     ]
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
         #if arch(arm64) || arch(arm64e)
         var score: Double = 0
         var methods: [String] = []

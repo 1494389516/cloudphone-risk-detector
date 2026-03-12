@@ -11,7 +11,7 @@ struct SchemeDetector: Detector {
         ("undecimus://", 20),
     ]
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
         var score: Double = 0
         var methods: [String] = []
 
@@ -41,6 +41,6 @@ struct SchemeDetector: Detector {
 #else
 
 struct SchemeDetector: Detector {
-    func detect() -> DetectorResult { .empty }
+    func detect() throws -> DetectorResult { .empty }
 }
 #endif

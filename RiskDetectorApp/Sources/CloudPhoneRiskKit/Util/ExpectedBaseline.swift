@@ -8,16 +8,9 @@ import Foundation
 /// 同时通过 kern.osversion sysctl 交叉验证，防止 ProcessInfo 被 swizzle。
 enum ExpectedBaseline {
 
-    /// iOS 主版本号（交叉验证 ProcessInfo 与 sysctl）
+    /// iOS 主版本号（仅用 sysctl kern.osversion，不依赖 ProcessInfo 防篡改）
     private static var iosMajorVersion: Int {
-        let processInfoVersion = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
-        guard let sysctlVersion = iosMajorFromBuildNumber() else {
-            return processInfoVersion
-        }
-        if abs(processInfoVersion - sysctlVersion) > 1 {
-            return min(processInfoVersion, sysctlVersion)
-        }
-        return processInfoVersion
+        iosMajorFromBuildNumber() ?? 16
     }
 
     /// 从 kern.osversion 构建号推算 iOS 主版本

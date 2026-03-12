@@ -4,7 +4,7 @@ import MachO
 import Security
 
 struct SDKIntegrityChecker: Detector {
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
         var score: Double = 0
         var methods: [String] = []
 

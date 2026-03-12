@@ -83,7 +83,7 @@ struct HoneypotMemoryDetector: Detector {
         Self.armHoneypotIfNeeded()
     }
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["honeypot:unavailable_simulator"])
 #else
@@ -234,8 +234,8 @@ struct HoneypotMemoryDetector: Detector {
 // MARK: - Signal emission
 
 extension HoneypotMemoryDetector {
-    func asSignals() -> [RiskSignal] {
-        let result = detect()
+    func asSignals() throws -> [RiskSignal] {
+        let result = try detect()
         guard result.score > 0 else { return [] }
 
         var signals: [RiskSignal] = []

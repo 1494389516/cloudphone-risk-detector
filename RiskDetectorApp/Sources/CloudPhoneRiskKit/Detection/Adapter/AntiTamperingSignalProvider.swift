@@ -68,31 +68,31 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         
         if configuration.enableAntiTampering {
             isolatedAppend("anti_tampering", &signals) {
-                detectAntiTampering(baseScore: baseJailbreakScore)
+                try detectAntiTampering(baseScore: baseJailbreakScore)
             }
         }
         
         if configuration.enableDebugger {
             isolatedAppend("debugger", &signals) {
-                detectDebugger(baseScore: baseJailbreakScore)
+                try detectDebugger(baseScore: baseJailbreakScore)
             }
         }
         
         if configuration.enableFrida {
             isolatedAppend("frida", &signals) {
-                detectFrida(baseScore: baseJailbreakScore)
+                try detectFrida(baseScore: baseJailbreakScore)
             }
         }
         
         if configuration.enableCodeSignature {
             isolatedAppend("code_signature", &signals) {
-                detectCodeSignatureIssues(baseScore: baseJailbreakScore)
+                try detectCodeSignatureIssues(baseScore: baseJailbreakScore)
             }
         }
         
         if configuration.enableMemoryIntegrity {
             isolatedAppend("memory_integrity", &signals) {
-                detectMemoryIntegrityIssues(baseScore: baseJailbreakScore)
+                try detectMemoryIntegrityIssues(baseScore: baseJailbreakScore)
             }
         }
 
@@ -118,31 +118,31 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
 
         if configuration.enableFridaThreadDetect {
             isolatedAppend("frida_thread", &signals) {
-                FridaThreadDetector().asSignals()
+                try FridaThreadDetector().asSignals()
             }
         }
 
         if configuration.enableFridaHeapDetect {
             isolatedAppend("frida_heap", &signals) {
-                FridaHeapDetector().asSignals()
+                try FridaHeapDetector().asSignals()
             }
         }
 
         if configuration.enableObjCSwizzleDetect {
             isolatedAppend("objc_swizzle", &signals) {
-                ObjCSwizzleDetector().asSignals()
+                try ObjCSwizzleDetector().asSignals()
             }
         }
 
         if configuration.enableFridaSocketDetect {
             isolatedAppend("frida_socket", &signals) {
-                FridaSocketDetector().asSignals()
+                try FridaSocketDetector().asSignals()
             }
         }
 
         if configuration.enableMultiPathFileDetect {
             isolatedAppend("multipath_file", &signals) {
-                let mpResult = MultiPathFileDetector().detect()
+                let mpResult = try MultiPathFileDetector().detect()
                 guard mpResult.score > 0 else { return [] }
                 var mpSignals: [RiskSignal] = []
                 let hookMethods = mpResult.methods.filter { $0.hasPrefix("multipart_hook:") }
@@ -175,7 +175,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
 
         if configuration.enableRandomizedDetection {
             isolatedAppend("randomized", &signals) {
-                let randResult = RandomizedDetection().detect()
+                let randResult = try RandomizedDetection().detect()
                 guard randResult.score > 0 else { return [] }
                 return [RiskSignal(
                     id: "randomized_env_anomaly",
@@ -191,7 +191,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
 
         if configuration.enableFingerprintDeobfuscation {
             isolatedAppend("fingerprint", &signals) {
-                let fpResult = FingerprintDeobfuscation().detect()
+                let fpResult = try FingerprintDeobfuscation().detect()
                 guard fpResult.score > 0 else { return [] }
                 var fpSignals: [RiskSignal] = []
                 if fpResult.methods.contains(where: { $0.contains("simulator") }) {
@@ -244,7 +244,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
 
         if configuration.enableDyldInterposeDetect {
             isolatedAppend("dyld_interpose", &signals) {
-                DyldInterposeDetector().asSignals()
+                try DyldInterposeDetector().asSignals()
             }
         }
 
@@ -257,19 +257,19 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
 
         if configuration.enableSensorReplayDetect {
             isolatedAppend("sensor_replay", &signals) {
-                SensorReplayDetector().asSignals()
+                try SensorReplayDetector().asSignals()
             }
         }
 
         if configuration.enableGPURenderProbe {
             isolatedAppend("gpu_render", &signals) {
-                GPURenderProbe().asSignals()
+                try GPURenderProbe().asSignals()
             }
         }
 
         if configuration.enableIsaSwizzleDetect {
             isolatedAppend("isa_swizzle", &signals) {
-                IsaSwizzleDetector().asSignals()
+                try IsaSwizzleDetector().asSignals()
             }
         }
 
@@ -284,13 +284,13 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
 
         if configuration.enableHoneypotMemory {
             isolatedAppend("honeypot_memory", &signals) {
-                HoneypotMemoryDetector().asSignals()
+                try HoneypotMemoryDetector().asSignals()
             }
         }
 
         if configuration.enableKernelHookSideChannel {
             isolatedAppend("kernel_hook_sc", &signals) {
-                KernelHookSideChannel().asSignals()
+                try KernelHookSideChannel().asSignals()
             }
         }
 
@@ -328,11 +328,11 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
             signals.append(RiskSignal(
                 id: "detector_anomaly_\(label)",
                 category: "anti_tamper",
-                score: 5,
+                score: 80,
                 evidence: ["error": "\(error)", "detector": label],
                 state: .tampered,
                 layer: 2,
-                weightHint: 10
+                weightHint: 80
             ))
         }
     }
@@ -340,10 +340,10 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
     // MARK: - 检测方法
     
     /// 反调试检测
-    private func detectAntiTampering(baseScore: Double) -> [RiskSignal] {
+    private func detectAntiTampering(baseScore: Double) throws -> [RiskSignal] {
         var signals: [RiskSignal] = []
         
-        let result = AntiTamperingDetector().detect()
+        let result = try AntiTamperingDetector().detect()
         
         if result.score > 0 {
             // 基础反调试信号
@@ -382,10 +382,10 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
     }
     
     /// 调试器检测
-    private func detectDebugger(baseScore: Double) -> [RiskSignal] {
+    private func detectDebugger(baseScore: Double) throws -> [RiskSignal] {
         var signals: [RiskSignal] = []
         
-        let result = DebuggerDetector().detect()
+        let result = try DebuggerDetector().detect()
         
         if result.score > 0 {
             signals.append(
@@ -435,10 +435,10 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
     }
     
     /// Frida 检测
-    private func detectFrida(baseScore: Double) -> [RiskSignal] {
+    private func detectFrida(baseScore: Double) throws -> [RiskSignal] {
         var signals: [RiskSignal] = []
         
-        let result = FridaDetector().detect()
+        let result = try FridaDetector().detect()
         
         if result.score > 0 {
             // Frida 是高风险信号，给予额外权重
@@ -492,10 +492,10 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
     }
     
     /// 代码签名验证
-    private func detectCodeSignatureIssues(baseScore: Double) -> [RiskSignal] {
+    private func detectCodeSignatureIssues(baseScore: Double) throws -> [RiskSignal] {
         var signals: [RiskSignal] = []
         
-        let result = CodeSignatureValidator().detect()
+        let result = try CodeSignatureValidator().detect()
         
         if result.score > 0 {
             signals.append(
@@ -554,10 +554,10 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
     }
     
     /// 内存完整性检查
-    private func detectMemoryIntegrityIssues(baseScore: Double) -> [RiskSignal] {
+    private func detectMemoryIntegrityIssues(baseScore: Double) throws -> [RiskSignal] {
         var signals: [RiskSignal] = []
         
-        let result = MemoryIntegrityChecker().detect()
+        let result = try MemoryIntegrityChecker().detect()
         
         if result.score > 0 {
             signals.append(

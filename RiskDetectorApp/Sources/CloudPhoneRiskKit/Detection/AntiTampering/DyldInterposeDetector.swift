@@ -4,7 +4,7 @@ import MachO
 
 struct DyldInterposeDetector: Detector {
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
         #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["unavailable_simulator"])
         #else
@@ -117,8 +117,8 @@ struct DyldInterposeDetector: Detector {
         return (0, [])
     }
 
-    func asSignals() -> [RiskSignal] {
-        let result = detect()
+    func asSignals() throws -> [RiskSignal] {
+        let result = try detect()
         guard result.score > 0 else { return [] }
 
         var signals: [RiskSignal] = []

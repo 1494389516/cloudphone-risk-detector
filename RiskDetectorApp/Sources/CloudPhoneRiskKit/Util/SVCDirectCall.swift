@@ -1,5 +1,4 @@
 import Darwin
-import Darwin.Mach
 import Foundation
 
 private let rtldNext = UnsafeMutableRawPointer(bitPattern: -1)
@@ -31,17 +30,32 @@ enum LibcPrologueGuard {
         "stat", "lstat", "access", "sysctlbyname", "sysctl", "dladdr", "backtrace"
     ]
 
-    private static let cachedResult: Bool = {
+    private static let lock = NSLock()
+    private static var lastScannedResult: Bool?
+    private static let rescanProbabilityPercent = 30
+
+    static func checkAllCritical() -> Bool {
+        let shouldRescan = arc4random_uniform(100) < UInt32(rescanProbabilityPercent)
+        if shouldRescan || lastScannedResult == nil {
+            let result = performFullScan()
+            lock.lock()
+            lastScannedResult = result
+            lock.unlock()
+            return result
+        }
+        lock.lock()
+        let cached = lastScannedResult ?? false
+        lock.unlock()
+        return cached
+    }
+
+    private static func performFullScan() -> Bool {
         for sym in criticalSymbols {
             if isInlineHooked(symbol: sym) {
                 return true
             }
         }
         return false
-    }()
-
-    static func checkAllCritical() -> Bool {
-        cachedResult
     }
 
     static func isInlineHooked(symbol: String) -> Bool {
@@ -49,15 +63,15 @@ enum LibcPrologueGuard {
         let addr = UInt(bitPattern: ptr)
 
         var buf = [UInt8](repeating: 0, count: 16)
-        var outSize: mach_vm_size_t = 0
+        var outSize: vm_size_t = 0
 
         let kr = buf.withUnsafeMutableBufferPointer { bufPtr -> kern_return_t in
             guard let base = bufPtr.baseAddress else { return KERN_FAILURE }
-            return mach_vm_read_overwrite(
+            return vm_read_overwrite(
                 mach_task_self_,
-                mach_vm_address_t(addr),
-                mach_vm_size_t(16),
-                mach_vm_address_t(UInt(bitPattern: base)),
+                vm_address_t(addr),
+                vm_size_t(16),
+                vm_address_t(UInt(bitPattern: base)),
                 &outSize
             )
         }

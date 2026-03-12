@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
-  <img src="https://img.shields.io/badge/SDK-4.7-FF3B30?style=for-the-badge" alt="SDK">
+  <img src="https://img.shields.io/badge/SDK-4.8-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
   <img src="https://img.shields.io/badge/License-Proprietary-8E8E93?style=for-the-badge" alt="License">
 </p>
@@ -47,6 +47,7 @@
 | **4.4** | **硬件信任根 + 执行流锁定 + 内存蜜罐反制** | Apple App Attest / Secure Enclave 硬件绑定签名、调用栈回溯 ROP/JOP 链检测、Syscall Canary 探针致盲感知、蜜罐内存页 SIGBUS 反 Dump、iOS 版本动态基线自适应、gRPC 传输层升级（7 项硬件级 + 执行流级深度加固） |
 | **4.6** | **第六轮红队审计 + 硬件信任根全链加固** | App Attest TOCTOU 竞态消除 + attestation 入签名域、CallStack RTLD_NEXT 双路 + vm_region 交叉校验、蜜罐三页分散 + handler/保护位自检、金丝雀 DualPath 双路 + 随机探针池、ExpectedBaseline sysctl 双路版本、payload_sha256 上下文绑定、PAC vm_read_overwrite 安全读取（12 项漏洞全修复） |
 | **4.7** | **Inline Hook 穿透 + 内核 Hook 侧信道 + 探针纵深** | LibcPrologueGuard 机器码入口校验（mach_vm_read_overwrite 检测 Dobby/Substrate 跳板）、KernelHookSideChannel 四策略内核 Hook 检测（时序分布 / inode 一致性 / 时钟交叉 / 返回值熵）、金丝雀探针池 5→16 + 动态路径 3 条 + 子集 6 选、DualPathValidator 三路验证（标准 / RTLD_NEXT / 入口完整性）、修正 SVC 0x80 声称为 Prologue Guard 实际机制（6 项深层加固） |
+| **4.8** | **4.7 遗留安全隐患修复** | LibcPrologueGuard TOCTOU 消除（废弃静态缓存、30% 概率重扫）、SecureBuffer 密钥内存安全擦除、ProcessInfo 全面替换为 sysctl、越狱特征字符串全量混淆（ObfuscatedJailbreakStrings）、DetectorRegistry 统一 do-catch 容错 + 高危权重异常信号（5 项致命隐患全修复） |
 
 ## 架构概览
 
@@ -318,6 +319,87 @@
 | `kernel_hook_pid_unstable` | 80（硬信号） | 连续 getpid()/getuid() 返回值不一致，syscall 返回值被操纵 |
 
 > **Breaking Change**：4.7 `DualPathValidator` 的 `validateSysctl`、`validateSysctlData`、`validateFileStat` 返回元组新增第四个字段 `inlineHooked: Bool`。直接使用 `.exists` / `.tampered` 等命名访问的代码不受影响；使用位置解构的代码需增加第四个占位。
+
+---
+
+## 4.8 新增能力 — 4.7 遗留安全隐患修复
+
+4.8 版本针对 4.7 遗留的 **5 个致命安全隐患** 进行全面修复：缓存污染、内存残影泄露、环境变量依赖、硬编码明文暴露及容错机制缺失，将 SDK 安全水位提升至抗高级对手水平。
+
+### 4.8 安全加固矩阵
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  4.8 安全隐患修复矩阵                            │
+├──────────────┬──────────────┬──────────────┬────────────────────┤
+│  TOCTOU 消除  │  内存安全擦除 │  信任根收紧   │    容错与混淆        │
+├──────────────┼──────────────┼──────────────┼────────────────────┤
+│ LibcPrologue │ SecureBuffer │ ProcessInfo  │ ObfuscatedJailbreak│
+│ Guard 废弃   │ 密钥 deinit   │ 全面替换     │ Strings 全量混淆    │
+│ 静态缓存     │ 擦除         │ sysctl       │ 越狱路径/进程名     │
+│ 30% 概率重扫 │ PayloadCrypto│ ExpectedBase │ 运行时 base64 还原  │
+│ 防延迟注入   │ DeviceKeyDer │ line/EnvDet  │ 拔高反编译门槛       │
+│              │ RiskConclusion│ KeychainSalt │                    │
+│              │ Signer       │ mach_absolute│ DetectorRegistry   │
+│              │              │ _time fallback│ 统一 do-catch       │
+│              │              │              │ 高危权重(80)异常信号 │
+└──────────────┴──────────────┴──────────────┴────────────────────┘
+```
+
+### TOCTOU 漏洞修复 — LibcPrologueGuard 概率性重扫
+
+| 机制 | 说明 |
+|------|------|
+| **废弃静态缓存** | 移除 `static let cachedResult`，消除攻击者在缓存后进行「延迟注入」的 TOCTOU 窗口。 |
+| **30% 概率重扫** | 每次评估有 30% 几率执行完整机器码扫描，其余使用 `lastScannedResult` + `NSLock` 保护，兼顾性能与安全。 |
+| **防延迟注入** | 攻击者无法预测何时触发重扫，显著提高 Inline Hook 持久化难度。 |
+
+### 内存安全擦除 — SecureBuffer 与密钥残影消除
+
+| 机制 | 说明 |
+|------|------|
+| **SecureBuffer** | 新增 `secureZeroBytes`、`secureZeroData`，敏感数据生命周期结束时主动覆写堆内存。 |
+| **PayloadCrypto** | 新密钥使用 `SecureBuffer(size: 32).use`，Keychain 读取后对 `keyData` 调用 `secureZeroData`。 |
+| **RiskConclusionSigner** | `DeviceKeyDeriver.deriveKey` 使用 `SecureScope.withSecureValue` + `secureZeroBytes` 擦除 `combined` 和 `dataBytes`。 |
+| **KeychainSalt fallback** | 使用 `mach_absolute_time()` 替代 `ProcessInfo.systemUptime`，消除 ProcessInfo 依赖。 |
+
+### ProcessInfo 全面替换 — 防沙盒逃逸篡改
+
+| 机制 | 说明 |
+|------|------|
+| **ExpectedBaseline** | `iosMajorVersion` 仅用 `iosMajorFromBuildNumber()`（sysctl），失败时默认 16。 |
+| **EnvDetector** | 环境信息走 C 层面 `sysctl(CTL_KERN)`，使用 `DualPathValidator.validateSysctl` 三路验证。 |
+| **KeychainSalt** | fallback 使用 `mach_absolute_time()` 替代 `ProcessInfo`。 |
+
+### 硬编码字符串全量混淆 — ObfuscatedJailbreakStrings
+
+| 机制 | 说明 |
+|------|------|
+| **ObfuscatedJailbreakStrings** | 新建模块，所有越狱路径、黑名单进程名、环境变量特征使用 base64 运行时还原。 |
+| **覆盖范围** | FileDetector、SysctlDetector、EnvDetector 中的特征字符串全部迁入，拔高黑产反编译门槛。 |
+
+### 统一容错机制 — DetectorRegistry 与异常信号
+
+| 机制 | 说明 |
+|------|------|
+| **Detector 协议** | `detect()` 改为 `throws -> DetectorResult`，所有实现同步更新。 |
+| **JailbreakEngine** | `accumulateDetector` 闭包 `do-catch`，异常时产出 `jailbreak_anomaly:label:threw`，惩罚分 80。 |
+| **JailbreakEngineV2** | `runDetectorWithTimeout` 捕获异常/超时，返回 `detector_anomaly_xxx` 或 `detector_timeout_xxx`（score: 80）。 |
+| **AntiTamperingSignalProvider** | `isolatedAppend` 捕获异常时产出 `detector_anomaly_label`（score: 80, weightHint: 80），不再静默通过。 |
+
+### 4.8 新增/增强信号 ID
+
+| 信号 ID | 权重 | 触发条件 |
+|---------|------|----------|
+| `detector_anomaly_<label>` | 80（硬信号） | 检测器抛出异常，AntiTamperingSignalProvider / JailbreakEngineV2 捕获 |
+| `detector_timeout_<name>` | 80（硬信号） | 检测器超时，JailbreakEngineV2 捕获 |
+| `jailbreak_anomaly:<label>:threw` | 80（惩罚分） | JailbreakEngine 检测器抛出异常 |
+
+### 平台兼容性
+
+| 变更 | 说明 |
+|------|------|
+| **vm_read_overwrite** | iOS Simulator 上 `mach_vm_read_overwrite` 不可用时，SVCDirectCall 与 ObjCSwizzleDetector 改用 `vm_read_overwrite`，保持真机与模拟器一致行为。 |
 
 ---
 
@@ -1070,4 +1152,4 @@ swift build
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 4.7 — Inline Hook Penetration + Kernel Hook Side-Channel + Probe Depth Enhancement</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 4.8 — 4.7 Legacy Security Fixes (TOCTOU / Memory Wipe / ProcessInfo / Obfuscation / Crash Handling)</sub></p>

@@ -13,7 +13,7 @@ import Metal
 /// 3. GPU 内存分配特征
 struct GPURenderProbe: Detector {
     
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
         #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["unavailable_simulator"])
         #else
@@ -142,8 +142,8 @@ struct GPURenderProbe: Detector {
 }
 
 extension GPURenderProbe {
-    func asSignals() -> [RiskSignal] {
-        let result = detect()
+    func asSignals() throws -> [RiskSignal] {
+        let result = try detect()
         guard result.score > 0 else { return [] }
         
         var signals: [RiskSignal] = []

@@ -12,7 +12,7 @@ import ObjectiveC
 /// 3. 类方法数量异常 — 注入框架通常会给关键类添加大量方法
 struct IsaSwizzleDetector: Detector {
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
         #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["unavailable_simulator"])
         #else
@@ -139,8 +139,8 @@ struct IsaSwizzleDetector: Detector {
 }
 
 extension IsaSwizzleDetector {
-    func asSignals() -> [RiskSignal] {
-        let result = detect()
+    func asSignals() throws -> [RiskSignal] {
+        let result = try detect()
         guard result.score > 0 else { return [] }
 
         var signals: [RiskSignal] = []

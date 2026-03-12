@@ -21,7 +21,7 @@ struct DebuggerDetector: Detector {
 
     let debuggerPorts: [Int] = [12345, 2345, 27042, 27043, 23946]
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["unavailable_simulator"])
 #else

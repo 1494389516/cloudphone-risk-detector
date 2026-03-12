@@ -2,65 +2,11 @@ import Darwin
 import Foundation
 
 struct FileDetector: Detector {
-    private let suspiciousPaths: [(path: String, score: Double)] = [
-        // Legacy package managers
-        ("/Applications/Cydia.app", 30),
-        ("/Applications/Sileo.app", 30),
-        ("/Applications/Zebra.app", 25),
-        ("/Applications/Installer.app", 20),
-        ("/Applications/Filza.app", 20),
-        ("/Applications/iFile.app", 15),
+    private var suspiciousPaths: [(path: String, score: Double)] {
+        ObfuscatedConstants.jailbreakSuspiciousPaths
+    }
 
-        // Substrate / hook frameworks (rootful)
-        ("/Library/MobileSubstrate/MobileSubstrate.dylib", 25),
-        ("/Library/MobileSubstrate/DynamicLibraries", 20),
-        ("/Library/Frameworks/CydiaSubstrate.framework", 25),
-        ("/usr/lib/libsubstrate.dylib", 20),
-        ("/usr/lib/libsubstitute.dylib", 20),
-        ("/usr/lib/substitute", 25),
-        ("/usr/lib/ElleKit.dylib", 25),
-        ("/usr/lib/libhooker.dylib", 20),
-        ("/Library/PreferenceBundles/LibertyPref.bundle", 10),
-        ("/Library/Substitute", 15),
-        ("/usr/libexec/substrated", 20),
-
-        // Rootless common prefixes
-        ("/var/jb", 15),
-        ("/var/jb/usr/bin/ssh", 10),
-        ("/var/jb/Applications/Sileo.app", 20),
-        ("/var/jb/Applications/Zebra.app", 20),
-        ("/var/jb/Library/MobileSubstrate/MobileSubstrate.dylib", 25),
-        ("/var/jb/usr/lib/ElleKit.dylib", 25),
-        ("/var/jb/usr/lib/libhooker.dylib", 20),
-        ("/var/jb/usr/lib/TweakInject", 15),
-
-        // Jailbreak tools
-        ("/Applications/checkra1n.app", 25),
-        ("/Applications/odyssey.app", 20),
-        ("/Applications/odysseyra1n.app", 20),
-        ("/Applications/unc0ver.app", 25),
-        ("/Applications/chimera.app", 20),
-        ("/Applications/Taurine.app", 20),
-        ("/Applications/Activator.app", 15),
-        ("/Applications/PreferenceLoader.app", 15),
-        ("/Applications/cycript.app", 15),
-        ("/Applications/AppSync.app", 15),
-
-        // APT (Debian package manager)
-        ("/etc/apt", 25),
-        ("/etc/apt/sources.list", 20),
-        ("/etc/apt/sources.list.d", 20),
-        ("/var/lib/apt", 15),
-        ("/var/cache/apt", 15),
-        ("/User/Library/apt", 10),
-
-        // Tools
-        ("/usr/sbin/sshd", 15),
-        ("/usr/bin/ssh", 10),
-        ("/bin/bash", 10),
-    ]
-
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
         var score: Double = 0
         var methods: [String] = []
         var fileExistsMismatchCount = 0
@@ -124,14 +70,7 @@ struct FileDetector: Detector {
             Logger.log("jailbreak.file.hit: suspicious_permission_denied (+\(Int(suspiciousPermissionScore)))")
         }
 
-        // 双路验证关键路径，检测 stat hook
-        let criticalPaths = [
-            "/etc/apt",
-            "/Applications/Cydia.app",
-            "/var/jb",
-            "/usr/lib/ElleKit.dylib",
-            "/Library/MobileSubstrate/MobileSubstrate.dylib",
-        ]
+        let criticalPaths = ObfuscatedConstants.jailbreakCriticalPaths
         var mismatchCount = 0
         var bypassCount = 0
         for path in criticalPaths {
@@ -155,7 +94,7 @@ struct FileDetector: Detector {
         }
 
         // System configuration / integrity signals.
-        let sys = SystemConfigDetector().detect()
+        let sys = try SystemConfigDetector().detect()
         score += sys.score
         methods.append(contentsOf: sys.methods)
 
@@ -248,7 +187,7 @@ struct FileDetector: Detector {
         guard let dir = opendir("/Applications") else { return false }
         defer { closedir(dir) }
 
-        let needles = ["sileo", "cydia", "zebra", "filza", "checkra1n", "taurine", "unc0ver", "chimera"]
+        let needles = ObfuscatedConstants.listApplicationsNeedles
         while let ent = readdir(dir) {
             var nameBuf = ent.pointee.d_name
             let name = withUnsafePointer(to: &nameBuf.0) { ptr in
@@ -301,7 +240,7 @@ struct FileDetector: Detector {
 }
 
 private struct SystemConfigDetector: Detector {
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)
         return .empty
 #else
@@ -343,13 +282,7 @@ private struct SystemConfigDetector: Detector {
     }
 
     private func checkSystemFileReadability() -> Bool {
-        let paths = [
-            "/etc/fstab",
-            "/etc/hosts",
-            "/etc/apt/sources.list",
-            "/private/etc/fstab",
-            "/private/etc/hosts",
-        ]
+        let paths = ObfuscatedConstants.systemConfigPaths
 
         for path in paths {
             if DualPathValidator.validateFileStat(path: path).exists {
@@ -363,19 +296,12 @@ private struct SystemConfigDetector: Detector {
     }
 
     private func checkHostsFile() -> Bool {
-        let hostsPath = "/etc/hosts"
+        let hostsPath = ObfuscatedConstants.hostsPath
         guard let hosts = try? String(contentsOfFile: hostsPath, encoding: .utf8), !hosts.isEmpty else {
             return false
         }
 
-        let suspiciousEntries = [
-            "127.0.0.1 ocsp",
-            "127.0.0.1 ocsp2",
-            "127.0.0.1 *.apple.com",
-            "adbconnect",
-            "cydia",
-            "sileo",
-        ]
+        let suspiciousEntries = ObfuscatedConstants.suspiciousHostsEntries
 
         for entry in suspiciousEntries {
             if hosts.range(of: entry, options: .caseInsensitive) != nil {
@@ -391,18 +317,12 @@ private struct SystemConfigDetector: Detector {
     }
 
     private func checkFstabConfiguration() -> Bool {
-        let fstabPath = "/etc/fstab"
+        let fstabPath = ObfuscatedConstants.fstabPath
         guard let fstab = try? String(contentsOfFile: fstabPath, encoding: .utf8), !fstab.isEmpty else {
             return false
         }
 
-        let suspiciousMounts = [
-            "/var",
-            "/Applications",
-            "/Library/MobileSubstrate",
-            "rw",
-            "nodev",
-        ]
+        let suspiciousMounts = ObfuscatedConstants.suspiciousFstabMounts
 
         for pattern in suspiciousMounts where fstab.contains(pattern) {
             return true
@@ -418,21 +338,13 @@ private struct SystemConfigDetector: Detector {
     }
 
     private func checkAPTConfiguration() -> Bool {
-        let aptPaths = [
-            "/etc/apt",
-            "/etc/apt/sources.list",
-            "/etc/apt/sources.list.d",
-            "/var/lib/apt",
-            "/var/cache/apt",
-            "/User/Library/apt",
-        ]
-
-        for path in aptPaths {
+        for path in ObfuscatedConstants.aptPaths {
             if DualPathValidator.validateFileStat(path: path).exists { return true }
         }
 
-        if let sourcesList = try? String(contentsOfFile: "/etc/apt/sources.list", encoding: .utf8), !sourcesList.isEmpty {
-            let needles = ["cydia", "bigboss", "modmyi"]
+        let sourcesPath = ObfuscatedConstants.aptSourcesListPath
+        if let sourcesList = try? String(contentsOfFile: sourcesPath, encoding: .utf8), !sourcesList.isEmpty {
+            let needles = ObfuscatedConstants.aptRepoNeedles
             if needles.contains(where: { sourcesList.range(of: $0, options: .caseInsensitive) != nil }) {
                 return true
             }

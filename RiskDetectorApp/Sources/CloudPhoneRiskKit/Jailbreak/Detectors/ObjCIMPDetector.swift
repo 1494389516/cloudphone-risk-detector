@@ -30,7 +30,7 @@ struct ObjCIMPDetector: Detector {
         "hook",
     ]
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
         var targets: [Target] = []
 
         if let fm = NSClassFromString("NSFileManager") {

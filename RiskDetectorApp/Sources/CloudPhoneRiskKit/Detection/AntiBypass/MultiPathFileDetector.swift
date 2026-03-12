@@ -18,7 +18,7 @@ struct MultiPathFileDetector: Detector {
         let hookMethods: [String]
     }
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
         var score: Double = 0
         var methods: [String] = []
 

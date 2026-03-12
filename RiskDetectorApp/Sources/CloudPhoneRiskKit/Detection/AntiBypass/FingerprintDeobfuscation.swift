@@ -45,7 +45,7 @@ struct FingerprintDeobfuscation: Detector {
             SecItemAdd(addQuery as CFDictionary, nil)
         }
     }
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
         var score: Double = 0
         var methods: [String] = []
 

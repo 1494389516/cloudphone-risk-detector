@@ -60,7 +60,7 @@ struct HookDetector: Detector {
         "hook",
     ]
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
         var score: Double = 0
         var methods: [String] = []
 
@@ -89,27 +89,27 @@ struct HookDetector: Detector {
         }
 
         // Advanced checks
-        let ptr = PointerValidationDetector().detect()
+        let ptr = try PointerValidationDetector().detect()
         score += ptr.score
         methods.append(contentsOf: ptr.methods)
 
-        let fw = HookFrameworkSymbolDetector().detect()
+        let fw = try HookFrameworkSymbolDetector().detect()
         score += fw.score
         methods.append(contentsOf: fw.methods)
 
-        let prologue = PrologueBranchDetector().detect()
+        let prologue = try PrologueBranchDetector().detect()
         score += prologue.score
         methods.append(contentsOf: prologue.methods)
 
-        let fishhook = IndirectSymbolPointerDetector().detect()
+        let fishhook = try IndirectSymbolPointerDetector().detect()
         score += fishhook.score
         methods.append(contentsOf: fishhook.methods)
 
-        let objc = ObjCIMPDetector().detect()
+        let objc = try ObjCIMPDetector().detect()
         score += objc.score
         methods.append(contentsOf: objc.methods)
 
-        let meta = ObjCMetadataDetector().detect()
+        let meta = try ObjCMetadataDetector().detect()
         score += meta.score
         methods.append(contentsOf: meta.methods)
 
@@ -144,7 +144,7 @@ struct HookDetector: Detector {
 }
 
 private struct ObjCMetadataDetector: Detector {
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
         var score: Double = 0
         var methods: [String] = []
 

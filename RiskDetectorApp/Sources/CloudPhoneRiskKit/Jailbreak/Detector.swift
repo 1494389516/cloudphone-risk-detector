@@ -7,7 +7,7 @@ public protocol Detector {
 
     /// 执行检测
     /// - Returns: 检测结果（分数 + 命中方法）
-    func detect() -> DetectorResult
+    func detect() throws -> DetectorResult
 }
 
 /*

@@ -24,7 +24,7 @@ struct MemoryIntegrityChecker: Detector {
         ("objc_msgSend", 12),
     ]
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["unavailable_simulator"])
 #else

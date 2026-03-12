@@ -44,7 +44,7 @@ struct ObjCSwizzleDetector: Detector {
         return checks
     }
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
         #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["unavailable_simulator"])
         #else
@@ -133,13 +133,13 @@ struct ObjCSwizzleDetector: Detector {
     /// dereferencing PAC-signed pointers (which would cause EXC_BAD_ACCESS on A12+).
     private func safeReadFirstInstruction(at addr: UnsafeRawPointer) -> UInt32? {
         var buf: UInt32 = 0
-        var outSize: mach_vm_size_t = 0
+        var outSize: vm_size_t = 0
         let kr = withUnsafeMutablePointer(to: &buf) { ptr in
-            mach_vm_read_overwrite(
+            vm_read_overwrite(
                 mach_task_self_,
-                mach_vm_address_t(UInt(bitPattern: addr)),
-                mach_vm_size_t(MemoryLayout<UInt32>.size),
-                mach_vm_address_t(UInt(bitPattern: ptr)),
+                vm_address_t(UInt(bitPattern: addr)),
+                vm_size_t(MemoryLayout<UInt32>.size),
+                vm_address_t(UInt(bitPattern: ptr)),
                 &outSize
             )
         }
@@ -196,8 +196,8 @@ struct ObjCSwizzleDetector: Detector {
 // MARK: - RiskSignal 转换
 
 extension ObjCSwizzleDetector {
-    func asSignals() -> [RiskSignal] {
-        let result = detect()
+    func asSignals() throws -> [RiskSignal] {
+        let result = try detect()
         guard result.score > 0 else { return [] }
 
         var signals: [RiskSignal] = []

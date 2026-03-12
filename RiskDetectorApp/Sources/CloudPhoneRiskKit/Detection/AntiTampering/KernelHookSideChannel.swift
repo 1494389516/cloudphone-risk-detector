@@ -39,7 +39,7 @@ struct KernelHookSideChannel: Detector {
         return TimingStats(median: median, p95: p95, stddev: stddev)
     }
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["kernel_hook_sc:unavailable_simulator"])
 #else
@@ -236,8 +236,8 @@ struct KernelHookSideChannel: Detector {
 // MARK: - Signal Conversion
 
 extension KernelHookSideChannel {
-    func asSignals() -> [RiskSignal] {
-        let result = detect()
+    func asSignals() throws -> [RiskSignal] {
+        let result = try detect()
         guard result.score > 0 else { return [] }
 
         var signals: [RiskSignal] = []

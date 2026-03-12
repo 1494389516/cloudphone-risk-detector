@@ -14,7 +14,7 @@ import CoreMotion
 /// 4. 交叉验证：加速度计/陀螺仪/磁力计的物理耦合关系在回放中可能断裂
 struct SensorReplayDetector: Detector {
     
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
         #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["unavailable_simulator"])
         #else
@@ -168,8 +168,8 @@ struct SensorReplayDetector: Detector {
 }
 
 extension SensorReplayDetector {
-    func asSignals() -> [RiskSignal] {
-        let result = detect()
+    func asSignals() throws -> [RiskSignal] {
+        let result = try detect()
         guard result.score > 0 else { return [] }
         
         var signals: [RiskSignal] = []

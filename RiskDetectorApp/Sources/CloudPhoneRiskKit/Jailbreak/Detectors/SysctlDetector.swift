@@ -2,33 +2,15 @@ import Darwin
 import Foundation
 
 struct SysctlDetector: Detector {
-    let suspiciousProcessNeedles: [String] = [
-        "cydia",
-        "sileo",
-        "filza",
-        "sshd",
-        "dropbear",
-        "frida",
-        "debugserver",
-        "cycript",
-        "substrated",
-        "substitute",
-        "ellekit",
-        "apt",
-        "dpkg",
-    ]
+    private var suspiciousProcessNeedles: [String] {
+        ObfuscatedConstants.sysctlSuspiciousProcessNeedles
+    }
 
-    let suspiciousParentNeedles: [String] = [
-        "cydia",
-        "sileo",
-        "filza",
-        "frida",
-        "debugserver",
-        "lldb",
-        "gdb",
-    ]
+    private var suspiciousParentNeedles: [String] {
+        ObfuscatedConstants.sysctlSuspiciousParentNeedles
+    }
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)
         // Simulator behavior differs from real iOS devices and can false-positive.
         return .empty

@@ -20,7 +20,7 @@ struct AntiTamperingDetector: Detector {
         "OS_ACTIVITY_DT_MODE",
     ]
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["unavailable_simulator"])
 #else

@@ -9,7 +9,7 @@ import MachO
 /// 2. Mach 异常端口劫持 — 检测 Frida 劫持的异常处理端口
 struct FridaThreadDetector: Detector {
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["unavailable_simulator"])
 #else
@@ -168,8 +168,8 @@ struct FridaThreadDetector: Detector {
 // MARK: - RiskSignal 转换
 
 extension FridaThreadDetector {
-    func asSignals() -> [RiskSignal] {
-        let result = detect()
+    func asSignals() throws -> [RiskSignal] {
+        let result = try detect()
         guard result.score > 0 else { return [] }
 
         var signals: [RiskSignal] = []

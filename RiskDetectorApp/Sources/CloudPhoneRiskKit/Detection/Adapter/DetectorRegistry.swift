@@ -139,7 +139,12 @@ public final class DetectorRegistry {
         guard let detector = createDetector(type: type) else {
             return .empty
         }
-        return detector.detect()
+        do {
+            return try detector.detect()
+        } catch {
+            Logger.log("DetectorRegistry.detect(\(type.rawValue)) threw: \(error)")
+            return DetectorResult(score: 80, methods: ["detector_anomaly_\(type.rawValue)"])
+        }
     }
     
     /// 执行指定分组的所有检测

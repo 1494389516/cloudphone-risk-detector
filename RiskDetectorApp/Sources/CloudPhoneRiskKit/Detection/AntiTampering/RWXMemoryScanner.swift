@@ -15,7 +15,7 @@ struct RWXMemoryScanner: Detector {
         var isAnonymousRX: Bool
     }
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["rwx:unavailable_simulator"])
 #else

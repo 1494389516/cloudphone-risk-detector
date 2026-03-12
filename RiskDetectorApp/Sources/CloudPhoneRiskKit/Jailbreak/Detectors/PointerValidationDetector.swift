@@ -42,7 +42,7 @@ struct PointerValidationDetector: Detector {
         "hook",
     ]
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
         var score: Double = 0
         var methods: [String] = []
 

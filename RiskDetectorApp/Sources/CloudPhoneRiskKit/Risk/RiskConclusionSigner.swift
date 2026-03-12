@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import Security
 
@@ -52,16 +53,18 @@ public enum DeviceKeyDeriver {
     ) -> SymmetricKey {
         let keychainSalt = KeychainSalt.shared.getOrCreate()
         let combined = "\(deviceID)|\(hardwareMachine)|\(kernelVersion)|\(keychainSalt)"
-        let combinedData = Data(combined.utf8)
-        let hash = SHA256.hash(data: combinedData)
-        let inputKeyMaterial = SymmetricKey(data: Data(hash))
-        let derivedKey = HKDF<SHA256>.deriveKey(
-            inputKeyMaterial: inputKeyMaterial,
-            salt: salt ?? Data(),
-            info: info,
-            outputByteCount: 32
-        )
-        return derivedKey
+        return SecureScope.withSecureValue(combined) { str in
+            var dataBytes = Array(str.utf8)
+            defer { secureZeroBytes(&dataBytes) }
+            let hash = SHA256.hash(data: Data(dataBytes))
+            let inputKeyMaterial = SymmetricKey(data: Data(hash))
+            return HKDF<SHA256>.deriveKey(
+                inputKeyMaterial: inputKeyMaterial,
+                salt: salt ?? Data(),
+                info: info,
+                outputByteCount: 32
+            )
+        }
     }
 }
 
@@ -87,7 +90,7 @@ private final class KeychainSalt {
             status = SecRandomCopyBytes(kSecRandomDefault, saltLength, &bytes)
         }
         if status != errSecSuccess {
-            let fallback = "\(UUID().uuidString)\(ProcessInfo.processInfo.systemUptime)"
+            let fallback = "\(UUID().uuidString)\(mach_absolute_time())"
             let hash = SHA256.hash(data: Data(fallback.utf8))
             bytes = Array(hash.prefix(saltLength))
         }

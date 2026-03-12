@@ -18,7 +18,7 @@ struct RandomizedDetection: Detector {
         self.config = config
     }
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
         var score: Double = 0
         var methods: [String] = []
         var rng = SeededRandomGenerator(seed: config.seed ?? UInt64(Date().timeIntervalSince1970.bitPattern))

@@ -8,7 +8,7 @@ import Foundation
 /// 2. **Timing side-channel** — detect instrumentation latency from Frida's Interceptor
 struct FridaSocketDetector: Detector {
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["unavailable_simulator"])
 #else
@@ -211,8 +211,8 @@ struct FridaSocketDetector: Detector {
 // MARK: - RiskSignal Conversion
 
 extension FridaSocketDetector {
-    func asSignals() -> [RiskSignal] {
-        let result = detect()
+    func asSignals() throws -> [RiskSignal] {
+        let result = try detect()
         guard result.score > 0 else { return [] }
 
         var signals: [RiskSignal] = []

@@ -20,7 +20,7 @@ struct CodeSignatureValidator: Detector {
         "DYLD_FORCE_FLAT_NAMESPACE",
     ]
 
-    func detect() -> DetectorResult {
+    func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["unavailable_simulator"])
 #else

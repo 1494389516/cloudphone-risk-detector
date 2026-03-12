@@ -25,8 +25,8 @@ import Foundation
 final class JailbreakEngine {
     /// 置信度上限
     private static let confidenceCap: Double = 100
-    /// 检测器异常（负分/抛异常）时的惩罚分
-    private static let detectorAnomalyPenalty: Double = 5
+    /// 检测器异常（负分/抛异常）时的惩罚分（高危权重，避免静默通过）
+    private static let detectorAnomalyPenalty: Double = 80
 
     func detect(config: JailbreakConfig) -> DetectionResult {
 #if targetEnvironment(simulator)
@@ -61,29 +61,29 @@ final class JailbreakEngine {
         Logger.log("jailbreak: start(threshold=\(config.threshold))")
 
         if config.enableFileDetect {
-            accumulateDetector("file", &score, &methods) { FileDetector().detect() }
+            accumulateDetector("file", &score, &methods) { try FileDetector().detect() }
         }
 
         if config.enableDyldDetect {
-            accumulateDetector("dyld", &score, &methods) { DyldDetector().detect() }
+            accumulateDetector("dyld", &score, &methods) { try DyldDetector().detect() }
         }
 
         if config.enableEnvDetect {
-            accumulateDetector("env", &score, &methods) { EnvDetector().detect() }
+            accumulateDetector("env", &score, &methods) { try EnvDetector().detect() }
         }
 
         if config.enableSysctlDetect {
-            accumulateDetector("sysctl", &score, &methods) { SysctlDetector().detect() }
+            accumulateDetector("sysctl", &score, &methods) { try SysctlDetector().detect() }
         }
 
         #if canImport(UIKit)
         if config.enableSchemeDetect {
-            accumulateDetector("scheme", &score, &methods) { SchemeDetector().detect() }
+            accumulateDetector("scheme", &score, &methods) { try SchemeDetector().detect() }
         }
         #endif
 
         if config.enableHookDetect {
-            accumulateDetector("hook", &score, &methods) { HookDetector().detect() }
+            accumulateDetector("hook", &score, &methods) { try HookDetector().detect() }
         }
 
         methods = Array(Set(methods)).sorted()

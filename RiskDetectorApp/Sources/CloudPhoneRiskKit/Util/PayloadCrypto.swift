@@ -69,16 +69,20 @@ enum PayloadCrypto {
         lock.lock()
         defer { lock.unlock() }
 
-        if let data = try readKey() {
-            return SymmetricKey(data: data)
+        if var keyData = try readKey() {
+            let key = SymmetricKey(data: keyData)
+            secureZeroData(&keyData)
+            return key
         }
-        var bytes = [UInt8](repeating: 0, count: 32)
-        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        guard status == errSecSuccess else {
-            throw NSError(domain: "CloudPhoneRiskKit", code: 3, userInfo: [NSLocalizedDescriptionKey: "SecRandomCopyBytes failed (\(status))"])
+        var secureData: Data?
+        _ = SecureBuffer(size: 32).use { ptr in
+            let status = SecRandomCopyBytes(kSecRandomDefault, 32, ptr)
+            guard status == errSecSuccess else { return }
+            secureData = Data(UnsafeRawBufferPointer(start: ptr, count: 32))
         }
-        let data = Data(bytes)
-        bzero(&bytes, bytes.count)
+        guard let data = secureData else {
+            throw NSError(domain: "CloudPhoneRiskKit", code: 3, userInfo: [NSLocalizedDescriptionKey: "SecRandomCopyBytes failed"])
+        }
         if let existing = try saveKey(data) {
             return SymmetricKey(data: existing)
         }
