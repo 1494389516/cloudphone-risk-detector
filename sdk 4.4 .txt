@@ -1,0 +1,164 @@
+CloudPhoneRiskKit 4.4 核心更新列表
+1. 硬件级信任根 (Hardware Trust Root)
+目标：终结模拟器、魔改内核与协议级伪造（重放/脱机跑数据）。
+
+[4.4.1] Apple App Attest 签名绑定：
+弃用纯软件的 HMAC-SHA256 作为顶层信封签名，将其降级为数据完整性校验。
+接入 DeviceCheck 框架，在 SDK 初始化时生成依赖于 Secure Enclave (安全飞地) 的硬件密钥对。
+将 CPRiskReport 的核心摘要（Hash）送入 Secure Enclave 进行硬件签名（生成 attestation / assertion 对象）。让黑产即使 Dump 了全部内存，也无法伪造风控报告的加密签名（因为私钥被焊死在芯片内）。
+[4.4.2] 硬件支持降级与异常告警：
+若 DCAppAttestService.shared.isSupported 为 false（例如跑在黑苹果、QEMU 虚拟机、或强行修改了系统底层的主板），直接作为最高权重的硬信号 hardware_trust_unsupported 报警。
+2. 执行流栈回溯 (Call Stack Unwinding & CFI)
+目标：降维打击 ROP/JOP 链、无痕调试及基于系统库的跳转劫持。
+
+[4.4.3] 关键节点帧指针 ($fp) 扫栈：
+在核心加解密（如 PayloadCrypto）、关键检测逻辑（如 evaluate()）、以及抛出高危 tampered 信号的瞬间，触发轻量级栈回溯（Call Stack Unwinding）。
+利用 __builtin_frame_address 或裸读寄存器遍历当前线程的调用栈，提取所有返回地址 (return address)。
+[4.4.4] 返回地址镜像合法性校验：
+将提取到的堆栈返回地址交给 dladdr（配合 RTLD_NEXT 防 Hook）验证。
+核心判定：如果调用链中存在地址不在主 App 的 __TEXT 段内、不在已知的系统库内，或者竟然落在了匿名内存/未知内存中，直接判定为恶意跳转注入，抛出 rop_chain_detected 或 malicious_call_stack（一击毙命）。
+3. 探针致盲感知与基线期望 (Probe Blindness & Canary)
+目标：反杀黑灰产“故意返回权限拒绝或空数据”的隐身衣策略（Fail-Open 漏洞）。
+
+[4.4.5] 金丝雀文件系统探针 (Canary File Probe)：
+在检查越狱文件前，强制 stat 绝对存在的系统文件（如 /usr/lib/dyld 或 /System/Library/CoreServices/SystemVersion.plist）。
+如果连金丝雀文件都返回 ENOENT 或 EPERM，说明底层 syscall 遭到无差别拦截/屏蔽，抛出 syscall_blinded_canary_dead。
+[4.4.6] 权限拒绝 (EPERM) 异常化处理：
+扫描受保护目录时，严格区分错误码。若在 iOS 16 下理应返回 ENOENT 的路径却返回了 EPERM 或 EACCES，不作为“安全”处理，而是判定为内核级沙盒策略被篡改，抛出 suspicious_permission_denied。
+[4.4.7] 动态系统版本基线自适应：
+引入 ExpectedBaseline 状态机。针对不同 iOS 版本（如 iOS 15 vs iOS 18）设定不同的探测期望值。在低版本上返回空数据（如 sysctl 进程列表为空）视为被 Hook，高版本则予以放行，防止黑产利用高版本特性在低版本上伪装安全。
+4. 其他底层补强 (Misc Deep Hardening)
+[4.4.8] PAC (Pointer Authentication) 旁路支持：
+针对 A12+ 芯片，在进行 IMP 机器码读取前，使用 ptrauth_strip (如果有 C 桥接) 剥离签名位，防止在高版本 iOS 上因强读被签名的指针导致 EXC_BAD_ACCESS 崩溃。
+[4.4.9] 蜜罐内存诱饵 (Honeypot Memory)：
+申请一块特殊的堆内存放入虚假的“AES Key”和“Device ID”。通过 mprotect 设置为无读权限。一旦黑客使用内存 Dump 工具强行越界扫描该区域，立刻触发 Mach 异常被 SDK 捕获，作为逆向分析证据 memory_dump_attempt_detected。
+原理与推导（为何这 4 点能组成完美的闭环？）
+在 4.4 版本中，这四大特性形成了一个极度绝望的“俄罗斯套娃”防线：
+
+黑产思路：我写个 Python 脚本，直接发包给风控接口，说我是干净设备。 4.4 防线：不行，没用。因为 [4.4.1] 要求包里必须有苹果硬件芯片签发的 Token。
+黑产思路：那我只能在真机上跑你的 SDK，但我用 Frida 把你的检测逻辑 Hook 掉。 4.4 防线：不行，没用。因为你的 Hook 必定会改变执行流。SDK 会在 [4.4.3] 查调用栈，发现你安插的 ROP 链，一击毙命。
+黑产思路：那我不用 Frida 改内存了。我写个内核驱动，把你想查的文件和进程全屏蔽了，让你啥也查不到。 4.4 防线：不行，没用。因为 [4.4.5] 的金丝雀探针发现连正常的系统文件都查不到了，直接判定你开启了“系统致盲”外挂。
+黑产思路：我急了，我直接开一个扫描器把你内存里的运行数据 Dump 出来慢慢研究！ 4.4 防线：恭喜，你踩中了 [4.4.9] 的蜜罐，触发异常，你的调试器和辅助工具直接暴露。
+下一步建议：
+
+
+
+
+狂野推演：CloudPhoneRiskKit 未来的四次升维
+SDK 4.4：硬件信任与执行流锁定（Absolute Trust 绝对信任）
+（这是我们之前聊过的，将防线从软件层下沉到硬件和 CPU 架构层）
+
+核心武器 1：DeviceCheck / App Attest 硬件签名。彻底废掉软件层面的 HMAC 伪造，让每一份风控报告都带有 Secure Enclave（安全飞地）的不可伪造印记。如果设备是黑苹果或 QEMU 模拟器，直接在硬件层被拒。
+核心武器 2：Call Stack Unwinding（堆栈回溯）。在关键节点裸读 $fp（帧指针），扫描整个调用链。如果返回地址落在匿名内存或者非系统库区域，直接判定 ROP/JOP 链注入。
+核心武器 3：Canary Probe（金丝雀探针）。防范黑产的“故意致盲”。如果连最基础的系统文件（如 /usr/lib/dyld）都 stat 失败，直接判定内核沙盒被恶意接管。
+SDK 4.5：动态混淆与自毁机制（Dark Forest 黑暗森林）
+（防守方开始主动隐藏自己，并对攻击者进行反制）
+
+核心武器 1：OLLVM / VMP（控制流平坦化与虚拟化）。这是你之前提过的。把核心的检测逻辑（如双路时钟对比、fsid 校验）编译成私有虚拟机的字节码。让 IDA Pro 里的控制流变成一团乱麻，彻底摧毁黑产的静态分析能力。
+核心武器 2：Honeypot Memory（内存蜜罐）。在堆上故意分配一块带有“AES Key”特征的内存，但设为不可读（PROT_NONE）。黑产用 Frida 或内存 Dump 工具一扫，直接触发 Mach 异常（EXC_BAD_ACCESS），SDK 捕获异常后直接将黑产工具的特征上报。
+核心武器 3：Logic Bomb（逻辑炸弹/焦土战术）。发现被深度 Hook 时，不立即报错，而是进入“死循环加密”或“无限分配内存”模式，直接把黑产工作室的云手机跑到发烫、死机，从物理层面增加他们的运营成本。
+SDK 4.6：行为生物特征与环境共鸣（Behavioral Resonance 行为共鸣）
+（放弃静态特征，转向无法伪造的生物学和物理学特征）
+
+核心武器 1：Touch/Motion 物理引擎校验。黑产用脚本模拟点击（如触动精灵），其坐标和加速度往往是线性的。SDK 引入微型物理引擎，校验触摸轨迹是否符合人类手指的“贝塞尔曲线”和“加速度阻尼”。不符合人类生物学特征的，直接判定为机器。
+核心武器 2：Sensor Noise Entropy（传感器底噪熵值）。真实的陀螺仪和加速计在静止时也有微小的物理热噪声。如果黑产为了掩盖云手机特征而 Hook 了传感器，返回固定值，其信息熵将趋近于 0。SDK 通过计算传感器数据的香农熵，瞬间识破“死寂的传感器”。
+核心武器 3：Network/Time 相对论。如果设备时间被篡改，它与真实网络时间（NTP）的流逝速度会产生夹角。通过对比本地 systemUptime 和网络请求的 RTT（往返时间），抓出时间刺客。
+SDK 4.7：AI 驱动的动态多态引擎（Polymorphic Engine 多态引擎）
+（SDK 成为一个活的生命体，每次下发都不一样）
+
+核心武器 1：AST 级动态变异。配合服务端的编译集群，SDK 每次被 App 集成时，其内部的类名、方法名、检测顺序、甚至检测逻辑的 AST（抽象语法树）结构都会发生随机变异。黑产昨天写好的 Hook 脚本，今天 App 一更新就全废了。
+核心武器 2：Remote Execution Payload（安全沙盒内的动态下发）。将某些极高危的检测逻辑编译成 WebAssembly 或自定义的微型字节码，通过加密通道实时下发到客户端的沙盒虚拟机中执行。黑产连静态分析的机会都没有，因为检测代码在磁盘上根本不存在。
+
+
+补充建议：4.4 版本的 gRPC / JSON 上报封装
+目标：在不推翻现有 JSON 报告与安全信封模型的前提下，引入更强的传输治理、头部强类型约束与服务端验签可观测性。
+
+[4.4.10] 外层 gRPC，内层 JSON Payload：
+不建议把整个 CPRiskReport / RiskReportDTO 一次性硬改成纯 Protobuf。当前 SDK 的风险报告天然适合 JSON 承载，因为字段层次深、版本演进快、联调和落盘观察也依赖 JSON。
+最佳方案是：gRPC 只负责传输层，JSON 继续作为业务载荷层，安全签名继续围绕 canonical JSON 进行。也就是：
+gRPC = 传输层
+Envelope = 安全层
+JSON = 业务载荷层
+
+[4.4.11] 顶层信封头字段 Proto 化：
+不要把整个 Envelope 再序列化成一坨 JSON blob 塞进 gRPC。应当把最关键的安全头字段直接提到 Proto 顶层，便于网关层和服务端快速校验：
+- report_id
+- ts
+- nonce
+- session_token
+- sig_ver
+- key_id
+- field_mapping_version
+- signature
+- payload_json
+
+推荐请求结构：
+message UploadRiskReportRequest {
+  string app_id = 1;
+  string sdk_version = 2;
+  string report_id = 3;
+  int64 ts = 4;
+  string nonce = 5;
+  string session_token = 6;
+  string sig_ver = 7;
+  string key_id = 8;
+  string field_mapping_version = 9;
+  string device_id = 10;
+  string scene = 11;
+  bytes payload_json = 12;
+  string signature = 13;
+  bytes payload_sha256 = 14;
+}
+
+[4.4.12] 签名语义不要切换到 Proto Wire Bytes：
+签名不要直接对 Protobuf 二进制 wire bytes 做 HMAC，更不要对 pretty-printed JSON 做签名。继续沿用当前 Secure Envelope 的核心原则：
+sigVer | nonce | ts | sessionToken | reportId | keyId | fieldMappingVersion | canonicalPayloadJSON
+原因是 canonical JSON 更稳定、跨语言更好对齐、签名失败时也更容易排查。Proto wire bytes 在不同实现、字段缺省值、升级兼容阶段更容易引入隐性签名不一致。
+
+[4.4.13] 少量高价值索引字段外提：
+除了安全信封头字段，还建议把少量高价值索引字段从 JSON 内部同步外提到 gRPC 顶层，作为网关和服务端的快速索引键：
+- device_id
+- scene
+- sdk_version
+- app_id
+
+注意：外提不是为了替代 JSON 内原字段，而是为了让网关层在不展开整包 JSON 的情况下就能做：
+- 限流
+- 采样
+- 路由
+- 风险审计
+- 版本灰度
+
+[4.4.14] 服务端验签顺序要固定：
+服务端处理顺序不能是“先解析业务，再顺手验签”，而必须是：
+1. 校验 ts 是否在允许时间窗内
+2. 校验 nonce 是否首次出现（防重放）
+3. 校验 session_token 是否有效
+4. 重建 canonical payload JSON
+5. 校验 signature
+6. 校验顶层 device_id / scene 与 payload 内部字段是否一致
+7. 最后才进入风险数据入库、聚合和策略处理
+
+这一步的意义在于：让“包能到服务端”不等于“包值得被信任”。
+
+[4.4.15] payload_json 用 bytes，不用 string：
+gRPC 里的 payload_json 推荐使用 bytes，而不是 string。
+原因：
+- 避免 UTF-8 / 转义 / 空白字符差异影响签名
+- 方便后续做压缩、加密、字段混淆扩展
+- 更贴合当前 SDK 内部 payload: Data 的设计
+
+[4.4.16] 版本演进策略采用“核心稳定字段 Proto 化 + 扩展字段 JSON 化”：
+4.4 不建议一次性全面 Proto 化。正确路线应是：
+第一阶段：保持整份风险报告为 JSON，先把安全头和索引字段放到 gRPC 顶层。
+第二阶段：当某些字段已经长期稳定且服务端高度依赖时，再考虑把它们从 JSON 中抽出来做正式 Protobuf 字段。
+第三阶段：保留 extra_json / payload_json 作为实验字段、灰度字段和快速演进字段容器。
+
+这样既保住了当前 SDK 的灵活性，又为后续协议治理留出了升级空间。
+
+[4.4.17] 一句话原则：
+不要把 gRPC 当成“新的加密壳”，而要把它当成“强类型传输头”；不要试图消灭 JSON，而要让 JSON 待在正确的位置；不要因为用了 gRPC 就放松服务端校验，真正的壁垒仍然是“canonical payload + 上下文绑定 + 防重放 + 服务端一致性验证”。
+
+
+
+云手机检测的时候还要关注app store换号的问题 keychain存储要注意这点

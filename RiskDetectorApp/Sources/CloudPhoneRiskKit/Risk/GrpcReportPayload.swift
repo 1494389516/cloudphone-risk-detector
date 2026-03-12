@@ -8,7 +8,7 @@ import Foundation
 ///
 /// ## payload_json 与 payload_sha256
 /// - `payload_json` 使用 bytes：JSON 传输时以 base64 编码；避免 UTF-8/转义/空白差异影响签名。
-/// - `payload_sha256` 为 payload 的 SHA-256 摘要，便于服务端快速校验完整性。
+/// - `payload_sha256` 为 `SHA256(nonce|ts|reportId|payload)` 的上下文绑定摘要，防止跨请求嫁接。
 ///
 /// ## 服务端验签顺序（必须严格按序执行）
 /// 1. 校验 `ts` 是否在允许时间窗内
@@ -114,8 +114,10 @@ extension ReportEnvelope {
     /// - Returns: 与 proto 字段一一对应的 `GrpcReportPayload`
     public func toGrpcCompatiblePayload(context: GrpcReportContext? = nil) -> GrpcReportPayload {
         let ctx = context ?? GrpcReportContext()
-        let sha256 = SHA256.hash(data: payload)
-        let payloadSha256 = Data(sha256)
+        var hasher = SHA256()
+        hasher.update(data: Data("\(nonce)|\(ts)|\(reportId)|".utf8))
+        hasher.update(data: payload)
+        let payloadSha256 = Data(hasher.finalize())
 
         return GrpcReportPayload(
             appId: ctx.appId,

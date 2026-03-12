@@ -14,6 +14,11 @@ public enum AppAttestSigner {
         DCAppAttestService.shared.isSupported
     }
 
+    /// 获取或创建 attestation key ID（不生成断言）
+    public static func resolveKeyId() async throws -> String {
+        try await getOrCreateKeyId()
+    }
+
     /// 对 payload 数据生成硬件断言（内部计算 SHA256）
     /// - Parameter payloadData: 待签名数据（通常为 canonical payload）
     /// - Returns: (keyId, assertionData)
@@ -59,7 +64,9 @@ public enum AppAttestSigner {
         let keyId = try await DCAppAttestService.shared.generateKey()
         let clientDataHash = SHA256.hash(data: attestationChallenge)
         _ = try await DCAppAttestService.shared.attestKey(keyId, clientDataHash: Data(clientDataHash))
-        saveKeyId(keyId)
+        if let winner = saveKeyId(keyId) {
+            return winner
+        }
         return keyId
     }
 
@@ -81,19 +88,42 @@ public enum AppAttestSigner {
         return str
     }
 
-    private static func saveKeyId(_ keyId: String) {
+    /// Add-only save: returns nil on success, or the existing keyId if another caller won the race.
+    @discardableResult
+    private static func saveKeyId(_ keyId: String) -> String? {
         lock.lock()
         defer { lock.unlock() }
-        guard let data = keyId.data(using: .utf8) else { return }
-        let query: [String: Any] = [
+        guard let data = keyId.data(using: .utf8) else { return nil }
+        let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: keychainAccount,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
             kSecValueData as String: data,
         ]
-        SecItemDelete(query as CFDictionary)
-        SecItemAdd(query as CFDictionary, nil)
+        let status = SecItemAdd(addQuery as CFDictionary, nil)
+        if status == errSecSuccess { return nil }
+        if status == errSecDuplicateItem, let existing = loadKeyIdLocked() {
+            return existing
+        }
+        return nil
+    }
+
+    /// Read keyId while the caller already holds `lock`.
+    private static func loadKeyIdLocked() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess, let data = item as? Data, let str = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return str
     }
 
     // MARK: - Error

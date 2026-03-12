@@ -495,7 +495,8 @@ public final class CPRiskKit: NSObject {
         report: CPRiskReport,
         sessionToken: String,
         signingKey: String,
-        keyId: String = "k1"
+        keyId: String = "k1",
+        attestationKeyId: String? = nil
     ) throws -> ReportEnvelope {
         let remoteConfig = currentRemoteConfig()
         let hardening = remoteConfig?.securityHardening ?? .default
@@ -531,6 +532,7 @@ public final class CPRiskKit: NSObject {
             signingKey: signingKey,
             keyId: keyId,
             fieldMapping: mapping,
+            attestationKeyId: attestationKeyId,
             config: envelopeConfig
         )
     }
@@ -621,27 +623,40 @@ public final class CPRiskKit: NSObject {
         signingKey: String,
         keyId: String = "k1"
     ) async throws -> ReportEnvelope {
-        var envelope = try buildSecureReportEnvelope(
-            report: report,
-            sessionToken: sessionToken,
-            signingKey: signingKey,
-            keyId: keyId
-        )
         guard AppAttestSigner.isSupported else {
-            return envelope
+            return try buildSecureReportEnvelope(
+                report: report,
+                sessionToken: sessionToken,
+                signingKey: signingKey,
+                keyId: keyId
+            )
         }
         do {
+            let attestKeyId = try await AppAttestSigner.resolveKeyId()
+            var envelope = try buildSecureReportEnvelope(
+                report: report,
+                sessionToken: sessionToken,
+                signingKey: signingKey,
+                keyId: keyId,
+                attestationKeyId: attestKeyId
+            )
             let canonicalPayload = try envelope.canonicalPayloadString()
             guard let payloadData = canonicalPayload.data(using: .utf8) else {
                 return envelope
             }
-            let (attestKeyId, assertion) = try await AppAttestSigner.generateAssertion(for: payloadData)
-            envelope = envelope.withAttestation(keyId: attestKeyId, assertion: assertion)
+            let (_, assertion) = try await AppAttestSigner.generateAssertion(for: payloadData)
+            envelope = envelope.withAttestation(attestationKeyId: attestKeyId, assertion: assertion)
             Logger.log("app_attest: envelope augmented with hardware assertion")
+            return envelope
         } catch {
             Logger.log("app_attest: failed to generate assertion, envelope without attestation: \(error.localizedDescription)")
+            return try buildSecureReportEnvelope(
+                report: report,
+                sessionToken: sessionToken,
+                signingKey: signingKey,
+                keyId: keyId
+            )
         }
-        return envelope
     }
 
     /// 异步生成报告（避免在主线程做重活）。

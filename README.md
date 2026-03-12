@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
-  <img src="https://img.shields.io/badge/SDK-4.4-FF3B30?style=for-the-badge" alt="SDK">
+  <img src="https://img.shields.io/badge/SDK-4.6-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
   <img src="https://img.shields.io/badge/License-Proprietary-8E8E93?style=for-the-badge" alt="License">
 </p>
@@ -45,6 +45,7 @@
 | **4.2** | **第四轮红队审计 + 信任根全面收紧** | 配置/策略双链 Release 禁 unverified fallback、安全地板扩展覆盖行为与越狱关键检测开关、DualPathValidator 接入核心 Detector、anti_tamper 结论消除分裂、基线首跑软信号化、deviceID 漂移修复、历史时钟回拨防御、CPRiskStore 暴露面收紧、EnvelopeSignature Release 强制 v2（8 项漏洞全修复） |
 | **4.3** | **第五轮红队审计 + 对抗降维打击** | 锁屏 Keychain ACL 撕裂死锁修复、ConfigCache 并发状态机锁绕过修复、内存 AES 密钥明文残影消除、时间跳跃重放绕过修复、线程级异常与硬件断点劫持检测、匿名内存隐写扫描、ObjC Inline Hook 跳板拦截、fsid 沙盒视图隔离探测、指令计数器时序侧信道双路校验、底层 SVC 0x80 原生系统调用接入（11 项极深层漏洞修复） |
 | **4.4** | **硬件信任根 + 执行流锁定 + 内存蜜罐反制** | Apple App Attest / Secure Enclave 硬件绑定签名、调用栈回溯 ROP/JOP 链检测、Syscall Canary 探针致盲感知、蜜罐内存页 SIGBUS 反 Dump、iOS 版本动态基线自适应、gRPC 传输层升级（7 项硬件级 + 执行流级深度加固） |
+| **4.6** | **第六轮红队审计 + 硬件信任根全链加固** | App Attest TOCTOU 竞态消除 + attestation 入签名域、CallStack RTLD_NEXT 双路 + vm_region 交叉校验、蜜罐三页分散 + handler/保护位自检、金丝雀 DualPath 双路 + 随机探针池、ExpectedBaseline sysctl 双路版本、payload_sha256 上下文绑定、PAC vm_read_overwrite 安全读取（12 项漏洞全修复） |
 
 ## 架构概览
 
@@ -170,6 +171,81 @@
 | `suspicious_permission_denied` | 30（软信号） | 保护路径返回 `EPERM`，结合 iOS 版本基线判定为可疑 |
 
 > **接入注意**：`AppAttestSigner` 需在 Xcode 工程 Capabilities 中开启 **App Attest**，并在 App Store Connect 完成 attestation key 注册；模拟器构建可安全跳过（自动降级为软信号）。`HoneypotMemoryDetector` 的 `SIGBUS` handler 会覆盖同信号的原有处理器，若业务代码本身有自定义 `SIGBUS` handler，请在接入前评估冲突风险。
+
+---
+
+## 4.6 新增能力 — 第六轮红队审计硬件信任根全链加固
+
+4.6 版本基于第六轮红队审计，针对 4.4 新增的硬件信任根、栈回溯、金丝雀探针、蜜罐内存、PAC 旁路、gRPC 封装六大模块进行深度安全审计，发现并修复 **12 个漏洞**（3 个 P0-Critical、5 个 P1-High、4 个 P2-Medium），将每项 4.4 能力从"可用"提升至"抗高级对手"水平。
+
+### 4.6 全链加固矩阵
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  4.6 硬件信任根全链加固矩阵                        │
+├──────────────┬──────────────┬──────────────┬────────────────────┤
+│  信任根加固   │  执行流纵深   │  蜜罐增强     │    探针与传输        │
+├──────────────┼──────────────┼──────────────┼────────────────────┤
+│ TOCTOU竞态   │ RTLD_NEXT双路 │ 三页分散布局  │ DualPath双路stat   │
+│ 消除(add-only)│ dladdr加固   │ handler完整性 │ 随机探针池(5选3)   │
+│ attestation  │ vm_region_64 │ 校验         │ 路径混淆拼接       │
+│ 入签名域     │ 交叉校验      │ vm_region保护 │ sysctl双路版本     │
+│ MITM剥离防护 │ 精确.framework│ 位自检        │ payload_sha256     │
+│              │ 路径匹配      │ 废弃API替换   │ 上下文绑定          │
+│              │ 动态信任镜像  │              │ PAC vm_read安全读  │
+│              │ 白名单收窄    │              │ 概率性栈校验       │
+└──────────────┴──────────────┴──────────────┴────────────────────┘
+```
+
+### 硬件信任根加固（P0-3 / P1-7）
+
+| 修复项 | 漏洞 | 修复方式 |
+|--------|------|----------|
+| **App Attest TOCTOU 竞态消除** | `getOrCreateKeyId()` 在 `await` 期间释放锁，并发调用可产生多个 keyId，但 Keychain 只保留最后一个，导致硬件信任根永久失效 | `saveKeyId` 改为 add-only（不做 `SecItemDelete`），`errSecDuplicateItem` 时回读赢家的 keyId，保证 Keychain 中只有一个有效密钥 |
+| **attestation 字段入签名域** | `attestationKeyId` 和 `attestationAssertion` 不在 HMAC 签名输入中，MITM 可剥离这两个字段而签名仍有效，彻底废掉硬件信任根 | 签名格式扩展为 `sigVer\|nonce\|ts\|sessionToken\|reportId\|keyId\|fmv\|attestationKeyId\|payload`，nil 时填空串 |
+
+### 执行流纵深加固（P0-1 / P1-4 / P2-10 / P2-12）
+
+| 修复项 | 漏洞 | 修复方式 |
+|--------|------|----------|
+| **CallStack RTLD_NEXT 双路** | `backtrace()` 和 `dladdr()` 均为 libc 函数，Inline Hook 可统一致盲 | 通过 `dlsym(RTLD_NEXT, ...)` 获取第二条路径，标准 vs RTLD_NEXT 结果比对，不一致判定 `dladdr_hook_detected` |
+| **vm_region_64 交叉校验** | `dladdr` 被 hook 后返回伪造路径，仅靠路径匹配无法发现匿名可执行内存 | 对 dladdr 失败或返回未知路径的地址，查询 `VM_REGION_BASIC_INFO_64` + `VM_REGION_EXTENDED_INFO`，匿名 + 可执行 → 判定恶意 |
+| **白名单精确匹配** | `/System/Library/PrivateFrameworks/` 过于宽泛，`JavaScriptCore` 可被 Frida V8 利用 | 所有前缀改为 `.framework/` 后缀精确匹配；移除 JSC/WebKit；PrivateFrameworks 缩窄为具体框架 |
+| **动态信任镜像快照** | 仅硬编码前缀，不检查运行时实际加载的镜像 | SDK 初始化时通过 `_dyld_image_count` / `_dyld_get_image_name` 构建快照集合，后续优先信任快照内镜像 |
+| **PAC 安全机器码读取** | iOS 14+ 全面跳过机器码扫描，DobbyHook 内联 Hook 完全不检测 | 改用 `mach_vm_read_overwrite` 安全读取 IMP 首条指令，无需解引用 PAC 签名指针 |
+| **PayloadCrypto 概率触发** | 每次 encrypt/decrypt 都跑 CallStackUnwinder，高频场景性能回退 + 时序侧信道 | 改为 10% 概率触发（`arc4random_uniform(10) == 0`），统计意义上仍可拦截 |
+
+### 蜜罐全面增强（P0-2 / P2-9）
+
+| 修复项 | 漏洞 | 修复方式 |
+|--------|------|----------|
+| **三页分散布局** | 单个 `PROT_NONE` 页易被 `vm_region_64` 扫描定位后 munmap | 分配 3 个独立 mmap 页散布不同虚拟地址，写入不同诱饵字符串，攻击者需逐一定位解除 |
+| **SIGBUS handler 完整性校验** | 攻击者可在 SDK 注册后替换 SIGBUS handler | `detect()` 中调 `sigaction(SIGBUS, nil, &current)` 取当前 handler，与我方指针比对，不一致发出 `honeypot_handler_replaced` |
+| **vm_region_64 保护位自检** | 蜜罐页可被 mprotect 改回 PROT_READ 而不触发 SIGBUS | `detect()` 中对 3 个蜜罐页逐一查询 `vm_region_basic_info_64_t.protection`，非 `VM_PROT_NONE` 即发出 `honeypot_protection_modified` |
+| **废弃 OSAtomic 替换** | `OSAtomicCompareAndSwap32` 已 deprecated + 信号处理器中使用 Swift 全局 var 地址存在 UB | 改为 `UnsafeMutablePointer<Int32>.allocate` 堆分配，信号处理器中直接写入（POSIX sig_atomic_t 安全） |
+
+### 探针与传输加固（P1-5 / P1-6 / P1-8 / P2-11）
+
+| 修复项 | 漏洞 | 修复方式 |
+|--------|------|----------|
+| **金丝雀 DualPath 双路** | 仅用 `Darwin.stat`，攻击者选择性 hook 放行金丝雀路径 | 改用 `DualPathValidator.validateFileStat(path:)`，标准 vs RTLD_NEXT 不一致判定 `canary_stat_tampered` |
+| **随机探针池** | 2 个硬编码路径被攻击者精确匹配 | 池扩充至 5 个（新增 `/usr/lib/libSystem.B.dylib`、`/etc/passwd`、`/dev/null`），每次随机选 3 个；路径通过组件拼接混淆 |
+| **ExpectedBaseline sysctl 双路** | `ProcessInfo.operatingSystemVersion` 可被 Swizzle 伪造高版本号，废掉低版本检测条件 | 新增 `sysctl kern.osversion` 获取构建号反推主版本（Darwin 映射），与 ProcessInfo 比对取保守值 |
+| **payload_sha256 上下文绑定** | 裸 `SHA256(payload)` 不绑定 nonce/ts，可被跨请求嫁接 | 改为 `SHA256(nonce\|ts\|reportId\|payload)` |
+| **EPERM 计数化** | `suspicious_permission_denied` 仅 Boolean 一次 +75，不区分命中数量 | 改为每次 +15 上限 75（5 次封顶），每次命中记录具体路径 `suspicious_permission_denied:<path>` |
+
+### 4.6 新增/增强信号 ID
+
+| 信号 ID | 权重 | 触发条件 |
+|---------|------|----------|
+| `dladdr_hook_detected` | 95（硬信号） | dladdr 标准路径与 RTLD_NEXT 路径返回不同结果 |
+| `anonymous_executable_region` | 90（硬信号） | vm_region_64 发现匿名 + 可执行内存区域 |
+| `honeypot_handler_replaced` | 90（硬信号） | SIGBUS handler 指针与 SDK 注册值不一致 |
+| `honeypot_protection_modified` | 90（硬信号） | 蜜罐页保护位从 PROT_NONE 被篡改 |
+| `canary_stat_tampered` | 90（硬信号） | 金丝雀文件 stat 双路结果不一致 |
+| `suspicious_permission_denied:<path>` | 15/次（软信号） | 特定路径返回 EPERM，累加上限 75 |
+
+> **Breaking Change**：4.6 `ReportEnvelope` 签名域新增 `attestationKeyId` 字段，服务端验签需同步更新。`payload_sha256` 计算方式从 `SHA256(payload)` 变为 `SHA256(nonce|ts|reportId|payload)`，服务端完整性校验需同步适配。
 
 ---
 
@@ -922,4 +998,4 @@ swift build
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 4.4 — Hardware Trust Root + Execution Flow Locking + Memory Honeypot</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 4.6 — Round 6 Red Team Hardening: Trust Root Full-Chain + Execution Flow + Honeypot + Probe Fortification</sub></p>

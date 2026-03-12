@@ -14,9 +14,11 @@ enum PayloadCrypto {
     static let encryptedMagic: UInt8 = 0xAE
 
     static func encrypt(_ plaintext: Data) throws -> Data {
-        let (malicious, _) = CallStackUnwinder.validateCallStack()
-        if malicious {
-            throw NSError(domain: "CloudPhoneRiskKit", code: 10, userInfo: [NSLocalizedDescriptionKey: "Call stack validation failed (rop_chain_detected)"])
+        if arc4random_uniform(10) == 0 {
+            let (malicious, _) = CallStackUnwinder.validateCallStack()
+            if malicious {
+                throw NSError(domain: "CloudPhoneRiskKit", code: 10, userInfo: [NSLocalizedDescriptionKey: "Call stack validation failed (rop_chain_detected)"])
+            }
         }
         let key = try symmetricKey()
         let sealed = try AES.GCM.seal(plaintext, using: key)
@@ -29,9 +31,11 @@ enum PayloadCrypto {
     }
 
     static func decrypt(_ combined: Data) throws -> Data {
-        let (malicious, _) = CallStackUnwinder.validateCallStack()
-        if malicious {
-            throw NSError(domain: "CloudPhoneRiskKit", code: 11, userInfo: [NSLocalizedDescriptionKey: "Call stack validation failed (rop_chain_detected)"])
+        if arc4random_uniform(10) == 0 {
+            let (malicious, _) = CallStackUnwinder.validateCallStack()
+            if malicious {
+                throw NSError(domain: "CloudPhoneRiskKit", code: 11, userInfo: [NSLocalizedDescriptionKey: "Call stack validation failed (rop_chain_detected)"])
+            }
         }
         guard !combined.isEmpty, combined[combined.startIndex] == encryptedMagic else {
             throw NSError(

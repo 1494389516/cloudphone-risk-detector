@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 
 /// 上报信封，用于防止重放和篡改
-/// v2 签名输入：sigVer|nonce|ts(ms)|sessionToken|reportId|keyId|fieldMappingVersion|payloadCanonical
+/// v2 签名输入：sigVer|nonce|ts(ms)|sessionToken|reportId|keyId|fieldMappingVersion|attestationKeyId|payloadCanonical
 public struct ReportEnvelope: Codable, Sendable {
 
     // MARK: - Properties
@@ -169,6 +169,7 @@ public struct ReportEnvelope: Codable, Sendable {
         signingKey: String,
         keyId: String = "k1",
         fieldMapping: PayloadFieldMapping? = nil,
+        attestationKeyId: String? = nil,
         config: Config = Config()
     ) throws -> ReportEnvelope {
         let nonce = UUID().uuidString
@@ -190,6 +191,7 @@ public struct ReportEnvelope: Codable, Sendable {
             reportId: reportId,
             keyId: keyId,
             fieldMappingVersion: fieldMapping?.version,
+            attestationKeyId: attestationKeyId,
             canonicalPayload: canonicalPayload
         )
 
@@ -210,13 +212,14 @@ public struct ReportEnvelope: Codable, Sendable {
             keyId: keyId,
             fieldMappingVersion: fieldMapping?.version,
             signature: signatureHex,
-            attestationKeyId: nil,
+            attestationKeyId: attestationKeyId,
             attestationAssertion: nil
         )
     }
 
     /// 返回带 App Attest 断言的副本（SDK 4.4）
-    public func withAttestation(keyId: String, assertion: Data) -> ReportEnvelope {
+    /// attestationKeyId 必须在 create() 时已传入并纳入签名域，此处仅附加断言数据。
+    public func withAttestation(attestationKeyId: String, assertion: Data) -> ReportEnvelope {
         ReportEnvelope(
             nonce: nonce,
             ts: ts,
@@ -224,10 +227,10 @@ public struct ReportEnvelope: Codable, Sendable {
             payload: payload,
             reportId: reportId,
             sigVer: sigVer,
-            keyId: keyId,
+            keyId: self.keyId,
             fieldMappingVersion: fieldMappingVersion,
             signature: signature,
-            attestationKeyId: keyId,
+            attestationKeyId: attestationKeyId,
             attestationAssertion: assertion
         )
     }
@@ -264,6 +267,7 @@ public struct ReportEnvelope: Codable, Sendable {
             reportId: reportId,
             keyId: keyId,
             fieldMappingVersion: fieldMappingVersion,
+            attestationKeyId: attestationKeyId,
             canonicalPayload: canonicalPayload
         )
         guard let signatureData = signatureInput.data(using: .utf8) else {
@@ -371,10 +375,12 @@ public struct ReportEnvelope: Codable, Sendable {
         reportId: String,
         keyId: String,
         fieldMappingVersion: String?,
+        attestationKeyId: String?,
         canonicalPayload: String
     ) -> String {
         let fmv = fieldMappingVersion ?? ""
-        return "\(sigVer)|\(nonce)|\(ts)|\(sessionToken)|\(reportId)|\(keyId)|\(fmv)|\(canonicalPayload)"
+        let akId = attestationKeyId ?? ""
+        return "\(sigVer)|\(nonce)|\(ts)|\(sessionToken)|\(reportId)|\(keyId)|\(fmv)|\(akId)|\(canonicalPayload)"
     }
 
     private static func hmacHex(message: Data, keyData: Data) -> String {

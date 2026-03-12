@@ -5,43 +5,84 @@ import MachO
 /// SDK 4.4 Phase 3: 执行流栈回溯 (Call Stack Unwinding & CFI)
 ///
 /// 在核心加解密、关键检测逻辑、抛出高危 tampered 信号的瞬间，触发轻量级栈回溯。
-/// 将提取到的返回地址交给 dladdr 验证：若存在地址不在主 App __TEXT、不在已知系统库内，
-/// 或落在匿名/未知内存中 → 判定为 ROP/JOP 链注入，抛出 rop_chain_detected。
+/// 将提取到的返回地址交给多层验证：
+///   1) RTLD_NEXT dual-path dladdr（检测 dladdr 自身被 hook）
+///   2) 动态信任镜像缓存（启动时快照）
+///   3) 严格前缀匹配（含 .framework/ 后缀）
+///   4) vm_region_64 交叉验证（匿名可执行内存 = 恶意）
 ///
 /// 纯 Swift 实现，仅使用 import Darwin 调用系统 API，无 C 代码。
 public enum CallStackUnwinder {
 
-    /// 信号 ID：检测到恶意调用栈（ROP/JOP 链）
     public static let ropChainSignalId = "rop_chain_detected"
+    public static let dladdrHookSignalId = "dladdr_hook_detected"
 
-    /// 权重（一击毙命）
     private static let maliciousWeight = 90
 
-    /// 已知可信系统库路径前缀（dladdr 返回的 dli_fname）
+    // MARK: - RTLD_NEXT dual-path resolution
+
+    private static let rtldNext = UnsafeMutableRawPointer(bitPattern: -1)
+
+    private typealias DladdrFn = @convention(c) (
+        UnsafeRawPointer?, UnsafeMutablePointer<Dl_info>?
+    ) -> Int32
+
+    private typealias BacktraceFn = @convention(c) (
+        UnsafeMutablePointer<UnsafeMutableRawPointer?>?, Int32
+    ) -> Int32
+
+    private static let nextDladdrFn: DladdrFn? = {
+        guard let ptr = dlsym(rtldNext, "dladdr") else { return nil }
+        return unsafeBitCast(ptr, to: DladdrFn.self)
+    }()
+
+    private static let nextBacktraceFn: BacktraceFn? = {
+        guard let ptr = dlsym(rtldNext, "backtrace") else { return nil }
+        return unsafeBitCast(ptr, to: BacktraceFn.self)
+    }()
+
+    // MARK: - Strict system library path prefixes
+
     private static let knownSystemLibPrefixes: [String] = [
         "/usr/lib/system/",
         "/usr/lib/libsystem",
         "/usr/lib/libobjc",
         "/usr/lib/dyld",
         "/usr/lib/libdispatch",
-        "/System/Library/Frameworks/Foundation",
-        "/System/Library/Frameworks/CoreFoundation",
-        "/System/Library/Frameworks/Security",
-        "/System/Library/Frameworks/CFNetwork",
-        "/System/Library/PrivateFrameworks/",
-        "/System/Library/Frameworks/UIKit",
-        "/System/Library/Frameworks/QuartzCore",
-        "/System/Library/Frameworks/Accelerate",
-        "/System/Library/Frameworks/ImageIO",
-        "/System/Library/Frameworks/Metal",
-        "/System/Library/Frameworks/AVFoundation",
-        "/System/Library/Frameworks/CoreGraphics",
-        "/System/Library/Frameworks/CoreText",
-        "/System/Library/Frameworks/JavaScriptCore",
-        "/System/Library/Frameworks/WebKit",
+        "/System/Library/Frameworks/Foundation.framework/",
+        "/System/Library/Frameworks/CoreFoundation.framework/",
+        "/System/Library/Frameworks/Security.framework/",
+        "/System/Library/Frameworks/CFNetwork.framework/",
+        "/System/Library/Frameworks/UIKit.framework/",
+        "/System/Library/Frameworks/QuartzCore.framework/",
+        "/System/Library/Frameworks/Accelerate.framework/",
+        "/System/Library/Frameworks/ImageIO.framework/",
+        "/System/Library/Frameworks/Metal.framework/",
+        "/System/Library/Frameworks/AVFoundation.framework/",
+        "/System/Library/Frameworks/CoreGraphics.framework/",
+        "/System/Library/Frameworks/CoreText.framework/",
+        "/System/Library/PrivateFrameworks/UIKitCore.framework/",
+        "/System/Library/PrivateFrameworks/GraphicsServices.framework/",
+        "/System/Library/PrivateFrameworks/FrontBoardServices.framework/",
     ]
 
-    // MARK: - 公开 API
+    // MARK: - Dynamic trusted image cache (snapshot at first access)
+
+    private static let trustedImagePaths: Set<String> = {
+        var paths = Set<String>()
+        let count = _dyld_image_count()
+        for i in 0..<count {
+            guard let raw = _dyld_get_image_name(i) else { continue }
+            paths.insert(String(cString: raw))
+        }
+        return paths
+    }()
+
+    // MARK: - VM region anonymous-executable tags (shared with RWXMemoryScanner)
+
+    private static let anonymousUserTags: Set<UInt32> = [240, 241, 242, 243, 244, 245]
+
+    // MARK: - Public API
 
     /// 校验当前调用栈合法性
     ///
@@ -64,7 +105,11 @@ public enum CallStackUnwinder {
         }
 
         for addr in addresses {
-            if !isAddressLegitimate(addr, trustedRanges: trustedRanges) {
+            let result = validateAddress(addr, trustedRanges: trustedRanges)
+            if result.dladdrHooked {
+                return (true, dladdrHookSignalId)
+            }
+            if !result.legitimate {
                 return (true, ropChainSignalId)
             }
         }
@@ -82,7 +127,7 @@ public enum CallStackUnwinder {
             score: 0,
             evidence: [
                 "detail": "call_stack_return_address_outside_trusted_regions",
-                "mechanism": "dladdr_validation"
+                "mechanism": "dladdr_dual_path_vm_region_validation",
             ],
             state: .tampered,
             layer: 2,
@@ -90,12 +135,18 @@ public enum CallStackUnwinder {
         )
     }
 
-    // MARK: - 栈回溯
+    // MARK: - Stack capture (RTLD_NEXT backtrace to bypass PLT hook)
 
-    /// 捕获当前线程的返回地址列表
     private static func captureReturnAddresses() -> [UInt64] {
         var buffer = [UnsafeMutableRawPointer?](repeating: nil, count: 64)
-        let count = backtrace(&buffer, Int32(buffer.count))
+
+        let count: Int32
+        if let fn = nextBacktraceFn {
+            count = fn(&buffer, Int32(buffer.count))
+        } else {
+            count = backtrace(&buffer, Int32(buffer.count))
+        }
+
         guard count > 0 else {
             return parseAddressesFromThreadCallStackSymbols()
         }
@@ -103,19 +154,13 @@ public enum CallStackUnwinder {
         var addresses: [UInt64] = []
         for i in 0..<Int(count) {
             guard let ptr = buffer[i] else { continue }
-            let addr = UInt64(bitPattern: Int64(Int(bitPattern: ptr)))
-            addresses.append(addr)
+            addresses.append(UInt64(bitPattern: Int64(Int(bitPattern: ptr))))
         }
 
-        if addresses.isEmpty {
-            return parseAddressesFromThreadCallStackSymbols()
-        }
-
-        return addresses
+        return addresses.isEmpty ? parseAddressesFromThreadCallStackSymbols() : addresses
     }
 
     /// 备选：从 Thread.callStackSymbols 解析地址（纯 Swift）
-    /// 格式示例: "1   App  0x0000000102abc123 0x0000000102abc000 + 291"
     private static func parseAddressesFromThreadCallStackSymbols() -> [UInt64] {
         let symbols = Thread.callStackSymbols
         var addresses: [UInt64] = []
@@ -135,15 +180,13 @@ public enum CallStackUnwinder {
         return addresses
     }
 
-    // MARK: - 主 App __TEXT 段
+    // MARK: - __TEXT segment ranges
 
-    /// 获取主 App（image 0）的 __TEXT 段地址范围
     private static func mainAppTextSegmentRange() -> Range<UInt64>? {
         guard let header = _dyld_get_image_header(0) else { return nil }
         return textSegmentRange(header: UnsafeRawPointer(header))
     }
 
-    /// 获取 CloudPhoneRiskKit SDK 的 __TEXT 段地址范围
     private static func sdkTextSegmentRange() -> Range<UInt64>? {
         let count = _dyld_image_count()
         for i in 0..<count {
@@ -157,7 +200,6 @@ public enum CallStackUnwinder {
         return nil
     }
 
-    /// 从 Mach-O header 解析 __TEXT 段范围
     private static func textSegmentRange(header: UnsafeRawPointer) -> Range<UInt64>? {
         let ptr = header.assumingMemoryBound(to: mach_header_64.self)
         guard ptr.pointee.magic == MH_MAGIC_64 || ptr.pointee.magic == MH_CIGAM_64 else {
@@ -172,8 +214,7 @@ public enum CallStackUnwinder {
                 let seg = cmd.assumingMemoryBound(to: segment_command_64.self).pointee
                 if tupleStringEquals(seg.segname, "__TEXT") {
                     let start = imageBase + seg.vmaddr
-                    let end = start + seg.vmsize
-                    return start..<end
+                    return start..<(start + seg.vmsize)
                 }
             }
             cmd = cmd.advanced(by: Int(load.cmdsize))
@@ -189,37 +230,170 @@ public enum CallStackUnwinder {
         }
     }
 
-    // MARK: - 地址合法性校验
+    // MARK: - Multi-layer address validation
 
-    /// 判断返回地址是否合法：在主 App / SDK __TEXT 内，或在已知系统库内
-    private static func isAddressLegitimate(
+    private struct AddressValidation {
+        var legitimate: Bool
+        var dladdrHooked: Bool
+    }
+
+    /// Layer 1 → trusted __TEXT range
+    /// Layer 2 → dual-path dladdr (hook detection)
+    /// Layer 3 → trusted image cache (startup snapshot)
+    /// Layer 4 → strict system library prefix matching
+    /// Layer 5 → vm_region_64 cross-validation
+    private static func validateAddress(
         _ addr: UInt64,
         trustedRanges: [Range<UInt64>]
-    ) -> Bool {
+    ) -> AddressValidation {
+        // Layer 1: within app / SDK __TEXT
         for range in trustedRanges {
             if range.contains(addr) {
-                return true
+                return AddressValidation(legitimate: true, dladdrHooked: false)
             }
         }
 
-        guard let ptr = UnsafeRawPointer(bitPattern: UInt(addr)) else {
-            return false
+        guard let rawPtr = UnsafeRawPointer(bitPattern: UInt(addr)) else {
+            return AddressValidation(legitimate: false, dladdrHooked: false)
         }
 
-        var info = Dl_info()
-        let found = dladdr(ptr, &info)
+        // Layer 2: dual-path dladdr — compare standard vs RTLD_NEXT
+        var stdInfo = Dl_info()
+        let stdFound = dladdr(rawPtr, &stdInfo)
 
+        var nextInfo = Dl_info()
+        let nextFound: Int32
+        if let fn = nextDladdrFn {
+            nextFound = fn(rawPtr, &nextInfo)
+        } else {
+            nextFound = stdFound
+            nextInfo = stdInfo
+        }
+
+        if stdFound != nextFound {
+            return AddressValidation(legitimate: false, dladdrHooked: true)
+        }
+
+        if stdFound != 0, nextFound != 0 {
+            let stdPath = stdInfo.dli_fname.map { String(cString: $0) }
+            let nextPath = nextInfo.dli_fname.map { String(cString: $0) }
+            if stdPath != nextPath {
+                return AddressValidation(legitimate: false, dladdrHooked: true)
+            }
+        }
+
+        let info = nextInfo
+        let found = nextFound
+
+        // dladdr could not resolve → cross-validate with vm_region
         if found == 0 || info.dli_fname == nil {
-            return false
+            let vmClass = vmRegionClassify(addr)
+            let legitimate = vmClass == .fileMapped
+            return AddressValidation(legitimate: legitimate, dladdrHooked: false)
         }
 
         let path = String(cString: info.dli_fname!)
-        return isKnownSystemLibPath(path)
+
+        // Layer 3: trusted image cache (built from startup snapshot)
+        if trustedImagePaths.contains(path) {
+            return AddressValidation(legitimate: true, dladdrHooked: false)
+        }
+
+        // Layer 4: strict system library prefix matching
+        if isKnownSystemLibPath(path) {
+            return AddressValidation(legitimate: true, dladdrHooked: false)
+        }
+
+        // Layer 5: vm_region cross-validation for unknown/suspicious paths
+        let vmClass = vmRegionClassify(addr)
+        if vmClass == .anonymousExecutable {
+            return AddressValidation(legitimate: false, dladdrHooked: false)
+        }
+
+        return AddressValidation(legitimate: false, dladdrHooked: false)
     }
 
-    /// 判断路径是否为已知系统库
+    // MARK: - vm_region_64 cross-validation
+
+    private enum VMRegionClass {
+        case fileMapped
+        case anonymousExecutable
+        case unknown
+    }
+
+    private static func vmRegionClassify(_ addr: UInt64) -> VMRegionClass {
+        var address = vm_address_t(addr)
+        var size: vm_size_t = 0
+        var objectName: mach_port_t = 0
+
+        var basicInfo = vm_region_basic_info_data_64_t()
+        var basicCount = mach_msg_type_number_t(
+            MemoryLayout<vm_region_basic_info_data_64_t>.stride
+                / MemoryLayout<natural_t>.stride
+        )
+
+        let result = withUnsafeMutablePointer(to: &basicInfo) { ptr in
+            ptr.withMemoryRebound(to: integer_t.self, capacity: Int(basicCount)) { rebound in
+                vm_region_64(
+                    mach_task_self_, &address, &size,
+                    VM_REGION_BASIC_INFO_64, rebound, &basicCount, &objectName
+                )
+            }
+        }
+
+        guard result == KERN_SUCCESS else { return .unknown }
+
+        // Verify the returned region actually contains our target address
+        guard addr >= UInt64(address), addr < UInt64(address) + UInt64(size) else {
+            return .unknown
+        }
+
+        let isExecutable = (basicInfo.protection & VM_PROT_EXECUTE) != 0
+
+        var extInfo = vm_region_extended_info_data_t()
+        var extCount = mach_msg_type_number_t(
+            MemoryLayout<vm_region_extended_info_data_t>.stride
+                / MemoryLayout<natural_t>.stride
+        )
+        var extAddress = vm_address_t(addr)
+        var extSize: vm_size_t = 0
+
+        let extResult = withUnsafeMutablePointer(to: &extInfo) { ptr in
+            ptr.withMemoryRebound(to: integer_t.self, capacity: Int(extCount)) { rebound in
+                vm_region_64(
+                    mach_task_self_, &extAddress, &extSize,
+                    VM_REGION_EXTENDED_INFO, rebound, &extCount, &objectName
+                )
+            }
+        }
+
+        guard extResult == KERN_SUCCESS else {
+            return isExecutable ? .anonymousExecutable : .unknown
+        }
+
+        // SM_PRIVATE = 3, SM_EMPTY = 0 → anonymous memory
+        let isAnonymous = (extInfo.share_mode == 3 || extInfo.share_mode == 0)
+            || anonymousUserTags.contains(UInt32(extInfo.user_tag))
+
+        if isAnonymous && isExecutable {
+            return .anonymousExecutable
+        }
+
+        if !isAnonymous {
+            return .fileMapped
+        }
+
+        return .unknown
+    }
+
+    // MARK: - Path validation (case-sensitive, no normalization)
+
     private static func isKnownSystemLibPath(_ path: String) -> Bool {
-        let normalized = path.lowercased()
-        return knownSystemLibPrefixes.contains { normalized.hasPrefix($0.lowercased()) }
+        for prefix in knownSystemLibPrefixes {
+            if path.hasPrefix(prefix) {
+                return true
+            }
+        }
+        return false
     }
 }

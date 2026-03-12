@@ -108,35 +108,15 @@ struct ObjCSwizzleDetector: Detector {
             return
         }
 
-        // 仅在非 PAC 环境下进行机器码扫描，否则跳过（防止 EXC_BAD_ACCESS）
-        let shouldSkipMachineCodeCheck: Bool
         #if arch(arm64)
-        if #available(iOS 14.0, macOS 11.0, *) {
-            // M1 Mac 或 iOS 14+：PAC 启用，跳过裸读以防 EXC_BAD_ACCESS
-            shouldSkipMachineCodeCheck = true
-        } else {
-            // iOS < 14：可尝试机器码扫描（A11 及更早设备无 PAC）
-            shouldSkipMachineCodeCheck = false
-        }
-        #else
-        shouldSkipMachineCodeCheck = true  // 非 arm64 无 B/BL 指令模式
-        #endif
-
-        if !shouldSkipMachineCodeCheck {
-            #if arch(arm64)
-            var inlineHookDetected = false
-            autoreleasepool {
-                let impPtr = impRaw.assumingMemoryBound(to: UInt32.self)
-                let firstInstruction = impPtr.pointee
-                if firstInstruction >= 0x14000000 && firstInstruction <= 0x17FFFFFF {
-                    score += 50
-                    methods.append("objc_inline_hook_detected:\(check.className).\(check.selector)")
-                    inlineHookDetected = true
-                }
+        if let firstInstruction = safeReadFirstInstruction(at: impRaw) {
+            if firstInstruction >= 0x14000000 && firstInstruction <= 0x17FFFFFF {
+                score += 50
+                methods.append("objc_inline_hook_detected:\(check.className).\(check.selector)")
+                return
             }
-            if inlineHookDetected { return }
-            #endif
         }
+        #endif
 
         // 校验 IMP 所在镜像是否与预期框架一致
         if let imagePath = info.dli_fname {
@@ -147,6 +127,26 @@ struct ObjCSwizzleDetector: Detector {
             }
         }
     }
+
+    #if arch(arm64)
+    /// Read first ARM64 instruction at `addr` via `vm_read_overwrite` to avoid
+    /// dereferencing PAC-signed pointers (which would cause EXC_BAD_ACCESS on A12+).
+    private func safeReadFirstInstruction(at addr: UnsafeRawPointer) -> UInt32? {
+        var buf: UInt32 = 0
+        var outSize: mach_vm_size_t = 0
+        let kr = withUnsafeMutablePointer(to: &buf) { ptr in
+            mach_vm_read_overwrite(
+                mach_task_self_,
+                mach_vm_address_t(UInt(bitPattern: addr)),
+                mach_vm_size_t(MemoryLayout<UInt32>.size),
+                mach_vm_address_t(UInt(bitPattern: ptr)),
+                &outSize
+            )
+        }
+        guard kr == KERN_SUCCESS, outSize == MemoryLayout<UInt32>.size else { return nil }
+        return buf
+    }
+    #endif
 
     // MARK: - 2. Dispatch Queue Name Scanning
 

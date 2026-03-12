@@ -72,7 +72,7 @@ struct FileDetector: Detector {
             methods.append(contentsOf: canaryResult.methods)
         }
 
-        var suspiciousPermissionDenied = false
+        var suspiciousPermissionScore: Double = 0
 
         // 沙盒视图隔离（Bind Mount 平行宇宙）防范
         if detectSandboxMountIsolation() {
@@ -85,7 +85,10 @@ struct FileDetector: Detector {
             // [4.4.6] EPERM 异常化：path 理应 ENOENT 却返回 EPERM/EACCES (iOS 16+)
             let (statExists, statErrno) = statWithErrno(item.path)
             if !statExists && ExpectedBaseline.epermOnProtectedPathIsSuspicious && ExpectedBaseline.isPermissionDeniedErrno(statErrno) {
-                suspiciousPermissionDenied = true
+                if suspiciousPermissionScore < 75 {
+                    suspiciousPermissionScore = min(suspiciousPermissionScore + 15, 75)
+                    methods.append("suspicious_permission_denied:\(item.path)")
+                }
             }
 
             let exists = existsAnyWay(item.path)
@@ -116,10 +119,9 @@ struct FileDetector: Detector {
             }
         }
 
-        if suspiciousPermissionDenied {
-            score += 75
-            methods.append("suspicious_permission_denied")
-            Logger.log("jailbreak.file.hit: suspicious_permission_denied (+75)")
+        if suspiciousPermissionScore > 0 {
+            score += suspiciousPermissionScore
+            Logger.log("jailbreak.file.hit: suspicious_permission_denied (+\(Int(suspiciousPermissionScore)))")
         }
 
         // 双路验证关键路径，检测 stat hook

@@ -5,11 +5,30 @@ import Foundation
 
 /// 针对不同 iOS 版本设定不同的探测期望值。
 /// 防止黑产利用高版本特性在低版本上伪装安全。
+/// 同时通过 kern.osversion sysctl 交叉验证，防止 ProcessInfo 被 swizzle。
 enum ExpectedBaseline {
 
-    /// iOS 主版本号
+    /// iOS 主版本号（交叉验证 ProcessInfo 与 sysctl）
     private static var iosMajorVersion: Int {
-        ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+        let processInfoVersion = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+        guard let sysctlVersion = iosMajorFromBuildNumber() else {
+            return processInfoVersion
+        }
+        if abs(processInfoVersion - sysctlVersion) > 1 {
+            return min(processInfoVersion, sysctlVersion)
+        }
+        return processInfoVersion
+    }
+
+    /// 从 kern.osversion 构建号推算 iOS 主版本
+    /// 构建号格式如 "22A3354"，前两位为 Darwin 内核主版本
+    /// 映射：22→iOS 18, 21→17, 20→16, 19→15 …（darwinMajor - 4）
+    private static func iosMajorFromBuildNumber() -> Int? {
+        let (value, _, _) = DualPathValidator.validateSysctl(key: "kern.osversion")
+        guard let build = value, build.count >= 2 else { return nil }
+        let prefix = build.prefix(2)
+        guard let darwinMajor = Int(prefix) else { return nil }
+        return darwinMajor - 4
     }
 
     /// 空进程列表是否可疑
