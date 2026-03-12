@@ -45,6 +45,9 @@ struct SDKIntegrityChecker: Detector {
         case .versionChanged:
             score += 12
             methods.append("integrity:plt_version_changed")
+        case .baselineRejectedSuspiciousEnv:
+            score += 55
+            methods.append("integrity:plt_baseline_rejected_suspicious_env")
         }
 
         return DetectorResult(score: score, methods: methods)
@@ -96,6 +99,8 @@ enum BaselineTrustState: String {
     case trusted
     case firstObservation
     case versionChanged
+    /// 建基线时环境可疑（DYLD_INSERT_LIBRARIES / suspicious image），拒绝建基线
+    case baselineRejectedSuspiciousEnv
 }
 
 struct PLTIntegrityResult {
@@ -161,10 +166,24 @@ struct PLTIntegrityGuard {
     static func verifyWithPersistedBaseline() -> PLTIntegrityResult {
         let versionToken = runtimeVersionToken()
         guard let persisted = loadPersistedBaseline() else {
+            // 首启：环境可疑时拒绝建基线，避免投毒
+            let envCheck = IntegrityBaselineEnvCheck.check()
+            if envCheck.isSuspicious {
+                return PLTIntegrityResult(
+                    isIntact: false,
+                    hookedFunctions: [],
+                    details: [
+                        "status": "baseline_rejected_suspicious_env",
+                        "reason": envCheck.reason ?? "unknown",
+                        "version_token": versionToken,
+                    ],
+                    baselineTrustState: .baselineRejectedSuspiciousEnv
+                )
+            }
             let fresh = captureBaseline()
             persistBaseline(fresh, versionToken: versionToken)
             return PLTIntegrityResult(
-                isIntact: true,
+                isIntact: false,  // 不可信窗口：无法断言完整性
                 hookedFunctions: [],
                 details: [
                     "status": "baseline_established",
@@ -175,10 +194,25 @@ struct PLTIntegrityGuard {
         }
 
         if persisted.versionToken != versionToken {
+            // 升级：环境可疑时拒绝建基线
+            let envCheck = IntegrityBaselineEnvCheck.check()
+            if envCheck.isSuspicious {
+                return PLTIntegrityResult(
+                    isIntact: false,
+                    hookedFunctions: [],
+                    details: [
+                        "status": "baseline_rejected_suspicious_env",
+                        "reason": envCheck.reason ?? "unknown",
+                        "previous_version_token": persisted.versionToken,
+                        "version_token": versionToken,
+                    ],
+                    baselineTrustState: .baselineRejectedSuspiciousEnv
+                )
+            }
             let fresh = captureBaseline()
             persistBaseline(fresh, versionToken: versionToken)
             return PLTIntegrityResult(
-                isIntact: true,
+                isIntact: false,  // 不可信窗口：无法断言完整性
                 hookedFunctions: [],
                 details: [
                     "status": "version_changed",
@@ -389,6 +423,18 @@ extension PLTIntegrityGuard {
                     state: .soft(confidence: 0.72),
                     layer: 2,
                     weightHint: 58
+                )
+            ]
+        case .baselineRejectedSuspiciousEnv:
+            return [
+                RiskSignal(
+                    id: "plt_integrity_baseline_rejected_suspicious_env",
+                    category: "integrity",
+                    score: 55,
+                    evidence: result.details,
+                    state: .tampered,
+                    layer: 2,
+                    weightHint: 88
                 )
             ]
         }

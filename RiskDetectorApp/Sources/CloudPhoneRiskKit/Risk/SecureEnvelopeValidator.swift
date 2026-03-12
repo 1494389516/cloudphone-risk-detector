@@ -218,25 +218,41 @@ public final class LocalEnvelopeReplayStore: NonceReplayProtecting, @unchecked S
         "\(sessionToken):\(nonce)"
     }
 
+    /// Unix 时间戳毫秒，与 ReportEnvelope.ts 及 expiresAtMillis 时间轴一致
     private func nowMillis() -> Int64 {
-        Int64(ProcessInfo.processInfo.systemUptime * 1000)
+        Int64(Date().timeIntervalSince1970 * 1000)
     }
 }
 
 extension CPRiskKit {
     /// 本地校验安全信封（用于 SDK 回归验证链路）。
     /// 默认仅接受 v2 签名，并启用持久化重放保护。
+    ///
+    /// **Attestation 一致性**：当 `validateAttestationConsistency == true`（默认）时，若 envelope 带有
+    /// `attestationKeyId` 但 `attestationAssertion` 为空，视为异常（`.attestationIncomplete`），防止
+    /// 硬件信任根被静默剥离或生成失败后仍被当作有效。
+    ///
+    /// - Parameter validateAttestationConsistency: 是否校验 attestationKeyId 与 attestationAssertion 成对存在。
     public func validateSecureReportEnvelope(
         _ envelope: ReportEnvelope,
         signingKey: String,
         allowedSignatureVersions: Set<String> = ["v2"],
         enableReplayProtection: Bool = true,
+        validateAttestationConsistency: Bool = true,
         nonceStore: NonceReplayProtecting? = nil,
         config: ReportEnvelope.Config = ReportEnvelope.Config()
     ) -> Result<Void, SecureEnvelopeValidationError> {
         guard allowedSignatureVersions.contains(envelope.sigVer) else {
             let allowed = Array(allowedSignatureVersions).sorted()
             return .failure(.unsupportedSignatureVersion(actual: envelope.sigVer, allowed: allowed))
+        }
+
+        if validateAttestationConsistency {
+            let hasKeyId = envelope.attestationKeyId.map { !$0.isEmpty } ?? false
+            let hasAssertion = envelope.attestationAssertion.map { !$0.isEmpty } ?? false
+            if hasKeyId && !hasAssertion {
+                return .failure(.reportEnvelope(.attestationIncomplete))
+            }
         }
 
         let replayStore = enableReplayProtection ? (nonceStore ?? LocalEnvelopeReplayStore.shared) : nil
@@ -255,6 +271,7 @@ extension CPRiskKit {
         keyResolver: (String) -> String?,
         allowedSignatureVersions: Set<String> = ["v2"],
         enableReplayProtection: Bool = true,
+        validateAttestationConsistency: Bool = true,
         nonceStore: NonceReplayProtecting? = nil,
         config: ReportEnvelope.Config = ReportEnvelope.Config()
     ) -> Result<Void, SecureEnvelopeValidationError> {
@@ -266,6 +283,7 @@ extension CPRiskKit {
             signingKey: signingKey,
             allowedSignatureVersions: allowedSignatureVersions,
             enableReplayProtection: enableReplayProtection,
+            validateAttestationConsistency: validateAttestationConsistency,
             nonceStore: nonceStore,
             config: config
         )
@@ -277,6 +295,7 @@ extension CPRiskKit {
         signingKey: String,
         allowedSignatureVersions: Set<String> = ["v2"],
         enableReplayProtection: Bool = true,
+        validateAttestationConsistency: Bool = true,
         nonceStore: NonceReplayProtecting? = nil,
         config: ReportEnvelope.Config = ReportEnvelope.Config()
     ) -> Result<ReportEnvelope, SecureEnvelopeValidationError> {
@@ -290,6 +309,7 @@ extension CPRiskKit {
             signingKey: signingKey,
             allowedSignatureVersions: allowedSignatureVersions,
             enableReplayProtection: enableReplayProtection,
+            validateAttestationConsistency: validateAttestationConsistency,
             nonceStore: nonceStore,
             config: config
         ) {

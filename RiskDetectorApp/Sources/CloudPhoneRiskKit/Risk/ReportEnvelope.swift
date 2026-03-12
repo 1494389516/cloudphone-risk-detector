@@ -40,6 +40,14 @@ public struct ReportEnvelope: Codable, Sendable {
     /// App Attest 断言数据（可选；Secure Enclave 对 payload 摘要的硬件签名）
     public let attestationAssertion: Data?
 
+    /// 是否具备完整硬件信任根（attestationKeyId 与 attestationAssertion 均存在且非空）。
+    /// 调用方可用此判断是否发生静默降级；若业务要求硬件信任根，应检查此属性为 true。
+    public var hasHardwareAttestation: Bool {
+        guard let keyId = attestationKeyId, !keyId.isEmpty else { return false }
+        guard let assertion = attestationAssertion, !assertion.isEmpty else { return false }
+        return true
+    }
+
     // MARK: - Configuration
 
     public struct Config: Sendable {
@@ -73,6 +81,8 @@ public struct ReportEnvelope: Codable, Sendable {
         case timestampOutOfRange
         case encodingFailed
         case signingFailed
+        /// attestationKeyId 存在但 attestationAssertion 为空，表示硬件信任根不完整（可能被剥离或生成失败）。
+        case attestationIncomplete
 
         public var errorDescription: String? {
             switch self {
@@ -90,6 +100,8 @@ public struct ReportEnvelope: Codable, Sendable {
                 return "编码失败"
             case .signingFailed:
                 return "签名生成失败"
+            case .attestationIncomplete:
+                return "attestationKeyId 存在但 attestationAssertion 为空，硬件信任根不完整"
             }
         }
     }

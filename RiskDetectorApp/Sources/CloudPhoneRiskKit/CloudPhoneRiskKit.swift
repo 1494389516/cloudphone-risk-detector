@@ -491,6 +491,10 @@ public final class CPRiskKit: NSObject {
     /// - `enforcePayloadFieldMapping=true` 且映射缺失/过期时会抛错。
     /// - `enableEnvelopeSignatureV2=false` 时自动降级为 v1 签名串格式。
     /// - `challengeBinding` 仅是 SDK 本地联调字段；Release 默认不会生成本地合成 challenge。
+    ///
+    /// **与 buildSecureReportEnvelopeWithAttestation 的区别**：本方法不附加 App Attest 硬件信任根；
+    /// 若业务要求硬件信任根，请使用 `buildSecureReportEnvelopeWithAttestation`，并检查返回的
+    /// `envelope.hasHardwareAttestation` 或 `attestationKeyId`/`attestationAssertion` 是否存在。
     public func buildSecureReportEnvelope(
         report: CPRiskReport,
         sessionToken: String,
@@ -615,15 +619,28 @@ public final class CPRiskKit: NSObject {
     }
 
     /// 构建带 App Attest 硬件信任根的安全信封（SDK 4.4）
-    /// 当 DCAppAttestService.isSupported 为 true 时，自动附加 attestationKeyId 与 attestationAssertion。
+    ///
+    /// **行为约定**：
+    /// - 当 `requireAttestation == true`（默认）：若 App Attest 不可用（`AppAttestSigner.isSupported == false`）
+    ///   或 assertion 生成失败，将 **throw** 而非静默退回普通 HMAC envelope，保证调用方收到的信封一定带硬件信任根。
+    /// - 当 `requireAttestation == false`：允许降级，失败时退回普通 envelope；调用方应检查
+    ///   `envelope.hasHardwareAttestation` 或 `attestationKeyId != nil && attestationAssertion != nil` 以识别降级。
+    ///
+    /// - Parameter requireAttestation: 是否强制要求硬件信任根；默认 true，失败时 throw。
+    /// - Throws: `AppAttestSigner.AppAttestError` 当 requireAttestation 为 true 且 App Attest 不可用或失败时。
     @available(iOS 14.0, macOS 11.0, *)
     public func buildSecureReportEnvelopeWithAttestation(
         report: CPRiskReport,
         sessionToken: String,
         signingKey: String,
-        keyId: String = "k1"
+        keyId: String = "k1",
+        requireAttestation: Bool = true
     ) async throws -> ReportEnvelope {
         guard AppAttestSigner.isSupported else {
+            if requireAttestation {
+                throw AppAttestSigner.AppAttestError.hardwareTrustUnsupported
+            }
+            Logger.log("app_attest: hardware_trust_unsupported, falling back to plain HMAC envelope (requireAttestation=false)")
             return try buildSecureReportEnvelope(
                 report: report,
                 sessionToken: sessionToken,
@@ -642,6 +659,9 @@ public final class CPRiskKit: NSObject {
             )
             let canonicalPayload = try envelope.canonicalPayloadString()
             guard let payloadData = canonicalPayload.data(using: .utf8) else {
+                if requireAttestation {
+                    throw SecureUploadError.invalidPayloadShape
+                }
                 return envelope
             }
             let (_, assertion) = try await AppAttestSigner.generateAssertion(for: payloadData)
@@ -649,6 +669,9 @@ public final class CPRiskKit: NSObject {
             Logger.log("app_attest: envelope augmented with hardware assertion")
             return envelope
         } catch {
+            if requireAttestation {
+                throw error
+            }
             Logger.log("app_attest: failed to generate assertion, envelope without attestation: \(error.localizedDescription)")
             return try buildSecureReportEnvelope(
                 report: report,

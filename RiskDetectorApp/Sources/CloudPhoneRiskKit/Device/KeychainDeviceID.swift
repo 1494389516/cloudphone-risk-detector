@@ -41,10 +41,12 @@ final class KeychainDeviceID {
         }
 
         if let fallback = readFallback() {
-            if !save(fallback) {
-                Logger.log("KeychainDeviceID: keychain unavailable, using signed fallback copy")
+            if save(fallback) {
+                return fallback
             }
-            return fallback
+            // Keychain 写失败，仅 UserDefaults 有值：返回 ephemeral 前缀，服务端可识别并限制高信任请求
+            Logger.log("KeychainDeviceID: keychain unavailable, using ephemeral-tagged fallback copy")
+            return "ephemeral:\(fallback)"
         }
 
         let newID = UUID().uuidString
@@ -53,8 +55,9 @@ final class KeychainDeviceID {
             return newID
         }
         if fallbackSaved {
-            Logger.log("KeychainDeviceID: keychain save failed, returning persisted fallback ID")
-            return newID
+            // Keychain 写失败但 UserDefaults 成功：返回 ephemeral 前缀，仅 Keychain 持久化成功才返回裸 ID
+            Logger.log("KeychainDeviceID: keychain save failed, returning ephemeral-tagged fallback ID")
+            return "ephemeral:\(newID)"
         }
         // 并发写入竞争：再次尝试读取（另一线程可能已写入）
         if let retry = read() { return retry }

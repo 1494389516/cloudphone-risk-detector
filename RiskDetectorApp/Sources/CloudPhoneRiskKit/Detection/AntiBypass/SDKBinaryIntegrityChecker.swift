@@ -34,6 +34,18 @@ enum SDKBinaryIntegrityChecker {
         guard let image = findSDKImage() else {
             return IntegrityResult(isIntact: true, checks: [:], detail: "sdk_image_not_found")
         }
+
+        // 首启：环境可疑时拒绝建基线，避免投毒
+        if keychainRead(account: keychainUUIDAcc) == nil {
+            let envCheck = IntegrityBaselineEnvCheck.check()
+            if envCheck.isSuspicious {
+                return IntegrityResult(
+                    isIntact: false,
+                    checks: ["baseline_rejected": false],
+                    detail: "baseline_rejected_suspicious_env"
+                )
+            }
+        }
         
         // 1. LC_CODE_SIGNATURE existence
         let hasCodeSig = checkCodeSignature(header: image.header)
@@ -57,7 +69,7 @@ enum SDKBinaryIntegrityChecker {
         
         let detail: String
         if uuidCheck.isFirstRun {
-            // 首次运行建基线：产出软信号而非静默通过，防止基线投毒窗口
+            // 首次运行建基线：不可信窗口，不返回 isIntact: true
             detail = "baseline_established"
         } else if allPassed {
             detail = "intact"
@@ -65,22 +77,36 @@ enum SDKBinaryIntegrityChecker {
             let failed = checks.filter { !$0.value }.map { $0.key }
             detail = "tampered:\(failed.joined(separator: ","))"
         }
-        
-        return IntegrityResult(isIntact: allPassed, checks: checks, detail: detail)
+
+        let isIntact = uuidCheck.isFirstRun ? false : allPassed
+        return IntegrityResult(isIntact: isIntact, checks: checks, detail: detail)
         #endif
     }
     
     static func asSignals(result: IntegrityResult) -> [RiskSignal] {
-        // 首次运行建基线：产出低权重软信号，让服务端感知到安装/重装事件
+        // 首次运行建基线：产出不可信窗口软信号，提高权重
         if result.detail == "baseline_established" {
             return [RiskSignal(
                 id: "sdk_integrity_first_run",
                 category: "integrity",
-                score: 0,
+                score: 8,
                 evidence: ["detail": "baseline_established_on_first_run"],
-                state: .soft(confidence: 0.3),
+                state: .soft(confidence: 0.55),
                 layer: 2,
-                weightHint: 30
+                weightHint: 45
+            )]
+        }
+
+        // 环境可疑拒绝建基线：高危信号
+        if result.detail == "baseline_rejected_suspicious_env" {
+            return [RiskSignal(
+                id: "sdk_integrity_baseline_rejected_suspicious_env",
+                category: "integrity",
+                score: 55,
+                evidence: ["detail": "baseline_rejected_suspicious_env"],
+                state: .tampered,
+                layer: 2,
+                weightHint: 88
             )]
         }
 

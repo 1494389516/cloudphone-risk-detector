@@ -121,27 +121,32 @@ public final class RiskDetectionService {
     }
 
     /// 生成带 App Attest 硬件信任根的安全信封（SDK 4.4）。
+    /// 默认 `requireAttestation=true`：App Attest 不可用或失败时 throw；设为 false 时允许降级为普通 HMAC envelope。
     @available(iOS 14.0, macOS 11.0, *)
     public func buildSecureReportEnvelopeWithAttestation(
         report: CPRiskReport,
         sessionToken: String,
         signingKey: String,
-        keyId: String = "k1"
+        keyId: String = "k1",
+        requireAttestation: Bool = true
     ) async throws -> ReportEnvelope {
         try await CPRiskKit.shared.buildSecureReportEnvelopeWithAttestation(
             report: report,
             sessionToken: sessionToken,
             signingKey: signingKey,
-            keyId: keyId
+            keyId: keyId,
+            requireAttestation: requireAttestation
         )
     }
 
     /// 本地校验安全信封（用于 SDK 联调与回归验证）。
+    /// 默认校验 attestation 一致性：attestationKeyId 存在但 attestationAssertion 为空时视为异常。
     public func validateSecureReportEnvelope(
         _ envelope: ReportEnvelope,
         signingKey: String,
         allowedSignatureVersions: Set<String> = ["v2"],
         enableReplayProtection: Bool = true,
+        validateAttestationConsistency: Bool = true,
         nonceStore: NonceReplayProtecting? = nil,
         config: ReportEnvelope.Config = ReportEnvelope.Config()
     ) -> Result<Void, SecureEnvelopeValidationError> {
@@ -150,6 +155,7 @@ public final class RiskDetectionService {
             signingKey: signingKey,
             allowedSignatureVersions: allowedSignatureVersions,
             enableReplayProtection: enableReplayProtection,
+            validateAttestationConsistency: validateAttestationConsistency,
             nonceStore: nonceStore,
             config: config
         )
@@ -161,6 +167,7 @@ public final class RiskDetectionService {
         signingKey: String,
         allowedSignatureVersions: Set<String> = ["v2"],
         enableReplayProtection: Bool = true,
+        validateAttestationConsistency: Bool = true,
         nonceStore: NonceReplayProtecting? = nil,
         config: ReportEnvelope.Config = ReportEnvelope.Config()
     ) -> Result<ReportEnvelope, SecureEnvelopeValidationError> {
@@ -169,6 +176,7 @@ public final class RiskDetectionService {
             signingKey: signingKey,
             allowedSignatureVersions: allowedSignatureVersions,
             enableReplayProtection: enableReplayProtection,
+            validateAttestationConsistency: validateAttestationConsistency,
             nonceStore: nonceStore,
             config: config
         )

@@ -1,3 +1,4 @@
+import CoreFoundation
 import Darwin
 import Foundation
 
@@ -32,23 +33,40 @@ enum LibcPrologueGuard {
 
     private static let lock = NSLock()
     private static var lastScannedResult: Bool?
-    private static let rescanProbabilityPercent = 30
+    private static var lastScannedTimestamp: CFTimeInterval?
+    private static let rescanProbabilityPercent = 50
+    /// 距上次扫描超过此秒数强制重扫，缓解晚注入盲区
+    private static let rescanIntervalSeconds: CFTimeInterval = 5
+
+    /// 供 DualPathValidator 在检测到 tampered 时调用，清除缓存以强制下次完整扫描
+    static func invalidateCache() {
+        lock.lock()
+        lastScannedResult = nil
+        lastScannedTimestamp = nil
+        lock.unlock()
+    }
 
     static func checkAllCritical() -> Bool {
-        // Read lastScannedResult under lock to avoid data race with concurrent writers.
+        let now = CFAbsoluteTimeGetCurrent()
         lock.lock()
-        let current = lastScannedResult
+        let cached = lastScannedResult
+        let lastTs = lastScannedTimestamp
         lock.unlock()
 
-        let shouldRescan = current == nil || arc4random_uniform(100) < UInt32(rescanProbabilityPercent)
+        let timeDecayForced = lastTs.map { now - $0 > rescanIntervalSeconds } ?? true
+        let shouldRescan = timeDecayForced
+            || cached == nil
+            || arc4random_uniform(100) < UInt32(rescanProbabilityPercent)
+
         if shouldRescan {
             let result = performFullScan()
             lock.lock()
             lastScannedResult = result
+            lastScannedTimestamp = now
             lock.unlock()
             return result
         }
-        return current!  // Safe: current != nil when shouldRescan is false
+        return cached ?? false
     }
 
     private static func performFullScan() -> Bool {
@@ -161,11 +179,10 @@ enum SVCDirectCall {
         return unsafeBitCast(ptr, to: AccessFn.self)
     }
 
-    /// 通过 RTLD_NEXT 获取下一跳 sysctlbyname，绕过当前进程的 PLT hook
+    /// 通过 RTLD_NEXT 获取下一跳 sysctlbyname，绕过当前进程的 PLT hook。
+    /// dlsym 失败时返回 nil，不静默回退到标准 libc，以便 DualPathValidator 识别安全路径失效。
     static func secureSysctlbyname(_ name: String) -> String? {
-        guard let fn = originalSysctlbyname() else {
-            return Sysctl.string(name)
-        }
+        guard let fn = originalSysctlbyname() else { return nil }
         return name.withCString { cName in
             var size: size_t = 0
             if fn(cName, nil, &size, nil, 0) != 0 { return nil }
@@ -197,10 +214,9 @@ enum SVCDirectCall {
     }
 
     /// 通过 RTLD_NEXT 获取下一跳 sysctl，绕过当前进程对 sysctl 的统一重绑定。
+    /// dlsym 失败时返回 nil，不静默回退到 standardSysctlData，以便 DualPathValidator 识别安全路径失效。
     static func secureSysctlData(_ mib: [Int32]) -> Data? {
-        guard let fn = originalSysctl() else {
-            return standardSysctlData(mib)
-        }
+        guard let fn = originalSysctl() else { return nil }
 
         var mibCopy = mib
         guard !mibCopy.isEmpty else { return nil }
@@ -222,33 +238,30 @@ enum SVCDirectCall {
         return success ? data : nil
     }
 
-    /// 通过 RTLD_NEXT 获取下一跳 stat，绕过当前进程的 PLT hook
-    static func secureStat(_ path: String) -> Bool {
-        guard let fn = originalStat() else {
-            var st = stat()
-            return path.withCString { stat($0, &st) == 0 }
-        }
+    /// 通过 RTLD_NEXT 获取下一跳 stat，绕过当前进程的 PLT hook。
+    /// dlsym 失败时返回 nil（安全路径不可用），不静默回退到标准 libc。
+    static func secureStat(_ path: String) -> Bool? {
+        guard let fn = originalStat() else { return nil }
         return path.withCString { cPath in
             var st = stat()
             return fn(cPath, &st) == 0
         }
     }
 
-    static func secureLstat(_ path: String) -> Bool {
-        guard let fn = originalLstat() else {
-            var st = stat()
-            return path.withCString { lstat($0, &st) == 0 }
-        }
+    /// 通过 RTLD_NEXT 获取下一跳 lstat。
+    /// dlsym 失败时返回 nil（安全路径不可用），不静默回退到标准 libc。
+    static func secureLstat(_ path: String) -> Bool? {
+        guard let fn = originalLstat() else { return nil }
         return path.withCString { cPath in
             var st = stat()
             return fn(cPath, &st) == 0
         }
     }
 
-    static func secureAccess(_ path: String, mode: CInt = F_OK) -> Bool {
-        guard let fn = originalAccess() else {
-            return path.withCString { access($0, mode) == 0 }
-        }
+    /// 通过 RTLD_NEXT 获取下一跳 access。
+    /// dlsym 失败时返回 nil（安全路径不可用），不静默回退到标准 libc。
+    static func secureAccess(_ path: String, mode: CInt = F_OK) -> Bool? {
+        guard let fn = originalAccess() else { return nil }
         return path.withCString { cPath in
             fn(cPath, mode) == 0
         }
@@ -288,6 +301,7 @@ struct DualPathValidator {
         if std == nil && secure == nil { return (nil, false, bypassed, hooked) }
         if std == nil || secure == nil { return (secure ?? std, true, bypassed, hooked) }
         let tampered = std != secure
+        if tampered { LibcPrologueGuard.invalidateCache() }
         return (secure, tampered, bypassed, hooked)
     }
 
@@ -305,10 +319,12 @@ struct DualPathValidator {
         if std == nil && secure == nil { return (nil, false, bypassed, hooked) }
         if std == nil || secure == nil { return (secure ?? std, true, bypassed, hooked) }
         let tampered = std != secure
+        if tampered { LibcPrologueGuard.invalidateCache() }
         return (secure ?? std, tampered, bypassed, hooked)
     }
 
-    /// 同时调用标准 stat/lstat/access 与加固版本，结果不一致则判定为 tampered
+    /// 同时调用标准 stat/lstat/access 与加固版本，结果不一致则判定为 tampered。
+    /// 当 secure 路径返回 nil（dlsym 失败，安全路径不可用）且 std 有值时，判定 tampered=true。
     static func validateFileStat(path: String) -> (exists: Bool, tampered: Bool, bypassed: Bool, inlineHooked: Bool) {
         let hooked = inlineHookDetected
 
@@ -328,9 +344,9 @@ struct DualPathValidator {
             stdAccessExists = path.withCString { access($0, F_OK) == 0 }
         }
 
-        var secureStatExists = false
-        var secureLstatExists = false
-        var secureAccessExists = false
+        var secureStatExists: Bool?
+        var secureLstatExists: Bool?
+        var secureAccessExists: Bool?
 
         let t4 = measure { secureStatExists = SVCDirectCall.secureStat(path) }
         let t5 = measure { secureLstatExists = SVCDirectCall.secureLstat(path) }
@@ -338,11 +354,20 @@ struct DualPathValidator {
 
         let bypassed = t1 < 50 || t2 < 50 || t3 < 50 || t4 < 50 || t5 < 50 || t6 < 50
 
-        let tampered = stdExists != secureStatExists
-            || stdLstatExists != secureLstatExists
-            || stdAccessExists != secureAccessExists
-        let exists = secureStatExists || secureLstatExists || secureAccessExists
-            || stdExists || stdLstatExists || stdAccessExists
+        // 安全路径返回 nil 且 std 有值：安全路径失效本身即异常，判定 tampered
+        let secureUnavailableButStdHasValue =
+            (secureStatExists == nil && stdExists)
+            || (secureLstatExists == nil && stdLstatExists)
+            || (secureAccessExists == nil && stdAccessExists)
+        // 双路均有值时，结果不一致则 tampered
+        let mismatchWhenBothAvailable =
+            (secureStatExists != nil && secureStatExists != stdExists)
+            || (secureLstatExists != nil && secureLstatExists != stdLstatExists)
+            || (secureAccessExists != nil && secureAccessExists != stdAccessExists)
+        let tampered = secureUnavailableButStdHasValue || mismatchWhenBothAvailable
+        if tampered { LibcPrologueGuard.invalidateCache() }
+        let exists = (secureStatExists ?? stdExists) || (secureLstatExists ?? stdLstatExists)
+            || (secureAccessExists ?? stdAccessExists)
         return (exists, tampered, bypassed, hooked)
     }
 }

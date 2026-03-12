@@ -1,155 +1,240 @@
-# CloudPhoneRiskKit（iOS 14+）使用说明
+# CloudPhoneRiskKit 4.9 使用与构建说明
 
-这是一个“云手机/远程控制风险 + 越狱风险”的本地采集与评分插件（SwiftPM），默认输出可直接上报的 JSON（加密你后面再接）。
+iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。
 
-## 接入（SwiftPM）
+---
 
-- Xcode → Project → Package Dependencies → Add Local… → 选择目录：`RiskDetectorApp`（包含 `Package.swift`）
-- App 工程里 `import CloudPhoneRiskKit`
+## 1. 环境要求
 
-## 启动采集（全局自动模式 B）
+| 项目 | 最低版本 |
+|------|---------|
+| macOS | 14.0+ |
+| Xcode | 15.0+ |
+| iOS 部署目标 | 14.0+ |
+| Swift | 5.9+ |
 
-建议在 App 启动尽早调用（会 swizzle `UIApplication.sendEvent`，用于全局触摸行为采集）：
+---
 
-Swift：
+## 2. 构建方式
+
+### 2.1 SPM 命令行构建
+
+```bash
+cd RiskDetectorApp
+swift build
+```
+
+### 2.2 XcodeGen 生成工程
+
+```bash
+cd RiskDetectorApp
+brew install xcodegen   # 如已安装可跳过
+xcodegen generate
+open RiskDetectorApp.xcodeproj
+```
+
+### 2.3 Xcode 直接打开
+
+用 Xcode 打开 `RiskDetectorApp/Package.swift`，Xcode 会自动识别为 SwiftPM 工程并解析依赖。
+
+### 2.4 真机 vs 模拟器
+
+**推荐真机调试。** 模拟器下以下检测器返回 `unavailable`：
+- DRM 能力检测（FairPlay）
+- 电池熵检测（无真实电池硬件）
+- 部分越狱 / 挂载点检测（沙盒行为不同）
+
+模拟器适合做接入验证和 JSON 结构检查；越狱强度回归 & 行为指纹精度测试请用真机。
+
+---
+
+## 3. 接入方式（SwiftPM）
+
+**方式 A — Xcode GUI**
+
+Xcode → Project → Package Dependencies → **Add Local…** → 选择 `RiskDetectorApp` 目录（包含 `Package.swift`）。
+
+**方式 B — Package.swift 声明**
+
 ```swift
+dependencies: [
+    .package(path: "../cloudphone-risk-detector/RiskDetectorApp")
+]
+// target
+.target(name: "YourApp", dependencies: [
+    .product(name: "CloudPhoneRiskKit", package: "CloudPhoneRiskKit"),
+])
+```
+
+---
+
+## 4. 快速上手
+
+```swift
+import CloudPhoneRiskKit
+
+// 1) 启动采集（建议在 didFinishLaunching 尽早调用）
 CPRiskKit.shared.start()
-```
 
-ObjC：
-```objc
-[[CPRiskKit shared] start];
-```
+// 2) 同步评估
+let report = CPRiskKit.shared.evaluate(config: .default, scenario: .payment)
+print(report.score, report.isHighRisk, report.summary)
 
-## 生成报告（JSON）
-
-Swift：
-```swift
-let report = CPRiskKit.shared.evaluate()
-let json = report.jsonString(prettyPrinted: true)
-```
-
-如需避免在主线程做重活（越狱扫描/Provider 汇总等），用异步版本（completion 回到主线程）：
-```swift
+// 3) 异步评估（completion 回到主线程）
 CPRiskKit.shared.evaluateAsync { report in
-  print(report.score)
+    print(report.score)
 }
+
+// 4) async/await（iOS 13+）
+let report = await CPRiskKit.shared.evaluateAsync(config: .default, scenario: .login)
+
+// 5) 停止采集
+CPRiskKit.shared.stop()
 ```
 
-ObjC：
-```objc
-CPRiskReport *report = [[CPRiskKit shared] evaluateWithConfig:[CPRiskConfig default]];
-NSString *json = [report jsonStringWithPrettyPrinted:YES];
-```
+---
 
-ObjC 异步版本：
+## 5. ObjC 兼容
+
 ```objc
-[[CPRiskKit shared] evaluateAsyncWithCompletion:^(CPRiskReport * _Nonnull report) {
-  NSLog(@"score=%f", report.score);
+#import <CloudPhoneRiskKit/CloudPhoneRiskKit-Swift.h>
+
+[[CPRiskKit shared] start];
+CPRiskReport *report = [[CPRiskKit shared] evaluateWithConfig:[CPRiskConfig default]
+                                                     scenario:[RiskScenario payment]];
+NSLog(@"score=%f high=%d", report.score, report.isHighRisk);
+
+[[CPRiskKit shared] evaluateAsyncWithCompletion:^(CPRiskReport *report) {
+    NSLog(@"score=%f", report.score);
 }];
 ```
 
-## 本地加密保存（方案 3）
+---
 
-默认使用 `AES-GCM` 加密后保存到 `Application Support/CloudPhoneRiskKit/reports/`，密钥保存在 Keychain（`ThisDeviceOnly`）。
+## 6. 场景化决策
 
-Swift：
+支持的 `RiskScenario`：
+
+| 场景标识 | 说明 |
+|---------|------|
+| `.login` | 登录 |
+| `.payment` | 支付 |
+| `.register` | 注册 |
+| `.accountChange` | 账号变更 |
+| `.sensitiveAction` | 敏感操作 |
+| `.apiAccess` | API 访问 |
+
 ```swift
-let report = CPRiskKit.shared.evaluate()
+let report = CPRiskKit.shared.evaluate(config: .default, scenario: .payment)
+// 不同场景有独立的阈值、权重和 combo 规则
+```
+
+---
+
+## 7. 服务端配置签名（推荐）
+
+配置 HMAC 签名密钥后，SDK 会验证远程配置的签名完整性，防止中间人篡改：
+
+```swift
+CPRiskKit.configureServerSigningKey("your-server-hmac-key")
+CPRiskKit.shared.start()
+```
+
+---
+
+## 8. App Attest 硬件信任根（4.9 更新）
+
+4.9 新增 `requireAttestation` 参数（默认 `true`），不支持或失败时 **抛错而非静默降级**：
+
+```swift
+let envelope = try await CPRiskKit.shared.buildSecureReportEnvelopeWithAttestation(
+    report: report,
+    sessionToken: sessionToken,
+    signingKey: signingKey,
+    requireAttestation: true   // 强制硬件信任根，失败即 throw
+)
+// envelope.hasHardwareAttestation == true 时表示已附加硬件断言
+```
+
+- 需在 Xcode → Signing & Capabilities 中开启 **App Attest**。
+- `requireAttestation: false` 时允许降级，调用方应检查 `envelope.hasHardwareAttestation`。
+
+---
+
+## 9. 服务端信号注入
+
+将服务端聚合结果（IP / ASN / 聚合度等）回注 SDK，参与本地评分：
+
+```swift
+CPRiskKit.setExternalServerSignals(
+    publicIP: "1.2.3.4",
+    asn: "AS4134",
+    asOrg: "CHINANET",
+    isDatacenter: 1,
+    ipDeviceAgg: 120,
+    ipAccountAgg: 500,
+    geoCountry: "CN",
+    geoRegion: "GD",
+    riskTags: ["dc_ip", "ip_shared"]
+)
+```
+
+---
+
+## 10. 本地加密存储
+
+报告使用 **AES-GCM** 加密 + **HMAC** 完整性保护，密钥存于 Keychain（`ThisDeviceOnly`）。
+
+```swift
+// 保存
 let path = CPRiskStore.shared.save(report, error: nil)
-```
 
-ObjC：
-```objc
-NSError *err = nil;
-NSString *path = [[CPRiskStore shared] saveReport:report error:&err];
-```
-
-如需在同机调试验证解密（取出文件后能解密）：
-
-Swift：
-```swift
+// 解密读取
 let json = CPRiskStore.shared.decryptReport(atPath: path, error: nil)
 ```
 
-ObjC：
-```objc
-NSError *err = nil;
-NSString *json = [[CPRiskStore shared] decryptReportAtPath:path error:&err];
-```
+---
 
-## 预留字段：IP 聚合度 / ASN（以后接云端用）
+## 11. 可插拔 Provider 扩展
 
-本地没云端数据时不用调用；未来你有服务端/离线脚本时可以把聚合结果写进 JSON 的 `server` 节点：
+实现 `RiskSignalProvider` 协议，注册后每次 `evaluate()` 自动参与评分：
 
-Swift：
 ```swift
-report.setServerSignals(
-  publicIP: "1.2.3.4",
-  asn: "AS4134",
-  asOrg: "CHINANET",
-  isDatacenter: 1,
-  ipDeviceAgg: 120,
-  ipAccountAgg: 500,
-  geoCountry: "CN",
-  geoRegion: "GD",
-  riskTags: ["dc_ip", "ip_shared"]
-)
-```
-
-也可以用全局注入（会自动写入 JSON 的 `server`，并通过内置 provider 参与评分）：
-```swift
-CPRiskKit.setExternalServerSignals(
-  publicIP: "1.2.3.4",
-  asn: "AS4134",
-  asOrg: "CHINANET",
-  isDatacenter: 1,
-  ipDeviceAgg: 120,
-  ipAccountAgg: 500,
-  geoCountry: "CN",
-  geoRegion: "GD",
-  riskTags: ["dc_ip", "ip_shared"]
-)
-```
-
-## 扩展机制（B2：可插拔 Provider）
-
-你可以注册自定义 `RiskSignalProvider`，在每次 `evaluate()` 时基于 `RiskSnapshot` 产出额外 `signals[]`，并自动参与评分与 JSON 输出。
-
-Swift：
-```swift
-final class ExampleProvider: RiskSignalProvider {
-  let id = "example"
-  func signals(snapshot: RiskSnapshot) -> [RiskSignal] {
-    if snapshot.network.isVPNActive {
-      return [RiskSignal(id: "vpn_boost", category: "custom", score: 5, evidence: ["reason":"vpn"])]
+final class MyProvider: RiskSignalProvider {
+    let id = "my_custom"
+    func signals(snapshot: RiskSnapshot) -> [RiskSignal] {
+        // 基于 snapshot 产出自定义信号
+        return []
     }
-    return []
-  }
 }
 
-CPRiskKit.register(provider: ExampleProvider())
+CPRiskKit.register(provider: MyProvider())
 ```
 
-## 内置 Providers（默认注册）
+---
 
-- `server_aggregate`：未来云端聚合信号注入（IP/ASN/聚合度）与评分
-- `device_hardware`：硬件标识采集（`hw.machine`）/ Simulator 标记
-- `device_age`：老机型风险启发式（基于 `hw.machine` 的 iPhone family）
-- `time_pattern`：本地 24h 活跃模式（频率/夜间占比/覆盖小时数）
+## 12. 配置项速查
 
-## 本地时间模式字段（JSON）
+`CPRiskConfig` 常用配置：
 
-每次 `evaluate()` 后会把本地滚动窗口的统计写进 JSON：`local.timePattern`。
+| 配置项 | 类型 | 默认值 | 说明 |
+|-------|------|--------|------|
+| `threshold` | `Double` | `60` | 高风险总分阈值 |
+| `enableBehaviorDetect` | `Bool` | `true` | 行为指纹采集 |
+| `enableNetworkSignals` | `Bool` | `true` | 网络信号采集 |
+| `enableAntiTamper` | `Bool` | `true` | 反篡改 / Hook 检测 |
+| `enableTemporalAnalysis` | `Bool` | `false` | 时序模式分析 |
+| `enableRemoteConfig` | `Bool` | `false` | 远程配置拉取 |
+| `defaultScenario` | `RiskScenario` | `.default` | 默认评估场景 |
+| `jailbreak.*` | — | — | 越狱检测子开关（file/dyld/sysctl/env/scheme/hook） |
 
-## 可调配置
+> Release 构建下，核心检测开关（file/dyld/sysctl/hook/behavior/network）由 SDK 强制开启，不可被远程配置或调用方关闭。
 
-- `CPRiskConfig.threshold`：总风险阈值（默认 `60`）
-- 越狱相关开关在 `CPRiskConfig.jailbreak*` 字段里
-- 每次 `evaluate` 会“截取并清空”当前行为窗口（触摸/传感器），避免长时间运行导致指标被历史数据稀释
+---
 
-## 注意事项（兼容性）
+## 13. 注意事项
 
-- 模拟器：越狱检测在模拟器环境不具备真实意义（系统能力/沙盒行为不同）。建议用模拟器做“接入与 JSON 结构”验证；越狱强度回归请用真机。
-- `SchemeDetector`：如果你想让 `canOpenURL` 生效，需要在宿主 App 的 `Info.plist` 增加 `LSApplicationQueriesSchemes`（例如 `cydia/sileo/filza/...`），否则该项会一直为 false（不会崩溃）。
-- 本插件把不可用/看不到的东西当作“弱信号/无信号”，不会因为系统限制直接判定高风险；强结论建议放在服务端做聚合判断（IP 聚合、ASN、长连接流量模式等）。
+1. **模拟器限制**：越狱检测在模拟器无实际意义，DRM / 电池 / 部分挂载点检测返回 `unavailable`。
+2. **SchemeDetector**：需在宿主 App 的 `Info.plist` 添加 `LSApplicationQueriesSchemes`（如 `cydia`、`sileo`、`filza` 等），否则 `canOpenURL` 始终返回 `false`。
+3. **弱信号原则**：SDK 将不可用 / 无法获取的信号视为弱信号，不会因系统限制直接判定高风险。**强结论建议放在服务端做聚合判断**（IP 聚合、ASN、设备图谱、长连接流量模式等）。
+4. **日志开关**：`CPRiskKit.setLogEnabled(true)` 仅在 `DEBUG` 构建下生效。

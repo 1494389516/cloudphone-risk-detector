@@ -85,9 +85,20 @@ enum TextSegmentIntegrityChecker {
         }
 
         if let stored = storedBaseline, stored.version != uuid {
+            let envCheck = IntegrityBaselineEnvCheck.check()
+            if envCheck.isSuspicious {
+                return IntegrityResult(
+                    isIntact: false,
+                    baselineHash: stored.hash,
+                    currentHash: hash,
+                    sdkVersion: sdkVersion,
+                    sectionSize: size,
+                    detail: "baseline_rejected_suspicious_env"
+                )
+            }
             saveBaseline(hash: hash, version: uuid)
             return IntegrityResult(
-                isIntact: true,
+                isIntact: false,  // 不可信窗口：无法断言完整性
                 baselineHash: hash,
                 currentHash: hash,
                 sdkVersion: sdkVersion,
@@ -96,9 +107,21 @@ enum TextSegmentIntegrityChecker {
             )
         }
 
+        // 首启：环境可疑时拒绝建基线
+        let envCheck = IntegrityBaselineEnvCheck.check()
+        if envCheck.isSuspicious {
+            return IntegrityResult(
+                isIntact: false,
+                baselineHash: "",
+                currentHash: hash,
+                sdkVersion: sdkVersion,
+                sectionSize: size,
+                detail: "baseline_rejected_suspicious_env"
+            )
+        }
         saveBaseline(hash: hash, version: uuid)
         return IntegrityResult(
-            isIntact: true,
+            isIntact: false,  // 不可信窗口：无法断言完整性
             baselineHash: hash,
             currentHash: hash,
             sdkVersion: sdkVersion,
@@ -147,6 +170,54 @@ enum TextSegmentIntegrityChecker {
                     state: .tampered,
                     layer: 2,
                     weightHint: 88
+                )
+            ]
+        case "baseline_rejected_suspicious_env":
+            return [
+                RiskSignal(
+                    id: "text_segment_baseline_rejected_suspicious_env",
+                    category: "integrity",
+                    score: 55,
+                    evidence: [
+                        "detail": "baseline_rejected_suspicious_env",
+                        "current_hash": result.currentHash,
+                        "sdk_version": result.sdkVersion
+                    ],
+                    state: .tampered,
+                    layer: 2,
+                    weightHint: 88
+                )
+            ]
+        case "baseline_established":
+            return [
+                RiskSignal(
+                    id: "text_segment_baseline_pending",
+                    category: "integrity",
+                    score: 8,
+                    evidence: [
+                        "detail": "baseline_established",
+                        "hash": result.currentHash,
+                        "sdk_version": result.sdkVersion
+                    ],
+                    state: .soft(confidence: 0.55),
+                    layer: 2,
+                    weightHint: 45
+                )
+            ]
+        case "version_changed":
+            return [
+                RiskSignal(
+                    id: "text_segment_version_changed",
+                    category: "integrity",
+                    score: 12,
+                    evidence: [
+                        "detail": "version_changed",
+                        "hash": result.currentHash,
+                        "sdk_version": result.sdkVersion
+                    ],
+                    state: .soft(confidence: 0.72),
+                    layer: 2,
+                    weightHint: 58
                 )
             ]
         case "intact":
