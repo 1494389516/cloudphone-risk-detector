@@ -215,6 +215,38 @@ public final class CPRiskKit: NSObject {
 
     @objc public static func clearExternalServerSignals() {
         ExternalServerAggregateProvider.shared.set(nil)
+        ExternalServerAggregateProvider.shared.clearGraphFeatures()
+    }
+
+    /// 应用图风控反馈：服务端返回图计算结果后调用，注入到 ExternalServerAggregateProvider。
+    /// 注入后可增强本地评分（占位：可选触发 re-evaluate 或调整阈值）。
+    /// - Parameter feedback: 图风控反馈（communityId、communityRiskDensity、hwProfileDegree 等）
+    public static func applyGraphRiskFeedback(_ feedback: GraphRiskFeedback) {
+        ExternalServerAggregateProvider.shared.applyGraphRiskFeedback(feedback)
+    }
+
+    /// 应用服务端返回的挑战验证结果（回注路径）
+    /// adjustedScore 语义：增量偏移（delta），与 baseScore 相加；非绝对分数。超出 [-100, 100] 时裁剪并打日志。
+    /// - Parameter result: 服务端返回的 ChallengeVerificationResult
+    public static func applyChallengeResult(_ result: ChallengeVerificationResult) {
+        ChallengeResultStore.shared.apply(result: result)
+    }
+
+    /// ObjC 兼容：应用挑战验证结果
+    @objc(applyChallengeResultWithChallengeId:passed:failedProbes:adjustedScore:)
+    public static func applyChallengeResult(
+        challengeId: String,
+        passed: Bool,
+        failedProbes: [String],
+        adjustedScore: NSNumber?
+    ) {
+        let result = ChallengeVerificationResult(
+            challengeId: challengeId,
+            passed: passed,
+            failedProbes: failedProbes,
+            adjustedScore: adjustedScore?.doubleValue
+        )
+        ChallengeResultStore.shared.apply(result: result)
     }
 
     /// 绑定业务账号 ID，用于设备-账号关联图构建。
@@ -243,6 +275,7 @@ public final class CPRiskKit: NSObject {
         currentSessionId = nil
         stateLock.unlock()
         PolicyManager.shared.clearCachedPolicy()
+        LocalDeviceClusterDetector.shared.clear()
         Logger.log("account.unbind")
     }
 
@@ -391,9 +424,29 @@ public final class CPRiskKit: NSObject {
             behavior: context.behavior,
             jailbreak: context.jailbreak
         )
+        let serverSignals = RiskSignalProviderRegistry.shared.serverSignals(snapshot: snapshot)
+        stateLock.lock()
+        let acctIdForGraph = boundAccountId
+        let sessIdForGraph = currentSessionId
+        stateLock.unlock()
+
+        let graphNodeDescriptor = GraphFeatureCollector.collect(
+            snapshot: snapshot,
+            serverSignals: serverSignals,
+            accountId: acctIdForGraph
+        )
+        var extraSignalsForGraph: [RiskSignal] = []
+        if let localClusterSignal = LocalDeviceClusterDetector.shared.recordAndDetect(
+            hwProfileHash: graphNodeDescriptor.hwProfileHash,
+            key: serverSignals?.publicIP ?? sessIdForGraph
+        ) {
+            extraSignalsForGraph = [localClusterSignal]
+        }
+
         let capabilityRuntime = runCapabilityProbe(remoteConfig: remoteConfig)
         var extraSignals = RiskSignalProviderRegistry.shared.signals(snapshot: snapshot)
         extraSignals.append(capabilityRuntime.score.toSignal())
+        extraSignals.append(contentsOf: extraSignalsForGraph)
 
         let serverPolicy = PolicyManager.shared.activePolicy
         let policy = buildEnginePolicy(
@@ -413,7 +466,9 @@ public final class CPRiskKit: NSObject {
             score: verdict.score,
             isHighRisk: verdict.isHighRisk,
             signals: verdict.signals,
-            summary: verdict.summary
+            summary: verdict.summary,
+            compressedDigest: verdict.compressedDigest,
+            mappingVersion: verdict.mappingVersion
         )
 
         Logger.log(
@@ -449,7 +504,8 @@ public final class CPRiskKit: NSObject {
         )
 
         let out = CPRiskReport(context: finalContext, report: scoreReport)
-        out.setServerSignals(RiskSignalProviderRegistry.shared.serverSignals(snapshot: snapshot))
+        out.setServerSignals(serverSignals)
+        out.setGraphNodeDescriptor(graphNodeDescriptor)
         stateLock.lock()
         let acctId = boundAccountId
         let sessId = currentSessionId
@@ -539,14 +595,25 @@ public final class CPRiskKit: NSObject {
         #endif
         let envelopeConfig = ReportEnvelope.Config(signatureVersion: signatureVersion)
 
+        let effectiveKeyId = (keyId == "k1" && TrustChainManager.currentKeyRotationPolicy() != nil)
+            ? TrustChainManager.currentKeyId(baseKeyId: keyId)
+            : keyId
+
+        let trustLevel = TrustChainManager.evaluateTrustLevel(
+            deviceID: report.deviceID,
+            hardwareMachine: report.device.hardwareMachine ?? "",
+            kernelVersion: Sysctl.string("kern.version") ?? ""
+        )
+
         return try ReportEnvelope.create(
             payloadData: payloadData,
             reportId: report.reportID,
             sessionToken: sessionToken,
             signingKey: signingKey,
-            keyId: keyId,
+            keyId: effectiveKeyId,
             fieldMapping: mapping,
             attestationKeyId: attestationKeyId,
+            trustLevel: trustLevel,
             config: envelopeConfig
         )
     }
@@ -646,6 +713,10 @@ public final class CPRiskKit: NSObject {
         keyId: String = "k1",
         requireAttestation: Bool = true
     ) async throws -> ReportEnvelope {
+        let effectiveKeyId = (keyId == "k1" && TrustChainManager.currentKeyRotationPolicy() != nil)
+            ? TrustChainManager.currentKeyId(baseKeyId: keyId)
+            : keyId
+
         guard AppAttestSigner.isSupported else {
             if requireAttestation {
                 throw AppAttestSigner.AppAttestError.hardwareTrustUnsupported
@@ -655,7 +726,7 @@ public final class CPRiskKit: NSObject {
                 report: report,
                 sessionToken: sessionToken,
                 signingKey: signingKey,
-                keyId: keyId
+                keyId: effectiveKeyId
             )
         }
         do {
@@ -664,7 +735,7 @@ public final class CPRiskKit: NSObject {
                 report: report,
                 sessionToken: sessionToken,
                 signingKey: signingKey,
-                keyId: keyId,
+                keyId: effectiveKeyId,
                 attestationKeyId: attestKeyId
             )
             let canonicalPayload = try envelope.canonicalPayloadString()
@@ -676,6 +747,19 @@ public final class CPRiskKit: NSObject {
             }
             let (_, assertion) = try await AppAttestSigner.generateAssertion(for: payloadData)
             envelope = envelope.withAttestation(attestationKeyId: attestKeyId, assertion: assertion)
+            if TrustChainManager.shouldRefreshAttestation(),
+               let challenge = PolicyManager.shared.activePolicy?.reAttestationChallenge,
+               !challenge.isEmpty {
+                do {
+                    let (_, reAssertion) = try await AppAttestSigner.generateAssertion(for: challenge)
+                    envelope = envelope.withReAttestationAssertion(reAssertion)
+                    TrustChainManager.markAttestationChecked()                    Logger.log("app_attest: re-attestation completed, challenge signed")
+                } catch {
+                    Logger.log("app_attest: re-attestation failed, degrading: \(error.localizedDescription)")
+                    envelope = envelope.withTrustLevel(TrustChainManager.degradedTrustLevel())                }
+            } else {
+                TrustChainManager.markAttestationChecked()
+            }
             Logger.log("app_attest: envelope augmented with hardware assertion")
             return envelope
         } catch {
@@ -683,12 +767,13 @@ public final class CPRiskKit: NSObject {
                 throw error
             }
             Logger.log("app_attest: failed to generate assertion, envelope without attestation: \(error.localizedDescription)")
-            return try buildSecureReportEnvelope(
+            var fallback = try buildSecureReportEnvelope(
                 report: report,
                 sessionToken: sessionToken,
                 signingKey: signingKey,
-                keyId: keyId
+                keyId: effectiveKeyId
             )
+            return fallback.withTrustLevel(TrustChainManager.degradedTrustLevel())
         }
     }
 
@@ -820,12 +905,24 @@ public final class CPRiskKit: NSObject {
             return nil
         }
 
+        let session = ChallengeSession.shared        if session.hasSubmitted(challenge.challengeId) {
+            Logger.log("challenge.binding skipped: challengeId=\(challenge.challengeId) already submitted (replay)")
+            return nil
+        }
+        guard session.markSubmitted(challenge.challengeId) else {
+            return nil
+        }
+        let expectedHash = ChallengeTrigger.computeExpectedHash(
+            seed: challenge.seed,
+            deviceFingerprint: deviceID
+        )
         return ChallengeTrigger.buildChallengeBindingPayload(
             challenge: challenge,
             capabilityScore: capabilityRuntime.score,
             tamperedCount: tamperedCount,
             executedProbeIDs: capabilityRuntime.probes.map(\.id),
-            triggerReason: "local_sdk_synthesized/\(trigger.reason)"
+            triggerReason: "local_sdk_synthesized/\(trigger.reason)",
+            expectedHash: expectedHash
         )
     }
 
@@ -1050,7 +1147,8 @@ public final class CPRiskKit: NSObject {
                 actionMapping: base.actionMapping,
                 signalWeights: effectiveWeights,
                 comboRules: base.comboRules,
-                enableForceRules: base.enableForceRules
+                enableForceRules: base.enableForceRules,
+                compressedVerdictRules: base.compressedVerdictRules
             )
         }
 
@@ -1081,7 +1179,6 @@ public final class CPRiskKit: NSObject {
                 }
             )
         }
-
         return EnginePolicy(
             name: remoteConfig.map { "remote_\($0.version)" } ?? "local_sdk3",
             version: remoteConfig.map { String($0.version) } ?? "3.0-local",

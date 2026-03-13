@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
-  <img src="https://img.shields.io/badge/SDK-4.9.2-FF3B30?style=for-the-badge" alt="SDK">
+  <img src="https://img.shields.io/badge/SDK-5.0.0-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
   <img src="https://img.shields.io/badge/License-Proprietary-8E8E93?style=for-the-badge" alt="License">
 </p>
@@ -50,6 +50,7 @@
 | **4.8** | **4.7 遗留安全隐患修复** | LibcPrologueGuard TOCTOU 消除（废弃静态缓存、30% 概率重扫）、SecureBuffer 密钥内存安全擦除、ProcessInfo 全面替换为 sysctl、越狱特征字符串全量混淆（ObfuscatedJailbreakStrings）、DetectorRegistry 统一 do-catch 容错 + 高危权重异常信号（5 项致命隐患全修复） |
 | **4.9** | **信任根防投毒 + fail-open 全面封堵** | RTLD_NEXT fail-open 消除（安全路径失败不再回退普通 libc）、LibcPrologueGuard 50% 概率 + 5s 时间衰减 + tampered 联动清缓存、完整性基线首启/升级环境检查（可疑环境拒绝建基线 + 高危信号）、App Attest 静默降级消除（requireAttestation 强制模式 + attestation 一致性校验）、deviceID ephemeral 标记修正、replay store 时间轴 systemUptime→Unix 对齐（6 项结构性漏洞全修复） |
 | **4.9.2** | **内存 Dump + 结构体恢复攻击面封堵** | ConfigSignatureVerifier 密钥 Keychain 按需加载、StorageIntegrityGuard/KeychainSalt/ReportEnvelope/ChallengeTrigger 密钥用后清零、SignedRiskConclusion 字符串插值 SecureScope、CPRiskKit/PolicyManager 敏感状态清理、Logger 敏感信息 DEBUG 限定（7 项内存安全加固） |
+| **5.0** | **端侧信任根链 + 内存语义压缩 + 挑战闭环 + 图风控联动** | TrustChainManager / TrustLevel / KeyRotation 端侧信任根链、内存语义压缩快速判决（CompressedVerdictRule）、挑战式验证闭环、图风控联动（GraphFeatureCollector / GraphNodeDescriptor） |
 
 ## 架构概览
 
@@ -94,20 +95,18 @@
 
 ---
 
-## 4.9 新增能力 — 信任根防投毒与 fail-open 全面封堵
+## 5.0 新增能力 — 端侧信任根链、内存语义压缩、挑战闭环与图风控联动
 
-4.9 针对 4.8 安全审计中发现的 **6 项结构性 fail-open / 信任根投毒** 问题进行全面封堵。
+5.0 引入端侧信任根链、内存语义压缩快速判决、挑战式验证闭环与图风控联动四大能力。
 
-### 4.9 修复矩阵
+### 5.0 新特性摘要
 
-| # | 问题 | 修复方案 | 涉及文件 |
-|---|------|----------|----------|
-| 1 | RTLD_NEXT fail-open | 安全路径（`dlsym(RTLD_NEXT, …)`）失败时不再回退普通 libc，直接返回 `nil` | `SVCDirectCall.swift` |
-| 2 | LibcPrologueGuard 增强 | 概率 30%→50%；增加 5s 时间衰减强制重扫；`tampered` 时联动 `invalidateCache()` | `SDKIntegrityChecker.swift` |
-| 3 | 完整性基线防投毒 | 新增 `IntegrityBaselineEnvCheck`：首启/升级时执行环境检查，可疑环境（越狱/Hook/调试器）拒绝建基线并发射高危信号 | `IntegrityBaselineEnvCheck.swift` |
-| 4 | App Attest 静默降级消除 | `requireAttestation` 强制模式：不支持/失败时抛错不降级；增加 attestation 一致性校验 | `SecureEnvelopeValidator.swift` |
-| 5 | deviceID ephemeral 修正 | Keychain 读写失败时返回 `ephemeral:` 前缀 ID，上层可识别并标记为软信号 | `KeychainDeviceID.swift` |
-| 6 | Replay Store 时间轴对齐 | `nowMillis()` 从 `systemUptime` 改为 Unix 时间戳毫秒，消除重启后时间轴断裂 | `ReportEnvelope.swift` |
+| 能力域 | 核心组件 | 说明 |
+|--------|----------|------|
+| **端侧信任根链** | `TrustChainManager`、`TrustLevel`、`KeyRotationPolicy` | 建立 Secure Enclave → App Attest → DeviceKey → SessionKey → ReportSignature 完整信任传递链；TrustLevel（hardware/derived/degraded）供服务端调整决策权重；KeyRotation 支持服务端下发轮换策略 |
+| **内存语义压缩快速判决** | `CompressedVerdictRule`、`SignalCompressor` | 8 字节压缩摘要位向量规则，支持 layer 1–4 及 crossLayer 快速判决通道，服务端可配置 bitMask/matchValue 实现低延迟拦截 |
+| **挑战式验证闭环** | `ChallengeSession`、`ChallengeResultStore`、`ChallengeTrigger` | 盲挑战从下发、执行到结果落库的完整闭环，支持 seed 与设备指纹绑定防重放 |
+| **图风控联动** | `GraphFeatureCollector`、`GraphNodeDescriptor`、`GraphRiskFeedback` | 端侧产出标准化图节点描述符（单向哈希），服务端可直接入图；支持社区风险、硬件画像等反哺 |
 
 ---
 
@@ -183,4 +182,4 @@ cd RiskDetectorApp && swift build
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 4.9.2 — Memory Dump & Struct Recovery Attack Surface Hardening</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 5.0.0 — Trust Chain, Compressed Verdict, Challenge Loop & Graph Risk Linkage</sub></p>

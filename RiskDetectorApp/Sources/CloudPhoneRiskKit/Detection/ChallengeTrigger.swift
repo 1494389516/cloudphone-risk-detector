@@ -233,13 +233,17 @@ extension ChallengeTrigger {
     }
 
     /// 生成强类型 challenge 绑定载荷，可直接写入 CPRiskReport payload。
+    /// - Parameter executionStatus: 探针执行状态（超时/不支持时传入 .timeout / .unsupported）
+    /// - Parameter expectedHash: seed 与设备指纹绑定占位，expectedHash = SHA256(seed + deviceFingerprint)
     public static func buildChallengeBindingPayload(
         challenge: BlindChallenge,
         capabilityScore: CapabilityScore,
         tamperedCount: Int,
         executedProbeIDs: [String],
         triggerReason: String?,
-        timestamp: Int64 = nowMillis()
+        timestamp: Int64 = nowMillis(),
+        executionStatus: ChallengeExecutionStatus = .completed,
+        expectedHash: String? = nil
     ) -> ChallengeBindingPayload {
         ChallengeBindingPayload(
             challengeId: challenge.challengeId,
@@ -253,8 +257,19 @@ extension ChallengeTrigger {
             totalProbes: capabilityScore.totalProbes,
             tamperedCount: tamperedCount,
             probeRiskContribution: capabilityScore.riskContribution,
-            triggerReason: triggerReason
+            triggerReason: triggerReason,
+            executionStatus: executionStatus,
+            expectedHash: expectedHash
         )
+    }
+
+    /// 计算 seed 与设备指纹绑定的 expectedHash 占位
+    /// expectedHash = SHA256(seed + deviceFingerprint)，用于服务端防重放验证
+    public static func computeExpectedHash(seed: String, deviceFingerprint: String) -> String {
+        let input = seed + deviceFingerprint
+        guard let data = input.data(using: .utf8) else { return "" }
+        let hash = SHA256.hash(data: data)
+        return hash.compactMap { String(format: "%02x", $0) }.joined()
     }
 
     /// challenge 是否在有效期内

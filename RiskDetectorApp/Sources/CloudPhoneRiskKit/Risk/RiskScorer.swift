@@ -139,7 +139,9 @@ enum RiskScorer {
             score: total,
             isHighRisk: isHighRisk,
             signals: signals,
-            summary: summary(score: total, isHighRisk: isHighRisk, jailbreak: context.jailbreak)
+            summary: summary(score: total, isHighRisk: isHighRisk, jailbreak: context.jailbreak),
+            compressedDigest: nil,
+            mappingVersion: nil
         )
     }
 

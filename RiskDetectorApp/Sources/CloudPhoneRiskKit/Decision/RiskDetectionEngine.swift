@@ -114,6 +114,19 @@ public struct RiskDetectionEngine: Sendable {
         allSignals = planner.maybeShuffle(allSignals, salt: "signal_order")
         log("Collected \(allSignals.count) signals")
 
+        // 2.4 内存语义压缩：将信号压缩为 8 字节摘要（在应用组合规则之前）
+        let compressResult = SignalCompressor.compress(signals: allSignals)
+
+        // 2.5 压缩摘要快速判决通道：纯位向量规则，命中可短路        if let fastVerdict = evaluateCompressedVerdictRules(
+            digest: compressResult.digest,
+            scenarioPolicy: scenarioPolicy,
+            signals: allSignals,
+            scenario: scenario
+        ) {
+            log("Compressed verdict rule hit, short-circuit: \(fastVerdict.internalAction.rawValue)")
+            return fastVerdict
+        }
+
         // 3. 应用组合规则
         let comboRules = planner.maybeShuffle(scenarioPolicy.comboRules, salt: "combo_rules")
         let comboBonus = applyComboRules(
@@ -148,8 +161,13 @@ public struct RiskDetectionEngine: Sendable {
             log("Blind challenge bonus applied")
         }
 
+        // 5.1 挑战验证结果回注：服务端 adjustedScore 作为基础偏移（一次性消费）
+        let challengeOffset = ChallengeResultStore.shared.consumeScoreOffset() ?? 0        if challengeOffset != 0 {
+            log("Challenge result offset applied: +\(challengeOffset)")
+        }
+
         // 6. 应用组合规则加成
-        let finalScore = min(baseScore + comboBonus + blindBonus, 100)
+        let finalScore = min(baseScore + comboBonus + blindBonus + challengeOffset, 100)
         log("Final score: \(finalScore)")
 
         // 7. 应用强制规则
@@ -191,7 +209,9 @@ public struct RiskDetectionEngine: Sendable {
             ),
             primaryReasons: extractPrimaryReasons(signals: allSignals),
             signals: allSignals,
-            scenario: scenario
+            scenario: scenario,
+            compressedDigest: compressResult.digest,
+            mappingVersion: compressResult.mappingVersion
         )
 
         log("=== Evaluation complete ===")
@@ -537,6 +557,40 @@ public struct RiskDetectionEngine: Sendable {
         return planner.jitter(base: baseWeight, maxBps: policy.mutationStrategy?.scoreJitterBps ?? 0)
     }
 
+    /// 压缩摘要快速判决：若位向量规则命中，返回短路判决；否则返回 nil
+    private func evaluateCompressedVerdictRules(
+        digest: Data,
+        scenarioPolicy: ScenarioPolicy,
+        signals: [RiskSignal],
+        scenario: RiskScenario
+    ) -> RiskVerdict? {
+        let rules = scenarioPolicy.compressedVerdictRules
+        guard !rules.isEmpty else { return nil }
+
+        var matchedRules: [CompressedVerdictRule] = []
+        for rule in rules {
+            if rule.matches(digest: digest) {
+                matchedRules.append(rule)
+            }
+        }        guard !matchedRules.isEmpty else { return nil }
+
+        // 取最严格动作
+        let strictestRule = matchedRules.max(by: { $0.action.severity < $1.action.severity })!
+        let score = minScore(for: strictestRule.action, scenarioPolicy: scenarioPolicy)
+
+        return RiskVerdict(
+            score: score,
+            internalLevel: InternalRiskLevel.from(score: score),
+            internalAction: strictestRule.action,
+            confidence: 1.0,
+            primaryReasons: ["compressed_rule:\(strictestRule.id)"],
+            signals: signals,
+            scenario: scenario,
+            compressedDigest: digest,
+            mappingVersion: SignalCompressor.mappingVersion
+        )
+    }
+
     /// 应用组合规则
     private func applyComboRules(
         signals: [RiskSignal],
@@ -669,7 +723,8 @@ public struct RiskDetectionEngine: Sendable {
             actionMapping: base.actionMapping,
             signalWeights: base.signalWeights,
             comboRules: base.comboRules,
-            enableForceRules: base.enableForceRules
+            enableForceRules: base.enableForceRules,
+            compressedVerdictRules: base.compressedVerdictRules
         )
     }
 
@@ -939,6 +994,7 @@ private extension RiskDetectionEngine {
         "graph_community_risk": 65,
         "graph_hw_profile_cluster": 70,
         "graph_dense_subgraph": 60,
+        "local_device_cluster": 55,
         "text_segment_tampered": 88,
         // 3.5.1 Frida 深度检测信号权重
         "frida_thread_anomaly": 75,
@@ -1201,7 +1257,9 @@ extension RiskDetectionEngine {
             score: verdict.score,
             isHighRisk: verdict.isHighRisk,
             signals: verdict.signals,
-            summary: verdict.summary
+            summary: verdict.summary,
+            compressedDigest: verdict.compressedDigest,
+            mappingVersion: verdict.mappingVersion
         )
     }
 }

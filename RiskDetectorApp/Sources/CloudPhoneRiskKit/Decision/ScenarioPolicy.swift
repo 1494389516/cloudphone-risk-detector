@@ -33,6 +33,10 @@ public struct ScenarioPolicy: Codable, Sendable {
     /// 是否启用强制规则（如：越狱设备直接拒绝）
     public let enableForceRules: Bool
 
+    /// 压缩摘要快速判决规则（纯位向量，命中可短路）
+    /// 如：layer2 & 0x0C != 0 --> block
+    public let compressedVerdictRules: [CompressedVerdictRule]
+
     // MARK: - 初始化
 
     public init(
@@ -42,7 +46,8 @@ public struct ScenarioPolicy: Codable, Sendable {
         actionMapping: [InternalRiskLevel: RiskAction]? = nil,
         signalWeights: SignalWeights = .default,
         comboRules: [ComboRule] = [],
-        enableForceRules: Bool = true
+        enableForceRules: Bool = true,
+        compressedVerdictRules: [CompressedVerdictRule] = []
     ) {
         self.mediumThreshold = mediumThreshold
         self.highThreshold = highThreshold
@@ -51,6 +56,19 @@ public struct ScenarioPolicy: Codable, Sendable {
         self.signalWeights = signalWeights
         self.comboRules = comboRules
         self.enableForceRules = enableForceRules
+        self.compressedVerdictRules = compressedVerdictRules
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mediumThreshold = try container.decode(Double.self, forKey: .mediumThreshold)
+        highThreshold = try container.decode(Double.self, forKey: .highThreshold)
+        criticalThreshold = try container.decode(Double.self, forKey: .criticalThreshold)
+        actionMapping = try container.decode([InternalRiskLevel: RiskAction].self, forKey: .actionMapping)
+        signalWeights = try container.decode(SignalWeights.self, forKey: .signalWeights)
+        comboRules = try container.decode([ComboRule].self, forKey: .comboRules)
+        enableForceRules = try container.decode(Bool.self, forKey: .enableForceRules)
+        compressedVerdictRules = try container.decodeIfPresent([CompressedVerdictRule].self, forKey: .compressedVerdictRules) ?? []
     }
 
     // MARK: - 便捷方法
@@ -325,6 +343,7 @@ public struct ScenarioPolicyBuilder {
     private var signalWeights: SignalWeights = .default
     private var comboRules: [ComboRule] = []
     private var enableForceRules: Bool = true
+    private var compressedVerdictRules: [CompressedVerdictRule] = []
 
     public init() {}
 
@@ -360,6 +379,12 @@ public struct ScenarioPolicyBuilder {
         return builder
     }
 
+    public func setCompressedVerdictRules(_ rules: [CompressedVerdictRule]) -> ScenarioPolicyBuilder {
+        var builder = self
+        builder.compressedVerdictRules = rules
+        return builder
+    }
+
     public func build() -> ScenarioPolicy {
         ScenarioPolicy(
             mediumThreshold: mediumThreshold,
@@ -368,7 +393,8 @@ public struct ScenarioPolicyBuilder {
             actionMapping: actionMapping.isEmpty ? nil : actionMapping,
             signalWeights: signalWeights,
             comboRules: comboRules,
-            enableForceRules: enableForceRules
+            enableForceRules: enableForceRules,
+            compressedVerdictRules: compressedVerdictRules
         )
     }
 }

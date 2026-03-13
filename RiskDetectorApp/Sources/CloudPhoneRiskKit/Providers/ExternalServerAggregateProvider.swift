@@ -23,11 +23,17 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
         var riskTags: [String]?
     }
 
+    /// 清空图特征，避免跨账号/跨会话残留。
+    func clearGraphFeatures() {
+        lock.lock()
+        graphFeatures = nil
+        lock.unlock()
+    }
+
     func set(_ signals: ServerSignals?) {
         lock.lock()
         current = signals
-        lock.unlock()
-        Logger.log("server_aggregate.set: \(signals == nil ? "nil" : "set")")
+        lock.unlock()        Logger.log("server_aggregate.set: \(signals == nil ? "nil" : "set")")
     }
 
     func setGraphFeatures(
@@ -47,18 +53,31 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
             isInDenseSubgraph: isInDenseSubgraph,
             riskTags: riskTags
         )
-        lock.unlock()
-        #if DEBUG
+        lock.unlock()        #if DEBUG
         Logger.log("server_aggregate.setGraphFeatures: community=\(communityId ?? "nil")")
         #endif
+    }
+
+    /// 应用图风控反馈：服务端返回图计算结果后注入，用于增强本地评分。
+    /// 注入后可触发 re-evaluate 或调整阈值（占位，当前仅更新 graphFeatures）。
+    /// - Parameter feedback: 图风控反馈（communityId、communityRiskDensity 等）
+    func applyGraphRiskFeedback(_ feedback: GraphRiskFeedback) {
+        setGraphFeatures(
+            communityId: feedback.communityId,
+            communityRiskDensity: feedback.communityRiskDensity,
+            hwProfileDegree: feedback.hwProfileDegree,
+            devicePageRank: feedback.devicePageRank,
+            isInDenseSubgraph: feedback.isInDenseSubgraph,
+            riskTags: feedback.riskTags
+        )
+        // 占位：可选触发 re-evaluate 或调整阈值
     }
 
     func serverSignals(snapshot: RiskSnapshot) -> ServerSignals? {
         lock.lock()
         let s = current
         let gf = graphFeatures
-        lock.unlock()
-        guard s != nil || gf != nil else { return nil }
+        lock.unlock()        guard s != nil || gf != nil else { return nil }
         var merged = s ?? ServerSignals()
         if let gf {
             merged.communityId = gf.communityId

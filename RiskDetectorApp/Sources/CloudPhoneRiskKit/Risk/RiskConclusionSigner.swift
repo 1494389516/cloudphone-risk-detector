@@ -44,18 +44,39 @@ public struct SignedRiskConclusion: Codable, Sendable {
 }
 
 public enum DeviceKeyDeriver {
-    private static let infoVersion = 1
-    private static var info: Data {
-        Data("CloudPhoneRiskKit.DeviceKey.v\(infoVersion)".utf8)
+    /// 默认 DeviceKey 版本（v1），与 KeyRotationPolicy.deviceKeyVersion 对应
+    public static let defaultInfoVersion = "v1"
+
+    private static func info(for version: String) -> Data {
+        Data("CloudPhoneRiskKit.DeviceKey.\(version)".utf8)
     }
 
+    /// 派生 DeviceKey（使用默认版本 v1）
     public static func deriveKey(
         deviceID: String,
         hardwareMachine: String,
         kernelVersion: String,
         salt: Data? = nil
     ) -> SymmetricKey {
-        let keychainSalt = KeychainSalt.shared.getOrCreate()
+        deriveKey(
+            deviceID: deviceID,
+            hardwareMachine: hardwareMachine,
+            kernelVersion: kernelVersion,
+            salt: salt,
+            infoVersion: defaultInfoVersion
+        )
+    }
+
+    /// 派生 DeviceKey（支持 infoVersion 可配置，用于密钥轮换）
+    /// - Parameter infoVersion: 与 KeyRotationPolicy.deviceKeyVersion 对应，如 "v1"、"v2"
+    public static func deriveKey(
+        deviceID: String,
+        hardwareMachine: String,
+        kernelVersion: String,
+        salt: Data? = nil,
+        infoVersion: String
+    ) -> SymmetricKey {
+        let (keychainSalt, _) = KeychainSalt.shared.getOrCreateWithPersistedFlag()
         let combined = "\(deviceID)|\(hardwareMachine)|\(kernelVersion)|\(keychainSalt)"
         return SecureScope.withSecureValue(combined) { str in
             var dataBytes = Array(str.utf8)
@@ -65,10 +86,36 @@ public enum DeviceKeyDeriver {
             return HKDF<SHA256>.deriveKey(
                 inputKeyMaterial: inputKeyMaterial,
                 salt: salt ?? Data(),
-                info: info,
+                info: info(for: infoVersion),
                 outputByteCount: 32
             )
         }
+    }
+
+    /// 派生 DeviceKey，返回 (key, wasPersistedSalt)
+    /// wasPersistedSalt 为 false 表示 Keychain 无持久化 salt（新建），TrustLevel 应为 .degraded
+    public static func deriveKeyWithTrustInfo(
+        deviceID: String,
+        hardwareMachine: String,
+        kernelVersion: String,
+        salt: Data? = nil,
+        infoVersion: String = defaultInfoVersion
+    ) -> (key: SymmetricKey, saltWasPersisted: Bool) {
+        let (keychainSalt, wasPersisted) = KeychainSalt.shared.getOrCreateWithPersistedFlag()
+        let combined = "\(deviceID)|\(hardwareMachine)|\(kernelVersion)|\(keychainSalt)"
+        let key = SecureScope.withSecureValue(combined) { str in
+            var dataBytes = Array(str.utf8)
+            defer { secureZeroBytes(&dataBytes) }
+            let hash = SHA256.hash(data: Data(dataBytes))
+            let inputKeyMaterial = SymmetricKey(data: Data(hash))
+            return HKDF<SHA256>.deriveKey(
+                inputKeyMaterial: inputKeyMaterial,
+                salt: salt ?? Data(),
+                info: info(for: infoVersion),
+                outputByteCount: 32
+            )
+        }
+        return (key, wasPersisted)
     }
 }
 
@@ -83,10 +130,15 @@ private final class KeychainSalt {
     private let lock = NSLock()
 
     func getOrCreate() -> String {
+        getOrCreateWithPersistedFlag().0
+    }
+
+    /// 返回 (salt, wasPersisted)：wasPersisted 为 true 表示从 Keychain 读取到已有 salt
+    func getOrCreateWithPersistedFlag() -> (String, Bool) {
         lock.lock()
         defer { lock.unlock() }
 
-        if let existing = read() { return existing }
+        if let existing = read() { return (existing, true) }
 
         var bytes = [UInt8](repeating: 0, count: saltLength)
         defer { secureZeroBytes(&bytes) }
@@ -102,9 +154,9 @@ private final class KeychainSalt {
 
         let hex = bytes.map { String(format: "%02x", $0) }.joined()
         if let existing = save(hex) {
-            return existing
+            return (existing, true)
         }
-        return hex
+        return (hex, false)
     }
 
     private func read() -> String? {

@@ -9,6 +9,12 @@ public struct ServerRiskPolicy: Codable, Sendable {
     public let blocklist: [String]
     public let mutation: MutationConfig?
     public let blindChallenge: BlindChallengeConfig?
+    /// 密钥轮换策略（SDK 5.0）
+    public let keyRotationPolicy: KeyRotationPolicy?
+
+    /// Re-attestation 服务端 challenge 占位（SDK 5.0）
+    /// 服务端下发后，客户端用 App Attest key 签名并上报，用于周期性 attestation 刷新
+    public let reAttestationChallenge: Data?
 
     public struct PolicyThresholds: Codable, Sendable {
         public let block: Double
@@ -112,7 +118,9 @@ public struct ServerRiskPolicy: Codable, Sendable {
         newVPhonePatterns: [String] = [],
         blocklist: [String] = [],
         mutation: MutationConfig? = nil,
-        blindChallenge: BlindChallengeConfig? = nil
+        blindChallenge: BlindChallengeConfig? = nil,
+        keyRotationPolicy: KeyRotationPolicy? = nil,
+        reAttestationChallenge: Data? = nil
     ) {
         self.version = version
         self.signalWeights = signalWeights
@@ -121,6 +129,8 @@ public struct ServerRiskPolicy: Codable, Sendable {
         self.blocklist = blocklist
         self.mutation = mutation
         self.blindChallenge = blindChallenge
+        self.keyRotationPolicy = keyRotationPolicy
+        self.reAttestationChallenge = reAttestationChallenge
     }
 }
 

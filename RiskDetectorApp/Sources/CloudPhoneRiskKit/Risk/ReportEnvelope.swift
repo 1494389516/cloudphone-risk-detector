@@ -1,6 +1,14 @@
 import CryptoKit
 import Foundation
 
+/// 签名密钥编码方式（SDK 5.0 keyResolver 支持）
+public enum SigningKeyEncoding: Sendable {
+    /// UTF-8 字符串（默认，兼容既有调用）
+    case utf8
+    /// Hex 编码（用于 DeviceKey 派生场景）
+    case hex
+}
+
 /// 上报信封，用于防止重放和篡改
 /// v2 签名输入：sigVer|nonce|ts(ms)|sessionToken|reportId|keyId|fieldMappingVersion|attestationKeyId|payloadCanonical
 public struct ReportEnvelope: Codable, Sendable {
@@ -39,6 +47,13 @@ public struct ReportEnvelope: Codable, Sendable {
 
     /// App Attest 断言数据（可选；Secure Enclave 对 payload 摘要的硬件签名）
     public let attestationAssertion: Data?
+
+    /// 端侧信任等级（SDK 5.0），服务端可据此调整决策权重
+    public let trustLevel: TrustLevel?
+
+    /// Re-attestation 断言（SDK 5.0，可选）
+    /// 当 shouldRefreshAttestation 且服务端下发 reAttestationChallenge 时，客户端用 App Attest key 签名后填入
+    public let reAttestationAssertion: Data?
 
     /// 是否具备完整硬件信任根（attestationKeyId 与 attestationAssertion 均存在且非空）。
     /// 调用方可用此判断是否发生静默降级；若业务要求硬件信任根，应检查此属性为 true。
@@ -120,6 +135,8 @@ public struct ReportEnvelope: Codable, Sendable {
         case signature
         case attestationKeyId
         case attestationAssertion
+        case trustLevel
+        case reAttestationAssertion
     }
 
     public init(
@@ -133,7 +150,9 @@ public struct ReportEnvelope: Codable, Sendable {
         fieldMappingVersion: String? = nil,
         signature: String,
         attestationKeyId: String? = nil,
-        attestationAssertion: Data? = nil
+        attestationAssertion: Data? = nil,
+        trustLevel: TrustLevel? = nil,
+        reAttestationAssertion: Data? = nil
     ) {
         self.nonce = nonce
         self.ts = ts
@@ -146,6 +165,8 @@ public struct ReportEnvelope: Codable, Sendable {
         self.signature = signature
         self.attestationKeyId = attestationKeyId
         self.attestationAssertion = attestationAssertion
+        self.trustLevel = trustLevel
+        self.reAttestationAssertion = reAttestationAssertion
     }
 
     public init(from decoder: Decoder) throws {
@@ -161,6 +182,8 @@ public struct ReportEnvelope: Codable, Sendable {
         signature = try container.decode(String.self, forKey: .signature)
         attestationKeyId = try container.decodeIfPresent(String.self, forKey: .attestationKeyId)
         attestationAssertion = try container.decodeIfPresent(Data.self, forKey: .attestationAssertion)
+        trustLevel = try container.decodeIfPresent(TrustLevel.self, forKey: .trustLevel)
+        reAttestationAssertion = try container.decodeIfPresent(Data.self, forKey: .reAttestationAssertion)
     }
 
     // MARK: - Factory
@@ -173,6 +196,8 @@ public struct ReportEnvelope: Codable, Sendable {
     ///   - signingKey: HMAC 密钥
     ///   - keyId: 密钥标识
     ///   - fieldMapping: 字段混淆映射（可选）
+    ///   - attestationKeyId: App Attest 密钥 ID（可选）
+    ///   - trustLevel: 端侧信任等级（SDK 5.0），Keychain 被清或 attestation 过期时应传 .degraded
     ///   - config: 签名配置
     public static func create(
         payloadData: Data,
@@ -182,6 +207,7 @@ public struct ReportEnvelope: Codable, Sendable {
         keyId: String = "k1",
         fieldMapping: PayloadFieldMapping? = nil,
         attestationKeyId: String? = nil,
+        trustLevel: TrustLevel? = nil,
         config: Config = Config()
     ) throws -> ReportEnvelope {
         let nonce = UUID().uuidString
@@ -228,12 +254,14 @@ public struct ReportEnvelope: Codable, Sendable {
             fieldMappingVersion: fieldMapping?.version,
             signature: signatureHex,
             attestationKeyId: attestationKeyId,
-            attestationAssertion: nil
+            attestationAssertion: nil,
+            trustLevel: trustLevel
         )
     }
 
     /// 返回带 App Attest 断言的副本（SDK 4.4）
     /// attestationKeyId 必须在 create() 时已传入并纳入签名域，此处仅附加断言数据。
+    /// 返回带 App Attest 断言的副本（SDK 4.4），trustLevel 设为 .hardware
     public func withAttestation(attestationKeyId: String, assertion: Data) -> ReportEnvelope {
         ReportEnvelope(
             nonce: nonce,
@@ -246,7 +274,47 @@ public struct ReportEnvelope: Codable, Sendable {
             fieldMappingVersion: fieldMappingVersion,
             signature: signature,
             attestationKeyId: attestationKeyId,
-            attestationAssertion: assertion
+            attestationAssertion: assertion,
+            trustLevel: .hardware,
+            reAttestationAssertion: reAttestationAssertion
+        )
+    }
+
+    /// 设置信任等级（SDK 5.0）
+    public func withTrustLevel(_ level: TrustLevel) -> ReportEnvelope {
+        ReportEnvelope(
+            nonce: nonce,
+            ts: ts,
+            sessionToken: sessionToken,
+            payload: payload,
+            reportId: reportId,
+            sigVer: sigVer,
+            keyId: keyId,
+            fieldMappingVersion: fieldMappingVersion,
+            signature: signature,
+            attestationKeyId: attestationKeyId,
+            attestationAssertion: attestationAssertion,
+            trustLevel: level,
+            reAttestationAssertion: reAttestationAssertion
+        )
+    }
+
+    /// 附加 re-attestation 断言（SDK 5.0）
+    public func withReAttestationAssertion(_ assertion: Data?) -> ReportEnvelope {
+        ReportEnvelope(
+            nonce: nonce,
+            ts: ts,
+            sessionToken: sessionToken,
+            payload: payload,
+            reportId: reportId,
+            sigVer: sigVer,
+            keyId: keyId,
+            fieldMappingVersion: fieldMappingVersion,
+            signature: signature,
+            attestationKeyId: attestationKeyId,
+            attestationAssertion: attestationAssertion,
+            trustLevel: trustLevel,
+            reAttestationAssertion: assertion
         )
     }
 
@@ -265,15 +333,36 @@ public struct ReportEnvelope: Codable, Sendable {
 
     // MARK: - Verification
 
-    public func verifySignature(_ signingKey: String) -> Bool {
-        guard let keyData = signingKey.data(using: .utf8) else {
+    /// 通过 key resolver 验签（支持 key rotation）
+    /// - Parameter keyEncoding: 密钥编码，.utf8 为 UTF-8 字符串，.hex 为 hex 编码（用于 DeviceKey 派生场景）
+    public func verifySignature(
+        using keyResolver: (String) -> String?,
+        keyEncoding: SigningKeyEncoding = .utf8
+    ) -> Bool {
+        guard let signingKey = keyResolver(keyId) else {
             return false
         }
+        return verifySignature(signingKey, keyEncoding: keyEncoding)
+    }
 
+    /// 验签（支持 hex 编码密钥）
+    public func verifySignature(_ signingKey: String, keyEncoding: SigningKeyEncoding = .utf8) -> Bool {
+        let keyData: Data?
+        switch keyEncoding {
+        case .utf8:
+            keyData = signingKey.data(using: .utf8)
+        case .hex:
+            keyData = Data(hexString: signingKey)
+        }
+        guard let keyData else { return false }
+        return verifySignature(keyData: keyData)
+    }
+
+    /// 验签（内部实现，使用 Data 密钥）
+    private func verifySignature(keyData: Data) -> Bool {
         guard let canonicalPayload = try? Self.canonicalJSONString(from: payload) else {
             return false
         }
-
         let signatureInput = Self.buildSignatureInput(
             sigVer: sigVer,
             nonce: nonce,
@@ -288,17 +377,8 @@ public struct ReportEnvelope: Codable, Sendable {
         guard let signatureData = signatureInput.data(using: .utf8) else {
             return false
         }
-
         let expectedSignature = Self.hmacHex(message: signatureData, keyData: keyData)
         return timingSafeCompare(expectedSignature, signature)
-    }
-
-    /// 通过 key resolver 验签（支持 key rotation）
-    public func verifySignature(using keyResolver: (String) -> String?) -> Bool {
-        guard let signingKey = keyResolver(keyId) else {
-            return false
-        }
-        return verifySignature(signingKey)
     }
 
     /// 检查 nonce 是否超时
@@ -352,7 +432,7 @@ public struct ReportEnvelope: Codable, Sendable {
         nonceStore: NonceReplayProtecting? = nil,
         config: Config = Config()
     ) -> Result<Void, ReportEnvelopeError> {
-        guard let signingKey = keyResolver(keyId) else {
+        let resolved = keyResolver(keyId)        guard let signingKey = resolved else {
             return .failure(.signingFailed)
         }
         return validate(signingKey: signingKey, nonceStore: nonceStore, config: config)
@@ -382,6 +462,8 @@ public struct ReportEnvelope: Codable, Sendable {
         try Self.canonicalJSONString(from: payload)
     }
 
+    /// v2 签名输入：sigVer|nonce|ts|sessionToken|reportId|keyId|fieldMappingVersion|attestationKeyId|canonicalPayload
+    /// canonicalPayload 为 payload 的规范 JSON，已包含 compressedDigestHex、signalMappingVersion 等字段，故压缩摘要已纳入签名域。
     private static func buildSignatureInput(
         sigVer: String,
         nonce: String,

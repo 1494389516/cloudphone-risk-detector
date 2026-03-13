@@ -69,6 +69,10 @@ public struct RiskScoreReport: Sendable {
     public var isHighRisk: Bool
     public var signals: [RiskSignal]
     public var summary: String
+    /// 内存语义压缩摘要（8 字节）
+    public var compressedDigest: Data?
+    /// 信号到 bit 映射表版本
+    public var mappingVersion: String?
 }
 
 public enum RiskSignalState: Sendable, Codable, Equatable {
@@ -179,6 +183,8 @@ public final class CPRiskSignal: NSObject {
 @objc(CPRiskReport)
 public final class CPRiskReport: NSObject {
     @objc public let deviceID: String
+    /// 设备指纹（用于 TrustChainManager.evaluateTrustLevel 等）
+    public var device: DeviceFingerprint { payload.device }
     @objc public let reportID: String
     @objc public let score: Double
     @objc public let isHighRisk: Bool
@@ -282,6 +288,10 @@ public final class CPRiskReport: NSObject {
         payload.challengeBinding = challengeBinding
     }
 
+    func setGraphNodeDescriptor(_ descriptor: GraphNodeDescriptor?) {
+        payload.graphNode = descriptor
+    }
+
     public func challengeBinding() -> ChallengeBindingPayload? {
         payload.challengeBinding
     }
@@ -302,6 +312,11 @@ private struct Payload: Codable {
     var summary: String
     var signals: [RiskSignal]
     var tamperedCount: Int
+
+    // 内存语义压缩摘要（8 字节 hex，纳入签名域）
+    var compressedDigestHex: String?
+    // 信号到 bit 映射表版本（服务端解码用）
+    var signalMappingVersion: String?
 
     // 预留：未来服务端/云端聚合信号（IP 聚合度、ASN、机房属性等）
     var server: ServerSignals?
@@ -326,6 +341,9 @@ private struct Payload: Codable {
     var sceneTag: String?
     var behaviorVector: [Double]?
 
+    // 3.5 图风控：端侧生产的图节点描述符（单向哈希，服务端可直接入图）
+    var graphNode: GraphNodeDescriptor?
+
     init(context: RiskContext, report: RiskScoreReport) {
         self.sdkVersion = Version.current
         self.reportId = UUID().uuidString
@@ -341,6 +359,8 @@ private struct Payload: Codable {
         self.summary = report.summary
         self.signals = report.signals
         self.tamperedCount = report.signals.filter { $0.state == .tampered }.count
+        self.compressedDigestHex = report.compressedDigest.map { $0.map { String(format: "%02x", $0) }.joined() }
+        self.signalMappingVersion = report.mappingVersion
         self.server = nil
         self.local = nil
         self.challengeBinding = nil
@@ -354,6 +374,7 @@ private struct Payload: Codable {
         self.sessionId = nil
         self.sceneTag = nil
         self.behaviorVector = Self.computeBehaviorVector(from: context.behavior)
+        self.graphNode = nil
     }
 
     private static func computeBehaviorVector(from behavior: BehaviorSignals) -> [Double]? {
@@ -369,6 +390,16 @@ private struct Payload: Codable {
     }
 }
 
+/// 探针执行状态（超时/不支持时上报）
+public enum ChallengeExecutionStatus: String, Codable, Sendable {
+    /// 正常完成
+    case completed
+    /// 客户端执行探针超时
+    case timeout
+    /// 设备不支持某些探针
+    case unsupported
+}
+
 public struct ChallengeBindingPayload: Codable, Sendable {
     public var challengeId: String
     public var seed: String
@@ -382,6 +413,10 @@ public struct ChallengeBindingPayload: Codable, Sendable {
     public var tamperedCount: Int
     public var probeRiskContribution: Int
     public var triggerReason: String?
+    /// 探针执行状态（超时/不支持时上报）
+    public var executionStatus: ChallengeExecutionStatus
+    /// seed 与设备指纹绑定：expectedHash = SHA256(seed + deviceFingerprint)，用于服务端防重放验证占位
+    public var expectedHash: String?
 
     public init(
         challengeId: String,
@@ -395,7 +430,9 @@ public struct ChallengeBindingPayload: Codable, Sendable {
         totalProbes: Int,
         tamperedCount: Int,
         probeRiskContribution: Int,
-        triggerReason: String? = nil
+        triggerReason: String? = nil,
+        executionStatus: ChallengeExecutionStatus = .completed,
+        expectedHash: String? = nil
     ) {
         self.challengeId = challengeId
         self.seed = seed
@@ -409,6 +446,50 @@ public struct ChallengeBindingPayload: Codable, Sendable {
         self.tamperedCount = tamperedCount
         self.probeRiskContribution = probeRiskContribution
         self.triggerReason = triggerReason
+        self.executionStatus = executionStatus
+        self.expectedHash = expectedHash
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        challengeId = try container.decode(String.self, forKey: .challengeId)
+        seed = try container.decode(String.self, forKey: .seed)
+        probeIds = try container.decode([String].self, forKey: .probeIds)
+        executedProbeIds = try container.decode([String].self, forKey: .executedProbeIds)
+        expiresAt = try container.decode(Int64.self, forKey: .expiresAt)
+        timestamp = try container.decode(Int64.self, forKey: .timestamp)
+        capabilityAnomalyCount = try container.decode(Int.self, forKey: .capabilityAnomalyCount)
+        qualitySuspicion = try container.decode(Int.self, forKey: .qualitySuspicion)
+        totalProbes = try container.decode(Int.self, forKey: .totalProbes)
+        tamperedCount = try container.decode(Int.self, forKey: .tamperedCount)
+        probeRiskContribution = try container.decode(Int.self, forKey: .probeRiskContribution)
+        triggerReason = try container.decodeIfPresent(String.self, forKey: .triggerReason)
+        executionStatus = try container.decodeIfPresent(ChallengeExecutionStatus.self, forKey: .executionStatus) ?? .completed
+        expectedHash = try container.decodeIfPresent(String.self, forKey: .expectedHash)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(challengeId, forKey: .challengeId)
+        try container.encode(seed, forKey: .seed)
+        try container.encode(probeIds, forKey: .probeIds)
+        try container.encode(executedProbeIds, forKey: .executedProbeIds)
+        try container.encode(expiresAt, forKey: .expiresAt)
+        try container.encode(timestamp, forKey: .timestamp)
+        try container.encode(capabilityAnomalyCount, forKey: .capabilityAnomalyCount)
+        try container.encode(qualitySuspicion, forKey: .qualitySuspicion)
+        try container.encode(totalProbes, forKey: .totalProbes)
+        try container.encode(tamperedCount, forKey: .tamperedCount)
+        try container.encode(probeRiskContribution, forKey: .probeRiskContribution)
+        try container.encodeIfPresent(triggerReason, forKey: .triggerReason)
+        try container.encode(executionStatus, forKey: .executionStatus)
+        try container.encodeIfPresent(expectedHash, forKey: .expectedHash)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case challengeId, seed, probeIds, executedProbeIds, expiresAt, timestamp
+        case capabilityAnomalyCount, qualitySuspicion, totalProbes, tamperedCount, probeRiskContribution
+        case triggerReason, executionStatus, expectedHash
     }
 }
 
@@ -488,5 +569,5 @@ private struct DetectionResultPayload: Codable {
 }
 
 enum Version {
-    static let current = "3.5.0"
+    static let current = "5.0.0"
 }

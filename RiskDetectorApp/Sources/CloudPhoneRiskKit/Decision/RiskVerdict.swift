@@ -48,6 +48,12 @@ public struct RiskVerdict: Codable, Sendable {
     /// 使用的场景类型
     public let scenario: RiskScenario
 
+    /// 内存语义压缩摘要（8 字节，用于降低驻留风险）
+    public let compressedDigest: Data?
+
+    /// 信号到 bit 的映射表版本（服务端解码用）
+    public let mappingVersion: String?
+
     // MARK: - 元数据
 
     /// 判决生成时间
@@ -73,7 +79,9 @@ public struct RiskVerdict: Codable, Sendable {
         confidence: Double,
         primaryReasons: [String],
         signals: [RiskSignal],
-        scenario: RiskScenario
+        scenario: RiskScenario,
+        compressedDigest: Data? = nil,
+        mappingVersion: String? = nil
     ) {
         self.score = score
         self.internalLevel = internalLevel
@@ -82,6 +90,8 @@ public struct RiskVerdict: Codable, Sendable {
         self.primaryReasons = primaryReasons
         self.signals = signals
         self.scenario = scenario
+        self.compressedDigest = compressedDigest
+        self.mappingVersion = mappingVersion
         self.timestamp = Date()
         self.requestId = UUID().uuidString
     }
@@ -92,7 +102,9 @@ public struct RiskVerdict: Codable, Sendable {
         confidence: Double,
         signals: [RiskSignal],
         scenario: RiskScenario,
-        policy: ScenarioPolicy
+        policy: ScenarioPolicy,
+        compressedDigest: Data? = nil,
+        mappingVersion: String? = nil
     ) {
         self.score = score
         self.internalLevel = InternalRiskLevel.from(score: score)
@@ -101,6 +113,8 @@ public struct RiskVerdict: Codable, Sendable {
         self.primaryReasons = Self.extractPrimaryReasons(signals: signals, score: score)
         self.signals = signals
         self.scenario = scenario
+        self.compressedDigest = compressedDigest
+        self.mappingVersion = mappingVersion
         self.timestamp = Date()
         self.requestId = UUID().uuidString
     }
@@ -187,7 +201,9 @@ extension RiskVerdict {
             confidence: calculateConfidence(context: context),
             primaryReasons: report.signals.map { "\($0.category)_\($0.id)" },
             signals: report.signals,
-            scenario: scenario
+            scenario: scenario,
+            compressedDigest: report.compressedDigest,
+            mappingVersion: report.mappingVersion
         )
     }
 

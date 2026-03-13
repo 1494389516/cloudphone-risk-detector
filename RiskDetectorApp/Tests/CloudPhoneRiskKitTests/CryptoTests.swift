@@ -250,6 +250,27 @@ final class CryptoTests: XCTestCase {
         XCTAssertNotEqual(data1, data2)
     }
 
+    func testDeviceKeyDeriverInfoVersionProducesDifferentKeys() {
+        let salt = Data("test-salt".utf8)
+        let keyV1 = DeviceKeyDeriver.deriveKey(
+            deviceID: "device-1",
+            hardwareMachine: "iPhone15,3",
+            kernelVersion: "23.0.0",
+            salt: salt,
+            infoVersion: "v1"
+        )
+        let keyV2 = DeviceKeyDeriver.deriveKey(
+            deviceID: "device-1",
+            hardwareMachine: "iPhone15,3",
+            kernelVersion: "23.0.0",
+            salt: salt,
+            infoVersion: "v2"
+        )
+        let dataV1 = keyV1.withUnsafeBytes { Data($0) }
+        let dataV2 = keyV2.withUnsafeBytes { Data($0) }
+        XCTAssertNotEqual(dataV1, dataV2, "不同 infoVersion 应产生不同密钥")
+    }
+
     // MARK: - DecoyFieldInjector Tests
 
     func testDecoyInjectionAddsFields() throws {
