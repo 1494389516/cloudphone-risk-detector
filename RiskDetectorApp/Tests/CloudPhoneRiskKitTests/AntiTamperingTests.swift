@@ -38,9 +38,9 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertTrue(detector.debugEnvironmentKeys.contains("OS_ACTIVITY_DT_MODE"))
     }
 
-    func testAntiTamperingScoreCapped() {
+    func testAntiTamperingScoreCapped() throws {
         let detector = AntiTamperingDetector()
-        let result = detector.detect()
+        let result = try detector.detect()
         XCTAssertLessThanOrEqual(result.score, 90)
     }
 
@@ -68,9 +68,9 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertEqual(detector.debuggerPorts.count, 5)
     }
 
-    func testDebuggerDetectorScoreCapped() {
+    func testDebuggerDetectorScoreCapped() throws {
         let detector = DebuggerDetector()
-        let result = detector.detect()
+        let result = try detector.detect()
         XCTAssertLessThanOrEqual(result.score, 85)
     }
 
@@ -116,15 +116,15 @@ final class AntiTamperingTests: XCTestCase {
 
     // MARK: - FridaHeapDetector Tests
 
-    func testFridaHeapDetectorScoreCapped() {
+    func testFridaHeapDetectorScoreCapped() throws {
         let detector = FridaHeapDetector()
-        let result = detector.detect()
+        let result = try detector.detect()
         XCTAssertLessThanOrEqual(result.score, 80)
     }
 
-    func testFridaHeapDetectorSignalConversion() {
+    func testFridaHeapDetectorSignalConversion() throws {
         let detector = FridaHeapDetector()
-        let signals = detector.asSignals()
+        let signals = try detector.asSignals()
         // On clean system, should produce no signals
         // If signals exist, verify structure
         for signal in signals {
@@ -136,15 +136,15 @@ final class AntiTamperingTests: XCTestCase {
 
     // MARK: - FridaThreadDetector Tests
 
-    func testFridaThreadDetectorScoreCapped() {
+    func testFridaThreadDetectorScoreCapped() throws {
         let detector = FridaThreadDetector()
-        let result = detector.detect()
+        let result = try detector.detect()
         XCTAssertLessThanOrEqual(result.score, 80)
     }
 
-    func testFridaThreadSignalConversion() {
+    func testFridaThreadSignalConversion() throws {
         let detector = FridaThreadDetector()
-        let signals = detector.asSignals()
+        let signals = try detector.asSignals()
         for signal in signals {
             XCTAssertEqual(signal.category, "anti_tamper")
             XCTAssertEqual(signal.layer, 2)
@@ -154,16 +154,16 @@ final class AntiTamperingTests: XCTestCase {
 
     // MARK: - FridaSocketDetector Tests
 
-    func testFridaSocketDetectorScoreCapped() {
+    func testFridaSocketDetectorScoreCapped() throws {
         let detector = FridaSocketDetector()
-        let result = detector.detect()
+        let result = try detector.detect()
         // Socket detection capped at 30, timing at 75
         XCTAssertTrue(result.score >= 0)
     }
 
-    func testFridaSocketSignalConversion() {
+    func testFridaSocketSignalConversion() throws {
         let detector = FridaSocketDetector()
-        let signals = detector.asSignals()
+        let signals = try detector.asSignals()
         for signal in signals {
             XCTAssertEqual(signal.category, "anti_tamper")
             XCTAssertEqual(signal.layer, 2)
@@ -173,16 +173,16 @@ final class AntiTamperingTests: XCTestCase {
 
     // MARK: - ObjCSwizzleDetector Tests
 
-    func testObjCSwizzleMethodChecksCompleteness() {
+    func testObjCSwizzleMethodChecksCompleteness() throws {
         let detector = ObjCSwizzleDetector()
         // Verify detect() runs without crash
-        let result = detector.detect()
+        let result = try detector.detect()
         XCTAssertTrue(result.score >= 0)
     }
 
-    func testObjCSwizzleSignalConversion() {
+    func testObjCSwizzleSignalConversion() throws {
         let detector = ObjCSwizzleDetector()
-        let signals = detector.asSignals()
+        let signals = try detector.asSignals()
         for signal in signals {
             XCTAssertEqual(signal.category, "anti_tamper")
             XCTAssertEqual(signal.layer, 2)
@@ -196,15 +196,15 @@ final class AntiTamperingTests: XCTestCase {
 
     // MARK: - SensorReplayDetector Tests
 
-    func testSensorReplayDetectorRuns() {
+    func testSensorReplayDetectorRuns() throws {
         let detector = SensorReplayDetector()
-        let result = detector.detect()
+        let result = try detector.detect()
         XCTAssertTrue(result.score >= 0)
     }
 
-    func testSensorReplaySignalConversion() {
+    func testSensorReplaySignalConversion() throws {
         let detector = SensorReplayDetector()
-        let signals = detector.asSignals()
+        let signals = try detector.asSignals()
         for signal in signals {
             XCTAssertEqual(signal.category, "device")
             XCTAssertEqual(signal.layer, 3)
@@ -214,7 +214,7 @@ final class AntiTamperingTests: XCTestCase {
 
     // MARK: - Cross-Detector Consistency Tests
 
-    func testAllAntiTamperingDetectorsProduceValidResults() {
+    func testAllAntiTamperingDetectorsProduceValidResults() throws {
         // All detectors should produce non-negative scores
         let detectors: [Detector] = [
             AntiTamperingDetector(),
@@ -228,7 +228,7 @@ final class AntiTamperingTests: XCTestCase {
         ]
 
         for detector in detectors {
-            let result = detector.detect()
+            let result = try detector.detect()
             XCTAssertGreaterThanOrEqual(result.score, 0,
                 "\(type(of: detector)) produced negative score: \(result.score)")
             // Methods should not be empty if score > 0

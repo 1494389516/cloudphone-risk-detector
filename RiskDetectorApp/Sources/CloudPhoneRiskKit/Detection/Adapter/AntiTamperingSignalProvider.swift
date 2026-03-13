@@ -686,7 +686,7 @@ extension JailbreakConfig {
         enableDebugger: Bool = true,
         enableFrida: Bool = true
     ) -> JailbreakConfig {
-        var config = JailbreakConfig(
+        let config = JailbreakConfig(
             enableFileDetect: true,
             enableDyldDetect: true,
             enableEnvDetect: true,

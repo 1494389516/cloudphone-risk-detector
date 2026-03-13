@@ -169,10 +169,9 @@ final class CryptoTests: XCTestCase {
     // MARK: - RiskConclusionSigner Tests
 
     func testSignAndVerifyConclusion() {
-        let report = RiskScorer.score(
-            context: TestFixtures.makeRiskContext(isJailbroken: true, jailbreakConfidence: 80),
-            config: TestFixtures.defaultRiskConfig
-        )
+        let context = TestFixtures.makeRiskContext(isJailbroken: true, jailbreakConfidence: 80)
+        let report = RiskScorer.score(context: context, config: TestFixtures.defaultRiskConfig)
+        let cprReport = CPRiskReport(context: context, report: report)
         let key = DeviceKeyDeriver.deriveKey(
             deviceID: "test-device",
             hardwareMachine: "iPhone15,3",
@@ -180,7 +179,7 @@ final class CryptoTests: XCTestCase {
             salt: Data("test-salt".utf8)
         )
 
-        let signed = SignedRiskConclusion.sign(report: report, deviceKey: key)
+        let signed = SignedRiskConclusion.sign(report: cprReport, deviceKey: key)
         XCTAssertFalse(signed.signature.isEmpty)
         XCTAssertFalse(signed.nonce.isEmpty)
         XCTAssertGreaterThan(signed.timestamp, 0)
@@ -190,10 +189,9 @@ final class CryptoTests: XCTestCase {
     }
 
     func testConclusionVerifyRejectsWrongKey() {
-        let report = RiskScorer.score(
-            context: TestFixtures.makeRiskContext(),
-            config: TestFixtures.defaultRiskConfig
-        )
+        let context = TestFixtures.makeRiskContext()
+        let report = RiskScorer.score(context: context, config: TestFixtures.defaultRiskConfig)
+        let cprReport = CPRiskReport(context: context, report: report)
         let key1 = DeviceKeyDeriver.deriveKey(
             deviceID: "device-1",
             hardwareMachine: "iPhone15,3",
@@ -207,7 +205,7 @@ final class CryptoTests: XCTestCase {
             salt: Data("salt-2".utf8)
         )
 
-        let signed = SignedRiskConclusion.sign(report: report, deviceKey: key1)
+        let signed = SignedRiskConclusion.sign(report: cprReport, deviceKey: key1)
         XCTAssertFalse(signed.verify(deviceKey: key2, maxAgeSeconds: 300))
     }
 

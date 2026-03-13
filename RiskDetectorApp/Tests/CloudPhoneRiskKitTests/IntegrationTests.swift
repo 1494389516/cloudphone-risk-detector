@@ -77,6 +77,7 @@ final class IntegrationTests: XCTestCase {
     func testSignedReportFullFlow() {
         let context = TestFixtures.makeRiskContext(isJailbroken: true, jailbreakConfidence: 70)
         let report = RiskScorer.score(context: context, config: TestFixtures.defaultRiskConfig)
+        let cprReport = CPRiskReport(context: context, report: report)
 
         let key = DeviceKeyDeriver.deriveKey(
             deviceID: "test-device-integration",
@@ -85,7 +86,7 @@ final class IntegrationTests: XCTestCase {
             salt: Data("integration-salt".utf8)
         )
 
-        let signed = SignedRiskConclusion.sign(report: report, deviceKey: key)
+        let signed = SignedRiskConclusion.sign(report: cprReport, deviceKey: key)
         XCTAssertTrue(signed.verify(deviceKey: key, maxAgeSeconds: 60))
         XCTAssertEqual(signed.score, report.score)
         XCTAssertEqual(signed.isHighRisk, report.isHighRisk)

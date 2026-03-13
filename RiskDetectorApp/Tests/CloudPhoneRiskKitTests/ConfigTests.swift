@@ -19,7 +19,7 @@ final class ConfigTests: XCTestCase {
     func testRemoteConfigValidation() {
         let config = RemoteConfig.default
         let result = config.validate()
-        XCTAssertTrue(result.isValid, "Default config should be valid: \(result.reason ?? "")")
+        XCTAssertTrue(result.isValid, "Default config should be valid: \(result.errors.joined(separator: "; "))")
     }
 
     func testRemoteConfigExpiration() {
@@ -196,8 +196,8 @@ final class ConfigTests: XCTestCase {
     func testCacheStats() {
         let cache = ConfigCache.inMemoryCache()
         let stats = cache.cacheStats()
-        XCTAssertEqual(stats.hitCount, 0)
-        XCTAssertEqual(stats.missCount, 0)
+        XCTAssertEqual(stats.diskSizeBytes, 0)
+        XCTAssertEqual(stats.diskEntryCount, 0)
     }
 
     // MARK: - ExperimentConfig Tests
@@ -205,8 +205,9 @@ final class ConfigTests: XCTestCase {
     func testExperimentVariantParameter() {
         let variant = ExperimentVariant(
             id: "variant-1",
+            bucket: 0,
             name: "Control",
-            weight: 100,
+            description: "Control group",
             parameters: ["key1": "value1", "key2": "value2"]
         )
 
