@@ -167,7 +167,10 @@ public struct RiskDetectionEngine: Sendable {
         }
 
         // 6. 应用组合规则加成
-        let finalScore = min(baseScore + comboBonus + blindBonus + challengeOffset, 100)
+        // Clamp [0, 100]: challengeOffset can be negative (range -100..100 from ChallengeResultStore).
+        // Without the lower bound, a large negative offset produces a negative finalScore, which then
+        // hits the `default` branch of InternalRiskLevel.from(score:) and is misclassified as .critical.
+        let finalScore = min(max(baseScore + comboBonus + blindBonus + challengeOffset, 0), 100)
         log("Final score: \(finalScore)")
 
         // 7. 应用强制规则
