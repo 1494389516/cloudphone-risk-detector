@@ -3,7 +3,7 @@ import Foundation
 // MARK: - 内存语义压缩模块
 ///
 /// 将多维检测信号压缩为紧凑的、语义不透明的内存表示，降低内存驻留风险。
-/// - 固定长度位向量（64-bit = 8 字节）
+/// - 固定长度：1.1 为 9 字节（bytes 0-3 层摘要 + bytes 4-7 crossLayer + byte 8 行为熵）
 /// - 分层摘要：Layer1(硬件) 8bit + Layer2(反篡改) 8bit + Layer3(行为) 8bit + Layer4(服务端) 8bit
 /// - 跨层关联 bits 编码在层摘要中
 /// - 使用 SecureBuffer 承载敏感中间结果，用完即焚
@@ -12,9 +12,9 @@ import Foundation
 public enum SignalCompressor {
 
     /// 映射表版本，服务端需用同一版本解码
-    public static let mappingVersion = "1.0"
+    public static let mappingVersion = "1.1"
 
-    /// 压缩结果：8 字节固定长度摘要
+    /// 压缩结果：9 字节固定长度摘要（1.1：byte8 扩展跨层 + 行为熵迁移）
     public struct CompressResult: Sendable {
         public let digest: Data
         public let mappingVersion: String
@@ -24,7 +24,7 @@ public enum SignalCompressor {
         }
     }
 
-    /// 将信号列表压缩为固定 8 字节摘要（确定性：相同输入→相同输出）
+    /// 将信号列表压缩为固定 9 字节摘要（确定性：相同输入→相同输出）
     /// - Parameter signals: 风险信号列表（collectSignals 完成后的完整列表）
     /// - Returns: 压缩摘要与映射版本
     public static func compress(signals: [RiskSignal]) -> CompressResult {
@@ -32,9 +32,9 @@ public enum SignalCompressor {
         let layer2 = layer2Summary(signals: signals)
         let layer3 = layer3Summary(signals: signals)
         let layer4 = layer4Summary(signals: signals)
-        let crossLayer = crossLayerBits(signals: signals)
+        let (crossLayer, extendedByte) = crossLayerBits(signals: signals)
 
-        let digest = SecureBuffer(size: 8).use { ptr in
+        let digest = SecureBuffer(size: 9).use { ptr in
             ptr.assumingMemoryBound(to: UInt8.self)[0] = layer1
             ptr.assumingMemoryBound(to: UInt8.self)[1] = layer2
             ptr.assumingMemoryBound(to: UInt8.self)[2] = layer3
@@ -43,7 +43,8 @@ public enum SignalCompressor {
             ptr.assumingMemoryBound(to: UInt8.self)[5] = UInt8((crossLayer >> 16) & 0xFF)
             ptr.assumingMemoryBound(to: UInt8.self)[6] = UInt8((crossLayer >> 8) & 0xFF)
             ptr.assumingMemoryBound(to: UInt8.self)[7] = UInt8(crossLayer & 0xFF)
-            return Data(bytes: ptr, count: 8)
+            ptr.assumingMemoryBound(to: UInt8.self)[8] = extendedByte
+            return Data(bytes: ptr, count: 9)
         }
 
         return CompressResult(digest: digest, mappingVersion: mappingVersion)
@@ -120,7 +121,8 @@ public enum SignalCompressor {
     }
 
     /// 跨层关联 bits：L1 vs L2、L1 vs L3、L2 tampered 计数等
-    private static func crossLayerBits(signals: [RiskSignal]) -> UInt32 {
+    /// 返回 (crossLayer UInt32, extendedByte)：bit 12-15 映射 SDK 5.2 新信号；行为熵迁移至 extendedByte
+    private static func crossLayerBits(signals: [RiskSignal]) -> (UInt32, UInt8) {
         var bits: UInt32 = 0
         let ids = Set(signals.map(\.id))
 
@@ -136,18 +138,32 @@ public enum SignalCompressor {
         if tamperedCount >= 1 { bits |= 0x0010 }
         if tamperedCount >= 2 { bits |= 0x0020 }
         if tamperedCount >= 3 { bits |= 0x0040 }
+        if ids.contains("physical_sensor_anomaly") { bits |= 0x0080 }
+        let hasEnvironmentStatic = ids.contains("thermal_state_static") || ids.contains("battery_state_static") || ids.contains("screen_brightness_static")
+        if hasEnvironmentStatic { bits |= 0x0100 }
+        let hasHardwareCapabilityMismatch = ids.contains("haptic_capability_mismatch") || ids.contains("refresh_rate_mismatch") || ids.contains("proximity_sensor_absent")
+        if hasHardwareCapabilityMismatch { bits |= 0x0200 }
+        if ids.contains("network_interface_anomaly") { bits |= 0x0400 }
+        if ids.contains("physical_sensor_anomaly") { bits |= 0x0800 }
 
-        // 行为熵量化：0-7 档
+        // bit 12-15：SDK 5.2 新信号（原 bits 12-14 行为熵已迁移至 extendedByte）
+        if ids.contains("screen_captured") { bits |= 0x1000 }
+        if ids.contains("external_display_attached") { bits |= 0x2000 }
+        if ids.contains("usb_audio_routed") { bits |= 0x4000 }
+        if ids.contains("no_cellular_provider") { bits |= 0x8000 }
+
+        // 行为熵量化：0-7 档，迁移至 extendedByte bits 0-2
         let behaviorEntropy = min(7, signals.filter { $0.category == "behavior" }.count)
-        bits |= UInt32(behaviorEntropy) << 12
+        let extendedByte = UInt8(behaviorEntropy & 0x07)
 
-        return bits
+        return (bits, extendedByte)
     }
 }
 
 // MARK: - SignalToBitMapping 版本化协议（服务端解码用）
 ///
-/// 服务端需维护与 mappingVersion 对应的解码表，用于从 8 字节摘要还原语义维度。
+/// 服务端需维护与 mappingVersion 对应的解码表，用于从摘要还原语义维度。
+/// 1.0=8 字节，1.1=9 字节（byte 8 为行为熵扩展）。
 /// 映射表设计见下方注释。
 public struct SignalToBitMapping {
 
@@ -208,7 +224,13 @@ public struct SignalToBitMapping {
     /// 跨层 bits（bytes 4-7）
     /// bits 0-3: L1 suspicious, L2 tampered, L3 virtual, cross_layer
     /// bits 4-6: tampered count tier (0/1/2/3+)
-    /// bits 12-14: behavior entropy tier (0-7)
+    /// bit 7: physical_sensor_anomaly
+    /// bit 8: environment_static (thermal_state_static, battery_state_static, screen_brightness_static 任一)
+    /// bit 9: hardware_capability_mismatch (haptic_capability_mismatch, refresh_rate_mismatch, proximity_sensor_absent 任一)
+    /// bit 10: network_interface_anomaly
+    /// bit 11: physical_sensor_anomaly（PhysicalSensorProbe 未单独输出 barometer_anomaly）
+    /// bits 12-15: SDK 5.2 screen_captured, external_display_attached, usb_audio_routed, no_cellular_provider
+    /// byte 8 (extended): bits 0-2 = behavior entropy tier (0-7)，迁移自原 crossLayer bits 12-14
     public static let crossLayerBitNames: [Int: String] = [
         0: "l1_suspicious",
         1: "l2_tampered",
@@ -217,5 +239,14 @@ public struct SignalToBitMapping {
         4: "tampered_1",
         5: "tampered_2",
         6: "tampered_3",
+        7: "physical_sensor_anomaly",
+        8: "environment_static",
+        9: "hardware_capability_mismatch",
+        10: "network_interface_anomaly",
+        11: "barometer_anomaly",
+        12: "screen_captured",
+        13: "external_display_attached",
+        14: "usb_audio_routed",
+        15: "no_cellular_provider",
     ]
 }

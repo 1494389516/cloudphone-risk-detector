@@ -275,7 +275,8 @@ extension CPRiskKit {
         nonceStore: NonceReplayProtecting? = nil,
         config: ReportEnvelope.Config = ReportEnvelope.Config()
     ) -> Result<Void, SecureEnvelopeValidationError> {
-        let resolved = keyResolver(envelope.keyId)        guard let signingKey = resolved else {
+        let resolved = keyResolver(envelope.keyId)
+        guard let signingKey = resolved else {
             return .failure(.unknownKeyId(envelope.keyId))
         }
         return validateSecureReportEnvelope(

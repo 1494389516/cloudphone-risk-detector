@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
-  <img src="https://img.shields.io/badge/SDK-5.0.0-FF3B30?style=for-the-badge" alt="SDK">
+  <img src="https://img.shields.io/badge/SDK-5.2.0-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
   <img src="https://img.shields.io/badge/License-Proprietary-8E8E93?style=for-the-badge" alt="License">
 </p>
@@ -51,6 +51,8 @@
 | **4.9** | **信任根防投毒 + fail-open 全面封堵** | RTLD_NEXT fail-open 消除（安全路径失败不再回退普通 libc）、LibcPrologueGuard 50% 概率 + 5s 时间衰减 + tampered 联动清缓存、完整性基线首启/升级环境检查（可疑环境拒绝建基线 + 高危信号）、App Attest 静默降级消除（requireAttestation 强制模式 + attestation 一致性校验）、deviceID ephemeral 标记修正、replay store 时间轴 systemUptime→Unix 对齐（6 项结构性漏洞全修复） |
 | **4.9.2** | **内存 Dump + 结构体恢复攻击面封堵** | ConfigSignatureVerifier 密钥 Keychain 按需加载、StorageIntegrityGuard/KeychainSalt/ReportEnvelope/ChallengeTrigger 密钥用后清零、SignedRiskConclusion 字符串插值 SecureScope、CPRiskKit/PolicyManager 敏感状态清理、Logger 敏感信息 DEBUG 限定（7 项内存安全加固） |
 | **5.0** | **端侧信任根链 + 内存语义压缩 + 挑战闭环 + 图风控联动** | TrustChainManager / TrustLevel / KeyRotation 端侧信任根链、内存语义压缩快速判决（CompressedVerdictRule）、挑战式验证闭环、图风控联动（GraphFeatureCollector / GraphNodeDescriptor） |
+| **5.1** | **vPhone 裸金属检测扩展** | PhysicalSensorProbe（CoreMotion 重力/加速度/陀螺仪/磁力计/气压计）、EnvironmentConsistencyProvider（热状态熵、电池状态转移、屏幕亮度熵）、HardwareCapabilityProvider（Haptic Engine、刷新率一致性、接近传感器）、NetworkInterfaceProvider（虚拟接口、MTU 异常、接口数量） |
+| **5.2** | **云手机运维特征检测 + Impossible States** | DisplayMuxProvider（录屏/推流、外接显示器）、BiometricStateProvider（生物特征未录入/不可用）、AudioRouteProvider（USB 音频、虚拟声卡）、BasebandIsolationProvider（无蜂窝、系统 App 阉割）、Impossible States 五信号组合强制拦截 |
 
 ## 架构概览
 
@@ -107,6 +109,41 @@
 | **内存语义压缩快速判决** | `CompressedVerdictRule`、`SignalCompressor` | 8 字节压缩摘要位向量规则，支持 layer 1–4 及 crossLayer 快速判决通道，服务端可配置 bitMask/matchValue 实现低延迟拦截 |
 | **挑战式验证闭环** | `ChallengeSession`、`ChallengeResultStore`、`ChallengeTrigger` | 盲挑战从下发、执行到结果落库的完整闭环，支持 seed 与设备指纹绑定防重放 |
 | **图风控联动** | `GraphFeatureCollector`、`GraphNodeDescriptor`、`GraphRiskFeedback` | 端侧产出标准化图节点描述符（单向哈希），服务端可直接入图；支持社区风险、硬件画像等反哺 |
+
+---
+
+## 5.1 新增能力 — vPhone 裸金属检测扩展
+
+5.1 针对裸金属/真机云手机（数据中心机架上的真实 ARM 主板）新增物理环境与硬件能力检测维度。
+
+### 5.1 新特性摘要
+
+| 能力域 | 核心组件 | 说明 |
+|--------|----------|------|
+| **物理传感器深度探测** | `PhysicalSensorProbe` | CoreMotion 重力矢量锁定、加速度噪底、陀螺仪零漂、磁力计地磁场、CMAltimeter 气压计；机架固定设备与真人手持的 MEMS 特征差异 |
+| **环境一致性检测** | `EnvironmentConsistencyProvider` | 热状态熵（工业冷却恒定）、电池状态转移（机架供电）、屏幕亮度熵（无环境光传感器） |
+| **硬件能力交叉验证** | `HardwareCapabilityProvider` | Haptic Engine、刷新率与机型一致性（Pro 应为 120Hz）、接近传感器可用性 |
+| **网络接口指纹** | `NetworkInterfaceProvider` | 虚拟接口（bridge/tap/tun）、MTU 异常、接口数量异常、缺少蜂窝 |
+
+---
+
+## 5.2 新增能力 — 云手机运维特征检测与 Impossible States
+
+5.2 针对云手机在运维和交互层面的必然妥协，新增显示推流、生物安全引擎、音频路由、基带孤岛四类检测，并实现「不可思议组合」强制拦截规则。
+
+### 5.2 新特性摘要
+
+| 能力域 | 核心组件 | 说明 |
+|--------|----------|------|
+| **显示推流检测** | `DisplayMuxProvider` | UIScreen.isCaptured（录屏/推流）、screens.count > 1（外接 HDMI 采集卡） |
+| **生物安全引擎** | `BiometricStateProvider` | LAContext 探测 biometryNotEnrolled/biometryNotAvailable，机架设备常未录入或硬件缺失 |
+| **音频路由** | `AudioRouteProvider` | USB 音频、虚拟声卡输出，CarPlay 场景排除 |
+| **基带孤岛** | `BasebandIsolationProvider` | 无蜂窝运营商、系统 App（Watch/Health）被阉割 |
+| **Impossible States** | ComboRule | screen_captured + battery_state_static + usb_audio_routed + no_cellular_provider + biometric_not_enrolled 五信号同时命中时强制 block |
+
+### 压缩摘要扩展
+
+- mappingVersion 1.1：digest 由 8 字节扩展为 9 字节，bits 12–15 映射 5.2 新信号，byte 8 承载行为熵。
 
 ---
 
@@ -182,4 +219,4 @@ cd RiskDetectorApp && swift build
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 5.0.0 — Trust Chain, Compressed Verdict, Challenge Loop & Graph Risk Linkage</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 5.2.0 — Display Mux, Biometric State, Audio Route, Baseband Isolation, Impossible States</sub></p>

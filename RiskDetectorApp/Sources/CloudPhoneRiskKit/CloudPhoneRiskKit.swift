@@ -753,10 +753,12 @@ public final class CPRiskKit: NSObject {
                 do {
                     let (_, reAssertion) = try await AppAttestSigner.generateAssertion(for: challenge)
                     envelope = envelope.withReAttestationAssertion(reAssertion)
-                    TrustChainManager.markAttestationChecked()                    Logger.log("app_attest: re-attestation completed, challenge signed")
+                    TrustChainManager.markAttestationChecked()
+                    Logger.log("app_attest: re-attestation completed, challenge signed")
                 } catch {
                     Logger.log("app_attest: re-attestation failed, degrading: \(error.localizedDescription)")
-                    envelope = envelope.withTrustLevel(TrustChainManager.degradedTrustLevel())                }
+                    envelope = envelope.withTrustLevel(TrustChainManager.degradedTrustLevel())
+                }
             } else {
                 TrustChainManager.markAttestationChecked()
             }
@@ -823,10 +825,17 @@ public final class CPRiskKit: NSObject {
         RiskSignalProviderRegistry.shared.register(DeviceAgeProvider.shared)
         RiskSignalProviderRegistry.shared.register(AppAttestSignalProvider.shared)
         RiskSignalProviderRegistry.shared.register(VPhoneHardwareProvider.shared)
+        RiskSignalProviderRegistry.shared.register(HardwareCapabilityProvider.shared)
+        RiskSignalProviderRegistry.shared.register(DisplayMuxProvider.shared)
+        RiskSignalProviderRegistry.shared.register(BiometricStateProvider.shared)
         RiskSignalProviderRegistry.shared.register(LayeredConsistencyProvider.shared)
         RiskSignalProviderRegistry.shared.register(MountPointProvider.shared)
+        RiskSignalProviderRegistry.shared.register(NetworkInterfaceProvider.shared)
         RiskSignalProviderRegistry.shared.register(DRMCapabilityProvider.shared)
         RiskSignalProviderRegistry.shared.register(BatteryEntropyProvider.shared)
+        RiskSignalProviderRegistry.shared.register(EnvironmentConsistencyProvider.shared)
+        RiskSignalProviderRegistry.shared.register(AudioRouteProvider.shared)
+        RiskSignalProviderRegistry.shared.register(BasebandIsolationProvider.shared)
 
         if config.enableTemporalAnalysis {
             RiskSignalProviderRegistry.shared.register(TimePatternProvider.shared)
@@ -834,7 +843,7 @@ public final class CPRiskKit: NSObject {
             RiskSignalProviderRegistry.shared.unregister(id: TimePatternProvider.shared.id)
         }
 
-        RiskSignalProviderRegistry.shared.register(AntiTamperingSignalProvider())
+        RiskSignalProviderRegistry.shared.register(AntiTamperingSignalProvider.shared)
     }
 
     private func runCapabilityProbe(remoteConfig: RemoteConfig?) -> CapabilityProbeRuntimeResult {
@@ -905,7 +914,8 @@ public final class CPRiskKit: NSObject {
             return nil
         }
 
-        let session = ChallengeSession.shared        if session.hasSubmitted(challenge.challengeId) {
+        let session = ChallengeSession.shared
+        if session.hasSubmitted(challenge.challengeId) {
             Logger.log("challenge.binding skipped: challengeId=\(challenge.challengeId) already submitted (replay)")
             return nil
         }

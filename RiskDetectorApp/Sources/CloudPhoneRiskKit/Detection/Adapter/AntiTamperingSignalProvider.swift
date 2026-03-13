@@ -10,9 +10,12 @@ import Foundation
 /// - 实现 RiskSignalProvider 协议，可插拔到 RiskDetectionEngine
 /// - 支持动态配置启用/禁用特定检测器
 public final class AntiTamperingSignalProvider: RiskSignalProvider {
-    
+
+    /// 单例实例，供 registerProviders 使用；seal 后禁止替换，否则触发 provider_instance_replaced
+    public static let shared = AntiTamperingSignalProvider()
+
     // MARK: - RiskSignalProvider
-    
+
     public let id = "anti_tampering"
     
     /// 配置选项
@@ -35,6 +38,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         var enableDyldInterposeDetect: Bool = true
         var enableSDKBinaryIntegrity: Bool = true
         var enableSensorReplayDetect: Bool = true
+        var enablePhysicalSensorProbe: Bool = true
         var enableGPURenderProbe: Bool = true
         var enableIsaSwizzleDetect: Bool = true
         var enableCallStackValidate: Bool = true
@@ -258,6 +262,12 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         if configuration.enableSensorReplayDetect {
             isolatedAppend("sensor_replay", &signals) {
                 try SensorReplayDetector().asSignals()
+            }
+        }
+
+        if configuration.enablePhysicalSensorProbe {
+            isolatedAppend("physical_sensor", &signals) {
+                try PhysicalSensorProbe().asSignals()
             }
         }
 

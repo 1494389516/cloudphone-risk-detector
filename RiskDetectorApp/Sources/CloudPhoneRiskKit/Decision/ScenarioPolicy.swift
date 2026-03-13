@@ -102,11 +102,27 @@ public struct ScenarioPolicy: Codable, Sendable {
 
     // MARK: - 预设策略
 
+    /// SDK 5.2 Impossible States：录屏+充电static+USB音频+无蜂窝+未录入生物识别 -> 强制 block
+    private static let impossibleStatesRule = ComboRule(
+        name: "impossible_states_cloudphone",
+        requiredSignals: [
+            "screen_captured",
+            "battery_state_static",
+            "usb_audio_routed",
+            "no_cellular_provider",
+            "biometric_not_enrolled",
+        ],
+        bonusScore: 100,
+        forceAction: .block,
+        description: "录屏+充电态静态+USB音频+无蜂窝+未录入生物识别 -> 云手机不可能状态"
+    )
+
     /// 通用策略（默认）
     public static let general = ScenarioPolicy(
         mediumThreshold: 30,
         highThreshold: 55,
-        criticalThreshold: 80
+        criticalThreshold: 80,
+        comboRules: [impossibleStatesRule]
     )
 
     /// 登录策略：相对宽松，允许一定风险但需要监控
@@ -120,7 +136,8 @@ public struct ScenarioPolicy: Codable, Sendable {
             behavior: 1.2,        // 重视行为异常
             device: 1.0,
             time: 1.0
-        )
+        ),
+        comboRules: [impossibleStatesRule]
     )
 
     /// 注册策略：严格，防止批量注册
@@ -146,7 +163,8 @@ public struct ScenarioPolicy: Codable, Sendable {
                 name: "vm_register",
                 requiredSignals: ["vm_detected", "suspicious_time"],
                 bonusScore: 30
-            )
+            ),
+            impossibleStatesRule,
         ]
     )
 
@@ -181,7 +199,8 @@ public struct ScenarioPolicy: Codable, Sendable {
                 requiredSignals: ["touch_spread_low", "swipe_too_linear"],
                 bonusScore: 25,
                 forceAction: .stepUpAuth
-            )
+            ),
+            impossibleStatesRule,
         ]
     )
 
@@ -195,7 +214,8 @@ public struct ScenarioPolicy: Codable, Sendable {
             .medium: .challenge,
             .high: .stepUpAuth,
             .critical: .block
-        ]
+        ],
+        comboRules: [impossibleStatesRule]
     )
 
     /// 敏感操作策略：最严格
@@ -215,7 +235,8 @@ public struct ScenarioPolicy: Codable, Sendable {
             behavior: 1.2,
             device: 1.5,
             time: 1.0
-        )
+        ),
+        comboRules: [impossibleStatesRule]
     )
 
     /// API访问策略：适中
@@ -229,7 +250,8 @@ public struct ScenarioPolicy: Codable, Sendable {
             behavior: 0.5,
             device: 1.2,
             time: 1.0
-        )
+        ),
+        comboRules: [impossibleStatesRule]
     )
 
     /// 根据场景获取预设策略

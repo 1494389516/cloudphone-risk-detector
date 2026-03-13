@@ -33,7 +33,8 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
     func set(_ signals: ServerSignals?) {
         lock.lock()
         current = signals
-        lock.unlock()        Logger.log("server_aggregate.set: \(signals == nil ? "nil" : "set")")
+        lock.unlock()
+        Logger.log("server_aggregate.set: \(signals == nil ? "nil" : "set")")
     }
 
     func setGraphFeatures(
@@ -53,7 +54,8 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
             isInDenseSubgraph: isInDenseSubgraph,
             riskTags: riskTags
         )
-        lock.unlock()        #if DEBUG
+        lock.unlock()
+        #if DEBUG
         Logger.log("server_aggregate.setGraphFeatures: community=\(communityId ?? "nil")")
         #endif
     }
@@ -77,7 +79,8 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
         lock.lock()
         let s = current
         let gf = graphFeatures
-        lock.unlock()        guard s != nil || gf != nil else { return nil }
+        lock.unlock()
+        guard s != nil || gf != nil else { return nil }
         var merged = s ?? ServerSignals()
         if let gf {
             merged.communityId = gf.communityId

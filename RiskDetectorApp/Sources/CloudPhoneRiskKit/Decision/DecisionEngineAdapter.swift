@@ -123,10 +123,16 @@ public final class DecisionEngineAdapter: DecisionEngine {
         for (scenarioKey, policyData) in config.policy.scenarios {
             // 根据场景键查找对应的枚举值
             let scenario = findRiskScenario(for: scenarioKey)
+            let base = ScenarioPolicy.policy(for: scenario)
+            // 远程配置有 comboRules 时使用，否则继承默认（含 Impossible States 等）
+            let comboRules: [ComboRule] = config.policy.comboRules.isEmpty
+                ? base.comboRules
+                : config.policy.comboRules.map { Self.comboRule(from: $0) }
             let policy = ScenarioPolicy(
                 mediumThreshold: policyData.thresholds.medium,
                 highThreshold: policyData.thresholds.high,
-                criticalThreshold: policyData.thresholds.critical
+                criticalThreshold: policyData.thresholds.critical,
+                comboRules: comboRules
             )
             scenarioPolicies[scenario] = policy
         }
@@ -152,6 +158,28 @@ public final class DecisionEngineAdapter: DecisionEngine {
         case "sensitive_action", "sensitiveaction": return .sensitiveAction
         case "api_access", "apiaccess": return .apiAccess
         default: return .default
+        }
+    }
+
+    /// 将 ComboRuleData 转为 ComboRule（含 forceAction 字符串解析）
+    private static func comboRule(from data: ComboRuleData) -> ComboRule {
+        ComboRule(
+            name: data.name,
+            requiredSignals: data.requiredSignals,
+            bonusScore: data.bonusScore,
+            forceAction: Self.parseRiskAction(from: data.forceAction),
+            description: nil
+        )
+    }
+
+    private static func parseRiskAction(from string: String?) -> RiskAction? {
+        guard let s = string?.lowercased() else { return nil }
+        switch s {
+        case "block": return .block
+        case "challenge": return .challenge
+        case "stepupauth", "step_up_auth": return .stepUpAuth
+        case "allow": return .allow
+        default: return nil
         }
     }
 }

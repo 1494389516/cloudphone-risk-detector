@@ -432,7 +432,8 @@ public struct ReportEnvelope: Codable, Sendable {
         nonceStore: NonceReplayProtecting? = nil,
         config: Config = Config()
     ) -> Result<Void, ReportEnvelopeError> {
-        let resolved = keyResolver(keyId)        guard let signingKey = resolved else {
+        let resolved = keyResolver(keyId)
+        guard let signingKey = resolved else {
             return .failure(.signingFailed)
         }
         return validate(signingKey: signingKey, nonceStore: nonceStore, config: config)
