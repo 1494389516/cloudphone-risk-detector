@@ -94,6 +94,13 @@ public struct ChallengeTrigger: Sendable {
             // 检查篡改计数是否满足规则要求
             let tamperedMatches = tamperedCount >= rule.minTamperedCount
 
+            // NOTE: rule.allOfSignalIDs, anyOfSignalIDs, requireCrossLayerInconsistency, and
+            // minDistinctRiskLayers are NOT evaluated here because this overload only receives
+            // aggregated counts, not the full signal list. Rules that rely solely on count-based
+            // conditions (the common case) are fully evaluated. Rules that also include signal-ID
+            // or cross-layer conditions will over-trigger (match on counts alone). Use the signals-
+            // based overload when those conditions need to be enforced.
+
             // 如果满足规则要求，触发 blindChallenge
             if capabilityMatches && tamperedMatches {
                 let reason = buildReason(
@@ -148,17 +155,12 @@ public struct ChallengeTrigger: Sendable {
             reasons.append("tamperedCount(\(tamperedCount)) >= \(rule.minTamperedCount)")
         }
 
-        if rule.requireCrossLayerInconsistency {
-            reasons.append("crossLayerInconsistency")
-        }
-
-        if !rule.allOfSignalIDs.isEmpty {
-            reasons.append("allOfSignals:\(rule.allOfSignalIDs.joined(separator: ","))")
-        }
-
-        if !rule.anyOfSignalIDs.isEmpty {
-            reasons.append("anyOfSignals:\(rule.anyOfSignalIDs.joined(separator: ","))")
-        }
+        // NOTE: rule.requireCrossLayerInconsistency, allOfSignalIDs, anyOfSignalIDs, and
+        // minDistinctRiskLayers are BlindRule fields that require the full signal list to
+        // evaluate. shouldTriggerBlindChallenge only receives count parameters and cannot
+        // check these conditions. Do NOT include them in the reason string to avoid sending
+        // the server false attribution (e.g. claiming "crossLayerInconsistency" was detected
+        // when it was never verified).
 
         return "Rule[\(rule.id)]: \(reasons.joined(separator: " && "))"
     }
