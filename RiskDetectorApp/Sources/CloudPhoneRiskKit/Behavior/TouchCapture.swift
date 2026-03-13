@@ -68,7 +68,9 @@ final class TouchCapture {
             forceVariance: forceVar,
             majorRadiusVariance: radiusVar
         )
+        #if DEBUG
         Logger.log("behavior.touch: samples=\(metrics.sampleCount) taps=\(metrics.tapCount) swipes=\(metrics.swipeCount) spread=\(metrics.coordinateSpread?.description ?? "nil") intervalCV=\(metrics.intervalCV?.description ?? "nil") avgLinearity=\(metrics.averageLinearity?.description ?? "nil")")
+        #endif
 
         let actions = actionTimestamps
 

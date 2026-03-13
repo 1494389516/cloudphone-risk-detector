@@ -46,11 +46,15 @@ enum StorageIntegrityGuard {
         let status = SecItemCopyMatching(query as CFDictionary, &result)
 
         if status == errSecSuccess, let data = result as? Data {
-            return SymmetricKey(data: data)
+            var mutableData = data
+            let key = SymmetricKey(data: mutableData)
+            secureZeroData(&mutableData)
+            return key
         }
 
         let newKey = SymmetricKey(size: .bits256)
-        let keyData = newKey.withUnsafeBytes { Data($0) }
+        var keyData = newKey.withUnsafeBytes { Data($0) }
+        defer { secureZeroData(&keyData) }
 
         let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -66,7 +70,10 @@ enum StorageIntegrityGuard {
             var existing: AnyObject?
             if SecItemCopyMatching(query as CFDictionary, &existing) == errSecSuccess,
                let existingData = existing as? Data {
-                return SymmetricKey(data: existingData)
+                var mutableExisting = existingData
+                let key = SymmetricKey(data: mutableExisting)
+                secureZeroData(&mutableExisting)
+                return key
             }
         }
 

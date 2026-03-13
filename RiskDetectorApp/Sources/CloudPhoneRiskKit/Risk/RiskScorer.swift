@@ -76,19 +76,25 @@ enum RiskScorer {
                     ]
                 )
             )
+            #if DEBUG
             Logger.log("score +\(jbContribution) from jailbreak(conf=\(context.jailbreak.confidence))")
+            #endif
         }
 
         if config.enableNetworkSignals {
             if context.network.isVPNActive {
                 total += vpnScore
                 signals.append(RiskSignal(id: SignalID.vpnActive, category: SignalCategory.network, score: vpnScore, evidence: [:]))
+                #if DEBUG
                 Logger.log("score +\(vpnScore) from vpn_active")
+                #endif
             }
             if context.network.proxyEnabled {
                 total += proxyScore
                 signals.append(RiskSignal(id: SignalID.proxyEnabled, category: SignalCategory.network, score: proxyScore, evidence: [:]))
+                #if DEBUG
                 Logger.log("score +\(proxyScore) from proxy_enabled")
+                #endif
             }
         }
 
@@ -96,7 +102,9 @@ enum RiskScorer {
             let b = behaviorScore(behavior: context.behavior)
             total += b.score
             signals.append(contentsOf: b.signals)
+            #if DEBUG
             Logger.log("score +\(b.score) from behavior(signals=\(b.signals.count))")
+            #endif
         }
 
         if !extraSignals.isEmpty {
@@ -113,7 +121,9 @@ enum RiskScorer {
             let pluginScore = min(pluginScoreRaw, maxExtraSignalsScore)
             total += pluginScore
             signals.append(contentsOf: unique)
+            #if DEBUG
             Logger.log("score +\(pluginScore) from providers(raw=\(pluginScoreRaw) signals=\(extraSignals.count) unique=\(unique.count))")
+            #endif
         }
 
         total = min(total, scoreCap)
@@ -122,7 +132,9 @@ enum RiskScorer {
             // Hard verdict: jailbreak => at least threshold.
             total = config.threshold
         }
+        #if DEBUG
         Logger.log("score total=\(total) threshold=\(config.threshold) isHighRisk=\(isHighRisk)")
+        #endif
         return RiskScoreReport(
             score: total,
             isHighRisk: isHighRisk,

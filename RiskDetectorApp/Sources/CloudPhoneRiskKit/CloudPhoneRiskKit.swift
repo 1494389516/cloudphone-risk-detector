@@ -119,7 +119,9 @@ public final class CPRiskKit: NSObject {
         stateLock.lock()
         currentSessionId = UUID().uuidString
         stateLock.unlock()
+        #if DEBUG
         Logger.log("start() sessionId=\(currentSessionId ?? "")")
+        #endif
         if !AppAttestSignalProvider.isHardwareTrustSupported {
             Logger.log("app_attest: hardware_trust_unsupported (evaluate will emit signal weight=95)")
         }
@@ -224,15 +226,23 @@ public final class CPRiskKit: NSObject {
         boundAccountId = accountId
         boundSceneTag = scene
         stateLock.unlock()
+        #if DEBUG
         Logger.log("account.bind: accountId=\(accountId) scene=\(scene ?? "nil")")
+        #endif
     }
 
     /// 解绑业务账号（用户登出时调用）。
+    ///
+    /// 清除 boundAccountId、boundSceneTag、currentSessionId 的引用，并清空 PolicyManager 内存策略缓存，
+    /// 减少内存转储风险。Swift 无 SecureString，无法清零字符串内存；及时置 nil 可缩短敏感数据驻留时间。
+    /// **调用方应在用户登出时调用本方法。**
     @objc public func unbindAccount() {
         stateLock.lock()
         boundAccountId = nil
         boundSceneTag = nil
+        currentSessionId = nil
         stateLock.unlock()
+        PolicyManager.shared.clearCachedPolicy()
         Logger.log("account.unbind")
     }
 
@@ -943,7 +953,9 @@ public final class CPRiskKit: NSObject {
             actionTimestamps: actionTimestamps,
             motion: motionSeries
         )
+        #if DEBUG
         Logger.log("behavior.coupling: actions=\(actionTimestamps.count) corr=\(coupling?.description ?? "nil")")
+        #endif
 
         return RiskContext(
             device: DeviceFingerprint.current(),

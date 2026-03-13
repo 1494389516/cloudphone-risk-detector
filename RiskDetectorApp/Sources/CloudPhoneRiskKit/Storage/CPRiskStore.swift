@@ -45,7 +45,9 @@ public final class CPRiskStore: NSObject {
             try applyFileProtection(url: url)
             try enforceRetention(in: base, maxFiles: maxFiles)
 
+            #if DEBUG
             Logger.log("store.save: path=\(url.path) bytes=\(data.count) encrypted=\(encryptionEnabled)")
+            #endif
             return url.path
         } catch let e as NSError {
             Logger.log("store.save: failed error=\(e)")

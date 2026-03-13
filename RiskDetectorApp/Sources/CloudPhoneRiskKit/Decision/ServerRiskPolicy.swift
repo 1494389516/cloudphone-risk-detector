@@ -214,6 +214,15 @@ public final class PolicyManager: @unchecked Sendable {
         UserDefaults.standard.removeObject(forKey: verifiedKey)
     }
 
+    /// 仅清空内存中的策略缓存（challengeSalt、mutation.seed、blocklist 等敏感数据），
+    /// 不删除持久化存储。用于登出等场景，缩短敏感数据在内存中的驻留时间。
+    /// **调用方应在用户登出时调用本方法或 `clear()`。**
+    public func clearCachedPolicy() {
+        lock.lock()
+        cachedPolicy = nil
+        lock.unlock()
+    }
+
     @discardableResult
     public func update(fromJSON json: String) -> Bool {
 #if DEBUG

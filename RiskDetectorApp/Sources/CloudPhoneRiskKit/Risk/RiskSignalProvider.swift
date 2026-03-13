@@ -177,8 +177,10 @@ final class RiskSignalProviderRegistry {
                 lock.unlock()
                 Logger.log("provider[\(provider.id)]: signals=\(collected.count)")
                 for s in collected where s.score > 0 {
+                    #if DEBUG
                     let keys = s.evidence.keys.sorted().joined(separator: ",")
                     Logger.log("provider.signal: provider=\(provider.id) category=\(s.category) id=\(s.id) score=\(s.score) evidenceKeys=\(keys)")
+                    #endif
                 }
                 out.append(contentsOf: collected)
             } else if knownActive.contains(provider.id) {

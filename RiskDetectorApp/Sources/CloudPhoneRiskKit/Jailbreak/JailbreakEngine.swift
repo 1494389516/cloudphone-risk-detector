@@ -58,7 +58,9 @@ final class JailbreakEngine {
         var score: Double = 0
         var methods: [String] = []
 
+        #if DEBUG
         Logger.log("jailbreak: start(threshold=\(config.threshold))")
+        #endif
 
         if config.enableFileDetect {
             accumulateDetector("file", &score, &methods) { try FileDetector().detect() }
@@ -88,7 +90,9 @@ final class JailbreakEngine {
 
         methods = Array(Set(methods)).sorted()
         let isJailbroken = score >= config.threshold
+        #if DEBUG
         Logger.log("jailbreak: done(score=\(min(score, Self.confidenceCap)) isJailbroken=\(isJailbroken) methods=\(methods.joined(separator: ",")))")
+        #endif
         return DetectionResult(
             isJailbroken: isJailbroken,
             confidence: min(score, Self.confidenceCap),
@@ -106,16 +110,22 @@ final class JailbreakEngine {
         do {
             let result = try block()
             if result.score < 0 {
+                #if DEBUG
                 Logger.log("jailbreak.\(label): negative score(\(result.score)), treating as suspicious")
+                #endif
                 score += Self.detectorAnomalyPenalty
                 methods.append("jailbreak_anomaly:\(label):negative_score")
             } else {
+                #if DEBUG
                 Logger.log("jailbreak.\(label): score=\(result.score) hits=\(result.methods.count)")
+                #endif
                 score += result.score
                 methods.append(contentsOf: result.methods)
             }
         } catch {
+            #if DEBUG
             Logger.log("jailbreak.\(label): detector threw error(\(error)), treating as suspicious")
+            #endif
             score += Self.detectorAnomalyPenalty
             methods.append("jailbreak_anomaly:\(label):threw")
         }

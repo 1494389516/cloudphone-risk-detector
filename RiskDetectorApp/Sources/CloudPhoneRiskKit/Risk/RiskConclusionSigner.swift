@@ -15,8 +15,10 @@ public struct SignedRiskConclusion: Codable, Sendable {
         let nonce = UUID().uuidString
         let timestamp = Date().timeIntervalSince1970
         let input = "\(report.score)|\(report.isHighRisk)|\(timestamp)|\(nonce)|\(report.tampered)"
-        let data = Data(input.utf8)
-        let hmac = HMAC<SHA256>.authenticationCode(for: data, using: deviceKey)
+        let hmac = SecureScope.withSecureBytes(Array(input.utf8)) { ptr in
+            let data = Data(buffer: ptr)
+            return HMAC<SHA256>.authenticationCode(for: data, using: deviceKey)
+        }
         let sigHex = Data(hmac).map { String(format: "%02x", $0) }.joined()
         return SignedRiskConclusion(
             score: report.score,
@@ -33,9 +35,11 @@ public struct SignedRiskConclusion: Codable, Sendable {
         guard age >= 0, age <= maxAgeSeconds else { return false }
 
         let input = "\(score)|\(isHighRisk)|\(timestamp)|\(nonce)|\(tampered)"
-        let data = Data(input.utf8)
         guard let signatureData = Data(hexString: signature) else { return false }
-        return HMAC<SHA256>.isValidAuthenticationCode(signatureData, authenticating: data, using: deviceKey)
+        return SecureScope.withSecureBytes(Array(input.utf8)) { ptr in
+            let data = Data(buffer: ptr)
+            return HMAC<SHA256>.isValidAuthenticationCode(signatureData, authenticating: data, using: deviceKey)
+        }
     }
 }
 
@@ -85,6 +89,7 @@ private final class KeychainSalt {
         if let existing = read() { return existing }
 
         var bytes = [UInt8](repeating: 0, count: saltLength)
+        defer { secureZeroBytes(&bytes) }
         var status = SecRandomCopyBytes(kSecRandomDefault, saltLength, &bytes)
         if status != errSecSuccess {
             status = SecRandomCopyBytes(kSecRandomDefault, saltLength, &bytes)
@@ -112,7 +117,9 @@ private final class KeychainSalt {
         ]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess, let data = item as? Data else { return nil }
+        guard status == errSecSuccess, let dataObj = item as? Data else { return nil }
+        var data = dataObj
+        defer { secureZeroData(&data) }
         return String(data: data, encoding: .utf8)
     }
 

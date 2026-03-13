@@ -1,4 +1,4 @@
-# CloudPhoneRiskKit 4.9 使用与构建说明
+# CloudPhoneRiskKit 4.9.2 使用与构建说明
 
 iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。
 
@@ -78,11 +78,15 @@ CPRiskKit.shared.start()
 
 // 2) 同步评估
 let report = CPRiskKit.shared.evaluate(config: .default, scenario: .payment)
+#if DEBUG
 print(report.score, report.isHighRisk, report.summary)
+#endif
 
 // 3) 异步评估（completion 回到主线程）
 CPRiskKit.shared.evaluateAsync { report in
+    #if DEBUG
     print(report.score)
+    #endif
 }
 
 // 4) async/await（iOS 13+）

@@ -48,7 +48,9 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
             riskTags: riskTags
         )
         lock.unlock()
+        #if DEBUG
         Logger.log("server_aggregate.setGraphFeatures: community=\(communityId ?? "nil")")
+        #endif
     }
 
     func serverSignals(snapshot: RiskSnapshot) -> ServerSignals? {

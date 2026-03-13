@@ -207,10 +207,13 @@ public struct ReportEnvelope: Codable, Sendable {
             canonicalPayload: canonicalPayload
         )
 
-        guard let signatureData = signatureInput.data(using: .utf8),
-              let keyData = signingKey.data(using: .utf8) else {
+        guard let signatureData = signatureInput.data(using: .utf8) else {
             throw ReportEnvelopeError.signingFailed
         }
+        guard var keyData = signingKey.data(using: .utf8) else {
+            throw ReportEnvelopeError.signingFailed
+        }
+        defer { secureZeroData(&keyData) }
 
         let signatureHex = hmacHex(message: signatureData, keyData: keyData)
 

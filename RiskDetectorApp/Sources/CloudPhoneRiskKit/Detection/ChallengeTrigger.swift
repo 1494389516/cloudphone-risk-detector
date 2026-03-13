@@ -263,10 +263,13 @@ extension ChallengeTrigger {
     /// 客户端生成 challenge 绑定签名
     public static func signChallengePayload(payload: [String: Any], signingKey: String) -> String? {
         guard let canonical = canonicalJSONString(payload),
-              let keyData = signingKey.data(using: .utf8),
               let messageData = canonical.data(using: .utf8) else {
             return nil
         }
+        guard var keyData = signingKey.data(using: .utf8) else {
+            return nil
+        }
+        defer { secureZeroData(&keyData) }
         let key = SymmetricKey(data: keyData)
         let digest = HMAC<SHA256>.authenticationCode(for: messageData, using: key)
         return digest.map { String(format: "%02x", $0) }.joined()

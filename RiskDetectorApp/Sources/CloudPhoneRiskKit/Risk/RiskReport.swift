@@ -265,7 +265,9 @@ public final class CPRiskReport: NSObject {
             geoRegion: geoRegion,
             riskTags: riskTags
         )
+        #if DEBUG
         Logger.log("server.signals: publicIP=\(publicIP ?? "nil") asn=\(asn ?? "nil") asOrg=\(asOrg ?? "nil") dc=\(isDatacenter?.stringValue ?? "nil") ipDeviceAgg=\(ipDeviceAgg?.stringValue ?? "nil") ipAccountAgg=\(ipAccountAgg?.stringValue ?? "nil")")
+        #endif
     }
 
     func setServerSignals(_ signals: ServerSignals?) {

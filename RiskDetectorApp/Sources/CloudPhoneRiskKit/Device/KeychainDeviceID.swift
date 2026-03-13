@@ -45,7 +45,9 @@ final class KeychainDeviceID {
                 return fallback
             }
             // Keychain 写失败，仅 UserDefaults 有值：返回 ephemeral 前缀，服务端可识别并限制高信任请求
+            #if DEBUG
             Logger.log("KeychainDeviceID: keychain unavailable, using ephemeral-tagged fallback copy")
+            #endif
             return "ephemeral:\(fallback)"
         }
 
@@ -56,13 +58,17 @@ final class KeychainDeviceID {
         }
         if fallbackSaved {
             // Keychain 写失败但 UserDefaults 成功：返回 ephemeral 前缀，仅 Keychain 持久化成功才返回裸 ID
+            #if DEBUG
             Logger.log("KeychainDeviceID: keychain save failed, returning ephemeral-tagged fallback ID")
+            #endif
             return "ephemeral:\(newID)"
         }
         // 并发写入竞争：再次尝试读取（另一线程可能已写入）
         if let retry = read() { return retry }
         // 两层存储均失败：返回带 ephemeral: 前缀的降级 ID，服务端可识别并拒绝高信任请求
+        #if DEBUG
         Logger.log("KeychainDeviceID: save failed, returning ephemeral-tagged fallback ID")
+        #endif
         return "ephemeral:\(newID)"
     }
 
