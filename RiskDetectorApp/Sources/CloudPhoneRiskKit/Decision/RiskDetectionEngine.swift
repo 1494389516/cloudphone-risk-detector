@@ -114,10 +114,11 @@ public struct RiskDetectionEngine: Sendable {
         allSignals = planner.maybeShuffle(allSignals, salt: "signal_order")
         log("Collected \(allSignals.count) signals")
 
-        // 2.4 内存语义压缩：将信号压缩为 8 字节摘要（在应用组合规则之前）
+        // 2.4 内存语义压缩：将信号压缩为 9 字节摘要（1.1，在应用组合规则之前）
         let compressResult = SignalCompressor.compress(signals: allSignals)
 
-        // 2.5 压缩摘要快速判决通道：纯位向量规则，命中可短路        if let fastVerdict = evaluateCompressedVerdictRules(
+        // 2.5 压缩摘要快速判决通道：纯位向量规则，命中可短路
+        if let fastVerdict = evaluateCompressedVerdictRules(
             digest: compressResult.digest,
             scenarioPolicy: scenarioPolicy,
             signals: allSignals,
@@ -162,7 +163,8 @@ public struct RiskDetectionEngine: Sendable {
         }
 
         // 5.1 挑战验证结果回注：服务端 adjustedScore 作为基础偏移（一次性消费）
-        let challengeOffset = ChallengeResultStore.shared.consumeScoreOffset() ?? 0        if challengeOffset != 0 {
+        let challengeOffset = ChallengeResultStore.shared.consumeScoreOffset() ?? 0
+        if challengeOffset != 0 {
             log("Challenge result offset applied: +\(challengeOffset)")
         }
 
@@ -572,7 +574,8 @@ public struct RiskDetectionEngine: Sendable {
             if rule.matches(digest: digest) {
                 matchedRules.append(rule)
             }
-        }        guard !matchedRules.isEmpty else { return nil }
+        }
+        guard !matchedRules.isEmpty else { return nil }
 
         // 取最严格动作
         let strictestRule = matchedRules.max(by: { $0.action.severity < $1.action.severity })!
@@ -637,6 +640,15 @@ public struct RiskDetectionEngine: Sendable {
             } else {
                 // 保持向后兼容：即使没有强制动作，越狱分数也不低于高风险阈值。
                 adjustedScore = max(adjustedScore, scenarioPolicy.highThreshold)
+            }
+        }
+
+        // ComboRule 命中且带 forceAction 时强制应用（如 Impossible States）
+        for rule in scenarioPolicy.comboRules {
+            guard let action = rule.forceAction else { continue }
+            if rule.matches(signals: signals) {
+                forcedAction = strictestAction(forcedAction, action)
+                adjustedScore = max(adjustedScore, minScore(for: action, scenarioPolicy: scenarioPolicy))
             }
         }
 
@@ -1028,6 +1040,23 @@ private extension RiskDetectionEngine {
         "method_count_anomaly": 50,
         // 4.4 执行流栈回溯
         "rop_chain_detected": 90,
+        // 环境一致性、硬件能力、网络接口
+        "physical_sensor_anomaly": 70,
+        "thermal_state_static": 40,
+        "battery_state_static": 50,
+        "screen_brightness_static": 35,
+        "haptic_capability_mismatch": 80,
+        "refresh_rate_mismatch": 75,
+        "proximity_sensor_absent": 30,
+        "network_interface_anomaly": 55,
+        // barometer_anomaly：PhysicalSensorProbe 当前未单独输出，预留权重供后续扩展
+        "barometer_anomaly": 65,
+        // SDK 5.2 新信号权重
+        "screen_captured": 50,
+        "external_display_attached": 45,
+        "usb_audio_routed": 55,
+        "no_cellular_provider": 60,
+        "biometric_not_enrolled": 40,
     ]
 }
 

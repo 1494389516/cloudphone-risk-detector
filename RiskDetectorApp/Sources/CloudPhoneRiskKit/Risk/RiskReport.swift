@@ -10,6 +10,7 @@ public enum SignalID {
     // Network
     static let vpnActive = "vpn_active"
     static let proxyEnabled = "proxy_enabled"
+    static let networkInterfaceAnomaly = "network_interface_anomaly"
 
     // Behavior
     static let touchSpreadLow = "touch_spread_low"
@@ -42,6 +43,10 @@ public enum SignalID {
     static let touchEntropy = "touch_entropy"
     static let hookDetected = "hook_detected"
     static let blocklistHit = "blocklist_hit"
+
+    /// Display Mux (SDK 5.2)
+    static let screenCaptured = "screen_captured"
+    static let externalDisplayAttached = "external_display_attached"
 }
 
 // MARK: - Signal Categories
@@ -69,7 +74,7 @@ public struct RiskScoreReport: Sendable {
     public var isHighRisk: Bool
     public var signals: [RiskSignal]
     public var summary: String
-    /// 内存语义压缩摘要（8 字节）
+    /// 内存语义压缩摘要（1.0=8 字节，1.1=9 字节含 byte 8 行为熵）
     public var compressedDigest: Data?
     /// 信号到 bit 映射表版本
     public var mappingVersion: String?
@@ -313,7 +318,7 @@ private struct Payload: Codable {
     var signals: [RiskSignal]
     var tamperedCount: Int
 
-    // 内存语义压缩摘要（8 字节 hex，纳入签名域）
+    // 内存语义压缩摘要（1.0=16 hex，1.1=18 hex，纳入签名域）
     var compressedDigestHex: String?
     // 信号到 bit 映射表版本（服务端解码用）
     var signalMappingVersion: String?
@@ -569,5 +574,5 @@ private struct DetectionResultPayload: Codable {
 }
 
 enum Version {
-    static let current = "5.0.0"
+    static let current = "5.2.0"
 }

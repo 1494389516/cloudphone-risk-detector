@@ -8,6 +8,7 @@ import Foundation
 //   server_aggregate   → IP/ASN/datacenter signals from server injection
 //   device_hardware    → hw.machine, simulator detection
 //   device_age         → old model heuristic risk scoring
+//   biometric_state   → LAContext biometry probe (not enrolled / not available / lockout)
 //   time_pattern       → 24h activity pattern analysis
 //   vphone_hardware    → GPU/BoardID/kernel cloud phone indicators
 //   battery_entropy    → ChargeCounter/voltage variance
@@ -67,6 +68,13 @@ final class RiskSignalProviderRegistry {
         "time_pattern",
         "anti_tampering",
         "app_attest",
+        "environment_consistency",
+        "hardware_capability",
+        "network_interface",
+        "biometric_state",
+        "audio_route",
+        "display_mux",
+        "baseband_isolation",
     ]
 
     func seal() {
@@ -219,7 +227,14 @@ final class RiskSignalProviderRegistry {
     }
 
     /// 带超时和崩溃隔离地收集 provider 信号
+    /// - 主线程调用时：直接同步执行，避免 DisplayMuxProvider/AudioRouteProvider 等内部 main.sync 导致死锁
+    ///   （主线程 wait 时无法处理 main queue，后台 main.sync 会永久阻塞）
+    /// - 非主线程调用时：async 到后台执行，主线程 wait 不会阻塞 main queue
     private func collectWithTimeout(provider: RiskSignalProvider, snapshot: RiskSnapshot) -> [RiskSignal] {
+        if Thread.isMainThread {
+            return autoreleasepool { provider.signals(snapshot: snapshot) }
+        }
+
         let semaphore = DispatchSemaphore(value: 0)
         var result: [RiskSignal] = []
 

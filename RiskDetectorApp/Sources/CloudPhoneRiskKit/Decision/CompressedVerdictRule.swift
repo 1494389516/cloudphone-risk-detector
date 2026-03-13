@@ -2,8 +2,8 @@ import Foundation
 
 // MARK: - 压缩摘要快速判决规则
 ///
-/// 纯位向量规则：基于 8 字节压缩摘要的快速判决通道。
-/// 规则格式：layerIndex (1-4 或 5 表示 crossLayer)、bitMask、matchValue、action。
+/// 纯位向量规则：基于压缩摘要的快速判决通道（1.0=8 字节，1.1=9 字节）。
+/// 规则格式：layerIndex (1-4 层摘要、5=crossLayer、6=byte8 行为熵)、bitMask、matchValue、action。
 /// 若 (layerValue & bitMask) == matchValue，则规则命中。
 ///
 /// 示例：layer2 & 0x0C != 0 --> block
@@ -13,10 +13,10 @@ public struct CompressedVerdictRule: Codable, Sendable {
     /// 规则 ID（用于日志与回溯）
     public let id: String
 
-    /// 层索引：1-4 表示 Layer1(硬件)/Layer2(反篡改)/Layer3(行为)/Layer4(服务端)，5 表示 crossLayer
+    /// 层索引：1-4 表示 Layer1(硬件)/Layer2(反篡改)/Layer3(行为)/Layer4(服务端)，5 表示 crossLayer，6 表示 byte8 行为熵（1.1）
     public let layerIndex: Int
 
-    /// 位掩码：layer 1-4 使用低 8 位，crossLayer 使用低 32 位
+    /// 位掩码：layer 1-4 使用低 8 位，crossLayer 使用低 32 位，byte8 使用低 3 位（bits 0-2）
     public let bitMask: UInt64
 
     /// 匹配值：满足 (layerValue & bitMask) == matchValue 时命中
@@ -39,8 +39,8 @@ public struct CompressedVerdictRule: Codable, Sendable {
         self.action = action
     }
 
-    /// 检查 8 字节摘要是否命中此规则
-    /// - Parameter digest: SignalCompressor 输出的 8 字节摘要
+    /// 检查压缩摘要是否命中此规则
+    /// - Parameter digest: SignalCompressor 输出的摘要（1.0=8 字节，1.1=9 字节）
     /// - Returns: 是否命中
     public func matches(digest: Data) -> Bool {
         guard digest.count >= 8 else { return false }
@@ -61,6 +61,9 @@ public struct CompressedVerdictRule: Codable, Sendable {
                 | UInt64(digest[5]) << 16
                 | UInt64(digest[6]) << 8
                 | UInt64(digest[7])
+        case 6:
+            // byte8 行为熵（1.1）：仅当 digest 为 9 字节时有效，否则视为 0
+            layerValue = digest.count >= 9 ? UInt64(digest[8]) : 0
         default:
             return false
         }
@@ -70,6 +73,9 @@ public struct CompressedVerdictRule: Codable, Sendable {
         if layerIndex >= 1 && layerIndex <= 4 {
             effectiveMask = bitMask & 0xFF
             effectiveMatch = matchValue & 0xFF
+        } else if layerIndex == 6 {
+            effectiveMask = bitMask & 0x07  // byte8 仅 bits 0-2 有效
+            effectiveMatch = matchValue & 0x07
         } else {
             effectiveMask = bitMask & 0xFFFF_FFFF
             effectiveMatch = matchValue & 0xFFFF_FFFF

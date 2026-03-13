@@ -54,8 +54,12 @@
 		<string>filza</string>
 		<string>activator</string>
 		<string>undecimus</string>
+		<string>itms-watch</string>
+		<string>x-apple-health</string>
 	</array>
     <key>NSMotionUsageDescription</key>
     <string>用于检测设备行为模式</string>
+    <key>NSFaceIDUsageDescription</key>
+    <string>用于风控设备生物识别能力探测</string>
 </dict>
 </plist>

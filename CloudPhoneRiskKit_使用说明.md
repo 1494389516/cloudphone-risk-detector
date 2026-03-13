@@ -1,4 +1,4 @@
-# CloudPhoneRiskKit 5.0 使用与构建说明
+# CloudPhoneRiskKit 5.2 使用与构建说明
 
 iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。
 
