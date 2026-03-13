@@ -28,15 +28,25 @@ final class HardwareCapabilityProvider: RiskSignalProvider {
 
         let machine = machineFromSnapshot(snapshot)
 
-        // CHHapticEngine、UIScreen、UIDevice 必须在主线程访问
+        // CHHapticEngine、UIScreen 必须在主线程访问
         let uiSignals = runOnMainIfNeeded {
             var signals: [RiskSignal] = []
             if let s = hapticCapabilitySignal(machine: machine) { signals.append(s) }
             if let s = refreshRateSignal(machine: machine) { signals.append(s) }
-            if let s = proximitySensorSignal(machine: machine) { signals.append(s) }
             return signals
         }
         out.append(contentsOf: uiSignals)
+
+        // proximitySensorSignal must NOT run on the main thread: it uses
+        // DispatchQueue.main.asyncAfter + semaphore.wait internally.  When called
+        // from the main thread (via runOnMainIfNeeded), the main queue is blocked by
+        // semaphore.wait so the asyncAfter closure can never fire → guaranteed 1-second
+        // timeout → false-positive proximity_sensor_absent on every invocation.
+        // Call it directly here (background thread) instead; UIDevice accesses inside
+        // are guarded with DispatchQueue.main.sync.
+        if let s = proximitySensorSignal(machine: machine) {
+            out.append(s)
+        }
 
         return out
         #endif
@@ -147,21 +157,33 @@ final class HardwareCapabilityProvider: RiskSignalProvider {
     /// 检测后必须恢复为 false，否则会影响通话等场景的屏幕熄灭逻辑。
     private func proximitySensorSignal(machine: String) -> RiskSignal? {
         #if canImport(UIKit)
+        // Guard: if we are already on the main thread we cannot block it with
+        // semaphore.wait while scheduling work on the main queue – that would
+        // guarantee a 1-second timeout and a false-positive signal every time.
+        // Skip the check in this case rather than report a bogus result.
+        guard !Thread.isMainThread else { return nil }
         guard machine.lowercased().hasPrefix("iphone") else { return nil }
 
         let device = UIDevice.current
-        device.isProximityMonitoringEnabled = true
+        // UIDevice must be mutated on the main thread.
+        DispatchQueue.main.sync { device.isProximityMonitoringEnabled = true }
 
         let semaphore = DispatchSemaphore(value: 0)
         var enabled = false
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            enabled = device.isProximityMonitoringEnabled
-            device.isProximityMonitoringEnabled = false
+        // Use a global (background) asyncAfter so that semaphore.wait (on the
+        // current background thread) does not block the main queue.  Reading and
+        // restoring isProximityMonitoringEnabled still happens on the main thread
+        // via an inner main.sync.
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.5) {
+            DispatchQueue.main.sync {
+                enabled = device.isProximityMonitoringEnabled
+                device.isProximityMonitoringEnabled = false
+            }
             semaphore.signal()
         }
         let waitResult = semaphore.wait(timeout: .now() + 1.0)
 
-        // 超时或提前返回都需确保恢复：若主线程回调未执行，isProximityMonitoringEnabled 仍为 true
+        // 超时或提前返回都需确保恢复：若 asyncAfter 回调未执行，isProximityMonitoringEnabled 仍为 true
         if waitResult == .timedOut {
             DispatchQueue.main.async { device.isProximityMonitoringEnabled = false }
         }
