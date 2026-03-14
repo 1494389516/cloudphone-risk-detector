@@ -211,7 +211,19 @@ final class EnvironmentConsistencyProvider: RiskSignalProvider {
     }
 
     /// UIScreen 必须在主线程访问；Provider 在 global 队列执行，故通过 main.async + asyncAfter 采样，避免主线程长时间阻塞
+    ///
+    /// **主线程调用禁止**: collectWithTimeout 在主线程直接同步调用 provider.signals。
+    /// 若此时执行 `DispatchQueue.main.async + semaphore.wait`，会产生：
+    ///   主线程 wait(2s) → 阻塞 main queue → main.async/asyncAfter 永远不执行 → 超时返回 []
+    /// 结果：brightness check 静默失败，且白白阻塞主线程 2 秒。
+    /// 解决：检测到主线程调用时直接跳过，等待下次后台线程调用时再采样。
     private func captureBrightnessSamples() -> [Double] {
+        guard !Thread.isMainThread else {
+            // 主线程 semaphore.wait 会阻塞 main queue，导致 asyncAfter 永不触发 → 2s 超时
+            // 跳过采样，等下次在后台线程执行时再收集亮度数据
+            Logger.log("captureBrightnessSamples: skipped on main thread (would deadlock)")
+            return []
+        }
         var samples: [Double] = []
         let semaphore = DispatchSemaphore(value: 0)
         func sample(index: Int) {
@@ -232,7 +244,10 @@ final class EnvironmentConsistencyProvider: RiskSignalProvider {
         guard series.count > 1 else { return 0 }
         let mean = series.reduce(0, +) / Double(series.count)
         let squaredDiffs = series.map { pow($0 - mean, 2) }
-        return squaredDiffs.reduce(0, +) / Double(series.count)
+        // 使用样本方差（÷n-1），而非总体方差（÷n）。
+        // 总体公式在样本数较小时（5-10个）会低估方差约 10-20%，
+        // 可能导致正常设备（亮度有轻微波动）被误判为亮度静止。
+        return squaredDiffs.reduce(0, +) / Double(series.count - 1)
     }
 
     // MARK: - Persistence

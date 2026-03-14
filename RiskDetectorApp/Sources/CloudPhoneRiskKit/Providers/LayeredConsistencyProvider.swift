@@ -124,26 +124,17 @@ final class LayeredConsistencyProvider: RiskSignalProvider {
         guard getpidMedianNs > 0, sysctlMedianNs > 0 else { return nil }
 
         let ratio = sysctlMedianNs / getpidMedianNs
-        // 仅用比值判断：ratio > 15 与 KernelHookSideChannel 一致（无量纲，不受机型影响）
-        if ratio > 15 {
-            let confidence = min(0.9, ratio / 30.0)
-            return RiskSignal(
-                id: "timing_anomaly",
-                category: "anti_tamper",
-                score: 0,
-                evidence: ["ratio": String(format: "%.1f", ratio)],
-                state: .soft(confidence: confidence),
-                layer: 2,
-                weightHint: 45
-            )
-        }
+        // 仅用比值判断：ratio > 15 与 KernelHookSideChannel 一致（无量纲，不受机型影响）。
+        // ratio <= 15 时序正常，不返回任何信号（避免 confidence=0 噪音信号污染 activeProviderIDs）。
+        guard ratio > 15 else { return nil }
 
+        let confidence = min(0.9, ratio / 30.0)
         return RiskSignal(
             id: "timing_anomaly",
             category: "anti_tamper",
             score: 0,
             evidence: ["ratio": String(format: "%.1f", ratio)],
-            state: .soft(confidence: 0),
+            state: .soft(confidence: confidence),
             layer: 2,
             weightHint: 45
         )
@@ -229,6 +220,7 @@ final class LayeredConsistencyProvider: RiskSignalProvider {
         guard sampleCount > 0 else { return 0 }
         var values: [UInt64] = []
         values.reserveCapacity(sampleCount)
+
         var timebase = mach_timebase_info_data_t()
         mach_timebase_info(&timebase)
 
@@ -248,6 +240,7 @@ final class LayeredConsistencyProvider: RiskSignalProvider {
         guard sampleCount > 0 else { return 0 }
         var values: [UInt64] = []
         values.reserveCapacity(sampleCount)
+
         var timebase = mach_timebase_info_data_t()
         mach_timebase_info(&timebase)
 
