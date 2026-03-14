@@ -156,10 +156,13 @@ final class RiskScorerTests: XCTestCase {
             RiskSignal(id: "custom1", category: "custom", score: 15, evidence: [:]),
             RiskSignal(id: "custom2", category: "custom", score: 15, evidence: [:]),
         ]
+        let baseReport = RiskScorer.score(context: context, config: TestFixtures.defaultRiskConfig)
         let report = RiskScorer.score(context: context, config: TestFixtures.defaultRiskConfig, extraSignals: extras)
 
-        let extraTotal = report.signals.filter { $0.category == "custom" }.reduce(0.0) { $0 + $1.score }
-        XCTAssertGreaterThan(extraTotal, 20)
+        // Raw sum of extra signal scores = 30, but the cap limits contribution to 20.
+        // Verify the actual score delta equals the cap (20), not the raw sum (30).
+        XCTAssertEqual(report.score, baseReport.score + 20, accuracy: 0.001,
+            "Extra signals (raw sum=30) should contribute capped 20, not 30, to final score")
 
         XCTAssertLessThanOrEqual(report.score, 100)
     }

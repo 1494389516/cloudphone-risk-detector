@@ -118,25 +118,23 @@ final class LayeredConsistencyProvider: RiskSignalProvider {
         let medianUs = measureSysctlMedianMicroseconds(sampleCount: 24)
         guard medianUs > 0 else { return nil }
 
-        if medianUs > 50 {
-            let confidence = min(0.9, medianUs / 200.0)
-            return RiskSignal(
-                id: "timing_anomaly",
-                category: "anti_tamper",
-                score: 0,
-                evidence: ["median_us": String(format: "%.1f", medianUs)],
-                state: .soft(confidence: confidence),
-                layer: 2,
-                weightHint: 45
-            )
+        guard medianUs > 50 else {
+            // 时序正常，不返回任何信号。
+            // 之前的代码在正常情况下返回 confidence=0 的信号，存在两个问题：
+            //   1. confidence=0 < softGate(0.3)，该信号对分数贡献为 0，是无意义的噪音。
+            //   2. 返回非空信号会让 LayeredConsistencyProvider 被标记为 "active"，
+            //      若后续该 Provider 恰好返回空结果（如 sampleCount=0 被 guard 过滤），
+            //      RiskSignalProviderRegistry 会误注入 signalCollectionFailed 篡改信号。
+            return nil
         }
 
+        let confidence = min(0.9, medianUs / 200.0)
         return RiskSignal(
             id: "timing_anomaly",
             category: "anti_tamper",
             score: 0,
             evidence: ["median_us": String(format: "%.1f", medianUs)],
-            state: .soft(confidence: 0),
+            state: .soft(confidence: confidence),
             layer: 2,
             weightHint: 45
         )
