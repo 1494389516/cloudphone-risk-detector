@@ -1,30 +1,9 @@
 import CoreFoundation
+import CRiskCore
 import Darwin
 import Foundation
 
-private let rtldNext = UnsafeMutableRawPointer(bitPattern: -1)
 private let rtldDefault = UnsafeMutableRawPointer(bitPattern: -2)
-
-typealias SysctlbynameFn = @convention(c) (
-    UnsafePointer<CChar>?,
-    UnsafeMutableRawPointer?,
-    UnsafeMutablePointer<Int>?,
-    UnsafeMutableRawPointer?,
-    Int
-) -> Int32
-
-typealias SysctlFn = @convention(c) (
-    UnsafeMutablePointer<Int32>?,
-    u_int,
-    UnsafeMutableRawPointer?,
-    UnsafeMutablePointer<size_t>?,
-    UnsafeMutableRawPointer?,
-    size_t
-) -> Int32
-
-typealias StatFn = @convention(c) (UnsafePointer<CChar>, UnsafeMutablePointer<stat>?) -> Int32
-typealias LstatFn = @convention(c) (UnsafePointer<CChar>, UnsafeMutablePointer<stat>?) -> Int32
-typealias AccessFn = @convention(c) (UnsafePointer<CChar>, CInt) -> Int32
 
 enum LibcPrologueGuard {
     private static let criticalSymbols = [
@@ -154,40 +133,26 @@ enum LibcPrologueGuard {
 }
 
 enum SVCDirectCall {
-    private static func originalSysctlbyname() -> SysctlbynameFn? {
-        guard let ptr = dlsym(rtldNext, "sysctlbyname") else { return nil }
-        return unsafeBitCast(ptr, to: SysctlbynameFn.self)
-    }
-
-    private static func originalSysctl() -> SysctlFn? {
-        guard let ptr = dlsym(rtldNext, "sysctl") else { return nil }
-        return unsafeBitCast(ptr, to: SysctlFn.self)
-    }
-
-    private static func originalStat() -> StatFn? {
-        guard let ptr = dlsym(rtldNext, "stat") else { return nil }
-        return unsafeBitCast(ptr, to: StatFn.self)
-    }
-
-    private static func originalLstat() -> LstatFn? {
-        guard let ptr = dlsym(rtldNext, "lstat") else { return nil }
-        return unsafeBitCast(ptr, to: LstatFn.self)
-    }
-
-    private static func originalAccess() -> AccessFn? {
-        guard let ptr = dlsym(rtldNext, "access") else { return nil }
-        return unsafeBitCast(ptr, to: AccessFn.self)
-    }
-
-    /// 通过 RTLD_NEXT 获取下一跳 sysctlbyname，绕过当前进程的 PLT hook。
-    /// dlsym 失败时返回 nil，不静默回退到标准 libc，以便 DualPathValidator 识别安全路径失效。
+    /// 通过 CRiskCore 的 arm64 直 syscall 路径调用 sysctlbyname。
+    /// 当直 syscall 不可用或失败时返回 nil，不静默回退到标准 libc，
+    /// 以便 DualPathValidator 识别安全路径失效。
     static func secureSysctlbyname(_ name: String) -> String? {
-        guard let fn = originalSysctlbyname() else { return nil }
         return name.withCString { cName in
             var size: size_t = 0
-            if fn(cName, nil, &size, nil, 0) != 0 { return nil }
+            var rawErrno: CInt = 0
+            if cprisk_sysctlbyname_direct(cName, nil, &size, nil, 0, &rawErrno) != 0 || size == 0 {
+                return nil
+            }
             var buf = [CChar](repeating: 0, count: max(1, Int(size)))
-            if fn(cName, &buf, &size, nil, 0) != 0 { return nil }
+            let result = buf.withUnsafeMutableBufferPointer { buffer in
+                cprisk_sysctlbyname_direct(cName, buffer.baseAddress, &size, nil, 0, &rawErrno)
+            }
+            if result != 0 || size == 0 {
+                return nil
+            }
+            if buf[Int(size) - 1] != 0 {
+                buf.append(0)
+            }
             return String(cString: buf)
         }
     }
@@ -213,17 +178,17 @@ enum SVCDirectCall {
         return success ? data : nil
     }
 
-    /// 通过 RTLD_NEXT 获取下一跳 sysctl，绕过当前进程对 sysctl 的统一重绑定。
-    /// dlsym 失败时返回 nil，不静默回退到 standardSysctlData，以便 DualPathValidator 识别安全路径失效。
+    /// 通过 CRiskCore 的 arm64 直 syscall 路径调用 sysctl。
+    /// 当直 syscall 不可用或失败时返回 nil，不静默回退到 standardSysctlData，
+    /// 以便 DualPathValidator 识别安全路径失效。
     static func secureSysctlData(_ mib: [Int32]) -> Data? {
-        guard let fn = originalSysctl() else { return nil }
-
         var mibCopy = mib
         guard !mibCopy.isEmpty else { return nil }
 
         var length: size_t = 0
+        var rawErrno: CInt = 0
         let sizeResult = mibCopy.withUnsafeMutableBufferPointer { buffer in
-            fn(buffer.baseAddress, u_int(buffer.count), nil, &length, nil, 0)
+            cprisk_sysctl_direct(buffer.baseAddress, u_int(buffer.count), nil, &length, nil, 0, &rawErrno)
         }
         guard sizeResult == 0, length > 0 else { return nil }
 
@@ -232,38 +197,48 @@ enum SVCDirectCall {
             guard let baseAddress = rawBuffer.baseAddress else { return false }
             var sizeCopy = length
             return mibCopy.withUnsafeMutableBufferPointer { buffer in
-                fn(buffer.baseAddress, u_int(buffer.count), baseAddress, &sizeCopy, nil, 0) == 0 && sizeCopy > 0
+                cprisk_sysctl_direct(buffer.baseAddress, u_int(buffer.count), baseAddress, &sizeCopy, nil, 0, &rawErrno) == 0
+                    && sizeCopy > 0
             }
         }
         return success ? data : nil
     }
 
-    /// 通过 RTLD_NEXT 获取下一跳 stat，绕过当前进程的 PLT hook。
-    /// dlsym 失败时返回 nil（安全路径不可用），不静默回退到标准 libc。
+    /// 通过 CRiskCore 的 arm64 直 syscall 路径调用 stat。
+    /// 直 syscall 不可用或失败时返回 nil（安全路径不可用），不静默回退到标准 libc。
     static func secureStat(_ path: String) -> Bool? {
-        guard let fn = originalStat() else { return nil }
         return path.withCString { cPath in
             var st = stat()
-            return fn(cPath, &st) == 0
+            var rawErrno: CInt = 0
+            let result = cprisk_stat_direct(cPath, &st, &rawErrno)
+            if result == 0 { return true }
+            if rawErrno == ENOENT || rawErrno == ENOTDIR { return false }
+            return nil
         }
     }
 
-    /// 通过 RTLD_NEXT 获取下一跳 lstat。
-    /// dlsym 失败时返回 nil（安全路径不可用），不静默回退到标准 libc。
+    /// 通过 CRiskCore 的 arm64 直 syscall 路径调用 lstat。
+    /// 直 syscall 不可用或失败时返回 nil（安全路径不可用），不静默回退到标准 libc。
     static func secureLstat(_ path: String) -> Bool? {
-        guard let fn = originalLstat() else { return nil }
         return path.withCString { cPath in
             var st = stat()
-            return fn(cPath, &st) == 0
+            var rawErrno: CInt = 0
+            let result = cprisk_lstat_direct(cPath, &st, &rawErrno)
+            if result == 0 { return true }
+            if rawErrno == ENOENT || rawErrno == ENOTDIR { return false }
+            return nil
         }
     }
 
-    /// 通过 RTLD_NEXT 获取下一跳 access。
-    /// dlsym 失败时返回 nil（安全路径不可用），不静默回退到标准 libc。
+    /// 通过 CRiskCore 的 arm64 直 syscall 路径调用 access。
+    /// 直 syscall 不可用或失败时返回 nil（安全路径不可用），不静默回退到标准 libc。
     static func secureAccess(_ path: String, mode: CInt = F_OK) -> Bool? {
-        guard let fn = originalAccess() else { return nil }
         return path.withCString { cPath in
-            fn(cPath, mode) == 0
+            var rawErrno: CInt = 0
+            let result = cprisk_access_direct(cPath, mode, &rawErrno)
+            if result == 0 { return true }
+            if rawErrno == ENOENT || rawErrno == ENOTDIR || rawErrno == EACCES || rawErrno == EPERM { return false }
+            return nil
         }
     }
 }
@@ -296,6 +271,8 @@ struct DualPathValidator {
         var secure: String?
         let t2 = measure { secure = SVCDirectCall.secureSysctlbyname(key) }
         
+        // 50 纳秒：检测「时序注入绕过」——syscall 异常快（如被 stub 或直接返回）时判定 bypassed。
+        // 注意：此为纳秒阈值，与 stat/getpid 延迟的 50ms 毫秒阈值无关。
         let bypassed = t1 < 50 || t2 < 50
 
         if std == nil && secure == nil { return (nil, false, bypassed, hooked) }
@@ -314,6 +291,7 @@ struct DualPathValidator {
         var secure: Data?
         let t2 = measure { secure = SVCDirectCall.secureSysctlData(mib) }
         
+        // 50 纳秒：检测「时序注入绕过」，非 stat 延迟阈值（见上方 validateSysctl 注释）
         let bypassed = t1 < 50 || t2 < 50
 
         if std == nil && secure == nil { return (nil, false, bypassed, hooked) }
@@ -352,6 +330,7 @@ struct DualPathValidator {
         let t5 = measure { secureLstatExists = SVCDirectCall.secureLstat(path) }
         let t6 = measure { secureAccessExists = SVCDirectCall.secureAccess(path) }
 
+        // 50 纳秒：检测「时序注入绕过」，任一 syscall 异常快则 bypassed（非 stat 延迟阈值）
         let bypassed = t1 < 50 || t2 < 50 || t3 < 50 || t4 < 50 || t5 < 50 || t6 < 50
 
         // 安全路径返回 nil 且 std 有值：安全路径失效本身即异常，判定 tampered

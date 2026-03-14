@@ -76,6 +76,7 @@ public final class CPRiskKit: NSObject {
     private var remoteConfigProvider: RemoteConfigProvider?
     private var remoteConfigEndpoint: URL?
     private var latestRemoteConfig: RemoteConfig?
+    private var textSegmentReferenceResolver: (any TextSegmentReferenceResolving)?
 
     private var boundAccountId: String?
     private var boundSceneTag: String?
@@ -138,6 +139,7 @@ public final class CPRiskKit: NSObject {
 #if canImport(UIKit)
         touchCapture.start()
         motionSampler.start()
+        PhysicalSensorProbe.prewarm()
 #endif
     }
 
@@ -395,6 +397,17 @@ public final class CPRiskKit: NSObject {
                 DispatchQueue.main.async { completion(false) }
             }
         }
+    }
+
+    /// 注入自定义 __TEXT.__text 参考哈希解析器。
+    ///
+    /// 默认情况下 SDK 使用 `RemoteConfig.textSegmentHashReference`。
+    /// 若已接入业务侧签名配置中心，可通过该解析器提供同样的参考哈希。
+    /// 解析器返回 `nil` 时，SDK 会继续回退到默认 RemoteConfig 逻辑。
+    public func setTextSegmentReferenceResolver(_ resolver: (any TextSegmentReferenceResolving)?) {
+        stateLock.lock()
+        textSegmentReferenceResolver = resolver
+        stateLock.unlock()
     }
 
     // MARK: - Evaluation
@@ -1239,7 +1252,8 @@ public final class CPRiskKit: NSObject {
         return refreshed
     }
 
-    private func currentRemoteConfig() -> RemoteConfig? {
+    /// 供 TextSegmentIntegrityChecker 等服务端参考哈希校验使用
+    internal func currentRemoteConfig() -> RemoteConfig? {
         stateLock.lock()
         let cached = latestRemoteConfig
         let provider = remoteConfigProvider
@@ -1250,6 +1264,33 @@ public final class CPRiskKit: NSObject {
         }
 
         return provider?.currentConfig
+    }
+
+
+    /// 解析当前 SDK 版本的可信 __TEXT.__text 参考哈希。
+    /// 优先走业务方注入的解析器；若未提供或返回 nil，则回退到 RemoteConfig。
+    internal func resolveTextSegmentReference(for sdkVersion: String) -> TextSegmentReference? {
+        stateLock.lock()
+        let resolver = textSegmentReferenceResolver
+        let cached = latestRemoteConfig
+        let provider = remoteConfigProvider
+        stateLock.unlock()
+
+        if let resolved = resolver?.resolveTextSegmentReference(for: sdkVersion) {
+            return resolved
+        }
+
+        let config = cached ?? provider?.currentConfig
+        guard let config,
+              let expectedHash = config.textSegmentHashReference?[sdkVersion] else {
+            return nil
+        }
+
+        return TextSegmentReference(
+            expectedHash: expectedHash,
+            source: "remote_config",
+            version: String(config.version)
+        )
     }
 
     @discardableResult

@@ -349,6 +349,9 @@ private struct Payload: Codable {
     // 3.5 图风控：端侧生产的图节点描述符（单向哈希，服务端可直接入图）
     var graphNode: GraphNodeDescriptor?
 
+    // 盲区四：__TEXT.__text 哈希供服务端二次校验
+    var textSegmentIntegrity: TextSegmentIntegrityPayload?
+
     init(context: RiskContext, report: RiskScoreReport) {
         self.sdkVersion = Version.current
         self.reportId = UUID().uuidString
@@ -380,6 +383,20 @@ private struct Payload: Codable {
         self.sceneTag = nil
         self.behaviorVector = Self.computeBehaviorVector(from: context.behavior)
         self.graphNode = nil
+        self.textSegmentIntegrity = Self.buildTextSegmentIntegrityPayload()
+    }
+
+    private static func buildTextSegmentIntegrityPayload() -> TextSegmentIntegrityPayload? {
+        let result = TextSegmentIntegrityChecker.verify()
+        guard !result.currentHash.isEmpty else { return nil }
+        return TextSegmentIntegrityPayload(
+            currentHash: result.currentHash,
+            sdkVersion: result.sdkVersion,
+            referenceSource: result.referenceSource,
+            referenceVersion: result.referenceVersion,
+            usedServerReference: result.usedServerReference,
+            clientDetail: result.detail
+        )
     }
 
     private static func computeBehaviorVector(from behavior: BehaviorSignals) -> [Double]? {
@@ -392,6 +409,36 @@ private struct Payload: Codable {
             behavior.motion.stillnessRatio ?? 0,
             min((behavior.motion.motionEnergy ?? 0) / 100.0, 1.0)
         ]
+    }
+}
+
+/// __TEXT.__text 完整性上报载荷（盲区四），供服务端二次校验
+public struct TextSegmentIntegrityPayload: Codable, Sendable {
+    public let currentHash: String
+    public let sdkVersion: String
+    /// 参考哈希来源，仅供服务端观测与审计，不应替代服务端独立查表。
+    public let referenceSource: String?
+    /// 参考哈希版本，如 RemoteConfig 版本号或业务侧参考表版本号。
+    public let referenceVersion: String?
+    /// 客户端本次是否命中了服务端参考哈希路径。
+    public let usedServerReference: Bool
+    /// 客户端本地结论细节，仅供观测，不应作为服务端最终信任依据。
+    public let clientDetail: String?
+
+    public init(
+        currentHash: String,
+        sdkVersion: String,
+        referenceSource: String? = nil,
+        referenceVersion: String? = nil,
+        usedServerReference: Bool = false,
+        clientDetail: String? = nil
+    ) {
+        self.currentHash = currentHash
+        self.sdkVersion = sdkVersion
+        self.referenceSource = referenceSource
+        self.referenceVersion = referenceVersion
+        self.usedServerReference = usedServerReference
+        self.clientDetail = clientDetail
     }
 }
 

@@ -27,8 +27,8 @@ final class SDK52ProviderTests: XCTestCase {
             isSimulator: false
         )
         return RiskSnapshot(
-            device: device,
             deviceID: "test-device-5200",
+            device: device,
             network: TestFixtures.makeNetworkSignals(),
             behavior: TestFixtures.makeBehaviorSignals(),
             jailbreak: TestFixtures.makeDetectionResult()

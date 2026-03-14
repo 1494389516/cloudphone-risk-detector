@@ -1,13 +1,8 @@
+import CRiskCore
 import Darwin
 import Foundation
 
 struct KernelHookSideChannel: Detector {
-
-    private struct TimingStats {
-        let median: UInt64
-        let p95: UInt64
-        let stddev: Double
-    }
 
     private static var timebaseInfo: mach_timebase_info_data_t = {
         var info = mach_timebase_info_data_t()
@@ -17,26 +12,6 @@ struct KernelHookSideChannel: Detector {
 
     private static func nanoseconds(from ticks: UInt64) -> UInt64 {
         ticks * UInt64(timebaseInfo.numer) / UInt64(timebaseInfo.denom)
-    }
-
-    private static func computeStats(_ samples: [UInt64]) -> TimingStats {
-        let sorted = samples.sorted()
-        let count = sorted.count
-        guard count > 0 else {
-            return TimingStats(median: 0, p95: 0, stddev: 0)
-        }
-        let median = sorted[count / 2]
-        let p95Index = min(Int(Double(count) * 0.95), count - 1)
-        let p95 = sorted[p95Index]
-
-        let mean = Double(sorted.reduce(0, +)) / Double(count)
-        let variance = sorted.reduce(0.0) { acc, v in
-            let diff = Double(v) - mean
-            return acc + diff * diff
-        } / Double(count)
-        let stddev = sqrt(variance)
-
-        return TimingStats(median: median, p95: p95, stddev: stddev)
     }
 
     func detect() throws -> DetectorResult {
@@ -76,7 +51,7 @@ struct KernelHookSideChannel: Detector {
 #if targetEnvironment(simulator)
         return (0, [])
 #else
-        let iterations = 30
+        let iterations = TimingRatioBaseline.defaultSampleCount
 
         var getpidSamples: [UInt64] = []
         getpidSamples.reserveCapacity(iterations)
@@ -97,34 +72,29 @@ struct KernelHookSideChannel: Detector {
             statSamples.append(Self.nanoseconds(from: end - start))
         }
 
-        let getpidStats = Self.computeStats(getpidSamples)
-        let statStats = Self.computeStats(statSamples)
-
-        guard getpidStats.median > 0 else { return (0, []) }
-
-        let ratio = Double(statStats.median) / Double(getpidStats.median)
-        let statP95ns = statStats.p95
+        guard let evaluation = TimingRatioBaseline.evaluate(
+            getpidSamples: getpidSamples,
+            statSamples: statSamples
+        ) else {
+            return (0, [])
+        }
 
         var score: Double = 0
         var methods: [String] = []
 
-        if ratio > 15 || statP95ns > 50_000 {
+        // 仅用比值判断：median ratio > 15 为主条件，P95 ratio > 15 为辅助（均无量纲，不受机型/负载影响）
+        if evaluation.isAnomalous {
             score = 40
-            methods.append("kernel_hook_timing_anomaly:ratio=\(String(format: "%.1f", ratio))_p95=\(statP95ns)ns")
+            methods.append(
+                "kernel_hook_timing_anomaly:ratio=\(String(format: "%.1f", evaluation.medianRatio))_ratioP95=\(String(format: "%.1f", evaluation.p95Ratio))"
+            )
         }
 
         return (score, methods)
 #endif
     }
 
-    // MARK: - Strategy 2: Syscall Pair Inode Consistency
-
-    private typealias StatFn = @convention(c) (UnsafePointer<CChar>, UnsafeMutablePointer<stat>?) -> Int32
-
-    private func rtldNextStat() -> StatFn? {
-        guard let ptr = dlsym(UnsafeMutableRawPointer(bitPattern: -1), "stat") else { return nil }
-        return unsafeBitCast(ptr, to: StatFn.self)
-    }
+    // MARK: - Strategy 2: libc vs direct-syscall inode consistency
 
     private func detectInodeMismatch() -> (Double, [String]) {
 #if targetEnvironment(simulator)
@@ -134,15 +104,14 @@ struct KernelHookSideChannel: Detector {
         var score: Double = 0
         var methods: [String] = []
 
-        guard let secureFn = rtldNextStat() else { return (0, []) }
-
         for path in testPaths {
             var stdStat = stat()
             var secureStat = stat()
 
             let stdRet = path.withCString { stat($0, &stdStat) }
             let secureRet = path.withCString { cPath -> Int32 in
-                secureFn(cPath, &secureStat)
+                var rawErrno: CInt = 0
+                return cprisk_stat_direct(cPath, &secureStat, &rawErrno)
             }
 
             guard stdRet == 0, secureRet == 0 else { continue }
