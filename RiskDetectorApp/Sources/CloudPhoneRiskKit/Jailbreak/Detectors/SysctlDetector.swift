@@ -1,3 +1,4 @@
+import CRiskCore
 import Darwin
 import Foundation
 
@@ -159,7 +160,7 @@ struct SysctlDetector: Detector {
     }
 
     private func parentProcessName() -> (name: String?, tampered: Bool) {
-        let ppid = getppid()
+        let ppid = cprisk_getppid_direct()
         guard let result = readProcessInfo(pid: ppid) else { return (nil, false) }
         let name = processComm(result.info)
         return (name.isEmpty ? nil : name, result.tampered)
@@ -181,7 +182,7 @@ struct SysctlDetector: Detector {
     }
 
     private func debuggerStatus() -> (attached: Bool, tampered: Bool) {
-        guard let result = readProcessInfo(pid: getpid()) else { return (false, false) }
+        guard let result = readProcessInfo(pid: cprisk_getpid_direct()) else { return (false, false) }
         let attached = (result.info.kp_proc.p_flag & P_TRACED) != 0
         return (attached, result.tampered)
     }

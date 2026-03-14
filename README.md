@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
-  <img src="https://img.shields.io/badge/SDK-5.3.0-FF3B30?style=for-the-badge" alt="SDK">
+  <img src="https://img.shields.io/badge/SDK-5.5.0-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
   <img src="https://img.shields.io/badge/License-Proprietary-8E8E93?style=for-the-badge" alt="License">
 </p>
@@ -54,6 +54,8 @@
 | **5.1** | **vPhone 裸金属检测扩展** | PhysicalSensorProbe（CoreMotion 重力/加速度/陀螺仪/磁力计/气压计）、EnvironmentConsistencyProvider（热状态熵、电池状态转移、屏幕亮度熵）、HardwareCapabilityProvider（Haptic Engine、刷新率一致性、接近传感器）、NetworkInterfaceProvider（虚拟接口、MTU 异常、接口数量） |
 | **5.2** | **云手机运维特征检测 + Impossible States** | DisplayMuxProvider（录屏/推流、外接显示器）、BiometricStateProvider（生物特征未录入/不可用）、AudioRouteProvider（USB 音频、虚拟声卡）、BasebandIsolationProvider（无蜂窝、系统 App 阉割）、Impossible States 五信号组合强制拦截 |
 | **5.3** | **自保护架构升级 + 内核直调** | SVC #0x80 直调 ptrace(PT_DENY_ATTACH) 绕过 Frida Hook、CRiskCore C 模块、自保护 C/Swift 混合层、下一代 6.x 架构奠基 |
+| **5.4** | **四盲区修复 + 直调扩展** | RTLD_NEXT 下沉为 SVC 直调、时序动态比值基线、PhysicalSensorProbe 预热缓存、服务端参考哈希、getpid/getppid/getuid/socket/connect 直调 |
+| **5.5** | **Bug 修复 + 实验分桶** | RandomizedDetection 父进程逻辑、ptrace 错误处理、ExperimentConfig.random 分桶、WhitelistRules 语义化版本比较、PayloadFieldObfuscator 反向映射、getentropy buflen 校验 |
 
 ## 架构概览
 
@@ -160,6 +162,20 @@
 | **CRiskCore C 模块** | CRiskCore | 首个 C/Swift 混合层，自保护核心逻辑下沉至 C 层，提升抗逆向与 Hook 能力 |
 | **下一代架构奠基** | 6.x 架构基础 | C 核心层、混淆、VMP 等下一代自保护能力的架构基础 |
 | **Mach Exception Handler 抢占** | CRiskCore | 主动注册 EXC_BREAKPOINT handler，定期验证是否被劫持 |
+
+---
+
+## 5.5 新增能力 — Bug 修复与实验分桶修正
+
+5.5 修复四轮子代理审计发现的逻辑与配置问题。
+
+### 5.5 修复摘要
+
+| 类别 | 修复项 |
+|------|--------|
+| **逻辑** | RandomizedDetection：ppid ≤ 1（init）时不再误报为可疑；AntiTamperingDetector：ptrace 失败时统一按失败处理 |
+| **配置** | ExperimentConfig.random：分桶改为 0/1 与 variants 匹配；WhitelistRules.isTrusted：语义化版本比较，避免 "10.0" < "9.0" |
+| **安全** | PayloadFieldObfuscate 反向映射冲突不崩溃；cprisk_getentropy_direct buflen ≤ 256 校验 |
 
 ## 项目结构
 
@@ -278,4 +294,4 @@ cd RiskDetectorApp && swift build
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 5.3.0 — SVC 直调 ptrace、CRiskCore 模块、下一代自保护架构奠基</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 5.5.0 — 四盲区修复、直调扩展、Bug 修复与实验分桶</sub></p>

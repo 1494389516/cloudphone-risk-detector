@@ -57,7 +57,7 @@ struct KernelHookSideChannel: Detector {
         getpidSamples.reserveCapacity(iterations)
         for _ in 0..<iterations {
             let start = mach_absolute_time()
-            _ = getpid()
+            _ = cprisk_getpid_direct()
             let end = mach_absolute_time()
             getpidSamples.append(Self.nanoseconds(from: end - start))
         }
@@ -67,7 +67,7 @@ struct KernelHookSideChannel: Detector {
         for _ in 0..<iterations {
             var st = stat()
             let start = mach_absolute_time()
-            _ = "/usr/lib/dyld".withCString { stat($0, &st) }
+            _ = "/usr/lib/dyld".withCString { cprisk_stat_direct($0, &st, nil) }
             let end = mach_absolute_time()
             statSamples.append(Self.nanoseconds(from: end - start))
         }
@@ -137,7 +137,7 @@ struct KernelHookSideChannel: Detector {
         let machA = mach_absolute_time()
 
         // Small busy-wait to create a measurable interval
-        for _ in 0..<10_000 { _ = getpid() }
+        for _ in 0..<10_000 { _ = cprisk_getpid_direct() }
 
         let uptimeB = ProcessInfo.processInfo.systemUptime
         let machB = mach_absolute_time()
@@ -171,19 +171,19 @@ struct KernelHookSideChannel: Detector {
         var score: Double = 0
         var methods: [String] = []
 
-        let expectedPid = getpid()
+        let expectedPid = cprisk_getpid_direct()
         var pidUnstable = false
         for _ in 0..<9 {
-            if getpid() != expectedPid {
+            if cprisk_getpid_direct() != expectedPid {
                 pidUnstable = true
                 break
             }
         }
 
-        let expectedUid = getuid()
+        let expectedUid = cprisk_getuid_direct()
         var uidUnstable = false
         for _ in 0..<9 {
-            if getuid() != expectedUid {
+            if cprisk_getuid_direct() != expectedUid {
                 uidUnstable = true
                 break
             }

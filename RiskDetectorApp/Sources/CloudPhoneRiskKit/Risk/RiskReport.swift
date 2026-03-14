@@ -621,5 +621,5 @@ private struct DetectionResultPayload: Codable {
 }
 
 enum Version {
-    static let current = "5.2.0"
+    static let current = "5.5.0"
 }

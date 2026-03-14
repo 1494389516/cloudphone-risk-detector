@@ -1,3 +1,4 @@
+import CRiskCore
 import Foundation
 import Darwin
 
@@ -233,7 +234,7 @@ final class LayeredConsistencyProvider: RiskSignalProvider {
 
         for _ in 0..<sampleCount {
             let t0 = mach_absolute_time()
-            _ = getpid()
+            _ = cprisk_getpid_direct()
             let t1 = mach_absolute_time()
             let ns = Double(t1 - t0) * Double(timebase.numer) / Double(timebase.denom)
             values.append(UInt64(ns))

@@ -585,9 +585,9 @@ public struct WhitelistRules: Codable, Sendable {
             return true
         }
 
-        // 版本号比较
+        // 版本号比较（语义化，避免 "10.0" < "9.0" 的字符串比较错误）
         if let minVersion = minTrustedVersion {
-            return version >= minVersion
+            return compareVersions(version, minVersion) >= 0
         }
 
         return false
@@ -616,6 +616,19 @@ public struct WhitelistRules: Codable, Sendable {
         }
         return false
     }
+}
+
+/// 语义化版本比较：a >= b 返回 true。避免 "10.0" < "9.0" 的字符串比较错误。
+private func compareVersions(_ a: String, _ b: String) -> Int {
+    let aParts = a.split(separator: ".", omittingEmptySubsequences: false).map { Int($0) ?? 0 }
+    let bParts = b.split(separator: ".", omittingEmptySubsequences: false).map { Int($0) ?? 0 }
+    let maxLen = max(aParts.count, bParts.count)
+    for i in 0..<maxLen {
+        let av = i < aParts.count ? aParts[i] : 0
+        let bv = i < bParts.count ? bParts[i] : 0
+        if av != bv { return av < bv ? -1 : 1 }
+    }
+    return 0
 }
 
 private enum ParsedIPAddress {
@@ -758,7 +771,7 @@ public struct ExperimentConfig: Codable, Sendable {
         case .modular:
             return modularBucket(deviceID: deviceID, traffic: traffic)
         case .random:
-            return Int.random(in: 0...100)
+            return Double.random(in: 0...1) <= traffic ? 1 : 0
         }
     }
 

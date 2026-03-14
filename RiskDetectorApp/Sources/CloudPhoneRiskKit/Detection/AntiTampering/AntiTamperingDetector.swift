@@ -59,14 +59,14 @@ struct AntiTamperingDetector: Detector {
 
     private func isTraced() -> Bool {
         var info = kinfo_proc()
-        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, cprisk_getpid_direct()]
         var size = MemoryLayout<kinfo_proc>.size
         guard sysctl(&mib, 4, &info, &size, nil, 0) == 0 else { return false }
         return (info.kp_proc.p_flag & tracedFlag) != 0
     }
 
     private func hasSuspiciousParent() -> Bool {
-        let ppid = getppid()
+        let ppid = cprisk_getppid_direct()
         guard ppid > 1 else { return false }
         guard let parentPath = parentProcessPath(ppid) else { return false }
         return firstSuspiciousParentToken(in: parentPath) != nil
@@ -93,11 +93,10 @@ struct AntiTamperingDetector: Detector {
         #else
         var rawErrno: CInt = 0
         let result = cprisk_deny_attach_status(&rawErrno)
-        if result != 0 && (rawErrno == ENOTSUP || rawErrno == EPERM) {
-            // Direct syscall path: treat ENOTSUP / EPERM as debugger already attached or ptrace denied.
-            return (25, ["ptrace:debugger_already_attached"])
-        }
-        if result != 0 && rawErrno != 0 {
+        if result != 0 {
+            if rawErrno == ENOTSUP || rawErrno == EPERM {
+                return (25, ["ptrace:debugger_already_attached"])
+            }
             return (5, ["ptrace:direct_syscall_errno:\(rawErrno)"])
         }
         return (0, [])
@@ -124,7 +123,7 @@ struct AntiTamperingDetector: Detector {
         getpidSamples.reserveCapacity(iterations)
         for _ in 0..<iterations {
             let start = DispatchTime.now().uptimeNanoseconds
-            _ = getpid()
+            _ = cprisk_getpid_direct()
             let end = DispatchTime.now().uptimeNanoseconds
             getpidSamples.append(end - start)
         }
@@ -134,7 +133,7 @@ struct AntiTamperingDetector: Detector {
         var st = stat()
         for _ in 0..<iterations {
             let start = DispatchTime.now().uptimeNanoseconds
-            _ = "/usr/lib/dyld".withCString { stat($0, &st) }
+            _ = "/usr/lib/dyld".withCString { cprisk_stat_direct($0, &st, nil) }
             let end = DispatchTime.now().uptimeNanoseconds
             statSamples.append(end - start)
         }

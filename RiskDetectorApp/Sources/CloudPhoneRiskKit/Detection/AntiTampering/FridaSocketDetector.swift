@@ -1,3 +1,4 @@
+import CRiskCore
 import Darwin
 import Foundation
 
@@ -119,18 +120,18 @@ struct FridaSocketDetector: Detector {
         getpidSamples.reserveCapacity(iterations)
         for _ in 0..<iterations {
             let start = mach_absolute_time()
-            _ = getpid()
+            _ = cprisk_getpid_direct()
             let end = mach_absolute_time()
             getpidSamples.append(Self.nanoseconds(from: end - start))
         }
 
-        // 2. 再对 stat 采样 30 次（与 KernelHookSideChannel 一致，使用 stat 而非 access）
+        // 2. 再对 stat 采样 30 次（与 KernelHookSideChannel 一致，使用 SVC 直调 stat）
         var statSamples: [UInt64] = []
         statSamples.reserveCapacity(iterations)
         var st = stat()
         for _ in 0..<iterations {
             let start = mach_absolute_time()
-            _ = "/usr/lib/dyld".withCString { stat($0, &st) }
+            _ = "/usr/lib/dyld".withCString { cprisk_stat_direct($0, &st, nil) }
             let end = mach_absolute_time()
             statSamples.append(Self.nanoseconds(from: end - start))
         }
