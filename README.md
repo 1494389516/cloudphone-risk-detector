@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
-  <img src="https://img.shields.io/badge/SDK-5.2.0-FF3B30?style=for-the-badge" alt="SDK">
+  <img src="https://img.shields.io/badge/SDK-5.3.0-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
   <img src="https://img.shields.io/badge/License-Proprietary-8E8E93?style=for-the-badge" alt="License">
 </p>
@@ -53,6 +53,7 @@
 | **5.0** | **端侧信任根链 + 内存语义压缩 + 挑战闭环 + 图风控联动** | TrustChainManager / TrustLevel / KeyRotation 端侧信任根链、内存语义压缩快速判决（CompressedVerdictRule）、挑战式验证闭环、图风控联动（GraphFeatureCollector / GraphNodeDescriptor） |
 | **5.1** | **vPhone 裸金属检测扩展** | PhysicalSensorProbe（CoreMotion 重力/加速度/陀螺仪/磁力计/气压计）、EnvironmentConsistencyProvider（热状态熵、电池状态转移、屏幕亮度熵）、HardwareCapabilityProvider（Haptic Engine、刷新率一致性、接近传感器）、NetworkInterfaceProvider（虚拟接口、MTU 异常、接口数量） |
 | **5.2** | **云手机运维特征检测 + Impossible States** | DisplayMuxProvider（录屏/推流、外接显示器）、BiometricStateProvider（生物特征未录入/不可用）、AudioRouteProvider（USB 音频、虚拟声卡）、BasebandIsolationProvider（无蜂窝、系统 App 阉割）、Impossible States 五信号组合强制拦截 |
+| **5.3** | **自保护架构升级 + 内核直调** | SVC #0x80 直调 ptrace(PT_DENY_ATTACH) 绕过 Frida Hook、CRiskCore C 模块、自保护 C/Swift 混合层、下一代 6.x 架构奠基 |
 
 ## 架构概览
 
@@ -147,12 +148,26 @@
 
 ---
 
+## 5.3 新增能力 — SVC 直调 ptrace、CRiskCore 模块与下一代自保护架构奠基
+
+5.3 在自保护维度引入 SVC 直调 ptrace、首个 C/Swift 混合层（CRiskCore），为 6.x 代 C 核心层、混淆与 VMP 奠定基础。
+
+### 5.3 新特性摘要
+
+| 能力域 | 核心组件 | 说明 |
+|--------|----------|------|
+| **SVC 直调 ptrace** | SVC #0x80 系统调用 | 直接通过 SVC #0x80 调用 ptrace(PT_DENY_ATTACH)，绕过 Frida 对 libc ptrace 的 Hook，实现原生系统调用级反调试 |
+| **CRiskCore C 模块** | CRiskCore | 首个 C/Swift 混合层，自保护核心逻辑下沉至 C 层，提升抗逆向与 Hook 能力 |
+| **下一代架构奠基** | 6.x 架构基础 | C 核心层、混淆、VMP 等下一代自保护能力的架构基础 |
+| **Mach Exception Handler 抢占** | CRiskCore | 主动注册 EXC_BREAKPOINT handler，定期验证是否被劫持 |
+
 ## 项目结构
 
 ```
 RiskDetectorApp/
 ├── App/                              # SwiftUI 示例应用
 ├── Sources/
+│   ├── CRiskCore/                    # C 自保护核心 (SVC ptrace、Exception Handler)
 │   ├── CloudPhoneRiskAppCore/        # 应用层编排 (配置/检测/摘要)
 │   └── CloudPhoneRiskKit/            # SDK 主体
 │       ├── Detection/
@@ -219,4 +234,4 @@ cd RiskDetectorApp && swift build
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 5.2.0 — Display Mux, Biometric State, Audio Route, Baseband Isolation, Impossible States</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 5.3.0 — SVC 直调 ptrace、CRiskCore 模块、下一代自保护架构奠基</sub></p>

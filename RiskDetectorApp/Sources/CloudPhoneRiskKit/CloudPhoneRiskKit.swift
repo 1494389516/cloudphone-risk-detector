@@ -30,6 +30,7 @@
 //   - Keychain operations use per-key locks to avoid TOCTOU races
 
 import CryptoKit
+import CRiskCore
 import Foundation
 #if canImport(UIKit)
 import UIKit
@@ -66,6 +67,11 @@ public final class CPRiskKit: NSObject {
 
     private let evaluateQueue = DispatchQueue(label: "CloudPhoneRiskKit.Evaluate", qos: .utility)
     private let stateLock = NSLock()
+
+    /// Throttle cprisk_verify_exception_handler to avoid syscall on every evaluate().
+    private static let verifyThrottleInterval: TimeInterval = 5.0
+    private static var lastExceptionVerifyTime: TimeInterval = 0
+    private static let verifyThrottleLock = NSLock()
 
     private var remoteConfigProvider: RemoteConfigProvider?
     private var remoteConfigEndpoint: URL?
@@ -115,6 +121,8 @@ public final class CPRiskKit: NSObject {
     /// 启动自动采集（全局触摸 + 传感器）。
     /// 建议在 `application(_:didFinishLaunchingWithOptions:)` 里尽早调用。
     @objc public func start() {
+        cprisk_deny_attach()
+        cprisk_register_exception_handler()
         BuildConfig.configureForRelease()
         stateLock.lock()
         currentSessionId = UUID().uuidString
@@ -415,6 +423,10 @@ public final class CPRiskKit: NSObject {
         )
 
         registerProviders(for: config)
+        // Ensure CRiskCore is initialized even if start() was never called (evaluate-only path).
+        cprisk_deny_attach()
+        cprisk_register_exception_handler()
+        Self.maybeVerifyExceptionHandler()
 
         let context = buildRiskContext(config: runtimeConfig)
         let snapshot = RiskSnapshot(
@@ -769,7 +781,7 @@ public final class CPRiskKit: NSObject {
                 throw error
             }
             Logger.log("app_attest: failed to generate assertion, envelope without attestation: \(error.localizedDescription)")
-            var fallback = try buildSecureReportEnvelope(
+            let fallback = try buildSecureReportEnvelope(
                 report: report,
                 sessionToken: sessionToken,
                 signingKey: signingKey,
@@ -1354,6 +1366,20 @@ public final class CPRiskKit: NSObject {
             stateLock.unlock()
         }
         PolicyManager.shared.reloadTrustedCacheState()
+    }
+
+    /// Throttled cprisk_verify_exception_handler to reduce task_get_exception_ports syscall frequency.
+    private static func maybeVerifyExceptionHandler() {
+        verifyThrottleLock.lock()
+        let now = Date().timeIntervalSince1970
+        let shouldVerify = (now - lastExceptionVerifyTime) >= verifyThrottleInterval
+        if shouldVerify {
+            lastExceptionVerifyTime = now
+            verifyThrottleLock.unlock()
+            cprisk_verify_exception_handler()
+        } else {
+            verifyThrottleLock.unlock()
+        }
     }
 
     private static func normalizedPinnedCertificateHashes(from hashes: [String]) -> Set<String> {

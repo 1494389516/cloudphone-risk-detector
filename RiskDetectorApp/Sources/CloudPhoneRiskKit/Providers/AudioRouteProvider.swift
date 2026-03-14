@@ -22,7 +22,7 @@ final class AudioRouteProvider: RiskSignalProvider {
         #if targetEnvironment(simulator)
         return []
         #else
-        #if canImport(AVFoundation)
+        #if os(iOS)
         return runOnMainIfNeeded { collectSignals() }
         #else
         return []
@@ -30,7 +30,7 @@ final class AudioRouteProvider: RiskSignalProvider {
         #endif
     }
 
-    #if !targetEnvironment(simulator) && canImport(AVFoundation)
+    #if !targetEnvironment(simulator) && os(iOS)
     private func collectSignals() -> [RiskSignal] {
         var out: [RiskSignal] = []
         let session = AVAudioSession.sharedInstance()
