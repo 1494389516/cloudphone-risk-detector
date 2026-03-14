@@ -52,24 +52,40 @@ struct KernelHookSideChannel: Detector {
         return (0, [])
 #else
         let iterations = TimingRatioBaseline.defaultSampleCount
+        let statFirst = Bool.random()
 
         var getpidSamples: [UInt64] = []
         getpidSamples.reserveCapacity(iterations)
-        for _ in 0..<iterations {
-            let start = mach_absolute_time()
-            _ = cprisk_getpid_direct()
-            let end = mach_absolute_time()
-            getpidSamples.append(Self.nanoseconds(from: end - start))
-        }
-
         var statSamples: [UInt64] = []
         statSamples.reserveCapacity(iterations)
-        for _ in 0..<iterations {
+
+        func sampleGetpid() {
+            for _ in 0..<iterations {
+                for _ in 0..<6 { TimingRatioBaseline.samplingNoise() }
+                let start = mach_absolute_time()
+                _ = cprisk_getpid_direct()
+                let end = mach_absolute_time()
+                getpidSamples.append(Self.nanoseconds(from: end - start))
+            }
+        }
+
+        func sampleStat() {
             var st = stat()
-            let start = mach_absolute_time()
-            _ = "/usr/lib/dyld".withCString { cprisk_stat_direct($0, &st, nil) }
-            let end = mach_absolute_time()
-            statSamples.append(Self.nanoseconds(from: end - start))
+            for _ in 0..<iterations {
+                for _ in 0..<6 { TimingRatioBaseline.samplingNoise() }
+                let start = mach_absolute_time()
+                _ = "/usr/lib/dyld".withCString { cprisk_stat_direct($0, &st, nil) }
+                let end = mach_absolute_time()
+                statSamples.append(Self.nanoseconds(from: end - start))
+            }
+        }
+
+        if statFirst {
+            sampleStat()
+            sampleGetpid()
+        } else {
+            sampleGetpid()
+            sampleStat()
         }
 
         guard let evaluation = TimingRatioBaseline.evaluate(
@@ -88,6 +104,21 @@ struct KernelHookSideChannel: Detector {
             methods.append(
                 "kernel_hook_timing_anomaly:ratio=\(String(format: "%.1f", evaluation.medianRatio))_ratioP95=\(String(format: "%.1f", evaluation.p95Ratio))"
             )
+        }
+
+        // 二次放大探测：间接函数指针 + 交替 syscall 使 Stalker DBT 开销显著放大，阈值更低即可触发
+        let amplified = TimingRatioBaseline.amplifiedSamples()
+        if let ampEval = TimingRatioBaseline.evaluate(
+            getpidSamples: amplified.getpid,
+            statSamples: amplified.stat,
+            ratioThreshold: 12.0
+        ) {
+            if ampEval.isAnomalous {
+                score += 30
+                methods.append(
+                    "kernel_hook_stalker_amplified:ratio=\(String(format: "%.1f", ampEval.medianRatio))_ratioP95=\(String(format: "%.1f", ampEval.p95Ratio))"
+                )
+            }
         }
 
         return (score, methods)
@@ -260,6 +291,19 @@ extension KernelHookSideChannel {
                 state: .tampered,
                 layer: 2,
                 weightHint: 95
+            ))
+        }
+
+        let amplifiedMethods = result.methods.filter { $0.hasPrefix("kernel_hook_stalker_amplified") }
+        if !amplifiedMethods.isEmpty {
+            signals.append(RiskSignal(
+                id: "kernel_hook_stalker_amplified",
+                category: "anti_tamper",
+                score: 30,
+                evidence: ["detail": amplifiedMethods.joined(separator: ",")],
+                state: .soft(confidence: 0.65),
+                layer: 2,
+                weightHint: 65
             ))
         }
 

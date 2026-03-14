@@ -230,6 +230,22 @@ enum SVCDirectCall {
         }
     }
 
+    /// 通过 CRiskCore 的 arm64 直 syscall 路径调用 lstat，返回 inode/st_dev/st_size。
+    /// 供 DualPathBaselineStore 基线采集与校验使用，确保与 validateFileStat 路径一致。
+    /// 成功返回详情；ENOENT/ENOTDIR 或安全路径不可用时返回 nil。
+    static func secureLstatDetail(path: String) -> (inode: UInt64, stDev: UInt32, stSize: Int64)? {
+        return path.withCString { cPath in
+            var st = stat()
+            var rawErrno: CInt = 0
+            let result = cprisk_lstat_direct(cPath, &st, &rawErrno)
+            if result == 0 {
+                return (UInt64(st.st_ino), UInt32(st.st_dev), st.st_size)
+            }
+            if rawErrno == ENOENT || rawErrno == ENOTDIR { return nil }
+            return nil
+        }
+    }
+
     /// 通过 CRiskCore 的 arm64 直 syscall 路径调用 access。
     /// 直 syscall 不可用或失败时返回 nil（安全路径不可用），不静默回退到标准 libc。
     static func secureAccess(_ path: String, mode: CInt = F_OK) -> Bool? {

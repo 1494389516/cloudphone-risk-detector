@@ -107,33 +107,46 @@ struct FridaSocketDetector: Detector {
     // MARK: - 2. Timing Side-Channel Detection
 
     /// 动态基线比值检测，与 KernelHookSideChannel 对齐。
-    /// 先对 getpid 采样 30 次建立基准，再对 stat 采样 30 次，用 stat_median/getpid_median 比值判断，
-    /// 避免 50ms 绝对值在低端机/冷启动/后台复起时误报。
+    /// 采样顺序随机化（先 stat 或先 getpid），每次采样前插入噪声计算以放大 Stalker DBT 开销。
     private func detectTimingAnomaly() -> (score: Double, methods: [String]) {
         var score: Double = 0
         var methods: [String] = []
 
         let iterations = TimingRatioBaseline.defaultSampleCount
+        let statFirst = Bool.random()
 
-        // 1. 先对 getpid 采样 30 次建立基准
         var getpidSamples: [UInt64] = []
         getpidSamples.reserveCapacity(iterations)
-        for _ in 0..<iterations {
-            let start = mach_absolute_time()
-            _ = cprisk_getpid_direct()
-            let end = mach_absolute_time()
-            getpidSamples.append(Self.nanoseconds(from: end - start))
-        }
-
-        // 2. 再对 stat 采样 30 次（与 KernelHookSideChannel 一致，使用 SVC 直调 stat）
         var statSamples: [UInt64] = []
         statSamples.reserveCapacity(iterations)
-        var st = stat()
-        for _ in 0..<iterations {
-            let start = mach_absolute_time()
-            _ = "/usr/lib/dyld".withCString { cprisk_stat_direct($0, &st, nil) }
-            let end = mach_absolute_time()
-            statSamples.append(Self.nanoseconds(from: end - start))
+
+        func sampleGetpid() {
+            for _ in 0..<iterations {
+                for _ in 0..<6 { TimingRatioBaseline.samplingNoise() }
+                let start = mach_absolute_time()
+                _ = cprisk_getpid_direct()
+                let end = mach_absolute_time()
+                getpidSamples.append(Self.nanoseconds(from: end - start))
+            }
+        }
+
+        func sampleStat() {
+            var st = stat()
+            for _ in 0..<iterations {
+                for _ in 0..<6 { TimingRatioBaseline.samplingNoise() }
+                let start = mach_absolute_time()
+                _ = "/usr/lib/dyld".withCString { cprisk_stat_direct($0, &st, nil) }
+                let end = mach_absolute_time()
+                statSamples.append(Self.nanoseconds(from: end - start))
+            }
+        }
+
+        if statFirst {
+            sampleStat()
+            sampleGetpid()
+        } else {
+            sampleGetpid()
+            sampleStat()
         }
 
         guard let evaluation = TimingRatioBaseline.evaluate(
@@ -151,7 +164,22 @@ struct FridaSocketDetector: Detector {
             )
         }
 
-        return (min(score, 25), methods)
+        // 二次放大探测：间接函数指针 + 交替 syscall 使 Stalker DBT 开销显著放大
+        let amplified = TimingRatioBaseline.amplifiedSamples()
+        if let ampEval = TimingRatioBaseline.evaluate(
+            getpidSamples: amplified.getpid,
+            statSamples: amplified.stat,
+            ratioThreshold: 12.0
+        ) {
+            if ampEval.isAnomalous {
+                score += 20
+                methods.append(
+                    "timing_stalker_amplified:ratio=\(String(format: "%.1f", ampEval.medianRatio))_ratioP95=\(String(format: "%.1f", ampEval.p95Ratio))"
+                )
+            }
+        }
+
+        return (min(score, 45), methods)
     }
 }
 
@@ -185,6 +213,19 @@ extension FridaSocketDetector {
                 score: min(Double(timingMethods.count) * 10, 20),
                 evidence: ["detail": timingMethods.joined(separator: ",")],
                 state: .soft(confidence: 70),
+                layer: 2,
+                weightHint: 65
+            ))
+        }
+
+        let amplifiedMethods = result.methods.filter { $0.hasPrefix("timing_stalker_amplified") }
+        if !amplifiedMethods.isEmpty {
+            signals.append(RiskSignal(
+                id: "frida_stalker_amplified",
+                category: "anti_tamper",
+                score: 20,
+                evidence: ["detail": amplifiedMethods.joined(separator: ",")],
+                state: .soft(confidence: 0.65),
                 layer: 2,
                 weightHint: 65
             ))

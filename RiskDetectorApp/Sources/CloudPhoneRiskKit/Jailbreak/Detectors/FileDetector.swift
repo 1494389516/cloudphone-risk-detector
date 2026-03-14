@@ -1,10 +1,14 @@
+import CRiskCore
 import Darwin
 import Foundation
 
 struct FileDetector: Detector {
-    private var suspiciousPaths: [(path: String, score: Double)] {
-        ObfuscatedConstants.jailbreakSuspiciousPaths
-    }
+
+    /// 每次 detect 随机抽样的 suspiciousPaths 百分比范围 (60-70%)
+    private static let suspiciousSamplePercentRange = 60...70
+
+    /// 抽样下限，即使百分比算出来更少也至少检查这么多
+    private static let suspiciousSampleFloor = 10
 
     func detect() throws -> DetectorResult {
         var score: Double = 0
@@ -27,7 +31,30 @@ struct FileDetector: Detector {
             Logger.log("jailbreak.file.hit: sandbox_mount_isolation_detected (+30)")
         }
 
+        // ── Anti-Stalker: path randomization + noise injection ──────────────
+        // Frida Stalker 可以追踪所有 SVC #0x80 syscall 并一次性提取完整路径列表。
+        // 对策：(1) 每次只随机抽样 60-70% 的路径，(2) 打乱顺序，(3) 在真实检查之间
+        // 穿插对合法系统路径的噪声 stat() 调用，使 Stalker 无法区分检测目标与噪声。
+        // 抽样导致的检出率降低通过分数补偿因子 (N/X) 修正。
+
+        let allSuspicious = ObfuscatedConstants.jailbreakSuspiciousPaths
+        let totalN = allSuspicious.count
+        let pct = Int.random(in: Self.suspiciousSamplePercentRange)
+        let sampleCount = max(Self.suspiciousSampleFloor, (totalN * pct) / 100)
+        let suspiciousPaths = PathRandomizer.randomSubset(from: allSuspicious, count: sampleCount)
+
+        let noisePaths = ObfuscatedConstants.pathNoisePaths.shuffled()
+        var noiseIdx = 0
+        var suspiciousPathScore: Double = 0
+
         for item in suspiciousPaths {
+            // Probabilistically inject a noise stat() via direct SVC before some real checks
+            if Bool.random() && noiseIdx < noisePaths.count {
+                var noiseSt = stat()
+                _ = noisePaths[noiseIdx].withCString { cprisk_stat_direct($0, &noiseSt, nil) }
+                noiseIdx += 1
+            }
+
             // [4.4.6] EPERM 异常化：path 理应 ENOENT 却返回 EPERM/EACCES (iOS 16+)
             let (statExists, statErrno) = statWithErrno(item.path)
             if !statExists && ExpectedBaseline.epermOnProtectedPathIsSuspicious && ExpectedBaseline.isPermissionDeniedErrno(statErrno) {
@@ -39,41 +66,54 @@ struct FileDetector: Detector {
 
             let exists = existsAnyWay(item.path)
             if exists.exists {
-                score += item.score
+                suspiciousPathScore += item.score
                 methods.append("file:\(item.path)")
                 Logger.log("jailbreak.file.hit: \(item.path) (+\(item.score))")
             }
 
             if exists.fileManagerMismatch, fileExistsMismatchCount < 3 {
                 fileExistsMismatchCount += 1
-                score += 8
+                suspiciousPathScore += 8
                 methods.append("hook:fileExists_mismatch:\(item.path)")
                 Logger.log("jailbreak.file.hit: fileExists_mismatch path=\(item.path) (+8)")
             }
 
             if exists.lowLevelPrimitiveMismatch, lowLevelMismatchCount < 4 {
                 lowLevelMismatchCount += 1
-                score += 12
+                suspiciousPathScore += 12
                 methods.append("hook:file_primitive_mismatch:\(item.path)")
                 Logger.log("jailbreak.file.hit: file_primitive_mismatch path=\(item.path) (+12)")
             }
 
             if exists.bypassed {
-                score += 20
+                suspiciousPathScore += 20
                 methods.append("syscall_bypassed:\(item.path)")
                 Logger.log("jailbreak.file.hit: syscall_bypassed path=\(item.path) (+20)")
             }
         }
+
+        // Score compensation: checked X of N paths → scale by N/X
+        let compensationFactor = suspiciousPaths.isEmpty ? 1.0 : Double(totalN) / Double(suspiciousPaths.count)
+        score += suspiciousPathScore * compensationFactor
 
         if suspiciousPermissionScore > 0 {
             score += suspiciousPermissionScore
             Logger.log("jailbreak.file.hit: suspicious_permission_denied (+\(Int(suspiciousPermissionScore)))")
         }
 
-        let criticalPaths = ObfuscatedConstants.jailbreakCriticalPaths
+        // ── Critical paths: always check ALL, order randomized + noise ────
+        let criticalPaths = ObfuscatedConstants.jailbreakCriticalPaths.shuffled()
+        let critNoisePaths = ObfuscatedConstants.pathNoisePaths.shuffled()
+        var critNoiseIdx = 0
         var mismatchCount = 0
         var bypassCount = 0
         for path in criticalPaths {
+            if Bool.random() && critNoiseIdx < critNoisePaths.count {
+                var noiseSt = stat()
+                _ = critNoisePaths[critNoiseIdx].withCString { cprisk_stat_direct($0, &noiseSt, nil) }
+                critNoiseIdx += 1
+            }
+
             let (_, tampered, bypassed, _) = DualPathValidator.validateFileStat(path: path)
             if tampered {
                 mismatchCount += 1

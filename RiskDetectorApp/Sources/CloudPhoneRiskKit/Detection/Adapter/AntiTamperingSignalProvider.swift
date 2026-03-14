@@ -45,6 +45,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         var enableHoneypotMemory: Bool = true
         var enableKernelHookSideChannel: Bool = true
         var enableLibcPrologueGuard: Bool = true
+        var enableDyldImageMonitor: Bool = true
         var minScoreThreshold: Double = 0
         
         public static let `default` = Configuration()
@@ -319,6 +320,12 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                     layer: 2,
                     weightHint: 98
                 )]
+            }
+        }
+
+        if configuration.enableDyldImageMonitor {
+            isolatedAppend("dyld_image_monitor", &signals) {
+                try DyldImageMonitor.shared.asSignals()
             }
         }
 

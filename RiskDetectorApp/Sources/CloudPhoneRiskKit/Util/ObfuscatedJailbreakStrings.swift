@@ -47,6 +47,17 @@ extension ObfuscatedConstants {
         ]
     }
 
+    /// 噪声路径：正常系统路径，用于在检查越狱路径前插入 stat 调用，干扰 Stalker 区分检测目标
+    static var pathNoisePaths: [String] {
+        [
+            b64("L3Vzci9saWIvZHlsZA=="),           // /usr/lib/dyld
+            b64("L2V0Yy9wYXNzd2Q="),               // /etc/passwd
+            b64("L2Rldi9udWxs"),                   // /dev/null
+            b64("L3Vzci9saWIvbGliU3lzdGVtLkIuZHlsaWI="),  // /usr/lib/libSystem.B.dylib
+            b64("L1N5c3RlbS9MaWJyYXJ5L0NvcmVTZXJ2aWNlcy9TeXN0ZW1WZXJzaW9uLnBsaXN0"),  // SystemVersion.plist
+        ]
+    }
+
     static var sysctlSuspiciousProcessNeedles: [String] {
         [
             b64("Y3lkaWE="),

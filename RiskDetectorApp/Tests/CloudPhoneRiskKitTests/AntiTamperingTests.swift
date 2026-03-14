@@ -293,4 +293,96 @@ final class AntiTamperingTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - Stalker Amplified Timing Tests
+
+    func testAmplifiedSamplesReturnsCorrectCount() {
+        let samples = TimingRatioBaseline.amplifiedSamples(count: 10)
+        XCTAssertEqual(samples.getpid.count, 10)
+        XCTAssertEqual(samples.stat.count, 10)
+    }
+
+    func testAmplifiedSamplesProducesNonZeroValues() {
+        let samples = TimingRatioBaseline.amplifiedSamples(count: 5)
+        for s in samples.getpid {
+            XCTAssertGreaterThan(s, 0)
+        }
+        for s in samples.stat {
+            XCTAssertGreaterThan(s, 0)
+        }
+    }
+
+    func testAmplifiedEvaluationWithNormalRatio() {
+        let getpid: [UInt64] = [500, 520, 510, 530, 490]
+        let stat: [UInt64] = [5000, 5200, 5100, 5300, 4900]
+        let eval = TimingRatioBaseline.evaluate(
+            getpidSamples: getpid,
+            statSamples: stat,
+            ratioThreshold: 12.0
+        )
+        XCTAssertNotNil(eval)
+        XCTAssertFalse(eval!.isAnomalous)
+    }
+
+    func testAmplifiedEvaluationDetectsHighRatio() {
+        let getpid: [UInt64] = [100, 110, 105, 108, 102]
+        let stat: [UInt64] = [2000, 2200, 2100, 2160, 2040]
+        let eval = TimingRatioBaseline.evaluate(
+            getpidSamples: getpid,
+            statSamples: stat,
+            ratioThreshold: 12.0
+        )
+        XCTAssertNotNil(eval)
+        XCTAssertTrue(eval!.isAnomalous)
+    }
+
+    // MARK: - DyldImageMonitor Tests
+
+    func testDyldImageMonitorSingleton() {
+        let a = DyldImageMonitor.shared
+        let b = DyldImageMonitor.shared
+        XCTAssertTrue(a === b)
+    }
+
+    func testDyldImageMonitorStartDoesNotCrash() {
+        DyldImageMonitor.shared.start()
+        DyldImageMonitor.shared.start()
+    }
+
+    func testDyldImageMonitorEvaluateReturnsValidResult() {
+        DyldImageMonitor.shared.start()
+        let result = DyldImageMonitor.shared.evaluate()
+        XCTAssertGreaterThanOrEqual(result.score, 0)
+    }
+
+    func testDyldImageMonitorSignalConversion() {
+        DyldImageMonitor.shared.start()
+        let signals = DyldImageMonitor.shared.asSignals()
+        for signal in signals {
+            XCTAssertEqual(signal.category, "anti_tamper")
+            XCTAssertEqual(signal.layer, 2)
+        }
+    }
+
+    func testDyldImageMonitorSuspiciousTokenDetection() {
+        let monitor = DyldImageMonitor.shared
+        let result = monitor.evaluate()
+        XCTAssertEqual(result.methods.filter { $0.contains("suspicious_image") }.count, 0)
+    }
+
+    // MARK: - FileDetector Randomization Tests
+
+    func testFileDetectorDoesNotCrashWithRandomization() throws {
+        let detector = FileDetector()
+        for _ in 0..<3 {
+            let result = try detector.detect()
+            XCTAssertGreaterThanOrEqual(result.score, 0)
+        }
+    }
+
+    func testFileDetectorProducesNonNegativeScore() throws {
+        let detector = FileDetector()
+        let result = try detector.detect()
+        XCTAssertGreaterThanOrEqual(result.score, 0)
+    }
 }

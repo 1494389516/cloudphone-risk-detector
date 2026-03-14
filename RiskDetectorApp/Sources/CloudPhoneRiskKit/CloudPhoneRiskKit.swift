@@ -124,6 +124,7 @@ public final class CPRiskKit: NSObject {
     @objc public func start() {
         cprisk_deny_attach()
         cprisk_register_exception_handler()
+        DyldImageMonitor.shared.start()
         BuildConfig.configureForRelease()
         stateLock.lock()
         currentSessionId = UUID().uuidString
