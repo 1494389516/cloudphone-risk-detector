@@ -24,12 +24,20 @@ enum TextSegmentIntegrityChecker {
         let sdkVersion: String
         let sectionSize: UInt64
         let detail: String
+        /// 是否使用服务端参考哈希完成校验（true=服务端锚点，false=Keychain 本地基线）
+        let usedServerReference: Bool
+        /// 参考哈希来源（如 remote_config / custom_resolver / keychain_baseline）
+        let referenceSource: String?
+        /// 参考哈希版本（如远程配置版本、业务侧参考表版本）
+        let referenceVersion: String?
     }
 
     private static let baselineAccount = "text_hash_baseline_v1"
     private static let versionAccount = "text_hash_version_v1"
 
     /// Main entry: verify text segment integrity
+    /// 优先使用服务端下发的参考哈希（RemoteConfig.textSegmentHashReference），Keychain 基线仅作本地辅助。
+    /// 无服务端参考时保持向后兼容，仍用 Keychain 本地基线。
     static func verify() -> IntegrityResult {
         let sdkVersion = Version.current
 
@@ -40,7 +48,10 @@ enum TextSegmentIntegrityChecker {
                 currentHash: "",
                 sdkVersion: sdkVersion,
                 sectionSize: 0,
-                detail: "sdk_image_not_found"
+                detail: "sdk_image_not_found",
+                usedServerReference: false,
+                referenceSource: nil,
+                referenceVersion: nil
             )
         }
 
@@ -54,7 +65,10 @@ enum TextSegmentIntegrityChecker {
                 currentHash: "",
                 sdkVersion: sdkVersion,
                 sectionSize: 0,
-                detail: "encrypted_skip"
+                detail: "encrypted_skip",
+                usedServerReference: false,
+                referenceSource: nil,
+                referenceVersion: nil
             )
         }
 
@@ -65,10 +79,30 @@ enum TextSegmentIntegrityChecker {
                 currentHash: "",
                 sdkVersion: sdkVersion,
                 sectionSize: 0,
-                detail: "hash_failed"
+                detail: "hash_failed",
+                usedServerReference: false,
+                referenceSource: nil,
+                referenceVersion: nil
             )
         }
 
+        // 1. 优先服务端参考哈希：若 RemoteConfig 有当前版本的参考值，直接对比
+        if let reference = resolveServerReferenceHash(for: sdkVersion) {
+            let match = reference.expectedHash.lowercased() == hash.lowercased()
+            return IntegrityResult(
+                isIntact: match,
+                baselineHash: reference.expectedHash,
+                currentHash: hash,
+                sdkVersion: sdkVersion,
+                sectionSize: size,
+                detail: match ? "intact" : "tampered",
+                usedServerReference: true,
+                referenceSource: reference.source,
+                referenceVersion: reference.version
+            )
+        }
+
+        // 2. 无服务端参考时，回退到 Keychain 本地基线（向后兼容）
         let uuid = binaryUUID(header: header) ?? "unknown"
         let storedBaseline = loadBaseline()
 
@@ -80,7 +114,10 @@ enum TextSegmentIntegrityChecker {
                 currentHash: hash,
                 sdkVersion: sdkVersion,
                 sectionSize: size,
-                detail: match ? "intact" : "tampered"
+                detail: match ? "intact" : "tampered",
+                usedServerReference: false,
+                referenceSource: "keychain_baseline",
+                referenceVersion: nil
             )
         }
 
@@ -93,7 +130,10 @@ enum TextSegmentIntegrityChecker {
                     currentHash: hash,
                     sdkVersion: sdkVersion,
                     sectionSize: size,
-                    detail: "baseline_rejected_suspicious_env"
+                    detail: "baseline_rejected_suspicious_env",
+                    usedServerReference: false,
+                    referenceSource: "keychain_baseline",
+                    referenceVersion: nil
                 )
             }
             saveBaseline(hash: hash, version: uuid)
@@ -103,7 +143,10 @@ enum TextSegmentIntegrityChecker {
                 currentHash: hash,
                 sdkVersion: sdkVersion,
                 sectionSize: size,
-                detail: "version_changed"
+                detail: "version_changed",
+                usedServerReference: false,
+                referenceSource: "keychain_baseline",
+                referenceVersion: nil
             )
         }
 
@@ -116,7 +159,10 @@ enum TextSegmentIntegrityChecker {
                 currentHash: hash,
                 sdkVersion: sdkVersion,
                 sectionSize: size,
-                detail: "baseline_rejected_suspicious_env"
+                detail: "baseline_rejected_suspicious_env",
+                usedServerReference: false,
+                referenceSource: "keychain_baseline",
+                referenceVersion: nil
             )
         }
         saveBaseline(hash: hash, version: uuid)
@@ -126,8 +172,16 @@ enum TextSegmentIntegrityChecker {
             currentHash: hash,
             sdkVersion: sdkVersion,
             sectionSize: size,
-            detail: "baseline_established"
+            detail: "baseline_established",
+            usedServerReference: false,
+            referenceSource: "keychain_baseline",
+            referenceVersion: nil
         )
+    }
+
+    /// 从 RemoteConfig 解析当前 SDK 版本的服务端参考哈希
+    private static func resolveServerReferenceHash(for sdkVersion: String) -> TextSegmentReference? {
+        CPRiskKit.shared.resolveTextSegmentReference(for: sdkVersion)
     }
 
     /// Convert result to RiskSignals

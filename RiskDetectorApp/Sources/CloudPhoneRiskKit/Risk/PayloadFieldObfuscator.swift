@@ -33,7 +33,7 @@ public enum PayloadFieldObfuscator {
 
     /// 将混淆字段反向恢复为语义字段（用于调试/服务端回溯）
     public static func deobfuscate(jsonData: Data, mapping: PayloadFieldMapping) throws -> Data {
-        let reverse = Dictionary(uniqueKeysWithValues: mapping.mappings.map { ($1, $0) })
+        let reverse = Dictionary(mapping.mappings.map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
         let object = try JSONSerialization.jsonObject(with: jsonData, options: [.fragmentsAllowed])
         let restored = transform(object, with: reverse)
 

@@ -1,7 +1,9 @@
 import Darwin
+import CRiskCore
 import Foundation
 
 struct AntiTamperingDetector: Detector {
+
     let suspiciousParentNeedles: [String] = [
         "lldb",
         "gdb",
@@ -57,14 +59,14 @@ struct AntiTamperingDetector: Detector {
 
     private func isTraced() -> Bool {
         var info = kinfo_proc()
-        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, cprisk_getpid_direct()]
         var size = MemoryLayout<kinfo_proc>.size
         guard sysctl(&mib, 4, &info, &size, nil, 0) == 0 else { return false }
         return (info.kp_proc.p_flag & tracedFlag) != 0
     }
 
     private func hasSuspiciousParent() -> Bool {
-        let ppid = getppid()
+        let ppid = cprisk_getppid_direct()
         guard ppid > 1 else { return false }
         guard let parentPath = parentProcessPath(ppid) else { return false }
         return firstSuspiciousParentToken(in: parentPath) != nil
@@ -89,30 +91,54 @@ struct AntiTamperingDetector: Detector {
         #if targetEnvironment(simulator) || DEBUG
         return (0, [])
         #else
-        typealias PtraceFunc = @convention(c) (CInt, pid_t, UnsafeRawPointer?, CInt) -> CInt
-        guard let ptracePtr = dlsym(UnsafeRawPointer(bitPattern: -2), "ptrace") else {
-            return (5, ["ptrace:dlsym_failed"])
-        }
-        let ptraceFn = unsafeBitCast(ptracePtr, to: PtraceFunc.self)
-        let PT_DENY_ATTACH: CInt = 31
-        let result = ptraceFn(PT_DENY_ATTACH, 0, nil, 0)
-        if result != 0 && errno == ENOTSUP {
-            // If PT_DENY_ATTACH fails with ENOTSUP, a debugger is already attached
-            return (25, ["ptrace:debugger_already_attached"])
+        var rawErrno: CInt = 0
+        let result = cprisk_deny_attach_status(&rawErrno)
+        if result != 0 {
+            if rawErrno == ENOTSUP || rawErrno == EPERM {
+                return (25, ["ptrace:debugger_already_attached"])
+            }
+            return (5, ["ptrace:direct_syscall_errno:\(rawErrno)"])
         }
         return (0, [])
         #endif
     }
 
+    func isTimingRatioAnomalous(
+        getpidSamples: [UInt64],
+        statSamples: [UInt64],
+        ratioThreshold: Double = TimingRatioBaseline.defaultRatioThreshold
+    ) -> Bool {
+        TimingRatioBaseline.isAnomalous(
+            getpidSamples: getpidSamples,
+            statSamples: statSamples,
+            ratioThreshold: ratioThreshold
+        )
+    }
+
+    /// 动态基线比值检测：先对 getpid 采样建立基准，再用「stat 耗时/getpid_median」比值判断。
+    /// 避免 50ms 绝对值在低端机/冷启动/后台复起时误报，与 KernelHookSideChannel 对齐。
     private func hasTimingAnomaly() -> Bool {
-        let start = DispatchTime.now().uptimeNanoseconds
-        var value = 0
-        for index in 0..<50_000 {
-            value &+= index
+        let iterations = TimingRatioBaseline.defaultSampleCount
+        var getpidSamples: [UInt64] = []
+        getpidSamples.reserveCapacity(iterations)
+        for _ in 0..<iterations {
+            let start = DispatchTime.now().uptimeNanoseconds
+            _ = cprisk_getpid_direct()
+            let end = DispatchTime.now().uptimeNanoseconds
+            getpidSamples.append(end - start)
         }
-        _ = value
-        let elapsedMs = (DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
-        return elapsedMs > 50
+
+        var statSamples: [UInt64] = []
+        statSamples.reserveCapacity(iterations)
+        var st = stat()
+        for _ in 0..<iterations {
+            let start = DispatchTime.now().uptimeNanoseconds
+            _ = "/usr/lib/dyld".withCString { cprisk_stat_direct($0, &st, nil) }
+            let end = DispatchTime.now().uptimeNanoseconds
+            statSamples.append(end - start)
+        }
+
+        return isTimingRatioAnomalous(getpidSamples: getpidSamples, statSamples: statSamples)
     }
 
     func firstSuspiciousParentToken(in parentProcessPath: String) -> String? {

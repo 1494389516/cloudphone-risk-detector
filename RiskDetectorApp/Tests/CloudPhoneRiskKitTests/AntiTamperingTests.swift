@@ -44,6 +44,61 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertLessThanOrEqual(result.score, 90)
     }
 
+    func testAntiTamperingTimingRatioDoesNotFlagSlowButProportionalSamples() {
+        let detector = AntiTamperingDetector()
+
+        let getpidSamples: [UInt64] = [900_000, 1_000_000, 1_100_000, 950_000, 1_050_000]
+        let statSamples: [UInt64] = [9_000_000, 10_000_000, 11_000_000, 9_500_000, 10_500_000]
+
+        XCTAssertFalse(detector.isTimingRatioAnomalous(
+            getpidSamples: getpidSamples,
+            statSamples: statSamples
+        ))
+    }
+
+    func testAntiTamperingTimingRatioFlagsRelativeInflation() {
+        let detector = AntiTamperingDetector()
+
+        let getpidSamples: [UInt64] = [180, 200, 220, 210, 205]
+        let statSamples: [UInt64] = [3_600, 4_000, 4_400, 4_200, 4_100]
+
+        XCTAssertTrue(detector.isTimingRatioAnomalous(
+            getpidSamples: getpidSamples,
+            statSamples: statSamples
+        ))
+    }
+
+    func testTimingRatioBaselineExposesMedianAndP95Ratios() {
+        let getpidSamples: [UInt64] = [200, 210, 220, 230, 240]
+        let statSamples: [UInt64] = [2_000, 2_100, 2_200, 2_300, 6_000]
+
+        let evaluation = TimingRatioBaseline.evaluate(
+            getpidSamples: getpidSamples,
+            statSamples: statSamples
+        )
+
+        guard let evaluation else {
+            XCTFail("evaluation should not be nil")
+            return
+        }
+        XCTAssertEqual(evaluation.medianRatio, 10.0, accuracy: 0.001)
+        XCTAssertEqual(evaluation.p95Ratio, 25.0, accuracy: 0.001)
+        XCTAssertTrue(evaluation.isAnomalous)
+    }
+
+    func testTimingRatioBaselineRejectsZeroMedianBaseline() {
+        let evaluation = TimingRatioBaseline.evaluate(
+            getpidSamples: [0, 0, 0],
+            statSamples: [100, 120, 140]
+        )
+
+        XCTAssertNil(evaluation)
+        XCTAssertFalse(TimingRatioBaseline.isAnomalous(
+            getpidSamples: [0, 0, 0],
+            statSamples: [100, 120, 140]
+        ))
+    }
+
     // MARK: - DebuggerDetector Logic Tests
 
     func testDebuggerParentTokenMatching() {
@@ -157,7 +212,7 @@ final class AntiTamperingTests: XCTestCase {
     func testFridaSocketDetectorScoreCapped() throws {
         let detector = FridaSocketDetector()
         let result = try detector.detect()
-        // Socket detection capped at 30, timing at 75
+        // Socket detection capped at 30, timing ratio path capped at 25
         XCTAssertTrue(result.score >= 0)
     }
 
@@ -167,7 +222,7 @@ final class AntiTamperingTests: XCTestCase {
         for signal in signals {
             XCTAssertEqual(signal.category, "anti_tamper")
             XCTAssertEqual(signal.layer, 2)
-            XCTAssertTrue(signal.id == "frida_unix_socket" || signal.id == "frida_timing_anomaly")
+            XCTAssertTrue(signal.id == "frida_unix_socket" || signal.id == "frida_timing_anomaly" || signal.id == "frida_stalker_amplified")
         }
     }
 
@@ -237,5 +292,97 @@ final class AntiTamperingTests: XCTestCase {
                     "\(type(of: detector)) has score \(result.score) but empty methods")
             }
         }
+    }
+
+    // MARK: - Stalker Amplified Timing Tests
+
+    func testAmplifiedSamplesReturnsCorrectCount() {
+        let samples = TimingRatioBaseline.amplifiedSamples(count: 10)
+        XCTAssertEqual(samples.getpid.count, 10)
+        XCTAssertEqual(samples.stat.count, 10)
+    }
+
+    func testAmplifiedSamplesProducesNonZeroValues() {
+        let samples = TimingRatioBaseline.amplifiedSamples(count: 5)
+        for s in samples.getpid {
+            XCTAssertGreaterThan(s, 0)
+        }
+        for s in samples.stat {
+            XCTAssertGreaterThan(s, 0)
+        }
+    }
+
+    func testAmplifiedEvaluationWithNormalRatio() {
+        let getpid: [UInt64] = [500, 520, 510, 530, 490]
+        let stat: [UInt64] = [5000, 5200, 5100, 5300, 4900]
+        let eval = TimingRatioBaseline.evaluate(
+            getpidSamples: getpid,
+            statSamples: stat,
+            ratioThreshold: 12.0
+        )
+        XCTAssertNotNil(eval)
+        XCTAssertFalse(eval!.isAnomalous)
+    }
+
+    func testAmplifiedEvaluationDetectsHighRatio() {
+        let getpid: [UInt64] = [100, 110, 105, 108, 102]
+        let stat: [UInt64] = [2000, 2200, 2100, 2160, 2040]
+        let eval = TimingRatioBaseline.evaluate(
+            getpidSamples: getpid,
+            statSamples: stat,
+            ratioThreshold: 12.0
+        )
+        XCTAssertNotNil(eval)
+        XCTAssertTrue(eval!.isAnomalous)
+    }
+
+    // MARK: - DyldImageMonitor Tests
+
+    func testDyldImageMonitorSingleton() {
+        let a = DyldImageMonitor.shared
+        let b = DyldImageMonitor.shared
+        XCTAssertTrue(a === b)
+    }
+
+    func testDyldImageMonitorStartDoesNotCrash() {
+        DyldImageMonitor.shared.start()
+        DyldImageMonitor.shared.start()
+    }
+
+    func testDyldImageMonitorEvaluateReturnsValidResult() {
+        DyldImageMonitor.shared.start()
+        let result = DyldImageMonitor.shared.evaluate()
+        XCTAssertGreaterThanOrEqual(result.score, 0)
+    }
+
+    func testDyldImageMonitorSignalConversion() throws {
+        DyldImageMonitor.shared.start()
+        let signals = try DyldImageMonitor.shared.asSignals()
+        for signal in signals {
+            XCTAssertEqual(signal.category, "anti_tamper")
+            XCTAssertEqual(signal.layer, 2)
+        }
+    }
+
+    func testDyldImageMonitorSuspiciousTokenDetection() {
+        let monitor = DyldImageMonitor.shared
+        let result = monitor.evaluate()
+        XCTAssertEqual(result.methods.filter { $0.contains("suspicious_load") }.count, 0)
+    }
+
+    // MARK: - FileDetector Randomization Tests
+
+    func testFileDetectorDoesNotCrashWithRandomization() throws {
+        let detector = FileDetector()
+        for _ in 0..<3 {
+            let result = try detector.detect()
+            XCTAssertGreaterThanOrEqual(result.score, 0)
+        }
+    }
+
+    func testFileDetectorProducesNonNegativeScore() throws {
+        let detector = FileDetector()
+        let result = try detector.detect()
+        XCTAssertGreaterThanOrEqual(result.score, 0)
     }
 }

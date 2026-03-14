@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
-  <img src="https://img.shields.io/badge/SDK-5.2.0-FF3B30?style=for-the-badge" alt="SDK">
+  <img src="https://img.shields.io/badge/SDK-5.5.0-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
   <img src="https://img.shields.io/badge/License-Proprietary-8E8E93?style=for-the-badge" alt="License">
 </p>
@@ -53,6 +53,9 @@
 | **5.0** | **端侧信任根链 + 内存语义压缩 + 挑战闭环 + 图风控联动** | TrustChainManager / TrustLevel / KeyRotation 端侧信任根链、内存语义压缩快速判决（CompressedVerdictRule）、挑战式验证闭环、图风控联动（GraphFeatureCollector / GraphNodeDescriptor） |
 | **5.1** | **vPhone 裸金属检测扩展** | PhysicalSensorProbe（CoreMotion 重力/加速度/陀螺仪/磁力计/气压计）、EnvironmentConsistencyProvider（热状态熵、电池状态转移、屏幕亮度熵）、HardwareCapabilityProvider（Haptic Engine、刷新率一致性、接近传感器）、NetworkInterfaceProvider（虚拟接口、MTU 异常、接口数量） |
 | **5.2** | **云手机运维特征检测 + Impossible States** | DisplayMuxProvider（录屏/推流、外接显示器）、BiometricStateProvider（生物特征未录入/不可用）、AudioRouteProvider（USB 音频、虚拟声卡）、BasebandIsolationProvider（无蜂窝、系统 App 阉割）、Impossible States 五信号组合强制拦截 |
+| **5.3** | **自保护架构升级 + 内核直调** | SVC #0x80 直调 ptrace(PT_DENY_ATTACH) 绕过 Frida Hook、CRiskCore C 模块、自保护 C/Swift 混合层、下一代 6.x 架构奠基 |
+| **5.4** | **四盲区修复 + 直调扩展** | RTLD_NEXT 下沉为 SVC 直调、时序动态比值基线、PhysicalSensorProbe 预热缓存、服务端参考哈希、getpid/getppid/getuid/socket/connect 直调 |
+| **5.5** | **Bug 修复 + 实验分桶** | RandomizedDetection 父进程逻辑、ptrace 错误处理、ExperimentConfig.random 分桶、WhitelistRules 语义化版本比较、PayloadFieldObfuscator 反向映射、getentropy buflen 校验 |
 
 ## 架构概览
 
@@ -147,12 +150,40 @@
 
 ---
 
+## 5.3 新增能力 — SVC 直调 ptrace、CRiskCore 模块与下一代自保护架构奠基
+
+5.3 在自保护维度引入 SVC 直调 ptrace、首个 C/Swift 混合层（CRiskCore），为 6.x 代 C 核心层、混淆与 VMP 奠定基础。
+
+### 5.3 新特性摘要
+
+| 能力域 | 核心组件 | 说明 |
+|--------|----------|------|
+| **SVC 直调 ptrace** | SVC #0x80 系统调用 | 直接通过 SVC #0x80 调用 ptrace(PT_DENY_ATTACH)，绕过 Frida 对 libc ptrace 的 Hook，实现原生系统调用级反调试 |
+| **CRiskCore C 模块** | CRiskCore | 首个 C/Swift 混合层，自保护核心逻辑下沉至 C 层，提升抗逆向与 Hook 能力 |
+| **下一代架构奠基** | 6.x 架构基础 | C 核心层、混淆、VMP 等下一代自保护能力的架构基础 |
+| **Mach Exception Handler 抢占** | CRiskCore | 主动注册 EXC_BREAKPOINT handler，定期验证是否被劫持 |
+
+---
+
+## 5.5 新增能力 — Bug 修复与实验分桶修正
+
+5.5 修复四轮子代理审计发现的逻辑与配置问题。
+
+### 5.5 修复摘要
+
+| 类别 | 修复项 |
+|------|--------|
+| **逻辑** | RandomizedDetection：ppid ≤ 1（init）时不再误报为可疑；AntiTamperingDetector：ptrace 失败时统一按失败处理 |
+| **配置** | ExperimentConfig.random：分桶改为 0/1 与 variants 匹配；WhitelistRules.isTrusted：语义化版本比较，避免 "10.0" < "9.0" |
+| **安全** | PayloadFieldObfuscate 反向映射冲突不崩溃；cprisk_getentropy_direct buflen ≤ 256 校验 |
+
 ## 项目结构
 
 ```
 RiskDetectorApp/
 ├── App/                              # SwiftUI 示例应用
 ├── Sources/
+│   ├── CRiskCore/                    # C 自保护核心 (SVC ptrace、Exception Handler)
 │   ├── CloudPhoneRiskAppCore/        # 应用层编排 (配置/检测/摘要)
 │   └── CloudPhoneRiskKit/            # SDK 主体
 │       ├── Detection/
@@ -191,6 +222,50 @@ RiskDetectorApp/
 
 SDK 采用纵深防御架构：**字符串全量混淆**（`ObfuscatedJailbreakStrings`）防止静态特征提取；**DualPathValidator 双路/三路验证**确保检测结果不被单点绕过；**HMAC-SHA256 签名**覆盖报告全字段防篡改；**Keychain + AES-GCM 加密存储**保护本地数据与历史记录；**配置签名信任链**（远端 → 缓存 → 运行时）杜绝配置注入；**__TEXT 段哈希 + SDK 二进制完整性校验**检测代码篡改；**Provider 注册表封印 + 实例锁定**防止运行时替换；**Frida 五维对抗**（线程 / 端口 / V8 堆 / Socket / 时序）全覆盖；**LibcPrologueGuard + KernelHookSideChannel** 实现 Inline Hook 穿透与内核级 Hook 侧信道检测；**IntegrityBaselineEnvCheck** 首启环境把关防止基线投毒；**App Attest 强制模式** 消除所有静默降级路径。
 
+### 盲区三：PhysicalSensorProbe 预热与支付场景 UX
+
+`PhysicalSensorProbe` 采集 CoreMotion 与气压计数据，同步采集约需 0.5–1.5 秒，在 `.payment` 场景会阻塞主流程。SDK 采用**后台异步预热 + 缓存**机制：
+
+| 机制 | 说明 |
+|------|------|
+| **预热** | `start()` 时在后台队列异步调用 `PhysicalSensorProbe.prewarm()`，不阻塞主流程 |
+| **缓存** | `detect()` 优先读缓存，命中且未过期时**零阻塞**直接返回；缓存 TTL 60 秒 |
+| **采样** | 15 帧 @ 30 Hz ≈ 0.5 秒，气压计 1 秒；兜底超时 2 秒 |
+
+**支付场景最佳实践**：应在 `start()` 后**至少 0.5 秒**再调用 `evaluate(scenario: .payment)`，以便预热完成；若用户进入支付页前已有足够停留时间（如浏览商品），通常已命中缓存。
+
+---
+
+### 盲区四：代码段哈希校验与服务端参考哈希
+
+`__TEXT.__text` 代码段哈希用于检测 inline patch（函数替换、指令修改）。客户端优先使用 **RemoteConfig.textSegmentHashReference** 下发的服务端参考哈希，无下发时回退到 Keychain 本地基线。
+
+**服务端参考哈希机制（越狱场景下的可信锚点）**：
+
+| 角色 | 职责 |
+|------|------|
+| **服务端** | 维护 `sdkVersion -> expectedHash` 映射表；每个 SDK 版本发布时预计算并入库；通过 RemoteConfig 下发 `textSegmentHashReference` |
+| **客户端** | 计算当前 `__TEXT.__text` 的 SHA-256 作为 `currentHash`，在 `textSegmentIntegrity` 中上报 `currentHash`、`sdkVersion` 以及 `referenceSource/referenceVersion/usedServerReference` 等观测字段 |
+| **服务端二次校验** | 收到上报后，用 `sdkVersion` 查 `expectedHash`，与 `currentHash` 对比；不一致则判定篡改 |
+
+**为何需要服务端参考哈希**：越狱环境下 Keychain 可被替换，攻击者可写入「已篡改」的哈希作为本地基线，使客户端误判为 intact。服务端参考哈希由发布流程预计算，不依赖客户端存储，**Keychain 被越狱篡改时仍可信**。
+
+**扩展点**：若业务方已有独立的签名配置中心，可通过 `CPRiskKit.setTextSegmentReferenceResolver(_:)` 注入自定义参考哈希解析器；未注入时默认仍复用 `RemoteConfig.textSegmentHashReference`。
+
+### 攻击者视角绕过成本对照表
+
+从攻击者经济学的角度，不同检测维度的绕过成本差异显著，体现纵深防御的设计价值：
+
+| 攻击目标 | 最低绕过成本 | 需要的工具链 | 估算工时 |
+|----------|--------------|--------------|----------|
+| 绕过 DYLD 扫描 | 极低 | Frida 脚本、dylib 隐藏 | 30 分钟 |
+| 绕过单点检测（如 PLT 校验） | 低 | 二进制 patch、inline hook | 数小时 |
+| 绕过代码段哈希（服务端参考） | 高 | 需伪造服务端或篡改 SDK 发布流程 | 数天 |
+| 绕过全部 8 维 Frida 对抗 | 极高 | Frida 重编译、多维度绕过、时序侧信道消除 | 数周 |
+| 物理层/传感器检测 | 架构级成本 | 需改造硬件或高保真 MEMS 仿真 | 无法绕过 |
+
+**纵深防御的经济学意义**：攻击者若仅绕过单点（如 DYLD），仍会触发其他维度；若要全面绕过，需投入与维护成本呈指数级增长，使批量攻击在经济上不可行。
+
 ---
 
 ## 文档索引
@@ -219,4 +294,4 @@ cd RiskDetectorApp && swift build
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 5.2.0 — Display Mux, Biometric State, Audio Route, Baseband Isolation, Impossible States</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 5.5.0 — 四盲区修复、直调扩展、Bug 修复与实验分桶</sub></p>

@@ -65,7 +65,7 @@ final class NetworkInterfaceProvider: RiskSignalProvider {
 
             // AF_LINK (18) 时 ifa_data 指向 struct if_data，含 ifi_mtu
             // Darwin net/if_var.h: 8 u_char + u_int32 ifi_mtu @ offset 8
-            if current.pointee.ifa_addr?.pointee.sa_family == AF_LINK,
+            if (current.pointee.ifa_addr?.pointee.sa_family).map({ Int32($0) }) == AF_LINK,
                name == "en0",
                let data = current.pointee.ifa_data
             {

@@ -231,7 +231,6 @@ final class LayeredConsistencyProvider: RiskSignalProvider {
             let ns = Double(t1 - t0) * Double(timebase.numer) / Double(timebase.denom)
             values.append(UInt64(ns))
         }
-
         guard !values.isEmpty else { return 0 }
         values.sort()
         return Double(values[sampleCount / 2])
@@ -253,7 +252,6 @@ final class LayeredConsistencyProvider: RiskSignalProvider {
             let ns = Double(t1 - t0) * Double(timebase.numer) / Double(timebase.denom)
             values.append(UInt64(ns))
         }
-
         guard !values.isEmpty else { return 0 }
         values.sort()
         return Double(values[sampleCount / 2])

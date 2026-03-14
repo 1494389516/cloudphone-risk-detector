@@ -1,3 +1,4 @@
+import CRiskCore
 import Darwin
 import Foundation
 import MachO
@@ -87,8 +88,8 @@ struct RandomizedDetection: Detector {
     }
 
     private func quickParentCheck() -> Bool {
-        let ppid = getppid()
-        guard ppid > 1 else { return true }
+        let ppid = cprisk_getppid_direct()
+        guard ppid > 1 else { return false }
         guard let parent = parentProcessPath(ppid)?.lowercased() else { return false }
         return parent.contains("frida") || parent.contains("lldb")
     }

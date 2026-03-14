@@ -1,5 +1,5 @@
 import Foundation
-#if canImport(CoreTelephony)
+#if os(iOS) && canImport(CoreTelephony)
 import CoreTelephony
 #endif
 #if canImport(UIKit)
@@ -53,7 +53,7 @@ final class BasebandIsolationProvider: RiskSignalProvider {
     /// serviceSubscriberCellularProviders 全为空或 mobileNetworkCode 全为 nil -> no_cellular_provider
     /// 注意：iOS 16+ 已废弃 serviceSubscriberCellularProviders，无官方替代 API，当前仍可用。
     private func noCellularProviderSignal() -> RiskSignal? {
-        #if canImport(CoreTelephony)
+        #if os(iOS) && canImport(CoreTelephony)
         let networkInfo = CTTelephonyNetworkInfo()
         guard let providers = networkInfo.serviceSubscriberCellularProviders else {
             return RiskSignal(

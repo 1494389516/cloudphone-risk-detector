@@ -30,6 +30,7 @@
 //   - Keychain operations use per-key locks to avoid TOCTOU races
 
 import CryptoKit
+import CRiskCore
 import Foundation
 #if canImport(UIKit)
 import UIKit
@@ -67,9 +68,15 @@ public final class CPRiskKit: NSObject {
     private let evaluateQueue = DispatchQueue(label: "CloudPhoneRiskKit.Evaluate", qos: .utility)
     private let stateLock = NSLock()
 
+    /// Throttle cprisk_verify_exception_handler to avoid syscall on every evaluate().
+    private static let verifyThrottleInterval: TimeInterval = 5.0
+    private static var lastExceptionVerifyTime: TimeInterval = 0
+    private static let verifyThrottleLock = NSLock()
+
     private var remoteConfigProvider: RemoteConfigProvider?
     private var remoteConfigEndpoint: URL?
     private var latestRemoteConfig: RemoteConfig?
+    private var textSegmentReferenceResolver: (any TextSegmentReferenceResolving)?
 
     private var boundAccountId: String?
     private var boundSceneTag: String?
@@ -115,6 +122,9 @@ public final class CPRiskKit: NSObject {
     /// 启动自动采集（全局触摸 + 传感器）。
     /// 建议在 `application(_:didFinishLaunchingWithOptions:)` 里尽早调用。
     @objc public func start() {
+        cprisk_deny_attach()
+        cprisk_register_exception_handler()
+        DyldImageMonitor.shared.start()
         BuildConfig.configureForRelease()
         stateLock.lock()
         currentSessionId = UUID().uuidString
@@ -130,6 +140,7 @@ public final class CPRiskKit: NSObject {
 #if canImport(UIKit)
         touchCapture.start()
         motionSampler.start()
+        PhysicalSensorProbe.prewarm()
 #endif
     }
 
@@ -389,6 +400,17 @@ public final class CPRiskKit: NSObject {
         }
     }
 
+    /// 注入自定义 __TEXT.__text 参考哈希解析器。
+    ///
+    /// 默认情况下 SDK 使用 `RemoteConfig.textSegmentHashReference`。
+    /// 若已接入业务侧签名配置中心，可通过该解析器提供同样的参考哈希。
+    /// 解析器返回 `nil` 时，SDK 会继续回退到默认 RemoteConfig 逻辑。
+    public func setTextSegmentReferenceResolver(_ resolver: (any TextSegmentReferenceResolving)?) {
+        stateLock.lock()
+        textSegmentReferenceResolver = resolver
+        stateLock.unlock()
+    }
+
     // MARK: - Evaluation
 
     @objc public func evaluate() -> CPRiskReport {
@@ -415,6 +437,10 @@ public final class CPRiskKit: NSObject {
         )
 
         registerProviders(for: config)
+        // Ensure CRiskCore is initialized even if start() was never called (evaluate-only path).
+        cprisk_deny_attach()
+        cprisk_register_exception_handler()
+        Self.maybeVerifyExceptionHandler()
 
         let context = buildRiskContext(config: runtimeConfig)
         let snapshot = RiskSnapshot(
@@ -769,7 +795,7 @@ public final class CPRiskKit: NSObject {
                 throw error
             }
             Logger.log("app_attest: failed to generate assertion, envelope without attestation: \(error.localizedDescription)")
-            var fallback = try buildSecureReportEnvelope(
+            let fallback = try buildSecureReportEnvelope(
                 report: report,
                 sessionToken: sessionToken,
                 signingKey: signingKey,
@@ -1227,7 +1253,8 @@ public final class CPRiskKit: NSObject {
         return refreshed
     }
 
-    private func currentRemoteConfig() -> RemoteConfig? {
+    /// 供 TextSegmentIntegrityChecker 等服务端参考哈希校验使用
+    internal func currentRemoteConfig() -> RemoteConfig? {
         stateLock.lock()
         let cached = latestRemoteConfig
         let provider = remoteConfigProvider
@@ -1238,6 +1265,33 @@ public final class CPRiskKit: NSObject {
         }
 
         return provider?.currentConfig
+    }
+
+
+    /// 解析当前 SDK 版本的可信 __TEXT.__text 参考哈希。
+    /// 优先走业务方注入的解析器；若未提供或返回 nil，则回退到 RemoteConfig。
+    internal func resolveTextSegmentReference(for sdkVersion: String) -> TextSegmentReference? {
+        stateLock.lock()
+        let resolver = textSegmentReferenceResolver
+        let cached = latestRemoteConfig
+        let provider = remoteConfigProvider
+        stateLock.unlock()
+
+        if let resolved = resolver?.resolveTextSegmentReference(for: sdkVersion) {
+            return resolved
+        }
+
+        let config = cached ?? provider?.currentConfig
+        guard let config,
+              let expectedHash = config.textSegmentHashReference?[sdkVersion] else {
+            return nil
+        }
+
+        return TextSegmentReference(
+            expectedHash: expectedHash,
+            source: "remote_config",
+            version: String(config.version)
+        )
     }
 
     @discardableResult
@@ -1354,6 +1408,20 @@ public final class CPRiskKit: NSObject {
             stateLock.unlock()
         }
         PolicyManager.shared.reloadTrustedCacheState()
+    }
+
+    /// Throttled cprisk_verify_exception_handler to reduce task_get_exception_ports syscall frequency.
+    private static func maybeVerifyExceptionHandler() {
+        verifyThrottleLock.lock()
+        let now = Date().timeIntervalSince1970
+        let shouldVerify = (now - lastExceptionVerifyTime) >= verifyThrottleInterval
+        if shouldVerify {
+            lastExceptionVerifyTime = now
+            verifyThrottleLock.unlock()
+            cprisk_verify_exception_handler()
+        } else {
+            verifyThrottleLock.unlock()
+        }
     }
 
     private static func normalizedPinnedCertificateHashes(from hashes: [String]) -> Set<String> {

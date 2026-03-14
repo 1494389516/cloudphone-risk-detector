@@ -91,6 +91,12 @@ public struct RemoteConfig: Codable, Sendable {
     /// 安全加固开关
     public let securityHardening: SecurityHardeningConfig?
 
+    // MARK: - 代码段完整性参考（盲区四）
+
+    /// __TEXT.__text 服务端参考哈希：sdkVersion -> expectedHash 映射，由服务端下发。
+    /// 越狱后 Keychain 基线可被替换，服务端参考哈希作为可信锚点，客户端优先与之对比。
+    public let textSegmentHashReference: [String: String]?
+
     // MARK: - 初始化
 
     public init(
@@ -105,7 +111,8 @@ public struct RemoteConfig: Codable, Sendable {
         advanced: AdvancedConfig? = nil,
         probeConfig: ProbeConfig? = nil,
         payloadFieldMapping: PayloadFieldMapping? = nil,
-        securityHardening: SecurityHardeningConfig? = nil
+        securityHardening: SecurityHardeningConfig? = nil,
+        textSegmentHashReference: [String: String]? = nil
     ) {
         self.version = version
         self.timestamp = timestamp
@@ -119,6 +126,7 @@ public struct RemoteConfig: Codable, Sendable {
         self.probeConfig = probeConfig
         self.payloadFieldMapping = payloadFieldMapping
         self.securityHardening = securityHardening
+        self.textSegmentHashReference = textSegmentHashReference
     }
 
     // MARK: - 默认配置
@@ -136,7 +144,8 @@ public struct RemoteConfig: Codable, Sendable {
         advanced: AdvancedConfig.default,
         probeConfig: nil,
         payloadFieldMapping: nil,
-        securityHardening: .default
+        securityHardening: .default,
+        textSegmentHashReference: nil
     )
 
     /// 开发环境配置
@@ -152,7 +161,8 @@ public struct RemoteConfig: Codable, Sendable {
         advanced: AdvancedConfig.default,
         probeConfig: nil,
         payloadFieldMapping: nil,
-        securityHardening: .default
+        securityHardening: .default,
+        textSegmentHashReference: nil
     )
 
     // MARK: - 验证
@@ -575,9 +585,9 @@ public struct WhitelistRules: Codable, Sendable {
             return true
         }
 
-        // 版本号比较
+        // 版本号比较（语义化，避免 "10.0" < "9.0" 的字符串比较错误）
         if let minVersion = minTrustedVersion {
-            return version >= minVersion
+            return compareVersions(version, minVersion) >= 0
         }
 
         return false
@@ -606,6 +616,19 @@ public struct WhitelistRules: Codable, Sendable {
         }
         return false
     }
+}
+
+/// 语义化版本比较：a >= b 返回 true。避免 "10.0" < "9.0" 的字符串比较错误。
+private func compareVersions(_ a: String, _ b: String) -> Int {
+    let aParts = a.split(separator: ".", omittingEmptySubsequences: false).map { Int($0) ?? 0 }
+    let bParts = b.split(separator: ".", omittingEmptySubsequences: false).map { Int($0) ?? 0 }
+    let maxLen = max(aParts.count, bParts.count)
+    for i in 0..<maxLen {
+        let av = i < aParts.count ? aParts[i] : 0
+        let bv = i < bParts.count ? bParts[i] : 0
+        if av != bv { return av < bv ? -1 : 1 }
+    }
+    return 0
 }
 
 private enum ParsedIPAddress {
@@ -748,7 +771,7 @@ public struct ExperimentConfig: Codable, Sendable {
         case .modular:
             return modularBucket(deviceID: deviceID, traffic: traffic)
         case .random:
-            return Int.random(in: 0...100)
+            return Double.random(in: 0...1) <= traffic ? 1 : 0
         }
     }
 
@@ -999,7 +1022,8 @@ extension RemoteConfig {
             advanced: advanced,
             probeConfig: probeConfig,
             payloadFieldMapping: payloadFieldMapping,
-            securityHardening: (securityHardening ?? .default).enforcingReleaseSecurityFloor()
+            securityHardening: (securityHardening ?? .default).enforcingReleaseSecurityFloor(),
+            textSegmentHashReference: textSegmentHashReference
         )
     }
 
@@ -1173,6 +1197,10 @@ extension RemoteConfig {
                 "enforcePayloadFieldMapping": false,
                 "enableChallengeBinding": true,
                 "killSwitchEnabled": false
+            },
+            "textSegmentHashReference": {
+                "5.2.0": "a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456",
+                "5.3.0": "f6e5d4c3b2a1987654321098765432109876543210fedcba09876543210fedcba"
             }
         }
         """

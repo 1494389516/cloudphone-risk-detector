@@ -13,14 +13,134 @@ import CoreMotion
 /// 4. 磁力计：地球磁场约 25-65 μT，异常值表示虚拟/回放
 /// 5. 气压计：CMAltimeter 不可用或相对海拔恒定表示无真实硬件
 /// 6. 传感器不可用：isDeviceMotionAvailable 为 false 直接判定异常
+///
+/// ## 预热与缓存（盲区三）
+/// - start() 时后台异步预热，评估时优先读缓存，避免 .payment 场景 UX 阻塞
+/// - 采样帧数 15 帧（约 0.5 秒），气压计 1 秒，缓存 TTL 60 秒
+/// - 线程安全：缓存与预热状态统一由 `cacheLock` 保护，避免并发重复采集
+/// - 未预热兜底：主线程冷启动直接返回 pending 并继续后台预热；后台线程仍可同步采集
 struct PhysicalSensorProbe: Detector {
 
-    private static let deviceMotionSampleCount = 30
+    private static let deviceMotionSampleCount = 15
+    /// 30 Hz 采样率，15 帧约 0.5 秒（支付场景 UX 友好）
     private static let deviceMotionInterval: TimeInterval = 1.0 / 30.0
-    private static let totalTimeoutSeconds: TimeInterval = 3.0
-    private static let barometerSampleSeconds: TimeInterval = 2.0
+    private static let totalTimeoutSeconds: TimeInterval = 2.0
+    private static let barometerSampleSeconds: TimeInterval = 1.0
+
+    /// 缓存 TTL（秒），超时后评估时需同步采集兜底
+    private static let cacheTTLSeconds: TimeInterval = 60.0
+
+    private static let prewarmQueue = DispatchQueue(label: "PhysicalSensorProbe.prewarm", qos: .utility)
+    private static let cacheLock = NSLock()
+    private static var cachedResult: DetectorResult?
+    private static var cachedTimestamp: TimeInterval = 0
+    private static var isPrewarming = false
+
+    /// 后台异步预热，在 CPRiskKit.start() 时调用，不阻塞主流程
+    static func prewarm(forceRefresh: Bool = false) {
+        #if targetEnvironment(simulator) || !os(iOS)
+        return
+        #else
+        let now = Date().timeIntervalSince1970
+        guard beginPrewarmIfNeeded(now: now, forceRefresh: forceRefresh) else { return }
+        prewarmQueue.async {
+            let probe = PhysicalSensorProbe()
+            defer { finishPrewarm() }
+            do {
+                let result = try probe.performDetection()
+                storeCache(result, at: Date().timeIntervalSince1970)
+                #if DEBUG
+                Logger.log("physical_sensor.prewarm: cached score=\(result.score)")
+                #endif
+            } catch {
+                #if DEBUG
+                Logger.log("physical_sensor.prewarm: failed \(error.localizedDescription)")
+                #endif
+            }
+        }
+        #endif
+    }
+
+    private static func beginPrewarmIfNeeded(now: TimeInterval, forceRefresh: Bool) -> Bool {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+
+        if isPrewarming { return false }
+        if !forceRefresh,
+           let _ = cachedResult,
+           (now - cachedTimestamp) < cacheTTLSeconds {
+            return false
+        }
+
+        isPrewarming = true
+        return true
+    }
+
+    private static func finishPrewarm() {
+        cacheLock.lock()
+        isPrewarming = false
+        cacheLock.unlock()
+    }
+
+    private static func storeCache(_ result: DetectorResult, at timestamp: TimeInterval) {
+        cacheLock.lock()
+        cachedResult = result
+        cachedTimestamp = timestamp
+        cacheLock.unlock()
+    }
+
+    private static func cachedSnapshot(now: TimeInterval) -> (result: DetectorResult, age: TimeInterval)? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+
+        guard let result = cachedResult, cachedTimestamp > 0 else { return nil }
+        return (result, now - cachedTimestamp)
+    }
 
     func detect() throws -> DetectorResult {
+        #if targetEnvironment(simulator)
+        return DetectorResult(score: 0, methods: ["unavailable_simulator"])
+        #elseif !os(iOS)
+        return DetectorResult(score: 0, methods: ["unavailable_macos"])
+        #else
+        let now = Date().timeIntervalSince1970
+
+        // 优先读 fresh cache，命中则零阻塞返回。
+        if let snapshot = Self.cachedSnapshot(now: now),
+           snapshot.age < Self.cacheTTLSeconds {
+            return snapshot.result
+        }
+
+        // 过期缓存也优先复用，后台刷新，避免支付主路径回退到同步采集。
+        if let staleSnapshot = Self.cachedSnapshot(now: now) {
+            Self.prewarm(forceRefresh: true)
+            #if DEBUG
+            Logger.log("physical_sensor: using_stale_cache age=\(Int(staleSnapshot.age))s, refresh_async")
+            #endif
+            return staleSnapshot.result
+        }
+
+        // 冷启动且运行在主线程时，避免同步采集阻塞 UX，转为后台预热兜底。
+        if Thread.isMainThread {
+            Self.prewarm()
+            #if DEBUG
+            Logger.log("physical_sensor: cold_start_main_thread, pending_prewarm")
+            #endif
+            return DetectorResult(score: 0, methods: ["physical_sensor:pending_prewarm"])
+        }
+
+        // 后台线程或非 UI 路径，允许同步采集兜底。
+        #if DEBUG
+        Logger.log("physical_sensor: cache_miss, sync_collect_background")
+        #endif
+        let result = try performDetection()
+        Self.storeCache(result, at: Date().timeIntervalSince1970)
+        return result
+        #endif
+    }
+
+    /// 实际执行检测（供预热与 detect 兜底共用）
+    private func performDetection() throws -> DetectorResult {
         #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["unavailable_simulator"])
         #elseif !os(iOS)
@@ -38,7 +158,7 @@ struct PhysicalSensorProbe: Detector {
             return DetectorResult(score: score, methods: methods)
         }
 
-        // 2-5: 采集 deviceMotion 并分析
+        // 2-5: 采集 deviceMotion 并分析（15 帧约 0.5 秒）
         let motionResult = collectAndAnalyzeDeviceMotion(motionManager: motionManager)
         score += motionResult.score
         methods.append(contentsOf: motionResult.methods)

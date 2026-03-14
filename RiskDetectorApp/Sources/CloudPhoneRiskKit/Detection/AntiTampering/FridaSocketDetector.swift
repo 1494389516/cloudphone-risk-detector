@@ -1,3 +1,4 @@
+import CRiskCore
 import Darwin
 import Foundation
 
@@ -6,7 +7,18 @@ import Foundation
 /// Implements two detection techniques:
 /// 1. **Unix domain socket detection** — detect Frida's IPC sockets in /tmp
 /// 2. **Timing side-channel** — detect instrumentation latency from Frida's Interceptor
+///    Uses dynamic baseline ratio (stat_median/getpid_median > 15), aligned with KernelHookSideChannel.
 struct FridaSocketDetector: Detector {
+
+    private static var timebaseInfo: mach_timebase_info_data_t = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return info
+    }()
+
+    private static func nanoseconds(from ticks: UInt64) -> UInt64 {
+        ticks * UInt64(timebaseInfo.numer) / UInt64(timebaseInfo.denom)
+    }
 
     func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)
@@ -94,117 +106,80 @@ struct FridaSocketDetector: Detector {
 
     // MARK: - 2. Timing Side-Channel Detection
 
+    /// 动态基线比值检测，与 KernelHookSideChannel 对齐。
+    /// 采样顺序随机化（先 stat 或先 getpid），每次采样前插入噪声计算以放大 Stalker DBT 开销。
     private func detectTimingAnomaly() -> (score: Double, methods: [String]) {
         var score: Double = 0
         var methods: [String] = []
 
-        let sysStart = ProcessInfo.processInfo.systemUptime
-        let absStart = mach_absolute_time()
+        let iterations = TimingRatioBaseline.defaultSampleCount
+        let statFirst = Bool.random()
 
-        // Measure the time for a cheap syscall (getpid) repeatedly
-        let iterations = 50
-        var times = [UInt64]()
-        times.reserveCapacity(iterations)
+        var getpidSamples: [UInt64] = []
+        getpidSamples.reserveCapacity(iterations)
+        var statSamples: [UInt64] = []
+        statSamples.reserveCapacity(iterations)
 
-        for _ in 0..<iterations {
-            let start = mach_absolute_time()
-            _ = getpid()
-            let end = mach_absolute_time()
-            times.append(end - start)
+        func sampleGetpid() {
+            for _ in 0..<iterations {
+                for _ in 0..<6 { TimingRatioBaseline.samplingNoise() }
+                let start = mach_absolute_time()
+                _ = cprisk_getpid_direct()
+                let end = mach_absolute_time()
+                getpidSamples.append(Self.nanoseconds(from: end - start))
+            }
         }
 
-        let absEnd = mach_absolute_time()
-        let sysEnd = ProcessInfo.processInfo.systemUptime
-
-        // Convert to nanoseconds
-        var timebaseInfo = mach_timebase_info_data_t()
-        mach_timebase_info(&timebaseInfo)
-        
-        let absDeltaNs = Double(absEnd - absStart) * Double(timebaseInfo.numer) / Double(timebaseInfo.denom)
-        let sysDeltaNs = (sysEnd - sysStart) * 1_000_000_000.0
-
-        let diffRatio = (sysDeltaNs - absDeltaNs).magnitude / max(sysDeltaNs, absDeltaNs, 1.0)
-        let diffAbs = (sysDeltaNs - absDeltaNs).magnitude
-
-        if diffRatio > 0.1 && diffAbs > 5_000_000 { // > 10% diff and > 5ms
-            score += 50
-            methods.append("time_manipulation_detected")
-            return (min(score, 75), methods)
+        func sampleStat() {
+            var st = stat()
+            for _ in 0..<iterations {
+                for _ in 0..<6 { TimingRatioBaseline.samplingNoise() }
+                let start = mach_absolute_time()
+                _ = "/usr/lib/dyld".withCString { cprisk_stat_direct($0, &st, nil) }
+                let end = mach_absolute_time()
+                statSamples.append(Self.nanoseconds(from: end - start))
+            }
         }
 
-        let nsTimes = times.map { Double($0) * Double(timebaseInfo.numer) / Double(timebaseInfo.denom) }
-
-        // Sort and take p95
-        let sorted = nsTimes.sorted()
-        let p95Idx = min(Int(Double(iterations) * 0.95), iterations - 1)
-        let p95 = sorted[p95Idx]
-
-        // Normal getpid: ~100-500ns
-        // With Frida Interceptor: ~5000-50000ns (5-50μs)
-        // Threshold: p95 > 3000ns is suspicious
-        if p95 > 3000 {
-            score += 15
-            methods.append("timing_anomaly:getpid_p95_\(Int(p95))ns")
+        if statFirst {
+            sampleStat()
+            sampleGetpid()
+        } else {
+            sampleGetpid()
+            sampleStat()
         }
 
-        // Also measure stat() which is commonly hooked for jailbreak bypass
-        var statTimes = [UInt64]()
-        statTimes.reserveCapacity(iterations)
-        let testPath = "/usr/lib/dyld"
-
-        let sysStartStat = ProcessInfo.processInfo.systemUptime
-        let absStartStat = mach_absolute_time()
-
-        for _ in 0..<iterations {
-            let start = mach_absolute_time()
-            _ = access(testPath, F_OK)
-            let end = mach_absolute_time()
-            statTimes.append(end - start)
+        guard let evaluation = TimingRatioBaseline.evaluate(
+            getpidSamples: getpidSamples,
+            statSamples: statSamples
+        ) else {
+            return (0, [])
         }
 
-        let absEndStat = mach_absolute_time()
-        let sysEndStat = ProcessInfo.processInfo.systemUptime
-
-        let absDeltaNsStat = Double(absEndStat - absStartStat) * Double(timebaseInfo.numer) / Double(timebaseInfo.denom)
-        let sysDeltaNsStat = (sysEndStat - sysStartStat) * 1_000_000_000.0
-
-        let diffRatioStat = (sysDeltaNsStat - absDeltaNsStat).magnitude / max(sysDeltaNsStat, absDeltaNsStat, 1.0)
-        let diffAbsStat = (sysDeltaNsStat - absDeltaNsStat).magnitude
-
-        if diffRatioStat > 0.1 && diffAbsStat > 5_000_000 { // > 10% diff and > 5ms
-            score += 50
-            methods.append("time_manipulation_detected")
-            return (min(score, 75), methods)
+        // 仅用比值判断：ratio > 15 为主条件，ratioP95 > 15 为辅助（均无量纲，不受机型/负载影响）
+        if evaluation.isAnomalous {
+            score = 25
+            methods.append(
+                "timing_anomaly:ratio=\(String(format: "%.1f", evaluation.medianRatio))_ratioP95=\(String(format: "%.1f", evaluation.p95Ratio))"
+            )
         }
 
-        let statNs = statTimes.map { Double($0) * Double(timebaseInfo.numer) / Double(timebaseInfo.denom) }
-        let statSorted = statNs.sorted()
-        let statP95Idx = min(Int(Double(iterations) * 0.95), iterations - 1)
-        let statP95 = statSorted[statP95Idx]
-
-        // Normal stat: ~1000-5000ns
-        // With Frida: ~10000-100000ns
-        if statP95 > 15000 {
-            score += 12
-            methods.append("timing_anomaly:stat_p95_\(Int(statP95))ns")
+        // 二次放大探测：间接函数指针 + 交替 syscall 使 Stalker DBT 开销显著放大
+        let amplified = TimingRatioBaseline.amplifiedSamples()
+        if let ampEval = TimingRatioBaseline.evaluate(
+            getpidSamples: amplified.getpid,
+            statSamples: amplified.stat,
+            ratioThreshold: 12.0
+        ) {
+            if ampEval.isAnomalous {
+                score += 20
+                methods.append(
+                    "timing_stalker_amplified:ratio=\(String(format: "%.1f", ampEval.medianRatio))_ratioP95=\(String(format: "%.1f", ampEval.p95Ratio))"
+                )
+            }
         }
 
-        let finalAbsEnd = mach_absolute_time()
-        let finalSysEnd = ProcessInfo.processInfo.systemUptime
-
-        let finalAbsDeltaNs = Double(finalAbsEnd - absStart) * Double(timebaseInfo.numer) / Double(timebaseInfo.denom)
-        let finalSysDeltaNs = (finalSysEnd - sysStart) * 1_000_000_000.0
-
-        let finalDiffRatio = (finalSysDeltaNs - finalAbsDeltaNs).magnitude / max(finalSysDeltaNs, finalAbsDeltaNs, 1.0)
-        let finalDiffAbs = (finalSysDeltaNs - finalAbsDeltaNs).magnitude
-
-        if finalDiffRatio > 0.1 && finalDiffAbs > 2_000_000 {
-            score += 50
-            methods.append("time_manipulation_detected")
-            return (min(score, 75), methods)
-        }
-
-        return (min(score, 25), methods)
+        return (min(score, 45), methods)
     }
 }
 
@@ -238,6 +213,19 @@ extension FridaSocketDetector {
                 score: min(Double(timingMethods.count) * 10, 20),
                 evidence: ["detail": timingMethods.joined(separator: ",")],
                 state: .soft(confidence: 70),
+                layer: 2,
+                weightHint: 65
+            ))
+        }
+
+        let amplifiedMethods = result.methods.filter { $0.hasPrefix("timing_stalker_amplified") }
+        if !amplifiedMethods.isEmpty {
+            signals.append(RiskSignal(
+                id: "frida_stalker_amplified",
+                category: "anti_tamper",
+                score: 20,
+                evidence: ["detail": amplifiedMethods.joined(separator: ",")],
+                state: .soft(confidence: 0.65),
                 layer: 2,
                 weightHint: 65
             ))

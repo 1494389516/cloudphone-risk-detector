@@ -175,7 +175,6 @@ public final class AnomalyDetector {
 
         // 计算四分位数
         let q1Index = count / 4
-        let q2Index = count / 2
         let q3Index = (3 * count) / 4
 
         let q1 = sorted[min(q1Index, count - 1)]

@@ -1,13 +1,8 @@
+import CRiskCore
 import Darwin
 import Foundation
 
 struct KernelHookSideChannel: Detector {
-
-    private struct TimingStats {
-        let median: UInt64
-        let p95: UInt64
-        let stddev: Double
-    }
 
     private static var timebaseInfo: mach_timebase_info_data_t = {
         var info = mach_timebase_info_data_t()
@@ -17,26 +12,6 @@ struct KernelHookSideChannel: Detector {
 
     private static func nanoseconds(from ticks: UInt64) -> UInt64 {
         ticks * UInt64(timebaseInfo.numer) / UInt64(timebaseInfo.denom)
-    }
-
-    private static func computeStats(_ samples: [UInt64]) -> TimingStats {
-        let sorted = samples.sorted()
-        let count = sorted.count
-        guard count > 0 else {
-            return TimingStats(median: 0, p95: 0, stddev: 0)
-        }
-        let median = sorted[count / 2]
-        let p95Index = min(Int(Double(count) * 0.95), count - 1)
-        let p95 = sorted[p95Index]
-
-        let mean = Double(sorted.reduce(0, +)) / Double(count)
-        let variance = sorted.reduce(0.0) { acc, v in
-            let diff = Double(v) - mean
-            return acc + diff * diff
-        } / Double(count)
-        let stddev = sqrt(variance)
-
-        return TimingStats(median: median, p95: p95, stddev: stddev)
     }
 
     func detect() throws -> DetectorResult {
@@ -76,55 +51,81 @@ struct KernelHookSideChannel: Detector {
 #if targetEnvironment(simulator)
         return (0, [])
 #else
-        let iterations = 30
+        let iterations = TimingRatioBaseline.defaultSampleCount
+        let statFirst = Bool.random()
 
         var getpidSamples: [UInt64] = []
         getpidSamples.reserveCapacity(iterations)
-        for _ in 0..<iterations {
-            let start = mach_absolute_time()
-            _ = getpid()
-            let end = mach_absolute_time()
-            getpidSamples.append(Self.nanoseconds(from: end - start))
-        }
-
         var statSamples: [UInt64] = []
         statSamples.reserveCapacity(iterations)
-        for _ in 0..<iterations {
-            var st = stat()
-            let start = mach_absolute_time()
-            _ = "/usr/lib/dyld".withCString { stat($0, &st) }
-            let end = mach_absolute_time()
-            statSamples.append(Self.nanoseconds(from: end - start))
+
+        func sampleGetpid() {
+            for _ in 0..<iterations {
+                for _ in 0..<6 { TimingRatioBaseline.samplingNoise() }
+                let start = mach_absolute_time()
+                _ = cprisk_getpid_direct()
+                let end = mach_absolute_time()
+                getpidSamples.append(Self.nanoseconds(from: end - start))
+            }
         }
 
-        let getpidStats = Self.computeStats(getpidSamples)
-        let statStats = Self.computeStats(statSamples)
+        func sampleStat() {
+            var st = stat()
+            for _ in 0..<iterations {
+                for _ in 0..<6 { TimingRatioBaseline.samplingNoise() }
+                let start = mach_absolute_time()
+                _ = "/usr/lib/dyld".withCString { cprisk_stat_direct($0, &st, nil) }
+                let end = mach_absolute_time()
+                statSamples.append(Self.nanoseconds(from: end - start))
+            }
+        }
 
-        guard getpidStats.median > 0 else { return (0, []) }
+        if statFirst {
+            sampleStat()
+            sampleGetpid()
+        } else {
+            sampleGetpid()
+            sampleStat()
+        }
 
-        let ratio = Double(statStats.median) / Double(getpidStats.median)
-        let statP95ns = statStats.p95
+        guard let evaluation = TimingRatioBaseline.evaluate(
+            getpidSamples: getpidSamples,
+            statSamples: statSamples
+        ) else {
+            return (0, [])
+        }
 
         var score: Double = 0
         var methods: [String] = []
 
-        if ratio > 15 || statP95ns > 50_000 {
+        // 仅用比值判断：median ratio > 15 为主条件，P95 ratio > 15 为辅助（均无量纲，不受机型/负载影响）
+        if evaluation.isAnomalous {
             score = 40
-            methods.append("kernel_hook_timing_anomaly:ratio=\(String(format: "%.1f", ratio))_p95=\(statP95ns)ns")
+            methods.append(
+                "kernel_hook_timing_anomaly:ratio=\(String(format: "%.1f", evaluation.medianRatio))_ratioP95=\(String(format: "%.1f", evaluation.p95Ratio))"
+            )
+        }
+
+        // 二次放大探测：间接函数指针 + 交替 syscall 使 Stalker DBT 开销显著放大，阈值更低即可触发
+        let amplified = TimingRatioBaseline.amplifiedSamples()
+        if let ampEval = TimingRatioBaseline.evaluate(
+            getpidSamples: amplified.getpid,
+            statSamples: amplified.stat,
+            ratioThreshold: 12.0
+        ) {
+            if ampEval.isAnomalous {
+                score += 30
+                methods.append(
+                    "kernel_hook_stalker_amplified:ratio=\(String(format: "%.1f", ampEval.medianRatio))_ratioP95=\(String(format: "%.1f", ampEval.p95Ratio))"
+                )
+            }
         }
 
         return (score, methods)
 #endif
     }
 
-    // MARK: - Strategy 2: Syscall Pair Inode Consistency
-
-    private typealias StatFn = @convention(c) (UnsafePointer<CChar>, UnsafeMutablePointer<stat>?) -> Int32
-
-    private func rtldNextStat() -> StatFn? {
-        guard let ptr = dlsym(UnsafeMutableRawPointer(bitPattern: -1), "stat") else { return nil }
-        return unsafeBitCast(ptr, to: StatFn.self)
-    }
+    // MARK: - Strategy 2: libc vs direct-syscall inode consistency
 
     private func detectInodeMismatch() -> (Double, [String]) {
 #if targetEnvironment(simulator)
@@ -134,15 +135,14 @@ struct KernelHookSideChannel: Detector {
         var score: Double = 0
         var methods: [String] = []
 
-        guard let secureFn = rtldNextStat() else { return (0, []) }
-
         for path in testPaths {
             var stdStat = stat()
             var secureStat = stat()
 
             let stdRet = path.withCString { stat($0, &stdStat) }
             let secureRet = path.withCString { cPath -> Int32 in
-                secureFn(cPath, &secureStat)
+                var rawErrno: CInt = 0
+                return cprisk_stat_direct(cPath, &secureStat, &rawErrno)
             }
 
             guard stdRet == 0, secureRet == 0 else { continue }
@@ -168,7 +168,7 @@ struct KernelHookSideChannel: Detector {
         let machA = mach_absolute_time()
 
         // Small busy-wait to create a measurable interval
-        for _ in 0..<10_000 { _ = getpid() }
+        for _ in 0..<10_000 { _ = cprisk_getpid_direct() }
 
         let uptimeB = ProcessInfo.processInfo.systemUptime
         let machB = mach_absolute_time()
@@ -202,19 +202,19 @@ struct KernelHookSideChannel: Detector {
         var score: Double = 0
         var methods: [String] = []
 
-        let expectedPid = getpid()
+        let expectedPid = cprisk_getpid_direct()
         var pidUnstable = false
         for _ in 0..<9 {
-            if getpid() != expectedPid {
+            if cprisk_getpid_direct() != expectedPid {
                 pidUnstable = true
                 break
             }
         }
 
-        let expectedUid = getuid()
+        let expectedUid = cprisk_getuid_direct()
         var uidUnstable = false
         for _ in 0..<9 {
-            if getuid() != expectedUid {
+            if cprisk_getuid_direct() != expectedUid {
                 uidUnstable = true
                 break
             }
@@ -291,6 +291,19 @@ extension KernelHookSideChannel {
                 state: .tampered,
                 layer: 2,
                 weightHint: 95
+            ))
+        }
+
+        let amplifiedMethods = result.methods.filter { $0.hasPrefix("kernel_hook_stalker_amplified") }
+        if !amplifiedMethods.isEmpty {
+            signals.append(RiskSignal(
+                id: "kernel_hook_stalker_amplified",
+                category: "anti_tamper",
+                score: 30,
+                evidence: ["detail": amplifiedMethods.joined(separator: ",")],
+                state: .soft(confidence: 0.65),
+                layer: 2,
+                weightHint: 65
             ))
         }
 
