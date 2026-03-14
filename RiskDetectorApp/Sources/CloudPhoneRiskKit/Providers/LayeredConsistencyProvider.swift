@@ -1,3 +1,4 @@
+import CRiskCore
 import Foundation
 import Darwin
 
@@ -114,26 +115,25 @@ final class LayeredConsistencyProvider: RiskSignalProvider {
         ]
     }
 
+    /// 动态基线比值检测：先对 getpid 采样建立基准，再用 sysctl_median/getpid_median 比值判断。
+    /// 避免 50μs 绝对值在低端机/冷启动时误报，与 KernelHookSideChannel 对齐。
     private func detectTimingAnomaly() -> RiskSignal? {
-        let medianUs = measureSysctlMedianMicroseconds(sampleCount: 24)
-        guard medianUs > 0 else { return nil }
+        let sampleCount = 24
+        let getpidMedianNs = measureGetpidMedianNanoseconds(sampleCount: sampleCount)
+        let sysctlMedianNs = measureSysctlMedianNanoseconds(sampleCount: sampleCount)
+        guard getpidMedianNs > 0, sysctlMedianNs > 0 else { return nil }
 
-        guard medianUs > 50 else {
-            // 时序正常，不返回任何信号。
-            // 之前的代码在正常情况下返回 confidence=0 的信号，存在两个问题：
-            //   1. confidence=0 < softGate(0.3)，该信号对分数贡献为 0，是无意义的噪音。
-            //   2. 返回非空信号会让 LayeredConsistencyProvider 被标记为 "active"，
-            //      若后续该 Provider 恰好返回空结果（如 sampleCount=0 被 guard 过滤），
-            //      RiskSignalProviderRegistry 会误注入 signalCollectionFailed 篡改信号。
-            return nil
-        }
+        let ratio = sysctlMedianNs / getpidMedianNs
+        // 仅用比值判断：ratio > 15 与 KernelHookSideChannel 一致（无量纲，不受机型影响）。
+        // ratio <= 15 时序正常，不返回任何信号（避免 confidence=0 噪音信号污染 activeProviderIDs）。
+        guard ratio > 15 else { return nil }
 
-        let confidence = min(0.9, medianUs / 200.0)
+        let confidence = min(0.9, ratio / 30.0)
         return RiskSignal(
             id: "timing_anomaly",
             category: "anti_tamper",
             score: 0,
-            evidence: ["median_us": String(format: "%.1f", medianUs)],
+            evidence: ["ratio": String(format: "%.1f", ratio)],
             state: .soft(confidence: confidence),
             layer: 2,
             weightHint: 45
@@ -216,27 +216,46 @@ final class LayeredConsistencyProvider: RiskSignalProvider {
         )
     }
 
-    private func measureSysctlMedianMicroseconds(sampleCount: Int) -> Double {
+    private func measureGetpidMedianNanoseconds(sampleCount: Int) -> Double {
         guard sampleCount > 0 else { return 0 }
         var values: [UInt64] = []
         values.reserveCapacity(sampleCount)
+
+        var timebase = mach_timebase_info_data_t()
+        mach_timebase_info(&timebase)
+
+        for _ in 0..<sampleCount {
+            let t0 = mach_absolute_time()
+            _ = cprisk_getpid_direct()
+            let t1 = mach_absolute_time()
+            let ns = Double(t1 - t0) * Double(timebase.numer) / Double(timebase.denom)
+            values.append(UInt64(ns))
+        }
+
+        guard !values.isEmpty else { return 0 }
+        values.sort()
+        return Double(values[sampleCount / 2])
+    }
+
+    private func measureSysctlMedianNanoseconds(sampleCount: Int) -> Double {
+        guard sampleCount > 0 else { return 0 }
+        var values: [UInt64] = []
+        values.reserveCapacity(sampleCount)
+
+        var timebase = mach_timebase_info_data_t()
+        mach_timebase_info(&timebase)
 
         for _ in 0..<sampleCount {
             var size: size_t = 0
             let t0 = mach_absolute_time()
             _ = sysctlbyname("hw.machine", nil, &size, nil, 0)
             let t1 = mach_absolute_time()
-            values.append(t1 - t0)
+            let ns = Double(t1 - t0) * Double(timebase.numer) / Double(timebase.denom)
+            values.append(UInt64(ns))
         }
 
-        guard values.isEmpty == false else { return 0 }
+        guard !values.isEmpty else { return 0 }
         values.sort()
-        let median = values[sampleCount / 2]
-
-        var timebase = mach_timebase_info_data_t()
-        mach_timebase_info(&timebase)
-
-        let ns = Double(median) * Double(timebase.numer) / Double(timebase.denom)
-        return ns / 1000.0
+        return Double(values[sampleCount / 2])
     }
 }
