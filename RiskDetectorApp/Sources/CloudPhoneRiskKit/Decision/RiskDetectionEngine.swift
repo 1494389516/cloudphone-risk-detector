@@ -586,7 +586,11 @@ public struct RiskDetectionEngine: Sendable {
         let minWeight = Self.criticalSignalMinWeights[signal.id] ?? 0
         let baseWeight: Double
         if signal.weightHint > 0 {
-            baseWeight = signal.weightHint
+            // minWeight must be enforced even when weightHint is explicitly set.
+            // Without max(), a critical signal whose weightHint is set to a low value
+            // (e.g. by a compromised/forged provider signal) would silently bypass
+            // its guaranteed floor, letting it contribute near-zero to the score.
+            baseWeight = max(signal.weightHint, minWeight)
             return planner.jitter(base: baseWeight, maxBps: policy.mutationStrategy?.scoreJitterBps ?? 0)
         }
         if let override = overrides[signal.id], override > 0 {
@@ -705,7 +709,10 @@ public struct RiskDetectionEngine: Sendable {
     private func minScore(for action: RiskAction, scenarioPolicy: ScenarioPolicy) -> Double {
         switch action {
         case .allow:
-            return scenarioPolicy.mediumThreshold
+            // Forcing .allow should NOT elevate the score. Returning mediumThreshold would
+            // produce a contradiction: action=allow but internalLevel=.medium, and would
+            // silently inflate the score when a blocklist/comboRule uses .allow as its action.
+            return 0
         case .challenge:
             return scenarioPolicy.highThreshold
         case .stepUpAuth, .block:
@@ -745,9 +752,14 @@ public struct RiskDetectionEngine: Sendable {
     }
 
     /// 提取主要原因
+    ///
+    /// Sort key 使用 `max(score, weightHint)`，而非单纯的 `.score`。
+    /// 原因：状态驱动信号（.tampered/.hard）统一将 score 设为 0，
+    /// 实际权重由 weightHint 表达。若仅按 score 排序，这些高危信号会被
+    /// 行为信号（score=10/8/5）压到末尾，导致主要原因与实际评分依据脱节。
     private func extractPrimaryReasons(signals: [RiskSignal]) -> [String] {
         signals
-            .sorted { $0.score > $1.score }
+            .sorted { max($0.score, $0.weightHint) > max($1.score, $1.weightHint) }
             .prefix(5)
             .map { signal in
                 var reason = signal.category

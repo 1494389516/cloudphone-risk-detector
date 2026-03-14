@@ -286,13 +286,13 @@ public enum CallStackUnwinder {
         let found = nextFound
 
         // dladdr could not resolve → cross-validate with vm_region
-        if found == 0 || info.dli_fname == nil {
+        guard found != 0, let fname = info.dli_fname else {
             let vmClass = vmRegionClassify(addr)
             let legitimate = vmClass == .fileMapped
             return AddressValidation(legitimate: legitimate, dladdrHooked: false)
         }
 
-        let path = String(cString: info.dli_fname!)
+        let path = String(cString: fname)
 
         // Layer 3: trusted image cache (built from startup snapshot)
         if trustedImagePaths.contains(path) {
