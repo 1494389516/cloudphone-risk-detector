@@ -83,4 +83,3 @@ public typealias ProtocolRiskScenario = RiskScenario
 public typealias ProtocolRiskLevel = PublicRiskLevel
 public typealias ProtocolRiskAction = PublicRiskAction
 public typealias ProtocolRiskVerdict = RiskVerdict
-public typealias ProtocolAnySendable = String
