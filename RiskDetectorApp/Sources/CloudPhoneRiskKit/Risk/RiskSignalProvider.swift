@@ -37,6 +37,28 @@ public extension RiskSignalProvider {
     func serverSignals(snapshot: RiskSnapshot) -> ServerSignals? { nil }
 }
 
+/// ## 线程模型（所有 Provider 必须遵守）
+///
+/// `collectWithTimeout` 是 Registry 的线程模型守卫：
+///
+/// **主线程调用路径（来自 UI 事件 / @MainActor 方法）**
+/// - `collectWithTimeout` 检测到 `Thread.isMainThread == true` 时，直接同步执行 `provider.signals`。
+/// - Provider 内部**不得**使用 `DispatchQueue.main.sync` 或 `semaphore.wait`，
+///   否则主线程会在等待自己的队列时死锁（self-deadlock）。
+/// - Provider 内部可以自由使用 `DispatchQueue.main.async`（不等待）。
+///
+/// **后台线程调用路径（来自 global 队列 / Task）**
+/// - `collectWithTimeout` 在后台线程使用 `DispatchQueue.global().async + semaphore.wait(timeout:3s)`。
+/// - Provider 内部可以使用 `DispatchQueue.main.sync`（跨线程等待主线程，不会死锁）。
+/// - Provider 内部**不得**在主线程上再 `semaphore.wait`，否则回到主线程后会形成
+///   「主线程 wait → 依赖主队列的 asyncAfter → 永不触发」的二次死锁。
+///
+/// **Provider 实现规范（摘要）**
+/// - 需要 UIKit/CoreHaptics 的调用：用 `runOnMainIfNeeded { ... }`（即 `main.sync` 包装）。
+/// - 需要延迟 + 等待结果的调用（如 proximitySensor）：
+///   必须先 `guard !Thread.isMainThread` 跳过主线程，延迟调度用 `DispatchQueue.global().asyncAfter`，
+///   读写 UIDevice 状态仍需内嵌 `DispatchQueue.main.sync`。
+/// - 纯计算或 Darwin/POSIX API（getifaddrs、sysctl、LAContext）：无线程限制，直接调用。
 final class RiskSignalProviderRegistry {
     static let shared = RiskSignalProviderRegistry()
     private init() {}

@@ -64,16 +64,55 @@ public struct RiskDetectionEngine: Sendable {
         log("Policy: \(policy.name)")
 
         // 0. SDK 4.4 执行流栈回溯：关键节点校验调用栈
-        if let stackSignal = CallStackUnwinder.validateCallStackAsSignal() {
-            return RiskVerdict(
-                score: 100,
-                internalLevel: .critical,
-                internalAction: .block,
-                confidence: 1.0,
-                primaryReasons: [stackSignal.id],
-                signals: [stackSignal],
-                scenario: scenario
-            )
+        //
+        // 分两条路径处理：
+        // - dladdr_hook_detected：验证机制本身已被 hook，整个栈验证失效，立即 block。
+        // - rop_chain_detected：仅将信号注入 extraSignals 进入正常评分管道，不硬性早退。
+        //   原因：合法的代码混淆/第三方 SDK 可能产生不在已知 __TEXT 范围内的合法返回地址，
+        //   单次触发即 block 会造成误杀，且无任何降级路径。注入信号可让后续组合规则/阈值
+        //   参与决策，并在结果中保留可审计的信号记录。
+        var callStackExtraSignals: [RiskSignal] = []
+        let (isCallStackMalicious, callStackSignalId) = CallStackUnwinder.validateCallStack()
+        if isCallStackMalicious, let signalId = callStackSignalId {
+            if signalId == CallStackUnwinder.dladdrHookSignalId {
+                // dladdr 本身被 hook → 验证机制失效，立即 block
+                let hookSignal = RiskSignal(
+                    id: signalId,
+                    category: "anti_tamper",
+                    score: 0,
+                    evidence: [
+                        "detail": "call_stack_return_address_outside_trusted_regions",
+                        "mechanism": "dladdr_dual_path_vm_region_validation",
+                    ],
+                    state: .tampered,
+                    layer: 2,
+                    weightHint: 90
+                )
+                return RiskVerdict(
+                    score: 100,
+                    internalLevel: .critical,
+                    internalAction: .block,
+                    confidence: 1.0,
+                    primaryReasons: [hookSignal.id],
+                    signals: [hookSignal],
+                    scenario: scenario
+                )
+            } else {
+                // rop_chain_detected 等：注入信号，进入正常评分管道
+                callStackExtraSignals.append(RiskSignal(
+                    id: signalId,
+                    category: "anti_tamper",
+                    score: 0,
+                    evidence: [
+                        "detail": "call_stack_return_address_outside_trusted_regions",
+                        "mechanism": "dladdr_dual_path_vm_region_validation",
+                    ],
+                    state: .tampered,
+                    layer: 2,
+                    weightHint: 90
+                ))
+                log("CallStackUnwinder: \(signalId) injected as signal (not hard-exit)")
+            }
         }
 
         // 1. 获取场景策略（带版本变形）
@@ -88,11 +127,11 @@ public struct RiskDetectionEngine: Sendable {
         )
         log("Scenario policy - medium: \(scenarioPolicy.mediumThreshold), high: \(scenarioPolicy.highThreshold), critical: \(scenarioPolicy.criticalThreshold)")
 
-        // 2. 收集所有风险信号
+        // 2. 收集所有风险信号（含调用栈注入信号）
         var allSignals = collectSignals(
             context: context,
             scenarioPolicy: scenarioPolicy,
-            extraSignals: extraSignals,
+            extraSignals: extraSignals + callStackExtraSignals,
             planner: planner
         )
 
@@ -169,7 +208,10 @@ public struct RiskDetectionEngine: Sendable {
         }
 
         // 6. 应用组合规则加成
-        let finalScore = min(baseScore + comboBonus + blindBonus + challengeOffset, 100)
+        // Clamp [0, 100]: challengeOffset can be negative (range -100..100 from ChallengeResultStore).
+        // Without the lower bound, a large negative offset produces a negative finalScore, which then
+        // hits the `default` branch of InternalRiskLevel.from(score:) and is misclassified as .critical.
+        let finalScore = min(max(baseScore + comboBonus + blindBonus + challengeOffset, 0), 100)
         log("Final score: \(finalScore)")
 
         // 7. 应用强制规则
