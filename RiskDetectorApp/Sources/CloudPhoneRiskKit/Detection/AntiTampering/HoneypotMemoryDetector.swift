@@ -157,6 +157,10 @@ struct HoneypotMemoryDetector: Detector {
             sizes.append(size)
         }
 
+        guard bases.count >= 3 else {
+            for (i, b) in bases.enumerated() { munmap(b, sizes[i]) }
+            return
+        }
         honeypotBase0 = bases[0]; honeypotSize0 = sizes[0]
         honeypotBase1 = bases[1]; honeypotSize1 = sizes[1]
         honeypotBase2 = bases[2]; honeypotSize2 = sizes[2]

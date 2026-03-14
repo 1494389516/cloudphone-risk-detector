@@ -18,6 +18,7 @@ final class DyldImageMonitor: @unchecked Sendable {
     private var baselineImageHash: UInt64 = 0
     private var baselineDyldGen: UInt64 = 0
     private var isStarted = false
+    private var addImageCallbackCount: UInt32 = 0
     private var suspiciousAdditions: [(name: String, gen: UInt64)] = []
 
     private let suspiciousTokens: [String] = [
@@ -32,6 +33,9 @@ final class DyldImageMonitor: @unchecked Sendable {
     // MARK: - Lifecycle
 
     func start() {
+    #if targetEnvironment(simulator)
+        return
+    #else
         lock.lock()
         guard !isStarted else { lock.unlock(); return }
         isStarted = true
@@ -44,6 +48,12 @@ final class DyldImageMonitor: @unchecked Sendable {
         _dyld_register_func_for_add_image { mh, slide in
             DyldImageMonitor.shared.onImageAdded(mh, slide: slide)
         }
+
+        // dyld 同步为每个已加载 image 调用回调，返回时 dyldGen 已累加完毕
+        lock.lock()
+        baselineDyldGen = dyldGen
+        lock.unlock()
+    #endif
     }
 
     // MARK: - Callback
@@ -52,8 +62,11 @@ final class DyldImageMonitor: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         dyldGen &+= 1
+        addImageCallbackCount &+= 1
 
         guard isStarted else { return }
+        // 注册时 dyld 会为已加载的每个 image 同步回调，前 baselineImageCount 次为基线，不计入 suspiciousAdditions
+        if addImageCallbackCount <= baselineImageCount { return }
 
         let imageName = resolveImageName(for: mh)
         guard let imageName, !imageName.isEmpty else { return }

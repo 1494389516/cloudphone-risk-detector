@@ -222,7 +222,7 @@ final class AntiTamperingTests: XCTestCase {
         for signal in signals {
             XCTAssertEqual(signal.category, "anti_tamper")
             XCTAssertEqual(signal.layer, 2)
-            XCTAssertTrue(signal.id == "frida_unix_socket" || signal.id == "frida_timing_anomaly")
+            XCTAssertTrue(signal.id == "frida_unix_socket" || signal.id == "frida_timing_anomaly" || signal.id == "frida_stalker_amplified")
         }
     }
 
@@ -355,9 +355,9 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(result.score, 0)
     }
 
-    func testDyldImageMonitorSignalConversion() {
+    func testDyldImageMonitorSignalConversion() throws {
         DyldImageMonitor.shared.start()
-        let signals = DyldImageMonitor.shared.asSignals()
+        let signals = try DyldImageMonitor.shared.asSignals()
         for signal in signals {
             XCTAssertEqual(signal.category, "anti_tamper")
             XCTAssertEqual(signal.layer, 2)
@@ -367,7 +367,7 @@ final class AntiTamperingTests: XCTestCase {
     func testDyldImageMonitorSuspiciousTokenDetection() {
         let monitor = DyldImageMonitor.shared
         let result = monitor.evaluate()
-        XCTAssertEqual(result.methods.filter { $0.contains("suspicious_image") }.count, 0)
+        XCTAssertEqual(result.methods.filter { $0.contains("suspicious_load") }.count, 0)
     }
 
     // MARK: - FileDetector Randomization Tests
