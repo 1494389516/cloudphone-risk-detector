@@ -167,4 +167,118 @@ final class ScorePipelineInvariantTests: XCTestCase {
         XCTAssertNotEqual(verdict.internalLevel, .critical,
             "干净设备 + 负 challengeOffset 不得误归 .critical")
     }
+
+    // MARK: - signalWeight minWeight 强制下限（Bug fix 验证）
+
+    /// Bug fix: signalWeight() 当 weightHint > 0 时，之前绕过了 criticalSignalMinWeights
+    /// 的下限约束。修复后使用 max(weightHint, minWeight)，确保关键信号不因低 weightHint 被压低。
+    func testSignalWeightMinWeightEnforcedWithLowWeightHint() {
+        // rop_chain_detected 的 criticalSignalMinWeights = 90
+        // 注入 weightHint=1（远低于 90）的 hard-detected 信号：
+        //   修复前 → weight = 1 → hardScore = 1 → finalScore ≈ 1
+        //   修复后 → weight = max(1, 90) = 90 → hardScore = 90 → finalScore ≈ 90
+        let criticalSignal = RiskSignal(
+            id: "rop_chain_detected",
+            category: "anti_tamper",
+            score: 0,
+            evidence: [:],
+            state: .hard(detected: true),
+            layer: 2,
+            weightHint: 1  // 故意设置低值，应被 minWeight=90 覆盖
+        )
+
+        let engine = RiskDetectionEngine(policy: .default, enableLogging: false)
+        let context = TestFixtures.makeRiskContext()
+        let verdict = engine.evaluate(context: context, extraSignals: [criticalSignal])
+
+        // criticalSignalMinWeights 下限生效后，score 应显著高于 weightHint=1 的原始值
+        XCTAssertGreaterThanOrEqual(verdict.score, 80,
+            "criticalSignalMinWeights 下限应覆盖低 weightHint，score 应 >= 80")
+        XCTAssertLessThanOrEqual(verdict.score, 100)
+    }
+
+    // MARK: - minScore(.allow) 不得抬升分数（Bug fix 验证）
+
+    /// Bug fix: minScore(for: .allow) 之前返回 mediumThreshold（如 50），
+    /// 导致 forceAction=.allow 的组合规则意外将 adjustedScore 抬升到 mediumThreshold。
+    /// 修复后返回 0，forcing .allow 不影响分数。
+    func testMinScoreForAllowComboRuleDoesNotInflateScore() {
+        let allowComboRule = ComboRule(
+            name: "test_force_allow",
+            requiredSignals: ["dummy_allow_test_signal"],
+            bonusScore: 0,
+            forceAction: .allow  // 修复前会把 adjustedScore 抬升到 mediumThreshold
+        )
+        let scenarioPolicy = ScenarioPolicy(
+            mediumThreshold: 50,  // 较高，便于检测意外抬升
+            highThreshold: 70,
+            criticalThreshold: 90,
+            comboRules: [allowComboRule],
+            enableForceRules: true
+        )
+        let enginePolicy = EnginePolicy(
+            scenarioPolicies: [.default: scenarioPolicy]
+        )
+        let dummySignal = RiskSignal(
+            id: "dummy_allow_test_signal",
+            category: "test",
+            score: 3,
+            evidence: [:]
+        )
+
+        let engine = RiskDetectionEngine(policy: enginePolicy, enableLogging: false)
+        let context = TestFixtures.makeRiskContext()
+        let verdict = engine.evaluate(context: context, extraSignals: [dummySignal])
+
+        // 修复前：adjustedScore = max(rawScore, 50) → 至少 50
+        // 修复后：adjustedScore = max(rawScore, 0) → 不被抬升到 50
+        XCTAssertLessThan(verdict.score, 50,
+            "forceAction=.allow 的组合规则不应将 score 抬升到 mediumThreshold (50)")
+    }
+
+    // MARK: - extractPrimaryReasons 优先展示高 weightHint 信号（Bug fix 验证）
+
+    /// Bug fix: 之前 extractPrimaryReasons 按 signal.score 降序排序，
+    /// 导致状态驱动信号（score=0, weightHint=90）被行为信号（score=12）排到末尾。
+    /// 修复后按 max(score, weightHint) 排序，tampered/hard 信号排在最前。
+    func testExtractPrimaryReasonsPrefersTamperedOverLowScoreSignal() {
+        let tamperedSignal = RiskSignal(
+            id: "rop_chain_detected",
+            category: "anti_tamper",
+            score: 0,
+            evidence: [:],
+            state: .tampered,
+            layer: 2,
+            weightHint: 90
+        )
+        let behaviorSignal = RiskSignal(
+            id: "touch_spread_low",
+            category: "behavior",
+            score: 12,
+            evidence: [:],
+            state: nil,
+            weightHint: 0
+        )
+
+        let engine = RiskDetectionEngine(policy: .default, enableLogging: false)
+        let context = TestFixtures.makeRiskContext()
+        // 故意将行为信号放在 tampered 信号之前，验证排序不依赖输入顺序
+        let verdict = engine.evaluate(
+            context: context,
+            extraSignals: [behaviorSignal, tamperedSignal]
+        )
+
+        let reasons = verdict.primaryReasons
+        let tamperedIdx = reasons.firstIndex(where: { $0.contains("rop_chain_detected") })
+        let behaviorIdx = reasons.firstIndex(where: { $0.contains("touch_spread_low") })
+
+        // tampered 信号 max(0, 90)=90 > 行为信号 max(12, 0)=12 → 应排在前面
+        if let ti = tamperedIdx, let bi = behaviorIdx {
+            XCTAssertLessThan(ti, bi,
+                "tampered 信号 (weightHint=90) 应排在行为信号 (score=12) 之前")
+        } else {
+            XCTAssertNotNil(tamperedIdx,
+                "rop_chain_detected tampered 信号应出现在 primaryReasons 中")
+        }
+    }
 }

@@ -122,10 +122,13 @@ public struct RiskVerdict: Codable, Sendable {
     // MARK: - 辅助方法
 
     /// 提取主要原因
+    ///
+    /// Sort key 使用 `max(score, weightHint)`，而非单纯的 `.score`。
+    /// 状态驱动信号（.tampered/.hard）score=0 而 weightHint 承载实际权重，
+    /// 若仅按 score 排序会将这些高危信号排到末尾，导致审计记录与真实原因脱节。
     private static func extractPrimaryReasons(signals: [RiskSignal], score: Double) -> [String] {
-        // 按分数降序排序，取前3个主要原因
         signals
-            .sorted { $0.score > $1.score }
+            .sorted { max($0.score, $0.weightHint) > max($1.score, $1.weightHint) }
             .prefix(3)
             .map { "\($0.category)_\($0.id)" }
     }
