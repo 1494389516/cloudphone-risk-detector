@@ -255,10 +255,16 @@ extension CPRiskKit {
             }
         }
 
-        // v2a 签名使用 armor material 派生的密钥，验签时需用 baseKey 派生 effectiveKey
+        // v2a 签名使用 armor material 派生的密钥，验签时需用 baseKey 派生 effectiveKey。
+        // 若 armor 被篡改或未初始化，effectiveSigningKeyForV2aValidation 返回 nil，
+        // 此时应以 signingFailed 失败，而不是用 poison material 继续验签（否则只会得到
+        // 误导性的 signatureMismatch，掩盖真实的 armor 篡改原因）。
         let effectiveKey: String
         if envelope.sigVer == "v2a" {
-            effectiveKey = effectiveSigningKeyForV2aValidation(baseKey: signingKey)
+            guard let derived = effectiveSigningKeyForV2aValidation(baseKey: signingKey) else {
+                return .failure(.reportEnvelope(.signingFailed))
+            }
+            effectiveKey = derived
         } else {
             effectiveKey = signingKey
         }
