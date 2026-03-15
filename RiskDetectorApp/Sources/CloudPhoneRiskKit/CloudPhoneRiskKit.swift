@@ -112,6 +112,68 @@ public final class CPRiskKit: NSObject {
         let probes: [ProbeResult]
     }
 
+    private enum ArmorRootKeySource: String {
+        case environment
+        case userDefaults
+        case debugFallback
+        case missing
+        case invalidEnvironment
+        case invalidUserDefaults
+    }
+
+    private enum ArmorRuntimeStatus: String {
+        case inactive
+        case active
+        case unavailable
+        case failed
+    }
+
+    internal struct ArmorRuntimeDebugSnapshot {
+        let status: String
+        let reason: String
+        let initCode: Int32?
+        let trigger: String
+        let rootKeySource: String
+        let debugFallbackUsed: Bool
+        let anchorPresent: Bool
+        let attemptCount: Int
+    }
+
+    private struct ArmorRootKeyResolution {
+        let keyData: Data?
+        let source: ArmorRootKeySource
+        let debugFallbackUsed: Bool
+        let failureReason: String?
+    }
+
+    private struct ArmorRuntimeSnapshot {
+        let status: ArmorRuntimeStatus
+        let reason: String
+        let initCode: Int32?
+        let trigger: String
+        let rootKeySource: ArmorRootKeySource
+        let debugFallbackUsed: Bool
+        let anchorPresent: Bool
+        let attemptCount: Int
+
+        static let inactive = ArmorRuntimeSnapshot(
+            status: .inactive,
+            reason: "not_started",
+            initCode: nil,
+            trigger: "none",
+            rootKeySource: .missing,
+            debugFallbackUsed: false,
+            anchorPresent: false,
+            attemptCount: 0
+        )
+    }
+
+    private static let armorRootKeyEnvironmentKey = "CPRISKKIT_ARMOR_ROOT_KEY_HEX"
+    private static let armorRootKeyDefaultsKey = "com.cloudphone.riskkit.armor.root_key_hex"
+#if DEBUG
+    private static let armorDebugFallbackRootKeyHex = "00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f"
+#endif
+
     private override init() {
         super.init()
         if let endpoint = UserDefaults.standard.string(forKey: Self.remoteConfigEndpointKey) {
@@ -119,11 +181,14 @@ public final class CPRiskKit: NSObject {
         }
     }
 
+    private var armorRuntimeSnapshot = ArmorRuntimeSnapshot.inactive
+
     /// 启动自动采集（全局触摸 + 传感器）。
     /// 建议在 `application(_:didFinishLaunchingWithOptions:)` 里尽早调用。
     @objc public func start() {
         cprisk_deny_attach()
         cprisk_register_exception_handler()
+        _ = ensureArmorRuntimeStarted(trigger: "start")
         DyldImageMonitor.shared.start()
         BuildConfig.configureForRelease()
         stateLock.lock()
@@ -146,6 +211,7 @@ public final class CPRiskKit: NSObject {
 
     @objc public func stop() {
         Logger.log("stop()")
+        resetArmorRuntime()
 #if canImport(UIKit)
         motionSampler.stop()
         touchCapture.stop()
@@ -437,9 +503,10 @@ public final class CPRiskKit: NSObject {
         )
 
         registerProviders(for: config)
-        // Ensure CRiskCore is initialized even if start() was never called (evaluate-only path).
+        // Ensure CRiskCore and armor runtime are initialized even if start() was never called.
         cprisk_deny_attach()
         cprisk_register_exception_handler()
+        let armorRuntimeSnapshot = ensureArmorRuntimeStarted(trigger: "evaluate")
         Self.maybeVerifyExceptionHandler()
 
         let context = buildRiskContext(config: runtimeConfig)
@@ -471,6 +538,9 @@ public final class CPRiskKit: NSObject {
 
         let capabilityRuntime = runCapabilityProbe(remoteConfig: remoteConfig)
         var extraSignals = RiskSignalProviderRegistry.shared.signals(snapshot: snapshot)
+        if let armorRuntimeSignal = Self.armorRuntimeSignal(from: armorRuntimeSnapshot) {
+            extraSignals.append(armorRuntimeSignal)
+        }
         extraSignals.append(capabilityRuntime.score.toSignal())
         extraSignals.append(contentsOf: extraSignalsForGraph)
 
@@ -615,9 +685,9 @@ public final class CPRiskKit: NSObject {
         }
 
         #if DEBUG
-        let signatureVersion = hardening.enableEnvelopeSignatureV2 ? "v2" : "v1"
+        let signatureVersion = hardening.enableEnvelopeSignatureV2 ? "v2a" : "v1"
         #else
-        let signatureVersion = "v2"  // Release 下忽略远程配置，始终强制 v2
+        let signatureVersion = "v2a"
         #endif
         let envelopeConfig = ReportEnvelope.Config(signatureVersion: signatureVersion)
 
@@ -631,11 +701,18 @@ public final class CPRiskKit: NSObject {
             kernelVersion: Sysctl.string("kern.version") ?? ""
         )
 
+        _ = ensureArmorRuntimeStarted(trigger: "build_envelope")
+        let (armorMaterial, _) = Self.armorRuntimeMaterial()
+        let effectiveSigningKey = Self.deriveEffectiveSigningKey(
+            baseKey: signingKey,
+            armorMaterial: armorMaterial
+        )
+
         return try ReportEnvelope.create(
             payloadData: payloadData,
             reportId: report.reportID,
             sessionToken: sessionToken,
-            signingKey: signingKey,
+            signingKey: effectiveSigningKey,
             keyId: effectiveKeyId,
             fieldMapping: mapping,
             attestationKeyId: attestationKeyId,
@@ -845,6 +922,22 @@ public final class CPRiskKit: NSObject {
 
     // MARK: - Internal Helpers
 
+    internal func debugArmorRuntimeSnapshot() -> ArmorRuntimeDebugSnapshot {
+        stateLock.lock()
+        let snapshot = armorRuntimeSnapshot
+        stateLock.unlock()
+        return ArmorRuntimeDebugSnapshot(
+            status: snapshot.status.rawValue,
+            reason: snapshot.reason,
+            initCode: snapshot.initCode,
+            trigger: snapshot.trigger,
+            rootKeySource: snapshot.rootKeySource.rawValue,
+            debugFallbackUsed: snapshot.debugFallbackUsed,
+            anchorPresent: snapshot.anchorPresent,
+            attemptCount: snapshot.attemptCount
+        )
+    }
+
     private func registerProviders(for config: CPRiskConfig) {
         RiskSignalProviderRegistry.shared.register(ExternalServerAggregateProvider.shared)
         RiskSignalProviderRegistry.shared.register(DeviceHardwareProvider.shared)
@@ -887,6 +980,78 @@ public final class CPRiskKit: NSObject {
         )
 
         return CapabilityProbeRuntimeResult(score: detailed.score, probes: detailed.probes)
+    }
+
+    @discardableResult
+    private func ensureArmorRuntimeStarted(trigger: String) -> ArmorRuntimeSnapshot {
+        stateLock.lock()
+        if armorRuntimeSnapshot.status != .inactive {
+            let existing = armorRuntimeSnapshot
+            stateLock.unlock()
+            return existing
+        }
+
+        let attemptCount = armorRuntimeSnapshot.attemptCount + 1
+        let anchorPresent = Self.hasArmorAnchor()
+        let keyResolution = Self.resolveArmorRootKey()
+
+        let snapshot: ArmorRuntimeSnapshot
+        if let failureReason = keyResolution.failureReason {
+            snapshot = ArmorRuntimeSnapshot(
+                status: .unavailable,
+                reason: failureReason,
+                initCode: nil,
+                trigger: trigger,
+                rootKeySource: keyResolution.source,
+                debugFallbackUsed: keyResolution.debugFallbackUsed,
+                anchorPresent: anchorPresent,
+                attemptCount: attemptCount
+            )
+        } else if let keyData = keyResolution.keyData {
+            let initCode = keyData.withUnsafeBytes { rawBuffer -> Int32 in
+                guard let baseAddress = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+                    return -1
+                }
+                return Int32(cprisk_init_protection(baseAddress, keyData.count))
+            }
+            snapshot = Self.makeArmorRuntimeSnapshot(
+                trigger: trigger,
+                initCode: initCode,
+                keySource: keyResolution.source,
+                debugFallbackUsed: keyResolution.debugFallbackUsed,
+                anchorPresent: anchorPresent,
+                attemptCount: attemptCount
+            )
+        } else {
+            snapshot = ArmorRuntimeSnapshot(
+                status: .unavailable,
+                reason: "missing_root_key",
+                initCode: nil,
+                trigger: trigger,
+                rootKeySource: .missing,
+                debugFallbackUsed: false,
+                anchorPresent: anchorPresent,
+                attemptCount: attemptCount
+            )
+        }
+
+        armorRuntimeSnapshot = snapshot
+        stateLock.unlock()
+
+        Self.logArmorRuntimeSnapshot(snapshot)
+        return snapshot
+    }
+
+    private func resetArmorRuntime() {
+        stateLock.lock()
+        let shouldCleanup = armorRuntimeSnapshot.status != .inactive || armorRuntimeSnapshot.attemptCount > 0
+        armorRuntimeSnapshot = .inactive
+        stateLock.unlock()
+
+        if shouldCleanup {
+            cprisk_cleanup_protection()
+            Logger.log("armor_runtime.cleanup")
+        }
     }
 
     private func buildChallengeBindingIfNeeded(
@@ -1424,6 +1589,194 @@ public final class CPRiskKit: NSObject {
         }
     }
 
+    private static func resolveArmorRootKey() -> ArmorRootKeyResolution {
+        if let rawValue = ProcessInfo.processInfo.environment[armorRootKeyEnvironmentKey] {
+            let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                return ArmorRootKeyResolution(
+                    keyData: nil,
+                    source: .invalidEnvironment,
+                    debugFallbackUsed: false,
+                    failureReason: "invalid_root_key_hex"
+                )
+            }
+            guard let keyData = Data(hexString: trimmed), keyData.count == 32 else {
+                return ArmorRootKeyResolution(
+                    keyData: nil,
+                    source: .invalidEnvironment,
+                    debugFallbackUsed: false,
+                    failureReason: "invalid_root_key_hex"
+                )
+            }
+            return ArmorRootKeyResolution(
+                keyData: keyData,
+                source: .environment,
+                debugFallbackUsed: false,
+                failureReason: nil
+            )
+        }
+
+        if let rawValue = UserDefaults.standard.string(forKey: armorRootKeyDefaultsKey) {
+            let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                return ArmorRootKeyResolution(
+                    keyData: nil,
+                    source: .invalidUserDefaults,
+                    debugFallbackUsed: false,
+                    failureReason: "invalid_root_key_hex"
+                )
+            }
+            guard let keyData = Data(hexString: trimmed), keyData.count == 32 else {
+                return ArmorRootKeyResolution(
+                    keyData: nil,
+                    source: .invalidUserDefaults,
+                    debugFallbackUsed: false,
+                    failureReason: "invalid_root_key_hex"
+                )
+            }
+            return ArmorRootKeyResolution(
+                keyData: keyData,
+                source: .userDefaults,
+                debugFallbackUsed: false,
+                failureReason: nil
+            )
+        }
+
+#if DEBUG
+        return ArmorRootKeyResolution(
+            keyData: Data(hexString: armorDebugFallbackRootKeyHex),
+            source: .debugFallback,
+            debugFallbackUsed: true,
+            failureReason: nil
+        )
+#else
+        return ArmorRootKeyResolution(
+            keyData: nil,
+            source: .missing,
+            debugFallbackUsed: false,
+            failureReason: "missing_root_key"
+        )
+#endif
+    }
+
+    private static func hasArmorAnchor() -> Bool {
+        var anchor = [UInt8](repeating: 0, count: 32)
+        return cprisk_read_full_anchor_hash(&anchor) == 0
+    }
+
+    private static func makeArmorRuntimeSnapshot(
+        trigger: String,
+        initCode: Int32,
+        keySource: ArmorRootKeySource,
+        debugFallbackUsed: Bool,
+        anchorPresent: Bool,
+        attemptCount: Int
+    ) -> ArmorRuntimeSnapshot {
+        let status: ArmorRuntimeStatus
+        let reason: String
+
+        switch initCode {
+        case 0:
+            status = .active
+            reason = "initialized"
+        case -1:
+            status = .unavailable
+            reason = "invalid_root_key"
+        case -2:
+            status = .failed
+            reason = "string_decryptor_init_failed"
+        case -3:
+            status = .failed
+            reason = "bootstrap_decrypt_failed"
+        case -4:
+            status = .failed
+            reason = "integrity_hash_failed"
+        case -5:
+            status = anchorPresent ? .failed : .unavailable
+            reason = anchorPresent ? "full_anchor_read_failed" : "armor_payload_missing"
+        case -6:
+            status = .failed
+            reason = "data_loader_init_failed"
+        case -7:
+            status = .failed
+            reason = "protected_data_load_failed"
+        default:
+            status = .failed
+            reason = "init_failed_\(initCode)"
+        }
+
+        return ArmorRuntimeSnapshot(
+            status: status,
+            reason: reason,
+            initCode: initCode,
+            trigger: trigger,
+            rootKeySource: keySource,
+            debugFallbackUsed: debugFallbackUsed,
+            anchorPresent: anchorPresent,
+            attemptCount: attemptCount
+        )
+    }
+
+    private static func logArmorRuntimeSnapshot(_ snapshot: ArmorRuntimeSnapshot) {
+        let message = "armor_runtime status=\(snapshot.status.rawValue) reason=\(snapshot.reason) " +
+            "trigger=\(snapshot.trigger) source=\(snapshot.rootKeySource.rawValue) " +
+            "anchor=\(snapshot.anchorPresent ? "present" : "missing") attempts=\(snapshot.attemptCount)" +
+            (snapshot.initCode.map { " initCode=\($0)" } ?? "") +
+            (snapshot.debugFallbackUsed ? " debugFallback=1" : "")
+
+        Logger.log(message)
+        if snapshot.status != .active && snapshot.status != .inactive {
+            NSLog("[CloudPhoneRiskKit] %@", message)
+        }
+    }
+
+    private static func armorRuntimeSignal(from snapshot: ArmorRuntimeSnapshot) -> RiskSignal? {
+        guard snapshot.status != .active && snapshot.status != .inactive else {
+            return nil
+        }
+
+        let signalID: String
+        let score: Double
+        let state: RiskSignalState
+
+        switch snapshot.status {
+        case .unavailable:
+            signalID = "armor_runtime_unavailable"
+            score = snapshot.anchorPresent ? 40 : 18
+            state = .unavailable
+        case .failed:
+            signalID = "armor_runtime_init_failed"
+            score = 72
+            state = .tampered
+        case .inactive, .active:
+            return nil
+        }
+
+        var evidence: [String: String] = [
+            "reason": snapshot.reason,
+            "trigger": snapshot.trigger,
+            "root_key_source": snapshot.rootKeySource.rawValue,
+            "anchor_present": snapshot.anchorPresent ? "1" : "0",
+            "attempt_count": "\(snapshot.attemptCount)"
+        ]
+        if let initCode = snapshot.initCode {
+            evidence["init_code"] = "\(initCode)"
+        }
+        if snapshot.debugFallbackUsed {
+            evidence["debug_fallback"] = "1"
+        }
+
+        return RiskSignal(
+            id: signalID,
+            category: "anti_tamper",
+            score: score,
+            evidence: evidence,
+            state: state,
+            layer: 2,
+            weightHint: score
+        )
+    }
+
     private static func normalizedPinnedCertificateHashes(from hashes: [String]) -> Set<String> {
         Set(
             hashes
@@ -1451,6 +1804,26 @@ public final class CPRiskKit: NSObject {
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(config) else { return nil }
         return SHA256.hash(data: data).compactMap { String(format: "%02x", $0) }.joined()
+    }
+
+    // MARK: - Armor Runtime Material for Envelope Signing
+
+    private static func armorRuntimeMaterial() -> (material: Data, authentic: Bool) {
+        var buffer = [UInt8](repeating: 0, count: 32)
+        let rc = cprisk_get_runtime_material(&buffer)
+        return (Data(buffer), rc == 0)
+    }
+
+    /// Derive an effective signing key by HMAC(armorMaterial, baseKey).
+    /// If armor was tampered/skipped, armorMaterial is poisoned -> effectiveKey is wrong
+    /// -> server-side HMAC verification fails.
+    private static func deriveEffectiveSigningKey(baseKey: String, armorMaterial: Data) -> String {
+        guard let keyData = baseKey.data(using: .utf8) else { return baseKey }
+        let derived = HMAC<SHA256>.authenticationCode(
+            for: keyData,
+            using: SymmetricKey(data: armorMaterial)
+        )
+        return Data(derived).map { String(format: "%02x", $0) }.joined()
     }
 }
 

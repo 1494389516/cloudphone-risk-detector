@@ -2,9 +2,12 @@
 #define CRiskCore_h
 
 #include <stddef.h>
+#include <stdint.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#include "cprisk_armor_abi.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -94,6 +97,69 @@ void cprisk_register_exception_handler(void);
 /// Verify current EXC_BREAKPOINT handler is still ours; re-register if hijacked.
 /// Call periodically (e.g. in evaluate() or a background check).
 void cprisk_verify_exception_handler(void);
+
+/* ── cprisk-armor Runtime Support (ABI v1) ─────────────────────────── */
+
+/// Initialize the string decryptor with a 32-byte key.
+/// Returns 0 on success, -1 on failure.
+int cprisk_init_string_decryptor(const uint8_t *key, size_t key_len);
+
+/// Decrypt the string identified by string_id from
+/// the packed string table section into buffer.
+/// Returns decrypted byte count, -1 on failure.
+/// Side-effect: updates the string integrity accumulator.
+int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size);
+
+/// Return the current string integrity accumulator value.
+uint64_t cprisk_get_string_integrity_accumulator(void);
+
+/// Securely wipe decryption key and accumulator state.
+void cprisk_cleanup_string_decryptor(void);
+
+/// Initialize the data segment loader with a 32-byte key.
+/// Returns 0 on success, -1 on failure.
+int cprisk_init_data_loader(const uint8_t *key, size_t key_len);
+
+/// Decrypt all protected __DATA sections described by the ABI-v1 loader
+/// descriptor. The runtime validates descriptor bounds, target section
+/// ownership, and basic writable permissions before mutating any bytes.
+/// On failure it rolls back previously decrypted entries and returns -1.
+/// Returns the number of sections decrypted, -1 on failure.
+int cprisk_load_protected_data(void);
+
+/// Return the current data integrity accumulator value.
+uint64_t cprisk_get_data_integrity_accumulator(void);
+
+/// Securely wipe decrypted data sections and loader state.
+void cprisk_unload_protected_data(void);
+
+/// Compute a three-path integrity hash of __TEXT.__text.
+/// Path C reconstructs the 32-byte anchor digest from the four split anchor
+/// sections. Writes 32 bytes to out_hash. Returns 0 on success, -1 on failure.
+int cprisk_compute_integrity_hash(uint8_t *out_hash);
+
+/// Read the full obfuscated anchor hash from the masked full-hash section.
+/// Section layout is `{ mask[32], masked_hash[32] }` where
+/// `masked_hash[i] = full_hash[i] ^ mask[i]`.
+/// Writes 32 bytes to out_hash. Returns 0 on success, -1 on failure.
+int cprisk_read_full_anchor_hash(uint8_t *out_hash);
+
+/// Master initialization: pass1 bootstrap string → pass4 integrity/anchor
+/// material → pass3 loader key derivation → decrypt protected data.
+/// root_key is optional entropy: NULL/0-length is allowed and treated as
+/// all-zero padding; longer values are truncated to 32 bytes.
+/// Returns 0 on success, negative on failure.
+int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len);
+
+/// Cleanup all armor runtime state (keys, accumulators, decrypted data).
+void cprisk_cleanup_protection(void);
+
+/// Retrieve the 32-byte runtime material derived from the full armor init chain.
+/// If armor runtime is not initialized or was tampered, out_material will be
+/// filled with a deterministic poison value derived from the init state.
+/// Always writes exactly 32 bytes to out_material. Returns 0 if material is
+/// authentic (init succeeded), -1 if poisoned (init failed/skipped).
+int cprisk_get_runtime_material(uint8_t out_material[32]);
 
 #ifdef __cplusplus
 }

@@ -236,7 +236,7 @@ extension CPRiskKit {
     public func validateSecureReportEnvelope(
         _ envelope: ReportEnvelope,
         signingKey: String,
-        allowedSignatureVersions: Set<String> = ["v2"],
+        allowedSignatureVersions: Set<String> = ["v2", "v2a"],
         enableReplayProtection: Bool = true,
         validateAttestationConsistency: Bool = true,
         nonceStore: NonceReplayProtecting? = nil,
@@ -269,7 +269,7 @@ extension CPRiskKit {
     public func validateSecureReportEnvelope(
         _ envelope: ReportEnvelope,
         keyResolver: (String) -> String?,
-        allowedSignatureVersions: Set<String> = ["v2"],
+        allowedSignatureVersions: Set<String> = ["v2", "v2a"],
         enableReplayProtection: Bool = true,
         validateAttestationConsistency: Bool = true,
         nonceStore: NonceReplayProtecting? = nil,
@@ -294,7 +294,7 @@ extension CPRiskKit {
     public func validateSecureReportEnvelopeJSON(
         _ json: String,
         signingKey: String,
-        allowedSignatureVersions: Set<String> = ["v2"],
+        allowedSignatureVersions: Set<String> = ["v2", "v2a"],
         enableReplayProtection: Bool = true,
         validateAttestationConsistency: Bool = true,
         nonceStore: NonceReplayProtecting? = nil,

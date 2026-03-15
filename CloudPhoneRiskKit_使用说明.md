@@ -1,6 +1,6 @@
-# CloudPhoneRiskKit 5.2 使用与构建说明
+# CloudPhoneRiskKit 6.0 使用与构建说明
 
-iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。
+iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。6.0 新增自研壳（cprisk-armor）二进制保护与端云签名绑定。
 
 ---
 
@@ -37,7 +37,29 @@ open RiskDetectorApp.xcodeproj
 
 用 Xcode 打开 `RiskDetectorApp/Package.swift`，Xcode 会自动识别为 SwiftPM 工程并解析依赖。
 
-### 2.4 真机 vs 模拟器
+### 2.4 壳工具链构建 (cprisk-armor)
+
+cprisk-armor 是编译后壳保护工具链，对 SDK 的 Mach-O 二进制执行字符串加密、数据段加密与完整性锚点注入。
+
+```bash
+cd cprisk-armor
+swift build -c release
+
+# 对 SDK framework 执行加固
+.build/release/cprisk-armor \
+  --input path/to/CloudPhoneRiskKit.framework/CloudPhoneRiskKit \
+  --output path/to/CloudPhoneRiskKit.framework/CloudPhoneRiskKit
+```
+
+**Pass 说明**：
+
+| Pass | 功能 | 运行时消费方 |
+|------|------|-------------|
+| Pass 1 | 字符串加密，写入伪装 Section | `cprisk_string_decrypt.c` |
+| Pass 3 | 数据段加密 | `cprisk_data_loader.c` |
+| Pass 4 | 完整性锚点注入 | `cprisk_integrity.c` |
+
+### 2.5 真机 vs 模拟器
 
 **推荐真机调试。** 模拟器下以下检测器返回 `unavailable`：
 - DRM 能力检测（FairPlay）
@@ -163,6 +185,36 @@ let envelope = try await CPRiskKit.shared.buildSecureReportEnvelopeWithAttestati
 
 - 需在 Xcode → Signing & Capabilities 中开启 **App Attest**。
 - `requireAttestation: false` 时允许降级，调用方应检查 `envelope.hasHardwareAttestation`。
+
+---
+
+## 8.1 壳保护与 v2a 签名 (6.0 新增)
+
+6.0 的自研壳在运行时由 CRiskCore 自动完成解密与完整性校验，无需调用方额外操作。SDK 在 `start()` / `evaluate()` 时自动初始化 armor runtime。
+
+**ReportEnvelope v2a 签名**：壳完整性 material 会自动混入 `buildSecureReportEnvelope` 的 HMAC 签名密钥派生链：
+
+```swift
+let envelope = CPRiskKit.shared.buildSecureReportEnvelope(
+    report: report,
+    sessionToken: sessionToken,
+    signingKey: signingKey
+)
+// envelope.signatureVersion == "v2a" 表示壳完整性已绑定签名
+// 篡改壳 → material 毒化 → 签名失效 → 服务端拒绝
+```
+
+**服务端适配**：
+
+- 验签时需同时接受 `v2` (无壳) 和 `v2a` (壳绑定) 两种签名版本
+- `v2a` 签名的 HMAC 密钥 = `HMAC-SHA256(baseKey, armorMaterial)`
+- 若设备壳未篡改，armor material 为正确的 32 字节；若篡改，material 为固定 poison 值，签名必然不匹配
+
+**壳初始化失败处理**：
+
+- 壳初始化失败时 SDK 不会 crash，而是注入 `armor_init_failure` 风险信号
+- 签名仍使用 poison material，服务端验签会失败
+- 可通过 `RiskSignal` 中的 `armor_init_failure` 信号及其 `reason` 字段排查
 
 ---
 
@@ -314,6 +366,8 @@ CPRiskKit.shared.setTextSegmentReferenceResolver(SignedReferenceResolver())
 2. **SchemeDetector**：需在宿主 App 的 `Info.plist` 添加 `LSApplicationQueriesSchemes`（如 `cydia`、`sileo`、`filza` 等），否则 `canOpenURL` 始终返回 `false`。
 3. **弱信号原则**：SDK 将不可用 / 无法获取的信号视为弱信号，不会因系统限制直接判定高风险。**强结论建议放在服务端做聚合判断**（IP 聚合、ASN、设备图谱、长连接流量模式等）。
 4. **日志开关**：`CPRiskKit.setLogEnabled(true)` 仅在 `DEBUG` 构建下生效。
+5. **壳工具链**：cprisk-armor 需在 `swift build` 之后对产物执行加固；壳运行时由 CRiskCore 自动管理，调用方无需手动介入。
+6. **v2a 签名兼容**：服务端需同时支持 `v2`（无壳）和 `v2a`（壳绑定）签名验证；未加壳的 SDK 仍输出 `v2`。
 
 ---
 
