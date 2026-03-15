@@ -167,7 +167,7 @@ final class RiskSignalProviderRegistry {
             out.append(RiskSignal(
                 id: "provider_tamper_attempt",
                 category: "anti_tamper",
-                score: 0,
+                score: 85,
                 evidence: ["attempts": "\(unregisterAttempts)"],
                 state: .tampered,
                 layer: 2,
@@ -180,7 +180,7 @@ final class RiskSignalProviderRegistry {
             out.append(RiskSignal(
                 id: "provider_instance_replaced",
                 category: "anti_tamper",
-                score: 0,
+                score: 85,
                 evidence: ["providers": ids],
                 state: .tampered,
                 layer: 2,

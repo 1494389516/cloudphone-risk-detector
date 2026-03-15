@@ -143,6 +143,7 @@ int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) 
         return -1;
     if ((size_t)ent->data_offset > sec_sz ||
         (size_t)dlen > sec_sz ||
+        data_base > sec_sz ||
         data_end > sec_sz - data_base)
         return -1;
 
