@@ -46,6 +46,10 @@ struct SettingsView: View {
                         resetButton
                             .opacity(appearAnimation ? 1 : 0)
 
+                        // 高级配置
+                        advancedConfigSection
+                            .opacity(appearAnimation ? 1 : 0)
+
                         // 关于
                         aboutSection
                             .opacity(appearAnimation ? 1 : 0)
@@ -303,6 +307,41 @@ struct SettingsView: View {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color.red.opacity(0.1))
             )
+        }
+    }
+
+    // MARK: - 高级配置
+    private var advancedConfigSection: some View {
+        SettingsSection(
+            title: "高级",
+            icon: "slider.horizontal.2.square.on.square",
+            iconColor: .indigo
+        ) {
+            NavigationLink {
+                ConfigurationView()
+                    .environmentObject(settingsVM)
+            } label: {
+                HStack(spacing: 14) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.indigo.opacity(0.15))
+                            .frame(width: 36, height: 36)
+
+                        Image(systemName: "gearshape.2.fill")
+                            .font(.system(size: 16))
+                            .foregroundColor(.indigo)
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("配置管理")
+                            .font(.system(size: 15))
+                        Text("预设场景、远程配置、导出")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
         }
     }
 

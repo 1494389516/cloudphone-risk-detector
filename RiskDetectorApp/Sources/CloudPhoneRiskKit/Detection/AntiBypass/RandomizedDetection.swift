@@ -90,19 +90,8 @@ struct RandomizedDetection: Detector {
     private func quickParentCheck() -> Bool {
         let ppid = cprisk_getppid_direct()
         guard ppid > 1 else { return false }
-        guard let parent = parentProcessPath(ppid)?.lowercased() else { return false }
+        guard let parent = processPath(for: ppid)?.lowercased() else { return false }
         return parent.contains("frida") || parent.contains("lldb")
-    }
-
-    private func parentProcessPath(_ pid: pid_t) -> String? {
-#if os(macOS)
-        var pathBuffer = [CChar](repeating: 0, count: Int(PATH_MAX))
-        let result = proc_pidpath(pid, &pathBuffer, UInt32(PATH_MAX))
-        guard result > 0 else { return nil }
-        return String(cString: pathBuffer)
-#else
-        return nil
-#endif
     }
 }
 

@@ -7,6 +7,7 @@ import CloudPhoneRiskKit
 
 struct HistoryView: View {
     @EnvironmentObject var historyVM: HistoryViewModel
+    @EnvironmentObject var detectionVM: DetectionViewModel
     @State private var showDeleteAllAlert = false
     @State private var appearAnimation = false
 
@@ -29,6 +30,16 @@ struct HistoryView: View {
             }
             .navigationTitle("检测历史")
             .navigationBarItems(trailing: HStack(spacing: 16) {
+                NavigationLink {
+                    TemporalAnalysisView()
+                        .environmentObject(detectionVM)
+                } label: {
+                    Image(systemName: "chart.line.uptrend.xyaxis")
+                        .font(.system(size: 16))
+                        .foregroundColor(.blue)
+                }
+                .accessibilityLabel("时序分析")
+
                 if !historyVM.items.isEmpty {
                     Button(action: { showDeleteAllAlert = true }) {
                         Image(systemName: "trash")
@@ -637,4 +648,5 @@ struct SignalBadge: View {
 #Preview {
     HistoryView()
         .environmentObject(HistoryViewModel())
+        .environmentObject(DetectionViewModel())
 }

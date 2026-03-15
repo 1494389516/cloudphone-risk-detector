@@ -40,6 +40,13 @@ import UIKit
 public final class CPRiskKit: NSObject {
     @objc public static let shared = CPRiskKit()
 
+    /// 图风控反馈应用后发送的通知名。业务侧可观察此通知并调用 evaluate() 重新评估风险。
+    /// 用法：`NotificationCenter.default.addObserver(..., name: CPRiskKit.graphRiskFeedbackDidApplyNotification, ...)`
+    public static let graphRiskFeedbackDidApplyNotification = ExternalServerAggregateProvider.graphRiskFeedbackDidApplyNotification
+
+    /// 图风控反馈应用后是否自动触发一次异步 re-evaluate。默认 true；设为 false 时仅发送通知，由业务侧自行调用 evaluate()。
+    public static var autoReEvaluateOnGraphFeedback: Bool = true
+
     public enum SecureUploadError: Error, LocalizedError {
         case payloadFieldMappingRequired
         case payloadFieldMappingExpired(version: String)
@@ -81,6 +88,7 @@ public final class CPRiskKit: NSObject {
     private var boundAccountId: String?
     private var boundSceneTag: String?
     private var currentSessionId: String?
+    private var graphFeedbackObserver: Any?
 
     private static let remoteConfigEndpointKey = "com.cloudphone.riskkit.remote.endpoint"
     private static let remoteTrustLock = NSLock()
@@ -202,6 +210,7 @@ public final class CPRiskKit: NSObject {
         }
         registerProviders(for: .default)
         RiskSignalProviderRegistry.shared.seal()
+        installGraphFeedbackReEvaluateObserver()
 #if canImport(UIKit)
         touchCapture.start()
         motionSampler.start()
@@ -211,11 +220,31 @@ public final class CPRiskKit: NSObject {
 
     @objc public func stop() {
         Logger.log("stop()")
+        removeGraphFeedbackReEvaluateObserver()
         resetArmorRuntime()
 #if canImport(UIKit)
         motionSampler.stop()
         touchCapture.stop()
 #endif
+    }
+
+    private func installGraphFeedbackReEvaluateObserver() {
+        removeGraphFeedbackReEvaluateObserver()
+        guard Self.autoReEvaluateOnGraphFeedback else { return }
+        graphFeedbackObserver = NotificationCenter.default.addObserver(
+            forName: Self.graphRiskFeedbackDidApplyNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.evaluateAsync { _ in }
+        }
+    }
+
+    private func removeGraphFeedbackReEvaluateObserver() {
+        if let obs = graphFeedbackObserver {
+            NotificationCenter.default.removeObserver(obs)
+            graphFeedbackObserver = nil
+        }
     }
 
     @objc public static func setLogEnabled(_ enabled: Bool) {
@@ -296,7 +325,7 @@ public final class CPRiskKit: NSObject {
     }
 
     /// 应用图风控反馈：服务端返回图计算结果后调用，注入到 ExternalServerAggregateProvider。
-    /// 注入后可增强本地评分（占位：可选触发 re-evaluate 或调整阈值）。
+    /// 注入后会发送 `graphRiskFeedbackDidApplyNotification`，业务侧可观察该通知并调用 evaluate() 重新评估风险。
     /// - Parameter feedback: 图风控反馈（communityId、communityRiskDensity、hwProfileDegree 等）
     public static func applyGraphRiskFeedback(_ feedback: GraphRiskFeedback) {
         ExternalServerAggregateProvider.shared.applyGraphRiskFeedback(feedback)
@@ -507,6 +536,10 @@ public final class CPRiskKit: NSObject {
         cprisk_deny_attach()
         cprisk_register_exception_handler()
         let armorRuntimeSnapshot = ensureArmorRuntimeStarted(trigger: "evaluate")
+        // Recheck integrity when armor runtime is active; on tampering, material is poisoned.
+        if armorRuntimeSnapshot.status == .active {
+            _ = cprisk_recheck_integrity()
+        }
         Self.maybeVerifyExceptionHandler()
 
         let context = buildRiskContext(config: runtimeConfig)
@@ -540,6 +573,9 @@ public final class CPRiskKit: NSObject {
         var extraSignals = RiskSignalProviderRegistry.shared.signals(snapshot: snapshot)
         if let armorRuntimeSignal = Self.armorRuntimeSignal(from: armorRuntimeSnapshot) {
             extraSignals.append(armorRuntimeSignal)
+        }
+        if cprisk_is_integrity_poisoned() != 0 {
+            extraSignals.append(Self.integrityRecheckPoisonedSignal())
         }
         extraSignals.append(capabilityRuntime.score.toSignal())
         extraSignals.append(contentsOf: extraSignalsForGraph)
@@ -1749,6 +1785,20 @@ public final class CPRiskKit: NSObject {
             state: state,
             layer: 2,
             weightHint: score
+        )
+    }
+
+    /// Signal emitted when cprisk_recheck_integrity() detected runtime tampering.
+    /// Material is poisoned; envelope signing will use wrong key → server verification fails.
+    private static func integrityRecheckPoisonedSignal() -> RiskSignal {
+        RiskSignal(
+            id: "integrity_runtime_tampered",
+            category: "integrity",
+            score: 85,
+            evidence: ["reason": "recheck_hash_mismatch"],
+            state: .tampered,
+            layer: 2,
+            weightHint: 85
         )
     }
 

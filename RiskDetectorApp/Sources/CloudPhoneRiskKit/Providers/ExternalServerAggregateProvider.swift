@@ -8,6 +8,9 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
     static let shared = ExternalServerAggregateProvider()
     private init() {}
 
+    /// 图风控反馈应用后发送，业务侧可观察此通知并调用 evaluate() 重新评估风险。
+    public static let graphRiskFeedbackDidApplyNotification = Notification.Name("CloudPhoneRiskKit.graphRiskFeedbackDidApply")
+
     let id = "server_aggregate"
 
     private let lock = NSLock()
@@ -61,7 +64,8 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
     }
 
     /// 应用图风控反馈：服务端返回图计算结果后注入，用于增强本地评分。
-    /// 注入后可触发 re-evaluate 或调整阈值（占位，当前仅更新 graphFeatures）。
+    /// 注入后更新 graphFeatures，并发送 `graphRiskFeedbackDidApply` 通知，供业务侧触发 re-evaluate。
+    /// 业务侧可观察该通知，在收到后调用 `CPRiskKit.shared.evaluate(...)` 重新评估风险。
     /// - Parameter feedback: 图风控反馈（communityId、communityRiskDensity 等）
     func applyGraphRiskFeedback(_ feedback: GraphRiskFeedback) {
         setGraphFeatures(
@@ -72,7 +76,10 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
             isInDenseSubgraph: feedback.isInDenseSubgraph,
             riskTags: feedback.riskTags
         )
-        // 占位：可选触发 re-evaluate 或调整阈值
+        NotificationCenter.default.post(
+            name: Self.graphRiskFeedbackDidApplyNotification,
+            object: self
+        )
     }
 
     func serverSignals(snapshot: RiskSnapshot) -> ServerSignals? {

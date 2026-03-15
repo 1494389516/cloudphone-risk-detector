@@ -62,19 +62,8 @@ struct DebuggerDetector: Detector {
     }
 
     private func hasDebuggerParent() -> Bool {
-        guard let name = parentProcessPath(cprisk_getppid_direct()) else { return false }
+        guard let name = processPath(for: cprisk_getppid_direct()) else { return false }
         return firstDebuggerParentToken(in: name) != nil
-    }
-
-    private func parentProcessPath(_ pid: pid_t) -> String? {
-#if os(macOS)
-        var pathBuffer = [CChar](repeating: 0, count: Int(PATH_MAX))
-        let result = proc_pidpath(pid, &pathBuffer, UInt32(PATH_MAX))
-        guard result > 0 else { return nil }
-        return String(cString: pathBuffer)
-#else
-        return nil
-#endif
     }
 
     private func hasDebuggerEnv() -> Bool {

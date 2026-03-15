@@ -6,7 +6,10 @@ import CloudPhoneRiskKit
 #endif
 
 /// 配置管理界面
-/// 
+///
+/// **主流程接入**：已接入主流程。入口：设置 Tab → 高级 → 配置管理（NavigationLink）。
+/// 决策：保留在主流程中，作为高级配置的次级页面。
+///
 /// 功能：
 /// 1. 检测开关配置
 /// 2. 阈值设置
@@ -362,11 +365,11 @@ extension SettingsViewModel {
         get {
             // 根据当前配置判断预设
             let config = currentConfig()
-            if config.threshold == 55 && config.jailbreak.threshold == 45 {
+            if config.threshold == 55 && config.jailbreakThreshold == 45 {
                 return .strict
-            } else if config.threshold == 70 && config.jailbreak.threshold == 60 {
+            } else if config.threshold == 70 && config.jailbreakThreshold == 60 {
                 return .relaxed
-            } else if config.threshold == 60 && config.jailbreak.threshold == 50 {
+            } else if config.threshold == 60 && config.jailbreakThreshold == 50 {
                 return .default
             }
             return .custom

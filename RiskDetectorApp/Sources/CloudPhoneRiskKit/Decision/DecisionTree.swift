@@ -88,9 +88,57 @@ public enum ConditionExpression: Codable, Sendable {
             return context.riskContext.network.isVPNActive
         case .isProxy:
             return context.riskContext.network.proxyEnabled
-        case .custom:
-            return false
+        case .custom(let id):
+            return ConditionExpression.customEvaluatorRegistry.evaluate(id: id, context: context)
         }
+    }
+}
+
+// MARK: - Custom Condition Evaluator Registry
+
+extension ConditionExpression {
+    /// 注册自定义条件求值器。`.custom(id)` 在 evaluate 时会调用已注册的 evaluator。
+    /// 若未注册或 evaluator 返回 false，则 `.custom(id)` 视为 false。
+    ///
+    /// 用法：
+    /// ```swift
+    /// ConditionExpression.registerCustomEvaluator(id: "my_check") { ctx in
+    ///     ctx.score > 80 && ctx.hasSignal("vpn_active")
+    /// }
+    /// ```
+    public static func registerCustomEvaluator(id: String, evaluator: @escaping (EvaluationContext) -> Bool) {
+        customEvaluatorRegistry.register(id: id, evaluator: evaluator)
+    }
+
+    /// 移除已注册的自定义求值器。
+    public static func unregisterCustomEvaluator(id: String) {
+        customEvaluatorRegistry.unregister(id: id)
+    }
+
+    fileprivate static let customEvaluatorRegistry = CustomEvaluatorRegistry()
+}
+
+private final class CustomEvaluatorRegistry: @unchecked Sendable {
+    private let lock = NSLock()
+    private var evaluators: [String: (EvaluationContext) -> Bool] = [:]
+
+    func register(id: String, evaluator: @escaping (EvaluationContext) -> Bool) {
+        lock.lock()
+        evaluators[id] = evaluator
+        lock.unlock()
+    }
+
+    func unregister(id: String) {
+        lock.lock()
+        evaluators.removeValue(forKey: id)
+        lock.unlock()
+    }
+
+    func evaluate(id: String, context: EvaluationContext) -> Bool {
+        lock.lock()
+        let evaluator = evaluators[id]
+        lock.unlock()
+        return evaluator?(context) ?? false
     }
 }
 

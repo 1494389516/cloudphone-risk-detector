@@ -24,6 +24,11 @@ void cprisk_deny_attach(void);
 /// it receives the raw BSD errno produced by the syscall path.
 int cprisk_deny_attach_status(int *error_out);
 
+/// Check if the current process is being traced (debugger attached).
+/// Uses sysctl KERN_PROC_PID to read P_TRACED from kinfo_proc.
+/// Returns 1 if traced, 0 if not traced or on query failure/simulator.
+int cprisk_is_being_traced(void);
+
 /// Invoke sysctlbyname via direct BSD syscall on arm64 Apple targets.
 /// Returns 0 on success, -1 on error. When error_out is non-null, it receives
 /// the raw BSD errno from the direct syscall path (or errno on fallback builds).
@@ -160,8 +165,9 @@ void cprisk_cleanup_protection(void);
 /// If armor runtime is not initialized or was tampered, out_material will be
 /// filled with a per-execution random poison value (generated via arc4random_buf
 /// on first use; never a public constant).
-/// Always writes exactly 32 bytes to out_material. Returns 0 if material is
-/// authentic (init succeeded), -1 if poisoned (init failed/skipped).
+/// Always writes exactly 32 bytes to out_material. Returns 0 on both success
+/// and poison paths (constant-time; attackers cannot distinguish via return value).
+/// Poison path still fills out_material with poisoned data, so signature will fail.
 int cprisk_get_runtime_material(uint8_t out_material[32]);
 
 /* ── Anti-Dump Memory Protection ───────────────────────────────────── */

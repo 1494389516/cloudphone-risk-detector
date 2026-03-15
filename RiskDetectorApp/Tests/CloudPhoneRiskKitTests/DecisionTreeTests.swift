@@ -90,9 +90,25 @@ final class DecisionTreeTests: XCTestCase {
         XCTAssertTrue(cond.evaluate(context: makeEvalContext(score: 0, signals: signals)))
     }
 
-    func testCustomConditionAlwaysFalse() {
-        let cond = ConditionExpression.custom("anything")
+    func testCustomConditionUnregisteredReturnsFalse() {
+        ConditionExpression.unregisterCustomEvaluator(id: "unregistered_id")
+        let cond = ConditionExpression.custom("unregistered_id")
         XCTAssertFalse(cond.evaluate(context: makeEvalContext(score: 100)))
+    }
+
+    func testCustomConditionWithRegisteredEvaluator() {
+        let id = "high_score_and_vpn"
+        ConditionExpression.registerCustomEvaluator(id: id) { ctx in
+            ctx.score >= 80 && ctx.hasSignal("vpn_active")
+        }
+        defer { ConditionExpression.unregisterCustomEvaluator(id: id) }
+
+        let cond = ConditionExpression.custom(id)
+        let vpnSignal = RiskSignal(id: "vpn_active", category: "network", score: 10, evidence: [:])
+
+        XCTAssertFalse(cond.evaluate(context: makeEvalContext(score: 50, signals: [vpnSignal])))
+        XCTAssertFalse(cond.evaluate(context: makeEvalContext(score: 90, signals: [])))
+        XCTAssertTrue(cond.evaluate(context: makeEvalContext(score: 90, signals: [vpnSignal])))
     }
 
     // MARK: - ActionNode

@@ -440,23 +440,21 @@ int cprisk_get_runtime_material(uint8_t out_material[32]) {
     if (!out_material)
         return -1;
 
-    if (s_runtime_material_ready) {
-        memcpy(out_material, s_runtime_material, CPRISK_ARMOR_HASH_SIZE);
-        return 0;
+    /*
+     * Poison path when integrity recheck detected tampering: return random material
+     * so HMAC verification fails server-side. Same path used when init never ran.
+     */
+    if (s_integrity_poisoned || !s_runtime_material_ready) {
+        if (!s_poison_material_ready) {
+            arc4random_buf(s_poison_material, CPRISK_ARMOR_HASH_SIZE);
+            s_poison_material_ready = 1;
+        }
+        memcpy(out_material, s_poison_material, CPRISK_ARMOR_HASH_SIZE);
+        return 0;  /* same as success to prevent timing/oracle distinction */
     }
 
-    /*
-     * Poison path: per-execution random 32-byte value, generated once on first
-     * use via arc4random_buf.  Using a public constant here would let an attacker
-     * pre-compute HMAC(key=constant, msg=baseKey) after forcing cleanup, so we
-     * keep this value secret and unpredictable per process run.
-     */
-    if (!s_poison_material_ready) {
-        arc4random_buf(s_poison_material, CPRISK_ARMOR_HASH_SIZE);
-        s_poison_material_ready = 1;
-    }
-    memcpy(out_material, s_poison_material, CPRISK_ARMOR_HASH_SIZE);
-    return -1;
+    memcpy(out_material, s_runtime_material, CPRISK_ARMOR_HASH_SIZE);
+    return 0;
 }
 
 int cprisk_recheck_integrity(void) {

@@ -5,13 +5,22 @@ import CloudPhoneRiskAppCore
 import CloudPhoneRiskKit
 #endif
 
-/// 决策结果展示视图
-/// 
+/// 决策结果展示视图（已弃用 / 备用）
+///
+/// **主流程接入**：未接入主流程。主流程使用 `ResultsView` 展示检测结果（DashboardView → sheet）。
+///
+/// **决策记录**：本视图为早期设计，与 `ResultsView` 功能重叠。保留为备用/参考实现，
+/// 不删除功能。若需切换回此视图，可在 `DashboardView` 的 `.sheet(isPresented: $detectionVM.showResults)`
+/// 中将 `ResultsView(dto:)` 替换为 `DecisionResultsView(dto:)`。
+///
 /// 功能：
 /// 1. 显示风险评分和等级
 /// 2. 展示各维度信号详情
 /// 3. 支持规则溯源
 /// 4. 提供建议操作
+///
+/// - SeeAlso: `ResultsView` - 当前主流程使用的检测结果展示视图
+@available(iOS 15.0, deprecated, message: "主流程已改用 ResultsView，本视图保留作备用")
 struct DecisionResultsView: View {
     let dto: RiskReportDTO
     @EnvironmentObject var settingsVM: SettingsViewModel

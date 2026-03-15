@@ -2,22 +2,24 @@ import Foundation
 
 // MARK: - Jailbreak Detection Engine
 //
-// Runs a configurable chain of 11 detectors, each returning a DetectorResult
+// Runs a configurable chain of detectors, each returning a DetectorResult
 // with a score and list of detected methods. The engine aggregates scores and
 // applies a confidence threshold to produce a final DetectionResult.
 //
 // Detector Chain (each independently toggleable via JailbreakConfig):
-//   FileDetector      → stat/access on known jailbreak paths
-//   DyldDetector      → _dyld_image_count / image name scanning
-//   EnvDetector       → DYLD_INSERT_LIBRARIES and related env vars
-//   SysctlDetector    → kern.proc P_TRACED flag, process list
-//   SchemeDetector    → canOpenURL for Cydia/Sileo/Filza schemes
-//   HookDetector      → function prologue integrity checks
-//   HookFramework..   → dlsym for Substrate/fishhook/Frida symbols
-//   ObjCIMPDetector   → method_getImplementation + dladdr validation
-//   PrologueBranch..  → ARM64 branch instruction at function entry
-//   PointerValid..    → pointer authentication checks
-//   IndirectSymbol..  → indirect symbol table integrity
+//   FileDetector              → stat/access on known jailbreak paths
+//   DyldDetector              → _dyld_image_count / image name scanning
+//   EnvDetector               → DYLD_INSERT_LIBRARIES and related env vars
+//   SysctlDetector            → kern.proc P_TRACED flag, process list
+//   SchemeDetector            → canOpenURL for Cydia/Sileo/Filza schemes (UIKit only)
+//   HookDetector              → composite: ObjC classes + symbol image + sub-detectors
+//     (invoked when enableHookDetect; sub-detectors run inside HookDetector.detect()):
+//     PointerValidationDetector      → pointer authentication checks
+//     HookFrameworkSymbolDetector   → dlsym for Substrate/fishhook/Frida symbols
+//     PrologueBranchDetector        → ARM64 branch instruction at function entry
+//     IndirectSymbolPointerDetector → indirect symbol table integrity
+//     ObjCIMPDetector               → method_getImplementation + dladdr validation
+//     ObjCMetadataDetector          → objc_copyClassList / protocol / NSObject extension scan
 //
 // Simulator: returns unavailable by default (set CPRISK_SIMULATE_JAILBREAK=1
 // to enable simulated jailbreak for testing)

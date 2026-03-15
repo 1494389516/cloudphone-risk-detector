@@ -68,19 +68,8 @@ struct AntiTamperingDetector: Detector {
     private func hasSuspiciousParent() -> Bool {
         let ppid = cprisk_getppid_direct()
         guard ppid > 1 else { return false }
-        guard let parentPath = parentProcessPath(ppid) else { return false }
+        guard let parentPath = processPath(for: ppid) else { return false }
         return firstSuspiciousParentToken(in: parentPath) != nil
-    }
-
-    private func parentProcessPath(_ pid: pid_t) -> String? {
-#if os(macOS)
-        var pathBuffer = [CChar](repeating: 0, count: Int(PATH_MAX))
-        let result = proc_pidpath(pid, &pathBuffer, UInt32(PATH_MAX))
-        guard result > 0 else { return nil }
-        return String(cString: pathBuffer)
-#else
-        return nil
-#endif
     }
 
     private func hasDebugEnvironment() -> Bool {

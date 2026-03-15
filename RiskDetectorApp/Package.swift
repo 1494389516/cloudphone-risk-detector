@@ -38,5 +38,9 @@ let package = Package(
             name: "CloudPhoneRiskKitTests",
             dependencies: ["CloudPhoneRiskKit"]
         ),
+        .testTarget(
+            name: "CloudPhoneRiskAppCoreTests",
+            dependencies: ["CloudPhoneRiskAppCore", "CloudPhoneRiskKit"]
+        ),
     ]
 )

@@ -8,7 +8,7 @@
  * - __TVOS_PROHIBITED/__WATCHOS_PROHIBITED on task_* APIs: may be unavailable on tvOS/watchOS.
  */
 
-#include "CRiskCore.h"
+#include "include/CRiskCore.h"
 #include <mach/mach.h>
 #include <mach/exception_types.h>
 #include <mach/exc.h>
@@ -22,7 +22,9 @@
 #include <TargetConditionals.h>
 
 #if defined(__APPLE__) && (defined(__arm64__) || defined(__aarch64__)) && \
-    (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+    (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR) && \
+    (!defined(TARGET_OS_TV) || !TARGET_OS_TV) && \
+    (!defined(TARGET_OS_WATCH) || !TARGET_OS_WATCH)
 
 static mach_port_t s_exception_port = MACH_PORT_NULL;
 static atomic_int s_registered = 0;

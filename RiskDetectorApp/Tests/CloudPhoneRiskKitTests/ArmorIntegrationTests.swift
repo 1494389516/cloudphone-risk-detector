@@ -23,8 +23,8 @@ final class ArmorIntegrationTests: XCTestCase {
     // MARK: - Test 1: Runtime Material Not Poison
 
     /// 验证 `cprisk_get_runtime_material()` 返回值的行为。
-    /// 在测试环境中壳未加固，所以预期返回 poison 值（rc == -1）；
-    /// 但函数本身必须可调用且写入 32 字节。
+    /// 在测试环境中壳未加固，走 poison 路径；但返回值与成功路径一致（rc == 0），
+    /// 防止攻击者通过返回值区分。函数必须可调用且写入 32 字节。
     func testArmorRuntimeMaterialReturnsValidBuffer() {
         var material = [UInt8](repeating: 0, count: 32)
         let rc = cprisk_get_runtime_material(&material)
@@ -33,18 +33,8 @@ final class ArmorIntegrationTests: XCTestCase {
         XCTAssertEqual(materialData.count, 32, "material must always be 32 bytes")
         XCTAssertFalse(materialData.allSatisfy({ $0 == 0 }),
                        "material must not be all zeros (even poison is non-zero)")
-
-        // In test environment without armor sections, init hasn't run → poison path
-        if rc != 0 {
-            let poisonSeed = Data([
-                0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE,
-                0x13, 0x37, 0x42, 0x42, 0xFE, 0xED, 0xFA, 0xCE,
-                0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89,
-                0x98, 0x76, 0x54, 0x32, 0x10, 0xFE, 0xDC, 0xBA,
-            ])
-            XCTAssertEqual(materialData, poisonSeed,
-                           "when armor is not initialized, material must be the deterministic poison value")
-        }
+        // Poison path returns 0 (same as success) to prevent oracle attacks
+        XCTAssertEqual(rc, 0, "cprisk_get_runtime_material must return 0 on both success and poison paths")
     }
 
     /// 验证初始化后 runtime material 的可获取性。
@@ -68,8 +58,8 @@ final class ArmorIntegrationTests: XCTestCase {
         if rc != 0 {
             var material = [UInt8](repeating: 0, count: 32)
             let materialRc = cprisk_get_runtime_material(&material)
-            XCTAssertEqual(materialRc, -1,
-                           "after failed init, get_runtime_material must return -1 (poison)")
+            XCTAssertEqual(materialRc, 0,
+                           "get_runtime_material returns 0 on poison path (constant-time, no oracle)")
         }
 
         cprisk_cleanup_protection()

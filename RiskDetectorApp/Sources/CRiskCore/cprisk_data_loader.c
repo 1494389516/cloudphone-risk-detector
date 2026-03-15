@@ -43,8 +43,12 @@ static const struct mach_header_64 *cprisk_own_hdr_l(void) {
     return cprisk_find_own_header((const void *)cprisk_own_hdr_l);
 }
 
-static void cprisk_keystream_l(const uint8_t *key, uint32_t sid,
-                               uint8_t *out, size_t len) {
+/* Generate len bytes of keystream starting at byte_offset. Used for chunked XOR. */
+static void cprisk_keystream_at_l(const uint8_t *key, uint32_t sid, size_t byte_offset,
+                                  uint8_t *out, size_t len) {
+    if (len == 0)
+        return;
+
     uint8_t seed[36];
     memcpy(seed, key, CPRISK_ARMOR_KEY_SIZE);
     seed[32] = (uint8_t)(sid);
@@ -56,14 +60,38 @@ static void cprisk_keystream_l(const uint8_t *key, uint32_t sid,
     cprisk_sha256(seed, sizeof(seed), blk);
     cprisk_secure_zero(seed, sizeof(seed));
 
-    size_t off = 0;
-    while (off < len) {
-        size_t chunk = len - off;
+    /* Fast-forward to byte_offset: advance through full blocks */
+    size_t block_offset = byte_offset / CPRISK_SHA256_DIGEST_LENGTH;
+    size_t in_block = byte_offset % CPRISK_SHA256_DIGEST_LENGTH;
+    for (size_t i = 0; i < block_offset; i++) {
+        uint8_t prev[CPRISK_SHA256_DIGEST_LENGTH];
+        memcpy(prev, blk, CPRISK_SHA256_DIGEST_LENGTH);
+        cprisk_sha256(prev, CPRISK_SHA256_DIGEST_LENGTH, blk);
+        cprisk_secure_zero(prev, sizeof(prev));
+    }
+
+    size_t out_off = 0;
+    if (in_block > 0) {
+        size_t take = CPRISK_SHA256_DIGEST_LENGTH - in_block;
+        if (take > len)
+            take = len;
+        memcpy(out, blk + in_block, take);
+        out_off = take;
+        if (out_off < len) {
+            uint8_t prev[CPRISK_SHA256_DIGEST_LENGTH];
+            memcpy(prev, blk, CPRISK_SHA256_DIGEST_LENGTH);
+            cprisk_sha256(prev, CPRISK_SHA256_DIGEST_LENGTH, blk);
+            cprisk_secure_zero(prev, sizeof(prev));
+        }
+    }
+
+    while (out_off < len) {
+        size_t chunk = len - out_off;
         if (chunk > CPRISK_SHA256_DIGEST_LENGTH)
             chunk = CPRISK_SHA256_DIGEST_LENGTH;
-        memcpy(out + off, blk, chunk);
-        off += chunk;
-        if (off < len) {
+        memcpy(out + out_off, blk, chunk);
+        out_off += chunk;
+        if (out_off < len) {
             uint8_t prev[CPRISK_SHA256_DIGEST_LENGTH];
             memcpy(prev, blk, CPRISK_SHA256_DIGEST_LENGTH);
             cprisk_sha256(prev, CPRISK_SHA256_DIGEST_LENGTH, blk);
@@ -71,6 +99,11 @@ static void cprisk_keystream_l(const uint8_t *key, uint32_t sid,
         }
     }
     cprisk_secure_zero(blk, sizeof(blk));
+}
+
+static void cprisk_keystream_l(const uint8_t *key, uint32_t sid,
+                               uint8_t *out, size_t len) {
+    cprisk_keystream_at_l(key, sid, 0, out, len);
 }
 
 static int cprisk_copy_fixed_name_l(const char raw[16], char out[17]) {
@@ -175,19 +208,32 @@ static uint8_t *cprisk_target_ptr_l(
     return (uint8_t *)((uintptr_t)ent->vm_addr + target->slide);
 }
 
+#define CPRISK_XOR_CHUNK_SIZE (64 * 1024)  /* 64KB chunks to limit peak memory */
+
 static int cprisk_xor_region_l(uint8_t *target, size_t sz, uint32_t key_id) {
     if (!target || sz == 0)
         return -1;
 
-    uint8_t *ks = (uint8_t *)malloc(sz);
+    size_t chunk_sz = (sz < CPRISK_XOR_CHUNK_SIZE) ? sz : CPRISK_XOR_CHUNK_SIZE;
+    uint8_t *ks = (uint8_t *)malloc(chunk_sz);
     if (!ks)
         return -1;
 
-    cprisk_keystream_l(s_ldr_key, key_id, ks, sz);
-    for (size_t i = 0; i < sz; i++)
-        target[i] ^= ks[i];
+    size_t off = 0;
+    while (off < sz) {
+        size_t todo = sz - off;
+        if (todo > chunk_sz)
+            todo = chunk_sz;
 
-    cprisk_secure_zero(ks, sz);
+        cprisk_keystream_at_l(s_ldr_key, key_id, off, ks, todo);
+        for (size_t i = 0; i < todo; i++)
+            target[off + i] ^= ks[i];
+
+        cprisk_secure_zero(ks, todo);
+        off += todo;
+    }
+
+    cprisk_secure_zero(ks, chunk_sz);
     free(ks);
     return 0;
 }
