@@ -41,8 +41,11 @@ int cprisk_addr_in_any_image(const void *addr) {
         if (!hdr) continue;
 
         if (hdr->magic != MH_MAGIC_64) continue;
+        /* Guard against corrupt sizeofcmds causing pointer overflow */
+        if (hdr->sizeofcmds > 0x100000u) continue;
 
         intptr_t slide = 0;
+        int found_text = 0;
         const uint8_t *p = (const uint8_t *)(hdr + 1);
         const uint8_t *end = (const uint8_t *)hdr + sizeof(struct mach_header_64) + hdr->sizeofcmds;
 
@@ -56,13 +59,14 @@ int cprisk_addr_in_any_image(const void *addr) {
                 const struct segment_command_64 *seg = (const struct segment_command_64 *)p;
                 if (segname_eq(seg->segname, "__TEXT", 16)) {
                     slide = (intptr_t)hdr - (intptr_t)seg->vmaddr;
+                    found_text = 1;
                     break;
                 }
             }
             p += lc->cmdsize;
         }
 
-        if (slide == 0) continue;
+        if (!found_text) continue;
 
         /* Second pass: check each segment */
         p = (const uint8_t *)(hdr + 1);

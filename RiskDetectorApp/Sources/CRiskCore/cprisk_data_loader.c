@@ -319,6 +319,8 @@ static int cprisk_page_span_l(uint8_t *target, size_t sz,
         return -1;
     if ((uintptr_t)target > UINTPTR_MAX - sz)
         return -1;
+    if ((uintptr_t)target + sz > UINTPTR_MAX - 0xFFF)
+        return -1;
     uintptr_t page = (uintptr_t)target & ~(uintptr_t)0xFFF;
     uintptr_t end = ((uintptr_t)target + sz + 0xFFF) & ~(uintptr_t)0xFFF;
     *page_out = (void *)page;
@@ -400,6 +402,8 @@ int cprisk_load_protected_data(void) {
             return -1;
         }
         pthread_mutex_lock(&s_loader_mutex);
+        free(s_applied_entries);
+        free(s_decrypted_flags);
         s_applied_entries = entries_tmp;
         s_decrypted_flags = flags_tmp;
         s_applied_count = 0;
