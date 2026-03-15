@@ -29,9 +29,6 @@ static int s_runtime_material_ready;
 static uint8_t s_poison_material[CPRISK_ARMOR_HASH_SIZE];
 static int s_poison_material_ready;
 
-static uint8_t s_root_material[CPRISK_ARMOR_KEY_SIZE];
-static uint8_t s_salt_xor_key;
-
 static void cprisk_szero_i(void *p, size_t n) {
     volatile uint8_t *v = (volatile uint8_t *)p;
     while (n--) *v++ = 0;
@@ -386,10 +383,6 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
         }
     }
 
-    /* Derive and store salt XOR key from root material */
-    s_salt_xor_key = cprisk_derive_salt_xor_key(root_material);
-    memcpy(s_root_material, root_material, CPRISK_ARMOR_KEY_SIZE);
-
     cprisk_derive_string_key_i(root_material, string_key);
     if (cprisk_init_string_decryptor(string_key, CPRISK_ARMOR_KEY_SIZE) != 0) {
         rc = -2;
@@ -473,7 +466,6 @@ cleanup:
 void cprisk_cleanup_protection(void) {
     cprisk_secure_zero(s_runtime_material, sizeof(s_runtime_material));
     cprisk_secure_zero(s_saved_integrity_hash, sizeof(s_saved_integrity_hash));
-    cprisk_secure_zero(s_root_material, sizeof(s_root_material));
     s_runtime_material_ready = 0;
     cprisk_szero_i(s_poison_material, sizeof(s_poison_material));
     s_poison_material_ready = 0;
@@ -494,7 +486,7 @@ int cprisk_get_runtime_material(uint8_t out_material[32]) {
             s_poison_material_ready = 1;
         }
         memcpy(out_material, s_poison_material, CPRISK_ARMOR_HASH_SIZE);
-        return 0;
+        return -1;  /* Caller (Swift: armorRuntimeMaterial) checks rc==0 for authentic */
     }
 
     memcpy(out_material, s_runtime_material, CPRISK_ARMOR_HASH_SIZE);

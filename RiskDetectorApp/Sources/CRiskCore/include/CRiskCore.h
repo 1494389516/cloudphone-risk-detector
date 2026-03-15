@@ -179,9 +179,12 @@ void cprisk_cleanup_protection(void);
 /// If armor runtime is not initialized or was tampered, out_material will be
 /// filled with a per-execution random poison value (generated via arc4random_buf
 /// on first use; never a public constant).
-/// Always writes exactly 32 bytes to out_material. Returns 0 on both success
-/// and poison paths (constant-time; attackers cannot distinguish via return value).
-/// Poison path still fills out_material with poisoned data, so signature will fail.
+/// Always writes exactly 32 bytes to out_material.
+/// Returns 0 on the authentic path (armor initialized and not tampered).
+/// Returns -1 on the poison path (tampered, uninitialized, or NULL argument).
+/// Callers MUST check the return value: rc == 0 means trustworthy material;
+/// rc == -1 means poison material — any signing key derived from it will fail
+/// server-side HMAC verification.
 int cprisk_get_runtime_material(uint8_t out_material[32]);
 
 /* ── Anti-Dump Memory Protection ───────────────────────────────────── */
