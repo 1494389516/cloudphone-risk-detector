@@ -55,9 +55,12 @@ const struct mach_header_64 *cprisk_find_own_header(const void *addr_in_image) {
 static inline __attribute__((always_inline))
 intptr_t cprisk_compute_slide(const struct mach_header_64 *hdr) {
     const uint8_t *p = (const uint8_t *)(hdr + 1);
+    const uint8_t *end = (const uint8_t *)hdr + sizeof(struct mach_header_64)
+                        + hdr->sizeofcmds;
     for (uint32_t i = 0; i < hdr->ncmds; i++) {
         const struct load_command *lc = (const struct load_command *)p;
-        if (lc->cmdsize == 0) break;
+        if (lc->cmdsize == 0 || p + lc->cmdsize > end)
+            break;
         if (lc->cmd == LC_SEGMENT_64) {
             const struct segment_command_64 *seg =
                 (const struct segment_command_64 *)p;
@@ -84,13 +87,21 @@ const uint8_t *cprisk_find_section(
 ) {
     const intptr_t slide = cprisk_compute_slide(hdr);
     const uint8_t *p = (const uint8_t *)(hdr + 1);
+    const uint8_t *end = (const uint8_t *)hdr + sizeof(struct mach_header_64)
+                         + hdr->sizeofcmds;
 
     for (uint32_t i = 0; i < hdr->ncmds; i++) {
         const struct load_command *lc = (const struct load_command *)p;
-        if (lc->cmdsize == 0) break;
+        if (lc->cmdsize == 0 || p + lc->cmdsize > end)
+            break;
         if (lc->cmd == LC_SEGMENT_64) {
             const struct segment_command_64 *seg =
                 (const struct segment_command_64 *)p;
+            size_t seg_sz = sizeof(struct segment_command_64);
+            size_t sect_sz = (size_t)seg->nsects * sizeof(struct section_64);
+            if (sect_sz / sizeof(struct section_64) != (size_t)seg->nsects ||
+                seg_sz + sect_sz > (size_t)lc->cmdsize)
+                goto next_cmd;  /* overflow or malformed */
             if (strncmp(seg->segname, seg_name, 16) == 0) {
                 const struct section_64 *sections =
                     (const struct section_64 *)(p + sizeof(*seg));
@@ -103,6 +114,7 @@ const uint8_t *cprisk_find_section(
                 }
             }
         }
+next_cmd:
         p += lc->cmdsize;
     }
 

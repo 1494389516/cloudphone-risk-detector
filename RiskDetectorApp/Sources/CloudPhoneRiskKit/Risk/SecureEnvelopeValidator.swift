@@ -255,8 +255,16 @@ extension CPRiskKit {
             }
         }
 
+        // v2a 签名使用 armor material 派生的密钥，验签时需用 baseKey 派生 effectiveKey
+        let effectiveKey: String
+        if envelope.sigVer == "v2a" {
+            effectiveKey = effectiveSigningKeyForV2aValidation(baseKey: signingKey)
+        } else {
+            effectiveKey = signingKey
+        }
+
         let replayStore = enableReplayProtection ? (nonceStore ?? LocalEnvelopeReplayStore.shared) : nil
-        let result = envelope.validate(signingKey: signingKey, nonceStore: replayStore, config: config)
+        let result = envelope.validate(signingKey: effectiveKey, nonceStore: replayStore, config: config)
         switch result {
         case .success:
             return .success(())

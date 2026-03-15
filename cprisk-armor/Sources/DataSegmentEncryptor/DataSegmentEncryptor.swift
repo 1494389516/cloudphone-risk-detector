@@ -36,34 +36,59 @@ public final class DataSegmentEncryptorPass: ArmorPass {
             stringAccumulator: stringAccumulator
         )
 
-        let protectedSection = try file.addOrUpdateSection(
+        try file.addOrUpdateSection(
             segment: ArmorABI.dataSegmentName,
             section: ArmorABI.Loader.protectedSectionName,
             content: plaintextPayload,
             align: 3
         )
-        let protectedPlaintext = try protectedSection.readContent(from: file.data)
-        let keyID = stableKeyID(
-            segment: ArmorABI.dataSegmentName,
-            section: ArmorABI.Loader.protectedSectionName
-        )
-        let encryptedPayload = xor(
-            protectedPlaintext,
-            makeKeystream(key: loaderKey, keyID: keyID, length: protectedPlaintext.count)
-        )
-        try file.replaceBytes(at: UInt64(protectedSection.offset), with: encryptedPayload)
 
-        var loaderPayload = ArmorABI.Loader.Header(count: 1).serialized()
-        loaderPayload.append(
-            ArmorABI.Loader.Entry(
-                segmentName: ArmorABI.dataSegmentName,
-                sectionName: ArmorABI.Loader.protectedSectionName,
+        guard let dataSegment = try file.segment(named: ArmorABI.dataSegmentName) else {
+            throw MachOError.segmentNotFound(ArmorABI.dataSegmentName)
+        }
+
+        let targetSections = dataSegment.sections.filter { section in
+            ArmorABI.DataEncryption.isEncryptable(section.sectionName)
+                && section.storesDataInFile
+                && section.size > 0
+        }
+
+        var entries = [ArmorABI.Loader.Entry]()
+        var totalBytesEncrypted = 0
+        var details = [String]()
+
+        for section in targetSections {
+            let plaintext = try section.readContent(from: file.data)
+            let contentHash = sha256(plaintext)
+            let keyID = stableKeyID(
+                segment: section.segmentName,
+                section: section.sectionName
+            )
+            let encrypted = xor(
+                plaintext,
+                makeKeystream(key: loaderKey, keyID: keyID, length: plaintext.count)
+            )
+            try file.replaceBytes(at: UInt64(section.offset), with: encrypted)
+
+            entries.append(ArmorABI.Loader.Entry(
+                segmentName: section.segmentName,
+                sectionName: section.sectionName,
                 keyID: keyID,
-                vmAddress: protectedSection.address,
-                size: protectedSection.size,
-                contentHash: sha256(protectedPlaintext)
-            ).serialized()
-        )
+                vmAddress: section.address,
+                size: section.size,
+                contentHash: contentHash
+            ))
+
+            totalBytesEncrypted += plaintext.count
+            details.append(
+                "Encrypted \(section.segmentName).\(section.sectionName) (\(plaintext.count) bytes)"
+            )
+        }
+
+        var loaderPayload = ArmorABI.Loader.Header(count: UInt32(entries.count)).serialized()
+        for entry in entries {
+            loaderPayload.append(entry.serialized())
+        }
 
         _ = try file.addOrUpdateSection(
             segment: ArmorABI.dataSegmentName,
@@ -72,15 +97,17 @@ public final class DataSegmentEncryptorPass: ArmorPass {
             align: 3
         )
 
+        details.append(
+            "Wrote loader descriptor (\(entries.count) entries) to "
+                + "\(ArmorABI.dataSegmentName).\(ArmorABI.Loader.sectionName)"
+        )
+        details.append("Loader key is chained from pass1 bootstrap accumulator and pass4 anchor material")
+
         return PassResult(
             passName: name,
-            itemsProcessed: 1,
-            bytesModified: protectedPlaintext.count + loaderPayload.count,
-            details: [
-                "Encrypted \(ArmorABI.dataSegmentName).\(ArmorABI.Loader.protectedSectionName) in place",
-                "Wrote runtime loader descriptor to \(ArmorABI.dataSegmentName).\(ArmorABI.Loader.sectionName)",
-                "Loader key is chained from pass1 bootstrap accumulator and pass4 anchor material"
-            ]
+            itemsProcessed: entries.count,
+            bytesModified: totalBytesEncrypted + loaderPayload.count,
+            details: details
         )
     }
 

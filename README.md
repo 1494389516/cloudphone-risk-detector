@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
-  <img src="https://img.shields.io/badge/SDK-6.0.0-FF3B30?style=for-the-badge" alt="SDK">
+  <img src="https://img.shields.io/badge/SDK-6.1.0-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
   <img src="https://img.shields.io/badge/License-Proprietary-8E8E93?style=for-the-badge" alt="License">
 </p>
@@ -57,41 +57,42 @@
 | **5.4** | **四盲区修复 + 直调扩展** | RTLD_NEXT 下沉为 SVC 直调、时序动态比值基线、PhysicalSensorProbe 预热缓存、服务端参考哈希、getpid/getppid/getuid/socket/connect 直调 |
 | **5.5** | **Bug 修复 + 实验分桶** | RandomizedDetection 父进程逻辑、ptrace 错误处理、ExperimentConfig.random 分桶、WhitelistRules 语义化版本比较、PayloadFieldObfuscator 反向映射、getentropy buflen 校验 |
 | **6.0** | **自研壳保护 + 端云签名绑定** | cprisk-armor 编译后壳工具链（Pass 1 字符串加密 / Pass 3 数据段加密 / Pass 4 完整性锚点）、CRiskCore 运行时解密消费链、内联 SHA-256 消除 CommonCrypto Hook 面、自包含 Mach-O 基址解析阻断 Clean Copy 攻击、Section 伪装隐写、编译期 XOR 盐混淆、armor runtime material 渗透式毒化业务签名（v2a）、9 项安全 Bug 修复 |
+| **6.1** | **壳工业化 + 运行时加固 + 全量回归** | Pass 1 全量敏感字符串加密 + 原位零化、Pass 2 Metadata 抹除（Swift 类型名/反射字符串/ObjC 方法名混淆）、Pass 3 多 Section 真实数据段加密（`__const`/`__cfstring`/`__swift5_fieldmd`）、Pass 5 结构混淆（5-8 假 Section 注入 + 随机布局）、密钥安全清零（`cprisk_secure_zero`）、Anti-Dump 页面保护验证（`vm_region_64`）、运行时完整性重校验（`cprisk_recheck_integrity`）、v2a 验签密钥派生修复、KDF 全链路测试（14 节点）、E2E 集成测试（6 场景）、10 项 Bug 修复、385 测试全绿 |
 
 ## 架构概览
 
 ```
 ┌────────────────────────────────────────────────────────┐
 │              Layer 0: 自研壳 (cprisk-armor)             │
-│   字符串加密 / 数据段加密 / 完整性锚点 / Section 伪装    │
-│   内联 SHA-256 / 自包含 Mach-O 解析 / 盐 XOR 隐写       │
-│   armor material → 业务签名毒化 (v2a)                  │
+│   全量字符串加密 / 多 Section 数据段加密 / 完整性锚点     │
+│   Metadata 抹除 / 结构混淆 / Anti-Dump / 密钥清零        │
+│   armor material → 业务签名毒化 (v2a)                    │
 ├────────────────────────────────────────────────────────┤
-│                   业务应用层                            │
+│                   业务应用层                             │
 │            evaluate(scenario: .payment)                │
 ├────────────────────────────────────────────────────────┤
-│               RiskDetectionEngine                       │
+│               RiskDetectionEngine                      │
 │   场景策略 ─ 决策树 ─ 组合规则 ─ 盲挑战 ─ HMAC 签名    │
 │   安全地板强制 ─ 关键信号权重下限 ─ 异常容错链          │
 ├──────────┬──────────────┬───────────┬───────────────────┤
 │ Layer 1  │   Layer 2    │  Layer 3  │     Layer 4       │
-│ 硬件指纹  │  一致性      │  行为熵    │   服务端聚合       │
+│ 硬件指纹  │  一致性      │  行为熵    │   服务端聚合         │
 ├──────────┼──────────────┼───────────┼───────────────────┤
 │ GPU 名称  │ PLT/GOT      │ 触摸熵    │  公网 IP / ASN    │
-│ DRM 等级  │ RWX 内存     │ 传感器熵   │  机房属性         │
-│ 设备型号  │ Hook 检测    │ 电压方差   │  IP 聚合度        │
-│ 电池计数器 │ 挂载点       │ 时序模式   │  图特征反哺       │
-│ Board ID │ SVC 双路     │ 耦合分析   │  风险标签         │
+│ DRM 等级  │ RWX 内存     │ 传感器熵   │  机房属性          │
+│ 设备型号  │ Hook 检测    │ 电压方差   │  IP 聚合度         │
+│ 电池计数器 │ 挂载点       │ 时序模式   │  图特征反哺        │
+│ Board ID │ SVC 双路     │ 耦合分析   │  风险标签          │
 │          │ 代码段哈希    │ 行为充足性  │  黑名单           │
 │          │ 线程枚举     │           │                   │
 │          │ 异常端口     │           │                   │
 │          │ V8 堆检测    │           │                   │
-│          │ ObjC Swizzle │           │                   │
+│          │ ObjC Swizzle │           │                  │
 │          │ Socket 检测  │           │                   │
-│          │ 时序侧信道   │           │                   │
-│ 指纹突变  │DYLD Interpose│         │                   │
-   │          │ SDK 自校验   │           │                   │
-│          │ ptrace 防附加 │           │                   │
+│          │ 时序侧信道   │           │                    │
+│ 指纹突变  │DYLD Interpose│         │                    │
+   │          │ SDK 自校验   │           │                │
+│          │ ptrace 防附加 │           │                  │
 │          │ 多路径一致性  │           │                   │
 └──────────┴──────────────┴───────────┴───────────────────┘
 ```
@@ -106,37 +107,44 @@
 
 ---
 
-## 6.0 新增能力 — 自研壳保护 + 端云签名绑定
+## 6.0 / 6.1 新增能力 — 自研壳保护 + 壳工业化
 
-6.0 引入编译后自研壳（cprisk-armor）工具链，实现 SDK 二进制的字符串加密、数据段加密和完整性锚点注入；运行时由 CRiskCore C 层完成解密消费与多路径完整性校验；armor 运行时 material 与 ReportEnvelope 签名绑定，实现篡改即签名失效的渗透式防护。
+6.0 引入编译后自研壳（cprisk-armor）工具链；6.1 将壳从概念验证升级为工业级全量保护，补齐 Pass 2 / Pass 5，并引入运行时加固与全链路测试。
 
-### 6.0 新特性摘要
+### 6.0 / 6.1 新特性摘要
 
 | 能力域 | 核心组件 | 说明 |
 |--------|----------|------|
-| **字符串加密 (Pass 1)** | `StringEncryptor` → `cprisk_string_decrypt.c` | 编译后扫描并加密 SDK 内敏感字符串，写入伪装 Section；运行时按需解密，消除静态分析特征 |
-| **数据段加密 (Pass 3)** | `DataSegmentEncryptor` → `cprisk_data_loader.c` | 加密 `__DATA` 段关键 Section，运行时一次性解密加载；失败时 rollback 防半损坏状态 |
-| **完整性锚点 (Pass 4)** | `IntegrityAnchor` → `cprisk_integrity.c` | 多路径完整性哈希注入四个伪装 Section，运行时交叉校验；哈希参与 KDF 链，篡改导致派生密钥错误 |
-| **内联 SHA-256** | `cprisk_sha256.h` | `always_inline` 头文件实现 FIPS-180-4 SHA-256，消除对 CommonCrypto 的 dylib 依赖，阻断 Hook 攻击面 |
-| **自包含 Mach-O 解析** | `cprisk_macho.h` | `always_inline` 实现 Mach-O 基址发现与 Section 查找，不依赖 `dladdr`/`getsectiondata`/`_dyld_*`，阻断 Clean Copy 攻击 |
-| **Section 伪装** | `cprisk_armor_abi.h` | 所有壳 Section 命名为 `__swift5_types2` 等 Apple 风格名称，IDA/Hopper 中不易辨识 |
-| **编译期盐 XOR 混淆** | `CPRISK_SALT_XOR_KEY` + `cprisk_decode_salt()` | KDF 盐在 C 源码中以 XOR 编码字节数组存在，运行时解码，消除字符串明文暴露 |
-| **业务签名毒化 (v2a)** | `armorRuntimeMaterial()` → `ReportEnvelope` | armor material（32 字节）混入 HMAC 签名密钥派生；篡改 → 毒化 material → 签名异常 → 服务端拒绝。新签名版本 `v2a` |
-| **Bug 修复** | 9 项 | `cprisk_rotl64` UB、`cmdsize=0` 死循环、`sha256_rotr` UB、Section 名冲突、initCode 映射错误、v2a 验签遗漏、envelope armor 未初始化、slide 类型溢出、buffer size 边界 |
+| **全量字符串加密 (Pass 1)** | `StringEncryptor` → `cprisk_string_decrypt.c` | 6.0 基础加密；6.1 升级为全量敏感字符串加密（18 关键词识别）+ 原位零化 `__cstring`，`strings` 工具提取归零 |
+| **Metadata 抹除 (Pass 2)** | `MetadataScrubber` | **6.1 新增**：Swift 类型名混淆、`__swift5_reflstr` 全段随机化、ObjC 方法名混淆，class-dump/dsdump 无法还原业务类名 |
+| **多 Section 数据段加密 (Pass 3)** | `DataSegmentEncryptor` → `cprisk_data_loader.c` | 6.0 单 blob 加密；6.1 升级为白名单多 Section 加密（`__const`/`__cfstring`/`__swift5_fieldmd`/`__swift5_assocty`），IDA 中 `__DATA` 显示全乱码 |
+| **完整性锚点 (Pass 4)** | `IntegrityAnchor` → `cprisk_integrity.c` | 多路径完整性哈希注入四个伪装 Section，运行时交叉校验；哈希参与 KDF 链 |
+| **结构混淆 (Pass 5)** | `StructureObfuscator` | **6.1 新增**：5-8 个假 Section 注入（Apple 风格命名）+ 结构化伪数据 + 随机 seed 布局，每次构建指纹不同 |
+| **内联 SHA-256** | `cprisk_sha256.h` | `always_inline` FIPS-180-4 SHA-256，消除 CommonCrypto Hook 面 |
+| **自包含 Mach-O 解析** | `cprisk_macho.h` | 不依赖 `dladdr`/`getsectiondata`/`_dyld_*`，阻断 Clean Copy 攻击 |
+| **密钥安全清零** | `cprisk_secure_zero()` | **6.1 新增**：统一 `volatile` 清零，覆盖全部解密密钥、keystream、中间哈希 |
+| **Anti-Dump 页面保护** | `cprisk_verify_page_protection()` | **6.1 新增**：`vm_region_64` 验证解密后数据页保护属性，检测攻击者重映射 |
+| **运行时完整性重校验** | `cprisk_recheck_integrity()` | **6.1 新增**：运行时重新计算 `__TEXT.__text` 哈希，不一致时静默毒化 material |
+| **v2a 验签修复** | `SecureEnvelopeValidator` | **6.1 修复**：v2a 验签时正确使用 armor material 派生密钥 |
+| **业务签名毒化 (v2a)** | `armorRuntimeMaterial()` → `ReportEnvelope` | armor material 混入 HMAC 签名密钥派生，篡改即签名失效 |
+| **Bug 修复** | 6.0: 9 项 + 6.1: 10 项 | rotl64 UB、整数溢出、loader key 过早清零、guard 页下溢、除零、v2a 验签、恒真断言等 |
 
 ### 壳保护工作流
 
 ```
 源码 → swift build → SDK.framework (原始 Mach-O)
                           ↓
-                    cprisk-armor CLI
-                    ┌─ Pass 1: StringEncryptor
-                    ├─ Pass 3: DataSegmentEncryptor
-                    └─ Pass 4: IntegrityAnchor
+                    cprisk-armor CLI (5 Pass)
+                    ┌─ Pass 4: IntegrityAnchor    (完整性锚点)
+                    ├─ Pass 1: StringEncryptor     (全量字符串加密)
+                    ├─ Pass 3: DataSegmentEncryptor(多 Section 加密)
+                    ├─ Pass 2: MetadataScrubber    (元数据抹除)
+                    └─ Pass 5: StructureObfuscator (结构混淆)
                           ↓
                     SDK.framework (加固后 Mach-O)
                           ↓
-                    运行时 CRiskCore 自动解密消费
+                    运行时 CRiskCore
+                    解密 + 完整性校验 + Anti-Dump
                     armor material → ReportEnvelope v2a
 ```
 
@@ -234,12 +242,14 @@
 .
 ├── cprisk-armor/                         # 编译后壳工具链 (SPM CLI)
 │   ├── Sources/
-│   │   ├── ArmorCLI/                     # CLI 入口 (多 Pass 编排)
+│   │   ├── ArmorCLI/                     # CLI 入口 (5 Pass 编排)
 │   │   ├── MachOKit/                     # Mach-O 读写库
-│   │   ├── StringEncryptor/              # Pass 1: 字符串加密
-│   │   ├── DataSegmentEncryptor/         # Pass 3: 数据段加密
-│   │   └── IntegrityAnchor/             # Pass 4: 完整性锚点
-│   └── Tests/                            # MachOKit & ABI 单元测试
+│   │   ├── StringEncryptor/              # Pass 1: 全量字符串加密
+│   │   ├── MetadataScrubber/             # Pass 2: Metadata 抹除
+│   │   ├── DataSegmentEncryptor/         # Pass 3: 多 Section 数据段加密
+│   │   ├── IntegrityAnchor/              # Pass 4: 完整性锚点
+│   │   └── StructureObfuscator/          # Pass 5: 结构混淆
+│   └── Tests/                            # 85 项单元 + E2E + KDF 链测试
 │
 ├── RiskDetectorApp/
 │   ├── App/                              # SwiftUI 示例应用
@@ -248,6 +258,7 @@
 │   │   │   ├── cprisk_string_decrypt.c   # 运行时字符串解密
 │   │   │   ├── cprisk_data_loader.c      # 运行时数据段加载/解密
 │   │   │   ├── cprisk_integrity.c        # 完整性校验 + 主初始化
+│   │   │   ├── cprisk_memory_guard.c     # Anti-Dump 页面保护
 │   │   │   └── include/
 │   │   │       ├── cprisk_armor_abi.h    # 壳 ABI (Section 名/Magic/盐)
 │   │   │       ├── cprisk_sha256.h       # 内联 SHA-256 (无 CommonCrypto)
@@ -265,7 +276,7 @@
 │   │       ├── Risk/                     # 报告封装 & 签名验证 (v2a)
 │   │       ├── Storage/                  # 加密存储 & 历史管理
 │   │       └── Util/                     # 工具 (SVC直调/混淆/加密)
-│   └── Tests/                            # 单元测试 (286 tests)
+│   └── Tests/                            # 单元测试 (301 tests)
 ```
 
 ---
@@ -288,7 +299,7 @@
 
 ## 安全设计概要
 
-SDK 采用纵深防御架构：**cprisk-armor 自研壳**在编译后对二进制执行字符串加密、数据段加密与完整性锚点注入，消除静态分析特征；**内联 SHA-256 + 自包含 Mach-O 解析**消除 CommonCrypto 与 dyld API 的 Hook 攻击面，阻断 Clean Copy 攻击；**渗透式毒化**将壳完整性 material 绑定到 ReportEnvelope 签名派生链（v2a），篡改即签名失效而非 crash，攻击者无法定位防护点；**字符串全量混淆**（`ObfuscatedJailbreakStrings`）防止静态特征提取；**DualPathValidator 双路/三路验证**确保检测结果不被单点绕过；**HMAC-SHA256 签名**覆盖报告全字段防篡改；**Keychain + AES-GCM 加密存储**保护本地数据与历史记录；**配置签名信任链**（远端 → 缓存 → 运行时）杜绝配置注入；**__TEXT 段哈希 + SDK 二进制完整性校验**检测代码篡改；**Provider 注册表封印 + 实例锁定**防止运行时替换；**Frida 五维对抗**（线程 / 端口 / V8 堆 / Socket / 时序）全覆盖；**LibcPrologueGuard + KernelHookSideChannel** 实现 Inline Hook 穿透与内核级 Hook 侧信道检测；**IntegrityBaselineEnvCheck** 首启环境把关防止基线投毒；**App Attest 强制模式** 消除所有静默降级路径。
+SDK 采用纵深防御架构：**cprisk-armor 自研壳（5 Pass）** 在编译后对二进制执行全量字符串加密 + 原位零化、Metadata 抹除、多 Section 数据段加密、完整性锚点注入与结构混淆，消除静态分析与逆向还原特征；**Anti-Dump 页面保护**（`vm_region_64`）检测攻击者重映射，**密钥安全清零**覆盖全部中间态敏感材料；**内联 SHA-256 + 自包含 Mach-O 解析**消除 CommonCrypto 与 dyld API 的 Hook 攻击面，阻断 Clean Copy 攻击；**渗透式毒化**将壳完整性 material 绑定到 ReportEnvelope 签名派生链（v2a），篡改即签名失效而非 crash，攻击者无法定位防护点；**字符串全量混淆**（`ObfuscatedJailbreakStrings`）防止静态特征提取；**DualPathValidator 双路/三路验证**确保检测结果不被单点绕过；**HMAC-SHA256 签名**覆盖报告全字段防篡改；**Keychain + AES-GCM 加密存储**保护本地数据与历史记录；**配置签名信任链**（远端 → 缓存 → 运行时）杜绝配置注入；**__TEXT 段哈希 + SDK 二进制完整性校验**检测代码篡改；**Provider 注册表封印 + 实例锁定**防止运行时替换；**Frida 五维对抗**（线程 / 端口 / V8 堆 / Socket / 时序）全覆盖；**LibcPrologueGuard + KernelHookSideChannel** 实现 Inline Hook 穿透与内核级 Hook 侧信道检测；**IntegrityBaselineEnvCheck** 首启环境把关防止基线投毒；**App Attest 强制模式** 消除所有静默降级路径。
 
 ### 盲区三：PhysicalSensorProbe 预热与支付场景 UX
 
@@ -362,4 +373,4 @@ cd RiskDetectorApp && swift build
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 6.0.0 — 自研壳保护 + 端云签名绑定 + 渗透式毒化防护</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 6.1.0 — 壳工业化 (5 Pass) + 运行时加固 + 渗透式毒化防护</sub></p>

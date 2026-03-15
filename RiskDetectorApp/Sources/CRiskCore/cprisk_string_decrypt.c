@@ -12,6 +12,7 @@
 #include <string.h>
 #include "include/cprisk_macho.h"
 #include "include/cprisk_sha256.h"
+#include "include/cprisk_secure_zero.h"
 
 _Static_assert(CPRISK_SHA256_DIGEST_LENGTH == CPRISK_ARMOR_HASH_SIZE,
                "inline SHA256 digest size must match armor ABI");
@@ -24,12 +25,8 @@ static uint64_t s_str_acc;
 
 /* ── internal ──────────────────────────────────────────────────────── */
 
-static void cprisk_szero(void *p, size_t n) {
-    volatile uint8_t *v = (volatile uint8_t *)p;
-    while (n--) *v++ = 0;
-}
-
 static inline uint64_t cprisk_rotl64(uint64_t x, int k) {
+    k &= 63;  /* avoid UB: shift amount must be in [0, 63] */
     return k == 0 ? x : ((x << k) | (x >> (64 - k)));
 }
 
@@ -48,7 +45,7 @@ static void cprisk_keystream(const uint8_t *key, uint32_t sid,
 
     uint8_t blk[CPRISK_SHA256_DIGEST_LENGTH];
     cprisk_sha256(seed, sizeof(seed), blk);
-    cprisk_szero(seed, sizeof(seed));
+    cprisk_secure_zero(seed, sizeof(seed));
 
     size_t off = 0;
     while (off < len) {
@@ -61,10 +58,10 @@ static void cprisk_keystream(const uint8_t *key, uint32_t sid,
             uint8_t prev[CPRISK_SHA256_DIGEST_LENGTH];
             memcpy(prev, blk, CPRISK_SHA256_DIGEST_LENGTH);
             cprisk_sha256(prev, CPRISK_SHA256_DIGEST_LENGTH, blk);
-            cprisk_szero(prev, sizeof(prev));
+            cprisk_secure_zero(prev, sizeof(prev));
         }
     }
-    cprisk_szero(blk, sizeof(blk));
+    cprisk_secure_zero(blk, sizeof(blk));
 }
 
 /* ── public API ────────────────────────────────────────────────────── */
@@ -124,9 +121,12 @@ int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) 
     uint32_t dlen = ent->data_length;
     if (dlen == 0 || dlen + 1 > buffer_size)
         return -1;
+    size_t data_end = (size_t)ent->data_offset + (size_t)dlen;
+    if (data_end < (size_t)dlen || data_end < (size_t)ent->data_offset)
+        return -1;  /* overflow */
     if ((size_t)ent->data_offset > sec_sz ||
         (size_t)dlen > sec_sz ||
-        data_base + (size_t)ent->data_offset + (size_t)dlen > sec_sz)
+        data_base + data_end > sec_sz)
         return -1;
 
     const uint8_t *enc = sec + data_base + ent->data_offset;
@@ -146,9 +146,9 @@ int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) 
     memcpy(&hv, dh, sizeof(hv));
     s_str_acc ^= cprisk_rotl64(hv, string_id % 64);
 
-    cprisk_szero(ks, dlen);
+    cprisk_secure_zero(ks, dlen);
     free(ks);
-    cprisk_szero(dh, sizeof(dh));
+    cprisk_secure_zero(dh, sizeof(dh));
 
     return (int)dlen;
 }
@@ -158,7 +158,7 @@ uint64_t cprisk_get_string_integrity_accumulator(void) {
 }
 
 void cprisk_cleanup_string_decryptor(void) {
-    cprisk_szero(s_dec_key, sizeof(s_dec_key));
+    cprisk_secure_zero(s_dec_key, sizeof(s_dec_key));
     s_dec_ready = 0;
     s_str_acc = 0;
 }

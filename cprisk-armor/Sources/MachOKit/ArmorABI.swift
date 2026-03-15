@@ -38,6 +38,17 @@ public enum ArmorABI {
             anchorC,
             anchorD,
         ]
+
+        public static let allCustom: Set<String> = [
+            stringTable, loader, protectedBlob,
+            anchorA, anchorB, anchorC, anchorD, fullAnchorHash,
+        ]
+    }
+
+    public enum MetadataSections {
+        public static let swiftTypes = "__swift5_types"
+        public static let swiftReflectionStrings = "__swift5_reflstr"
+        public static let objcMethodNames = "__objc_methname"
     }
 
     public enum StringTable {
@@ -178,6 +189,44 @@ public enum ArmorABI {
                 data.append(contentHash)
                 return data
             }
+        }
+    }
+
+    public enum DataEncryption {
+        /// `__DATA` sections that Pass 3 is allowed to encrypt.
+        public static let encryptableSections: Set<String> = [
+            "__const",
+            "__cfstring",
+            "__swift5_fieldmd",
+            "__swift5_assocty",
+            Sections.protectedBlob,
+        ]
+
+        /// `__DATA` sections that must **never** be encrypted (dyld / ObjC runtime dependencies).
+        public static let blacklistedSections: Set<String> = {
+            var set: Set<String> = [
+                "__objc_data",
+                "__objc_const",
+                "__la_symbol_ptr",
+                "__nl_symbol_ptr",
+                "__got",
+                "__mod_init_func",
+                "__objc_classlist",
+                "__objc_catlist",
+                "__objc_protolist",
+            ]
+            set.insert(Sections.stringTable)
+            set.insert(Sections.loader)
+            for s in Sections.splitAnchorSections {
+                set.insert(s)
+            }
+            set.insert(Sections.fullAnchorHash)
+            return set
+        }()
+
+        /// Returns `true` when a `__DATA` section with the given name may be encrypted.
+        public static func isEncryptable(_ sectionName: String) -> Bool {
+            encryptableSections.contains(sectionName) && !blacklistedSections.contains(sectionName)
         }
     }
 

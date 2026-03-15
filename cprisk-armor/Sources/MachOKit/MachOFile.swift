@@ -156,10 +156,12 @@ public protocol ArmorPass {
 public struct PassConfig {
     public let verbose: Bool
     public let encryptionKey: Data?
+    public let randomSeed: UInt64?
 
-    public init(verbose: Bool = false, encryptionKey: Data? = nil) {
+    public init(verbose: Bool = false, encryptionKey: Data? = nil, randomSeed: UInt64? = nil) {
         self.verbose = verbose
         self.encryptionKey = encryptionKey
+        self.randomSeed = randomSeed
     }
 }
 

@@ -14,6 +14,8 @@
 #include <mach/vm_prot.h>
 #include "include/cprisk_macho.h"
 #include "include/cprisk_sha256.h"
+#include "include/cprisk_secure_zero.h"
+#include "include/cprisk_memory_guard.h"
 
 _Static_assert(CPRISK_SHA256_DIGEST_LENGTH == CPRISK_ARMOR_HASH_SIZE,
                "inline SHA256 digest size must match armor ABI");
@@ -30,15 +32,10 @@ static uint8_t  s_ldr_key[CPRISK_ARMOR_KEY_SIZE];
 static int      s_ldr_ready;
 static int      s_ldr_loaded;
 static uint64_t s_data_acc;
-
-/* ── internal ──────────────────────────────────────────────────────── */
-
-static void cprisk_szero_l(void *p, size_t n) {
-    volatile uint8_t *v = (volatile uint8_t *)p;
-    while (n--) *v++ = 0;
-}
+static struct cprisk_guard_state s_guard_state;
 
 static inline uint64_t cprisk_rotl64_l(uint64_t x, int k) {
+    k &= 63;  /* avoid UB: shift amount must be in [0, 63] */
     return k == 0 ? x : ((x << k) | (x >> (64 - k)));
 }
 
@@ -57,7 +54,7 @@ static void cprisk_keystream_l(const uint8_t *key, uint32_t sid,
 
     uint8_t blk[CPRISK_SHA256_DIGEST_LENGTH];
     cprisk_sha256(seed, sizeof(seed), blk);
-    cprisk_szero_l(seed, sizeof(seed));
+    cprisk_secure_zero(seed, sizeof(seed));
 
     size_t off = 0;
     while (off < len) {
@@ -70,10 +67,10 @@ static void cprisk_keystream_l(const uint8_t *key, uint32_t sid,
             uint8_t prev[CPRISK_SHA256_DIGEST_LENGTH];
             memcpy(prev, blk, CPRISK_SHA256_DIGEST_LENGTH);
             cprisk_sha256(prev, CPRISK_SHA256_DIGEST_LENGTH, blk);
-            cprisk_szero_l(prev, sizeof(prev));
+            cprisk_secure_zero(prev, sizeof(prev));
         }
     }
-    cprisk_szero_l(blk, sizeof(blk));
+    cprisk_secure_zero(blk, sizeof(blk));
 }
 
 static int cprisk_copy_fixed_name_l(const char raw[16], char out[17]) {
@@ -135,6 +132,13 @@ static int cprisk_resolve_loader_target(
         if (lc->cmd == LC_SEGMENT_64) {
             const struct segment_command_64 *seg =
                 (const struct segment_command_64 *)cursor;
+            size_t seg_sz = sizeof(struct segment_command_64);
+            size_t sect_sz = (size_t)seg->nsects * sizeof(struct section_64);
+            if (sect_sz / sizeof(struct section_64) != (size_t)seg->nsects ||
+                seg_sz + sect_sz > (size_t)lc->cmdsize) {
+                cursor += lc->cmdsize;
+                continue;
+            }
             if (strncmp(seg->segname, segment_name, 16) == 0) {
                 const struct section_64 *sections =
                     (const struct section_64 *)(cursor + sizeof(*seg));
@@ -183,7 +187,7 @@ static int cprisk_xor_region_l(uint8_t *target, size_t sz, uint32_t key_id) {
     for (size_t i = 0; i < sz; i++)
         target[i] ^= ks[i];
 
-    cprisk_szero_l(ks, sz);
+    cprisk_secure_zero(ks, sz);
     free(ks);
     return 0;
 }
@@ -296,8 +300,8 @@ int cprisk_load_protected_data(void) {
 
         if (memcmp(actual_h, ent->content_hash, CPRISK_SHA256_DIGEST_LENGTH) != 0) {
             (void)cprisk_xor_region_l(ptr, (size_t)ent->size, ent->key_id);
-            cprisk_szero_l(actual_h, sizeof(actual_h));
-            cprisk_szero_l(diff, sizeof(diff));
+            cprisk_secure_zero(actual_h, sizeof(actual_h));
+            cprisk_secure_zero(diff, sizeof(diff));
             cprisk_rollback_l(hdr, slide, applied, applied_count);
             free(applied);
             return -1;
@@ -316,11 +320,27 @@ int cprisk_load_protected_data(void) {
         memcpy(&applied[applied_count], ent, sizeof(*ent));
         applied_count++;
 
-        cprisk_szero_l(actual_h, sizeof(actual_h));
-        cprisk_szero_l(diff, sizeof(diff));
+        cprisk_secure_zero(actual_h, sizeof(actual_h));
+        cprisk_secure_zero(diff, sizeof(diff));
+    }
+
+    /* Anti-dump: protect decrypted pages and install guard traps */
+    memset(&s_guard_state, 0, sizeof(s_guard_state));
+    for (uint32_t i = 0; i < applied_count; i++) {
+        const struct cprisk_armor_loader_entry *ent = &applied[i];
+        struct cprisk_loader_target target;
+        if (cprisk_resolve_loader_target(hdr, slide, ent, &target) == 0) {
+            uint8_t *ptr = cprisk_target_ptr_l(&target, ent);
+            if (ptr) {
+                cprisk_protect_decrypted_pages(ptr, (size_t)ent->size);
+                cprisk_install_memory_trap(ptr, (size_t)ent->size, &s_guard_state);
+            }
+        }
     }
 
     free(applied);
+    /* Do NOT zero s_ldr_key here: cprisk_unload_protected_data needs it to
+     * re-encrypt (XOR) the data before munlock. Key is zeroed in unload. */
     s_ldr_loaded = 1;
     return (int)count;
 }
@@ -330,6 +350,8 @@ uint64_t cprisk_get_data_integrity_accumulator(void) {
 }
 
 void cprisk_unload_protected_data(void) {
+    cprisk_remove_memory_trap(&s_guard_state);
+
     const struct mach_header_64 *hdr = cprisk_own_hdr_l();
     if (hdr && s_ldr_loaded) {
         unsigned long sec_sz = 0;
@@ -363,7 +385,7 @@ void cprisk_unload_protected_data(void) {
         }
     }
 
-    cprisk_szero_l(s_ldr_key, sizeof(s_ldr_key));
+    cprisk_secure_zero(s_ldr_key, sizeof(s_ldr_key));
     s_ldr_ready = 0;
     s_ldr_loaded = 0;
     s_data_acc = 0;

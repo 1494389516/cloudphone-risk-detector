@@ -25,6 +25,9 @@ let package = Package(
                 "StructureObfuscator"
             ]
         ),
-        .testTarget(name: "MachOKitTests", dependencies: ["MachOKit"])
+        .testTarget(name: "MachOKitTests", dependencies: [
+            "MachOKit", "StringEncryptor", "MetadataScrubber",
+            "DataSegmentEncryptor", "IntegrityAnchor", "StructureObfuscator",
+        ])
     ]
 )

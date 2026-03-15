@@ -8,6 +8,8 @@
 #include <unistd.h>
 
 #include "cprisk_armor_abi.h"
+#include "cprisk_secure_zero.h"
+#include "cprisk_memory_guard.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -161,6 +163,32 @@ void cprisk_cleanup_protection(void);
 /// Always writes exactly 32 bytes to out_material. Returns 0 if material is
 /// authentic (init succeeded), -1 if poisoned (init failed/skipped).
 int cprisk_get_runtime_material(uint8_t out_material[32]);
+
+/* ── Anti-Dump Memory Protection ───────────────────────────────────── */
+
+/// Verify that the specified memory region is read-only protected.
+/// Uses vm_region_64() to inspect page protection attributes.
+/// Returns 1 if the region is read-only (protection valid),
+/// 0 if writable or query failed (potentially tampered).
+int cprisk_verify_page_protection(void *region, size_t len);
+
+/* ── Runtime Integrity Re-check ────────────────────────────────────── */
+
+/// Re-compute __TEXT.__text hash and compare with the value saved at init.
+/// Returns 0 if integrity is intact, 1 if tampered (poison flag set),
+/// -1 if no saved hash, -2 on computation error.
+/// Does NOT crash; sets an internal poison flag readable via
+/// cprisk_is_integrity_poisoned().
+int cprisk_recheck_integrity(void);
+
+/// Returns 1 if integrity re-check detected tampering, 0 otherwise.
+int cprisk_is_integrity_poisoned(void);
+
+/// Return wall-clock nanoseconds spent in cprisk_init_protection().
+uint64_t cprisk_get_init_elapsed_ns(void);
+
+/// Thin wrapper around cprisk_secure_zero() exposed for testing.
+void cprisk_test_secure_zero(void *buf, size_t len);
 
 #ifdef __cplusplus
 }

@@ -1,6 +1,6 @@
-# CloudPhoneRiskKit 6.0 使用与构建说明
+# CloudPhoneRiskKit 6.1 使用与构建说明
 
-iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。6.0 新增自研壳（cprisk-armor）二进制保护与端云签名绑定。
+iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。6.0 引入自研壳（cprisk-armor）二进制保护与端云签名绑定；6.1 将壳升级为 5 Pass 工业化保护，新增 Metadata 抹除、结构混淆、Anti-Dump、密钥清零与运行时加固。
 
 ---
 
@@ -39,7 +39,7 @@ open RiskDetectorApp.xcodeproj
 
 ### 2.4 壳工具链构建 (cprisk-armor)
 
-cprisk-armor 是编译后壳保护工具链，对 SDK 的 Mach-O 二进制执行字符串加密、数据段加密与完整性锚点注入。
+cprisk-armor 是编译后壳保护工具链，对 SDK 的 Mach-O 二进制执行 5 Pass 加固（字符串加密、Metadata 抹除、数据段加密、完整性锚点、结构混淆）。
 
 ```bash
 cd cprisk-armor
@@ -55,9 +55,11 @@ swift build -c release
 
 | Pass | 功能 | 运行时消费方 |
 |------|------|-------------|
-| Pass 1 | 字符串加密，写入伪装 Section | `cprisk_string_decrypt.c` |
-| Pass 3 | 数据段加密 | `cprisk_data_loader.c` |
+| Pass 1 | 全量敏感字符串加密 + 原位零化 | `cprisk_string_decrypt.c` |
+| Pass 2 | Metadata 抹除（类型名/反射/方法名） | — (编译后不可逆) |
+| Pass 3 | 多 Section 数据段加密 | `cprisk_data_loader.c` |
 | Pass 4 | 完整性锚点注入 | `cprisk_integrity.c` |
+| Pass 5 | 结构混淆（假 Section + 随机布局） | — (编译后不可逆) |
 
 ### 2.5 真机 vs 模拟器
 
@@ -188,9 +190,9 @@ let envelope = try await CPRiskKit.shared.buildSecureReportEnvelopeWithAttestati
 
 ---
 
-## 8.1 壳保护与 v2a 签名 (6.0 新增)
+## 8.1 壳保护与 v2a 签名 (6.0 / 6.1)
 
-6.0 的自研壳在运行时由 CRiskCore 自动完成解密与完整性校验，无需调用方额外操作。SDK 在 `start()` / `evaluate()` 时自动初始化 armor runtime。
+自研壳在运行时由 CRiskCore 自动完成解密与完整性校验，无需调用方额外操作。SDK 在 `start()` / `evaluate()` 时自动初始化 armor runtime。6.1 新增 Anti-Dump 页面保护、密钥安全清零和运行时完整性重校验。
 
 **ReportEnvelope v2a 签名**：壳完整性 material 会自动混入 `buildSecureReportEnvelope` 的 HMAC 签名密钥派生链：
 
@@ -366,7 +368,7 @@ CPRiskKit.shared.setTextSegmentReferenceResolver(SignedReferenceResolver())
 2. **SchemeDetector**：需在宿主 App 的 `Info.plist` 添加 `LSApplicationQueriesSchemes`（如 `cydia`、`sileo`、`filza` 等），否则 `canOpenURL` 始终返回 `false`。
 3. **弱信号原则**：SDK 将不可用 / 无法获取的信号视为弱信号，不会因系统限制直接判定高风险。**强结论建议放在服务端做聚合判断**（IP 聚合、ASN、设备图谱、长连接流量模式等）。
 4. **日志开关**：`CPRiskKit.setLogEnabled(true)` 仅在 `DEBUG` 构建下生效。
-5. **壳工具链**：cprisk-armor 需在 `swift build` 之后对产物执行加固；壳运行时由 CRiskCore 自动管理，调用方无需手动介入。
+5. **壳工具链**：cprisk-armor（5 Pass）需在 `swift build` 之后对产物执行加固；壳运行时由 CRiskCore 自动管理（含 Anti-Dump + 密钥清零 + 完整性重校验），调用方无需手动介入。
 6. **v2a 签名兼容**：服务端需同时支持 `v2`（无壳）和 `v2a`（壳绑定）签名验证；未加壳的 SDK 仍输出 `v2`。
 
 ---

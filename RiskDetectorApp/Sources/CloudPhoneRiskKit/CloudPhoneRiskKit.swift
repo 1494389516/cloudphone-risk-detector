@@ -1800,6 +1800,15 @@ public final class CPRiskKit: NSObject {
         )
         return Data(derived).map { String(format: "%02x", $0) }.joined()
     }
+
+    /// 返回 v2a 信封验签所需的派生密钥。
+    /// 确保 armor runtime 已启动，并用 baseKey + armor material 派生。
+    /// 供 validateSecureReportEnvelope 在 sigVer == "v2a" 时使用。
+    internal func effectiveSigningKeyForV2aValidation(baseKey: String) -> String {
+        _ = ensureArmorRuntimeStarted(trigger: "validate_envelope")
+        let (armorMaterial, _) = Self.armorRuntimeMaterial()
+        return Self.deriveEffectiveSigningKey(baseKey: baseKey, armorMaterial: armorMaterial)
+    }
 }
 
 // MARK: - async/await APIs (2.0)
