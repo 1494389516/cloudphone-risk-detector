@@ -22,6 +22,10 @@ _Static_assert(CPRISK_SHA256_DIGEST_LENGTH == CPRISK_ARMOR_HASH_SIZE,
 static uint8_t s_runtime_material[CPRISK_ARMOR_HASH_SIZE];
 static int s_runtime_material_ready;
 
+/* Per-execution random value filled on first poison use; never a public constant. */
+static uint8_t s_poison_material[CPRISK_ARMOR_HASH_SIZE];
+static int s_poison_material_ready;
+
 static void cprisk_szero_i(void *p, size_t n) {
     volatile uint8_t *v = (volatile uint8_t *)p;
     while (n--) *v++ = 0;
@@ -308,6 +312,20 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
     int rc = -1;
 
     cprisk_fill_root_material_i(root_key, root_key_len, root_material);
+
+    /* Reject NULL or all-zero root keys: an all-zero key makes the full
+     * armor chain deterministic for any attacker who can read __TEXT. */
+    {
+        int all_zero = 1;
+        for (int zi = 0; zi < CPRISK_ARMOR_KEY_SIZE; zi++) {
+            if (root_material[zi] != 0) { all_zero = 0; break; }
+        }
+        if (all_zero) {
+            rc = -1;
+            goto cleanup;
+        }
+    }
+
     cprisk_derive_string_key_i(root_material, string_key);
     if (cprisk_init_string_decryptor(string_key, CPRISK_ARMOR_KEY_SIZE) != 0) {
         rc = -2;
@@ -379,6 +397,9 @@ cleanup:
 void cprisk_cleanup_protection(void) {
     cprisk_szero_i(s_runtime_material, sizeof(s_runtime_material));
     s_runtime_material_ready = 0;
+    /* Invalidate the per-run poison so a new random is drawn on next use. */
+    cprisk_szero_i(s_poison_material, sizeof(s_poison_material));
+    s_poison_material_ready = 0;
     cprisk_cleanup_string_decryptor();
     cprisk_unload_protected_data();
 }
@@ -393,15 +414,15 @@ int cprisk_get_runtime_material(uint8_t out_material[32]) {
     }
 
     /*
-     * Poison path: deterministic but WRONG 32-byte value.
-     * Any signature derived from this will fail server-side verification.
+     * Poison path: per-execution random 32-byte value, generated once on first
+     * use via arc4random_buf.  Using a public constant here would let an attacker
+     * pre-compute HMAC(key=constant, msg=baseKey) after forcing cleanup, so we
+     * keep this value secret and unpredictable per process run.
      */
-    static const uint8_t poison_seed[32] = {
-        0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE,
-        0x13, 0x37, 0x42, 0x42, 0xFE, 0xED, 0xFA, 0xCE,
-        0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89,
-        0x98, 0x76, 0x54, 0x32, 0x10, 0xFE, 0xDC, 0xBA
-    };
-    memcpy(out_material, poison_seed, CPRISK_ARMOR_HASH_SIZE);
+    if (!s_poison_material_ready) {
+        arc4random_buf(s_poison_material, CPRISK_ARMOR_HASH_SIZE);
+        s_poison_material_ready = 1;
+    }
+    memcpy(out_material, s_poison_material, CPRISK_ARMOR_HASH_SIZE);
     return -1;
 }

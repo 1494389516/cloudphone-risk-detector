@@ -114,11 +114,11 @@ public final class CPRiskKit: NSObject {
 
     private enum ArmorRootKeySource: String {
         case environment
-        case userDefaults
+
         case debugFallback
         case missing
         case invalidEnvironment
-        case invalidUserDefaults
+
     }
 
     private enum ArmorRuntimeStatus: String {
@@ -169,7 +169,7 @@ public final class CPRiskKit: NSObject {
     }
 
     private static let armorRootKeyEnvironmentKey = "CPRISKKIT_ARMOR_ROOT_KEY_HEX"
-    private static let armorRootKeyDefaultsKey = "com.cloudphone.riskkit.armor.root_key_hex"
+
 #if DEBUG
     private static let armorDebugFallbackRootKeyHex = "00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f"
 #endif
@@ -1616,31 +1616,6 @@ public final class CPRiskKit: NSObject {
             )
         }
 
-        if let rawValue = UserDefaults.standard.string(forKey: armorRootKeyDefaultsKey) {
-            let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else {
-                return ArmorRootKeyResolution(
-                    keyData: nil,
-                    source: .invalidUserDefaults,
-                    debugFallbackUsed: false,
-                    failureReason: "invalid_root_key_hex"
-                )
-            }
-            guard let keyData = Data(hexString: trimmed), keyData.count == 32 else {
-                return ArmorRootKeyResolution(
-                    keyData: nil,
-                    source: .invalidUserDefaults,
-                    debugFallbackUsed: false,
-                    failureReason: "invalid_root_key_hex"
-                )
-            }
-            return ArmorRootKeyResolution(
-                keyData: keyData,
-                source: .userDefaults,
-                debugFallbackUsed: false,
-                failureReason: nil
-            )
-        }
 
 #if DEBUG
         return ArmorRootKeyResolution(
