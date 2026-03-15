@@ -595,6 +595,18 @@ public final class CPRiskKit: NSObject {
         extraSignals.append(contentsOf: extraSignalsForGraph)
         extraSignals.append(contentsOf: ChallengeResultStore.shared.consumePendingMismatchSignals())
 
+        if let provider = currentRemoteConfigProvider(), provider.isConfigStale {
+            extraSignals.append(RiskSignal(
+                id: "remote_config_stale",
+                category: "config",
+                score: 0,
+                evidence: ["age_seconds": "\(Int(provider.configAge))"],
+                state: .soft(confidence: 0.3),
+                layer: 4,
+                weightHint: 10
+            ))
+        }
+
         let serverPolicy = PolicyManager.shared.activePolicy
         let policy = buildEnginePolicy(
             runtimeConfig: runtimeConfig,
@@ -602,6 +614,9 @@ public final class CPRiskKit: NSObject {
             enableTemporalAnalysis: config.enableTemporalAnalysis,
             serverPolicy: serverPolicy
         )
+        if policy.killSwitchEnabled {
+            Logger.log("⚠️ killSwitch is ACTIVE — evaluation will force low-risk/allow verdict")
+        }
         let decisionEngine = RiskDetectionEngine(policy: policy, enableLogging: Logger.isEnabled)
         let verdict = decisionEngine.evaluate(
             context: context,
@@ -713,7 +728,8 @@ public final class CPRiskKit: NSObject {
         sessionToken: String,
         signingKey: String,
         keyId: String = "k1",
-        attestationKeyId: String? = nil
+        attestationKeyId: String? = nil,
+        requireArmor: Bool = true
     ) throws -> ReportEnvelope {
         let remoteConfig = currentRemoteConfig()
         let hardening = remoteConfig?.securityHardening ?? .default
@@ -735,13 +751,6 @@ public final class CPRiskKit: NSObject {
             payloadData = try removingPayloadKey("challengeBinding", from: payloadData)
         }
 
-        #if DEBUG
-        let signatureVersion = hardening.enableEnvelopeSignatureV2 ? "v2a" : "v1"
-        #else
-        let signatureVersion = "v2a"
-        #endif
-        let envelopeConfig = ReportEnvelope.Config(signatureVersion: signatureVersion)
-
         let effectiveKeyId = (keyId == "k1" && TrustChainManager.currentKeyRotationPolicy() != nil)
             ? TrustChainManager.currentKeyId(baseKeyId: keyId)
             : keyId
@@ -753,19 +762,39 @@ public final class CPRiskKit: NSObject {
         )
 
         let armorSnapshot = ensureArmorRuntimeStarted(trigger: "build_envelope")
-        if armorSnapshot.status != .active {
+        let effectiveSigningKey: String
+        let signatureVersion: String
+
+        if armorSnapshot.status == .active {
+            let (armorMaterial, authentic) = Self.armorRuntimeMaterial()
+            if authentic {
+                effectiveSigningKey = Self.deriveEffectiveSigningKey(
+                    baseKey: signingKey,
+                    armorMaterial: armorMaterial
+                )
+                #if DEBUG
+                signatureVersion = hardening.enableEnvelopeSignatureV2 ? "v2a" : "v1"
+                #else
+                signatureVersion = "v2a"
+                #endif
+            } else if requireArmor {
+                Logger.log("buildSecureReportEnvelope: armor material poisoned (cprisk_get_runtime_material failed)")
+                throw SecureUploadError.armorRuntimeUnavailable(reason: "material_poisoned")
+            } else {
+                Logger.log("buildSecureReportEnvelope: armor material poisoned, degrading to v2 signature")
+                effectiveSigningKey = signingKey
+                signatureVersion = "v2"
+            }
+        } else if requireArmor {
             Logger.log("buildSecureReportEnvelope: armor unavailable status=\(armorSnapshot.status.rawValue) reason=\(armorSnapshot.reason)")
             throw SecureUploadError.armorRuntimeUnavailable(reason: armorSnapshot.reason)
+        } else {
+            Logger.log("buildSecureReportEnvelope: armor unavailable, degrading to v2 signature (status=\(armorSnapshot.status.rawValue))")
+            effectiveSigningKey = signingKey
+            signatureVersion = "v2"
         }
-        let (armorMaterial, authentic) = Self.armorRuntimeMaterial()
-        if !authentic {
-            Logger.log("buildSecureReportEnvelope: armor material poisoned (cprisk_get_runtime_material failed)")
-            throw SecureUploadError.armorRuntimeUnavailable(reason: "material_poisoned")
-        }
-        let effectiveSigningKey = Self.deriveEffectiveSigningKey(
-            baseKey: signingKey,
-            armorMaterial: armorMaterial
-        )
+
+        let envelopeConfig = ReportEnvelope.Config(signatureVersion: signatureVersion)
 
         return try ReportEnvelope.create(
             payloadData: payloadData,
@@ -888,7 +917,8 @@ public final class CPRiskKit: NSObject {
                 report: report,
                 sessionToken: sessionToken,
                 signingKey: signingKey,
-                keyId: effectiveKeyId
+                keyId: effectiveKeyId,
+                requireArmor: false
             )
         }
         do {
@@ -935,7 +965,8 @@ public final class CPRiskKit: NSObject {
                 report: report,
                 sessionToken: sessionToken,
                 signingKey: signingKey,
-                keyId: effectiveKeyId
+                keyId: effectiveKeyId,
+                requireArmor: false
             )
             return fallback.withTrustLevel(TrustChainManager.degradedTrustLevel())
         }
@@ -1442,6 +1473,7 @@ public final class CPRiskKit: NSObject {
         return EnginePolicy(
             name: remoteConfig.map { "remote_\($0.version)" } ?? "local_sdk3",
             version: remoteConfig.map { String($0.version) } ?? "3.0-local",
+            killSwitchEnabled: remoteConfig?.securityHardening?.killSwitchEnabled ?? false,
             enableNetworkSignals: runtimeConfig.enableNetworkSignals,
             enableBehaviorDetection: runtimeConfig.enableBehaviorDetect,
             enableDeviceFingerprint: true,

@@ -59,6 +59,22 @@ export CPRISK_ARMOR_KEY=<hex>; .build/release/cprisk-armor --input ... --output 
 
 > **6.2 Breaking Change**：启用加密 Pass（1/3/4）时必须提供密钥，否则 CLI 拒绝执行。密钥优先级：`--key` > `--key-file` > `CPRISK_ARMOR_KEY` 环境变量。全零密钥会被拒绝。
 
+### 2.4.1 Build Phase 集成（默认）
+
+使用 **XcodeGen** 生成工程时，`project.yml` 已内置 cprisk-armor 的 Run Script Phase（postBuildScripts）。每次 Release 构建完成后会自动对 `CloudPhoneRiskKit.framework` 执行壳加固。
+
+**配置步骤**：
+
+1. 在 Xcode Scheme 中设置环境变量 `CPRISK_ARMOR_KEY`（64 字符十六进制密钥），或通过 CI Secrets 注入。
+2. 首次使用前执行 `cd cprisk-armor && swift build -c release` 构建壳工具。
+3. 运行时需同时配置 `CPRISKKIT_ARMOR_ROOT_KEY_HEX`（与 `CPRISK_ARMOR_KEY` 相同密钥），供 CRiskCore 解密消费。
+
+未设置 `CPRISK_ARMOR_KEY` 时，脚本会跳过加固并输出 warning，不影响构建。
+
+### 2.4.2 手动执行（可选）
+
+若不使用 XcodeGen、或需在自定义构建流程中执行壳加固，可沿用 2.4 节的手动方式。若已集成 Build Phase 但希望临时禁用，可不设置 `CPRISK_ARMOR_KEY`，脚本会自动跳过。
+
 **Pass 说明**：
 
 | Pass | 功能 | 运行时消费方 |

@@ -376,15 +376,64 @@ SDK 采用纵深防御架构：**cprisk-armor 自研壳（5 Pass / ABI v2）** �
 
 ---
 
+## 灰度与降级机制
+
+SDK 在对抗安全的同时兼顾业务可用性，内置多层灰度与降级保护：
+
+### 紧急熔断开关（Kill Switch）
+
+通过 `RemoteConfig.securityHardening.killSwitchEnabled` 远程下发，启用后决策引擎强制返回 `score=0 / action=allow`，所有高风险拦截立即失效。用于线上误杀事故时快速止血，无需发版。
+
+### 远程配置熔断器（Circuit Breaker）
+
+`RemoteConfigProvider` 内置三态熔断器（closed → open → half-open）：
+
+| 状态 | 行为 |
+|------|------|
+| **closed** | 正常拉取远程配置 |
+| **open** | 连续失败 ≥3 次后触发，跳过拉取，直接返回当前配置 |
+| **half-open** | 冷却期（30s→60s→120s→300s 递增）过后允许一次探测请求 |
+
+熔断对调用方透明，`fetchLatest()` 在 open 状态下返回 `.success(currentConfig)` 而非错误。
+
+### 配置降级链
+
+远程配置不可用时，SDK 按以下优先级回退：
+
+1. **内存缓存**：最近一次成功拉取的配置
+2. **磁盘缓存**：`ConfigCache` 持久化的 verified 配置（Release 下仅接受已验签且未过期的缓存）
+3. **本地默认配置**：`RemoteConfig.default` / `config.toSwift()`
+4. **安全地板强制**：无论使用哪层配置，Release 下关键检测开关始终强制开启
+
+配置过期（超过 `cacheValidityDuration`）时注入 `remote_config_stale` 软信号（weight=10），供服务端感知。
+
+### 签名降级（v2a → v2）
+
+`buildSecureReportEnvelope` 在 armor 运行时不可用时的行为：
+
+| `requireArmor` | armor 状态 | 行为 |
+|:---:|:---:|------|
+| `true`（默认） | 不可用 | 抛出 `armorRuntimeUnavailable`，调用方需处理 |
+| `false` | 不可用 | 降级为 v2 签名（不含 armor material），报告仍可提交 |
+
+服务端应根据 `signatureVersion` 字段（`v2a` vs `v2`）调整信任评估。
+
+### 检测器容错
+
+| 场景 | 降级行为 |
+|------|----------|
+| 检测器超时 / 异常 | 返回 `score=80`（高风险），避免静默放过 |
+| PhysicalSensorProbe 冷启动 | 返回 `pending_prewarm`（score=0），后台预热 |
+| Keychain 不可用 | 降级到 UserDefaults；两层都失败返回 `ephemeral:` 前缀 ID |
+| App Attest 不可用 | `requireAttestation=true` 时 throw；`false` 时降级为普通 HMAC |
+
+---
+
 ## 文档索引
 
 | 文档 | 路径 |
 |------|------|
 | SDK 使用与构建说明 | `CloudPhoneRiskKit_使用说明.md` |
-| 项目技术文档 | `RiskDetectorApp/RiskDetectorApp项目文档.md` |
-| 架构设计 | `RiskDetectorApp/docs/architecture-design.md` |
-| API 设计 | `RiskDetectorApp/docs/api-design.md` |
-| 模块依赖 | `RiskDetectorApp/docs/module-dependencies.md` |
 
 ---
 

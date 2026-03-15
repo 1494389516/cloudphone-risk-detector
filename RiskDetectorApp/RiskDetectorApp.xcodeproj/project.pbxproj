@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		0A1B2C3D4E5F60718293A4B5 /* ConfigurationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6D7E8F90A1B2C3D4E5F6071 /* ConfigurationView.swift */; };
 		0AFBA4C93CB42EF36F235C3C /* JSONTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F122700AF4487064C43D5A26 /* JSONTextView.swift */; };
 		2B03C19AF9B27CD84112F0C0 /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 712221BDAFCF54247F7DF807 /* HistoryView.swift */; };
 		35227729D62B5C8E41B1858E /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A3E4EC6427C6C650C3B1ADD /* SettingsView.swift */; };
@@ -18,6 +17,9 @@
 		5DB74DF056EBA9015ADA15BB /* ResultsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A80CAAB554D2C859E899FDC /* ResultsView.swift */; };
 		5F16D37AFAEB881265210F5F /* HistoryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 698C3C44E735A10FF92C8983 /* HistoryViewModel.swift */; };
 		5F3F2612522A94E6891BA3F2 /* CloudPhoneRiskAppCore in Frameworks */ = {isa = PBXBuildFile; productRef = D34F6AE5C4E0319547182CBC /* CloudPhoneRiskAppCore */; };
+		7D79402EFFA7BF56F68A1F70 /* TemporalAnalysisView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2E05022B74402189F70CEF6 /* TemporalAnalysisView.swift */; };
+		8C15AFCA5B99041724592F82 /* DecisionResultsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 035F16FD598559910D38E7D7 /* DecisionResultsView.swift */; };
+		8D53993F58D43D0AF555B128 /* ConfigurationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99FF79A75D6145C691B5B70C /* ConfigurationView.swift */; };
 		924F9265427DBB1A0832F4C0 /* RiskDetectorAppApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4B412448EA04BD2B3489174 /* RiskDetectorAppApp.swift */; };
 		9E8FCDBABD0E44933EEE8908 /* CloudPhoneRiskKit in Frameworks */ = {isa = PBXBuildFile; productRef = 7EB5EB801CAB076729C5031C /* CloudPhoneRiskKit */; };
 		B0AE4B9538BA842166DBB25C /* DetectionViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F212856003CC3E5DFF042B1 /* DetectionViewModel.swift */; };
@@ -25,7 +27,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		C6D7E8F90A1B2C3D4E5F6071 /* ConfigurationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigurationView.swift; sourceTree = "<group>"; };
+		035F16FD598559910D38E7D7 /* DecisionResultsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecisionResultsView.swift; sourceTree = "<group>"; };
 		1A80CAAB554D2C859E899FDC /* ResultsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultsView.swift; sourceTree = "<group>"; };
 		2A3E4EC6427C6C650C3B1ADD /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		2EA595A34F27736C533461B6 /* RiskGaugeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskGaugeView.swift; sourceTree = "<group>"; };
@@ -37,8 +39,10 @@
 		698C3C44E735A10FF92C8983 /* HistoryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryViewModel.swift; sourceTree = "<group>"; };
 		712221BDAFCF54247F7DF807 /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
 		85F797EBC0F59AF96A5B3C24 /* RiskDetectorApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = RiskDetectorApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		99FF79A75D6145C691B5B70C /* ConfigurationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigurationView.swift; sourceTree = "<group>"; };
 		A087EC82DBDA65A07B21344B /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
 		A4B412448EA04BD2B3489174 /* RiskDetectorAppApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskDetectorAppApp.swift; sourceTree = "<group>"; };
+		B2E05022B74402189F70CEF6 /* TemporalAnalysisView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemporalAnalysisView.swift; sourceTree = "<group>"; };
 		BE6EB08AABF071A7808460B7 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		F122700AF4487064C43D5A26 /* JSONTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONTextView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -76,11 +80,13 @@
 		571E62450A18B12181483CFC /* Views */ = {
 			isa = PBXGroup;
 			children = (
-				C6D7E8F90A1B2C3D4E5F6071 /* ConfigurationView.swift */,
+				99FF79A75D6145C691B5B70C /* ConfigurationView.swift */,
 				41E5A393FB92AF0CB59ECEF4 /* DashboardView.swift */,
+				035F16FD598559910D38E7D7 /* DecisionResultsView.swift */,
 				712221BDAFCF54247F7DF807 /* HistoryView.swift */,
 				1A80CAAB554D2C859E899FDC /* ResultsView.swift */,
 				2A3E4EC6427C6C650C3B1ADD /* SettingsView.swift */,
+				B2E05022B74402189F70CEF6 /* TemporalAnalysisView.swift */,
 				E521293DE4F8298FC620140D /* Components */,
 			);
 			path = Views;
@@ -143,6 +149,7 @@
 			buildPhases = (
 				C4B83FE55BD25F814A031D80 /* Sources */,
 				9186A67757FFACE74AB10A65 /* Frameworks */,
+				C80A41327137059CEA0DC9B8 /* cprisk-armor (Release) */,
 			);
 			buildRules = (
 			);
@@ -194,14 +201,37 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		C80A41327137059CEA0DC9B8 /* cprisk-armor (Release) */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "cprisk-armor (Release)";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ \"${CONFIGURATION}\" != \"Release\" ]; then\n  exit 0\nfi\nif [ -z \"${CPRISK_ARMOR_KEY}\" ]; then\n  echo \"warning: CPRISK_ARMOR_KEY not set, skipping cprisk-armor (Release build unarmored)\"\n  exit 0\nfi\nARMOR_CLI=\"${PROJECT_DIR}/../cprisk-armor/.build/release/cprisk-armor\"\nFRAMEWORK_BINARY=\"${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}/Frameworks/CloudPhoneRiskKit.framework/CloudPhoneRiskKit\"\nif [ ! -f \"${ARMOR_CLI}\" ]; then\n  echo \"warning: cprisk-armor not built at ${ARMOR_CLI}, run: cd cprisk-armor && swift build -c release\"\n  exit 0\nfi\nif [ ! -f \"${FRAMEWORK_BINARY}\" ]; then\n  echo \"warning: CloudPhoneRiskKit.framework not found at ${FRAMEWORK_BINARY}, skipping armor\"\n  exit 0\nfi\n\"${ARMOR_CLI}\" --input \"${FRAMEWORK_BINARY}\" --output \"${FRAMEWORK_BINARY}\" --all --key \"${CPRISK_ARMOR_KEY}\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		C4B83FE55BD25F814A031D80 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				0A1B2C3D4E5F60718293A4B5 /* ConfigurationView.swift in Sources */,
+				8D53993F58D43D0AF555B128 /* ConfigurationView.swift in Sources */,
 				3D7419B2D3E663698F729C5F /* ContentView.swift in Sources */,
 				51E093489AF3E8CDA9276CF5 /* DashboardView.swift in Sources */,
+				8C15AFCA5B99041724592F82 /* DecisionResultsView.swift in Sources */,
 				B0AE4B9538BA842166DBB25C /* DetectionViewModel.swift in Sources */,
 				2B03C19AF9B27CD84112F0C0 /* HistoryView.swift in Sources */,
 				5F16D37AFAEB881265210F5F /* HistoryViewModel.swift in Sources */,
@@ -212,6 +242,7 @@
 				35227729D62B5C8E41B1858E /* SettingsView.swift in Sources */,
 				4C14492CA727814792C09D3A /* SettingsViewModel.swift in Sources */,
 				D98CCB96D2F671CCD4A514CE /* SignalRowView.swift in Sources */,
+				7D79402EFFA7BF56F68A1F70 /* TemporalAnalysisView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

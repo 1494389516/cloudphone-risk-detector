@@ -40,6 +40,28 @@ targets:
         product: CloudPhoneRiskKit
       - package: CloudPhoneRiskKit
         product: CloudPhoneRiskAppCore
+    postBuildScripts:
+      - name: "cprisk-armor (Release)"
+        script: |
+          if [ "${CONFIGURATION}" != "Release" ]; then
+            exit 0
+          fi
+          if [ -z "${CPRISK_ARMOR_KEY}" ]; then
+            echo "warning: CPRISK_ARMOR_KEY not set, skipping cprisk-armor (Release build unarmored)"
+            exit 0
+          fi
+          ARMOR_CLI="${PROJECT_DIR}/../cprisk-armor/.build/release/cprisk-armor"
+          FRAMEWORK_BINARY="${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}/Frameworks/CloudPhoneRiskKit.framework/CloudPhoneRiskKit"
+          if [ ! -f "${ARMOR_CLI}" ]; then
+            echo "warning: cprisk-armor not built at ${ARMOR_CLI}, run: cd cprisk-armor && swift build -c release"
+            exit 0
+          fi
+          if [ ! -f "${FRAMEWORK_BINARY}" ]; then
+            echo "warning: CloudPhoneRiskKit.framework not found at ${FRAMEWORK_BINARY}, skipping armor"
+            exit 0
+          fi
+          "${ARMOR_CLI}" --input "${FRAMEWORK_BINARY}" --output "${FRAMEWORK_BINARY}" --all --key "${CPRISK_ARMOR_KEY}"
+        basedOnDependencyAnalysis: false
 
 schemes:
   RiskDetectorApp:

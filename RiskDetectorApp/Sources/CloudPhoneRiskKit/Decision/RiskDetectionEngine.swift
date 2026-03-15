@@ -63,6 +63,19 @@ public struct RiskDetectionEngine: Sendable {
         log("Scenario: \(scenario.rawValue)")
         log("Policy: \(policy.name)")
 
+        if policy.killSwitchEnabled {
+            log("⚠️ killSwitch enabled — forcing allow verdict, all risk interception bypassed")
+            return RiskVerdict(
+                score: 0,
+                internalLevel: .low,
+                internalAction: .allow,
+                confidence: 1.0,
+                primaryReasons: ["kill_switch_active"],
+                signals: [],
+                scenario: scenario
+            )
+        }
+
         // 0. SDK 4.4 执行流栈回溯：关键节点校验调用栈
         //
         // 分两条路径处理：
@@ -1118,6 +1131,11 @@ private extension RiskDetectionEngine {
 /// 决策引擎的全局策略配置
 public struct EnginePolicy: Codable, Sendable {
 
+    // MARK: - 紧急开关
+
+    /// 紧急熔断开关：启用后所有评估强制返回低风险/allow，用于线上事故时快速止血
+    public let killSwitchEnabled: Bool
+
     // MARK: - 全局开关
 
     /// 是否启用网络信号检测
@@ -1169,6 +1187,7 @@ public struct EnginePolicy: Codable, Sendable {
     public init(
         name: String = "default",
         version: String = "1.0.0",
+        killSwitchEnabled: Bool = false,
         enableNetworkSignals: Bool = true,
         enableBehaviorDetection: Bool = true,
         enableDeviceFingerprint: Bool = true,
@@ -1182,6 +1201,7 @@ public struct EnginePolicy: Codable, Sendable {
     ) {
         self.name = name
         self.version = version
+        self.killSwitchEnabled = killSwitchEnabled
         self.enableNetworkSignals = enableNetworkSignals
         self.enableBehaviorDetection = enableBehaviorDetection
         self.enableDeviceFingerprint = enableDeviceFingerprint
@@ -1192,6 +1212,23 @@ public struct EnginePolicy: Codable, Sendable {
         self.serverBlocklist = serverBlocklist
         self.blocklistAction = blocklistAction
         self.scenarioPolicies = scenarioPolicies
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        version = try container.decode(String.self, forKey: .version)
+        killSwitchEnabled = try container.decodeIfPresent(Bool.self, forKey: .killSwitchEnabled) ?? false
+        enableNetworkSignals = try container.decode(Bool.self, forKey: .enableNetworkSignals)
+        enableBehaviorDetection = try container.decode(Bool.self, forKey: .enableBehaviorDetection)
+        enableDeviceFingerprint = try container.decode(Bool.self, forKey: .enableDeviceFingerprint)
+        forceActionOnJailbreak = try container.decodeIfPresent(RiskAction.self, forKey: .forceActionOnJailbreak)
+        signalWeightOverrides = try container.decode([String: Double].self, forKey: .signalWeightOverrides)
+        mutationStrategy = try container.decodeIfPresent(MutationStrategy.self, forKey: .mutationStrategy)
+        blindChallengePolicy = try container.decodeIfPresent(BlindChallengePolicy.self, forKey: .blindChallengePolicy)
+        serverBlocklist = try container.decodeIfPresent([String].self, forKey: .serverBlocklist)
+        blocklistAction = try container.decodeIfPresent(RiskAction.self, forKey: .blocklistAction)
+        scenarioPolicies = try container.decode([RiskScenario: ScenarioPolicy].self, forKey: .scenarioPolicies)
     }
 
     /// 获取指定场景的策略
