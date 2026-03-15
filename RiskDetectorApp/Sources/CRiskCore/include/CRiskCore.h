@@ -146,9 +146,9 @@ int cprisk_read_full_anchor_hash(uint8_t *out_hash);
 
 /// Master initialization: pass1 bootstrap string → pass4 integrity/anchor
 /// material → pass3 loader key derivation → decrypt protected data.
-/// root_key is optional entropy: NULL/0-length is allowed and treated as
-/// all-zero padding; longer values are truncated to 32 bytes.
-/// Returns 0 on success, negative on failure.
+/// root_key must be non-NULL and non-zero (all-zero keys are rejected with -1
+/// to prevent a predictable key chain); values longer than 32 bytes are
+/// truncated. Returns 0 on success, negative on failure.
 int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len);
 
 /// Cleanup all armor runtime state (keys, accumulators, decrypted data).
@@ -156,7 +156,8 @@ void cprisk_cleanup_protection(void);
 
 /// Retrieve the 32-byte runtime material derived from the full armor init chain.
 /// If armor runtime is not initialized or was tampered, out_material will be
-/// filled with a deterministic poison value derived from the init state.
+/// filled with a per-execution random poison value (generated via arc4random_buf
+/// on first use; never a public constant).
 /// Always writes exactly 32 bytes to out_material. Returns 0 if material is
 /// authentic (init succeeded), -1 if poisoned (init failed/skipped).
 int cprisk_get_runtime_material(uint8_t out_material[32]);

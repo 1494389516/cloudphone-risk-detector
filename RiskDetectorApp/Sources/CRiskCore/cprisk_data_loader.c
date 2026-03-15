@@ -208,10 +208,13 @@ static void cprisk_rollback_l(
         if (cprisk_resolve_loader_target(hdr, slide, ent, &target) == 0) {
             uint8_t *ptr = cprisk_target_ptr_l(&target, ent);
             if (ptr) {
-                (void)cprisk_xor_region_l(ptr, (size_t)ent->size, ent->key_id);
                 void *page = NULL;
                 size_t span = 0;
                 cprisk_page_span_l(ptr, (size_t)ent->size, &page, &span);
+                /* Restore write permission before re-encrypting. */
+                if (page && span > 0)
+                    (void)mprotect(page, span, PROT_READ | PROT_WRITE);
+                (void)cprisk_xor_region_l(ptr, (size_t)ent->size, ent->key_id);
                 if (page && span > 0)
                     munlock(page, span);
             }
@@ -303,8 +306,12 @@ int cprisk_load_protected_data(void) {
         void *page = NULL;
         size_t span = 0;
         cprisk_page_span_l(ptr, (size_t)ent->size, &page, &span);
-        if (page && span > 0)
+        if (page && span > 0) {
             (void)mlock(page, span);
+            /* Remove write permission from decrypted pages so an attacker
+             * cannot silently patch detection logic in memory. */
+            (void)mprotect(page, span, PROT_READ);
+        }
 
         memcpy(&applied[applied_count], ent, sizeof(*ent));
         applied_count++;
@@ -343,11 +350,13 @@ void cprisk_unload_protected_data(void) {
                 if (!ptr)
                     continue;
 
-                (void)cprisk_xor_region_l(ptr, (size_t)ent->size, ent->key_id);
-
                 void *page = NULL;
                 size_t span = 0;
                 cprisk_page_span_l(ptr, (size_t)ent->size, &page, &span);
+                /* Restore write permission before re-encrypting. */
+                if (page && span > 0)
+                    (void)mprotect(page, span, PROT_READ | PROT_WRITE);
+                (void)cprisk_xor_region_l(ptr, (size_t)ent->size, ent->key_id);
                 if (page && span > 0)
                     munlock(page, span);
             }
