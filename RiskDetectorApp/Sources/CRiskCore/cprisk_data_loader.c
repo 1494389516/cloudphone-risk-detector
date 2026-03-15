@@ -525,8 +525,6 @@ void cprisk_unload_protected_data(void) {
     if (hdr && s_ldr_loaded && s_applied_entries && s_decrypted_flags) {
         intptr_t slide = cprisk_compute_slide(hdr);
         for (uint32_t i = s_applied_count; i > 0; i--) {
-            if (!s_decrypted_flags[i - 1]) continue;
-            
             const struct cprisk_armor_loader_entry *ent = &s_applied_entries[i - 1];
             struct cprisk_loader_target target;
             if (cprisk_resolve_loader_target(hdr, slide, ent, &target) != 0)
@@ -539,10 +537,17 @@ void cprisk_unload_protected_data(void) {
             void *page = NULL;
             size_t span = 0;
             if (cprisk_page_span_l(ptr, (size_t)ent->size, &page, &span) == 0) {
+                /* Restore write permission before any mutation.
+                 * Pages that were mlocked+PROT_NONE but never JIT-decrypted must
+                 * also be unlocked here; without this, mlock is leaked and the
+                 * pages remain unswappable after stop(). */
                 if (page && span > 0)
                     (void)cprisk_hidden_mprotect(page, span, PROT_READ | PROT_WRITE);
-                (void)cprisk_xor_region_l(ptr, (size_t)ent->size, ent->key_id,
-                                          ent->nonce, CPRISK_ARMOR_NONCE_SIZE);
+                if (s_decrypted_flags[i - 1]) {
+                    /* Page was JIT-decrypted: re-encrypt before releasing. */
+                    (void)cprisk_xor_region_l(ptr, (size_t)ent->size, ent->key_id,
+                                              ent->nonce, CPRISK_ARMOR_NONCE_SIZE);
+                }
                 if (page && span > 0)
                     cprisk_hidden_munlock(page, span);
             }
@@ -572,8 +577,12 @@ void cprisk_erase_macho_header(void) {
     if (!hdr)
         return;
 
-    /* Validate sizeofcmds and ncmds before erasing to avoid OOB or abuse */
-    if (hdr->sizeofcmds > 0x1000 || hdr->ncmds >= 4096u)
+    /* Sanity-check ncmds only; the loop is already bounded by both `end` and
+     * `page_end`, so a large-but-legitimate sizeofcmds is handled safely.
+     * The previous `sizeofcmds > 0x1000` guard was too restrictive: real
+     * production binaries routinely have sizeofcmds > 0x2000, causing the
+     * function to silently return without erasing anything. */
+    if (hdr->ncmds >= 4096u)
         return;
 
     uintptr_t page_start = (uintptr_t)hdr & ~(uintptr_t)0xFFF;

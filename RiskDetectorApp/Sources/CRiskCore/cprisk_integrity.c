@@ -494,7 +494,7 @@ int cprisk_get_runtime_material(uint8_t out_material[32]) {
             s_poison_material_ready = 1;
         }
         memcpy(out_material, s_poison_material, CPRISK_ARMOR_HASH_SIZE);
-        return 0;
+        return -1;  /* Caller (Swift: armorRuntimeMaterial) checks rc==0 for authentic */
     }
 
     memcpy(out_material, s_runtime_material, CPRISK_ARMOR_HASH_SIZE);
