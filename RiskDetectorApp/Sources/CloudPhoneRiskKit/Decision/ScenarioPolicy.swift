@@ -61,17 +61,28 @@ public struct ScenarioPolicy: Codable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        mediumThreshold = try container.decode(Double.self, forKey: .mediumThreshold)
-        highThreshold = try container.decode(Double.self, forKey: .highThreshold)
-        criticalThreshold = try container.decode(Double.self, forKey: .criticalThreshold)
-        actionMapping = try container.decode([InternalRiskLevel: RiskAction].self, forKey: .actionMapping)
-        signalWeights = try container.decode(SignalWeights.self, forKey: .signalWeights)
-        comboRules = try container.decode([ComboRule].self, forKey: .comboRules)
-        enableForceRules = try container.decode(Bool.self, forKey: .enableForceRules)
+        mediumThreshold = try container.decodeIfPresent(Double.self, forKey: .mediumThreshold) ?? 30
+        highThreshold = try container.decodeIfPresent(Double.self, forKey: .highThreshold) ?? 55
+        criticalThreshold = try container.decodeIfPresent(Double.self, forKey: .criticalThreshold) ?? 80
+        actionMapping = try container.decodeIfPresent([InternalRiskLevel: RiskAction].self, forKey: .actionMapping) ?? Self.defaultActionMapping()
+        signalWeights = try container.decodeIfPresent(SignalWeights.self, forKey: .signalWeights) ?? .default
+        comboRules = try container.decodeIfPresent([ComboRule].self, forKey: .comboRules) ?? []
+        enableForceRules = try container.decodeIfPresent(Bool.self, forKey: .enableForceRules) ?? true
         compressedVerdictRules = try container.decodeIfPresent([CompressedVerdictRule].self, forKey: .compressedVerdictRules) ?? []
     }
 
     // MARK: - 便捷方法
+
+    /// 根据分数和策略阈值计算风险等级
+    public func level(for score: Double) -> InternalRiskLevel {
+        guard score.isFinite, score >= 0 else { return .low }
+        switch score {
+        case ..<mediumThreshold: return .low
+        case mediumThreshold..<highThreshold: return .medium
+        case highThreshold..<criticalThreshold: return .high
+        default: return .critical
+        }
+    }
 
     /// 根据风险等级获取建议动作
     public func action(for level: InternalRiskLevel) -> RiskAction {

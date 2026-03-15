@@ -37,6 +37,8 @@ static const struct mach_header_64 *cprisk_own_hdr(void) {
 static void cprisk_keystream(const uint8_t *key, uint32_t sid,
                              const uint8_t *nonce, size_t nonce_len,
                              uint8_t *out, size_t len) {
+    if (nonce_len > CPRISK_ARMOR_NONCE_SIZE)
+        return;
     /* seed = key[32] || sid_le[4] || nonce[nonce_len] */
     size_t seed_len = CPRISK_ARMOR_KEY_SIZE + 4 + nonce_len;
     uint8_t seed_buf[CPRISK_ARMOR_KEY_SIZE + 4 + CPRISK_ARMOR_NONCE_SIZE];
@@ -141,7 +143,7 @@ int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) 
         return -1;
     if ((size_t)ent->data_offset > sec_sz ||
         (size_t)dlen > sec_sz ||
-        data_base + data_end > sec_sz)
+        data_end > sec_sz - data_base)
         return -1;
 
     const uint8_t *enc = sec + data_base + ent->data_offset;

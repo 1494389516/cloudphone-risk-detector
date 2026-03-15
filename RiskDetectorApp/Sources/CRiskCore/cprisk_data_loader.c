@@ -92,6 +92,8 @@ static void cprisk_keystream_at_l(const uint8_t *key, uint32_t sid,
                                   const uint8_t *nonce, size_t nonce_len,
                                   size_t byte_offset,
                                   uint8_t *out, size_t len) {
+    if (nonce_len > CPRISK_ARMOR_NONCE_SIZE)
+        return;
     if (len == 0)
         return;
 
@@ -409,7 +411,7 @@ int cprisk_load_protected_data(void) {
         pthread_mutex_unlock(&s_loader_mutex);
     }
 
-    memset(&s_guard_state, 0, sizeof(s_guard_state));
+    cprisk_secure_zero(&s_guard_state, sizeof(s_guard_state));
     s_ldr_loaded = 1;
     return (int)s_applied_count;
 }

@@ -240,7 +240,7 @@ final class RiskSignalProviderRegistry {
         for provider in current {
             guard let s = provider.serverSignals(snapshot: snapshot) else { continue }
             if merged == nil { merged = s }
-            else { merged = merge(merged!, s) }
+            else { merged = merged.map { merge($0, s) } ?? s }
         }
         if merged != nil {
             Logger.log("provider.serverSignals: merged")

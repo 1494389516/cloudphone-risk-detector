@@ -40,13 +40,13 @@ final class ScorePipelineInvariantTests: XCTestCase {
         XCTAssertEqual(InternalRiskLevel.from(score: 100), .critical)
     }
 
-    /// 负分（已修复前的隐患复现）：负分命中 default 分支，应归为 .critical
-    /// 但 finalScore 现在有下界 clamp，负分永远不会被传入 from(score:)。
-    /// 此测试验证 from(score:) 本身对负数的行为是 .critical（符合 switch default）
-    func testInternalRiskLevelNegativeScoreFallsToDefault() {
-        // 负分命中 switch default → .critical（这是语言行为，不是期望的生产路径）
-        XCTAssertEqual(InternalRiskLevel.from(score: -1), .critical)
-        XCTAssertEqual(InternalRiskLevel.from(score: -100), .critical)
+    /// 无效分数（NaN/负/无穷）：guard 提前返回 .low，避免误判
+    func testInternalRiskLevelInvalidScoreReturnsLow() {
+        XCTAssertEqual(InternalRiskLevel.from(score: -1), .low)
+        XCTAssertEqual(InternalRiskLevel.from(score: -100), .low)
+        XCTAssertEqual(InternalRiskLevel.from(score: Double.nan), .low)
+        XCTAssertEqual(InternalRiskLevel.from(score: Double.infinity), .low)
+        XCTAssertEqual(InternalRiskLevel.from(score: -Double.infinity), .low)
     }
 
     // MARK: - ChallengeResultStore 偏移范围约束

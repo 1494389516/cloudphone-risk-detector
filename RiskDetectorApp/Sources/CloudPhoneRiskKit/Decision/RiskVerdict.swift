@@ -107,7 +107,7 @@ public struct RiskVerdict: Codable, Sendable {
         mappingVersion: String? = nil
     ) {
         self.score = score
-        self.internalLevel = InternalRiskLevel.from(score: score)
+        self.internalLevel = policy.level(for: score)
         self.internalAction = policy.action(for: self.internalLevel)
         self.confidence = confidence
         self.primaryReasons = Self.extractPrimaryReasons(signals: signals, score: score)

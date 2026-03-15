@@ -61,10 +61,12 @@ struct CodeSignatureValidator: Detector {
 
         for _ in 0..<header64.pointee.ncmds {
             let command = commandPointer.assumingMemoryBound(to: load_command.self).pointee
+            let cmdSize = Int(command.cmdsize)
+            guard cmdSize >= MemoryLayout<load_command>.size, cmdSize <= 0x100000 else { break }
             if command.cmd == LC_CODE_SIGNATURE {
                 return true
             }
-            commandPointer = commandPointer.advanced(by: Int(command.cmdsize))
+            commandPointer = commandPointer.advanced(by: cmdSize)
         }
 
         return false

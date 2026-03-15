@@ -211,7 +211,8 @@ private enum TouchMath {
             actual += hypot(path[i + 1].x - path[i].x, path[i + 1].y - path[i].y)
         }
         guard actual > 0 else { return nil }
-        let straight = hypot(path.last!.x - path.first!.x, path.last!.y - path.first!.y)
+        guard let first = path.first, let last = path.last else { return nil }
+        let straight = hypot(last.x - first.x, last.y - first.y)
         return Double(straight / actual)
     }
 
