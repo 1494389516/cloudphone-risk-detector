@@ -144,7 +144,12 @@ int cprisk_install_memory_trap(void *region, size_t len,
         planted++;
     }
 
-    state->pages_protected = 1;
+    /* Only mark traps as active when at least one guard page was actually
+     * installed.  VM_FLAGS_FIXED allocation fails when the adjacent pages are
+     * already mapped (standard in any __DATA segment), so planted may be 0.
+     * Setting pages_protected=1 unconditionally masks this silent failure and
+     * misleads any caller that inspects state->pages_protected. */
+    state->pages_protected = (planted > 0) ? 1 : 0;
     return planted;
 }
 

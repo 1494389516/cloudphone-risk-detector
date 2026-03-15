@@ -38,7 +38,6 @@ static int s_integrity_hash_saved;
 static int s_integrity_poisoned;
 
 static uint64_t s_init_elapsed_ns;
->>>>>>> dc37570 (feat: SDK 6.1 — 壳工业化 (5 Pass) + 运行时加固 + 全量回归)
 
 static const struct mach_header_64 *cprisk_own_hdr_i(void) {
     return cprisk_find_own_header((const void *)cprisk_own_hdr_i);
