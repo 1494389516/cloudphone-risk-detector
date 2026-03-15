@@ -140,7 +140,22 @@ public struct RiskDeviceHistory: Codable, Sendable {
         let stdScore = sqrt(variance)
 
         // 时间跨度
-        let timeSpan = timestamps.last! - timestamps.first!
+        guard let first = timestamps.first, let last = timestamps.last else {
+            let highRiskThreshold: Double = 60
+            let earlyHighRiskCount = scores.filter { $0 >= highRiskThreshold }.count
+            return HistoryTemporalFeatures(
+                count: Int(count),
+                timeSpan: 0,
+                meanScore: meanScore,
+                stdScore: stdScore,
+                trendSlope: 0,
+                maxScore: maxScore,
+                minScore: minScore,
+                highRiskCount: earlyHighRiskCount,
+                highRiskRatio: Double(earlyHighRiskCount) / count
+            )
+        }
+        let timeSpan = last - first
 
         // 趋势斜率（线性回归）
         let trendSlope = calculateLinearRegression(

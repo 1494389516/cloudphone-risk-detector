@@ -234,8 +234,8 @@ public struct RiskDetectionEngine: Sendable {
             signals: allSignals,
             scenarioPolicy: scenarioPolicy
         )
-        if forcedAction != nil {
-            log("Force rule applied, action: \(forcedAction!.rawValue)")
+        if let action = forcedAction {
+            log("Force rule applied, action: \(action.rawValue)")
         }
 
         // 8. 使用决策树确定最终动作
@@ -257,7 +257,7 @@ public struct RiskDetectionEngine: Sendable {
         // 10. 创建判决结果
         let verdict = RiskVerdict(
             score: adjustedScore,
-            internalLevel: InternalRiskLevel.from(score: adjustedScore),
+            internalLevel: scenarioPolicy.level(for: adjustedScore),
             internalAction: finalAction,
             confidence: calculateConfidence(
                 context: context,
@@ -556,11 +556,13 @@ public struct RiskDetectionEngine: Sendable {
                 continue
             }
 
+            let w = weights.weight(for: signal.category)
             let categoryWeight = planner.jitter(
-                base: weights.weight(for: signal.category),
+                base: w.isFinite ? w : 1.0,
                 maxBps: policy.mutationStrategy?.scoreJitterBps ?? 0
             )
-            legacyScore += signal.score * categoryWeight
+            let safeScore = signal.score.isFinite ? signal.score : 0
+            legacyScore += safeScore * categoryWeight
         }
 
         let tamperedMultiplier = 1.0 + Double(tamperedCount) * 0.5
@@ -637,12 +639,14 @@ public struct RiskDetectionEngine: Sendable {
         guard !matchedRules.isEmpty else { return nil }
 
         // 取最严格动作
-        let strictestRule = matchedRules.max(by: { $0.action.severity < $1.action.severity })!
+        guard let strictestRule = matchedRules.max(by: { $0.action.severity < $1.action.severity }) else {
+            return nil
+        }
         let score = minScore(for: strictestRule.action, scenarioPolicy: scenarioPolicy)
 
         return RiskVerdict(
             score: score,
-            internalLevel: InternalRiskLevel.from(score: score),
+            internalLevel: scenarioPolicy.level(for: score),
             internalAction: strictestRule.action,
             confidence: 1.0,
             primaryReasons: ["compressed_rule:\(strictestRule.id)"],
@@ -662,8 +666,9 @@ public struct RiskDetectionEngine: Sendable {
 
         for rule in comboRules {
             if rule.matches(signals: signals) {
-                log("Combo rule matched: \(rule.name), bonus: +\(rule.bonusScore)")
-                bonus += rule.bonusScore
+                let safeBonus = max(0, rule.bonusScore.isFinite ? rule.bonusScore : 0)
+                log("Combo rule matched: \(rule.name), bonus: +\(safeBonus)")
+                bonus += safeBonus
             }
         }
 
@@ -761,7 +766,8 @@ public struct RiskDetectionEngine: Sendable {
             confidence += 0.1
         }
 
-        return min(confidence, 1.0)
+        let result = min(confidence, 1.0)
+        return result.isFinite && result >= 0 ? result : 0.5
     }
 
     /// 提取主要原因
@@ -1075,6 +1081,8 @@ private extension RiskDetectionEngine {
         "graph_dense_subgraph": 60,
         "local_device_cluster": 55,
         "text_segment_tampered": 88,
+        "text_segment_baseline_rejected_suspicious_env": 88,
+        "text_segment_baseline_cleared_suspicious_env": 88,
         // 3.5.1 Frida 深度检测信号权重
         "frida_thread_anomaly": 75,
         "frida_exception_port": 85,
@@ -1219,16 +1227,16 @@ public struct EnginePolicy: Codable, Sendable {
         name = try container.decode(String.self, forKey: .name)
         version = try container.decode(String.self, forKey: .version)
         killSwitchEnabled = try container.decodeIfPresent(Bool.self, forKey: .killSwitchEnabled) ?? false
-        enableNetworkSignals = try container.decode(Bool.self, forKey: .enableNetworkSignals)
-        enableBehaviorDetection = try container.decode(Bool.self, forKey: .enableBehaviorDetection)
-        enableDeviceFingerprint = try container.decode(Bool.self, forKey: .enableDeviceFingerprint)
+        enableNetworkSignals = try container.decodeIfPresent(Bool.self, forKey: .enableNetworkSignals) ?? true
+        enableBehaviorDetection = try container.decodeIfPresent(Bool.self, forKey: .enableBehaviorDetection) ?? true
+        enableDeviceFingerprint = try container.decodeIfPresent(Bool.self, forKey: .enableDeviceFingerprint) ?? true
         forceActionOnJailbreak = try container.decodeIfPresent(RiskAction.self, forKey: .forceActionOnJailbreak)
-        signalWeightOverrides = try container.decode([String: Double].self, forKey: .signalWeightOverrides)
+        signalWeightOverrides = try container.decodeIfPresent([String: Double].self, forKey: .signalWeightOverrides) ?? [:]
         mutationStrategy = try container.decodeIfPresent(MutationStrategy.self, forKey: .mutationStrategy)
         blindChallengePolicy = try container.decodeIfPresent(BlindChallengePolicy.self, forKey: .blindChallengePolicy)
         serverBlocklist = try container.decodeIfPresent([String].self, forKey: .serverBlocklist)
         blocklistAction = try container.decodeIfPresent(RiskAction.self, forKey: .blocklistAction)
-        scenarioPolicies = try container.decode([RiskScenario: ScenarioPolicy].self, forKey: .scenarioPolicies)
+        scenarioPolicies = try container.decodeIfPresent([RiskScenario: ScenarioPolicy].self, forKey: .scenarioPolicies) ?? [:]
     }
 
     /// 获取指定场景的策略

@@ -96,6 +96,23 @@ public struct RiskVerdict: Codable, Sendable {
         self.requestId = UUID().uuidString
     }
 
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let rawScore = try container.decode(Double.self, forKey: .score)
+        score = rawScore.isFinite ? min(max(rawScore, 0), 100) : 0
+        internalLevel = try container.decode(InternalRiskLevel.self, forKey: .internalLevel)
+        internalAction = try container.decode(RiskAction.self, forKey: .internalAction)
+        let rawConfidence = try container.decode(Double.self, forKey: .confidence)
+        confidence = rawConfidence.isFinite ? min(max(rawConfidence, 0), 1) : 0.5
+        primaryReasons = try container.decodeIfPresent([String].self, forKey: .primaryReasons) ?? []
+        signals = try container.decodeIfPresent([RiskSignal].self, forKey: .signals) ?? []
+        scenario = try container.decode(RiskScenario.self, forKey: .scenario)
+        compressedDigest = try container.decodeIfPresent(Data.self, forKey: .compressedDigest)
+        mappingVersion = try container.decodeIfPresent(String.self, forKey: .mappingVersion)
+        timestamp = try container.decodeIfPresent(Date.self, forKey: .timestamp) ?? Date()
+        requestId = try container.decodeIfPresent(String.self, forKey: .requestId) ?? UUID().uuidString
+    }
+
     /// 便捷初始化：从分数自动推算等级和动作
     public init(
         score: Double,
@@ -186,16 +203,9 @@ extension RiskVerdict {
         context: RiskContext,
         scenario: RiskScenario = .default
     ) -> RiskVerdict {
-        let level = InternalRiskLevel.from(score: report.score)
-        let action: RiskAction
-        switch level {
-        case .low, .medium:
-            action = .allow
-        case .high:
-            action = .challenge
-        case .critical:
-            action = .block
-        }
+        let policy = ScenarioPolicy.policy(for: scenario)
+        let level = policy.level(for: report.score)
+        let action = policy.action(for: level)
 
         return RiskVerdict(
             score: report.score,

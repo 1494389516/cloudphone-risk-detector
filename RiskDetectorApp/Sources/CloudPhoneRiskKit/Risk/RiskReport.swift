@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 // MARK: - Signal Identifiers
@@ -47,6 +48,9 @@ public enum SignalID {
     /// Display Mux (SDK 5.2)
     static let screenCaptured = "screen_captured"
     static let externalDisplayAttached = "external_display_attached"
+
+    /// Signal suppression detection (SDK 5.5)
+    static let signalSuppressionDetected = "signal_suppression_detected"
 }
 
 // MARK: - Signal Categories
@@ -108,7 +112,8 @@ public enum RiskSignalState: Sendable, Codable, Equatable {
         case .hard:
             self = .hard(detected: try container.decode(Bool.self, forKey: .detected))
         case .soft:
-            self = .soft(confidence: try container.decode(Double.self, forKey: .confidence))
+            let raw = try container.decode(Double.self, forKey: .confidence)
+            self = .soft(confidence: raw.isFinite ? min(max(raw, 0), 1) : 0)
         case .serverRequired:
             self = .serverRequired
         case .unavailable:
@@ -171,17 +176,24 @@ public final class CPRiskSignal: NSObject {
     @objc public let category: String
     @objc public let score: Double
     @objc public let evidenceJSON: String
+    /// Stable string representation of signal state for digest computation.
+    public let stateDescription: String
 
     init(_ signal: RiskSignal) {
         self.id = signal.id
         self.category = signal.category
         self.score = signal.score
+        self.stateDescription = Self.stableStateString(signal.state)
         do {
             self.evidenceJSON = try JSON.stringify(signal.evidence)
         } catch {
             Logger.log("CPRiskSignal: evidence JSON stringify failed - \(error.localizedDescription)")
             self.evidenceJSON = "{}"
         }
+    }
+
+    private static func stableStateString(_ state: RiskSignalState?) -> String {
+        SignalDigest.stableStateTag(state)
     }
 }
 
@@ -335,6 +347,10 @@ private struct Payload: Codable {
     // 信号到 bit 映射表版本（服务端解码用）
     var signalMappingVersion: String?
 
+    // v2a: SHA-256 hex of sorted "id:score:state" entries; binds signal values into envelope signature domain.
+    var signalsDigest: String?
+    var signalsDigestVersion: String?
+
     // 预留：未来服务端/云端聚合信号（IP 聚合度、ASN、机房属性等）
     var server: ServerSignals?
 
@@ -381,6 +397,8 @@ private struct Payload: Codable {
         self.tamperedCount = report.signals.filter { $0.state == .tampered }.count
         self.compressedDigestHex = report.compressedDigest.map { $0.map { String(format: "%02x", $0) }.joined() }
         self.signalMappingVersion = report.mappingVersion
+        self.signalsDigest = SignalDigest.computeFullDigest(report.signals)
+        self.signalsDigestVersion = "v2a"
         self.server = nil
         self.local = nil
         self.challengeBinding = nil
@@ -634,4 +652,66 @@ private struct DetectionResultPayload: Codable {
 
 enum Version {
     static let current = "5.5.0"
+}
+
+// MARK: - Signal Digest
+
+/// Shared signal digest computation used by SignedRiskConclusion, Payload, and signal continuity checks.
+///
+/// Score and confidence are quantized to discrete buckets so that minor floating-point
+/// jitter between successive evaluations does not change the digest. This prevents
+/// false-positive HMAC mismatches on legitimate devices while still detecting
+/// meaningful manipulation (e.g., an attacker zeroing out a score).
+enum SignalDigest {
+    /// Full digest: SHA-256 of sorted "id:scoreBucket:stateTag" entries.
+    static func computeFullDigest(_ signals: [RiskSignal]) -> String {
+        let entries = signals.map { signal in
+            "\(signal.id):\(scoreBucket(signal.score)):\(stableStateTag(signal.state))"
+        }.sorted()
+        let joined = entries.joined(separator: ",")
+        let hash = SHA256.hash(data: Data(joined.utf8))
+        return hash.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Full digest from CPRiskSignal array.
+    static func computeFullDigest(_ signals: [CPRiskSignal]) -> String {
+        let entries = signals.map { signal in
+            "\(signal.id):\(scoreBucket(signal.score)):\(signal.stateDescription)"
+        }.sorted()
+        let joined = entries.joined(separator: ",")
+        let hash = SHA256.hash(data: Data(joined.utf8))
+        return hash.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Quantize score into coarse 10-point buckets so small fluctuations don't flip the digest.
+    /// 0 → "0", 7 → "0", 15 → "10", 25 → "20", 100 → "100".
+    static func scoreBucket(_ score: Double) -> String {
+        let clamped = max(0, min(score, 100))
+        if clamped < 1 { return "0" }
+        let bucket = Int(clamped) / 10 * 10
+        return "\(bucket)"
+    }
+
+    /// Stable discrete tag for signal state. Confidence is quantized to integer percentage
+    /// via floor (e.g. 0.7444 and 0.7449 both become "74"), eliminating ±0.0001 jitter.
+    static func stableStateTag(_ state: RiskSignalState?) -> String {
+        guard let state else { return "none" }
+        switch state {
+        case .hard(let detected):
+            return "hard:\(detected ? "1" : "0")"
+        case .soft(let confidence):
+            let quantized = Int(confidence * 100)
+            return "soft:\(quantized)"
+        case .serverRequired:
+            return "serverRequired"
+        case .unavailable:
+            return "unavailable"
+        case .tampered:
+            return "tampered"
+        }
+    }
+
+    static func stableStateString(_ state: RiskSignalState?) -> String {
+        stableStateTag(state)
+    }
 }

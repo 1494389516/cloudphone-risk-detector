@@ -10,18 +10,17 @@ public struct SignedRiskConclusion: Codable, Sendable {
     public let tampered: Bool
     public let nonce: String
     public let signature: String
-    /// "v1" = legacy (no signals), "v2" = includes signalsDigest
+    /// "v1" = legacy (no signals), "v2" = ID-only digest, "v2a" = full signal digest (id+score+state)
     public let signatureVersion: String?
-    /// SHA-256 hex of sorted signal IDs joined by comma (v2 only)
+    /// v2: SHA-256 hex of sorted signal IDs joined by comma.
+    /// v2a: SHA-256 hex of sorted "id:score:state" entries, binding signal values into the signature.
     public let signalsDigest: String?
 
     public static func sign(report: CPRiskReport, deviceKey: SymmetricKey) -> SignedRiskConclusion {
         let nonce = UUID().uuidString
         let timestamp = Date().timeIntervalSince1970
 
-        let sortedSignalIDs = report.signals.map(\.id).sorted().joined(separator: ",")
-        let digestData = SHA256.hash(data: Data(sortedSignalIDs.utf8))
-        let signalsDigest = digestData.map { String(format: "%02x", $0) }.joined()
+        let signalsDigest = SignalDigest.computeFullDigest(report.signals)
 
         let input = "\(report.score)|\(report.isHighRisk)|\(timestamp)|\(nonce)|\(report.tampered)|\(signalsDigest)"
         let hmac = SecureScope.withSecureBytes(Array(input.utf8)) { ptr in
@@ -36,7 +35,7 @@ public struct SignedRiskConclusion: Codable, Sendable {
             tampered: report.tampered,
             nonce: nonce,
             signature: sigHex,
-            signatureVersion: "v2",
+            signatureVersion: "v2a",
             signalsDigest: signalsDigest
         )
     }
@@ -49,9 +48,11 @@ public struct SignedRiskConclusion: Codable, Sendable {
 
         let version = signatureVersion ?? "v1"
         let input: String
-        if version == "v2", let digest = signalsDigest {
+        switch version {
+        case "v2a", "v2":
+            guard let digest = signalsDigest else { return false }
             input = "\(score)|\(isHighRisk)|\(timestamp)|\(nonce)|\(tampered)|\(digest)"
-        } else {
+        default:
             input = "\(score)|\(isHighRisk)|\(timestamp)|\(nonce)|\(tampered)"
         }
 

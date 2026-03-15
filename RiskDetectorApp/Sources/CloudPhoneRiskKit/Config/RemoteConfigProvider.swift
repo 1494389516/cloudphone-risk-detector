@@ -101,6 +101,9 @@ public final class RemoteConfigProvider: @unchecked Sendable {
     public func reloadCachedConfigTrustState() {
         if let cached = cache.load(), !cached.isExpired(duration: cacheValidityDuration) {
             applyConfig(Self.releaseHardenedConfig(cached.config))
+            lock.lock()
+            _lastSuccessfulFetchTime = cached.cachedAt
+            lock.unlock()
         } else {
             applyConfig(fallbackConfig)
         }
@@ -125,6 +128,7 @@ public final class RemoteConfigProvider: @unchecked Sendable {
             return
         }
         _isFetching = true
+        let session = urlSession
         lock.unlock()
 
         var request = URLRequest(url: configURL)
@@ -134,7 +138,7 @@ public final class RemoteConfigProvider: @unchecked Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("CloudPhoneRiskKit/2.0", forHTTPHeaderField: "User-Agent")
 
-        urlSession.dataTask(with: request) { [weak self] data, response, error in
+        session.dataTask(with: request) { [weak self] data, response, error in
             guard let self else {
                 completion(.failure(.providerDeallocated))
                 return
@@ -324,22 +328,36 @@ public final class RemoteConfigProvider: @unchecked Sendable {
     }
 
     private func startPeriodicUpdates() {
-        guard timer == nil else { return }
+        lock.lock()
+        guard timer == nil else {
+            lock.unlock()
+            return
+        }
         let interval = updateInterval
+        lock.unlock()
+
         let schedule: () -> Void = { [weak self] in
-            guard let self, self.timer == nil else { return }
-            self.timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.lock.lock()
+            guard self.timer == nil else {
+                self.lock.unlock()
+                return
+            }
+            let t = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
                 guard let self else { return }
                 self.fetchLatest { result in
                     if case .failure(let error) = result {
                         Logger.log("remote_config.periodic_update failed: \(error.localizedDescription)")
                         if self.isConfigStale {
                             Logger.log("remote_config: config is stale (age=\(Int(self.configAge))s), falling back to default")
-                            self.applyConfig(self.fallbackConfig)
+                            self.reloadCachedConfigTrustState()
                         }
                     }
                 }
             }
+            RunLoop.main.add(t, forMode: .common)
+            self.timer = t
+            self.lock.unlock()
         }
         if Thread.isMainThread {
             schedule()

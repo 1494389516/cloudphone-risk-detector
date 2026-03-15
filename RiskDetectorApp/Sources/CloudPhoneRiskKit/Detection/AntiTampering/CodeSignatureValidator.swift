@@ -57,12 +57,19 @@ struct CodeSignatureValidator: Detector {
         }
 
         let header64 = UnsafeRawPointer(header).assumingMemoryBound(to: mach_header_64.self)
-        var commandPointer = UnsafeRawPointer(header64).advanced(by: MemoryLayout<mach_header_64>.size)
+        let loadCommandsStart = UnsafeRawPointer(header64).advanced(by: MemoryLayout<mach_header_64>.size)
+        let loadCommandsEnd = loadCommandsStart.advanced(by: Int(header64.pointee.sizeofcmds))
+        var commandPointer = loadCommandsStart
 
-        for _ in 0..<header64.pointee.ncmds {
+        let ncmds = header64.pointee.ncmds
+        guard ncmds <= 4096 else { return false }
+
+        for _ in 0..<ncmds {
+            guard commandPointer < loadCommandsEnd else { break }
             let command = commandPointer.assumingMemoryBound(to: load_command.self).pointee
             let cmdSize = Int(command.cmdsize)
             guard cmdSize >= MemoryLayout<load_command>.size, cmdSize <= 0x100000 else { break }
+            guard commandPointer.advanced(by: cmdSize) <= loadCommandsEnd else { break }
             if command.cmd == LC_CODE_SIGNATURE {
                 return true
             }

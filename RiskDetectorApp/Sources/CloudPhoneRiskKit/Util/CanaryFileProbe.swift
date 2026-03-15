@@ -72,6 +72,11 @@ enum CanaryFileProbe {
                 Logger.log("jailbreak.canary.hit: canary_stat_tampered path=\(path) (+\(Int(canaryDeadWeight)))")
                 return DetectorResult(score: canaryDeadWeight, methods: ["canary_stat_tampered"])
             }
+
+            if validation.traced {
+                Logger.log("jailbreak.canary.hit: dbi_stalker_traced path=\(path) (+\(Int(canaryDeadWeight)))")
+                return DetectorResult(score: canaryDeadWeight, methods: ["dbi_stalker_traced"])
+            }
         }
 
         for path in dynamicCanaryPaths() {
@@ -85,6 +90,11 @@ enum CanaryFileProbe {
             if validation.tampered {
                 Logger.log("jailbreak.canary.hit: canary_stat_tampered path=\(path) (+\(Int(canaryDeadWeight)))")
                 return DetectorResult(score: canaryDeadWeight, methods: ["canary_stat_tampered"])
+            }
+
+            if validation.traced {
+                Logger.log("jailbreak.canary.hit: dbi_stalker_traced path=\(path) (+\(Int(canaryDeadWeight)))")
+                return DetectorResult(score: canaryDeadWeight, methods: ["dbi_stalker_traced"])
             }
         }
 

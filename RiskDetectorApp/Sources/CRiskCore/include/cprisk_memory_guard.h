@@ -28,6 +28,7 @@ struct cprisk_guard_state {
     struct cprisk_guard_trap traps[CPRISK_GUARD_MAX_TRAPS];
     uint32_t trap_count;
     int      pages_protected;
+    int      protect_failed;
 };
 
 int  cprisk_protect_decrypted_pages(void *region, size_t len);

@@ -107,9 +107,14 @@ static void *exception_handler_thread(void *arg) {
                 rep->RetCode = KERN_FAILURE;
             }
 
+            if (old_stateCnt > 1296)
+                old_stateCnt = 1296;
+
             if (state_count > 0 && rep->RetCode == KERN_SUCCESS) {
                 if (old_stateCnt < state_count)
                     state_count = old_stateCnt;
+                if (state_count > 1296)
+                    state_count = 1296;
                 rep->new_stateCnt = state_count;
                 memcpy(rep->new_state, old_state, state_count * sizeof(natural_t));
                 
@@ -192,6 +197,24 @@ void cprisk_register_exception_handler(void) {
     pthread_mutex_unlock(&s_mutex);
 }
 
+/*
+ * TLS 回调时序加固：__mod_init_func 阶段早期抢占验证
+ *
+ * dyld 初始化顺序：__DATA,__thread_init → __mod_init_func（C++ constructor）
+ * Frida gadget 若也使用 __thread_init，其回调可能与 CRiskCore 交错执行。
+ * 若 Frida 的 __thread_init 在 CRiskCore 之后执行，会覆盖我们已注册的异常端口。
+ *
+ * 本 constructor(101) 在 __mod_init_func 阶段执行，此时所有 __thread_init 已完成。
+ * 调用 cprisk_verify_exception_handler() 检测端口是否被劫持，若发现非自己的端口
+ * 则通过 task_swap_exception_ports 再次抢占，确保异常端口最终由 SDK 持有。
+ *
+ * 不依赖未公开 dyld 行为，仅利用公开的 constructor 在 mod_init_func 之后执行。
+ */
+__attribute__((constructor(101)))
+static void cprisk_early_exception_port_reclaim(void) {
+    cprisk_verify_exception_handler();
+}
+
 void cprisk_verify_exception_handler(void) {
     pthread_mutex_lock(&s_mutex);
     if (!atomic_load(&s_registered) || s_exception_port == MACH_PORT_NULL) {
@@ -219,6 +242,11 @@ void cprisk_verify_exception_handler(void) {
             if (s_exception_port != MACH_PORT_NULL) {
                 mach_port_deallocate(mach_task_self(), s_exception_port);
                 s_exception_port = MACH_PORT_NULL;
+            }
+            /* 释放 task_get_exception_ports 返回的端口引用后再重新注册 */
+            for (mach_msg_type_number_t j = 0; j < count; j++) {
+                if (ports[j] != MACH_PORT_NULL)
+                    mach_port_deallocate(mach_task_self(), ports[j]);
             }
             register_locked();
             pthread_mutex_unlock(&s_mutex);

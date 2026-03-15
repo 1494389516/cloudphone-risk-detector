@@ -17,7 +17,7 @@ enum ExpectedBaseline {
     /// 构建号格式如 "22A3354"，前两位为 Darwin 内核主版本
     /// 映射：22→iOS 18, 21→17, 20→16, 19→15 …（darwinMajor - 4）
     private static func iosMajorFromBuildNumber() -> Int? {
-        let (value, _, _, _) = DualPathValidator.validateSysctl(key: "kern.osversion")
+        let (value, _, _, _, _) = DualPathValidator.validateSysctl(key: "kern.osversion")
         guard let build = value, build.count >= 2 else { return nil }
         let prefix = build.prefix(2)
         guard let darwinMajor = Int(prefix) else { return nil }

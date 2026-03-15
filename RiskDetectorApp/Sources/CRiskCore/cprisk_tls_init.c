@@ -2,22 +2,27 @@
 #include <TargetConditionals.h>
 
 /*
- * Early TLS (Thread Local Storage) Callback
+ * Early TLS (Thread Local Storage) Callback — TLS 回调时序加固
  *
- * Placed in the __DATA,__thread_init section, this callback executes very early
- * during the dynamic linker (dyld) loading phase—before C++ constructors
- * (__mod_init_func) and Objective-C +load methods.
+ * 执行时机：__DATA,__thread_init 在 dyld 加载阶段执行，早于 __mod_init_func
+ * （C++ constructor）和 Objective-C +load。
  *
- * This makes it an ideal place to invoke anti-debugging logic (like ptrace
- * PT_DENY_ATTACH or Mach exception handler registration) to preempt attackers
- * who try to set up hooks early in the application lifecycle.
+ * 时序风险：Frida gadget 若打包进 IPA，也可使用 __DATA,__thread_init。同一
+ * section 内多个回调的调用顺序由链接器决定（通常按 section 中出现顺序）。
+ * 若 gadget 的 __thread_init 先于或交错于本回调执行，可能已注册异常端口或
+ * 设置 Hook，导致 ptrace 被绕过或异常端口被抢占。
+ *
+ * 加固策略：
+ * 1. ptrace 优先：使用 SVC 直调绕过 libc Hook，即使 Frida 已 Hook ptrace 也无效。
+ * 2. 异常端口：本回调中注册后，由 cprisk_early_exception_port_reclaim（constructor
+ *    101）在 __mod_init_func 阶段再次验证；若被 Frida 覆盖则 task_swap_exception_ports
+ *    重新抢占。详见 cprisk_exception_handler.c。
  */
-
 static void cprisk_tls_init_callback(void) {
-    /* Invoke direct syscall ptrace(PT_DENY_ATTACH) */
+    /* 1. ptrace 优先：SVC 直调，不经过 libc，抗 Hook */
     cprisk_deny_attach();
-    
-    /* Preemptively register Mach exception handler for EXC_BREAKPOINT */
+
+    /* 2. 抢占异常端口；若 Frida 后执行覆盖，constructor 阶段会重新抢占 */
     cprisk_register_exception_handler();
 }
 

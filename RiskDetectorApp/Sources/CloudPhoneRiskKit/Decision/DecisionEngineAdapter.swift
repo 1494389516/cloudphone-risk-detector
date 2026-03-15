@@ -121,19 +121,31 @@ public final class DecisionEngineAdapter: DecisionEngine {
 
         // 转换各场景策略
         for (scenarioKey, policyData) in config.policy.scenarios {
-            // 根据场景键查找对应的枚举值
             let scenario = findRiskScenario(for: scenarioKey)
             let base = ScenarioPolicy.policy(for: scenario)
-            // 远程配置有 comboRules 时使用，否则继承默认（含 Impossible States 等）
             let comboRules: [ComboRule] = config.policy.comboRules.isEmpty
                 ? base.comboRules
                 : config.policy.comboRules.map { Self.comboRule(from: $0) }
-            let policy = ScenarioPolicy(
-                mediumThreshold: policyData.thresholds.medium,
-                highThreshold: policyData.thresholds.high,
-                criticalThreshold: policyData.thresholds.critical,
-                comboRules: comboRules
-            )
+            let m = policyData.thresholds.medium
+            let h = policyData.thresholds.high
+            let c = policyData.thresholds.critical
+            let validThresholds = m.isFinite && h.isFinite && c.isFinite && (0 <= m && m < h && h < c && c <= 100)
+            let policy: ScenarioPolicy
+            if validThresholds {
+                policy = ScenarioPolicy(
+                    mediumThreshold: m,
+                    highThreshold: h,
+                    criticalThreshold: c,
+                    comboRules: comboRules
+                )
+            } else {
+                policy = ScenarioPolicy(
+                    mediumThreshold: 30,
+                    highThreshold: 55,
+                    criticalThreshold: 80,
+                    comboRules: comboRules
+                )
+            }
             scenarioPolicies[scenario] = policy
         }
 

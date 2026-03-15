@@ -1,3 +1,4 @@
+import CRiskCore
 import Darwin
 import Foundation
 import MachO
@@ -83,9 +84,10 @@ struct FridaDetector: Detector {
     }
 
     private func isPortOpen(_ port: Int) -> Bool {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        var rawErrno: CInt = 0
+        let fd = cprisk_socket_direct(AF_INET, SOCK_STREAM, 0, &rawErrno)
         guard fd >= 0 else { return false }
-        defer { close(fd) }
+        defer { _ = cprisk_close_direct(fd, nil) }
 
         var addr = sockaddr_in()
         addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
@@ -94,8 +96,9 @@ struct FridaDetector: Detector {
         addr.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
 
         let result = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr -> Int32 in
+                var connectErrno: CInt = 0
+                return cprisk_connect_direct(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_in>.size), &connectErrno)
             }
         }
         return result == 0
@@ -103,6 +106,6 @@ struct FridaDetector: Detector {
 
     private func fileExists(path: String) -> Bool {
         var st = stat()
-        return stat(path, &st) == 0
+        return path.withCString { cprisk_stat_direct($0, &st, nil) == 0 }
     }
 }

@@ -172,10 +172,10 @@ struct ObjCSwizzleDetector: Detector {
         for i in 0..<Int(threadCount) {
             let thread = threads[i]
             let pt = pthread_from_mach_thread_np(thread)
-            guard pt != nil else { continue }
+            guard let pt = pt else { continue }
 
             var name = [CChar](repeating: 0, count: 256)
-            if pthread_getname_np(pt!, &name, 256) == 0 {
+            if pthread_getname_np(pt, &name, 256) == 0 {
                 let threadName = String(cString: name).lowercased()
                 if threadName.isEmpty { continue }
                 for label in suspiciousLabels {

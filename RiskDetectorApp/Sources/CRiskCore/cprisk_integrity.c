@@ -190,7 +190,8 @@ static int path_a(const struct mach_header_64 *hdr, uint8_t *out) {
     if (!text || sz == 0)
         return -1;
 
-    uint8_t *buf = (uint8_t *)malloc(sz);
+    uint8_t *buf = NULL;
+    buf = (uint8_t *)malloc(sz);
     if (!buf)
         return -1;
 
@@ -521,8 +522,17 @@ int cprisk_is_integrity_poisoned(void) {
     return s_integrity_poisoned;
 }
 
+void cprisk_force_integrity_poison(void) {
+    s_integrity_poisoned = 1;
+}
+
 uint64_t cprisk_get_init_elapsed_ns(void) {
     return s_init_elapsed_ns;
+}
+
+int cprisk_check_init_timing(void) {
+    /* 5 seconds in nanoseconds — if init took longer, likely DBI-traced */
+    return s_init_elapsed_ns > 5000000000ULL ? 1 : 0;
 }
 
 void cprisk_test_secure_zero(void *buf, size_t len) {

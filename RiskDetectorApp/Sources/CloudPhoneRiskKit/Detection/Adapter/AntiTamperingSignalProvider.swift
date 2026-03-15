@@ -1,3 +1,4 @@
+import CRiskCore
 import Foundation
 
 /// 反篡改检测信号提供者
@@ -46,6 +47,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         var enableKernelHookSideChannel: Bool = true
         var enableLibcPrologueGuard: Bool = true
         var enableDyldImageMonitor: Bool = true
+        var enableDylibInjectionDetect: Bool = true
         var minScoreThreshold: Double = 0
         
         public static let `default` = Configuration()
@@ -327,6 +329,24 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
             isolatedAppend("dyld_image_monitor", &signals) {
                 try DyldImageMonitor.shared.asSignals()
             }
+        }
+
+        if configuration.enableDylibInjectionDetect {
+            isolatedAppend("dylib_injection", &signals) {
+                try DylibInjectionDetector().asSignals()
+            }
+        }
+
+        if cprisk_is_mprotect_tampered() != 0 {
+            signals.append(RiskSignal(
+                id: "memory_protection_tampered",
+                category: "anti_tamper",
+                score: 85,
+                evidence: ["detail": "mprotect_syscall_blocked"],
+                state: .tampered,
+                layer: 1,
+                weightHint: 90
+            ))
         }
 
         return signals.filter { $0.score >= configuration.minScoreThreshold }

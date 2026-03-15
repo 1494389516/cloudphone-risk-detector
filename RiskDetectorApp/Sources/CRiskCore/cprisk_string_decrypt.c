@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 #include "include/cprisk_macho.h"
 #include "include/cprisk_sha256.h"
 #include "include/cprisk_secure_zero.h"
@@ -138,21 +139,24 @@ int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) 
     uint32_t dlen = ent->data_length;
     if (dlen == 0 || dlen + 1 > buffer_size)
         return -1;
+    size_t data_block_sz = sec_sz - data_base;
     size_t data_end = (size_t)ent->data_offset + (size_t)dlen;
     if (data_end < (size_t)dlen || data_end < (size_t)ent->data_offset)
         return -1;
-    if ((size_t)ent->data_offset > sec_sz ||
-        (size_t)dlen > sec_sz ||
-        data_base > sec_sz ||
-        data_end > sec_sz - data_base)
+    if ((size_t)ent->data_offset >= data_block_sz ||
+        (size_t)dlen > data_block_sz ||
+        data_end > data_block_sz)
         return -1;
 
     const uint8_t *enc = sec + data_base + ent->data_offset;
 
     /* Verify HMAC-SHA256(key, nonce || ciphertext) before decrypting */
     {
+        if ((size_t)dlen > SIZE_MAX - CPRISK_ARMOR_NONCE_SIZE)
+            return -1;
         size_t hmac_msg_len = CPRISK_ARMOR_NONCE_SIZE + dlen;
-        uint8_t *hmac_msg = (uint8_t *)malloc(hmac_msg_len);
+        uint8_t *hmac_msg = NULL;
+        hmac_msg = (uint8_t *)malloc(hmac_msg_len);
         if (!hmac_msg)
             return -1;
         memcpy(hmac_msg, ent->nonce, CPRISK_ARMOR_NONCE_SIZE);
@@ -172,9 +176,11 @@ int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) 
         cprisk_secure_zero(computed_hmac, sizeof(computed_hmac));
     }
 
-    uint8_t *ks = (uint8_t *)malloc(dlen);
+    uint8_t *ks = NULL;
+    ks = (uint8_t *)malloc(dlen);
     if (!ks)
         return -1;
+    memset(ks, 0, dlen);
     cprisk_keystream(s_dec_key, string_id,
                      ent->nonce, CPRISK_ARMOR_NONCE_SIZE, ks, dlen);
 
@@ -192,6 +198,8 @@ int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) 
     free(ks);
     cprisk_secure_zero(dh, sizeof(dh));
 
+    if (dlen > (uint32_t)INT_MAX)
+        return -1;
     return (int)dlen;
 }
 

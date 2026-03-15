@@ -360,6 +360,8 @@ public struct ReportEnvelope: Codable, Sendable {
 
     /// 验签（内部实现，使用 Data 密钥）
     private func verifySignature(keyData: Data) -> Bool {
+        var keyDataCopy = keyData
+        defer { secureZeroData(&keyDataCopy) }
         guard let canonicalPayload = try? Self.canonicalJSONString(from: payload) else {
             return false
         }
@@ -377,7 +379,7 @@ public struct ReportEnvelope: Codable, Sendable {
         guard let signatureData = signatureInput.data(using: .utf8) else {
             return false
         }
-        let expectedSignature = Self.hmacHex(message: signatureData, keyData: keyData)
+        let expectedSignature = Self.hmacHex(message: signatureData, keyData: keyDataCopy)
         return timingSafeCompare(expectedSignature, signature)
     }
 

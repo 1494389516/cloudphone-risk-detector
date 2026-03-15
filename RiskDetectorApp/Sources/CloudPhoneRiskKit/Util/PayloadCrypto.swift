@@ -51,6 +51,9 @@ enum PayloadCrypto {
     }
 
     static func encrypt(_ plaintext: Data, rawKey: Data) throws -> Data {
+        guard rawKey.count == 16 || rawKey.count == 24 || rawKey.count == 32 else {
+            throw NSError(domain: "PayloadCrypto", code: -1, userInfo: [NSLocalizedDescriptionKey: "rawKey must be 16, 24, or 32 bytes"])
+        }
         let key = SymmetricKey(data: rawKey)
         let sealed = try AES.GCM.seal(plaintext, using: key)
         guard let combined = sealed.combined else {
@@ -60,6 +63,9 @@ enum PayloadCrypto {
     }
 
     static func decrypt(_ combined: Data, rawKey: Data) throws -> Data {
+        guard rawKey.count == 16 || rawKey.count == 24 || rawKey.count == 32 else {
+            throw NSError(domain: "PayloadCrypto", code: -1, userInfo: [NSLocalizedDescriptionKey: "rawKey must be 16, 24, or 32 bytes"])
+        }
         let key = SymmetricKey(data: rawKey)
         let box = try AES.GCM.SealedBox(combined: combined)
         return try AES.GCM.open(box, using: key)
@@ -80,9 +86,10 @@ enum PayloadCrypto {
             guard status == errSecSuccess else { return }
             secureData = Data(UnsafeRawBufferPointer(start: ptr, count: 32))
         }
-        guard let data = secureData else {
+        guard var data = secureData else {
             throw NSError(domain: "CloudPhoneRiskKit", code: 3, userInfo: [NSLocalizedDescriptionKey: "SecRandomCopyBytes failed"])
         }
+        defer { secureZeroData(&data) }
         if let existing = try saveKey(data) {
             return SymmetricKey(data: existing)
         }

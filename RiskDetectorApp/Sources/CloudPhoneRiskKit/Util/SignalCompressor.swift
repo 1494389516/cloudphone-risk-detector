@@ -78,7 +78,9 @@ public enum SignalCompressor {
         if ids.contains("cross_layer_inconsistency") { bits |= 0x02 }
         if ids.contains("jailbreak") || ids.contains("jailbreak_device") { bits |= 0x04 }
         if ids.contains("frida_detected") || ids.contains("frida_js_engine_heap") || ids.contains("frida_unix_socket") { bits |= 0x08 }
-        if ids.contains("plt_integrity_tampered") || ids.contains("text_segment_tampered") { bits |= 0x10 }
+        if ids.contains("plt_integrity_tampered") || ids.contains("text_segment_tampered")
+            || ids.contains("text_segment_baseline_rejected_suspicious_env")
+            || ids.contains("text_segment_baseline_cleared_suspicious_env") { bits |= 0x10 }
         if ids.contains("sdk_binary_replaced") || ids.contains("sdk_code_signature_missing") { bits |= 0x20 }
         if ids.contains("dyld_interpose_detected") || ids.contains("libc_inline_hook_detected") { bits |= 0x40 }
         if ids.contains("multipath_hook_detected") || ids.contains("objc_method_swizzled") || ids.contains("isa_swizzle_detected") { bits |= 0x80 }

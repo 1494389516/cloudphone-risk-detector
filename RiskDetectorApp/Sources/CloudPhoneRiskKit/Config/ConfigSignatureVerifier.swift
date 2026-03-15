@@ -2,6 +2,7 @@ import Foundation
 import CryptoKit
 import Security
 
+/// Server config signature verification. Verify is only valid after a successful configure.
 public enum ConfigSignatureVerifier {
 
     public struct VerificationResult {
@@ -14,26 +15,34 @@ public enum ConfigSignatureVerifier {
     private static let keychainAccount = "verification_key"
     private static let accessible = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
 
-    public static func configure(serverSigningKey: String) {
+    /// Configure with UTF-8 signing key. Returns false if keychain save failed; verify is only valid after true.
+    @discardableResult
+    public static func configure(serverSigningKey: String) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         var keyData = Data(serverSigningKey.utf8)
         defer { secureZeroData(&keyData) }
         let hashed = SHA256.hash(data: keyData)
         let keyBytes = Data(hashed)
-        if !saveKeyToKeychain(keyBytes) {
+        guard saveKeyToKeychain(keyBytes) else {
             Logger.log("ConfigSignatureVerifier.configure(serverSigningKey): keychain save failed")
+            return false
         }
+        return true
     }
 
-    public static func configure(serverSigningKeyData: Data) {
+    /// Configure with raw key data. Returns false if keychain save failed; verify is only valid after true.
+    @discardableResult
+    public static func configure(serverSigningKeyData: Data) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         var keyData = serverSigningKeyData
         defer { secureZeroData(&keyData) }
-        if !saveKeyToKeychain(keyData) {
+        guard saveKeyToKeychain(keyData) else {
             Logger.log("ConfigSignatureVerifier.configure(serverSigningKeyData): keychain save failed")
+            return false
         }
+        return true
     }
 
     public static var isConfigured: Bool {

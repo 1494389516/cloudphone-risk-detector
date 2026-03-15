@@ -80,7 +80,9 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         self.persistToDisk = persistToDisk
         self.maxDiskEntries = maxDiskEntries
         self.memoryCache = nil
+        ConfigCache.globalLock.lock()
         self.memoryCache = loadLatestFromDisk()
+        ConfigCache.globalLock.unlock()
     }
 
     public static func instance(withNamespace namespace: String) -> ConfigCache {

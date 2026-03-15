@@ -93,6 +93,18 @@ public final class CPRiskKit: NSObject {
     private var currentSessionId: String?
     private var graphFeedbackObserver: Any?
 
+    /// Signal IDs from the previous evaluate() call, used for suppression detection.
+    private var previousSignalIds: Set<String> = []
+    /// SHA-256 digest of previous evaluate()'s full signal content (id+score+state).
+    private var previousSignalsDigest: String?
+    /// High-risk signal IDs that are candidates for suppression detection.
+    private static let highRiskSignalIds: Set<String> = [
+        "frida_heap", "frida_stalker", "frida_socket", "frida_thread",
+        "hook_detected", "objc_swizzle", "rwx_memory",
+        "armor_runtime_init_failed", "integrity_runtime_tampered",
+        "code_signature_invalid", "text_segment_tampered"
+    ]
+
     private static let remoteConfigEndpointKey = "com.cloudphone.riskkit.remote.endpoint"
     private static let remoteTrustLock = NSLock()
     private static var pinnedCertificateHashes: Set<String> = []
@@ -388,6 +400,8 @@ public final class CPRiskKit: NSObject {
         boundAccountId = nil
         boundSceneTag = nil
         currentSessionId = nil
+        previousSignalIds = []
+        previousSignalsDigest = nil
         stateLock.unlock()
         PolicyManager.shared.clearCachedPolicy()
         LocalDeviceClusterDetector.shared.clear()
@@ -591,6 +605,9 @@ public final class CPRiskKit: NSObject {
         if cprisk_is_integrity_poisoned() != 0 {
             extraSignals.append(Self.integrityRecheckPoisonedSignal())
         }
+        if cprisk_is_mprotect_tampered() != 0 {
+            extraSignals.append(Self.mprotectTamperedSignal())
+        }
         extraSignals.append(capabilityRuntime.score.toSignal())
         extraSignals.append(contentsOf: extraSignalsForGraph)
         extraSignals.append(contentsOf: ChallengeResultStore.shared.consumePendingMismatchSignals())
@@ -605,6 +622,34 @@ public final class CPRiskKit: NSObject {
                 layer: 4,
                 weightHint: 10
             ))
+        }
+
+        // Signal continuity check: detect sudden disappearance of high-risk signals between evaluations.
+        let allCurrentSignalIds = Set(extraSignals.map(\.id))
+        stateLock.lock()
+        let prevIds = previousSignalIds
+        stateLock.unlock()
+        if !prevIds.isEmpty {
+            let previousHighRisk = prevIds.intersection(Self.highRiskSignalIds)
+            let currentHighRisk = allCurrentSignalIds.intersection(Self.highRiskSignalIds)
+            let suppressedIds = previousHighRisk.subtracting(currentHighRisk)
+            if suppressedIds.count >= 2 || (previousHighRisk.count > 0 && currentHighRisk.isEmpty && previousHighRisk.count >= 1) {
+                let evidence = [
+                    "suppressed_ids": suppressedIds.sorted().joined(separator: ","),
+                    "previous_count": "\(previousHighRisk.count)",
+                    "current_count": "\(currentHighRisk.count)"
+                ]
+                extraSignals.append(RiskSignal(
+                    id: "signal_suppression_detected",
+                    category: "integrity",
+                    score: 80,
+                    evidence: evidence,
+                    state: .tampered,
+                    layer: 1,
+                    weightHint: 80
+                ))
+                Logger.log("signal_suppression: \(suppressedIds.sorted()) disappeared between evaluations")
+            }
         }
 
         let serverPolicy = PolicyManager.shared.activePolicy
@@ -695,6 +740,13 @@ public final class CPRiskKit: NSObject {
                 )
             )
         )
+
+        // Update signal continuity state for next evaluate() call.
+        let allVerdictSignalIds = Set(verdict.signals.map(\.id))
+        stateLock.lock()
+        previousSignalIds = allVerdictSignalIds
+        previousSignalsDigest = SignalDigest.computeFullDigest(verdict.signals)
+        stateLock.unlock()
 
         if let challengeBinding = buildChallengeBindingIfNeeded(
             remoteConfig: remoteConfig,
@@ -1864,6 +1916,18 @@ public final class CPRiskKit: NSObject {
         )
     }
 
+    private static func mprotectTamperedSignal() -> RiskSignal {
+        RiskSignal(
+            id: "memory_protection_tampered",
+            category: "anti_tamper",
+            score: 85,
+            evidence: ["detail": "mprotect_syscall_blocked"],
+            state: .tampered,
+            layer: 1,
+            weightHint: 90
+        )
+    }
+
     private static func normalizedPinnedCertificateHashes(from hashes: [String]) -> Set<String> {
         Set(
             hashes
@@ -1917,7 +1981,7 @@ public final class CPRiskKit: NSObject {
     /// 确保 armor runtime 已启动，并用 baseKey + armor material 派生。
     /// 供 validateSecureReportEnvelope 在 sigVer == "v2a" 时使用。
     /// armor 被篡改或未初始化时返回 nil，调用方应将此视为验签失败。
-    private func effectiveSigningKeyForV2aValidation(baseKey: String) -> String? {
+    func effectiveSigningKeyForV2aValidation(baseKey: String) -> String? {
         _ = ensureArmorRuntimeStarted(trigger: "validate_envelope")
         let (armorMaterial, authentic) = Self.armorRuntimeMaterial()
         guard authentic else { return nil }

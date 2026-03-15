@@ -203,6 +203,7 @@ public final class PolicyManager: @unchecked Sendable {
             Logger.log("PolicyManager.configurePinning: empty hashes provided — all TLS connections would fail")
             #if DEBUG
             Logger.log("⚠️ PolicyManager.configurePinning: [DEBUG] falling back to system CA with empty hashes")
+            urlSession.invalidateAndCancel()
             urlSession = CertificatePinningSessionDelegate.pinnedSession(
                 hashes: [],
                 allowsSystemCA: true
@@ -212,6 +213,7 @@ public final class PolicyManager: @unchecked Sendable {
             #endif
             return
         }
+        urlSession.invalidateAndCancel()
         urlSession = CertificatePinningSessionDelegate.pinnedSession(
             hashes: hashes,
             allowsSystemCA: false
@@ -238,10 +240,10 @@ public final class PolicyManager: @unchecked Sendable {
     public func clear() {
         lock.lock()
         cachedPolicy = nil
-        lock.unlock()
         UserDefaults.standard.removeObject(forKey: cacheKey)
         UserDefaults.standard.removeObject(forKey: hmacCacheKey)
         UserDefaults.standard.removeObject(forKey: verifiedKey)
+        lock.unlock()
     }
 
     /// 仅清空内存中的策略缓存（challengeSalt、mutation.seed、blocklist 等敏感数据），
@@ -270,7 +272,11 @@ public final class PolicyManager: @unchecked Sendable {
 
     @available(iOS 13.0, macOS 10.15, *)
     public func fetchLatestPolicy(from url: URL) async throws -> ServerRiskPolicy {
-        let (data, response) = try await urlSession.data(from: url)
+        let session: URLSession
+        lock.lock()
+        session = urlSession
+        lock.unlock()
+        let (data, response) = try await session.data(from: url)
 
         let signatureHex = (response as? HTTPURLResponse)?
             .value(forHTTPHeaderField: "X-Policy-Signature") ?? ""
@@ -287,8 +293,8 @@ public final class PolicyManager: @unchecked Sendable {
     private func update(policy: ServerRiskPolicy, verifiedByServer: Bool) {
         lock.lock()
         cachedPolicy = policy
-        lock.unlock()
         persist(policy: policy, verifiedByServer: verifiedByServer)
+        lock.unlock()
     }
 
     private func persist(policy: ServerRiskPolicy, verifiedByServer: Bool) {

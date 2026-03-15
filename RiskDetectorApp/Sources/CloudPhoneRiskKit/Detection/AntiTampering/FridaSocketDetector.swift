@@ -60,7 +60,9 @@ struct FridaSocketDetector: Detector {
             defer { closedir(dir) }
             while let entry = readdir(dir) {
                 let name = withUnsafePointer(to: &entry.pointee.d_name) { ptr in
-                    String(cString: UnsafeRawPointer(ptr).assumingMemoryBound(to: CChar.self))
+                    let cptr = UnsafeRawPointer(ptr).assumingMemoryBound(to: CChar.self)
+                    let len = strnlen(cptr, 256)
+                    return String(data: Data(bytes: cptr, count: len), encoding: .utf8) ?? ""
                 }
                 let lower = name.lowercased()
                 if lower.hasPrefix("frida") || lower.hasPrefix(".frida") || lower.contains("linjector") {
@@ -81,8 +83,12 @@ struct FridaSocketDetector: Detector {
                 }
             }
             if result == 0 && addr.sun_family == sa_family_t(AF_UNIX) {
-                let path = withUnsafePointer(to: &addr.sun_path) { ptr in
-                    String(cString: UnsafeRawPointer(ptr).assumingMemoryBound(to: CChar.self))
+                var sunPath = addr.sun_path
+                let maxLen = MemoryLayout.size(ofValue: sunPath)
+                let path = withUnsafePointer(to: &sunPath) { ptr in
+                    let cptr = UnsafeRawPointer(ptr).assumingMemoryBound(to: CChar.self)
+                    let len = strnlen(cptr, maxLen)
+                    return String(data: Data(bytes: cptr, count: len), encoding: .utf8) ?? ""
                 }
                 guard !path.isEmpty else { continue }
                 let lower = path.lowercased()

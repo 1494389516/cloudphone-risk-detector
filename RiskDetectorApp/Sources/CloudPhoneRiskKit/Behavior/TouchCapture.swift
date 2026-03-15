@@ -108,7 +108,10 @@ final class TouchCapture {
     private func zeroBuffer<T>(_ array: inout [T]) {
         array.withUnsafeMutableBufferPointer { buf in
             guard let base = buf.baseAddress else { return }
-            memset(base, 0, buf.count * MemoryLayout<T>.stride)
+            let stride = MemoryLayout<T>.stride
+            let (byteCount, overflow) = buf.count.multipliedReportingOverflow(by: stride)
+            if overflow { return }
+            memset(base, 0, byteCount)
         }
         array.removeAll(keepingCapacity: false)
     }
@@ -132,7 +135,9 @@ final class TouchCapture {
         case .began:
             currentSwipePath = [p]
         case .moved:
-            currentSwipePath.append(p)
+            if currentSwipePath.count < 500 {
+                currentSwipePath.append(p)
+            }
         case .ended:
             // Record per-action touch shape and pressure hints (best-effort; not all devices support force).
             if touch.force > 0 { forces.append(Double(touch.force)) }

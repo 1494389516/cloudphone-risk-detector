@@ -277,8 +277,41 @@ struct DualPathValidator {
         LibcPrologueGuard.checkAllCritical()
     }
 
+    // MARK: - getpid SVC 动态基线（DBI 过慢检测）
+
+    private static let baselineLock = NSLock()
+    private static var cachedGetpidBaseline: UInt64 = 0
+    private static var baselineTimestamp: CFTimeInterval = 0
+    private static let baselineCacheDuration: CFTimeInterval = 5.0
+    /// 实际 syscall 耗时超过 getpid 基线的此倍数即判定为 DBI traced
+    private static let stalkerSlowdownMultiplier: UInt64 = 500
+
+    static var getpidBaseline: UInt64 {
+        let now = CFAbsoluteTimeGetCurrent()
+        baselineLock.lock()
+        let cached = cachedGetpidBaseline
+        let ts = baselineTimestamp
+        baselineLock.unlock()
+
+        if cached > 0 && (now - ts) < baselineCacheDuration {
+            return cached
+        }
+        let baseline = measure { _ = cprisk_getpid_direct() }
+        let value = max(baseline, 1)
+        baselineLock.lock()
+        cachedGetpidBaseline = value
+        baselineTimestamp = now
+        baselineLock.unlock()
+        return value
+    }
+
+    static func isTracedTiming(_ durations: UInt64...) -> Bool {
+        let threshold = getpidBaseline &* stalkerSlowdownMultiplier
+        return durations.contains { $0 > threshold }
+    }
+
     /// 同时调用标准 libc 与加固版本，结果不一致则判定为 tampered
-    static func validateSysctl(key: String) -> (value: String?, tampered: Bool, bypassed: Bool, inlineHooked: Bool) {
+    static func validateSysctl(key: String) -> (value: String?, tampered: Bool, bypassed: Bool, traced: Bool, inlineHooked: Bool) {
         let hooked = inlineHookDetected
 
         var std: String?
@@ -288,17 +321,17 @@ struct DualPathValidator {
         let t2 = measure { secure = SVCDirectCall.secureSysctlbyname(key) }
         
         // 50 纳秒：检测「时序注入绕过」——syscall 异常快（如被 stub 或直接返回）时判定 bypassed。
-        // 注意：此为纳秒阈值，与 stat/getpid 延迟的 50ms 毫秒阈值无关。
         let bypassed = t1 < 50 || t2 < 50
+        let traced = isTracedTiming(t1, t2)
 
-        if std == nil && secure == nil { return (nil, false, bypassed, hooked) }
-        if std == nil || secure == nil { return (secure ?? std, true, bypassed, hooked) }
+        if std == nil && secure == nil { return (nil, false, bypassed, traced, hooked) }
+        if std == nil || secure == nil { return (secure ?? std, true, bypassed, traced, hooked) }
         let tampered = std != secure
         if tampered { LibcPrologueGuard.invalidateCache() }
-        return (secure, tampered, bypassed, hooked)
+        return (secure, tampered, bypassed, traced, hooked)
     }
 
-    static func validateSysctlData(mib: [Int32]) -> (data: Data?, tampered: Bool, bypassed: Bool, inlineHooked: Bool) {
+    static func validateSysctlData(mib: [Int32]) -> (data: Data?, tampered: Bool, bypassed: Bool, traced: Bool, inlineHooked: Bool) {
         let hooked = inlineHookDetected
 
         var std: Data?
@@ -309,17 +342,18 @@ struct DualPathValidator {
         
         // 50 纳秒：检测「时序注入绕过」，非 stat 延迟阈值（见上方 validateSysctl 注释）
         let bypassed = t1 < 50 || t2 < 50
+        let traced = isTracedTiming(t1, t2)
 
-        if std == nil && secure == nil { return (nil, false, bypassed, hooked) }
-        if std == nil || secure == nil { return (secure ?? std, true, bypassed, hooked) }
+        if std == nil && secure == nil { return (nil, false, bypassed, traced, hooked) }
+        if std == nil || secure == nil { return (secure ?? std, true, bypassed, traced, hooked) }
         let tampered = std != secure
         if tampered { LibcPrologueGuard.invalidateCache() }
-        return (secure ?? std, tampered, bypassed, hooked)
+        return (secure ?? std, tampered, bypassed, traced, hooked)
     }
 
     /// 同时调用标准 stat/lstat/access 与加固版本，结果不一致则判定为 tampered。
     /// 当 secure 路径返回 nil（dlsym 失败，安全路径不可用）且 std 有值时，判定 tampered=true。
-    static func validateFileStat(path: String) -> (exists: Bool, tampered: Bool, bypassed: Bool, inlineHooked: Bool) {
+    static func validateFileStat(path: String) -> (exists: Bool, tampered: Bool, bypassed: Bool, traced: Bool, inlineHooked: Bool) {
         let hooked = inlineHookDetected
 
         var stdExists = false
@@ -348,6 +382,7 @@ struct DualPathValidator {
 
         // 50 纳秒：检测「时序注入绕过」，任一 syscall 异常快则 bypassed（非 stat 延迟阈值）
         let bypassed = t1 < 50 || t2 < 50 || t3 < 50 || t4 < 50 || t5 < 50 || t6 < 50
+        let traced = isTracedTiming(t1, t2, t3, t4, t5, t6)
 
         // 安全路径返回 nil 且 std 有值：安全路径失效本身即异常，判定 tampered
         let secureUnavailableButStdHasValue =
@@ -363,6 +398,6 @@ struct DualPathValidator {
         if tampered { LibcPrologueGuard.invalidateCache() }
         let exists = (secureStatExists ?? stdExists) || (secureLstatExists ?? stdLstatExists)
             || (secureAccessExists ?? stdAccessExists)
-        return (exists, tampered, bypassed, hooked)
+        return (exists, tampered, bypassed, traced, hooked)
     }
 }

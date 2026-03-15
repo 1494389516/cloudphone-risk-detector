@@ -90,6 +90,12 @@ struct FileDetector: Detector {
                 methods.append("syscall_bypassed:\(item.path)")
                 Logger.log("jailbreak.file.hit: syscall_bypassed path=\(item.path) (+20)")
             }
+
+            if exists.traced {
+                suspiciousPathScore += 25
+                methods.append("dbi_stalker_traced:\(item.path)")
+                Logger.log("jailbreak.file.hit: dbi_stalker_traced path=\(item.path) (+25)")
+            }
         }
 
         // Score compensation: checked X of N paths → scale by N/X
@@ -107,6 +113,7 @@ struct FileDetector: Detector {
         var critNoiseIdx = 0
         var mismatchCount = 0
         var bypassCount = 0
+        var tracedCount = 0
         for path in criticalPaths {
             if Bool.random() && critNoiseIdx < critNoisePaths.count {
                 var noiseSt = stat()
@@ -114,7 +121,7 @@ struct FileDetector: Detector {
                 critNoiseIdx += 1
             }
 
-            let (_, tampered, bypassed, _) = DualPathValidator.validateFileStat(path: path)
+            let (_, tampered, bypassed, traced, _) = DualPathValidator.validateFileStat(path: path)
             if tampered {
                 mismatchCount += 1
                 methods.append("dual_path_mismatch:\(path.components(separatedBy: "/").last ?? path)")
@@ -125,12 +132,20 @@ struct FileDetector: Detector {
                 methods.append("syscall_bypassed:\(path.components(separatedBy: "/").last ?? path)")
                 Logger.log("jailbreak.file.hit: syscall_bypassed path=\(path) (+20)")
             }
+            if traced {
+                tracedCount += 1
+                methods.append("dbi_stalker_traced:\(path.components(separatedBy: "/").last ?? path)")
+                Logger.log("jailbreak.file.hit: dbi_stalker_traced path=\(path) (+25)")
+            }
         }
         if mismatchCount > 0 {
             score += Double(mismatchCount) * 20
         }
         if bypassCount > 0 {
             score += Double(bypassCount) * 20
+        }
+        if tracedCount > 0 {
+            score += Double(min(tracedCount, 3)) * 25
         }
 
         // System configuration / integrity signals.
@@ -178,6 +193,7 @@ struct FileDetector: Detector {
         var fileManagerMismatch: Bool
         var lowLevelPrimitiveMismatch: Bool
         var bypassed: Bool
+        var traced: Bool
     }
 
     private func detectSandboxMountIsolation() -> Bool {
@@ -212,7 +228,8 @@ struct FileDetector: Detector {
             exists: fm || low.exists,
             fileManagerMismatch: mismatch,
             lowLevelPrimitiveMismatch: low.tampered,
-            bypassed: low.bypassed
+            bypassed: low.bypassed,
+            traced: low.traced
         )
     }
 
@@ -231,7 +248,8 @@ struct FileDetector: Detector {
         while let ent = readdir(dir) {
             var nameBuf = ent.pointee.d_name
             let name = withUnsafePointer(to: &nameBuf.0) { ptr in
-                String(cString: ptr).lowercased()
+                let len = strnlen(ptr, 256)
+                return (String(data: Data(bytes: ptr, count: len), encoding: .utf8) ?? "").lowercased()
             }
             if needles.contains(where: { name.contains($0) }) {
                 return true

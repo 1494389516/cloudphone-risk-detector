@@ -1,3 +1,4 @@
+import CRiskCore
 import Darwin
 import Foundation
 import MachO
@@ -79,9 +80,10 @@ struct FridaHeapDetector: Detector {
                     isAnonymous = anonymousUserTags.contains(UInt32(extInfo.user_tag))
                 }
 
-                if isAnonymous {
-                    var dlInfo = Dl_info()
-                    let inImage = dladdr(UnsafeRawPointer(bitPattern: UInt(address)), &dlInfo) != 0
+                if isAnonymous, address != 0, let ptr = UnsafeRawPointer(bitPattern: UInt(address)) {
+                    // Use cprisk_addr_in_any_image (task_info + dyld_all_image_infos) instead of
+                    // dladdr — resistant to dladdr hook that could hide anonymous Frida memory.
+                    let inImage = cprisk_addr_in_any_image(ptr) != 0
                     if !inImage {
                         largeAnonRWCount += 1
                         totalAnonRWSize += UInt64(size)
@@ -162,9 +164,10 @@ struct FridaHeapDetector: Detector {
                     isAnonymous = anonymousUserTags.contains(UInt32(extInfo.user_tag))
                 }
 
-                if isAnonymous {
-                    var dlInfo = Dl_info()
-                    let inImage = dladdr(UnsafeRawPointer(bitPattern: UInt(address)), &dlInfo) != 0
+                if isAnonymous, address != 0, let ptr = UnsafeRawPointer(bitPattern: UInt(address)) {
+                    // Use cprisk_addr_in_any_image (task_info + dyld_all_image_infos) instead of
+                    // dladdr — resistant to dladdr hook that could hide anonymous Frida memory.
+                    let inImage = cprisk_addr_in_any_image(ptr) != 0
                     if !inImage {
                         jitPageCount += 1
                     }

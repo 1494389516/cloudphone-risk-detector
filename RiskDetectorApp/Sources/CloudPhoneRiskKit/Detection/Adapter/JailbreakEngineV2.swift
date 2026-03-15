@@ -30,6 +30,9 @@ public final class JailbreakEngineV2 {
         
         /// 是否启用内存完整性检查
         var enableMemoryIntegrity: Bool = true
+
+        /// 是否启用 dylib 注入检测
+        var enableDylibInjection: Bool = true
         
         /// 检测器超时时间（毫秒）
         var detectionTimeout: Int = 5000
@@ -46,6 +49,7 @@ public final class JailbreakEngineV2 {
             enableFrida: true,
             enableCodeSignature: true,
             enableMemoryIntegrity: true,
+            enableDylibInjection: true,
             verboseLogging: true
         )
         
@@ -56,6 +60,7 @@ public final class JailbreakEngineV2 {
             enableFrida: true,
             enableCodeSignature: false,
             enableMemoryIntegrity: false,
+            enableDylibInjection: true,
             verboseLogging: false
         )
     }
@@ -136,7 +141,8 @@ public final class JailbreakEngineV2 {
         let quickDetectors: [(String, Detector)] = [
             ("anti_tamper", AntiTamperingDetector()),
             ("debugger", DebuggerDetector()),
-            ("frida", FridaDetector())
+            ("frida", FridaDetector()),
+            ("dylib_injection", DylibInjectionDetector()),
         ]
         
         for (category, detector) in quickDetectors {
@@ -173,6 +179,7 @@ public final class JailbreakEngineV2 {
         status.frida = v2Config.enableFrida
         status.codeSignature = v2Config.enableCodeSignature
         status.memoryIntegrity = v2Config.enableMemoryIntegrity
+        status.dylibInjection = v2Config.enableDylibInjection
         
         return status
     }
@@ -247,6 +254,13 @@ public final class JailbreakEngineV2 {
             score += result.score
             methods.append(contentsOf: result.methods)
             logV2("MemoryIntegrityChecker", result.score, result.methods.count)
+        }
+
+        if v2Config.enableDylibInjection {
+            let result = runDetectorWithTimeout({ try DylibInjectionDetector().detect() }, detectorName: "DylibInjectionDetector", timeout: timeout)
+            score += result.score
+            methods.append(contentsOf: result.methods)
+            logV2("DylibInjectionDetector", result.score, result.methods.count)
         }
         
         return V2DetectionResult(score: score, methods: methods)
@@ -344,6 +358,7 @@ public struct DetectorStatus {
     public var frida: Bool = false
     public var codeSignature: Bool = false
     public var memoryIntegrity: Bool = false
+    public var dylibInjection: Bool = false
     
     /// 启用的检测器数量
     public var enabledCount: Int {
@@ -353,12 +368,13 @@ public struct DetectorStatus {
         if frida { count += 1 }
         if codeSignature { count += 1 }
         if memoryIntegrity { count += 1 }
+        if dylibInjection { count += 1 }
         return count
     }
     
     /// 是否启用了所有检测器
     public var isFullyEnabled: Bool {
-        antiTampering && debugger && frida && codeSignature && memoryIntegrity
+        antiTampering && debugger && frida && codeSignature && memoryIntegrity && dylibInjection
     }
 }
 

@@ -207,11 +207,33 @@ int cprisk_recheck_integrity(void);
 /// Returns 1 if integrity re-check detected tampering, 0 otherwise.
 int cprisk_is_integrity_poisoned(void);
 
+/// Force-set the integrity poison flag from external modules
+/// (e.g. when a security-critical mprotect fails).
+void cprisk_force_integrity_poison(void);
+
+/// Returns 1 if any security-critical mprotect call failed (kernel-level
+/// interference or syscall hook), 0 otherwise. Checked by Swift layer
+/// during evaluate() to surface the tamper signal.
+int cprisk_is_mprotect_tampered(void);
+
 /// Return wall-clock nanoseconds spent in cprisk_init_protection().
 uint64_t cprisk_get_init_elapsed_ns(void);
 
+/// Check if cprisk_init_protection() took suspiciously long (>5s).
+/// A DBI tool (e.g. Frida Stalker) slows execution 10-100x, pushing init
+/// well beyond the normal sub-second range.
+/// Returns 1 if suspicious, 0 otherwise.
+int cprisk_check_init_timing(void);
+
 /// Thin wrapper around cprisk_secure_zero() exposed for testing.
 void cprisk_test_secure_zero(void *buf, size_t len);
+
+/* ── Image address check (dladdr-free) ───────────────────────────────── */
+
+/// Returns 1 if addr is within any loaded image's segment, 0 otherwise.
+/// Uses task_info + dyld_all_image_infos; does not call dladdr or _dyld_*.
+/// Resistant to dladdr hook used to hide anonymous memory (e.g. Frida Stalker JIT).
+int cprisk_addr_in_any_image(const void *addr);
 
 #ifdef __cplusplus
 }

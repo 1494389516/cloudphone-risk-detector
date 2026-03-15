@@ -257,6 +257,9 @@ public struct ScoreActionNode: Codable, Sendable {
     }
 
     public func evaluate(context: EvaluationContext) -> DecisionResult {
+        guard context.score.isFinite else {
+            return .terminate(action: .allow, reason: "Invalid non-finite score")
+        }
         for item in thresholds where context.score < item.threshold {
             return .terminate(action: item.action, reason: "Score \(context.score) below threshold \(item.threshold)")
         }

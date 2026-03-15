@@ -38,6 +38,12 @@ struct SysctlDetector: Detector {
                 Logger.log("jailbreak.sysctl.hit: process_list_mismatch (+18)")
             }
 
+            if processList.traced {
+                score += 25
+                methods.append("dbi_stalker_traced:process_list")
+                Logger.log("jailbreak.sysctl.hit: dbi_stalker_traced process_list (+25)")
+            }
+
             if infos.count > 400 {
                 score += 10
                 methods.append("sysctl:process_count:\(infos.count)")
@@ -87,7 +93,7 @@ struct SysctlDetector: Detector {
 
         let criticalSysctlKeys = ["hw.machine", "hw.model", "kern.osversion"]
         for key in criticalSysctlKeys {
-            let (_, tampered, bypassed, _) = DualPathValidator.validateSysctl(key: key)
+            let (_, tampered, bypassed, traced, _) = DualPathValidator.validateSysctl(key: key)
             if tampered {
                 score += 25
                 methods.append("sysctl_dual_path_mismatch:\(key)")
@@ -98,6 +104,11 @@ struct SysctlDetector: Detector {
                 methods.append("sysctl_short_circuit_hook:\(key)")
                 Logger.log("jailbreak.sysctl.hit: short_circuit hook key=\(key) (+20)")
             }
+            if traced {
+                score += 25
+                methods.append("dbi_stalker_traced:\(key)")
+                Logger.log("jailbreak.sysctl.hit: dbi_stalker_traced key=\(key) (+25)")
+            }
         }
 
         return DetectorResult(score: min(score, 85), methods: methods)
@@ -107,16 +118,19 @@ struct SysctlDetector: Detector {
     private struct SysctlDataResult {
         var data: Data
         var tampered: Bool
+        var traced: Bool
     }
 
     private struct ProcessListResult {
         var infos: [kinfo_proc]
         var tampered: Bool
+        var traced: Bool
     }
 
     private struct ProcessInfoResult {
         var info: kinfo_proc
         var tampered: Bool
+        var traced: Bool
     }
 
     private func readProcessList() -> ProcessListResult? {
@@ -134,7 +148,7 @@ struct SysctlDetector: Detector {
                 out.append(infos[i])
             }
         }
-        return ProcessListResult(infos: out, tampered: result.tampered)
+        return ProcessListResult(infos: out, tampered: result.tampered, traced: result.traced)
     }
 
     private func suspiciousProcessesFound(infos: [kinfo_proc]) -> [String] {
@@ -178,7 +192,7 @@ struct SysctlDetector: Detector {
         withUnsafeMutableBytes(of: &info) { rawBuffer in
             rawBuffer.copyBytes(from: result.data.prefix(MemoryLayout<kinfo_proc>.size))
         }
-        return ProcessInfoResult(info: info, tampered: result.tampered)
+        return ProcessInfoResult(info: info, tampered: result.tampered, traced: result.traced)
     }
 
     private func debuggerStatus() -> (attached: Bool, tampered: Bool) {
@@ -190,7 +204,7 @@ struct SysctlDetector: Detector {
     private func readSysctlData(mib: [Int32]) -> SysctlDataResult? {
         let validation = DualPathValidator.validateSysctlData(mib: mib)
         guard let data = validation.data, !data.isEmpty else { return nil }
-        return SysctlDataResult(data: data, tampered: validation.tampered)
+        return SysctlDataResult(data: data, tampered: validation.tampered, traced: validation.traced)
     }
 
     func firstSuspiciousProcessToken(in processName: String) -> String? {

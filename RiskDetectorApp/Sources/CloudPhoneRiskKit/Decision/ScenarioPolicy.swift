@@ -61,9 +61,15 @@ public struct ScenarioPolicy: Codable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        mediumThreshold = try container.decodeIfPresent(Double.self, forKey: .mediumThreshold) ?? 30
-        highThreshold = try container.decodeIfPresent(Double.self, forKey: .highThreshold) ?? 55
-        criticalThreshold = try container.decodeIfPresent(Double.self, forKey: .criticalThreshold) ?? 80
+        var m = try container.decodeIfPresent(Double.self, forKey: .mediumThreshold) ?? 30
+        var h = try container.decodeIfPresent(Double.self, forKey: .highThreshold) ?? 55
+        var c = try container.decodeIfPresent(Double.self, forKey: .criticalThreshold) ?? 80
+        if !m.isFinite || !h.isFinite || !c.isFinite || !(0 <= m && m < h && h < c && c <= 100) {
+            m = 30; h = 55; c = 80
+        }
+        mediumThreshold = m
+        highThreshold = h
+        criticalThreshold = c
         actionMapping = try container.decodeIfPresent([InternalRiskLevel: RiskAction].self, forKey: .actionMapping) ?? Self.defaultActionMapping()
         signalWeights = try container.decodeIfPresent(SignalWeights.self, forKey: .signalWeights) ?? .default
         comboRules = try container.decodeIfPresent([ComboRule].self, forKey: .comboRules) ?? []
@@ -311,6 +317,18 @@ public struct SignalWeights: Codable, Sendable {
     /// 默认权重（全部为1.0）
     public static let `default` = SignalWeights()
 
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        func valid(_ v: Double) -> Double {
+            (v.isFinite && v >= 0 && v <= 10) ? v : 1.0
+        }
+        jailbreak = valid(try container.decodeIfPresent(Double.self, forKey: .jailbreak) ?? 1.0)
+        network = valid(try container.decodeIfPresent(Double.self, forKey: .network) ?? 1.0)
+        behavior = valid(try container.decodeIfPresent(Double.self, forKey: .behavior) ?? 1.0)
+        device = valid(try container.decodeIfPresent(Double.self, forKey: .device) ?? 1.0)
+        time = valid(try container.decodeIfPresent(Double.self, forKey: .time) ?? 1.0)
+    }
+
     /// 获取指定类别的权重
     public func weight(for category: String) -> Double {
         switch category.lowercased() {
@@ -360,6 +378,7 @@ public struct ComboRule: Codable, Sendable {
 
     /// 检查信号是否匹配此规则
     public func matches(signals: [RiskSignal]) -> Bool {
+        guard !requiredSignals.isEmpty else { return false }
         let signalIds = Set(signals.map { $0.id })
         let required = Set(requiredSignals)
         return required.isSubset(of: signalIds)

@@ -149,13 +149,16 @@ final class DyldImageMonitor: @unchecked Sendable {
     private func computeImageListHash() -> UInt64 {
         var hash: UInt64 = 14695981039346656037 // FNV-1a offset basis
         let count = _dyld_image_count()
+        let maxPathLen = 256
         for i in 0..<count {
             guard let cName = _dyld_get_image_name(i) else { continue }
             var ptr = cName
-            while ptr.pointee != 0 {
+            var left = maxPathLen
+            while left > 0 && ptr.pointee != 0 {
                 hash ^= UInt64(UInt8(bitPattern: ptr.pointee))
                 hash &*= 1099511628211 // FNV-1a prime
                 ptr = ptr.advanced(by: 1)
+                left -= 1
             }
             hash ^= 0xFF
             hash &*= 1099511628211

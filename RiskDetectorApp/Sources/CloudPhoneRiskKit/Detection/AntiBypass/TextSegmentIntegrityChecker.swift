@@ -34,6 +34,8 @@ enum TextSegmentIntegrityChecker {
 
     private static let baselineAccount = "text_hash_baseline_v1"
     private static let versionAccount = "text_hash_version_v1"
+    /// 首次建基线后标记为「待确认」，下次启动环境干净且哈希一致才视为可信
+    private static let pendingAccount = "text_hash_pending_v1"
 
     /// Main entry: verify text segment integrity
     /// 优先使用服务端下发的参考哈希（RemoteConfig.textSegmentHashReference），Keychain 基线仅作本地辅助。
@@ -105,8 +107,53 @@ enum TextSegmentIntegrityChecker {
         // 2. 无服务端参考时，回退到 Keychain 本地基线（向后兼容）
         let uuid = binaryUUID(header: header) ?? "unknown"
         let storedBaseline = loadBaseline()
+        let isPending = loadPending()
 
         if let stored = storedBaseline, stored.version == uuid {
+            // 待确认窗口：首次建基线后需下次启动环境干净且哈希一致才视为可信
+            if isPending {
+                if stored.hash != hash {
+                    return IntegrityResult(
+                        isIntact: false,
+                        baselineHash: stored.hash,
+                        currentHash: hash,
+                        sdkVersion: sdkVersion,
+                        sectionSize: size,
+                        detail: "tampered",
+                        usedServerReference: false,
+                        referenceSource: "keychain_baseline",
+                        referenceVersion: nil
+                    )
+                }
+                let envCheck = IntegrityBaselineEnvCheck.check()
+                if envCheck.isSuspicious {
+                    clearBaseline()
+                    clearPending()
+                    return IntegrityResult(
+                        isIntact: false,
+                        baselineHash: "",
+                        currentHash: hash,
+                        sdkVersion: sdkVersion,
+                        sectionSize: size,
+                        detail: "baseline_cleared_suspicious_env",
+                        usedServerReference: false,
+                        referenceSource: nil,
+                        referenceVersion: nil
+                    )
+                }
+                clearPending()
+                return IntegrityResult(
+                    isIntact: true,
+                    baselineHash: stored.hash,
+                    currentHash: hash,
+                    sdkVersion: sdkVersion,
+                    sectionSize: size,
+                    detail: "intact",
+                    usedServerReference: false,
+                    referenceSource: "keychain_baseline",
+                    referenceVersion: nil
+                )
+            }
             let match = stored.hash == hash
             return IntegrityResult(
                 isIntact: match,
@@ -137,8 +184,9 @@ enum TextSegmentIntegrityChecker {
                 )
             }
             saveBaseline(hash: hash, version: uuid)
+            savePending()
             return IntegrityResult(
-                isIntact: false,  // 不可信窗口：无法断言完整性
+                isIntact: false,  // 不可信窗口：待下次启动确认
                 baselineHash: hash,
                 currentHash: hash,
                 sdkVersion: sdkVersion,
@@ -150,7 +198,7 @@ enum TextSegmentIntegrityChecker {
             )
         }
 
-        // 首启：环境可疑时拒绝建基线
+        // 首启：环境可疑时拒绝建基线（扩展检查：DYLD_INSERT_LIBRARIES、suspicious image、P_TRACED、可疑父进程）
         let envCheck = IntegrityBaselineEnvCheck.check()
         if envCheck.isSuspicious {
             return IntegrityResult(
@@ -166,8 +214,9 @@ enum TextSegmentIntegrityChecker {
             )
         }
         saveBaseline(hash: hash, version: uuid)
+        savePending()
         return IntegrityResult(
-            isIntact: false,  // 不可信窗口：无法断言完整性
+            isIntact: false,  // 不可信窗口：待下次启动确认
             baselineHash: hash,
             currentHash: hash,
             sdkVersion: sdkVersion,
@@ -234,6 +283,22 @@ enum TextSegmentIntegrityChecker {
                     score: 55,
                     evidence: [
                         "detail": "baseline_rejected_suspicious_env",
+                        "current_hash": result.currentHash,
+                        "sdk_version": result.sdkVersion
+                    ],
+                    state: .tampered,
+                    layer: 2,
+                    weightHint: 88
+                )
+            ]
+        case "baseline_cleared_suspicious_env":
+            return [
+                RiskSignal(
+                    id: "text_segment_baseline_cleared_suspicious_env",
+                    category: "integrity",
+                    score: 55,
+                    evidence: [
+                        "detail": "baseline_cleared_suspicious_env",
                         "current_hash": result.currentHash,
                         "sdk_version": result.sdkVersion
                     ],
@@ -381,6 +446,24 @@ enum TextSegmentIntegrityChecker {
         _ = keychainSave(account: versionAccount, value: version)
     }
 
+    /// 清除基线（用于待确认窗口内环境可疑时强制重新采集）
+    private static func clearBaseline() {
+        _ = keychainDelete(account: baselineAccount)
+        _ = keychainDelete(account: versionAccount)
+    }
+
+    static func loadPending() -> Bool {
+        keychainRead(account: pendingAccount) == "1"
+    }
+
+    private static func savePending() {
+        _ = keychainSave(account: pendingAccount, value: "1")
+    }
+
+    private static func clearPending() {
+        _ = keychainDelete(account: pendingAccount)
+    }
+
     private static let keychainService = "CloudPhoneRiskKit"
     private static let keychainAccessible = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
 
@@ -417,6 +500,16 @@ enum TextSegmentIntegrityChecker {
         addQuery[kSecValueData as String] = data
         addQuery[kSecAttrAccessible as String] = keychainAccessible
         return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+    }
+
+    private static func keychainDelete(account: String) -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: account,
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
     }
 
     /// Extract LC_UUID for version tracking

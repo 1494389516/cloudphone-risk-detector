@@ -32,6 +32,7 @@ public final class DetectorRegistry {
         case antiTampering = "anti_tampering"
         case debugger = "debugger"
         case frida = "frida"
+        case dylibInjection = "dylib_injection"
         case codeSignature = "code_signature"
         case memoryIntegrity = "memory_integrity"
     }
@@ -69,6 +70,7 @@ public final class DetectorRegistry {
         .antiTampering: { AntiTamperingDetector() },
         .debugger: { DebuggerDetector() },
         .frida: { FridaDetector() },
+        .dylibInjection: { DylibInjectionDetector() },
         .codeSignature: { CodeSignatureValidator() },
         .memoryIntegrity: { MemoryIntegrityChecker() },
     ]
@@ -76,7 +78,7 @@ public final class DetectorRegistry {
     /// 检测器分组映射
     private let groupMapping: [DetectorGroup: Set<DetectorType>] = [
         .jailbreak: [.file, .dyld, .env, .sysctl, .scheme, .hook],
-        .antiTamper: [.antiTampering, .debugger, .frida],
+        .antiTamper: [.antiTampering, .debugger, .frida, .dylibInjection],
         .integrity: [.codeSignature, .memoryIntegrity]
     ]
     
@@ -287,6 +289,7 @@ extension JailbreakConfig {
         types.insert(.antiTampering)
         types.insert(.debugger)
         types.insert(.frida)
+        types.insert(.dylibInjection)
         types.insert(.codeSignature)
         types.insert(.memoryIntegrity)
         

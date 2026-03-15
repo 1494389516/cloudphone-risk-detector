@@ -141,6 +141,7 @@ int cprisk_install_memory_trap(void *region, size_t len,
             VM_PROT_NONE);
 
         if (kr != KERN_SUCCESS) {
+            state->protect_failed = 1;
             vm_deallocate(mach_task_self(), alloc_addr, CPRISK_PAGE_SIZE_4K);
             continue;
         }
@@ -164,7 +165,10 @@ void cprisk_remove_memory_trap(struct cprisk_guard_state *state) {
     if (!state)
         return;
 
-    for (uint32_t i = 0; i < state->trap_count; i++) {
+    uint32_t limit = state->trap_count;
+    if (limit > CPRISK_GUARD_MAX_TRAPS)
+        limit = CPRISK_GUARD_MAX_TRAPS;
+    for (uint32_t i = 0; i < limit; i++) {
         if (state->traps[i].addr && state->traps[i].size > 0) {
             vm_deallocate(
                 mach_task_self(),
