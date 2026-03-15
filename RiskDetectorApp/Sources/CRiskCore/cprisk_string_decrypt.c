@@ -137,7 +137,7 @@ int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) 
         return -1;
 
     uint32_t dlen = ent->data_length;
-    if (dlen == 0 || dlen + 1 > buffer_size)
+    if (dlen == 0 || dlen >= buffer_size)
         return -1;
     size_t data_block_sz = sec_sz - data_base;
     size_t data_end = (size_t)ent->data_offset + (size_t)dlen;
