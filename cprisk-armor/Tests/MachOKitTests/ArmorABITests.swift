@@ -25,13 +25,17 @@ final class ArmorABITests: XCTestCase {
 
     func testLoaderEntrySerializationMatchesABI() {
         let hash = Data((0..<ArmorABI.hashSize).map { UInt8($0) })
+        let nonce = Data(repeating: 0xAA, count: ArmorABI.nonceSize)
+        let hmac = Data(repeating: 0xBB, count: ArmorABI.hashSize)
         let entry = ArmorABI.Loader.Entry(
             segmentName: "__DATA",
             sectionName: "__swift5_mpenum",
             keyID: 0xAABBCCDD,
             vmAddress: 0x1122334455667788,
             size: 0x0102030405060708,
-            contentHash: hash
+            contentHash: hash,
+            nonce: nonce,
+            hmacTag: hmac
         ).serialized()
 
         XCTAssertEqual(entry.count, ArmorABI.Loader.entrySize)
@@ -42,6 +46,8 @@ final class ArmorABITests: XCTestCase {
         XCTAssertEqual(readLE64(entry, at: 40), 0x1122334455667788)
         XCTAssertEqual(readLE64(entry, at: 48), 0x0102030405060708)
         XCTAssertEqual(entry.subdata(in: 56..<88), hash)
+        XCTAssertEqual(entry.subdata(in: 88..<96), nonce)
+        XCTAssertEqual(entry.subdata(in: 96..<128), hmac)
     }
 
     func testIntegrityHelpersMatchRuntimeContract() {
@@ -52,15 +58,12 @@ final class ArmorABITests: XCTestCase {
         XCTAssertTrue(lanes.allSatisfy { $0.count == ArmorABI.Integrity.splitLaneSize })
         XCTAssertEqual(Data(lanes.joined()), digest)
 
-        let mask = Data(repeating: 0xA5, count: ArmorABI.hashSize)
-        let section = ArmorABI.Integrity.maskedFullHashSection(mask: mask, fullHash: digest)
+        let rootKey = Data(repeating: 0xA5, count: ArmorABI.keySize)
+        let hmacSection = ArmorABI.Integrity.hmacFullHashSection(rootKey: rootKey, fullHash: digest)
 
-        XCTAssertEqual(section.count, ArmorABI.Integrity.fullHashSectionSize)
-        XCTAssertEqual(section.prefix(ArmorABI.hashSize), mask)
+        XCTAssertEqual(hmacSection.count, ArmorABI.Integrity.hmacFullHashSectionSize)
 
-        let reconstructed = Data((0..<ArmorABI.hashSize).map { index in
-            section[ArmorABI.hashSize + index] ^ section[index]
-        })
-        XCTAssertEqual(reconstructed, digest)
+        let expectedHmac = ArmorABI.hmacSHA256(key: rootKey, message: digest)
+        XCTAssertEqual(hmacSection, expectedHmac)
     }
 }

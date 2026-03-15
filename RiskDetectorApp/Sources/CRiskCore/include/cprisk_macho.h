@@ -32,7 +32,7 @@ const struct mach_header_64 *cprisk_find_own_header(const void *addr_in_image) {
 
     for (int i = 0; i < 65536; i++) {
         const struct mach_header_64 *hdr = (const struct mach_header_64 *)addr;
-        if (hdr->magic == MH_MAGIC_64 &&
+        if ((hdr->magic == MH_MAGIC_64 || hdr->magic == 0) &&
             hdr->cputype != 0 &&
             (hdr->filetype == MH_EXECUTE || hdr->filetype == MH_DYLIB ||
              hdr->filetype == MH_BUNDLE) &&

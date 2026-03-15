@@ -51,6 +51,7 @@ public final class CPRiskKit: NSObject {
         case payloadFieldMappingRequired
         case payloadFieldMappingExpired(version: String)
         case invalidPayloadShape
+        case armorRuntimeUnavailable(reason: String)
 
         public var errorDescription: String? {
             switch self {
@@ -60,6 +61,8 @@ public final class CPRiskKit: NSObject {
                 return "payloadFieldMapping 已过期（version=\(version)）"
             case .invalidPayloadShape:
                 return "上报 payload 结构无效，无法构建安全信封"
+            case .armorRuntimeUnavailable(let reason):
+                return "armor 运行时不可用，无法派生签名密钥（reason=\(reason)），服务端验签将失败"
             }
         }
     }
@@ -194,6 +197,7 @@ public final class CPRiskKit: NSObject {
     /// 启动自动采集（全局触摸 + 传感器）。
     /// 建议在 `application(_:didFinishLaunchingWithOptions:)` 里尽早调用。
     @objc public func start() {
+        cprisk_erase_macho_header()
         cprisk_deny_attach()
         cprisk_register_exception_handler()
         _ = ensureArmorRuntimeStarted(trigger: "start")
@@ -210,6 +214,7 @@ public final class CPRiskKit: NSObject {
         }
         registerProviders(for: .default)
         RiskSignalProviderRegistry.shared.seal()
+        ConditionExpression.sealCustomEvaluators()
         installGraphFeedbackReEvaluateObserver()
 #if canImport(UIKit)
         touchCapture.start()
@@ -320,8 +325,7 @@ public final class CPRiskKit: NSObject {
     }
 
     @objc public static func clearExternalServerSignals() {
-        ExternalServerAggregateProvider.shared.set(nil)
-        ExternalServerAggregateProvider.shared.clearGraphFeatures()
+        ExternalServerAggregateProvider.shared.clear()
     }
 
     /// 应用图风控反馈：服务端返回图计算结果后调用，注入到 ExternalServerAggregateProvider。
@@ -332,9 +336,14 @@ public final class CPRiskKit: NSObject {
     }
 
     /// 应用服务端返回的挑战验证结果（回注路径）
+    /// 若配置了 HMAC 密钥，先校验；校验失败则拒绝应用并注入 challenge_hmac_mismatch 信号。
     /// adjustedScore 语义：增量偏移（delta），与 baseScore 相加；非绝对分数。超出 [-100, 100] 时裁剪并打日志。
     /// - Parameter result: 服务端返回的 ChallengeVerificationResult
     public static func applyChallengeResult(_ result: ChallengeVerificationResult) {
+        if let mismatchSignal = ChallengeSession.shared.verifyResult(result) {
+            ChallengeResultStore.shared.storePendingMismatchSignal(mismatchSignal)
+            return
+        }
         ChallengeResultStore.shared.apply(result: result)
     }
 
@@ -352,7 +361,7 @@ public final class CPRiskKit: NSObject {
             failedProbes: failedProbes,
             adjustedScore: adjustedScore?.doubleValue
         )
-        ChallengeResultStore.shared.apply(result: result)
+        applyChallengeResult(result)
     }
 
     /// 绑定业务账号 ID，用于设备-账号关联图构建。
@@ -532,6 +541,11 @@ public final class CPRiskKit: NSObject {
         )
 
         registerProviders(for: config)
+        // If start() was never called, seal the registry so provider tampering is detectable.
+        if !RiskSignalProviderRegistry.shared.isSealed {
+            RiskSignalProviderRegistry.shared.seal()
+            ConditionExpression.sealCustomEvaluators()
+        }
         // Ensure CRiskCore and armor runtime are initialized even if start() was never called.
         cprisk_deny_attach()
         cprisk_register_exception_handler()
@@ -579,6 +593,7 @@ public final class CPRiskKit: NSObject {
         }
         extraSignals.append(capabilityRuntime.score.toSignal())
         extraSignals.append(contentsOf: extraSignalsForGraph)
+        extraSignals.append(contentsOf: ChallengeResultStore.shared.consumePendingMismatchSignals())
 
         let serverPolicy = PolicyManager.shared.activePolicy
         let policy = buildEnginePolicy(
@@ -737,8 +752,16 @@ public final class CPRiskKit: NSObject {
             kernelVersion: Sysctl.string("kern.version") ?? ""
         )
 
-        _ = ensureArmorRuntimeStarted(trigger: "build_envelope")
-        let (armorMaterial, _) = Self.armorRuntimeMaterial()
+        let armorSnapshot = ensureArmorRuntimeStarted(trigger: "build_envelope")
+        if armorSnapshot.status != .active {
+            Logger.log("buildSecureReportEnvelope: armor unavailable status=\(armorSnapshot.status.rawValue) reason=\(armorSnapshot.reason)")
+            throw SecureUploadError.armorRuntimeUnavailable(reason: armorSnapshot.reason)
+        }
+        let (armorMaterial, authentic) = Self.armorRuntimeMaterial()
+        if !authentic {
+            Logger.log("buildSecureReportEnvelope: armor material poisoned (cprisk_get_runtime_material failed)")
+            throw SecureUploadError.armorRuntimeUnavailable(reason: "material_poisoned")
+        }
         let effectiveSigningKey = Self.deriveEffectiveSigningKey(
             baseKey: signingKey,
             armorMaterial: armorMaterial
@@ -1592,6 +1615,13 @@ public final class CPRiskKit: NSObject {
         }
 
         latestRemoteConfig = effectiveConfig
+
+        DynamicFeatureList.shared.applyRemoteConfig(
+            additionalSuspiciousLibraries: effectiveConfig.additionalSuspiciousLibraries,
+            additionalSuspiciousPaths: effectiveConfig.additionalSuspiciousPaths,
+            additionalSuspiciousPorts: effectiveConfig.additionalSuspiciousPorts
+        )
+
         return true
     }
 
@@ -1854,7 +1884,7 @@ public final class CPRiskKit: NSObject {
     /// 返回 v2a 信封验签所需的派生密钥。
     /// 确保 armor runtime 已启动，并用 baseKey + armor material 派生。
     /// 供 validateSecureReportEnvelope 在 sigVer == "v2a" 时使用。
-    private func effectiveSigningKeyForV2aValidation(baseKey: String) -> String {
+    internal func effectiveSigningKeyForV2aValidation(baseKey: String) -> String {
         _ = ensureArmorRuntimeStarted(trigger: "validate_envelope")
         let (armorMaterial, _) = Self.armorRuntimeMaterial()
         return Self.deriveEffectiveSigningKey(baseKey: baseKey, armorMaterial: armorMaterial)

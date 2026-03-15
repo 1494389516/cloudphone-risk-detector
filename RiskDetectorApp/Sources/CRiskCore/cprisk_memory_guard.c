@@ -20,12 +20,15 @@
 #endif
 #define CPRISK_PAGE_SIZE_4K 0x1000u
 
-static void page_span(void *ptr, size_t len,
-                       vm_address_t *page_out, vm_size_t *span_out) {
+static int page_span(void *ptr, size_t len,
+                     vm_address_t *page_out, vm_size_t *span_out) {
+    if ((uintptr_t)ptr > UINTPTR_MAX - len)
+        return -1;
     uintptr_t start = (uintptr_t)ptr & CPRISK_PAGE_MASK;
     uintptr_t end   = ((uintptr_t)ptr + len + CPRISK_PAGE_SIZE_4K - 1) & CPRISK_PAGE_MASK;
     *page_out = (vm_address_t)start;
     *span_out = (vm_size_t)(end - start);
+    return 0;
 }
 
 int cprisk_protect_decrypted_pages(void *region, size_t len) {
@@ -34,7 +37,8 @@ int cprisk_protect_decrypted_pages(void *region, size_t len) {
 
     vm_address_t page;
     vm_size_t span;
-    page_span(region, len, &page, &span);
+    if (page_span(region, len, &page, &span) != 0)
+        return -1;
 
     kern_return_t kr = vm_protect(
         mach_task_self(),
@@ -51,7 +55,8 @@ int cprisk_verify_page_protection(void *region, size_t len) {
 
     vm_address_t page;
     vm_size_t span;
-    page_span(region, len, &page, &span);
+    if (page_span(region, len, &page, &span) != 0)
+        return 0;
 
     vm_address_t addr = page;
     vm_size_t region_size = 0;
@@ -85,7 +90,8 @@ int cprisk_unprotect_pages(void *region, size_t len) {
 
     vm_address_t page;
     vm_size_t span;
-    page_span(region, len, &page, &span);
+    if (page_span(region, len, &page, &span) != 0)
+        return -1;
 
     kern_return_t kr = vm_protect(
         mach_task_self(),
@@ -103,7 +109,8 @@ int cprisk_install_memory_trap(void *region, size_t len,
 
     vm_address_t page;
     vm_size_t span;
-    page_span(region, len, &page, &span);
+    if (page_span(region, len, &page, &span) != 0)
+        return -1;
 
     vm_address_t guard_addrs[2];
     int guard_valid[2];

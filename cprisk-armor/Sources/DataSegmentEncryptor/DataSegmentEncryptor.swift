@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import MachOKit
+import Security
 
 private enum DataArmorSeed {
     static let bootstrapID: UInt32 = 1
@@ -64,11 +65,16 @@ public final class DataSegmentEncryptorPass: ArmorPass {
                 segment: section.segmentName,
                 section: section.sectionName
             )
+            let nonce = generateNonce()
             let encrypted = xor(
                 plaintext,
-                makeKeystream(key: loaderKey, keyID: keyID, length: plaintext.count)
+                makeKeystream(key: loaderKey, keyID: keyID, nonce: nonce, length: plaintext.count)
             )
             try file.replaceBytes(at: UInt64(section.offset), with: encrypted)
+
+            var hmacMessage = nonce
+            hmacMessage.append(encrypted)
+            let hmacTag = ArmorABI.hmacSHA256(key: loaderKey, message: hmacMessage)
 
             entries.append(ArmorABI.Loader.Entry(
                 segmentName: section.segmentName,
@@ -76,7 +82,9 @@ public final class DataSegmentEncryptorPass: ArmorPass {
                 keyID: keyID,
                 vmAddress: section.address,
                 size: section.size,
-                contentHash: contentHash
+                contentHash: contentHash,
+                nonce: nonce,
+                hmacTag: hmacTag
             ))
 
             totalBytesEncrypted += plaintext.count
@@ -112,21 +120,23 @@ public final class DataSegmentEncryptorPass: ArmorPass {
     }
 
     private func readFullAnchorHash(from file: MachOFile) throws -> Data {
-        guard let section = try file.section(
-            segment: ArmorABI.dataSegmentName,
-            section: ArmorABI.Integrity.fullHashSectionName
-        ) else {
-            throw MachOError.sectionNotFound(ArmorABI.dataSegmentName, ArmorABI.Integrity.fullHashSectionName)
+        var digest = Data(repeating: 0, count: ArmorABI.hashSize)
+        for (i, name) in ArmorABI.Integrity.splitSectionNames.enumerated() {
+            guard let section = try file.section(
+                segment: ArmorABI.dataSegmentName,
+                section: name
+            ) else {
+                throw MachOError.sectionNotFound(ArmorABI.dataSegmentName, name)
+            }
+            let lane = try section.readContent(from: file.data)
+            guard lane.count >= ArmorABI.Integrity.splitLaneSize else {
+                throw MachOError.invalidData("Split anchor lane \(name) is truncated")
+            }
+            let offset = i * ArmorABI.Integrity.splitLaneSize
+            digest.replaceSubrange(offset..<(offset + ArmorABI.Integrity.splitLaneSize),
+                                   with: lane.prefix(ArmorABI.Integrity.splitLaneSize))
         }
-
-        let content = try section.readContent(from: file.data)
-        guard content.count >= ArmorABI.Integrity.fullHashSectionSize else {
-            throw MachOError.invalidData("Integrity full-hash section is truncated")
-        }
-
-        let mask = content.prefix(ArmorABI.hashSize)
-        let masked = content.dropFirst(ArmorABI.hashSize).prefix(ArmorABI.hashSize)
-        return Data(zip(mask, masked).map(^))
+        return digest
     }
 
     private func buildProtectedBlob(
@@ -180,10 +190,18 @@ private func stableKeyID(segment: String, section: String) -> UInt32 {
     return hash
 }
 
-private func makeKeystream(key: Data, keyID: UInt32, length: Int) -> Data {
+private func generateNonce() -> Data {
+    var bytes = [UInt8](repeating: 0, count: ArmorABI.nonceSize)
+    let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+    precondition(status == errSecSuccess, "SecRandomCopyBytes failed")
+    return Data(bytes)
+}
+
+private func makeKeystream(key: Data, keyID: UInt32, nonce: Data, length: Int) -> Data {
     var seed = Data()
     seed.append(key)
     appendUInt32(keyID, to: &seed)
+    seed.append(nonce)
 
     var block = sha256(seed)
     var output = Data()

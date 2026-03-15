@@ -29,12 +29,14 @@ public enum GraphFeatureCollector {
         )
 
         var ipHash: String?
-        var asn: String?
+        var asnHash: String?
         if let s = serverSignals {
             if let ip = s.publicIP, !ip.isEmpty {
                 ipHash = sha256Hex(ip)
             }
-            asn = s.asn
+            if let asn = s.asn, !asn.isEmpty {
+                asnHash = sha256Hex(asn)
+            }
         }
 
         var accountIdHash: String?
@@ -48,7 +50,7 @@ public enum GraphFeatureCollector {
         return GraphNodeDescriptor(
             hwProfileHash: hwProfileHash,
             ipHash: ipHash,
-            asn: asn,
+            asnHash: asnHash,
             accountIdHash: accountIdHash,
             bssidHash: nil,
             appListHash: nil

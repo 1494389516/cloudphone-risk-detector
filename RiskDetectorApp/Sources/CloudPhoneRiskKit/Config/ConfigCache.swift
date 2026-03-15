@@ -16,6 +16,9 @@ extension ConfigCaching {
     }
 }
 
+// SECURITY-TODO: Migrate to Keychain or FileProtection.complete sandboxed file.
+// UserDefaults stores encrypted config cache but lacks NSFileProtectionComplete at rest.
+// Target: sandboxed file with NSFileProtectionComplete attribute for data-at-rest protection.
 public final class ConfigCache: @unchecked Sendable, ConfigCaching {
     public static let shared = ConfigCache()
 
@@ -54,6 +57,7 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
     private let diskKey: String
     private let hmacDiskKey: String
     private let versionKey: String
+    private let rollbackVersionKey: String
     private let maxDiskEntries: Int
     private let persistToDisk: Bool
 
@@ -66,10 +70,12 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
             self.diskKey = "com.cloudphone.riskkit.remote_config_cache.\(namespace)"
             self.hmacDiskKey = "com.cloudphone.riskkit.remote_config_cache.\(namespace)_hmac"
             self.versionKey = "com.cloudphone.riskkit.config_version.\(namespace)"
+            self.rollbackVersionKey = "com.cloudphone.riskkit.config_rollback_version.\(namespace)"
         } else {
             self.diskKey = "com.cloudphone.riskkit.remote_config_cache"
             self.hmacDiskKey = "com.cloudphone.riskkit.remote_config_cache_hmac"
             self.versionKey = "com.cloudphone.riskkit.config_version"
+            self.rollbackVersionKey = "com.cloudphone.riskkit.config_rollback_version"
         }
         self.persistToDisk = persistToDisk
         self.maxDiskEntries = maxDiskEntries
@@ -89,7 +95,12 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         ConfigCache.globalLock.lock()
         defer { ConfigCache.globalLock.unlock() }
 
-        if let memoryCache, isUsableTrustedEntry(memoryCache, source: "memory_cache") {
+        #if DEBUG
+        let isUsable = { [self] (e: CacheEntry, s: String) in self.isUsableDebugEntry(e, source: s) }
+        #else
+        let isUsable = { [self] (e: CacheEntry, s: String) in self.isUsableTrustedEntry(e, source: s) }
+        #endif
+        if let memoryCache, isUsable(memoryCache, "memory_cache") {
             return CachedConfig(
                 config: memoryCache.config,
                 cachedAt: memoryCache.cachedAt,
@@ -136,6 +147,7 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
 
         saveDiskEntries(entries)
         UserDefaults.standard.set(config.version, forKey: versionKey)
+        UserDefaults.standard.removeObject(forKey: rollbackVersionKey)
     }
 
     public func clear() {
@@ -147,6 +159,7 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         UserDefaults.standard.removeObject(forKey: diskKey)
         UserDefaults.standard.removeObject(forKey: hmacDiskKey)
         UserDefaults.standard.removeObject(forKey: versionKey)
+        UserDefaults.standard.removeObject(forKey: rollbackVersionKey)
     }
 
     public func cacheSize() -> Int {
@@ -181,6 +194,9 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         }
 
         memoryCache = target
+        if persistToDisk {
+            UserDefaults.standard.set(version, forKey: rollbackVersionKey)
+        }
         return target.config
 #else
         Logger.log("ConfigCache.rollback rejected: not allowed in release build")
@@ -243,7 +259,16 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
 
     private func loadLatestFromDisk() -> CacheEntry? {
         guard persistToDisk else { return nil }
-        let all = loadAllDiskEntries().filter { isUsableTrustedEntry($0, source: "disk_cache") }
+        let allEntries = loadAllDiskEntries()
+        #if DEBUG
+        let all = allEntries.filter { isUsableDebugEntry($0, source: "disk_cache") }
+        #else
+        let all = allEntries.filter { isUsableTrustedEntry($0, source: "disk_cache") }
+        #endif
+        if let rollbackVer = UserDefaults.standard.object(forKey: rollbackVersionKey) as? Int,
+           let pinned = all.first(where: { $0.config.version == rollbackVer }) {
+            return pinned
+        }
         if let verified = all
             .filter({ $0.isVerifiedByServer })
             .max(by: { $0.config.version < $1.config.version }) {
@@ -252,7 +277,7 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
 
 #if DEBUG
         if let fallback = all.max(by: { $0.config.version < $1.config.version }) {
-            Logger.log("ConfigCache.loadLatestFromDisk: [DEBUG] using unverified cache entry version=\(fallback.config.version)")
+            Logger.log("⚠️ ConfigCache.loadLatestFromDisk: [DEBUG] using unverified cache entry version=\(fallback.config.version)")
             return fallback
         }
 #else
@@ -309,18 +334,10 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
 
     private func isUsableTrustedEntry(_ entry: CacheEntry, source: String) -> Bool {
         guard entry.contentHash == CacheEntry.computeContentHash(for: entry.config) else {
-#if DEBUG
-            Logger.log("ConfigCache.\(source): content hash missing or mismatch, allowing only in debug")
-            return true
-#else
             Logger.log("ConfigCache.\(source): rejecting cache entry due to missing or mismatched content hash")
             return false
-#endif
         }
 
-#if DEBUG
-        return true
-#else
         guard ConfigSignatureVerifier.isConfigured else {
             Logger.log("ConfigCache.\(source): rejecting cache entry because signing key is not configured")
             return false
@@ -330,8 +347,17 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
             return false
         }
         return true
-#endif
     }
+
+    #if DEBUG
+    private func isUsableDebugEntry(_ entry: CacheEntry, source: String) -> Bool {
+        if isUsableTrustedEntry(entry, source: source) {
+            return true
+        }
+        Logger.log("⚠️ ConfigCache.\(source): [DEBUG] allowing unverified/untrusted cache entry version=\(entry.config.version) — this would be REJECTED in Release")
+        return true
+    }
+    #endif
 
     private func cacheSizeUnlocked() -> Int {
         guard persistToDisk,

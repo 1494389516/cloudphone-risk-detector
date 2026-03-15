@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 private extension Data {
@@ -17,9 +18,10 @@ private extension Data {
 /// The goal of this namespace is to freeze the section names and packed layout
 /// semantics that the Swift producer emits and the C runtime consumes.
 public enum ArmorABI {
-    public static let version: UInt32 = 1
+    public static let version: UInt32 = 2
     public static let keySize = 32
     public static let hashSize = 32
+    public static let nonceSize = 8
     public static let dataSegmentName = "__DATA"
 
     public enum Sections {
@@ -56,7 +58,7 @@ public enum ArmorABI {
         public static let magic: UInt32 = 0x43505354
         public static let sectionName = Sections.stringTable
         public static let headerSize = 12
-        public static let indexEntrySize = 12
+        public static let indexEntrySize = 52
 
         /// Packed layout: { magic, version, count }.
         public struct Header {
@@ -83,16 +85,23 @@ public enum ArmorABI {
             }
         }
 
-        /// Packed layout: { string_id, data_offset, data_length }.
+        /// Packed layout: { string_id, data_offset, data_length, nonce[8], hmac_tag[32] }.
         public struct IndexEntry {
             public let stringID: UInt32
             public let dataOffset: UInt32
             public let dataLength: UInt32
+            public let nonce: Data
+            public let hmacTag: Data
 
-            public init(stringID: UInt32, dataOffset: UInt32, dataLength: UInt32) {
+            public init(stringID: UInt32, dataOffset: UInt32, dataLength: UInt32,
+                        nonce: Data, hmacTag: Data) {
+                precondition(nonce.count == ArmorABI.nonceSize, "nonce must be 8 bytes")
+                precondition(hmacTag.count == ArmorABI.hashSize, "hmacTag must be 32 bytes")
                 self.stringID = stringID
                 self.dataOffset = dataOffset
                 self.dataLength = dataLength
+                self.nonce = nonce
+                self.hmacTag = hmacTag
             }
 
             public func serialized() -> Data {
@@ -100,6 +109,8 @@ public enum ArmorABI {
                 data.appendLittleEndian(stringID)
                 data.appendLittleEndian(dataOffset)
                 data.appendLittleEndian(dataLength)
+                data.append(nonce)
+                data.append(hmacTag)
                 return data
             }
         }
@@ -111,7 +122,7 @@ public enum ArmorABI {
         public static let sectionName = Sections.loader
         public static let protectedSectionName = Sections.protectedBlob
         public static let headerSize = 12
-        public static let entrySize = 88
+        public static let entrySize = 128
 
         /// Packed layout: { magic, version, count }.
         public struct Header {
@@ -139,13 +150,8 @@ public enum ArmorABI {
         }
 
         /// Packed layout:
-        /// { segment_name[16], section_name[16], key_id, flags, vm_addr, size, content_hash[32] }.
-        ///
-        /// `keyID` is the keystream domain separator shared with the runtime.
-        /// `flags` is reserved for future pass expansion and currently emitted as 0.
-        /// `vmAddress` is the unslid Mach-O vmaddr of the protected section.
-        /// `size` is the encrypted payload size in bytes.
-        /// `contentHash` is the SHA-256 of the post-decrypt plaintext section.
+        /// { segment_name[16], section_name[16], key_id, flags, vm_addr, size,
+        ///   content_hash[32], nonce[8], hmac_tag[32] }.
         public struct Entry {
             public let segmentName: String
             public let sectionName: String
@@ -154,6 +160,8 @@ public enum ArmorABI {
             public let vmAddress: UInt64
             public let size: UInt64
             public let contentHash: Data
+            public let nonce: Data
+            public let hmacTag: Data
 
             public init(
                 segmentName: String,
@@ -162,9 +170,13 @@ public enum ArmorABI {
                 flags: UInt32 = 0,
                 vmAddress: UInt64,
                 size: UInt64,
-                contentHash: Data
+                contentHash: Data,
+                nonce: Data,
+                hmacTag: Data
             ) {
                 precondition(contentHash.count == ArmorABI.hashSize, "contentHash must be 32 bytes")
+                precondition(nonce.count == ArmorABI.nonceSize, "nonce must be 8 bytes")
+                precondition(hmacTag.count == ArmorABI.hashSize, "hmacTag must be 32 bytes")
                 self.segmentName = segmentName
                 self.sectionName = sectionName
                 self.keyID = keyID
@@ -172,6 +184,8 @@ public enum ArmorABI {
                 self.vmAddress = vmAddress
                 self.size = size
                 self.contentHash = contentHash
+                self.nonce = nonce
+                self.hmacTag = hmacTag
             }
 
             public func serialized() -> Data {
@@ -187,6 +201,8 @@ public enum ArmorABI {
                 data.appendLittleEndian(vmAddress)
                 data.appendLittleEndian(size)
                 data.append(contentHash)
+                data.append(nonce)
+                data.append(hmacTag)
                 return data
             }
         }
@@ -234,9 +250,12 @@ public enum ArmorABI {
         public static let splitSectionNames = Sections.splitAnchorSections
         public static let splitSectionCount = 4
         public static let splitLaneSize = 8
-        public static let fullHashSectionName = Sections.fullAnchorHash
-        public static let fullHashMaskSize = ArmorABI.hashSize
-        public static let fullHashSectionSize = ArmorABI.hashSize * 2
+        public static let hmacFullHashSectionName = Sections.fullAnchorHash
+        /// Alias for hmacFullHashSectionName (tests / legacy usage).
+        public static let fullHashSectionName = hmacFullHashSectionName
+        public static let hmacFullHashSectionSize = ArmorABI.hashSize
+        /// Alias for legacy callers that used the v1 name.
+        public static let fullHashSectionSize = hmacFullHashSectionSize
 
         /// Split anchor sections each store one contiguous 8-byte lane
         /// of the 32-byte anchor digest, in order.
@@ -247,16 +266,28 @@ public enum ArmorABI {
             }
         }
 
-        /// Full anchor hash section stores { mask[32], maskedHash[32] } where
-        /// `maskedHash[i] = fullHash[i] ^ mask[i]`.
-        public static func maskedFullHashSection(mask: Data, fullHash: Data) -> Data {
-            precondition(mask.count == ArmorABI.hashSize, "mask must be 32 bytes")
+        /// HMAC anchor section stores HMAC-SHA256(rootKey, fullHash) — 32 bytes.
+        /// The runtime reconstructs fullHash from split lanes, re-derives the
+        /// HMAC with its own root key, and compares in constant time.
+        public static func hmacFullHashSection(rootKey: Data, fullHash: Data) -> Data {
             precondition(fullHash.count == ArmorABI.hashSize, "fullHash must be 32 bytes")
-
-            var data = Data()
-            data.append(mask)
-            data.append(Data(zip(mask, fullHash).map { $0 ^ $1 }))
-            return data
+            return hmacSHA256(key: rootKey, message: fullHash)
         }
+    }
+
+    /// HMAC-SHA256 — used for authentication tags throughout the ABI.
+    public static func hmacSHA256(key: Data, message: Data) -> Data {
+        let symmetricKey = SymmetricKey(data: key)
+        let mac = HMAC<SHA256>.authenticationCode(for: message, using: symmetricKey)
+        return Data(mac)
+    }
+
+    /// Derive a single-byte salt XOR key from the root key.
+    /// Replaces the former hardcoded 0xA7 constant.
+    public static func deriveSaltXorKey(rootKey: Data) -> UInt8 {
+        var seed = rootKey
+        seed.append(Data("salt-xor".utf8))
+        let hash = Data(SHA256.hash(data: seed))
+        return hash[0]
     }
 }

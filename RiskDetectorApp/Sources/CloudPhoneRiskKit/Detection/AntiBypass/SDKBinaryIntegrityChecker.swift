@@ -18,6 +18,8 @@ enum SDKBinaryIntegrityChecker {
         let isIntact: Bool
         let checks: [String: Bool]
         let detail: String
+        /// UUID changed but text segment hash stayed the same — possible targeted UUID spoofing
+        let baselineAnomaly: Bool
     }
     
     private static let keychainService = "CloudPhoneRiskKit"
@@ -26,13 +28,14 @@ enum SDKBinaryIntegrityChecker {
     
     static func verify() -> IntegrityResult {
         #if targetEnvironment(simulator)
-        return IntegrityResult(isIntact: true, checks: [:], detail: "simulator_skip")
+        return IntegrityResult(isIntact: true, checks: [:], detail: "simulator_skip", baselineAnomaly: false)
         #else
         var checks: [String: Bool] = [:]
         var allPassed = true
+        var baselineAnomaly = false
         
         guard let image = findSDKImage() else {
-            return IntegrityResult(isIntact: true, checks: [:], detail: "sdk_image_not_found")
+            return IntegrityResult(isIntact: true, checks: [:], detail: "sdk_image_not_found", baselineAnomaly: false)
         }
 
         // 首启：环境可疑时拒绝建基线，避免投毒
@@ -42,7 +45,8 @@ enum SDKBinaryIntegrityChecker {
                 return IntegrityResult(
                     isIntact: false,
                     checks: ["baseline_rejected": false],
-                    detail: "baseline_rejected_suspicious_env"
+                    detail: "baseline_rejected_suspicious_env",
+                    baselineAnomaly: false
                 )
             }
         }
@@ -56,6 +60,11 @@ enum SDKBinaryIntegrityChecker {
         let uuidCheck = checkUUIDConsistency(header: image.header)
         checks["uuid_consistent"] = uuidCheck.consistent
         if !uuidCheck.consistent { allPassed = false }
+
+        // Co-validation: if UUID changed, cross-check with TextSegmentIntegrityChecker
+        if !uuidCheck.consistent && !uuidCheck.isFirstRun {
+            baselineAnomaly = crossValidateWithTextSegment(image: image)
+        }
         
         // 3. Segment permission sanity
         let permCheck = checkSegmentPermissions(header: image.header)
@@ -69,7 +78,6 @@ enum SDKBinaryIntegrityChecker {
         
         let detail: String
         if uuidCheck.isFirstRun {
-            // 首次运行建基线：不可信窗口，不返回 isIntact: true
             detail = "baseline_established"
         } else if allPassed {
             detail = "intact"
@@ -79,8 +87,27 @@ enum SDKBinaryIntegrityChecker {
         }
 
         let isIntact = uuidCheck.isFirstRun ? false : allPassed
-        return IntegrityResult(isIntact: isIntact, checks: checks, detail: detail)
+        return IntegrityResult(isIntact: isIntact, checks: checks, detail: detail, baselineAnomaly: baselineAnomaly)
         #endif
+    }
+
+    /// Cross-validate UUID change against TextSegmentIntegrityChecker.
+    /// Returns true (anomaly) if UUID changed but text segment hash did NOT change,
+    /// indicating possible targeted UUID manipulation rather than a real upgrade.
+    private static func crossValidateWithTextSegment(image: (header: UnsafeRawPointer, index: UInt32)) -> Bool {
+        guard let (currentHash, _) = TextSegmentIntegrityChecker.hashTextSection(
+            header: image.header, imageIndex: image.index
+        ) else {
+            return false
+        }
+
+        guard let storedBaseline = TextSegmentIntegrityChecker.loadBaseline() else {
+            return false
+        }
+
+        let textHashChanged = storedBaseline.hash != currentHash
+        // UUID changed + text hash unchanged = suspicious (targeted UUID manipulation)
+        return !textHashChanged
     }
     
     static func asSignals(result: IntegrityResult) -> [RiskSignal] {
@@ -110,9 +137,34 @@ enum SDKBinaryIntegrityChecker {
             )]
         }
 
-        guard !result.isIntact else { return [] }
+        guard !result.isIntact else {
+            if result.baselineAnomaly {
+                return [RiskSignal(
+                    id: "sdk_binary_baseline_anomaly",
+                    category: "integrity",
+                    score: 40,
+                    evidence: ["detail": "uuid_changed_but_text_segment_unchanged"],
+                    state: .tampered,
+                    layer: 2,
+                    weightHint: 85
+                )]
+            }
+            return []
+        }
         
         var signals: [RiskSignal] = []
+
+        if result.baselineAnomaly {
+            signals.append(RiskSignal(
+                id: "sdk_binary_baseline_anomaly",
+                category: "integrity",
+                score: 40,
+                evidence: ["detail": "uuid_changed_but_text_segment_unchanged"],
+                state: .tampered,
+                layer: 2,
+                weightHint: 85
+            ))
+        }
         
         if result.checks["code_signature"] == false {
             signals.append(RiskSignal(
@@ -279,8 +331,7 @@ enum SDKBinaryIntegrityChecker {
         let sizeStr = "\(totalSize)"
         if let storedSize = keychainRead(account: keychainSizeAcc) {
             guard let stored = UInt64(storedSize) else {
-                keychainWrite(account: keychainSizeAcc, value: sizeStr)
-                return true
+                return false
             }
             let ratio = Double(totalSize) / Double(stored)
             // Size should not change by more than 30% without a version update
@@ -302,6 +353,7 @@ enum SDKBinaryIntegrityChecker {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: account,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
@@ -327,7 +379,10 @@ enum SDKBinaryIntegrityChecker {
             var addQuery = query
             addQuery[kSecValueData as String] = data
             addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            SecItemAdd(addQuery as CFDictionary, nil)
+            let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+            if addStatus != errSecSuccess {
+                Logger.log("SDKBinaryIntegrityChecker.keychainWrite: SecItemAdd failed (status=\(addStatus))")
+            }
         }
     }
 }

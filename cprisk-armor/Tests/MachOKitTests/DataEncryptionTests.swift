@@ -37,11 +37,12 @@ final class DataEncryptionTests: XCTestCase {
         Data(SHA256.hash(data: data))
     }
 
-    private func makeKeystream(key: Data, keyID: UInt32, length: Int) -> Data {
+    private func makeKeystream(key: Data, keyID: UInt32, nonce: Data = Data(), length: Int) -> Data {
         var seed = Data()
         seed.append(key)
         var le = keyID.littleEndian
         withUnsafeBytes(of: &le) { seed.append(contentsOf: $0) }
+        seed.append(nonce)
 
         var block = sha256(seed)
         var output = Data()
@@ -68,6 +69,9 @@ final class DataEncryptionTests: XCTestCase {
             ("__DATA", "__swift5_mpenum", 300, 0x3000, 256),
         ]
 
+        let testNonce = Data(repeating: 0xDD, count: ArmorABI.nonceSize)
+        let testHmac = Data(repeating: 0xEE, count: ArmorABI.hashSize)
+
         var payload = ArmorABI.Loader.Header(count: count).serialized()
         for (i, sec) in sections.enumerated() {
             payload.append(
@@ -77,7 +81,9 @@ final class DataEncryptionTests: XCTestCase {
                     keyID: sec.2,
                     vmAddress: sec.3,
                     size: sec.4,
-                    contentHash: hashes[i]
+                    contentHash: hashes[i],
+                    nonce: testNonce,
+                    hmacTag: testHmac
                 ).serialized()
             )
         }
@@ -98,6 +104,8 @@ final class DataEncryptionTests: XCTestCase {
             XCTAssertEqual(readLE64(payload, at: base + 40), sec.3)
             XCTAssertEqual(readLE64(payload, at: base + 48), sec.4)
             XCTAssertEqual(payload.subdata(in: (base + 56)..<(base + 88)), hashes[i])
+            XCTAssertEqual(payload.subdata(in: (base + 88)..<(base + 96)), testNonce)
+            XCTAssertEqual(payload.subdata(in: (base + 96)..<(base + 128)), testHmac)
         }
     }
 
@@ -110,6 +118,9 @@ final class DataEncryptionTests: XCTestCase {
         ]
         let count = UInt32(entries.count)
 
+        let dummyNonce = Data(repeating: 0x11, count: ArmorABI.nonceSize)
+        let dummyHmac = Data(repeating: 0x22, count: ArmorABI.hashSize)
+
         var payload = ArmorABI.Loader.Header(count: count).serialized()
         let hashes = entries.map { e in
             Data(SHA256.hash(data: Data("\(e.seg).\(e.sec)".utf8)))
@@ -119,7 +130,8 @@ final class DataEncryptionTests: XCTestCase {
                 ArmorABI.Loader.Entry(
                     segmentName: e.seg, sectionName: e.sec,
                     keyID: e.keyID, vmAddress: e.addr,
-                    size: e.sz, contentHash: hashes[i]
+                    size: e.sz, contentHash: hashes[i],
+                    nonce: dummyNonce, hmacTag: dummyHmac
                 ).serialized()
             )
         }

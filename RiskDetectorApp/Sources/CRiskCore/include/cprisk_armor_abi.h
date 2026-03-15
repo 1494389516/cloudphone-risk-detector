@@ -2,11 +2,14 @@
 #define CPRISK_ARMOR_ABI_H
 
 #include <stdint.h>
+#include "cprisk_sha256.h"
+#include "cprisk_secure_zero.h"
 
-#define CPRISK_ARMOR_ABI_VERSION 1u
+#define CPRISK_ARMOR_ABI_VERSION 2u
 
 #define CPRISK_ARMOR_KEY_SIZE 32u
 #define CPRISK_ARMOR_HASH_SIZE 32u
+#define CPRISK_ARMOR_NONCE_SIZE 8u
 
 #define CPRISK_ARMOR_SEGMENT_DATA "__DATA"
 
@@ -26,7 +29,9 @@
 
 #define CPRISK_ARMOR_ANCHOR_LANE_COUNT 4u
 #define CPRISK_ARMOR_ANCHOR_LANE_SIZE 8u
-#define CPRISK_ARMOR_FULL_HASH_SECTION_SIZE (CPRISK_ARMOR_HASH_SIZE * 2u)
+#define CPRISK_ARMOR_HMAC_FULL_HASH_SECTION_SIZE CPRISK_ARMOR_HASH_SIZE
+#define CPRISK_MAX_SECTION_SIZE (256UL * 1024UL * 1024UL)
+#define CPRISK_MAX_ENTRY_COUNT 64u
 
 #pragma pack(push, 1)
 
@@ -40,6 +45,8 @@ struct cprisk_armor_strtab_index_entry {
     uint32_t string_id;
     uint32_t data_offset;
     uint32_t data_length;
+    uint8_t  nonce[CPRISK_ARMOR_NONCE_SIZE];
+    uint8_t  hmac_tag[CPRISK_ARMOR_HASH_SIZE];
 };
 
 struct cprisk_armor_loader_header {
@@ -56,30 +63,107 @@ struct cprisk_armor_loader_entry {
     uint64_t vm_addr;
     uint64_t size;
     uint8_t  content_hash[CPRISK_ARMOR_HASH_SIZE];
+    uint8_t  nonce[CPRISK_ARMOR_NONCE_SIZE];
+    uint8_t  hmac_tag[CPRISK_ARMOR_HASH_SIZE];
 };
 
 #pragma pack(pop)
 
 _Static_assert(sizeof(struct cprisk_armor_strtab_header) == 12,
                "cprisk strtab header ABI drift");
-_Static_assert(sizeof(struct cprisk_armor_strtab_index_entry) == 12,
+_Static_assert(sizeof(struct cprisk_armor_strtab_index_entry) == 52,
                "cprisk strtab index ABI drift");
 _Static_assert(sizeof(struct cprisk_armor_loader_header) == 12,
                "cprisk loader header ABI drift");
-_Static_assert(sizeof(struct cprisk_armor_loader_entry) == 88,
+_Static_assert(sizeof(struct cprisk_armor_loader_entry) == 128,
                "cprisk loader entry ABI drift");
 _Static_assert(CPRISK_ARMOR_ANCHOR_LANE_COUNT * CPRISK_ARMOR_ANCHOR_LANE_SIZE ==
                    CPRISK_ARMOR_HASH_SIZE,
                "split anchor sections must reconstruct a 32-byte hash");
 
+/* ── HMAC-SHA256 ───────────────────────────────────────────────────── */
+
+#define CPRISK_HMAC_BLOCK_SIZE 64
+
+static inline __attribute__((always_inline))
+void cprisk_hmac_sha256(const uint8_t *key, size_t key_len,
+                        const uint8_t *msg, size_t msg_len,
+                        uint8_t out[CPRISK_ARMOR_HASH_SIZE]) {
+    uint8_t k_norm[CPRISK_HMAC_BLOCK_SIZE];
+    memset(k_norm, 0, CPRISK_HMAC_BLOCK_SIZE);
+    if (key_len > CPRISK_HMAC_BLOCK_SIZE) {
+        cprisk_sha256(key, key_len, k_norm);
+    } else {
+        memcpy(k_norm, key, key_len);
+    }
+
+    uint8_t ipad[CPRISK_HMAC_BLOCK_SIZE];
+    uint8_t opad[CPRISK_HMAC_BLOCK_SIZE];
+    for (int i = 0; i < CPRISK_HMAC_BLOCK_SIZE; i++) {
+        ipad[i] = k_norm[i] ^ 0x36;
+        opad[i] = k_norm[i] ^ 0x5C;
+    }
+
+    cprisk_sha256_ctx ctx;
+    uint8_t inner_hash[CPRISK_SHA256_DIGEST_LENGTH];
+
+    cprisk_sha256_init(&ctx);
+    cprisk_sha256_update(&ctx, ipad, CPRISK_HMAC_BLOCK_SIZE);
+    cprisk_sha256_update(&ctx, msg, msg_len);
+    cprisk_sha256_final(&ctx, inner_hash);
+
+    cprisk_sha256_init(&ctx);
+    cprisk_sha256_update(&ctx, opad, CPRISK_HMAC_BLOCK_SIZE);
+    cprisk_sha256_update(&ctx, inner_hash, CPRISK_SHA256_DIGEST_LENGTH);
+    cprisk_sha256_final(&ctx, out);
+
+    cprisk_secure_zero(k_norm, sizeof(k_norm));
+    cprisk_secure_zero(ipad, sizeof(ipad));
+    cprisk_secure_zero(opad, sizeof(opad));
+    cprisk_secure_zero(inner_hash, sizeof(inner_hash));
+}
+
 /* ── compile-time salt obfuscation ──────────────────────────────────── */
 
-#define CPRISK_SALT_XOR_KEY 0xA7
+/* Legacy default; runtime should derive from root key via
+   cprisk_derive_salt_xor_key() and use the result instead. */
+#define CPRISK_SALT_XOR_KEY_DEFAULT 0xA7
 
-static inline void cprisk_decode_salt(const uint8_t *encoded, size_t len, char *out) {
+static inline __attribute__((always_inline))
+uint8_t cprisk_derive_salt_xor_key(const uint8_t root_key[CPRISK_ARMOR_KEY_SIZE]) {
+    uint8_t seed[CPRISK_ARMOR_KEY_SIZE + 8];
+    memcpy(seed, root_key, CPRISK_ARMOR_KEY_SIZE);
+    seed[CPRISK_ARMOR_KEY_SIZE + 0] = 's';
+    seed[CPRISK_ARMOR_KEY_SIZE + 1] = 'a';
+    seed[CPRISK_ARMOR_KEY_SIZE + 2] = 'l';
+    seed[CPRISK_ARMOR_KEY_SIZE + 3] = 't';
+    seed[CPRISK_ARMOR_KEY_SIZE + 4] = '-';
+    seed[CPRISK_ARMOR_KEY_SIZE + 5] = 'x';
+    seed[CPRISK_ARMOR_KEY_SIZE + 6] = 'o';
+    seed[CPRISK_ARMOR_KEY_SIZE + 7] = 'r';
+    uint8_t hash[CPRISK_SHA256_DIGEST_LENGTH];
+    cprisk_sha256(seed, sizeof(seed), hash);
+    uint8_t result = hash[0];
+    cprisk_secure_zero(seed, sizeof(seed));
+    cprisk_secure_zero(hash, sizeof(hash));
+    return result;
+}
+
+static inline __attribute__((always_inline))
+void cprisk_decode_salt(const uint8_t *encoded, size_t len,
+                        uint8_t xor_key, char *out) {
     for (size_t i = 0; i < len; i++)
-        out[i] = (char)(encoded[i] ^ CPRISK_SALT_XOR_KEY);
+        out[i] = (char)(encoded[i] ^ xor_key);
     out[len] = '\0';
+}
+
+/* Constant-time comparison for HMAC tags. */
+static inline __attribute__((always_inline))
+int cprisk_hmac_verify(const uint8_t *expected, const uint8_t *actual, size_t len) {
+    uint8_t diff = 0;
+    for (size_t i = 0; i < len; i++)
+        diff |= expected[i] ^ actual[i];
+    return diff == 0 ? 0 : -1;
 }
 
 #endif /* CPRISK_ARMOR_ABI_H */

@@ -239,17 +239,76 @@ public struct ChallengeVerificationResult: Codable, Sendable {
     /// 客户端将其与 baseScore 相加：finalScore = baseScore + comboBonus + blindBonus + adjustedScore。
     /// 若服务端误返绝对分（0–100），会导致分数异常；建议服务端明确返回 delta，或与客户端约定语义。
     public let adjustedScore: Double?
+    /// HMAC-SHA256 of "\(challengeId)|\(adjustedScore)|\(passed)" using the challenge key.
+    public let hmac: String?
 
     public init(
         challengeId: String,
         passed: Bool,
         failedProbes: [String] = [],
-        adjustedScore: Double? = nil
+        adjustedScore: Double? = nil,
+        hmac: String? = nil
     ) {
         self.challengeId = challengeId
         self.passed = passed
         self.failedProbes = failedProbes
         self.adjustedScore = adjustedScore
+        self.hmac = hmac
+    }
+}
+
+// MARK: - Challenge HMAC Verification
+
+extension ChallengeSession {
+
+    private static let challengeKeyLock = NSLock()
+    private static var _challengeKey: SymmetricKey?
+
+    /// Configure the HMAC key used to verify `ChallengeVerificationResult`.
+    public func configureChallengeKey(_ key: Data) {
+        Self.challengeKeyLock.lock()
+        Self._challengeKey = SymmetricKey(data: key)
+        Self.challengeKeyLock.unlock()
+    }
+
+    /// Verify the HMAC on a `ChallengeVerificationResult`.
+    /// Returns a `challenge_hmac_mismatch` signal if verification fails, or nil on success / no key configured.
+    public func verifyResult(_ result: ChallengeVerificationResult) -> RiskSignal? {
+        Self.challengeKeyLock.lock()
+        let key = Self._challengeKey
+        Self.challengeKeyLock.unlock()
+
+        guard let key else { return nil }
+
+        guard let hmacHex = result.hmac, !hmacHex.isEmpty else {
+            Logger.log("ChallengeSession.verifyResult: hmac field missing")
+            return makeMismatchSignal(challengeId: result.challengeId, reason: "hmac_missing")
+        }
+
+        let scoreStr = result.adjustedScore.map { "\($0)" } ?? "nil"
+        let input = "\(result.challengeId)|\(scoreStr)|\(result.passed)"
+        let inputData = Data(input.utf8)
+        let expected = HMAC<SHA256>.authenticationCode(for: inputData, using: key)
+        let expectedHex = Data(expected).map { String(format: "%02x", $0) }.joined()
+
+        guard hmacHex.lowercased() == expectedHex.lowercased() else {
+            Logger.log("ChallengeSession.verifyResult: HMAC mismatch for challengeId=\(result.challengeId)")
+            return makeMismatchSignal(challengeId: result.challengeId, reason: "hmac_mismatch")
+        }
+
+        return nil
+    }
+
+    private func makeMismatchSignal(challengeId: String, reason: String) -> RiskSignal {
+        RiskSignal(
+            id: "challenge_hmac_mismatch",
+            category: "integrity",
+            score: 35,
+            evidence: ["challenge_id": challengeId, "reason": reason],
+            state: .tampered,
+            layer: 3,
+            weightHint: 80
+        )
     }
 }
 

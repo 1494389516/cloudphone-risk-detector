@@ -99,6 +99,7 @@ public enum ConditionExpression: Codable, Sendable {
 extension ConditionExpression {
     /// 注册自定义条件求值器。`.custom(id)` 在 evaluate 时会调用已注册的 evaluator。
     /// 若未注册或 evaluator 返回 false，则 `.custom(id)` 视为 false。
+    /// 注册仅在 `seal()` 之前有效；`CPRiskKit.start()` 后注册表将被封印。
     ///
     /// 用法：
     /// ```swift
@@ -115,24 +116,63 @@ extension ConditionExpression {
         customEvaluatorRegistry.unregister(id: id)
     }
 
+    /// 封印自定义求值器注册表，之后拒绝一切 register/unregister。
+    public static func sealCustomEvaluators() {
+        customEvaluatorRegistry.seal()
+    }
+
+#if DEBUG
+    /// 测试用：解除封印并清空注册表，允许测试中重新注册。
+    public static func unsealCustomEvaluatorsForTesting() {
+        customEvaluatorRegistry.unsealForTesting()
+    }
+#endif
+
     fileprivate static let customEvaluatorRegistry = CustomEvaluatorRegistry()
 }
 
 private final class CustomEvaluatorRegistry: @unchecked Sendable {
     private let lock = NSLock()
     private var evaluators: [String: (EvaluationContext) -> Bool] = [:]
+    private var isSealed = false
 
     func register(id: String, evaluator: @escaping (EvaluationContext) -> Bool) {
         lock.lock()
+        if isSealed {
+            lock.unlock()
+            Logger.log("CustomEvaluatorRegistry.register rejected (sealed): \(id)")
+            return
+        }
         evaluators[id] = evaluator
         lock.unlock()
     }
 
     func unregister(id: String) {
         lock.lock()
+        if isSealed {
+            lock.unlock()
+            Logger.log("CustomEvaluatorRegistry.unregister rejected (sealed): \(id)")
+            return
+        }
         evaluators.removeValue(forKey: id)
         lock.unlock()
     }
+
+    func seal() {
+        lock.lock()
+        isSealed = true
+        lock.unlock()
+        Logger.log("CustomEvaluatorRegistry.sealed")
+    }
+
+#if DEBUG
+    func unsealForTesting() {
+        lock.lock()
+        isSealed = false
+        evaluators.removeAll()
+        lock.unlock()
+    }
+#endif
 
     func evaluate(id: String, context: EvaluationContext) -> Bool {
         lock.lock()

@@ -1,6 +1,6 @@
-# CloudPhoneRiskKit 6.1 使用与构建说明
+# CloudPhoneRiskKit 6.2 使用与构建说明
 
-iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。6.0 引入自研壳（cprisk-armor）二进制保护与端云签名绑定；6.1 将壳升级为 5 Pass 工业化保护，新增 Metadata 抹除、结构混淆、Anti-Dump、密钥清零与运行时加固。
+iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。6.0 引入自研壳（cprisk-armor）二进制保护与端云签名绑定；6.1 将壳升级为 5 Pass 工业化保护；6.2 对壳执行密码学重建（ABI v2：强制密钥注入 / HMAC 认证 / 随机 nonce / IntegrityAnchor HMAC），同时完成 CRiskCore C 层边界安全、运行时反篡改纵深、配置降级封堵等全栈安全加固，共 46 项漏洞修复。
 
 ---
 
@@ -45,11 +45,19 @@ cprisk-armor 是编译后壳保护工具链，对 SDK 的 Mach-O 二进制执行
 cd cprisk-armor
 swift build -c release
 
-# 对 SDK framework 执行加固
+# 对 SDK framework 执行加固（6.2 起必须提供加密密钥）
 .build/release/cprisk-armor \
   --input path/to/CloudPhoneRiskKit.framework/CloudPhoneRiskKit \
-  --output path/to/CloudPhoneRiskKit.framework/CloudPhoneRiskKit
+  --output path/to/CloudPhoneRiskKit.framework/CloudPhoneRiskKit \
+  --all \
+  --key <64-char-hex-string>
+
+# 或使用密钥文件 / 环境变量
+.build/release/cprisk-armor --input ... --output ... --all --key-file /path/to/key.bin
+export CPRISK_ARMOR_KEY=<hex>; .build/release/cprisk-armor --input ... --output ... --all
 ```
+
+> **6.2 Breaking Change**：启用加密 Pass（1/3/4）时必须提供密钥，否则 CLI 拒绝执行。密钥优先级：`--key` > `--key-file` > `CPRISK_ARMOR_KEY` 环境变量。全零密钥会被拒绝。
 
 **Pass 说明**：
 
@@ -190,9 +198,9 @@ let envelope = try await CPRiskKit.shared.buildSecureReportEnvelopeWithAttestati
 
 ---
 
-## 8.1 壳保护与 v2a 签名 (6.0 / 6.1)
+## 8.1 壳保护与 v2a 签名 (6.0 / 6.1 / 6.2)
 
-自研壳在运行时由 CRiskCore 自动完成解密与完整性校验，无需调用方额外操作。SDK 在 `start()` / `evaluate()` 时自动初始化 armor runtime。6.1 新增 Anti-Dump 页面保护、密钥安全清零和运行时完整性重校验。
+自研壳在运行时由 CRiskCore 自动完成 HMAC 验证、解密与完整性校验，无需调用方额外操作。SDK 在 `start()` / `evaluate()` 时自动初始化 armor runtime。6.1 新增 Anti-Dump 页面保护、密钥安全清零和运行时完整性重校验。6.2 升级 ABI v2：每个加密项附带 HMAC 认证标签 + 随机 nonce，解密前先验 HMAC 完整性；完整性锚点改为 HMAC 绑定 rootKey，无密钥不可恢复 fullHash。
 
 **ReportEnvelope v2a 签名**：壳完整性 material 会自动混入 `buildSecureReportEnvelope` 的 HMAC 签名密钥派生链：
 
@@ -225,7 +233,9 @@ let envelope = CPRiskKit.shared.buildSecureReportEnvelope(
 将服务端聚合结果（IP / ASN / 聚合度等）回注 SDK，参与本地评分：
 
 ```swift
-CPRiskKit.setExternalServerSignals(
+// 6.2 起推荐使用带签名的注入方式（Release 下旧 set() 为 no-op）
+CPRiskKit.configureServerSignalKey(hmacKeyData)
+CPRiskKit.setExternalServerSignalsVerified(
     publicIP: "1.2.3.4",
     asn: "AS4134",
     asOrg: "CHINANET",
@@ -234,7 +244,8 @@ CPRiskKit.setExternalServerSignals(
     ipAccountAgg: 500,
     geoCountry: "CN",
     geoRegion: "GD",
-    riskTags: ["dc_ip", "ip_shared"]
+    riskTags: ["dc_ip", "ip_shared"],
+    signature: serverHMACSignature
 )
 ```
 
@@ -368,8 +379,10 @@ CPRiskKit.shared.setTextSegmentReferenceResolver(SignedReferenceResolver())
 2. **SchemeDetector**：需在宿主 App 的 `Info.plist` 添加 `LSApplicationQueriesSchemes`（如 `cydia`、`sileo`、`filza` 等），否则 `canOpenURL` 始终返回 `false`。
 3. **弱信号原则**：SDK 将不可用 / 无法获取的信号视为弱信号，不会因系统限制直接判定高风险。**强结论建议放在服务端做聚合判断**（IP 聚合、ASN、设备图谱、长连接流量模式等）。
 4. **日志开关**：`CPRiskKit.setLogEnabled(true)` 仅在 `DEBUG` 构建下生效。
-5. **壳工具链**：cprisk-armor（5 Pass）需在 `swift build` 之后对产物执行加固；壳运行时由 CRiskCore 自动管理（含 Anti-Dump + 密钥清零 + 完整性重校验），调用方无需手动介入。
+5. **壳工具链**：cprisk-armor（5 Pass / ABI v2）需在 `swift build` 之后对产物执行加固；**6.2 起必须通过 `--key` 提供加密密钥**；壳运行时由 CRiskCore 自动管理（含 HMAC 验证 + Anti-Dump + 密钥清零 + 完整性重校验），调用方无需手动介入。
 6. **v2a 签名兼容**：服务端需同时支持 `v2`（无壳）和 `v2a`（壳绑定）签名验证；未加壳的 SDK 仍输出 `v2`。
+7. **服务端信号注入**：6.2 起 Release 下旧 `setExternalServerSignals()` 为 no-op，需使用 `setExternalServerSignalsVerified()` + HMAC 签名。
+8. **动态特征列表**：可通过 RemoteConfig 下发 `additionalSuspiciousLibraries` / `additionalSuspiciousPaths` / `additionalSuspiciousPorts` 扩展检测规则，无需发版。
 
 ---
 

@@ -17,6 +17,7 @@ struct FingerprintDeobfuscation: Detector {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: keychainAccount,
+            kSecAttrAccessible as String: keychainAccessible,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
@@ -42,7 +43,10 @@ struct FingerprintDeobfuscation: Detector {
             var addQuery = query
             addQuery[kSecValueData as String] = data
             addQuery[kSecAttrAccessible as String] = keychainAccessible
-            SecItemAdd(addQuery as CFDictionary, nil)
+            let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+            if addStatus != errSecSuccess {
+                Logger.log("FingerprintDeobfuscation.keychainWrite: SecItemAdd failed (status=\(addStatus))")
+            }
         }
     }
     func detect() throws -> DetectorResult {

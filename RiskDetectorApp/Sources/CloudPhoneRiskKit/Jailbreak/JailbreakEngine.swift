@@ -32,29 +32,26 @@ final class JailbreakEngine {
 
     func detect(config: JailbreakConfig) -> DetectionResult {
 #if targetEnvironment(simulator)
-        // iOS Simulator runs as a macOS process and shares host filesystem/dyld state.
-        // Most jailbreak heuristics will false-positive here (e.g. dylib count, /bin/bash).
-        var simulate = ProcessInfo.processInfo.environment["CPRISK_SIMULATE_JAILBREAK"] == "1"
-        #if DEBUG
-        simulate = simulate || UserDefaults.standard.bool(forKey: "cloudphone_risk_debug_simulate_jailbreak")
-        #endif
+    #if DEBUG
+        let simulate = ProcessInfo.processInfo.environment["CPRISK_SIMULATE_JAILBREAK"] == "1"
+            || UserDefaults.standard.bool(forKey: "cloudphone_risk_debug_simulate_jailbreak")
         if simulate {
-            Logger.log("jailbreak: simulator -> simulated_jailbreak")
+            Logger.log("jailbreak: simulator -> simulated_jailbreak (DEBUG only)")
             return DetectionResult(
                 isJailbroken: true,
                 confidence: Self.confidenceCap,
                 detectedMethods: ["simulated:targetEnvironment(simulator)"],
                 details: "simulated_jailbreak_simulator"
             )
-        } else {
-            Logger.log("jailbreak: simulator -> unavailable")
-            return DetectionResult(
-                isJailbroken: false,
-                confidence: 0,
-                detectedMethods: [],
-                details: "unavailable_simulator"
-            )
         }
+    #endif
+        Logger.log("jailbreak: simulator -> unavailable")
+        return DetectionResult(
+            isJailbroken: false,
+            confidence: 0,
+            detectedMethods: [],
+            details: "unavailable_simulator"
+        )
 #endif
 
         var score: Double = 0

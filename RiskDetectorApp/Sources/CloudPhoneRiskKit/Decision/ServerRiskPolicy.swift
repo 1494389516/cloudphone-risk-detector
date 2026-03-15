@@ -134,6 +134,8 @@ public struct ServerRiskPolicy: Codable, Sendable {
     }
 }
 
+// SECURITY-TODO: Migrate to Keychain or FileProtection.complete sandboxed file.
+// UserDefaults stores encrypted policy cache but lacks file-level encryption at rest.
 public final class PolicyManager: @unchecked Sendable {
     public static let shared = PolicyManager()
 
@@ -182,16 +184,34 @@ public final class PolicyManager: @unchecked Sendable {
     private var urlSession: URLSession
 
     private init() {
+        #if DEBUG
+        Logger.log("⚠️ PolicyManager.init: no certificate hashes configured yet — falling back to system CA in DEBUG. Call configurePinning(hashes:) before fetching policy.")
         self.urlSession = CertificatePinningSessionDelegate.pinnedSession(
             hashes: [],
-            allowsSystemCA: false
+            allowsSystemCA: true
         )
+        #else
+        self.urlSession = URLSession(configuration: .ephemeral)
+        #endif
         self.cachedPolicy = loadFromCache()
     }
 
     public func configurePinning(hashes: Set<String>) {
         lock.lock()
         defer { lock.unlock() }
+        guard !hashes.isEmpty else {
+            Logger.log("PolicyManager.configurePinning: empty hashes provided — all TLS connections would fail")
+            #if DEBUG
+            Logger.log("⚠️ PolicyManager.configurePinning: [DEBUG] falling back to system CA with empty hashes")
+            urlSession = CertificatePinningSessionDelegate.pinnedSession(
+                hashes: [],
+                allowsSystemCA: true
+            )
+            #else
+            Logger.log("PolicyManager.configurePinning: refusing to configure pinning with empty hashes in Release — retaining previous session")
+            #endif
+            return
+        }
         urlSession = CertificatePinningSessionDelegate.pinnedSession(
             hashes: hashes,
             allowsSystemCA: false

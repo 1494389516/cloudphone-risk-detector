@@ -2,8 +2,9 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdint.h>
-#include <sys/random.h>
+#include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
@@ -272,6 +273,11 @@ int cprisk_close_direct(int fd, int *error_out) {
 }
 
 ssize_t cprisk_read_direct(int fd, void *buf, size_t nbyte, int *error_out) {
+    if (nbyte > (size_t)SSIZE_MAX) {
+        if (error_out != NULL)
+            *error_out = EINVAL;
+        return -1;
+    }
 #if CPRISK_DIRECT_SYSCALLS_AVAILABLE
     return (ssize_t)cprisk_direct_syscall6(
         SYS_read,
@@ -335,7 +341,11 @@ int cprisk_connect_direct(int sockfd, const struct sockaddr *addr, socklen_t add
 /* ── getentropy ────────────────────────────────────────────────────── */
 
 #ifndef SYS_getentropy
-#define SYS_getentropy 500
+#if defined(__APPLE__)
+#define SYS_getentropy 500   /* Darwin arm64 getentropy trap number */
+#else
+#error "SYS_getentropy not defined for this platform"
+#endif
 #endif
 
 int cprisk_getentropy_direct(void *buf, size_t buflen, int *error_out) {
@@ -357,6 +367,10 @@ int cprisk_getentropy_direct(void *buf, size_t buflen, int *error_out) {
         error_out
     );
 #else
-    return cprisk_finish_errno(getentropy(buf, buflen), error_out);
+    arc4random_buf(buf, buflen);
+    if (error_out != NULL) {
+        *error_out = 0;
+    }
+    return 0;
 #endif
 }

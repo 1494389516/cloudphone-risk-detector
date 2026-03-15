@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import MachOKit
+import Security
 
 // MARK: - 字符串敏感度分类
 
@@ -94,16 +95,22 @@ public final class StringEncryptorPass: ArmorPass {
 
         for record in records {
             let plaintext = Data(record.value.utf8)
+            let nonce = generateNonce()
             let encrypted = xor(
                 plaintext,
-                makeKeystream(key: stringKey, stringID: record.id, length: plaintext.count)
+                makeKeystream(key: stringKey, stringID: record.id, nonce: nonce, length: plaintext.count)
             )
+            var hmacMessage = nonce
+            hmacMessage.append(encrypted)
+            let hmacTag = ArmorABI.hmacSHA256(key: stringKey, message: hmacMessage)
 
             payload.append(
                 ArmorABI.StringTable.IndexEntry(
                     stringID: record.id,
                     dataOffset: UInt32(dataArea.count),
-                    dataLength: UInt32(plaintext.count)
+                    dataLength: UInt32(plaintext.count),
+                    nonce: nonce,
+                    hmacTag: hmacTag
                 ).serialized()
             )
             dataArea.append(encrypted)
@@ -179,12 +186,20 @@ private func normalizedRootKey(_ rootKey: Data?) -> Data {
     return key
 }
 
-private func makeKeystream(key: Data, stringID: UInt32, length: Int) -> Data {
+private func generateNonce() -> Data {
+    var bytes = [UInt8](repeating: 0, count: ArmorABI.nonceSize)
+    let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+    precondition(status == errSecSuccess, "SecRandomCopyBytes failed")
+    return Data(bytes)
+}
+
+private func makeKeystream(key: Data, stringID: UInt32, nonce: Data, length: Int) -> Data {
     var seed = Data()
     seed.append(key)
 
     var sid = stringID.littleEndian
     withUnsafeBytes(of: &sid) { seed.append(contentsOf: $0) }
+    seed.append(nonce)
 
     var block = sha256(seed)
     var output = Data()

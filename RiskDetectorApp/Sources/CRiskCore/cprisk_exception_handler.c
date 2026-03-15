@@ -31,11 +31,37 @@ static atomic_int s_registered = 0;
 static pthread_mutex_t s_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 #define EXC_EXCEPTION_RAISE_STATE_IDENTITY 2403
+#define MACH_EXCEPTION_RAISE_STATE_IDENTITY 2407
+
+#pragma pack(push, 4)
+typedef struct {
+    mach_msg_header_t Head;
+    mach_msg_body_t msgh_body;
+    mach_msg_port_descriptor_t thread;
+    mach_msg_port_descriptor_t task;
+    NDR_record_t NDR;
+    exception_type_t exception;
+    mach_msg_type_number_t codeCnt;
+    int64_t code[2];
+    int flavor;
+    mach_msg_type_number_t old_stateCnt;
+    natural_t old_state[1296];
+} __Request__mach_exception_raise_state_identity_t;
+
+typedef struct {
+    mach_msg_header_t Head;
+    NDR_record_t NDR;
+    kern_return_t RetCode;
+    int flavor;
+    mach_msg_type_number_t new_stateCnt;
+    natural_t new_state[1296];
+} __Reply__mach_exception_raise_state_identity_t;
+#pragma pack(pop)
 
 static void *exception_handler_thread(void *arg) {
     (void)arg;
-    char req_buf[512];
-    char reply_buf[512];
+    char req_buf[sizeof(__Request__mach_exception_raise_state_identity_t)];
+    char reply_buf[sizeof(__Reply__mach_exception_raise_state_identity_t)];
     mach_msg_header_t *req = (mach_msg_header_t *)req_buf;
     mach_msg_header_t *reply = (mach_msg_header_t *)reply_buf;
 
@@ -58,15 +84,15 @@ static void *exception_handler_thread(void *arg) {
         reply->msgh_local_port = MACH_PORT_NULL;
         reply->msgh_id = req->msgh_id + 100;
 
-        if (req->msgh_id == EXC_EXCEPTION_RAISE_STATE_IDENTITY) {
-            const __Request__exception_raise_state_identity_t *r =
-                (const __Request__exception_raise_state_identity_t *)req;
+        if (req->msgh_id == MACH_EXCEPTION_RAISE_STATE_IDENTITY) {
+            const __Request__mach_exception_raise_state_identity_t *r =
+                (const __Request__mach_exception_raise_state_identity_t *)req;
             int flavor = r->flavor;
             mach_msg_type_number_t old_stateCnt = r->old_stateCnt;
             const natural_t *old_state = r->old_state;
 
-            __Reply__exception_raise_state_identity_t *rep =
-                (__Reply__exception_raise_state_identity_t *)reply;
+            __Reply__mach_exception_raise_state_identity_t *rep =
+                (__Reply__mach_exception_raise_state_identity_t *)reply;
             rep->NDR = NDR_record;
             rep->RetCode = KERN_SUCCESS;
             rep->flavor = flavor;
@@ -86,9 +112,22 @@ static void *exception_handler_thread(void *arg) {
                     state_count = old_stateCnt;
                 rep->new_stateCnt = state_count;
                 memcpy(rep->new_state, old_state, state_count * sizeof(natural_t));
-                if (flavor == ARM_THREAD_STATE64 && state_count >= 34) {
-                    uint64_t *pc = (uint64_t *)(rep->new_state + 32);
-                    *pc += 4;
+                
+                if (r->exception == EXC_BREAKPOINT) {
+                    if (flavor == ARM_THREAD_STATE64 && state_count >= 34) {
+                        uint64_t *pc = (uint64_t *)(rep->new_state + 32);
+                        *pc += 4;
+                    }
+                } else if (r->exception == EXC_BAD_ACCESS) {
+                    void *fault_addr = (void *)(uintptr_t)r->code[1];
+                    extern int cprisk_jit_decrypt_page(void *fault_addr);
+                    if (cprisk_jit_decrypt_page(fault_addr)) {
+                        rep->RetCode = KERN_SUCCESS;
+                    } else {
+                        rep->RetCode = KERN_FAILURE;
+                    }
+                } else {
+                    rep->RetCode = KERN_FAILURE;
                 }
             }
 
@@ -102,28 +141,23 @@ static void *exception_handler_thread(void *arg) {
     return NULL;
 }
 
-void cprisk_register_exception_handler(void) {
-    pthread_mutex_lock(&s_mutex);
-    if (atomic_load(&s_registered)) {
-        pthread_mutex_unlock(&s_mutex);
+/* Caller must hold s_mutex. */
+static void register_locked(void) {
+    if (atomic_load(&s_registered))
         return;
-    }
 
     kern_return_t kr = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &s_exception_port);
-    if (kr != KERN_SUCCESS) {
-        pthread_mutex_unlock(&s_mutex);
+    if (kr != KERN_SUCCESS)
         return;
-    }
 
     kr = mach_port_insert_right(mach_task_self(), s_exception_port, s_exception_port, MACH_MSG_TYPE_MAKE_SEND);
     if (kr != KERN_SUCCESS) {
         mach_port_deallocate(mach_task_self(), s_exception_port);
         s_exception_port = MACH_PORT_NULL;
-        pthread_mutex_unlock(&s_mutex);
         return;
     }
 
-    exception_mask_t mask = EXC_MASK_BREAKPOINT;
+    exception_mask_t mask = EXC_MASK_BREAKPOINT | EXC_MASK_BAD_ACCESS;
     exception_mask_t old_masks[EXC_TYPES_COUNT];
     mach_port_t old_ports[EXC_TYPES_COUNT];
     exception_behavior_t old_behaviors[EXC_TYPES_COUNT];
@@ -131,13 +165,12 @@ void cprisk_register_exception_handler(void) {
     mach_msg_type_number_t old_count = EXC_TYPES_COUNT;
 
     kr = task_swap_exception_ports(mach_task_self(), mask, s_exception_port,
-                                   EXCEPTION_STATE_IDENTITY, ARM_THREAD_STATE64,
+                                   EXCEPTION_STATE_IDENTITY | MACH_EXCEPTION_CODES, ARM_THREAD_STATE64,
                                    old_masks, &old_count, old_ports, old_behaviors, old_flavors);
 
     if (kr != KERN_SUCCESS) {
         mach_port_deallocate(mach_task_self(), s_exception_port);
         s_exception_port = MACH_PORT_NULL;
-        pthread_mutex_unlock(&s_mutex);
         return;
     }
 
@@ -151,6 +184,11 @@ void cprisk_register_exception_handler(void) {
     pthread_detach(th);
 
     atomic_store(&s_registered, 1);
+}
+
+void cprisk_register_exception_handler(void) {
+    pthread_mutex_lock(&s_mutex);
+    register_locked();
     pthread_mutex_unlock(&s_mutex);
 }
 
@@ -161,7 +199,7 @@ void cprisk_verify_exception_handler(void) {
         return;
     }
 
-    exception_mask_t mask = EXC_MASK_BREAKPOINT;
+    exception_mask_t mask = EXC_MASK_BREAKPOINT | EXC_MASK_BAD_ACCESS;
     exception_mask_t masks[EXC_TYPES_COUNT];
     mach_port_t ports[EXC_TYPES_COUNT];
     exception_behavior_t behaviors[EXC_TYPES_COUNT];
@@ -176,16 +214,18 @@ void cprisk_verify_exception_handler(void) {
     }
 
     for (mach_msg_type_number_t i = 0; i < count; i++) {
-        if ((masks[i] & EXC_MASK_BREAKPOINT) && ports[i] != s_exception_port) {
+        if ((masks[i] & (EXC_MASK_BREAKPOINT | EXC_MASK_BAD_ACCESS)) && ports[i] != s_exception_port) {
             atomic_store(&s_registered, 0);
             if (s_exception_port != MACH_PORT_NULL) {
                 mach_port_deallocate(mach_task_self(), s_exception_port);
                 s_exception_port = MACH_PORT_NULL;
             }
+            register_locked();
             pthread_mutex_unlock(&s_mutex);
-            cprisk_register_exception_handler();
             return;
         }
+        if (ports[i] != MACH_PORT_NULL)
+            mach_port_deallocate(mach_task_self(), ports[i]);
     }
     pthread_mutex_unlock(&s_mutex);
 }

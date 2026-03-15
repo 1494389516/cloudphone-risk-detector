@@ -28,9 +28,9 @@ final class TouchCapture {
     }
 
     func stop() {
-        // no-op (we don't unswizzle); just stop collecting new data
         lock.lock()
         started = false
+        zeroSensitiveBuffersLocked()
         lock.unlock()
     }
 
@@ -85,6 +85,32 @@ final class TouchCapture {
         majorRadii.removeAll(keepingCapacity: true)
 
         return (metrics, actions)
+    }
+
+    func clearSensitiveData() {
+        lock.lock()
+        defer { lock.unlock() }
+        zeroSensitiveBuffersLocked()
+    }
+
+    private func zeroSensitiveBuffersLocked() {
+        zeroBuffer(&touchPoints)
+        zeroBuffer(&tapTimestamps)
+        zeroBuffer(&swipeLinearities)
+        zeroBuffer(&currentSwipePath)
+        zeroBuffer(&actionTimestamps)
+        zeroBuffer(&forces)
+        zeroBuffer(&majorRadii)
+        swipeCount = 0
+        tapCount = 0
+    }
+
+    private func zeroBuffer<T>(_ array: inout [T]) {
+        array.withUnsafeMutableBufferPointer { buf in
+            guard let base = buf.baseAddress else { return }
+            memset(base, 0, buf.count * MemoryLayout<T>.stride)
+        }
+        array.removeAll(keepingCapacity: false)
     }
 
     private func record(touch: UITouch) {
@@ -203,6 +229,7 @@ final class TouchCapture {
     private init() {}
     func start() {}
     func stop() {}
+    func clearSensitiveData() {}
     func snapshotAndReset() -> TouchMetrics {
         TouchMetrics(
             sampleCount: 0,

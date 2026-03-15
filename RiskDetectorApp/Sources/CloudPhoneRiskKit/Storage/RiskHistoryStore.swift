@@ -14,6 +14,9 @@ public struct TimePattern: Codable, Sendable {
     public var averageIntervalSeconds24h: Double?
 }
 
+// SECURITY-TODO: Migrate to Keychain or FileProtection.complete sandboxed file.
+// UserDefaults is not appropriate for encrypted risk history data — it lacks file-level
+// encryption at rest and is accessible to any code in the app's process space.
 public final class RiskHistoryStore {
     public static let shared = RiskHistoryStore()
 
@@ -161,11 +164,7 @@ public final class RiskHistoryStore {
         if state.freshness.sequence < anchor.sequence || state.freshness.latestTimestamp < anchor.latestTimestamp {
             Logger.log("RiskHistoryStore: freshness rollback detected")
             clearPersistedDataLocked(resetAnchor: false)
-            #if DEBUG
             return LoadedState(events: [], freshness: anchor)
-            #else
-            return LoadedState(events: [], freshness: anchor)
-            #endif
         }
 
         if state.freshness.sequence > anchor.sequence || state.freshness.latestTimestamp > anchor.latestTimestamp {

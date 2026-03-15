@@ -10,11 +10,20 @@ public struct SignedRiskConclusion: Codable, Sendable {
     public let tampered: Bool
     public let nonce: String
     public let signature: String
+    /// "v1" = legacy (no signals), "v2" = includes signalsDigest
+    public let signatureVersion: String?
+    /// SHA-256 hex of sorted signal IDs joined by comma (v2 only)
+    public let signalsDigest: String?
 
     public static func sign(report: CPRiskReport, deviceKey: SymmetricKey) -> SignedRiskConclusion {
         let nonce = UUID().uuidString
         let timestamp = Date().timeIntervalSince1970
-        let input = "\(report.score)|\(report.isHighRisk)|\(timestamp)|\(nonce)|\(report.tampered)"
+
+        let sortedSignalIDs = report.signals.map(\.id).sorted().joined(separator: ",")
+        let digestData = SHA256.hash(data: Data(sortedSignalIDs.utf8))
+        let signalsDigest = digestData.map { String(format: "%02x", $0) }.joined()
+
+        let input = "\(report.score)|\(report.isHighRisk)|\(timestamp)|\(nonce)|\(report.tampered)|\(signalsDigest)"
         let hmac = SecureScope.withSecureBytes(Array(input.utf8)) { ptr in
             let data = Data(buffer: ptr)
             return HMAC<SHA256>.authenticationCode(for: data, using: deviceKey)
@@ -26,7 +35,9 @@ public struct SignedRiskConclusion: Codable, Sendable {
             timestamp: timestamp,
             tampered: report.tampered,
             nonce: nonce,
-            signature: sigHex
+            signature: sigHex,
+            signatureVersion: "v2",
+            signalsDigest: signalsDigest
         )
     }
 
@@ -34,8 +45,16 @@ public struct SignedRiskConclusion: Codable, Sendable {
         let age = Date().timeIntervalSince1970 - timestamp
         guard age >= 0, age <= maxAgeSeconds else { return false }
 
-        let input = "\(score)|\(isHighRisk)|\(timestamp)|\(nonce)|\(tampered)"
         guard let signatureData = Data(hexString: signature) else { return false }
+
+        let version = signatureVersion ?? "v1"
+        let input: String
+        if version == "v2", let digest = signalsDigest {
+            input = "\(score)|\(isHighRisk)|\(timestamp)|\(nonce)|\(tampered)|\(digest)"
+        } else {
+            input = "\(score)|\(isHighRisk)|\(timestamp)|\(nonce)|\(tampered)"
+        }
+
         return SecureScope.withSecureBytes(Array(input.utf8)) { ptr in
             let data = Data(buffer: ptr)
             return HMAC<SHA256>.isValidAuthenticationCode(signatureData, authenticating: data, using: deviceKey)
@@ -119,7 +138,7 @@ public enum DeviceKeyDeriver {
     }
 }
 
-/// DeviceKey 派生盐，存 Keychain。SDK 4.4 Phase 6: kSecAttrAccessibleWhenUnlockedThisDeviceOnly。
+/// DeviceKey 派生盐，存 Keychain。SDK 4.4 Phase 6: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly。
 private final class KeychainSalt {
     static let shared = KeychainSalt()
     private init() {}
@@ -164,6 +183,7 @@ private final class KeychainSalt {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
@@ -181,7 +201,7 @@ private final class KeychainSalt {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
             kSecValueData as String: data,
         ]
         let status = SecItemAdd(query as CFDictionary, nil)

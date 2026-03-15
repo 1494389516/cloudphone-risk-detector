@@ -97,6 +97,15 @@ public struct RemoteConfig: Codable, Sendable {
     /// 越狱后 Keychain 基线可被替换，服务端参考哈希作为可信锚点，客户端优先与之对比。
     public let textSegmentHashReference: [String: String]?
 
+    // MARK: - 动态特征列表（P1 加固）
+
+    /// 服务端追加的可疑库名（合并到 DynamicFeatureList）
+    public let additionalSuspiciousLibraries: [String]?
+    /// 服务端追加的可疑路径（合并到 DynamicFeatureList）
+    public let additionalSuspiciousPaths: [String]?
+    /// 服务端追加的可疑端口（合并到 DynamicFeatureList）
+    public let additionalSuspiciousPorts: [Int]?
+
     // MARK: - 初始化
 
     public init(
@@ -112,7 +121,10 @@ public struct RemoteConfig: Codable, Sendable {
         probeConfig: ProbeConfig? = nil,
         payloadFieldMapping: PayloadFieldMapping? = nil,
         securityHardening: SecurityHardeningConfig? = nil,
-        textSegmentHashReference: [String: String]? = nil
+        textSegmentHashReference: [String: String]? = nil,
+        additionalSuspiciousLibraries: [String]? = nil,
+        additionalSuspiciousPaths: [String]? = nil,
+        additionalSuspiciousPorts: [Int]? = nil
     ) {
         self.version = version
         self.timestamp = timestamp
@@ -127,6 +139,9 @@ public struct RemoteConfig: Codable, Sendable {
         self.payloadFieldMapping = payloadFieldMapping
         self.securityHardening = securityHardening
         self.textSegmentHashReference = textSegmentHashReference
+        self.additionalSuspiciousLibraries = additionalSuspiciousLibraries
+        self.additionalSuspiciousPaths = additionalSuspiciousPaths
+        self.additionalSuspiciousPorts = additionalSuspiciousPorts
     }
 
     // MARK: - 默认配置
@@ -1023,7 +1038,10 @@ extension RemoteConfig {
             probeConfig: probeConfig,
             payloadFieldMapping: payloadFieldMapping,
             securityHardening: (securityHardening ?? .default).enforcingReleaseSecurityFloor(),
-            textSegmentHashReference: textSegmentHashReference
+            textSegmentHashReference: textSegmentHashReference,
+            additionalSuspiciousLibraries: additionalSuspiciousLibraries,
+            additionalSuspiciousPaths: additionalSuspiciousPaths,
+            additionalSuspiciousPorts: additionalSuspiciousPorts
         )
     }
 

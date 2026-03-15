@@ -21,7 +21,9 @@ public enum ConfigSignatureVerifier {
         defer { secureZeroData(&keyData) }
         let hashed = SHA256.hash(data: keyData)
         let keyBytes = Data(hashed)
-        saveKeyToKeychain(keyBytes)
+        if !saveKeyToKeychain(keyBytes) {
+            Logger.log("ConfigSignatureVerifier.configure(serverSigningKey): keychain save failed")
+        }
     }
 
     public static func configure(serverSigningKeyData: Data) {
@@ -29,7 +31,9 @@ public enum ConfigSignatureVerifier {
         defer { lock.unlock() }
         var keyData = serverSigningKeyData
         defer { secureZeroData(&keyData) }
-        saveKeyToKeychain(keyData)
+        if !saveKeyToKeychain(keyData) {
+            Logger.log("ConfigSignatureVerifier.configure(serverSigningKeyData): keychain save failed")
+        }
     }
 
     public static var isConfigured: Bool {
@@ -38,15 +42,26 @@ public enum ConfigSignatureVerifier {
         return keychainHasKey()
     }
 
+    public static var isConfiguredForDebug: Bool {
+        #if DEBUG
+        let configured = isConfigured
+        if !configured {
+            Logger.log("⚠️ ConfigSignatureVerifier: signing key not configured in DEBUG build — verify() will return isValid=false. Call configure() to set up signature verification.")
+        }
+        return configured
+        #else
+        return isConfigured
+        #endif
+    }
+
     public static func verify(payload: Data, signatureHex: String) -> VerificationResult {
         lock.lock()
         guard let keyBytes = readKeyFromKeychain() else {
             lock.unlock()
             #if DEBUG
-            return VerificationResult(isValid: true, reason: "verification_not_configured_debug")
-            #else
-            return VerificationResult(isValid: false, reason: "verification_not_configured")
+            Logger.log("⚠️ ConfigSignatureVerifier.verify: not configured in DEBUG — returning isValid=false. Use isConfiguredForDebug to check setup.")
             #endif
+            return VerificationResult(isValid: false, reason: "verification_not_configured")
         }
         lock.unlock()
 
@@ -74,6 +89,7 @@ public enum ConfigSignatureVerifier {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: keychainAccount,
+            kSecAttrAccessible as String: accessible,
             kSecReturnData as String: false,
         ]
         var item: CFTypeRef?
@@ -86,6 +102,7 @@ public enum ConfigSignatureVerifier {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: keychainAccount,
+            kSecAttrAccessible as String: accessible,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
@@ -95,7 +112,7 @@ public enum ConfigSignatureVerifier {
         return data
     }
 
-    private static func saveKeyToKeychain(_ keyBytes: Data) {
+    private static func saveKeyToKeychain(_ keyBytes: Data) -> Bool {
         let deleteQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -110,7 +127,12 @@ public enum ConfigSignatureVerifier {
             kSecValueData as String: keyBytes,
             kSecAttrAccessible as String: accessible,
         ]
-        _ = SecItemAdd(addQuery as CFDictionary, nil)
+        let status = SecItemAdd(addQuery as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            Logger.log("ConfigSignatureVerifier.saveKeyToKeychain: SecItemAdd failed (status=\(status)), key lost after Delete")
+            return false
+        }
+        return true
     }
 }
 

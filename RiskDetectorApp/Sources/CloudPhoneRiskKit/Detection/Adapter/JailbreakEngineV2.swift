@@ -256,8 +256,8 @@ public final class JailbreakEngineV2 {
     
     /// 处理模拟器环境
     private func handleSimulator(config: JailbreakConfig) -> DetectionResult {
+        #if DEBUG
         let simulate = ProcessInfo.processInfo.environment["CPRISK_SIMULATE_JAILBREAK"] == "1"
-        
         if simulate {
             return DetectionResult(
                 isJailbroken: true,
@@ -266,6 +266,7 @@ public final class JailbreakEngineV2 {
                 details: "simulated_jailbreak"
             )
         }
+        #endif
         
         return DetectionResult(
             isJailbroken: false,

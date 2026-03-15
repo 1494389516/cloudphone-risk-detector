@@ -11,8 +11,8 @@ public struct GraphNodeDescriptor: Codable, Sendable {
     /// IP 哈希（从 context 或 ServerSignals 获取）
     public var ipHash: String?
 
-    /// ASN（自治系统号，明文用于图边构建；服务端可再哈希）
-    public var asn: String?
+    /// ASN 哈希：SHA256(asn + salt)，与 IP/accountId 保持一致的隐私保护
+    public var asnHash: String?
 
     /// 账号 ID 哈希（已有 bindAccount）
     public var accountIdHash: String?
@@ -26,14 +26,14 @@ public struct GraphNodeDescriptor: Codable, Sendable {
     public init(
         hwProfileHash: String,
         ipHash: String? = nil,
-        asn: String? = nil,
+        asnHash: String? = nil,
         accountIdHash: String? = nil,
         bssidHash: String? = nil,
         appListHash: String? = nil
     ) {
         self.hwProfileHash = hwProfileHash
         self.ipHash = ipHash
-        self.asn = asn
+        self.asnHash = asnHash
         self.accountIdHash = accountIdHash
         self.bssidHash = bssidHash
         self.appListHash = appListHash

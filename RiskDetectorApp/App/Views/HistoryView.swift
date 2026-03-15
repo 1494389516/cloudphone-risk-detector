@@ -30,10 +30,9 @@ struct HistoryView: View {
             }
             .navigationTitle("检测历史")
             .navigationBarItems(trailing: HStack(spacing: 16) {
-                NavigationLink {
-                    TemporalAnalysisView()
-                        .environmentObject(detectionVM)
-                } label: {
+                NavigationLink(
+                    destination: TemporalAnalysisPlaceholderView()
+                ) {
                     Image(systemName: "chart.line.uptrend.xyaxis")
                         .font(.system(size: 16))
                         .foregroundColor(.blue)
@@ -641,6 +640,24 @@ struct SignalBadge: View {
             case .needBackend: return Color.purple.opacity(0.15)
             }
         }
+    }
+}
+
+/// 时序分析占位视图（iOS 14 兼容，完整功能需 iOS 16+ Charts）
+struct TemporalAnalysisPlaceholderView: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "chart.line.uptrend.xyaxis")
+                .font(.system(size: 48))
+                .foregroundColor(.secondary)
+            Text("时序分析")
+                .font(.title2)
+            Text("此功能需要 iOS 16 或更高版本")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationTitle("时序分析")
     }
 }
 #endif

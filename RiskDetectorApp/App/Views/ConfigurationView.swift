@@ -42,13 +42,13 @@ struct ConfigurationView: View {
         }
         .navigationTitle("配置管理")
         .navigationBarTitleDisplayMode(.large)
-        .alert("重置配置", isPresented: $showResetAlert) {
-            Button("取消", role: .cancel) { }
-            Button("重置", role: .destructive) {
-                resetToDefault()
-            }
-        } message: {
-            Text("确定要将所有配置重置为默认值吗？")
+        .alert(isPresented: $showResetAlert) {
+            Alert(
+                title: Text("重置配置"),
+                message: Text("确定要将所有配置重置为默认值吗？"),
+                primaryButton: .cancel(),
+                secondaryButton: .destructive(Text("重置")) { resetToDefault() }
+            )
         }
         .sheet(isPresented: $showExportSheet) {
             exportSheet
@@ -58,14 +58,14 @@ struct ConfigurationView: View {
     // MARK: - 预设场景
     
     private var presetSection: some View {
-        Section {
+        Section(header: Text("检测场景")) {
             Picker("检测场景", selection: $settingsVM.selectedPreset) {
                 Text("默认模式").tag(PresetMode.default)
                 Text("严格模式").tag(PresetMode.strict)
                 Text("宽松模式").tag(PresetMode.relaxed)
                 Text("自定义").tag(PresetMode.custom)
             }
-            .onChange(of: settingsVM.selectedPreset) { _, newValue in
+            .onChange(of: settingsVM.selectedPreset) { newValue in
                 settingsVM.applyPreset(newValue)
             }
             
@@ -74,8 +74,6 @@ struct ConfigurationView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-        } header: {
-            Text("检测场景")
         }
     }
     
@@ -96,7 +94,7 @@ struct ConfigurationView: View {
     // MARK: - 检测开关
     
     private var detectionTogglesSection: some View {
-        Section("检测模块") {
+        Section(header: Text("检测模块")) {
             Toggle("行为分析", isOn: $settingsVM.enableBehaviorDetect)
             Toggle("网络信号", isOn: $settingsVM.enableNetworkSignals)
             
@@ -110,7 +108,7 @@ struct ConfigurationView: View {
     // MARK: - 阈值设置
     
     private var thresholdSection: some View {
-        Section("风险阈值") {
+        Section(header: Text("风险阈值")) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Text("高风险阈值")
@@ -120,13 +118,12 @@ struct ConfigurationView: View {
                         .foregroundColor(.blue)
                 }
                 
-                Slider(value: $settingsVM.threshold, in: 30...90, step: 5) {
-                    Text("阈值")
-                } minimumValueLabel: {
+                Slider(value: $settingsVM.threshold, in: 30...90, step: 5)
+                HStack {
                     Text("30")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                } maximumValueLabel: {
+                    Spacer()
                     Text("90")
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -142,24 +139,22 @@ struct ConfigurationView: View {
     
     @ViewBuilder
     private func thresholdDescription(_ threshold: Double) -> some View {
-        let text: String
         switch threshold {
         case 30..<50:
-            text = "严格：轻微异常即触发"
+            Text("严格：轻微异常即触发")
         case 50..<70:
-            text = "标准：平衡误报与漏报"
+            Text("标准：平衡误报与漏报")
         case 70...90:
-            text = "宽松：仅严重风险触发"
+            Text("宽松：仅严重风险触发")
         default:
-            text = ""
+            EmptyView()
         }
-        Text(text)
     }
     
     // MARK: - 越狱检测配置
     
     private var jailbreakSection: some View {
-        Section("越狱检测") {
+        Section(header: Text("越狱检测")) {
             Toggle("文件检测", isOn: $settingsVM.jailbreakEnableFileDetect)
             Toggle("Dyld 检测", isOn: $settingsVM.jailbreakEnableDyldDetect)
             Toggle("环境检测", isOn: $settingsVM.jailbreakEnableEnvDetect)
@@ -185,7 +180,7 @@ struct ConfigurationView: View {
     // MARK: - 远程配置
     
     private var remoteConfigSection: some View {
-        Section("远程配置") {
+        Section(header: Text("远程配置")) {
             HStack {
                 Text("配置版本")
                 Spacer()
@@ -222,7 +217,7 @@ struct ConfigurationView: View {
     // MARK: - 操作
     
     private var actionsSection: some View {
-        Section("操作") {
+        Section(header: Text("操作")) {
             Button {
                 showExportSheet = true
             } label: {
@@ -238,7 +233,7 @@ struct ConfigurationView: View {
                 HStack {
                     Image(systemName: "arrow.counterclockwise")
                     Text("重置为默认")
-                   foregroundColor(.red)
+                        .foregroundColor(.red)
                 }
             }
         }
@@ -302,7 +297,7 @@ struct ConfigurationView: View {
             
             ScrollView {
                 Text(configJSONString)
-                    .font(.system(.monospaced, design: .rounded))
+                    .font(.system(size: 12, weight: .regular, design: .monospaced))
                     .font(.caption)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)

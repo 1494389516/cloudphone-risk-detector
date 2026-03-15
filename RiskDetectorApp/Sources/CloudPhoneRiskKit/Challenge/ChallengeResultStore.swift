@@ -16,8 +16,25 @@ public final class ChallengeResultStore: @unchecked Sendable {
     private var _lastChallengeId: String?
     private var _lastAdjustedScore: Double?
     private var _lastPassed: Bool?
+    private var _pendingMismatchSignals: [RiskSignal] = []
 
     private init() {}
+
+    /// 存储 HMAC 校验失败时的信号，供下一次 evaluate 注入
+    func storePendingMismatchSignal(_ signal: RiskSignal) {
+        lock.lock()
+        _pendingMismatchSignals.append(signal)
+        lock.unlock()
+    }
+
+    /// 消费并返回待注入的 HMAC 校验失败信号
+    func consumePendingMismatchSignals() -> [RiskSignal] {
+        lock.lock()
+        let signals = _pendingMismatchSignals
+        _pendingMismatchSignals = []
+        lock.unlock()
+        return signals
+    }
 
     /// 应用挑战验证结果（由 CPRiskKit.applyChallengeResult 调用）
     /// 对 adjustedScore 做范围校验：超出 [-100, 100] 时裁剪并记录日志，避免负值或超大值污染分数

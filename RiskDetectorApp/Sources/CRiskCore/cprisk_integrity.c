@@ -1,8 +1,10 @@
 /*
- * CRiskCore - Multi-path integrity verification for cprisk-armor ABI v1.
+ * CRiskCore - Multi-path integrity verification for cprisk-armor ABI v2.
  * Three independent paths compute the __TEXT.__text hash; path C reconstructs
- * the digest from the four split anchor sections. The combined result feeds
- * key derivation, so tampering silently corrupts the derived key.
+ * the digest from the four split anchor sections. The HMAC anchor tag is
+ * verified against the reconstructed hash using the root key.
+ * The combined result feeds key derivation, so tampering silently corrupts
+ * the derived key.
  */
 
 #include "include/CRiskCore.h"
@@ -24,9 +26,11 @@ _Static_assert(CPRISK_SHA256_DIGEST_LENGTH == CPRISK_ARMOR_HASH_SIZE,
 static uint8_t s_runtime_material[CPRISK_ARMOR_HASH_SIZE];
 static int s_runtime_material_ready;
 
-/* Per-execution random value filled on first poison use; never a public constant. */
 static uint8_t s_poison_material[CPRISK_ARMOR_HASH_SIZE];
 static int s_poison_material_ready;
+
+static uint8_t s_root_material[CPRISK_ARMOR_KEY_SIZE];
+static uint8_t s_salt_xor_key;
 
 static void cprisk_szero_i(void *p, size_t n) {
     volatile uint8_t *v = (volatile uint8_t *)p;
@@ -71,17 +75,25 @@ static void cprisk_derive_string_key_i(
     const uint8_t root_material[CPRISK_ARMOR_KEY_SIZE],
     uint8_t out_key[CPRISK_ARMOR_KEY_SIZE]
 ) {
-    static const uint8_t label_enc[] = {
-        'c'^0xA7, 'p'^0xA7, 'r'^0xA7, 'i'^0xA7, 's'^0xA7, 'k'^0xA7,
-        '.'^0xA7, 'p'^0xA7, 'a'^0xA7, 's'^0xA7, 's'^0xA7, '1'^0xA7,
-        '.'^0xA7, 'k'^0xA7, 'e'^0xA7, 'y'^0xA7, '.'^0xA7, 'v'^0xA7, '1'^0xA7
+    static const uint8_t label_enc_default[] = {
+        'c'^CPRISK_SALT_XOR_KEY_DEFAULT, 'p'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        'r'^CPRISK_SALT_XOR_KEY_DEFAULT, 'i'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        's'^CPRISK_SALT_XOR_KEY_DEFAULT, 'k'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        '.'^CPRISK_SALT_XOR_KEY_DEFAULT, 'p'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        'a'^CPRISK_SALT_XOR_KEY_DEFAULT, 's'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        's'^CPRISK_SALT_XOR_KEY_DEFAULT, '1'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        '.'^CPRISK_SALT_XOR_KEY_DEFAULT, 'k'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        'e'^CPRISK_SALT_XOR_KEY_DEFAULT, 'y'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        '.'^CPRISK_SALT_XOR_KEY_DEFAULT, 'v'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        '1'^CPRISK_SALT_XOR_KEY_DEFAULT
     };
-    char label[sizeof(label_enc) + 1];
-    cprisk_decode_salt(label_enc, sizeof(label_enc), label);
+    char label[sizeof(label_enc_default) + 1];
+    cprisk_decode_salt(label_enc_default, sizeof(label_enc_default),
+                       CPRISK_SALT_XOR_KEY_DEFAULT, label);
 
     cprisk_sha256_ctx ctx;
     cprisk_sha256_init(&ctx);
-    cprisk_sha256_update(&ctx, (const uint8_t *)label, sizeof(label_enc));
+    cprisk_sha256_update(&ctx, (const uint8_t *)label, sizeof(label_enc_default));
     cprisk_sha256_update(&ctx, root_material, CPRISK_ARMOR_KEY_SIZE);
     cprisk_sha256_final(&ctx, out_key);
 
@@ -95,20 +107,28 @@ static void cprisk_derive_loader_key_i(
     uint64_t string_acc,
     uint8_t out_key[CPRISK_ARMOR_KEY_SIZE]
 ) {
-    static const uint8_t label_enc[] = {
-        'c'^0xA7, 'p'^0xA7, 'r'^0xA7, 'i'^0xA7, 's'^0xA7, 'k'^0xA7,
-        '.'^0xA7, 'p'^0xA7, 'a'^0xA7, 's'^0xA7, 's'^0xA7, '3'^0xA7,
-        '.'^0xA7, 'k'^0xA7, 'e'^0xA7, 'y'^0xA7, '.'^0xA7, 'v'^0xA7, '1'^0xA7
+    static const uint8_t label_enc_default[] = {
+        'c'^CPRISK_SALT_XOR_KEY_DEFAULT, 'p'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        'r'^CPRISK_SALT_XOR_KEY_DEFAULT, 'i'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        's'^CPRISK_SALT_XOR_KEY_DEFAULT, 'k'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        '.'^CPRISK_SALT_XOR_KEY_DEFAULT, 'p'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        'a'^CPRISK_SALT_XOR_KEY_DEFAULT, 's'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        's'^CPRISK_SALT_XOR_KEY_DEFAULT, '3'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        '.'^CPRISK_SALT_XOR_KEY_DEFAULT, 'k'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        'e'^CPRISK_SALT_XOR_KEY_DEFAULT, 'y'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        '.'^CPRISK_SALT_XOR_KEY_DEFAULT, 'v'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        '1'^CPRISK_SALT_XOR_KEY_DEFAULT
     };
-    char label[sizeof(label_enc) + 1];
-    cprisk_decode_salt(label_enc, sizeof(label_enc), label);
+    char label[sizeof(label_enc_default) + 1];
+    cprisk_decode_salt(label_enc_default, sizeof(label_enc_default),
+                       CPRISK_SALT_XOR_KEY_DEFAULT, label);
 
     uint8_t acc_le[8];
     cprisk_u64_to_le_i(string_acc, acc_le);
 
     cprisk_sha256_ctx ctx;
     cprisk_sha256_init(&ctx);
-    cprisk_sha256_update(&ctx, (const uint8_t *)label, sizeof(label_enc));
+    cprisk_sha256_update(&ctx, (const uint8_t *)label, sizeof(label_enc_default));
     cprisk_sha256_update(&ctx, root_material, CPRISK_ARMOR_KEY_SIZE);
     cprisk_sha256_update(&ctx, full_anchor_hash, CPRISK_ARMOR_HASH_SIZE);
     cprisk_sha256_update(&ctx, integrity_hash, CPRISK_ARMOR_HASH_SIZE);
@@ -127,14 +147,23 @@ static void cprisk_derive_runtime_material_i(
     uint64_t data_acc,
     uint8_t out_hash[CPRISK_ARMOR_HASH_SIZE]
 ) {
-    static const uint8_t label_enc[] = {
-        'c'^0xA7, 'p'^0xA7, 'r'^0xA7, 'i'^0xA7, 's'^0xA7, 'k'^0xA7,
-        '.'^0xA7, 'r'^0xA7, 'u'^0xA7, 'n'^0xA7, 't'^0xA7, 'i'^0xA7,
-        'm'^0xA7, 'e'^0xA7, '.'^0xA7, 's'^0xA7, 't'^0xA7, 'a'^0xA7,
-        't'^0xA7, 'e'^0xA7, '.'^0xA7, 'v'^0xA7, '1'^0xA7
+    static const uint8_t label_enc_default[] = {
+        'c'^CPRISK_SALT_XOR_KEY_DEFAULT, 'p'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        'r'^CPRISK_SALT_XOR_KEY_DEFAULT, 'i'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        's'^CPRISK_SALT_XOR_KEY_DEFAULT, 'k'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        '.'^CPRISK_SALT_XOR_KEY_DEFAULT, 'r'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        'u'^CPRISK_SALT_XOR_KEY_DEFAULT, 'n'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        't'^CPRISK_SALT_XOR_KEY_DEFAULT, 'i'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        'm'^CPRISK_SALT_XOR_KEY_DEFAULT, 'e'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        '.'^CPRISK_SALT_XOR_KEY_DEFAULT, 's'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        't'^CPRISK_SALT_XOR_KEY_DEFAULT, 'a'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        't'^CPRISK_SALT_XOR_KEY_DEFAULT, 'e'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        '.'^CPRISK_SALT_XOR_KEY_DEFAULT, 'v'^CPRISK_SALT_XOR_KEY_DEFAULT,
+        '1'^CPRISK_SALT_XOR_KEY_DEFAULT
     };
-    char label[sizeof(label_enc) + 1];
-    cprisk_decode_salt(label_enc, sizeof(label_enc), label);
+    char label[sizeof(label_enc_default) + 1];
+    cprisk_decode_salt(label_enc_default, sizeof(label_enc_default),
+                       CPRISK_SALT_XOR_KEY_DEFAULT, label);
 
     uint8_t str_le[8];
     uint8_t data_le[8];
@@ -143,7 +172,7 @@ static void cprisk_derive_runtime_material_i(
 
     cprisk_sha256_ctx ctx;
     cprisk_sha256_init(&ctx);
-    cprisk_sha256_update(&ctx, (const uint8_t *)label, sizeof(label_enc));
+    cprisk_sha256_update(&ctx, (const uint8_t *)label, sizeof(label_enc_default));
     cprisk_sha256_update(&ctx, root_material, CPRISK_ARMOR_KEY_SIZE);
     cprisk_sha256_update(&ctx, full_anchor_hash, CPRISK_ARMOR_HASH_SIZE);
     cprisk_sha256_update(&ctx, integrity_hash, CPRISK_ARMOR_HASH_SIZE);
@@ -260,10 +289,6 @@ int cprisk_compute_integrity_hash(uint8_t *out_hash) {
     int rb = path_b(hdr, hb);
     int rc = path_c(hdr, hc);
 
-    /*
-     * SHA256(ha || hb || hc) — deterministic iff all three agree.
-     * On failure, fill with 0xFF so result diverges predictably.
-     */
     uint8_t cat[CPRISK_SHA256_DIGEST_LENGTH * 3];
     if (ra == 0)
         memcpy(cat, ha, CPRISK_SHA256_DIGEST_LENGTH);
@@ -298,16 +323,30 @@ int cprisk_read_full_anchor_hash(uint8_t *out_hash) {
     if (!hdr)
         return -1;
 
+    /* ABI v2: reconstruct fullHash from split anchor lanes */
+    return path_c(hdr, out_hash);
+}
+
+int cprisk_verify_anchor_hmac(const uint8_t root_material[CPRISK_ARMOR_KEY_SIZE],
+                              const uint8_t full_hash[CPRISK_ARMOR_HASH_SIZE]) {
+    const struct mach_header_64 *hdr = cprisk_own_hdr_i();
+    if (!hdr)
+        return -1;
+
     unsigned long sz = 0;
     const uint8_t *sec = cprisk_find_section(
         hdr, CPRISK_ARMOR_SEGMENT_DATA, CPRISK_ARMOR_SECTION_FULL_HASH, &sz);
-    if (!sec || sz < CPRISK_ARMOR_FULL_HASH_SECTION_SIZE)
+    if (!sec || sz < CPRISK_ARMOR_HMAC_FULL_HASH_SECTION_SIZE)
         return -1;
 
-    for (uint32_t i = 0; i < CPRISK_ARMOR_HASH_SIZE; i++)
-        out_hash[i] = sec[CPRISK_ARMOR_HASH_SIZE + i] ^ sec[i];
+    uint8_t computed_hmac[CPRISK_ARMOR_HASH_SIZE];
+    cprisk_hmac_sha256(root_material, CPRISK_ARMOR_KEY_SIZE,
+                       full_hash, CPRISK_ARMOR_HASH_SIZE,
+                       computed_hmac);
 
-    return 0;
+    int result = cprisk_hmac_verify(sec, computed_hmac, CPRISK_ARMOR_HASH_SIZE);
+    cprisk_secure_zero(computed_hmac, sizeof(computed_hmac));
+    return result;
 }
 
 static uint64_t cprisk_monotonic_ns(void) {
@@ -315,7 +354,7 @@ static uint64_t cprisk_monotonic_ns(void) {
     if (tb.denom == 0)
         mach_timebase_info(&tb);
     if (tb.denom == 0)
-        return 0;  /* avoid division by zero on abnormal hardware */
+        return 0;
     return mach_absolute_time() * tb.numer / tb.denom;
 }
 
@@ -335,8 +374,7 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
 
     cprisk_fill_root_material_i(root_key, root_key_len, root_material);
 
-    /* Reject NULL or all-zero root keys: an all-zero key makes the full
-     * armor chain deterministic for any attacker who can read __TEXT. */
+    /* Reject NULL or all-zero root keys */
     {
         int all_zero = 1;
         for (int zi = 0; zi < CPRISK_ARMOR_KEY_SIZE; zi++) {
@@ -347,6 +385,10 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
             goto cleanup;
         }
     }
+
+    /* Derive and store salt XOR key from root material */
+    s_salt_xor_key = cprisk_derive_salt_xor_key(root_material);
+    memcpy(s_root_material, root_material, CPRISK_ARMOR_KEY_SIZE);
 
     cprisk_derive_string_key_i(root_material, string_key);
     if (cprisk_init_string_decryptor(string_key, CPRISK_ARMOR_KEY_SIZE) != 0) {
@@ -371,6 +413,12 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
     s_integrity_hash_saved = 1;
 
     if (cprisk_read_full_anchor_hash(full_anchor_hash) != 0) {
+        rc = -5;
+        goto cleanup;
+    }
+
+    /* Verify HMAC anchor tag against reconstructed full hash */
+    if (cprisk_verify_anchor_hmac(root_material, full_anchor_hash) != 0) {
         rc = -5;
         goto cleanup;
     }
@@ -425,8 +473,8 @@ cleanup:
 void cprisk_cleanup_protection(void) {
     cprisk_secure_zero(s_runtime_material, sizeof(s_runtime_material));
     cprisk_secure_zero(s_saved_integrity_hash, sizeof(s_saved_integrity_hash));
+    cprisk_secure_zero(s_root_material, sizeof(s_root_material));
     s_runtime_material_ready = 0;
-    /* Invalidate the per-run poison so a new random is drawn on next use. */
     cprisk_szero_i(s_poison_material, sizeof(s_poison_material));
     s_poison_material_ready = 0;
     s_integrity_hash_saved = 0;
@@ -440,17 +488,13 @@ int cprisk_get_runtime_material(uint8_t out_material[32]) {
     if (!out_material)
         return -1;
 
-    /*
-     * Poison path when integrity recheck detected tampering: return random material
-     * so HMAC verification fails server-side. Same path used when init never ran.
-     */
     if (s_integrity_poisoned || !s_runtime_material_ready) {
         if (!s_poison_material_ready) {
             arc4random_buf(s_poison_material, CPRISK_ARMOR_HASH_SIZE);
             s_poison_material_ready = 1;
         }
         memcpy(out_material, s_poison_material, CPRISK_ARMOR_HASH_SIZE);
-        return 0;  /* same as success to prevent timing/oracle distinction */
+        return 0;
     }
 
     memcpy(out_material, s_runtime_material, CPRISK_ARMOR_HASH_SIZE);

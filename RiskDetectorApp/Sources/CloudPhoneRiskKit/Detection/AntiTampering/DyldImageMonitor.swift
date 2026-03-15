@@ -21,12 +21,9 @@ final class DyldImageMonitor: @unchecked Sendable {
     private var addImageCallbackCount: UInt32 = 0
     private var suspiciousAdditions: [(name: String, gen: UInt64)] = []
 
-    private let suspiciousTokens: [String] = [
-        "frida", "gadget", "gum", "substrate", "libsubstrate",
-        "substitute", "libsubstitute", "cycript", "libcycript",
-        "libhooker", "ellekit", "sslkill", "tweakinject",
-        "shadow", "dopamine"
-    ]
+    private var suspiciousTokens: [String] {
+        DynamicFeatureList.shared.suspiciousLibraries
+    }
 
     private init() {}
 

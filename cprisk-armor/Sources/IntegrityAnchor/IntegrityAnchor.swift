@@ -18,10 +18,9 @@ public final class IntegrityAnchorPass: ArmorPass {
         }
 
         let textHash = sha256(try textSection.readContent(from: file.data))
-        // Build-tool only — this salt does not appear in the final SDK binary.
-        let mask = sha256(Data("cprisk.pass4.mask.v1".utf8) + textHash)
+        let rootKey = normalizedRootKey(config.encryptionKey)
         let lanes = ArmorABI.Integrity.splitAnchorLanes(for: textHash)
-        let fullHashSection = ArmorABI.Integrity.maskedFullHashSection(mask: mask, fullHash: textHash)
+        let hmacSection = ArmorABI.Integrity.hmacFullHashSection(rootKey: rootKey, fullHash: textHash)
 
         for (name, lane) in zip(ArmorABI.Integrity.splitSectionNames, lanes) {
             _ = try file.addOrUpdateSection(
@@ -34,18 +33,18 @@ public final class IntegrityAnchorPass: ArmorPass {
 
         _ = try file.addOrUpdateSection(
             segment: ArmorABI.dataSegmentName,
-            section: ArmorABI.Integrity.fullHashSectionName,
-            content: fullHashSection,
+            section: ArmorABI.Integrity.hmacFullHashSectionName,
+            content: hmacSection,
             align: 3
         )
 
         return PassResult(
             passName: name,
             itemsProcessed: ArmorABI.Integrity.splitSectionCount + 1,
-            bytesModified: lanes.reduce(fullHashSection.count) { $0 + $1.count },
+            bytesModified: lanes.reduce(hmacSection.count) { $0 + $1.count },
             details: [
                 "Anchored SHA-256(__TEXT.__text) into \(ArmorABI.Integrity.splitSectionNames.joined(separator: ", "))",
-                "Wrote masked full hash to \(ArmorABI.dataSegmentName).\(ArmorABI.Integrity.fullHashSectionName)"
+                "Wrote HMAC anchor to \(ArmorABI.dataSegmentName).\(ArmorABI.Integrity.hmacFullHashSectionName)"
             ]
         )
     }
@@ -53,4 +52,12 @@ public final class IntegrityAnchorPass: ArmorPass {
 
 private func sha256(_ data: Data) -> Data {
     Data(SHA256.hash(data: data))
+}
+
+private func normalizedRootKey(_ rootKey: Data?) -> Data {
+    var key = Data(repeating: 0, count: ArmorABI.keySize)
+    guard let rootKey else { return key }
+    let prefix = rootKey.prefix(ArmorABI.keySize)
+    key.replaceSubrange(0..<prefix.count, with: prefix)
+    return key
 }

@@ -41,7 +41,8 @@ public final class MachOWriter {
         segment: String,
         section: String,
         content: Data,
-        protection: UInt32
+        protection: UInt32,
+        flags: UInt32 = 0
     ) throws -> Section {
         let header = try MachOHeader(from: data)
         guard header.isValid else {
@@ -82,7 +83,7 @@ public final class MachOWriter {
             address: contentAddress, size: UInt64(content.count),
             offset: UInt32(contentOffset), align: target.segment.sections.last?.align ?? 0,
             relocationOffset: 0, numberOfRelocations: 0,
-            flags: 0, reserved1: 0, reserved2: 0, reserved3: 0
+            flags: flags, reserved1: 0, reserved2: 0, reserved3: 0
         )
 
         try insertSectionHeader(in: &data, section: newSection, segmentName: segment)

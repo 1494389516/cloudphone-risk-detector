@@ -315,21 +315,21 @@ struct SettingsView: View {
         SettingsSection(
             title: "高级",
             icon: "slider.horizontal.2.square.on.square",
-            iconColor: .indigo
+            iconColor: Color(red: 0.29, green: 0.33, blue: 0.83)
         ) {
-            NavigationLink {
-                ConfigurationView()
+            NavigationLink(
+                destination: ConfigurationView()
                     .environmentObject(settingsVM)
-            } label: {
+            ) {
                 HStack(spacing: 14) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.indigo.opacity(0.15))
+                            .fill(Color(red: 0.29, green: 0.33, blue: 0.83).opacity(0.15))
                             .frame(width: 36, height: 36)
 
                         Image(systemName: "gearshape.2.fill")
                             .font(.system(size: 16))
-                            .foregroundColor(.indigo)
+                            .foregroundColor(Color(red: 0.29, green: 0.33, blue: 0.83))
                     }
 
                     VStack(alignment: .leading, spacing: 2) {

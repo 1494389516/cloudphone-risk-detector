@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Local injection point for future "server aggregation" signals (IP/ASN/datacenter/IP聚合度...).
@@ -16,6 +17,7 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
     private let lock = NSLock()
     private var current: ServerSignals?
     private var graphFeatures: GraphFeatures?
+    private var serverSignalKey: SymmetricKey?
 
     struct GraphFeatures {
         var communityId: String?
@@ -33,11 +35,63 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
         lock.unlock()
     }
 
+    /// Configure the HMAC key used by `setVerified(_:signature:)`.
+    func configureServerSignalKey(_ key: Data) {
+        lock.lock()
+        serverSignalKey = SymmetricKey(data: key)
+        lock.unlock()
+    }
+
+    /// 清空服务端信号和图特征，Release 下始终可用（用于 clearExternalServerSignals）。
+    func clear() {
+        lock.lock()
+        current = nil
+        graphFeatures = nil
+        lock.unlock()
+        Logger.log("server_aggregate.clear")
+    }
+
+    @available(*, deprecated, message: "Use setVerified(_:signature:) instead")
     func set(_ signals: ServerSignals?) {
+        if signals == nil {
+            clear()
+            return
+        }
+        #if DEBUG
         lock.lock()
         current = signals
         lock.unlock()
-        Logger.log("server_aggregate.set: \(signals == nil ? "nil" : "set")")
+        Logger.log("server_aggregate.set (deprecated): set")
+        #else
+        Logger.log("server_aggregate.set rejected: use setVerified in Release builds")
+        #endif
+    }
+
+    /// Accept server signals only after HMAC-SHA256 verification.
+    /// `signature` = HMAC-SHA256(serverSignalKey, canonicalJSON(signals)).
+    func setVerified(_ signals: ServerSignals, signature: Data) {
+        lock.lock()
+        guard let key = serverSignalKey else {
+            lock.unlock()
+            Logger.log("server_aggregate.setVerified rejected: no key configured")
+            return
+        }
+        lock.unlock()
+
+        guard let payload = try? JSONEncoder().encode(signals) else {
+            Logger.log("server_aggregate.setVerified rejected: encode failed")
+            return
+        }
+
+        guard HMAC<SHA256>.isValidAuthenticationCode(signature, authenticating: payload, using: key) else {
+            Logger.log("server_aggregate.setVerified rejected: HMAC mismatch")
+            return
+        }
+
+        lock.lock()
+        current = signals
+        lock.unlock()
+        Logger.log("server_aggregate.setVerified: accepted")
     }
 
     func setGraphFeatures(

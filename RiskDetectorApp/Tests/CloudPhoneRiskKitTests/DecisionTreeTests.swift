@@ -91,12 +91,18 @@ final class DecisionTreeTests: XCTestCase {
     }
 
     func testCustomConditionUnregisteredReturnsFalse() {
+#if DEBUG
+        ConditionExpression.unsealCustomEvaluatorsForTesting()
+#endif
         ConditionExpression.unregisterCustomEvaluator(id: "unregistered_id")
         let cond = ConditionExpression.custom("unregistered_id")
         XCTAssertFalse(cond.evaluate(context: makeEvalContext(score: 100)))
     }
 
     func testCustomConditionWithRegisteredEvaluator() {
+#if DEBUG
+        ConditionExpression.unsealCustomEvaluatorsForTesting()
+#endif
         let id = "high_score_and_vpn"
         ConditionExpression.registerCustomEvaluator(id: id) { ctx in
             ctx.score >= 80 && ctx.hasSignal("vpn_active")

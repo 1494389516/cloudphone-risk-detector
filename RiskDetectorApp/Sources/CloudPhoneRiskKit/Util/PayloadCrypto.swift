@@ -94,6 +94,7 @@ enum PayloadCrypto {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keyService,
             kSecAttrAccount as String: keyAccount,
+            kSecAttrAccessible as String: accessible,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]

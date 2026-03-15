@@ -1,5 +1,6 @@
 import Foundation
 import MachOKit
+import Security
 
 /// SplitMix64 — deterministic PRNG for reproducible obfuscation across runs.
 private struct SeededRNG: RandomNumberGenerator {
@@ -42,11 +43,11 @@ public final class StructureObfuscatorPass: ArmorPass {
         "__sw5_builtin2",
         "__sw5_capture2",
         "__sw5_typeref2",
-        "__objc_imginf2",
+        "__objc_imageinfo",
         "__la_resolver2",
         "__stub_helper2",
         "__auth_got2",
-        "__nl_catlog2",
+        "__nl_catlist",
     ]
 
     public init() {}
@@ -61,7 +62,16 @@ public final class StructureObfuscatorPass: ArmorPass {
             )
         }
 
-        let seed = config.randomSeed ?? UInt64(Date().timeIntervalSince1970 * 1_000_000)
+        let seed: UInt64
+        if let provided = config.randomSeed {
+            seed = provided
+        } else {
+            var randomBytes: UInt64 = 0
+            let status = SecRandomCopyBytes(kSecRandomDefault, MemoryLayout<UInt64>.size, &randomBytes)
+            precondition(status == errSecSuccess, "SecRandomCopyBytes failed")
+            seed = randomBytes == 0 ? 1 : randomBytes
+        }
+        if config.verbose { print("    [StructureObfuscator] seed = \(seed)") }
         var rng = SeededRNG(seed: seed)
 
         let count = 5 + Int(rng.next() % 4)

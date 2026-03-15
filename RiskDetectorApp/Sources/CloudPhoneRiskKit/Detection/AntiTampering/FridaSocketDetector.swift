@@ -45,14 +45,7 @@ struct FridaSocketDetector: Detector {
         var score: Double = 0
         var methods: [String] = []
 
-        // Check /tmp for Frida socket files
-        let suspiciousPaths = [
-            "/tmp/frida-",
-            "/tmp/.frida-",
-            "/tmp/linjector",
-            "/private/tmp/frida-",
-            "/private/tmp/.frida-",
-        ]
+        let suspiciousPaths = DynamicFeatureList.shared.suspiciousPaths
 
         // Method 1: Check known paths using access()
         for prefix in suspiciousPaths {

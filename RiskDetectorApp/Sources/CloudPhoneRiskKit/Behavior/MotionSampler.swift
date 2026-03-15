@@ -36,6 +36,7 @@ final class MotionSampler {
     func stop() {
         lock.lock()
         started = false
+        zeroSensitiveBuffersLocked()
         lock.unlock()
         manager.stopDeviceMotionUpdates()
     }
@@ -74,6 +75,23 @@ final class MotionSampler {
         return (metrics, outSeries)
     }
 
+    func clearSensitiveData() {
+        lock.lock()
+        defer { lock.unlock() }
+        zeroSensitiveBuffersLocked()
+    }
+
+    private func zeroSensitiveBuffersLocked() {
+        series.withUnsafeMutableBufferPointer { buf in
+            guard let base = buf.baseAddress else { return }
+            memset(base, 0, buf.count * MemoryLayout<MotionSample>.stride)
+        }
+        series.removeAll(keepingCapacity: false)
+        sampleCount = 0
+        stillCount = 0
+        energySum = 0
+    }
+
     private func consume(motion: CMDeviceMotion) {
         let user = motion.userAcceleration
         let magnitude = sqrt(user.x * user.x + user.y * user.y + user.z * user.z)
@@ -103,6 +121,7 @@ final class MotionSampler {
     private init() {}
     func start() {}
     func stop() {}
+    func clearSensitiveData() {}
     func snapshot() -> MotionMetrics { .empty }
     func snapshotAndReset() -> MotionMetrics { .empty }
     func snapshotDetailAndReset() -> (metrics: MotionMetrics, series: [MotionSample]) { (.empty, []) }

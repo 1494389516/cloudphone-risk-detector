@@ -124,34 +124,25 @@ final class KDFChainTests: XCTestCase {
         }
     }
 
-    // MARK: - Test 4: Pass 4 Masked Full Hash
+    // MARK: - Test 4: Pass 4 HMAC Full Hash
 
-    func testPass4MaskedFullHash() {
+    func testPass4HmacFullHash() {
         let textHash = Self.sha256(Data("test-text-content".utf8))
-        let mask = Self.sha256(Data(Self.pass4MaskSalt.utf8) + textHash)
+        let rootKey = Self.testRootKey
 
-        let section = ArmorABI.Integrity.maskedFullHashSection(mask: mask, fullHash: textHash)
-        XCTAssertEqual(section.count, 64, "section must be 64 bytes (mask + maskedHash)")
+        let section = ArmorABI.Integrity.hmacFullHashSection(rootKey: rootKey, fullHash: textHash)
+        XCTAssertEqual(section.count, 32, "section must be 32 bytes (HMAC tag only)")
 
-        let storedMask = section.prefix(32)
-        let maskedHash = section.suffix(32)
-
-        XCTAssertEqual(storedMask, mask, "first 32 bytes must be the mask")
-
-        var recovered = Data(count: 32)
-        for i in 0..<32 {
-            recovered[i] = storedMask[i] ^ maskedHash[maskedHash.startIndex + i]
-        }
-        XCTAssertEqual(recovered, textHash,
-                       "fullHash must be recoverable via mask ^ maskedHash")
+        let expectedHmac = ArmorABI.hmacSHA256(key: rootKey, message: textHash)
+        XCTAssertEqual(section, expectedHmac, "section must match HMAC-SHA256(rootKey, fullHash)")
     }
 
-    func testPass4MaskedFullHashWithIdenticalInputs() {
+    func testPass4HmacFullHashWithIdenticalInputs() {
         let hash = Self.sha256(Data("identical".utf8))
-        let mask = Self.sha256(Data(Self.pass4MaskSalt.utf8) + hash)
+        let rootKey = Self.testRootKey
 
-        let section1 = ArmorABI.Integrity.maskedFullHashSection(mask: mask, fullHash: hash)
-        let section2 = ArmorABI.Integrity.maskedFullHashSection(mask: mask, fullHash: hash)
+        let section1 = ArmorABI.Integrity.hmacFullHashSection(rootKey: rootKey, fullHash: hash)
+        let section2 = ArmorABI.Integrity.hmacFullHashSection(rootKey: rootKey, fullHash: hash)
         XCTAssertEqual(section1, section2, "deterministic: same inputs → same output")
     }
 
@@ -247,15 +238,12 @@ final class KDFChainTests: XCTestCase {
             )
         )
         let fullHashContent = try fullHashSection.readContent(from: file.data)
-        XCTAssertEqual(fullHashContent.count, 64)
-        let mask = fullHashContent.prefix(32)
-        let maskedHash = fullHashContent.suffix(32)
-        let recoveredFullHash = Data(zip(mask, maskedHash).map(^))
-        XCTAssertEqual(recoveredFullHash, originalTextHash,
-                       "recovered anchor hash must equal SHA256(__TEXT.__text)")
+        XCTAssertEqual(fullHashContent.count, 32, "HMAC anchor section must be 32 bytes")
 
-        let expectedMask = Self.sha256(Data(Self.pass4MaskSalt.utf8) + originalTextHash)
-        XCTAssertEqual(Data(mask), expectedMask, "mask must match SHA256(salt + textHash)")
+        let normalizedKey = Self.normalizedRootKey(rootKey)
+        let expectedHmac = ArmorABI.hmacSHA256(key: normalizedKey, message: originalTextHash)
+        XCTAssertEqual(fullHashContent, expectedHmac,
+                       "stored HMAC must match HMAC-SHA256(rootKey, textHash)")
 
         for (i, sectionName) in ArmorABI.Integrity.splitSectionNames.enumerated() {
             let section = try XCTUnwrap(
@@ -286,10 +274,11 @@ final class KDFChainTests: XCTestCase {
         let firstID = Self.readLE32(tableContent, at: indexBase)
         let firstOffset = Int(Self.readLE32(tableContent, at: indexBase + 4))
         let firstLength = Int(Self.readLE32(tableContent, at: indexBase + 8))
+        let firstNonce = tableContent.subdata(in: (indexBase + 12)..<(indexBase + 20))
         let firstEncrypted = tableContent.subdata(
             in: (dataBase + firstOffset)..<(dataBase + firstOffset + firstLength)
         )
-        let firstKeystream = Self.makeKeystream(key: stringKey, stringID: firstID, length: firstLength)
+        let firstKeystream = Self.makeKeystream(key: stringKey, stringID: firstID, nonce: firstNonce, length: firstLength)
         let firstDecrypted = Data(zip(firstEncrypted, firstKeystream).map(^))
         XCTAssertNotNil(String(data: firstDecrypted, encoding: .utf8),
                         "first entry must decrypt to valid UTF-8")
@@ -307,14 +296,9 @@ final class KDFChainTests: XCTestCase {
         let file1 = try MachOFile(url: url1)
         let anchorPass1 = IntegrityAnchorPass()
         _ = try anchorPass1.execute(on: file1, config: config)
-        let fh1 = try XCTUnwrap(
-            try file1.section(
-                segment: ArmorABI.dataSegmentName,
-                section: ArmorABI.Integrity.fullHashSectionName
-            )
-        )
-        let content1 = try fh1.readContent(from: file1.data)
-        let hash1 = Data(zip(content1.prefix(32), content1.suffix(32)).map(^))
+
+        let textSection1 = try XCTUnwrap(try file1.section(segment: "__TEXT", section: "__text"))
+        let hash1 = Self.sha256(try textSection1.readContent(from: file1.data))
 
         var fixture2 = Self.makeKDFTestFixture()
         let tmpUrl = Self.temporaryURL(named: "kdf_tmp")
@@ -332,14 +316,9 @@ final class KDFChainTests: XCTestCase {
         let file2 = try MachOFile(url: url2)
         let anchorPass2 = IntegrityAnchorPass()
         _ = try anchorPass2.execute(on: file2, config: config)
-        let fh2 = try XCTUnwrap(
-            try file2.section(
-                segment: ArmorABI.dataSegmentName,
-                section: ArmorABI.Integrity.fullHashSectionName
-            )
-        )
-        let content2 = try fh2.readContent(from: file2.data)
-        let hash2 = Data(zip(content2.prefix(32), content2.suffix(32)).map(^))
+
+        let textSection2 = try XCTUnwrap(try file2.section(segment: "__TEXT", section: "__text"))
+        let hash2 = Self.sha256(try textSection2.readContent(from: file2.data))
 
         XCTAssertNotEqual(hash1, hash2,
                           "modifying 1 byte of __TEXT.__text must change the anchor hash")
@@ -387,11 +366,12 @@ final class KDFChainTests: XCTestCase {
         return sha256(seed)
     }
 
-    private static func makeKeystream(key: Data, stringID: UInt32, length: Int) -> Data {
+    private static func makeKeystream(key: Data, stringID: UInt32, nonce: Data = Data(), length: Int) -> Data {
         var seed = Data()
         seed.append(key)
         var sid = stringID.littleEndian
         withUnsafeBytes(of: &sid) { seed.append(contentsOf: $0) }
+        seed.append(nonce)
 
         var block = sha256(seed)
         var output = Data()

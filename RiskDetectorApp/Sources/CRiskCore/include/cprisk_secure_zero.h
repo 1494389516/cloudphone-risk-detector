@@ -13,6 +13,8 @@
 
 static inline __attribute__((always_inline))
 void cprisk_secure_zero(void *ptr, size_t len) {
+    if (!ptr || len == 0 || len > (1UL << 30))
+        return;
     volatile unsigned char *p = (volatile unsigned char *)ptr;
     while (len--) *p++ = 0;
 }

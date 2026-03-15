@@ -228,7 +228,13 @@ public final class CPRiskReport: NSObject {
     }
 
     /// 用于上报的 JSON（未加密）。
+    @available(*, deprecated, message: "Use securePayload() for production. jsonData() returns unencrypted data suitable only for debugging.")
     @objc public func jsonData(prettyPrinted: Bool = false) -> Data {
+        #if DEBUG
+        Logger.log("⚠️ CPRiskReport.jsonData(): returning unencrypted payload — use securePayload() in production")
+        #else
+        assertionFailure("CPRiskReport.jsonData() called in Release — prefer securePayload() for encrypted transport")
+        #endif
         do {
             return try JSON.encode(payload, prettyPrinted: prettyPrinted)
         } catch {
@@ -241,9 +247,15 @@ public final class CPRiskReport: NSObject {
         String(data: jsonData(prettyPrinted: prettyPrinted), encoding: .utf8) ?? "{}"
     }
 
+    /// AES-GCM 加密后的 payload（生产环境推荐）。
+    @objc public func securePayload() throws -> Data {
+        let plaintext = try JSON.encode(payload, prettyPrinted: false)
+        return try PayloadCrypto.encrypt(plaintext)
+    }
+
     /// 本地加密后的 bytes（AES-GCM，密钥在 Keychain）。
     @objc public func encryptedData() throws -> Data {
-        try PayloadCrypto.encrypt(jsonData(prettyPrinted: false))
+        try securePayload()
     }
 
     /// 本地加密后的 base64 字符串（便于写文件/复制）。

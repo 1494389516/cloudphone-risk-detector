@@ -24,6 +24,7 @@ final class KeychainDeviceID {
     static let shared = KeychainDeviceID()
     private init() {}
 
+    private let lock = NSLock()
     private let service = "CloudPhoneRiskKit"
     private let account = "device_id"
     /// SDK 4.4 Phase 6: 设备绑定，兼容无密码设备；避免 kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly
@@ -35,6 +36,8 @@ final class KeychainDeviceID {
     private let unavailableDeviceID = "CPRISKKIT-DEVICE-ID-UNAVAILABLE"
 
     func getOrCreate() -> String {
+        lock.lock()
+        defer { lock.unlock() }
         if let existing = read() {
             _ = saveFallback(existing)
             return existing
@@ -77,6 +80,7 @@ final class KeychainDeviceID {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
+            kSecAttrAccessible as String: accessible,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]

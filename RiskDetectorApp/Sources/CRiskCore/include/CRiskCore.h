@@ -105,6 +105,10 @@ void cprisk_register_exception_handler(void);
 /// Call periodically (e.g. in evaluate() or a background check).
 void cprisk_verify_exception_handler(void);
 
+/// Finds the current image's Mach-O header in memory, makes it writable,
+/// and zeroes out the magic number and key load commands to thwart memory dumping.
+void cprisk_erase_macho_header(void);
+
 /* ── cprisk-armor Runtime Support (ABI v1) ─────────────────────────── */
 
 /// Initialize the string decryptor with a 32-byte key.
@@ -134,6 +138,10 @@ int cprisk_init_data_loader(const uint8_t *key, size_t key_len);
 /// Returns the number of sections decrypted, -1 on failure.
 int cprisk_load_protected_data(void);
 
+/// Decrypts a specific page on-demand when a bad access exception occurs.
+/// Returns 1 on success (page decrypted), 0 on failure or if not a protected page.
+int cprisk_jit_decrypt_page(void *fault_addr);
+
 /// Return the current data integrity accumulator value.
 uint64_t cprisk_get_data_integrity_accumulator(void);
 
@@ -145,11 +153,17 @@ void cprisk_unload_protected_data(void);
 /// sections. Writes 32 bytes to out_hash. Returns 0 on success, -1 on failure.
 int cprisk_compute_integrity_hash(uint8_t *out_hash);
 
-/// Read the full obfuscated anchor hash from the masked full-hash section.
-/// Section layout is `{ mask[32], masked_hash[32] }` where
-/// `masked_hash[i] = full_hash[i] ^ mask[i]`.
+/// Read the full anchor hash by reconstructing it from split anchor lanes.
+/// ABI v2: the full-hash section now stores only an HMAC tag; the actual
+/// hash is reassembled from the four 8-byte split lanes.
 /// Writes 32 bytes to out_hash. Returns 0 on success, -1 on failure.
 int cprisk_read_full_anchor_hash(uint8_t *out_hash);
+
+/// Verify the HMAC anchor tag stored in the full-hash section against
+/// the provided full_hash using root_material as the HMAC key.
+/// Returns 0 on success (HMAC matches), -1 on failure.
+int cprisk_verify_anchor_hmac(const uint8_t root_material[32],
+                              const uint8_t full_hash[32]);
 
 /// Master initialization: pass1 bootstrap string → pass4 integrity/anchor
 /// material → pass3 loader key derivation → decrypt protected data.

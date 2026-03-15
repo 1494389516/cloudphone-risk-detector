@@ -171,11 +171,12 @@ final class StringEncryptorTests: XCTestCase {
             let stringID = readLE32(content, at: entryOffset)
             let dataOffset = Int(readLE32(content, at: entryOffset + 4))
             let dataLength = Int(readLE32(content, at: entryOffset + 8))
+            let nonce = content.subdata(in: (entryOffset + 12)..<(entryOffset + 20))
 
             let encrypted = content.subdata(
                 in: (dataBase + dataOffset)..<(dataBase + dataOffset + dataLength)
             )
-            let keystream = Self.makeKeystream(key: stringKey, stringID: stringID, length: dataLength)
+            let keystream = Self.makeKeystream(key: stringKey, stringID: stringID, nonce: nonce, length: dataLength)
             let decrypted = Data(zip(encrypted, keystream).map(^))
             let decryptedString = String(data: decrypted, encoding: .utf8)
             XCTAssertNotNil(decryptedString, "Failed to decode entry \(i)")
@@ -277,12 +278,12 @@ final class StringEncryptorTests: XCTestCase {
         return Data(SHA256.hash(data: seed))
     }
 
-    /// Keystream 生成（与 StringEncryptorPass 内部逻辑保持一致）
-    private static func makeKeystream(key: Data, stringID: UInt32, length: Int) -> Data {
+    private static func makeKeystream(key: Data, stringID: UInt32, nonce: Data = Data(), length: Int) -> Data {
         var seed = Data()
         seed.append(key)
         var sid = stringID.littleEndian
         withUnsafeBytes(of: &sid) { seed.append(contentsOf: $0) }
+        seed.append(nonce)
 
         var block = Data(SHA256.hash(data: seed))
         var output = Data()

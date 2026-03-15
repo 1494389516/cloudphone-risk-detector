@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0A1B2C3D4E5F60718293A4B5 /* ConfigurationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6D7E8F90A1B2C3D4E5F6071 /* ConfigurationView.swift */; };
 		0AFBA4C93CB42EF36F235C3C /* JSONTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F122700AF4487064C43D5A26 /* JSONTextView.swift */; };
 		2B03C19AF9B27CD84112F0C0 /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 712221BDAFCF54247F7DF807 /* HistoryView.swift */; };
 		35227729D62B5C8E41B1858E /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A3E4EC6427C6C650C3B1ADD /* SettingsView.swift */; };
@@ -24,6 +25,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		C6D7E8F90A1B2C3D4E5F6071 /* ConfigurationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigurationView.swift; sourceTree = "<group>"; };
 		1A80CAAB554D2C859E899FDC /* ResultsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultsView.swift; sourceTree = "<group>"; };
 		2A3E4EC6427C6C650C3B1ADD /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		2EA595A34F27736C533461B6 /* RiskGaugeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskGaugeView.swift; sourceTree = "<group>"; };
@@ -74,6 +76,7 @@
 		571E62450A18B12181483CFC /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				C6D7E8F90A1B2C3D4E5F6071 /* ConfigurationView.swift */,
 				41E5A393FB92AF0CB59ECEF4 /* DashboardView.swift */,
 				712221BDAFCF54247F7DF807 /* HistoryView.swift */,
 				1A80CAAB554D2C859E899FDC /* ResultsView.swift */,
@@ -196,6 +199,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0A1B2C3D4E5F60718293A4B5 /* ConfigurationView.swift in Sources */,
 				3D7419B2D3E663698F729C5F /* ContentView.swift in Sources */,
 				51E093489AF3E8CDA9276CF5 /* DashboardView.swift in Sources */,
 				B0AE4B9538BA842166DBB25C /* DetectionViewModel.swift in Sources */,

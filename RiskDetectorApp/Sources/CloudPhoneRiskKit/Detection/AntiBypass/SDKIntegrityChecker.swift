@@ -54,7 +54,7 @@ struct SDKIntegrityChecker: Detector {
     }
 
     private func firstSuspiciousImage() -> String? {
-        let patterns = ["frida", "substrate", "libhooker", "ellekit", "substitute"]
+        let patterns = DynamicFeatureList.shared.suspiciousLibraries
         let count = _dyld_image_count()
         for index in 0..<count {
             guard let raw = _dyld_get_image_name(index) else { continue }
@@ -237,6 +237,7 @@ struct PLTIntegrityGuard {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: keychainBaselineAccount,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
