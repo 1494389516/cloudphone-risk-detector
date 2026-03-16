@@ -81,6 +81,28 @@
          </BuildableReference>
       </MacroExpansion>
       <Testables>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "00F3F470BFB99E877E446073"
+               BuildableName = "CloudPhoneRiskKitTests.xctest"
+               BlueprintName = "CloudPhoneRiskKitTests"
+               ReferencedContainer = "container:RiskDetectorApp.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "D399E2AD70F902A7F5758889"
+               BuildableName = "CloudPhoneRiskAppCoreTests.xctest"
+               BlueprintName = "CloudPhoneRiskAppCoreTests"
+               ReferencedContainer = "container:RiskDetectorApp.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
       <CommandLineArguments>
       </CommandLineArguments>

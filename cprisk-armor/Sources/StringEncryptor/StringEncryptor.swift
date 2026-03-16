@@ -104,7 +104,7 @@ public final class StringEncryptorPass: ArmorPass {
 
         for record in records {
             let plaintext = Data(record.value.utf8)
-            let nonce = generateNonce()
+            let nonce = try generateNonce()
             let encrypted = xor(
                 plaintext,
                 makeKeystream(key: stringKey, stringID: record.id, nonce: nonce, length: plaintext.count)
@@ -195,10 +195,12 @@ private func normalizedRootKey(_ rootKey: Data?) -> Data {
     return key
 }
 
-private func generateNonce() -> Data {
+private func generateNonce() throws -> Data {
     var bytes = [UInt8](repeating: 0, count: ArmorABI.nonceSize)
     let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-    precondition(status == errSecSuccess, "SecRandomCopyBytes failed")
+    guard status == errSecSuccess else {
+        throw MachOError.invalidData("SecRandomCopyBytes failed: \(status)")
+    }
     return Data(bytes)
 }
 

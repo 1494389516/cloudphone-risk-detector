@@ -503,6 +503,16 @@ SDK 在对抗安全的同时兼顾业务可用性，内置多层灰度与降级�
 cd RiskDetectorApp && swift build
 ```
 
+## 测试
+
+单元测试通过 Swift Package Manager 运行。Xcode scheme 的 TestAction 若为空，请使用以下命令：
+
+```bash
+cd RiskDetectorApp && swift test
+```
+
+若使用 XcodeGen 生成工程（`xcodegen generate`），则 `CloudPhoneRiskKitTests` 与 `CloudPhoneRiskAppCoreTests` 会加入 scheme，可在 Xcode 中直接运行测试。
+
 ---
 
 ## 免责声明

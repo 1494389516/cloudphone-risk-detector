@@ -4,10 +4,11 @@ import MachOKit
 import Security
 
 private enum DataArmorSeed {
-    static let bootstrapID: UInt32 = 1
-    // Build-tool only — this literal does not appear in the final SDK binary.
-    static let bootstrapValue = "cprisk-bootstrap-v1"
     static let blobMagic: UInt32 = 0x43504244
+    static let accumulatorVersion: UInt32 = 2
+    static let accumulatorRotation: UInt32 = 7
+    // Build-tool only — this domain tag does not appear in the final SDK binary.
+    static let accumulatorDomain = "cprisk.pass1.acc.v2"
 }
 
 /// Pass 3: emit a minimal real protected `__DATA` payload and loader descriptor.
@@ -23,18 +24,22 @@ public final class DataSegmentEncryptorPass: ArmorPass {
     public func execute(on file: MachOFile, config: PassConfig) throws -> PassResult {
         let fullAnchorHash = try readFullAnchorHash(from: file)
         let integrityHash = sha256(fullAnchorHash + fullAnchorHash + fullAnchorHash)
-        let stringAccumulator = bootstrapAccumulator()
+        let anchorAccumulator = anchorBoundAccumulator(
+            rootKey: config.encryptionKey,
+            fullAnchorHash: fullAnchorHash,
+            integrityHash: integrityHash
+        )
         let loaderKey = deriveLoaderKey(
             rootKey: config.encryptionKey,
             fullAnchorHash: fullAnchorHash,
             integrityHash: integrityHash,
-            stringAccumulator: stringAccumulator
+            anchorAccumulator: anchorAccumulator
         )
 
         let plaintextPayload = buildProtectedBlob(
             fullAnchorHash: fullAnchorHash,
             integrityHash: integrityHash,
-            stringAccumulator: stringAccumulator
+            anchorAccumulator: anchorAccumulator
         )
 
         try file.addOrUpdateSection(
@@ -65,7 +70,7 @@ public final class DataSegmentEncryptorPass: ArmorPass {
                 segment: section.segmentName,
                 section: section.sectionName
             )
-            let nonce = generateNonce()
+            let nonce = try generateNonce()
             let encrypted = xor(
                 plaintext,
                 makeKeystream(key: loaderKey, keyID: keyID, nonce: nonce, length: plaintext.count)
@@ -109,7 +114,9 @@ public final class DataSegmentEncryptorPass: ArmorPass {
             "Wrote loader descriptor (\(entries.count) entries) to "
                 + "\(ArmorABI.dataSegmentName).\(ArmorABI.Loader.sectionName)"
         )
-        details.append("Loader key is chained from pass1 bootstrap accumulator and pass4 anchor material")
+        details.append(
+            "Loader key is chained from the anchor-bound accumulator plus pass4 anchor material"
+        )
 
         return PassResult(
             passName: name,
@@ -142,27 +149,36 @@ public final class DataSegmentEncryptorPass: ArmorPass {
     private func buildProtectedBlob(
         fullAnchorHash: Data,
         integrityHash: Data,
-        stringAccumulator: UInt64
+        anchorAccumulator: UInt64
     ) -> Data {
         var payload = Data()
         appendUInt32(DataArmorSeed.blobMagic, to: &payload)
         appendUInt32(ArmorABI.version, to: &payload)
-        appendUInt32(DataArmorSeed.bootstrapID, to: &payload)
-        appendUInt32(1, to: &payload)
+        appendUInt32(DataArmorSeed.accumulatorVersion, to: &payload)
+        appendUInt32(DataArmorSeed.accumulatorRotation, to: &payload)
         payload.append(fullAnchorHash)
         payload.append(integrityHash)
-        appendUInt64(stringAccumulator, to: &payload)
+        appendUInt64(anchorAccumulator, to: &payload)
         return payload
     }
+}
 
-    private func bootstrapAccumulator() -> UInt64 {
-        let digest = sha256(Data(DataArmorSeed.bootstrapValue.utf8))
-        var value: UInt64 = 0
-        _ = withUnsafeMutableBytes(of: &value) { target in
-            digest.prefix(MemoryLayout<UInt64>.size).copyBytes(to: target)
-        }
-        return rotl64(value, by: Int(DataArmorSeed.bootstrapID % 64))
+package func anchorBoundAccumulator(
+    rootKey: Data?,
+    fullAnchorHash: Data,
+    integrityHash: Data
+) -> UInt64 {
+    var seed = Data(DataArmorSeed.accumulatorDomain.utf8)
+    seed.append(normalizedRootKey(rootKey))
+    seed.append(fullAnchorHash)
+    seed.append(integrityHash)
+
+    let digest = sha256(seed)
+    var value: UInt64 = 0
+    _ = withUnsafeMutableBytes(of: &value) { target in
+        digest.prefix(MemoryLayout<UInt64>.size).copyBytes(to: target)
     }
+    return rotl64(value, by: Int(DataArmorSeed.accumulatorRotation))
 }
 
 // Build-tool only — this salt does not appear in the final SDK binary.
@@ -170,13 +186,13 @@ private func deriveLoaderKey(
     rootKey: Data?,
     fullAnchorHash: Data,
     integrityHash: Data,
-    stringAccumulator: UInt64
+    anchorAccumulator: UInt64
 ) -> Data {
     var seed = Data("cprisk.pass3.key.v1".utf8)
     seed.append(normalizedRootKey(rootKey))
     seed.append(fullAnchorHash)
     seed.append(integrityHash)
-    appendUInt64(stringAccumulator, to: &seed)
+    appendUInt64(anchorAccumulator, to: &seed)
     return sha256(seed)
 }
 
@@ -190,10 +206,12 @@ private func stableKeyID(segment: String, section: String) -> UInt32 {
     return hash
 }
 
-private func generateNonce() -> Data {
+private func generateNonce() throws -> Data {
     var bytes = [UInt8](repeating: 0, count: ArmorABI.nonceSize)
     let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-    precondition(status == errSecSuccess, "SecRandomCopyBytes failed")
+    guard status == errSecSuccess else {
+        throw MachOError.invalidData("SecRandomCopyBytes failed: \(status)")
+    }
     return Data(bytes)
 }
 

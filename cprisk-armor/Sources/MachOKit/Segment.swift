@@ -158,9 +158,13 @@ public struct Section {
 
     public func readContent(from fileData: Data) throws -> Data {
         guard storesDataInFile else { return Data() }
+        guard size <= UInt64(Int.max) else {
+            throw MachOError.integerOverflow("section \(segmentName),\(sectionName) size \(size) exceeds Int.max")
+        }
         let start = Int(offset)
         guard size > 0 else { return Data() }
-        let (end, overflow) = start.addingReportingOverflow(Int(size))
+        let sizeInt = Int(size)
+        let (end, overflow) = start.addingReportingOverflow(sizeInt)
         guard !overflow, start >= 0, end <= fileData.count, start < end else {
             throw MachOError.validationFailed(
                 "Section \(segmentName),\(sectionName) content range [\(start), \(start) + \(size)) is invalid"

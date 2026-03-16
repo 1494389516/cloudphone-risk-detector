@@ -263,9 +263,9 @@ extension CPRiskKit {
         }
 
         // v2a 签名使用 armor material 派生的密钥，验签时需用 baseKey 派生 effectiveKey。
-        // 若 armor 被篡改或未初始化，effectiveSigningKeyForV2aValidation 返回 nil，
-        // 此时应以 signingFailed 失败，而不是用 poison material 继续验签（否则只会得到
-        // 误导性的 signatureMismatch，掩盖真实的 armor 篡改原因）。
+        // cprisk_get_runtime_material() 的返回码不再是 authenticity oracle；只有当 runtime
+        // 未激活或显式暴露 visible-poison 状态时，effectiveSigningKeyForV2aValidation 才返回 nil。
+        // 若 deception 已激活，这里会继续拿 decoy material 派生密钥，最终更像普通签名不匹配。
         let effectiveKey: String
         if envelope.sigVer == "v2a" {
             guard let derived = effectiveSigningKeyForV2aValidation(baseKey: signingKey) else {

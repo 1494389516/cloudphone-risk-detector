@@ -101,6 +101,9 @@ public final class MetadataScrubberPass: ArmorPass {
             section: ArmorABI.MetadataSections.swiftReflectionStrings
         ) else { return 0 }
 
+        guard section.size <= UInt64(Int.max) else {
+            throw MachOError.integerOverflow("section \(section.sectionName) size exceeds Int.max")
+        }
         let size = Int(section.size)
         guard size > 0 else { return 0 }
 
@@ -126,6 +129,7 @@ public final class MetadataScrubberPass: ArmorPass {
                 guard let section = try file.section(segment: segName, section: sectionName) else {
                     continue
                 }
+                guard section.size <= UInt64(Int.max) else { continue }
                 let size = Int(section.size)
                 guard size > 0 else { continue }
 
@@ -216,6 +220,47 @@ public final class MetadataScrubberPass: ArmorPass {
     /// Minimum length for a generic "Risk"-containing string to be eligible for scrubbing.
     private static let riskSubstringMinLength = 5
 
+    /// Raw byte-level keyword search for slices that failed UTF-8/Latin-1 decode.
+    /// Matches keywords case-insensitively (ASCII only).
+    private static func rawSliceContainsScrubKeyword(_ slice: Data, length: Int) -> Bool {
+        for keyword in constSectionScrubKeywords {
+            let kw = keyword.lowercased()
+            let kwBytes = Array(kw.utf8)
+            guard length >= kwBytes.count else { continue }
+            for i in 0...(length - kwBytes.count) {
+                var match = true
+                for j in 0..<kwBytes.count {
+                    let b = slice[i + j]
+                    let kb = kwBytes[j]
+                    if b == kb { continue }
+                    if (65...90).contains(b) && b + 32 == kb { continue }
+                    if (97...122).contains(b) && b - 32 == kb { continue }
+                    match = false
+                    break
+                }
+                if match { return true }
+            }
+        }
+        if length > riskSubstringMinLength {
+            let riskBytes = Array("risk".utf8)
+            guard length >= riskBytes.count else { return false }
+            for i in 0...(length - riskBytes.count) {
+                var match = true
+                for j in 0..<riskBytes.count {
+                    let b = slice[i + j]
+                    let kb = riskBytes[j]
+                    if b == kb { continue }
+                    if (65...90).contains(b) && b + 32 == kb { continue }
+                    if (97...122).contains(b) && b - 32 == kb { continue }
+                    match = false
+                    break
+                }
+                if match { return true }
+            }
+        }
+        return false
+    }
+
     /// Returns true when a C string found in `__TEXT,__const` should be overwritten.
     ///
     /// Rules (evaluated in order):
@@ -289,27 +334,26 @@ public final class MetadataScrubberPass: ArmorPass {
                 let str = String(data: slice, encoding: .utf8)
                     ?? String(data: slice, encoding: .isoLatin1)
                     ?? ""
-                if Self.shouldScrubConstString(str) {
-                    // Overwrite string content bytes with random hex; null terminator stays at `end`.
+                var shouldScrub = false
+                if !str.isEmpty {
+                    shouldScrub = Self.shouldScrubConstString(str)
+                    if !shouldScrub {
+                        // Raw byte-level search for business keywords in non-UTF8 records.
+                        let lower = str.lowercased()
+                        shouldScrub = Self.constSectionScrubKeywords.contains(where: { lower.contains($0.lowercased()) })
+                            || (lower.count > Self.riskSubstringMinLength && lower.contains("risk"))
+                    }
+                } else {
+                    // Decoding failed: do raw byte-level keyword match to avoid missing hits.
+                    shouldScrub = Self.rawSliceContainsScrubKeyword(slice, length: length)
+                }
+                if shouldScrub {
                     try file.replaceBytes(
                         at: sectionFileOffset + UInt64(position),
                         with: Self.randomHexBytes(count: length)
                     )
                     scrubbed += 1
                     bytes += length
-                } else {
-                    // Also do a raw byte-level search for business keywords in non-UTF8 records.
-                    let lower = str.lowercased()
-                    let rawContainsBusiness = Self.constSectionScrubKeywords.contains(where: { lower.contains($0.lowercased()) })
-                        || (lower.count > Self.riskSubstringMinLength && lower.contains("risk"))
-                    if rawContainsBusiness {
-                        try file.replaceBytes(
-                            at: sectionFileOffset + UInt64(position),
-                            with: Self.randomHexBytes(count: length)
-                        )
-                        scrubbed += 1
-                        bytes += length
-                    }
                 }
             }
 

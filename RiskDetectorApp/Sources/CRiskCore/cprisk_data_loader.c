@@ -665,9 +665,6 @@ void cprisk_erase_macho_header(void) {
         return;
 
     struct mach_header_64 *mut_hdr = (struct mach_header_64 *)hdr;
-    if (!mut_hdr)
-        return;
-
     if (mut_hdr->sizeofcmds > page_size - sizeof(struct mach_header_64))
         return;
 

@@ -60,7 +60,7 @@ final class StringEncryptorTests: XCTestCase {
         XCTAssertEqual(StringClassifier.classify(str256), .shouldEncrypt)
     }
 
-    func testClassifyLength257IsSkip() {
+    func testClassifyLength257IsShouldEncrypt() {
         // Length limit (256) removed — long strings are now shouldEncrypt to catch JSON config literals.
         let str257 = String(repeating: "a", count: 257)
         XCTAssertEqual(StringClassifier.classify(str257), .shouldEncrypt)
@@ -107,7 +107,8 @@ final class StringEncryptorTests: XCTestCase {
         let config = PassConfig(encryptionKey: Data(repeating: 0x42, count: 32))
         let result = try pass.execute(on: file, config: config)
 
-        // 1 bootstrap + 6 个非 skip 的 cstring = 7 条记录
+        // 1 条 Pass 1 合成 bootstrap 记录 + 6 个非 skip 的 cstring = 7 条记录。
+        // 这条合成记录仅用于 string table 覆盖，Pass 3 不再依赖它派生 loader key。
         XCTAssertEqual(result.itemsProcessed, 7)
 
         let section = try XCTUnwrap(
@@ -184,6 +185,7 @@ final class StringEncryptorTests: XCTestCase {
             XCTAssertNotNil(decryptedString, "Failed to decode entry \(i)")
 
             if stringID == 1 {
+                // Pass 1 仍保留这条合成记录；它不再承担 runtime KDF bootstrap 语义。
                 XCTAssertEqual(decryptedString, "cprisk-bootstrap-v1")
             } else {
                 XCTAssertTrue(
