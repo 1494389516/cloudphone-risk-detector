@@ -167,6 +167,129 @@ final class RiskReportMapperTests: XCTestCase {
         XCTAssertTrue(cloudDatacenter?.detected ?? false)
     }
 
+    // MARK: - graphPayload mapping (Bug fix: commit 54881e1)
+
+    /// 验证 graphPayload 字段在 PayloadMirror 解码后正确传递到 RiskReportDTO
+    /// 回归测试：此前 RiskReportMapper 在 dto(from:jsonData:) 路径中
+    /// 将 graphPayload 静默丢弃（未传入 RiskReportDTO 构造器）
+    func testDtoFromJSONData_GraphPayloadMappedCorrectly() {
+        let json = """
+        {
+          "generatedAt": "2024-01-15T10:00:00.000Z",
+          "deviceID": "test-device-graph",
+          "score": 42.0,
+          "isHighRisk": false,
+          "summary": "medium_risk",
+          "network": {
+            "interfaceType": {"value": "wifi", "method": "NWPathMonitor"},
+            "isExpensive": false,
+            "isConstrained": false,
+            "vpn": {"detected": false, "method": "ifaddrs", "confidence": "weak"},
+            "proxy": {"detected": false, "method": "CFNetwork", "confidence": "weak"}
+          },
+          "behavior": {
+            "touch": {"sampleCount": 0, "tapCount": 0, "swipeCount": 0},
+            "motion": {"sampleCount": 0},
+            "touchMotionCorrelation": null,
+            "actionCount": 0
+          },
+          "jailbreak": {
+            "isJailbroken": false,
+            "confidence": 0,
+            "detectedMethods": [],
+            "details": ""
+          },
+          "signals": [],
+          "graphPayload": {
+            "fingerprintVector": {
+              "hwEntropy": 5.5,
+              "screenRatioDrift": 0.02,
+              "cpuCoreConsistency": 0.95,
+              "bootTimeDelta": 72000,
+              "gpuTier": 2
+            },
+            "edgeSignals": {
+              "ipSubnet": "192.168.1",
+              "carrierASN": 4134,
+              "timezoneOffset": 28800,
+              "locale": "zh_CN"
+            },
+            "temporalRhythm": {
+              "sessionSeq": 3,
+              "installAgeDays": 30,
+              "tapIntervalP50": 250.0,
+              "sessionDurationP50": 120.0
+            },
+            "capabilityScore": {
+              "basicAnomalyCount": 0,
+              "qualitySuspicion": 10,
+              "totalProbes": 8
+            }
+          }
+        }
+        """
+        guard let data = json.data(using: .utf8) else {
+            XCTFail("JSON data encoding failed")
+            return
+        }
+
+        let dto = RiskReportMapper.dto(from: data)
+
+        XCTAssertNotNil(dto, "DTO should not be nil")
+        XCTAssertNotNil(dto?.graphPayload, "graphPayload should be decoded and mapped, not silently dropped")
+
+        let gp = dto?.graphPayload
+        XCTAssertEqual(gp?.fingerprintVector.hwEntropy, 5.5, accuracy: 0.001)
+        XCTAssertEqual(gp?.fingerprintVector.gpuTier, 2)
+        XCTAssertEqual(gp?.edgeSignals.ipSubnet, "192.168.1")
+        XCTAssertEqual(gp?.edgeSignals.carrierASN, 4134)
+        XCTAssertEqual(gp?.temporalRhythm.sessionSeq, 3)
+        XCTAssertEqual(gp?.temporalRhythm.installAgeDays, 30)
+        XCTAssertEqual(gp?.capabilityScore.qualitySuspicion, 10)
+        XCTAssertEqual(gp?.capabilityScore.totalProbes, 8)
+    }
+
+    /// 验证 graphPayload 为 nil 时不影响其他字段映射
+    func testDtoFromJSONData_GraphPayloadAbsentMapsToNil() {
+        let json = """
+        {
+          "generatedAt": "2024-01-15T10:00:00.000Z",
+          "deviceID": "test-no-graph",
+          "score": 10.0,
+          "isHighRisk": false,
+          "summary": "low_risk",
+          "network": {
+            "interfaceType": {"value": "wifi", "method": "NWPathMonitor"},
+            "isExpensive": false,
+            "isConstrained": false,
+            "vpn": {"detected": false, "method": "ifaddrs", "confidence": "weak"},
+            "proxy": {"detected": false, "method": "CFNetwork", "confidence": "weak"}
+          },
+          "behavior": {
+            "touch": {"sampleCount": 0, "tapCount": 0, "swipeCount": 0},
+            "motion": {"sampleCount": 0},
+            "touchMotionCorrelation": null,
+            "actionCount": 0
+          },
+          "jailbreak": {
+            "isJailbroken": false,
+            "confidence": 0,
+            "detectedMethods": [],
+            "details": ""
+          },
+          "signals": []
+        }
+        """
+        guard let data = json.data(using: .utf8) else {
+            XCTFail("JSON data encoding failed")
+            return
+        }
+
+        let dto = RiskReportMapper.dto(from: data)
+        XCTAssertNotNil(dto)
+        XCTAssertNil(dto?.graphPayload, "graphPayload should be nil when absent from JSON")
+    }
+
     func testDtoFromReport_RoundtripViaJSON() {
         let context = TestFixtures.makeRiskContext()
         let report = RiskScorer.score(context: context, config: TestFixtures.defaultRiskConfig)

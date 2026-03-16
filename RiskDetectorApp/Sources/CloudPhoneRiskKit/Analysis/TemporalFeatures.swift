@@ -237,7 +237,11 @@ public final class TemporalFeaturesCalculator {
         let sumXY = zip(xValues, scores).map(*).reduce(0, +)
         let sumXX = xValues.map { $0 * $0 }.reduce(0, +)
 
-        let slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX)
+        let denominator = n * sumXX - sumX * sumX
+        guard abs(denominator) > 1e-9 else {
+            return .stable
+        }
+        let slope = (n * sumXY - sumX * sumY) / denominator
         let avgScore = sumY / n
 
         // 根据斜率判断趋势

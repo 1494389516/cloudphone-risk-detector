@@ -85,6 +85,6 @@ public final class SymbolStripperPass: ArmorPass {
     private static let hexTable: [UInt8] = Array("0123456789abcdef".utf8)
 
     private static func randomHexBytes(count: Int) -> Data {
-        Data((0..<count).map { _ in hexTable[Int.random(in: 0..<16)] })
+        Data((0..<count).map { _ in hexTable[Int.random(in: 0..<hexTable.count)] })
     }
 }

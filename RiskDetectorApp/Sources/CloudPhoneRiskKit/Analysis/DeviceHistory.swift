@@ -466,7 +466,7 @@ public final class DeviceHistory {
             return
         }
 
-        if diskFreshness.sequence < anchor.sequence || diskFreshness.latestTimestamp < anchor.latestTimestamp {
+        if diskFreshness.sequence < anchor.sequence && diskFreshness.latestTimestamp < anchor.latestTimestamp {
             Logger.log("DeviceHistory: freshness rollback detected")
             clearPersistedFilesLocked(resetAnchor: false)
             cachedSnapshots = []
