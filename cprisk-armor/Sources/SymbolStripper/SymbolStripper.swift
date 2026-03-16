@@ -1,25 +1,24 @@
 import Foundation
 import MachOKit
 
-/// Pass 6: Strip or obfuscate SDK-specific local symbols from the Mach-O
+/// Pass 6: Strip or obfuscate ALL defined-local symbols from the Mach-O
 /// nlist symbol table to prevent IDA / Hopper from demangling function names.
 ///
-/// Only touches LOCAL symbols (no N_EXT, no N_UNDF, no N_STAB) whose names
-/// contain known SDK markers or the "outlined" keyword. The symbol name bytes
-/// in the string table are replaced with random hex of the same length,
-/// preserving the null terminator and overall table layout.
+/// Only touches LOCAL symbols (no N_EXT, no N_UNDF, no N_STAB).
+/// Every local symbol is obfuscated **unless** it matches a conservative
+/// whitelist of system/runtime prefixes. The symbol name bytes in the string
+/// table are replaced with random hex of the same length, preserving the
+/// null terminator and overall table layout.
 public final class SymbolStripperPass: ArmorPass {
     public let name = "SymbolStripper"
 
-    private static let sdkMarkers: [String] = [
-        "CPRisk", "CloudPhone", "Risk", "Detection",
-        "Jailbreak", "AntiTamper", "Behavior", "Sensor",
-        "Policy", "Decision", "TrustChain", "Armor",
+    private static let systemModulePrefixes: [String] = [
+        "Swift", "Foundation", "UIKit", "SwiftUI",
+        "CoreFoundation", "ObjectiveC", "Combine",
+        "Darwin", "os", "Dispatch",
     ]
 
-    private static let leakMarkers: [String] = [
-        "outlined",
-    ]
+    private static let entryPoints: Set<String> = ["_main"]
 
     public init() {}
 
@@ -71,13 +70,20 @@ public final class SymbolStripperPass: ArmorPass {
     // MARK: - Decision Logic
 
     private func shouldObfuscate(_ symbolName: String) -> Bool {
-        for marker in Self.sdkMarkers where symbolName.contains(marker) {
-            return true
+        if symbolName.count <= 1 { return false }
+
+        if symbolName.hasPrefix("_$s") {
+            for module in Self.systemModulePrefixes where symbolName.contains(module) {
+                return false
+            }
         }
-        for marker in Self.leakMarkers where symbolName.contains(marker) {
-            return true
-        }
-        return false
+
+        if symbolName.hasPrefix("_objc_") || symbolName.hasPrefix("_OBJC_") { return false }
+        if symbolName.hasPrefix("_swift_") { return false }
+        if symbolName.hasPrefix("___swift_") { return false }
+        if Self.entryPoints.contains(symbolName) { return false }
+
+        return true
     }
 
     // MARK: - Random Generation

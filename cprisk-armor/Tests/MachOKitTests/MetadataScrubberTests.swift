@@ -24,15 +24,12 @@ final class MetadataScrubberTests: XCTestCase {
 
         let after = try file.findSwiftTypeMetadata()
 
-        // _InternalHelper: obfuscated, same length
         XCTAssertNotEqual(after[0].name, "_InternalHelper")
         XCTAssertEqual(after[0].name.count, "_InternalHelper".count)
 
-        // CPRiskDetector: now obfuscated (no more SDK-name whitelist)
         XCTAssertNotEqual(after[1].name, "CPRiskDetector")
         XCTAssertEqual(after[1].name.count, "CPRiskDetector".count)
 
-        // BusinessLogic: obfuscated, same length
         XCTAssertNotEqual(after[2].name, "BusinessLogic")
         XCTAssertEqual(after[2].name.count, "BusinessLogic".count)
 
@@ -65,7 +62,43 @@ final class MetadataScrubberTests: XCTestCase {
         XCTAssertTrue(result.details.contains { $0.contains("Reflection strings scrubbed: 32 bytes") })
     }
 
-    // MARK: - C. ObjC Method Name Obfuscation
+    // MARK: - B2. Additional Metadata Section Scrubbing
+
+    func testAdditionalMetadataSectionsScrubbed() throws {
+        let (file, url) = try Self.loadFixture(named: "extra_sections", useExtendedFixture: true)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let fieldmd = try XCTUnwrap(
+            try file.section(segment: "__TEXT", section: "__swift5_fieldmd")
+        )
+        let originalFieldmd = file.data.subdata(
+            in: Int(fieldmd.offset)..<(Int(fieldmd.offset) + Int(fieldmd.size))
+        )
+
+        let capture = try XCTUnwrap(
+            try file.section(segment: "__TEXT", section: "__swift5_capture")
+        )
+        let originalCapture = file.data.subdata(
+            in: Int(capture.offset)..<(Int(capture.offset) + Int(capture.size))
+        )
+
+        let pass = MetadataScrubberPass()
+        let result = try pass.execute(on: file, config: PassConfig())
+
+        let modifiedFieldmd = file.data.subdata(
+            in: Int(fieldmd.offset)..<(Int(fieldmd.offset) + Int(fieldmd.size))
+        )
+        XCTAssertNotEqual(modifiedFieldmd, originalFieldmd)
+
+        let modifiedCapture = file.data.subdata(
+            in: Int(capture.offset)..<(Int(capture.offset) + Int(capture.size))
+        )
+        XCTAssertNotEqual(modifiedCapture, originalCapture)
+
+        XCTAssertTrue(result.details.contains { $0.contains("Additional metadata sections scrubbed:") })
+    }
+
+    // MARK: - C. ObjC Method Name Obfuscation (aggressive mode)
 
     func testObjCMethodNameObfuscation() throws {
         let (file, url) = try Self.loadFixture(named: "objc_meth")
@@ -80,15 +113,17 @@ final class MetadataScrubberTests: XCTestCase {
         let content = try section.readContent(from: file.data)
         let methods = Self.parseCStrings(from: content)
 
-        // System/non-SDK methods preserved (no SDK marker → left untouched)
+        // System methods preserved (init prefix)
         XCTAssertTrue(methods.contains("initWithFrame:"))
-        XCTAssertTrue(methods.contains("setTitle:"))
 
-        // SDK methods obfuscated (contain SDK markers → names gone)
+        // Non-system methods are now ALL obfuscated (aggressive mode)
         XCTAssertFalse(methods.contains("cpriskCollect"))
         XCTAssertFalse(methods.contains("CPRiskCheck"))
+        XCTAssertFalse(methods.contains("setTitle:"))
 
-        XCTAssertTrue(result.details.contains { $0.contains("ObjC method names obfuscated: 2/4") })
+        // 3 out of 4 obfuscated: cpriskCollect, CPRiskCheck, setTitle: (all non-system)
+        // initWithFrame: preserved (init prefix)
+        XCTAssertTrue(result.details.contains { $0.contains("ObjC method names obfuscated: 3/4") })
     }
 
     // MARK: - D. Structural Preservation
@@ -136,20 +171,23 @@ final class MetadataScrubberTests: XCTestCase {
         let pass = MetadataScrubberPass()
         let result = try pass.execute(on: file, config: PassConfig())
 
-        // 3 type names + 1 reflstr section + 2 objc methods = 6 items
-        XCTAssertEqual(result.itemsProcessed, 6)
+        // 3 type names + 1 reflstr + 3 objc methods (aggressive: all non-system) = 7 items
+        XCTAssertEqual(result.itemsProcessed, 7)
         XCTAssertEqual(result.passName, "MetadataScrubber")
 
         // bytes: 15 (_InternalHelper) + 14 (CPRiskDetector) + 13 (BusinessLogic)
         //      + 32 (reflstr)
-        //      + 13 (cpriskCollect) + 11 (CPRiskCheck) = 98
-        XCTAssertEqual(result.bytesModified, 98)
+        //      + 13 (cpriskCollect) + 9 (setTitle:) + 11 (CPRiskCheck) = 107
+        XCTAssertEqual(result.bytesModified, 107)
     }
 
     // MARK: - Helpers
 
-    private static func loadFixture(named label: String) throws -> (MachOFile, URL) {
-        let data = makeMetadataFixture()
+    private static func loadFixture(
+        named label: String,
+        useExtendedFixture: Bool = false
+    ) throws -> (MachOFile, URL) {
+        let data = useExtendedFixture ? makeExtendedMetadataFixture() : makeMetadataFixture()
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(label)_\(UUID().uuidString).macho")
         try data.write(to: url)
@@ -172,7 +210,7 @@ final class MetadataScrubberTests: XCTestCase {
         return strings
     }
 
-    // MARK: - Fixture Builder
+    // MARK: - Fixture Builder (base: 3 sections)
     //
     // Layout (1024 bytes total):
     //
@@ -186,10 +224,6 @@ final class MetadataScrubberTests: XCTestCase {
     //   [480, 512)  __swift5_reflstr  (32 bytes)
     //   [512, 563)  __objc_methname   (4 null-terminated method names, 51 bytes)
     //   [563,1024)  zero padding
-    //
-    // Relative pointer math:
-    //   entry[i] at (384 + i*4) stores Int32 offset to descriptor[i]
-    //   descriptor[i].nameField at (descriptor + 8) stores Int32 offset to name string
 
     private static func makeMetadataFixture() -> Data {
         var d = Data()
@@ -259,39 +293,33 @@ final class MetadataScrubberTests: XCTestCase {
         d.append(Data(count: 384 - d.count))
 
         // ── __swift5_types entries (3 × Int32 relative pointers) ──
-        //   entry[0] at 384 → descriptor at 396:  384 + 12 = 396
-        //   entry[1] at 388 → descriptor at 408:  388 + 20 = 408
-        //   entry[2] at 392 → descriptor at 420:  392 + 28 = 420
         d.appendLE(Int32(12))
         d.appendLE(Int32(20))
         d.appendLE(Int32(28))
         assert(d.count == 396)
 
         // ── type descriptors (3 × 12 bytes: flags, parent, name_rel) ──
-        //   desc[0] at 396, nameField at 404 → name at 432: 404 + 28 = 432
         d.appendLE(UInt32(0)); d.appendLE(UInt32(0)); d.appendLE(Int32(28))
         assert(d.count == 408)
-        //   desc[1] at 408, nameField at 416 → name at 448: 416 + 32 = 448
         d.appendLE(UInt32(0)); d.appendLE(UInt32(0)); d.appendLE(Int32(32))
         assert(d.count == 420)
-        //   desc[2] at 420, nameField at 428 → name at 463: 428 + 35 = 463
         d.appendLE(UInt32(0)); d.appendLE(UInt32(0)); d.appendLE(Int32(35))
         assert(d.count == 432)
 
         // ── name strings ──
-        d.append(contentsOf: "_InternalHelper".utf8); d.append(0)  // 16 bytes → [432,448)
+        d.append(contentsOf: "_InternalHelper".utf8); d.append(0)
         assert(d.count == 448)
-        d.append(contentsOf: "CPRiskDetector".utf8); d.append(0)   // 15 bytes → [448,463)
+        d.append(contentsOf: "CPRiskDetector".utf8); d.append(0)
         assert(d.count == 463)
-        d.append(contentsOf: "BusinessLogic".utf8); d.append(0)    // 14 bytes → [463,477)
+        d.append(contentsOf: "BusinessLogic".utf8); d.append(0)
         assert(d.count == 477)
 
-        d.append(Data(count: 480 - d.count))  // pad to 480
+        d.append(Data(count: 480 - d.count))
 
         // ── __swift5_reflstr content (32 bytes) ──
-        let reflStr = "SomeField\0TypeName\0Extra\0Pad\0XX"  // 30 bytes
+        let reflStr = "SomeField\0TypeName\0Extra\0Pad\0XX"
         d.append(contentsOf: reflStr.utf8)
-        d.append(Data(count: 512 - d.count))   // pad to 512
+        d.append(Data(count: 512 - d.count))
         assert(d.count == 512)
 
         // ── __objc_methname content (51 bytes) ──
@@ -302,6 +330,160 @@ final class MetadataScrubberTests: XCTestCase {
         assert(d.count == 563)
 
         d.append(Data(count: 1024 - d.count))
+        return d
+    }
+
+    // MARK: - Extended Fixture (with additional metadata sections)
+    //
+    // Adds __swift5_fieldmd (24 bytes) and __swift5_capture (16 bytes) to the base layout.
+    // Layout (2048 bytes total):
+    //
+    //   [   0,   32)  mach_header_64
+    //   [  32,  504)  LC_SEGMENT_64 __TEXT  (72 hdr + 5×80 sections = 472)
+    //   [ 504,  512)  padding
+    //   [ 512,  524)  __swift5_types    (3 entries × 4 = 12 bytes)
+    //   [ 524,  560)  type descriptors  (3 × 12 = 36 bytes)
+    //   [ 560,  605)  name strings
+    //   [ 605,  608)  padding
+    //   [ 608,  640)  __swift5_reflstr  (32 bytes)
+    //   [ 640,  691)  __objc_methname   (51 bytes)
+    //   [ 691,  704)  padding
+    //   [ 704,  728)  __swift5_fieldmd  (24 bytes)
+    //   [ 728,  744)  __swift5_capture  (16 bytes)
+    //   [ 744, 2048)  zero padding
+
+    private static func makeExtendedMetadataFixture() -> Data {
+        var d = Data()
+
+        let nsects: UInt32 = 5
+        let cmdsize: UInt32 = 72 + nsects * 80   // 472
+
+        // ── mach_header_64 (32 bytes) ──
+        d.appendLE(UInt32(0xFEEDFACF))
+        d.appendLE(UInt32(0x0100000C))
+        d.appendLE(UInt32(0))
+        d.appendLE(UInt32(0x00000006))
+        d.appendLE(UInt32(1))             // ncmds
+        d.appendLE(cmdsize)               // sizeofcmds
+        d.appendLE(UInt32(0))
+        d.appendLE(UInt32(0))
+        assert(d.count == 32)
+
+        // ── LC_SEGMENT_64 __TEXT header (72 bytes) ──
+        d.appendLE(UInt32(0x19))
+        d.appendLE(cmdsize)
+        d.appendFixedCString("__TEXT", length: 16)
+        d.appendLE(UInt64(0))             // vmaddr
+        d.appendLE(UInt64(2048))          // vmsize
+        d.appendLE(UInt64(0))             // fileoff
+        d.appendLE(UInt64(2048))          // filesize
+        d.appendLE(UInt32(5))
+        d.appendLE(UInt32(5))
+        d.appendLE(nsects)
+        d.appendLE(UInt32(0))
+        assert(d.count == 104)
+
+        // ── section: __swift5_types ──
+        d.appendFixedCString("__swift5_types", length: 16)
+        d.appendFixedCString("__TEXT", length: 16)
+        d.appendLE(UInt64(512)); d.appendLE(UInt64(12))
+        d.appendLE(UInt32(512)); d.appendLE(UInt32(2))
+        d.appendLE(UInt32(0)); d.appendLE(UInt32(0))
+        d.appendLE(UInt32(0))
+        d.appendLE(UInt32(0)); d.appendLE(UInt32(0)); d.appendLE(UInt32(0))
+        assert(d.count == 184)
+
+        // ── section: __swift5_reflstr ──
+        d.appendFixedCString("__swift5_reflstr", length: 16)
+        d.appendFixedCString("__TEXT", length: 16)
+        d.appendLE(UInt64(608)); d.appendLE(UInt64(32))
+        d.appendLE(UInt32(608)); d.appendLE(UInt32(0))
+        d.appendLE(UInt32(0)); d.appendLE(UInt32(0))
+        d.appendLE(UInt32(0))
+        d.appendLE(UInt32(0)); d.appendLE(UInt32(0)); d.appendLE(UInt32(0))
+        assert(d.count == 264)
+
+        // ── section: __objc_methname ──
+        d.appendFixedCString("__objc_methname", length: 16)
+        d.appendFixedCString("__TEXT", length: 16)
+        d.appendLE(UInt64(640)); d.appendLE(UInt64(51))
+        d.appendLE(UInt32(640)); d.appendLE(UInt32(0))
+        d.appendLE(UInt32(0)); d.appendLE(UInt32(0))
+        d.appendLE(UInt32(0x02))
+        d.appendLE(UInt32(0)); d.appendLE(UInt32(0)); d.appendLE(UInt32(0))
+        assert(d.count == 344)
+
+        // ── section: __swift5_fieldmd ──
+        d.appendFixedCString("__swift5_fieldmd", length: 16)
+        d.appendFixedCString("__TEXT", length: 16)
+        d.appendLE(UInt64(704)); d.appendLE(UInt64(24))
+        d.appendLE(UInt32(704)); d.appendLE(UInt32(2))
+        d.appendLE(UInt32(0)); d.appendLE(UInt32(0))
+        d.appendLE(UInt32(0))
+        d.appendLE(UInt32(0)); d.appendLE(UInt32(0)); d.appendLE(UInt32(0))
+        assert(d.count == 424)
+
+        // ── section: __swift5_capture ──
+        d.appendFixedCString("__swift5_capture", length: 16)
+        d.appendFixedCString("__TEXT", length: 16)
+        d.appendLE(UInt64(728)); d.appendLE(UInt64(16))
+        d.appendLE(UInt32(728)); d.appendLE(UInt32(2))
+        d.appendLE(UInt32(0)); d.appendLE(UInt32(0))
+        d.appendLE(UInt32(0))
+        d.appendLE(UInt32(0)); d.appendLE(UInt32(0)); d.appendLE(UInt32(0))
+        assert(d.count == 504)
+
+        // ── padding to content start ──
+        d.append(Data(count: 512 - d.count))
+
+        // ── __swift5_types entries ──
+        d.appendLE(Int32(12))
+        d.appendLE(Int32(20))
+        d.appendLE(Int32(28))
+        assert(d.count == 524)
+
+        // ── type descriptors ──
+        d.appendLE(UInt32(0)); d.appendLE(UInt32(0)); d.appendLE(Int32(28))   // → 560
+        assert(d.count == 536)
+        d.appendLE(UInt32(0)); d.appendLE(UInt32(0)); d.appendLE(Int32(32))   // → 576
+        assert(d.count == 548)
+        d.appendLE(UInt32(0)); d.appendLE(UInt32(0)); d.appendLE(Int32(35))   // → 591
+        assert(d.count == 560)
+
+        // ── name strings ──
+        d.append(contentsOf: "_InternalHelper".utf8); d.append(0)
+        assert(d.count == 576)
+        d.append(contentsOf: "CPRiskDetector".utf8); d.append(0)
+        assert(d.count == 591)
+        d.append(contentsOf: "BusinessLogic".utf8); d.append(0)
+        assert(d.count == 605)
+
+        d.append(Data(count: 608 - d.count))
+
+        // ── __swift5_reflstr (32 bytes) ──
+        let reflStr = "SomeField\0TypeName\0Extra\0Pad\0XX"
+        d.append(contentsOf: reflStr.utf8)
+        d.append(Data(count: 640 - d.count))
+
+        // ── __objc_methname (51 bytes) ──
+        d.append(contentsOf: "initWithFrame:".utf8); d.append(0)
+        d.append(contentsOf: "cpriskCollect".utf8);  d.append(0)
+        d.append(contentsOf: "setTitle:".utf8);      d.append(0)
+        d.append(contentsOf: "CPRiskCheck".utf8);    d.append(0)
+        assert(d.count == 691)
+
+        d.append(Data(count: 704 - d.count))
+
+        // ── __swift5_fieldmd content (24 bytes of fake field descriptor data) ──
+        d.append(contentsOf: "StoredRiskReport\0Padding".utf8)
+        assert(d.count <= 728)
+        d.append(Data(count: 728 - d.count))
+
+        // ── __swift5_capture content (16 bytes of fake capture descriptor data) ──
+        d.append(contentsOf: "RiskSignalCapt\0\0".utf8)
+        assert(d.count == 744)
+
+        d.append(Data(count: 2048 - d.count))
         return d
     }
 }

@@ -7,8 +7,8 @@ final class SymbolStripperTests: XCTestCase {
     // MARK: - Fixture Builder
 
     /// Build an ARM64 Mach-O with __TEXT segment, LC_SYMTAB, and a symbol/string table
-    /// containing a mix of local SDK symbols, local non-SDK symbols, external symbols,
-    /// stab symbols, and "outlined" symbols.
+    /// containing local symbols, external symbols, stab symbols, and whitelisted
+    /// system symbols to exercise the full-obfuscation + whitelist logic.
     ///
     /// Layout:
     ///   [0..32)         mach_header_64
@@ -18,20 +18,6 @@ final class SymbolStripperTests: XCTestCase {
     ///   [2048..4096)    __TEXT.__cstring content + padding
     ///   [4096..)        symbol table (nlist64 entries), then string table
     private static func makeSymtabFixture() -> Data {
-        // -- String table --
-        // Index 0: "\0" (empty, required by convention)
-        // Index 1: "_$s10CPRiskKit20evaluateRiskPolicySiyF\0"  (local SDK symbol)
-        // Index 43: "_regularHelperFunction\0"                  (local non-SDK symbol)
-        // Index 66: "_$s10CPRiskKit8exported\0"                 (external symbol)
-        // Index 90: "outlined init with copy of (RiskScenario, ScenarioPolicy)\0" (outlined local)
-        // Index 149: "_$s9Detection15JailbreakCheckCfd\0"        (local SDK: Detection + Jailbreak)
-        // Index 184: ""
-
-        let strings: [(String, Bool)] = [
-            ("", false), // index 0 placeholder
-        ]
-        _ = strings
-
         var stringTable = Data()
         stringTable.append(0) // index 0: empty string
 
@@ -65,56 +51,80 @@ final class SymbolStripperTests: XCTestCase {
         stringTable.append(contentsOf: sym6Name.utf8)
         stringTable.append(0)
 
-        // Nlist entries start at file offset 4096
+        // Whitelisted: Swift system module symbol (starts with _$s, contains "Swift")
+        let sym7Name = "_$s5Swift15ContiguousArrayVySiGMa"
+        let sym7Strx = UInt32(stringTable.count)
+        stringTable.append(contentsOf: sym7Name.utf8)
+        stringTable.append(0)
+
+        // Whitelisted: ObjC runtime symbol
+        let sym8Name = "_objc_retain_autorelease"
+        let sym8Strx = UInt32(stringTable.count)
+        stringTable.append(contentsOf: sym8Name.utf8)
+        stringTable.append(0)
+
         let symoff: UInt32 = 4096
-        let nsyms: UInt32 = 6
+        let nsyms: UInt32 = 8
         let nlistSize = Int(nsyms) * 16
         let stroff = symoff + UInt32(nlistSize)
 
-        // Build nlist64 entries
         var nlistData = Data()
 
-        // Symbol 1: local SDK symbol (N_SECT, no N_EXT)
+        // Symbol 1: local app symbol (N_SECT, no N_EXT) — obfuscated
         nlistData.appendLE(sym1Strx)
         nlistData.append(0x0E) // n_type = N_SECT
         nlistData.append(0x01) // n_sect
         nlistData.appendLE(Int16(0)) // n_desc
         nlistData.appendLE(UInt64(0x100001000)) // n_value
 
-        // Symbol 2: local non-SDK symbol (N_SECT, no N_EXT) — should NOT be obfuscated
+        // Symbol 2: local generic symbol (N_SECT, no N_EXT) — obfuscated (full coverage)
         nlistData.appendLE(sym2Strx)
         nlistData.append(0x0E)
         nlistData.append(0x01)
         nlistData.appendLE(Int16(0))
         nlistData.appendLE(UInt64(0x100002000))
 
-        // Symbol 3: external symbol (N_SECT | N_EXT) — should NOT be obfuscated
+        // Symbol 3: external symbol (N_SECT | N_EXT) — NOT obfuscated (external)
         nlistData.appendLE(sym3Strx)
         nlistData.append(0x0F) // n_type = N_SECT | N_EXT
         nlistData.append(0x01)
         nlistData.appendLE(Int16(0))
         nlistData.appendLE(UInt64(0x100003000))
 
-        // Symbol 4: local "outlined" symbol (N_SECT, no N_EXT) — should be obfuscated
+        // Symbol 4: local "outlined" symbol (N_SECT, no N_EXT) — obfuscated
         nlistData.appendLE(sym4Strx)
         nlistData.append(0x0E)
         nlistData.append(0x01)
         nlistData.appendLE(Int16(0))
         nlistData.appendLE(UInt64(0x100004000))
 
-        // Symbol 5: local SDK symbol with Detection + Jailbreak markers
+        // Symbol 5: local app symbol with Detection marker — obfuscated
         nlistData.appendLE(sym5Strx)
         nlistData.append(0x0E)
         nlistData.append(0x01)
         nlistData.appendLE(Int16(0))
         nlistData.appendLE(UInt64(0x100005000))
 
-        // Symbol 6: stab debug symbol (N_STAB set) — should NOT be obfuscated
+        // Symbol 6: stab debug symbol (N_STAB set) — NOT obfuscated (stab)
         nlistData.appendLE(sym6Strx)
         nlistData.append(0x24) // N_FUN stab type (has N_STAB bit set)
         nlistData.append(0x01)
         nlistData.appendLE(Int16(0))
         nlistData.appendLE(UInt64(0x100006000))
+
+        // Symbol 7: local Swift system symbol — NOT obfuscated (whitelist)
+        nlistData.appendLE(sym7Strx)
+        nlistData.append(0x0E)
+        nlistData.append(0x01)
+        nlistData.appendLE(Int16(0))
+        nlistData.appendLE(UInt64(0x100007000))
+
+        // Symbol 8: local ObjC runtime symbol — NOT obfuscated (whitelist)
+        nlistData.appendLE(sym8Strx)
+        nlistData.append(0x0E)
+        nlistData.append(0x01)
+        nlistData.appendLE(Int16(0))
+        nlistData.appendLE(UInt64(0x100008000))
 
         // -- Build the full Mach-O --
         var d = Data()
@@ -203,7 +213,7 @@ final class SymbolStripperTests: XCTestCase {
 
         let file = try MachOFile(url: url)
         let symbols = try file.readSymbols()
-        XCTAssertEqual(symbols.count, 6)
+        XCTAssertEqual(symbols.count, 8)
 
         XCTAssertTrue(symbols[0].name.contains("CPRiskKit"))
         XCTAssertTrue(symbols[1].name.contains("regularHelper"))
@@ -211,6 +221,8 @@ final class SymbolStripperTests: XCTestCase {
         XCTAssertTrue(symbols[3].name.contains("outlined"))
         XCTAssertTrue(symbols[4].name.contains("Jailbreak"))
         XCTAssertTrue(symbols[5].name.contains("Stab"))
+        XCTAssertTrue(symbols[6].name.contains("Swift"))
+        XCTAssertTrue(symbols[7].name.contains("objc_retain"))
     }
 
     func testNlist64EntryFlags() throws {
@@ -220,12 +232,12 @@ final class SymbolStripperTests: XCTestCase {
         let file = try MachOFile(url: url)
         let symbols = try file.readSymbols()
 
-        // sym1: local SDK
+        // sym1: local app symbol
         XCTAssertTrue(symbols[0].nlist.isDefinedLocal)
         XCTAssertFalse(symbols[0].nlist.isExternal)
         XCTAssertFalse(symbols[0].nlist.isStab)
 
-        // sym2: local non-SDK
+        // sym2: local generic
         XCTAssertTrue(symbols[1].nlist.isDefinedLocal)
 
         // sym3: external
@@ -241,48 +253,63 @@ final class SymbolStripperTests: XCTestCase {
         // sym6: stab
         XCTAssertTrue(symbols[5].nlist.isStab)
         XCTAssertFalse(symbols[5].nlist.isDefinedLocal)
+
+        // sym7: local Swift system (whitelisted but still local)
+        XCTAssertTrue(symbols[6].nlist.isDefinedLocal)
+
+        // sym8: local ObjC runtime (whitelisted but still local)
+        XCTAssertTrue(symbols[7].nlist.isDefinedLocal)
     }
 
     // MARK: - B. Selective Obfuscation
 
-    func testObfuscatesOnlySDKLocalSymbols() throws {
-        let url = try Self.writeFixture(named: "selective_obfusc")
+    func testObfuscatesAllLocalExceptWhitelisted() throws {
+        let url = try Self.writeFixture(named: "full_obfusc")
         defer { try? FileManager.default.removeItem(at: url) }
 
         let file = try MachOFile(url: url)
         let config = PassConfig(verbose: true)
         let result = try SymbolStripperPass().execute(on: file, config: config)
 
-        // Should obfuscate: sym1 (CPRisk), sym4 (outlined), sym5 (Detection+Jailbreak) = 3
-        XCTAssertEqual(result.itemsProcessed, 3, "Expected 3 SDK/outlined symbols to be obfuscated")
+        // Obfuscated: sym1 (app), sym2 (generic local), sym4 (outlined), sym5 (app) = 4
+        // Skipped: sym3 (external), sym6 (stab), sym7 (Swift whitelist), sym8 (objc_ whitelist)
+        XCTAssertEqual(result.itemsProcessed, 4,
+                       "Expected 4 local symbols obfuscated (all local minus whitelisted)")
         XCTAssertGreaterThan(result.bytesModified, 0)
 
-        // Verify the names were actually changed
         let symbolsAfter = try file.readSymbols()
 
-        // sym1: was CPRiskKit symbol → should be obfuscated
+        // sym1: local app symbol → obfuscated
         XCTAssertFalse(symbolsAfter[0].name.contains("CPRisk"),
-                       "SDK symbol should have been obfuscated")
+                       "Local app symbol should have been obfuscated")
 
-        // sym2: was regularHelper → should be UNTOUCHED
-        XCTAssertTrue(symbolsAfter[1].name.contains("regularHelper"),
-                      "Non-SDK local symbol should be untouched")
+        // sym2: local generic → obfuscated (full coverage, no longer spared)
+        XCTAssertFalse(symbolsAfter[1].name.contains("regularHelper"),
+                       "All local symbols should be obfuscated under full-coverage mode")
 
-        // sym3: was exported CPRiskKit → should be UNTOUCHED (external)
+        // sym3: external → untouched
         XCTAssertTrue(symbolsAfter[2].name.contains("CPRiskKit"),
                       "External symbol should be untouched")
 
-        // sym4: was "outlined init..." → should be obfuscated
+        // sym4: local outlined → obfuscated
         XCTAssertFalse(symbolsAfter[3].name.contains("outlined"),
                        "Outlined symbol should have been obfuscated")
 
-        // sym5: was Detection/Jailbreak → should be obfuscated
+        // sym5: local app → obfuscated
         XCTAssertFalse(symbolsAfter[4].name.contains("Detection"),
-                       "SDK symbol with Detection marker should have been obfuscated")
+                       "Local app symbol should have been obfuscated")
 
-        // sym6: was stab → should be UNTOUCHED
+        // sym6: stab → untouched
         XCTAssertTrue(symbolsAfter[5].name.contains("Stab"),
                       "Stab symbol should be untouched")
+
+        // sym7: Swift system module → whitelisted, untouched
+        XCTAssertTrue(symbolsAfter[6].name.contains("Swift"),
+                      "Swift system symbol should be whitelisted and untouched")
+
+        // sym8: ObjC runtime → whitelisted, untouched
+        XCTAssertTrue(symbolsAfter[7].name.contains("objc_retain"),
+                      "ObjC runtime symbol should be whitelisted and untouched")
     }
 
     func testObfuscatedNameLengthPreserved() throws {

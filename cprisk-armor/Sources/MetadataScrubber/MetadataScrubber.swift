@@ -8,12 +8,19 @@ import MachOKit
 public final class MetadataScrubberPass: ArmorPass {
     public let name = "MetadataScrubber"
 
-    private static let sdkMethodMarkers = [
-        "cprisk", "CPRisk", "cloudPhone", "CloudPhone",
-        "riskSignal", "RiskSignal", "riskReport", "RiskReport",
-        "detection", "Detection", "jailbreak", "Jailbreak",
-        "antiTamper", "AntiTamper", "trustChain", "TrustChain",
-        "behavior", "Behavior", "evaluate", "armoring",
+    /// ObjC method prefixes that must be preserved for runtime correctness.
+    private static let systemMethodPrefixes = [
+        "init", ".cxx_destruct",
+        "viewDid", "viewWill", "layout", "draw",
+        "encode", "decode", "awakeFromNib",
+        "application:", "scene:",
+        "tableView:", "collectionView:", "scrollView:",
+        "textField:", "picker:",
+        "dealloc", "description", "debugDescription",
+        "hash", "isEqual:", "copy", "mutableCopy",
+        "responds", "performs", "class", "super", "self",
+        "zone", "retain", "release", "autorelease", "forward",
+        "observeValue", "setValue:forKey", "valueForKey",
     ]
 
     public init() {}
@@ -33,6 +40,13 @@ public final class MetadataScrubberPass: ArmorPass {
             itemsProcessed += 1
             bytesModified += reflBytes
             details.append("Reflection strings scrubbed: \(reflBytes) bytes")
+        }
+
+        let extraBytes = try scrubAdditionalMetadataSections(in: file)
+        if extraBytes > 0 {
+            itemsProcessed += 1
+            bytesModified += extraBytes
+            details.append("Additional metadata sections scrubbed: \(extraBytes) bytes")
         }
 
         let methResult = try scrubObjCMethodNames(in: file)
@@ -85,6 +99,33 @@ public final class MetadataScrubberPass: ArmorPass {
 
         try file.replaceBytes(at: UInt64(section.offset), with: Self.randomBytes(count: size))
         return size
+    }
+
+    // MARK: - B2. Additional Metadata Section Scrubbing
+
+    /// Randomize content of additional Swift metadata sections that may leak type/field names.
+    /// These sections (__swift5_fieldmd, __swift5_builtin, __swift5_capture, __swift5_assocty,
+    /// __swift5_proto, __swift5_protos) contain descriptors with embedded name references.
+    /// Rather than parsing each complex descriptor format, we overwrite the full section content
+    /// with random bytes — safe because the SDK binary is re-signed after armoring and these
+    /// sections are not required for correct execution of our own code.
+    private func scrubAdditionalMetadataSections(in file: MachOFile) throws -> Int {
+        var totalBytes = 0
+
+        for sectionName in ArmorABI.MetadataSections.additionalScrubSections {
+            for segName in ["__TEXT", "__DATA"] {
+                guard let section = try file.section(segment: segName, section: sectionName) else {
+                    continue
+                }
+                let size = Int(section.size)
+                guard size > 0 else { continue }
+
+                try file.replaceBytes(at: UInt64(section.offset), with: Self.randomBytes(count: size))
+                totalBytes += size
+            }
+        }
+
+        return totalBytes
     }
 
     // MARK: - C. ObjC Method Name Obfuscation
@@ -140,12 +181,13 @@ public final class MetadataScrubberPass: ArmorPass {
         return true
     }
 
+    /// Default-obfuscate: all methods are obfuscated UNLESS they match a system prefix or are single-char.
     private static func shouldObfuscateMethod(_ name: String) -> Bool {
-        guard !name.isEmpty else { return false }
-        for marker in sdkMethodMarkers where name.contains(marker) {
-            return true
+        guard name.count > 1 else { return false }
+        for prefix in systemMethodPrefixes where name.hasPrefix(prefix) {
+            return false
         }
-        return false
+        return true
     }
 
     // MARK: - Random Generation
