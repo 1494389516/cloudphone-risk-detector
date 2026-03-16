@@ -22,6 +22,7 @@ public final class RemoteConfigProvider: @unchecked Sendable {
     private var _circuitOpenUntil: TimeInterval = 0
     private var _lastSuccessfulFetchTime: TimeInterval = 0
     private var _configStalenessThreshold: TimeInterval
+    private var _schedulingTimer: Bool = false
     private static let circuitBreakerThreshold: Int = 3
     private static let circuitBreakerCooldowns: [TimeInterval] = [30, 60, 120, 300]
 
@@ -328,21 +329,22 @@ public final class RemoteConfigProvider: @unchecked Sendable {
     }
 
     private func startPeriodicUpdates() {
+        // 用 _schedulingTimer 标记"已提交调度"，防止在 async 派发期间被重复调用
         lock.lock()
-        guard timer == nil else {
+        guard timer == nil && !_schedulingTimer else {
             lock.unlock()
             return
         }
+        _schedulingTimer = true
         let interval = updateInterval
         lock.unlock()
 
         let schedule: () -> Void = { [weak self] in
             guard let self else { return }
             self.lock.lock()
-            guard self.timer == nil else {
-                self.lock.unlock()
-                return
-            }
+            defer { self.lock.unlock() }
+            // 二次检查：确保 Timer 仍未被创建（防止两次 async 同时执行）
+            guard self.timer == nil else { return }
             let t = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
                 guard let self else { return }
                 self.fetchLatest { result in
@@ -357,7 +359,7 @@ public final class RemoteConfigProvider: @unchecked Sendable {
             }
             RunLoop.main.add(t, forMode: .common)
             self.timer = t
-            self.lock.unlock()
+            self._schedulingTimer = false
         }
         if Thread.isMainThread {
             schedule()
