@@ -238,15 +238,18 @@ final class RiskReportMapperTests: XCTestCase {
         XCTAssertNotNil(dto, "DTO should not be nil")
         XCTAssertNotNil(dto?.graphPayload, "graphPayload should be decoded and mapped, not silently dropped")
 
-        let gp = dto?.graphPayload
-        XCTAssertEqual(gp?.fingerprintVector.hwEntropy, 5.5, accuracy: 0.001)
-        XCTAssertEqual(gp?.fingerprintVector.gpuTier, 2)
-        XCTAssertEqual(gp?.edgeSignals.ipSubnet, "192.168.1")
-        XCTAssertEqual(gp?.edgeSignals.carrierASN, 4134)
-        XCTAssertEqual(gp?.temporalRhythm.sessionSeq, 3)
-        XCTAssertEqual(gp?.temporalRhythm.installAgeDays, 30)
-        XCTAssertEqual(gp?.capabilityScore.qualitySuspicion, 10)
-        XCTAssertEqual(gp?.capabilityScore.totalProbes, 8)
+        guard let gp = dto?.graphPayload else {
+            XCTFail("graphPayload should be present")
+            return
+        }
+        XCTAssertEqual(gp.fingerprintVector.hwEntropy, 5.5, accuracy: 0.001)
+        XCTAssertEqual(gp.fingerprintVector.gpuTier, 2)
+        XCTAssertEqual(gp.edgeSignals.ipSubnet, "192.168.1")
+        XCTAssertEqual(gp.edgeSignals.carrierASN, 4134)
+        XCTAssertEqual(gp.temporalRhythm.sessionSeq, 3)
+        XCTAssertEqual(gp.temporalRhythm.installAgeDays, 30)
+        XCTAssertEqual(gp.capabilityScore.qualitySuspicion, 10)
+        XCTAssertEqual(gp.capabilityScore.totalProbes, 8)
     }
 
     /// 验证 graphPayload 为 nil 时不影响其他字段映射

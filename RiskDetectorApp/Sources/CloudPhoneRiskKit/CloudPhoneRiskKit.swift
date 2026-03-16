@@ -104,7 +104,10 @@ public final class CPRiskKit: NSObject {
         "frida_heap", "frida_stalker", "frida_socket", "frida_thread",
         "hook_detected", "objc_swizzle", "rwx_memory",
         "armor_runtime_init_failed", "integrity_runtime_tampered",
-        "code_signature_invalid", "text_segment_tampered"
+        "code_signature_invalid", "text_segment_tampered",
+        "kernel_hook_timing_anomaly", "kernel_hook_stalker_amplified",
+        "system_library_wx_mapping", "system_library_anonymous_exec_region",
+        "app_image_segment_layout_anomaly"
     ]
 
     private static let remoteConfigEndpointKey = "com.cloudphone.riskkit.remote.endpoint"

@@ -166,10 +166,12 @@ targets:
       - path: Tests/CloudPhoneRiskKitTests
     dependencies:
       - target: CloudPhoneRiskKit
+      - target: CRiskCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cloudphonerisk.CloudPhoneRiskKitTests
         ENABLE_TESTABILITY: YES
+        GENERATE_INFOPLIST_FILE: YES
 
   CloudPhoneRiskAppCoreTests:
     type: bundle.unit-test
@@ -180,10 +182,12 @@ targets:
     dependencies:
       - target: CloudPhoneRiskAppCore
       - target: CloudPhoneRiskKit
+      - target: CRiskCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cloudphonerisk.CloudPhoneRiskAppCoreTests
         ENABLE_TESTABILITY: YES
+        GENERATE_INFOPLIST_FILE: YES
 
 schemes:
   RiskDetectorApp:

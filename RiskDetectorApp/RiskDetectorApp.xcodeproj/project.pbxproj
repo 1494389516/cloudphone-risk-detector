@@ -129,6 +129,7 @@
 		8600B1974819AFA62E7B80B3 /* RiskReportSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAAABA0C9CD0C798E0066839 /* RiskReportSummary.swift */; };
 		869AC1CE34B5B76932955BBA /* RiskSignalProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BA95BB56D482BFDD40167DF /* RiskSignalProvider.swift */; };
 		86F654E9DD01D7A8442710C4 /* CallStackUnwinder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25D5685440DEF8CE18FC7089 /* CallStackUnwinder.swift */; };
+		87361A46B1A772C9C1CD9B4D /* RiskDeviceHistoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38B75463ABBB98581F6B6C9B /* RiskDeviceHistoryTests.swift */; };
 		87980A3A3B6214C910FB9B13 /* SDKIntegrityChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = F02DB668F8391D2A9495C3BD /* SDKIntegrityChecker.swift */; };
 		8A3F0F87FCBF6A33AAADA618 /* LayeredConsistencyProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61C676880FC9F5F38F947C3F /* LayeredConsistencyProvider.swift */; };
 		8C657567CC190B7664C198A4 /* DecisionTreeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF57A2B7C3737F382767A79C /* DecisionTreeTests.swift */; };
@@ -182,11 +183,14 @@
 		BFEB382AC0CC1FEB40CD3893 /* CloudPhoneRiskKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ECD06ED3A5B2C35D55205F5 /* CloudPhoneRiskKit.swift */; };
 		C1B4AD9ACE37509E301367DA /* PayloadFieldObfuscator.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD77BDAD9006E5E1B5DBDB67 /* PayloadFieldObfuscator.swift */; };
 		C2CF57F279CEC0BBEFD2E170 /* ExternalServerAggregateProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4829802E1A3519560C651066 /* ExternalServerAggregateProvider.swift */; };
+		C5D2FFA55685E037CEBB5678 /* libCRiskCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CADFFA2F83EA30EB6D6C003 /* libCRiskCore.a */; };
 		CB6630A5879F4CD1FF312313 /* UploadPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2361FCB9A55605A2BC932EC4 /* UploadPolicy.swift */; };
 		CC6869C610D3EBA22B4490E6 /* DecisionTree.swift in Sources */ = {isa = PBXBuildFile; fileRef = 829AE513037A19D9FF7E3491 /* DecisionTree.swift */; };
 		CF054CBD60A19DD0FD4FEA19 /* RandomizedDetection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 683D5E0E9879A860257962BE /* RandomizedDetection.swift */; };
 		D1D1447B4D6B89A6B159EC65 /* CRiskCore-umbrella.h in CopyFiles */ = {isa = PBXBuildFile; fileRef = 7139C612FDCF177DF58F02C6 /* CRiskCore-umbrella.h */; };
+		D4C0B229FA1FBAB9F2BBF094 /* libCRiskCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CADFFA2F83EA30EB6D6C003 /* libCRiskCore.a */; };
 		D553DCF9F89CEBC0326C02C5 /* BehaviorBaseline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B163CE62E70C39372E9483C /* BehaviorBaseline.swift */; };
+		D63C2201724E846A0F11A4AA /* SystemLibrarySegmentLayoutDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F22F1BCFF84D579DA6B860BB /* SystemLibrarySegmentLayoutDetector.swift */; };
 		D6843C9AEE0894EC0638C482 /* DeviceFingerprint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 757E6358BEF786A86421F4D5 /* DeviceFingerprint.swift */; };
 		D68CD74446BABDE00D9A8DC9 /* RiskReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F054166973FF8107B4CDEE8 /* RiskReport.swift */; };
 		D7DBB7692B01E44C8F88C07D /* EnvironmentConsistencyProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD1759C6E1C612F7FEF1C0E1 /* EnvironmentConsistencyProvider.swift */; };
@@ -222,6 +226,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		22A00F27D8C7C18306A5FFDB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D024DAD1632183985148A6A9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = ADF1B136890DE640C9F5C27B;
+			remoteInfo = CRiskCore;
+		};
 		3DA8A063E214611ECAEB4FAD /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = D024DAD1632183985148A6A9 /* Project object */;
@@ -230,6 +241,13 @@
 			remoteInfo = CloudPhoneRiskKit;
 		};
 		4742FD098FA370D7586BA17E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D024DAD1632183985148A6A9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = ADF1B136890DE640C9F5C27B;
+			remoteInfo = CRiskCore;
+		};
+		584EF2D81D1AD02DF5BAA961 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = D024DAD1632183985148A6A9 /* Project object */;
 			proxyType = 1;
@@ -343,6 +361,7 @@
 		33EE9FDDEBDD1ED69679D6BB /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
 		33F6A9718D0F858752F0E952 /* ObjCIMPDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjCIMPDetector.swift; sourceTree = "<group>"; };
 		3792ADFBBFBD0FF4BBF2C316 /* WhitelistRulesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhitelistRulesTests.swift; sourceTree = "<group>"; };
+		38B75463ABBB98581F6B6C9B /* RiskDeviceHistoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskDeviceHistoryTests.swift; sourceTree = "<group>"; };
 		38CE61D23119AE10A1FCA635 /* SDKBinaryIntegrityChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SDKBinaryIntegrityChecker.swift; sourceTree = "<group>"; };
 		38FA0E5745A688DCA61A54A4 /* BehaviorCoupling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BehaviorCoupling.swift; sourceTree = "<group>"; };
 		3A089D69D2F1BCDD0D37127E /* BehaviorSignals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BehaviorSignals.swift; sourceTree = "<group>"; };
@@ -495,6 +514,7 @@
 		F02DB668F8391D2A9495C3BD /* SDKIntegrityChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SDKIntegrityChecker.swift; sourceTree = "<group>"; };
 		F08541E79CA6D642F135D021 /* DualPathBaselineStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DualPathBaselineStore.swift; sourceTree = "<group>"; };
 		F16EF99079DDD86B1F017387 /* CPRiskStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CPRiskStore.swift; sourceTree = "<group>"; };
+		F22F1BCFF84D579DA6B860BB /* SystemLibrarySegmentLayoutDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemLibrarySegmentLayoutDetector.swift; sourceTree = "<group>"; };
 		F2483684AF7DD7EBE7FF50CD /* TemporalAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemporalAnalyzer.swift; sourceTree = "<group>"; };
 		F4983507C632F30D10765168 /* FridaThreadDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FridaThreadDetector.swift; sourceTree = "<group>"; };
 		F51F880AB576E598D8157761 /* ReportEnvelope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportEnvelope.swift; sourceTree = "<group>"; };
@@ -526,6 +546,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				DC7952E16D5687D8DCE67841 /* libCloudPhoneRiskKit.a in Frameworks */,
+				C5D2FFA55685E037CEBB5678 /* libCRiskCore.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -535,6 +556,7 @@
 			files = (
 				26BCC30364355295A2D89AC0 /* libCloudPhoneRiskAppCore.a in Frameworks */,
 				7223EBC099A44CC90EC0B71D /* libCloudPhoneRiskKit.a in Frameworks */,
+				D4C0B229FA1FBAB9F2BBF094 /* libCRiskCore.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -594,6 +616,7 @@
 				1F09AF7053772B13DAED91FB /* PhysicalSensorProbe.swift */,
 				96901442467C54B533B01ACF /* RWXMemoryScanner.swift */,
 				995ECCC2D755A1C29E529277 /* SensorReplayDetector.swift */,
+				F22F1BCFF84D579DA6B860BB /* SystemLibrarySegmentLayoutDetector.swift */,
 				5C73BDB714A6DE2BE3B2D80A /* TimingRatioBaseline.swift */,
 			);
 			path = AntiTampering;
@@ -1038,6 +1061,7 @@
 				BF57A2B7C3737F382767A79C /* DecisionTreeTests.swift */,
 				7968F20F5F831E6BF2E14834 /* IntegrationTests.swift */,
 				AC4BFF614884CD3855108036 /* JailbreakEngineTests.swift */,
+				38B75463ABBB98581F6B6C9B /* RiskDeviceHistoryTests.swift */,
 				EFC2834E89630C039617CDC1 /* RiskScorerTests.swift */,
 				5FD9AACB1FE016CEF40026E8 /* RiskSignalTests.swift */,
 				437950A05C4272A3C114A6C2 /* RiskTypesTests.swift */,
@@ -1108,6 +1132,7 @@
 			);
 			dependencies = (
 				D8B72E7EC589667328136FEF /* PBXTargetDependency */,
+				1877C3CE394ABF1394837651 /* PBXTargetDependency */,
 			);
 			name = CloudPhoneRiskKitTests;
 			packageProductDependencies = (
@@ -1206,6 +1231,7 @@
 			dependencies = (
 				557EEC1F41964A9DC08132EC /* PBXTargetDependency */,
 				5912AC2EF23D089CE26C6C6F /* PBXTargetDependency */,
+				C111847EB8092DB5C1B8A466 /* PBXTargetDependency */,
 			);
 			name = CloudPhoneRiskAppCoreTests;
 			packageProductDependencies = (
@@ -1440,6 +1466,7 @@
 				7EBA8E7B4A129247DE805351 /* StorageIntegrityGuard.swift in Sources */,
 				4314E4022D27851F21143FFE /* Sysctl.swift in Sources */,
 				BA980AB785B698CD40BD563B /* SysctlDetector.swift in Sources */,
+				D63C2201724E846A0F11A4AA /* SystemLibrarySegmentLayoutDetector.swift in Sources */,
 				14375053C3C6602FF03FD9E6 /* TemporalAnalyzer.swift in Sources */,
 				3C3586F7CBC1BE7C3682BBB4 /* TemporalFeatures.swift in Sources */,
 				A46A2FFBE08C46DC2D835699 /* TextSegmentIntegrityChecker.swift in Sources */,
@@ -1466,6 +1493,7 @@
 				8C657567CC190B7664C198A4 /* DecisionTreeTests.swift in Sources */,
 				61D5872F922E370E1DC8DA44 /* IntegrationTests.swift in Sources */,
 				5717B71507EE86FCDADF5E2F /* JailbreakEngineTests.swift in Sources */,
+				87361A46B1A772C9C1CD9B4D /* RiskDeviceHistoryTests.swift in Sources */,
 				3EBDF46DDF95F9BE11EA0D88 /* RiskScorerTests.swift in Sources */,
 				6BEFC700FE298E149C0824AB /* RiskSignalTests.swift in Sources */,
 				121AA0F7B13C70D7FB109A90 /* RiskTypesTests.swift in Sources */,
@@ -1537,6 +1565,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		1877C3CE394ABF1394837651 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = ADF1B136890DE640C9F5C27B /* CRiskCore */;
+			targetProxy = 22A00F27D8C7C18306A5FFDB /* PBXContainerItemProxy */;
+		};
 		3A01099DBEF7436FE370D57A /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 317F07BE91552DD8BB537E27 /* CloudPhoneRiskKit */;
@@ -1561,6 +1594,11 @@
 			isa = PBXTargetDependency;
 			target = 317F07BE91552DD8BB537E27 /* CloudPhoneRiskKit */;
 			targetProxy = 8A4E8DA619B68D46B4852B5E /* PBXContainerItemProxy */;
+		};
+		C111847EB8092DB5C1B8A466 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = ADF1B136890DE640C9F5C27B /* CRiskCore */;
+			targetProxy = 584EF2D81D1AD02DF5BAA961 /* PBXContainerItemProxy */;
 		};
 		D8B72E7EC589667328136FEF /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -1608,6 +1646,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1685,6 +1724,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1706,6 +1746,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1727,6 +1768,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

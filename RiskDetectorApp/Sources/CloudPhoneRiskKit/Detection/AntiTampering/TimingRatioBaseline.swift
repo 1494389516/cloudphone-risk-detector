@@ -2,6 +2,26 @@ import CRiskCore
 import Foundation
 
 struct TimingRatioBaseline {
+    struct PairEvaluation {
+        let baselineName: String
+        let probeName: String
+        let sampleCount: Int
+        let baselineMedianNs: UInt64
+        let probeMedianNs: UInt64
+        let medianRatio: Double
+        let p95Ratio: Double
+        let isAnomalous: Bool
+    }
+
+    private static var timebaseInfo: mach_timebase_info_data_t = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return info
+    }()
+
+    private static func nanoseconds(from ticks: UInt64) -> UInt64 {
+        ticks * UInt64(timebaseInfo.numer) / UInt64(timebaseInfo.denom)
+    }
 
     // MARK: - Sampling Noise (Stalker DBT Overhead Amplification)
 
@@ -115,6 +135,75 @@ struct TimingRatioBaseline {
 
     static let defaultSampleCount = 30
     static let defaultRatioThreshold = 15.0
+
+    @_optimize(none)
+    private static func measureTicks(
+        noiseIterations: Int = 6,
+        block: () -> Void
+    ) -> UInt64 {
+        for _ in 0..<noiseIterations {
+            samplingNoise()
+        }
+        let start = mach_absolute_time()
+        block()
+        let end = mach_absolute_time()
+        return end &- start
+    }
+
+    static func evaluatePair(
+        baselineName: String,
+        probeName: String,
+        sampleCount: Int = defaultSampleCount,
+        warmupCount: Int = 3,
+        noiseIterations: Int = 6,
+        ratioThreshold: Double = defaultRatioThreshold,
+        baseline: () -> Void,
+        probe: () -> Void
+    ) -> PairEvaluation? {
+        guard sampleCount > 0 else { return nil }
+
+        for _ in 0..<warmupCount {
+            baseline()
+            probe()
+        }
+
+        var baselineSamples: [UInt64] = []
+        baselineSamples.reserveCapacity(sampleCount)
+        var probeSamples: [UInt64] = []
+        probeSamples.reserveCapacity(sampleCount)
+
+        for i in 0..<sampleCount {
+            let baselineFirst = (i % 2 == 0)
+            if baselineFirst {
+                baselineSamples.append(measureTicks(noiseIterations: noiseIterations, block: baseline))
+                probeSamples.append(measureTicks(noiseIterations: noiseIterations, block: probe))
+            } else {
+                probeSamples.append(measureTicks(noiseIterations: noiseIterations, block: probe))
+                baselineSamples.append(measureTicks(noiseIterations: noiseIterations, block: baseline))
+            }
+        }
+
+        guard let evaluation = evaluate(
+            getpidSamples: baselineSamples,
+            statSamples: probeSamples,
+            ratioThreshold: ratioThreshold
+        ) else {
+            return nil
+        }
+
+        let baselineStats = computeStats(baselineSamples)
+        let probeStats = computeStats(probeSamples)
+        return PairEvaluation(
+            baselineName: baselineName,
+            probeName: probeName,
+            sampleCount: sampleCount,
+            baselineMedianNs: nanoseconds(from: baselineStats.median),
+            probeMedianNs: nanoseconds(from: probeStats.median),
+            medianRatio: evaluation.medianRatio,
+            p95Ratio: evaluation.p95Ratio,
+            isAnomalous: evaluation.isAnomalous
+        )
+    }
 
     static func evaluate(
         getpidSamples: [UInt64],

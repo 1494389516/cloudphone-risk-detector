@@ -3,7 +3,6 @@ import Darwin
 import Foundation
 
 struct KernelHookSideChannel: Detector {
-
     private static var timebaseInfo: mach_timebase_info_data_t = {
         var info = mach_timebase_info_data_t()
         mach_timebase_info(&info)
@@ -51,62 +50,47 @@ struct KernelHookSideChannel: Detector {
 #if targetEnvironment(simulator)
         return (0, [])
 #else
-        let iterations = TimingRatioBaseline.defaultSampleCount
-        let statFirst = Bool.random()
-
-        var getpidSamples: [UInt64] = []
-        getpidSamples.reserveCapacity(iterations)
-        var statSamples: [UInt64] = []
-        statSamples.reserveCapacity(iterations)
-
-        func sampleGetpid() {
-            for _ in 0..<iterations {
-                for _ in 0..<6 { TimingRatioBaseline.samplingNoise() }
-                let start = mach_absolute_time()
-                _ = cprisk_getpid_direct()
-                let end = mach_absolute_time()
-                getpidSamples.append(Self.nanoseconds(from: end - start))
-            }
-        }
-
-        func sampleStat() {
-            var st = stat()
-            for _ in 0..<iterations {
-                for _ in 0..<6 { TimingRatioBaseline.samplingNoise() }
-                let start = mach_absolute_time()
-                _ = "/usr/lib/dyld".withCString { cprisk_stat_direct($0, &st, nil) }
-                let end = mach_absolute_time()
-                statSamples.append(Self.nanoseconds(from: end - start))
-            }
-        }
-
-        if statFirst {
-            sampleStat()
-            sampleGetpid()
-        } else {
-            sampleGetpid()
-            sampleStat()
-        }
-
-        guard let evaluation = TimingRatioBaseline.evaluate(
-            getpidSamples: getpidSamples,
-            statSamples: statSamples
-        ) else {
-            return (0, [])
-        }
-
         var score: Double = 0
         var methods: [String] = []
 
-        // 仅用比值判断：median ratio > 15 为主条件，P95 ratio > 15 为辅助（均无量纲，不受机型/负载影响）
-        if evaluation.isAnomalous {
-            score = 40
+        let statProbe = TimingRatioBaseline.evaluatePair(
+            baselineName: "getpid",
+            probeName: "stat:/usr/lib/dyld"
+        ) {
+            _ = cprisk_getpid_direct()
+        } probe: {
+            var st = stat()
+            _ = "/usr/lib/dyld".withCString { cprisk_stat_direct($0, &st, nil) }
+        }
+
+        if let statProbe, statProbe.isAnomalous {
+            score += 25
             methods.append(
-                "kernel_hook_timing_anomaly:ratio=\(String(format: "%.1f", evaluation.medianRatio))_ratioP95=\(String(format: "%.1f", evaluation.p95Ratio))"
+                "kernel_hook_timing_anomaly:probe=\(statProbe.probeName)_baseline=\(statProbe.baselineName)_medianNs=\(statProbe.probeMedianNs)_baselineMedianNs=\(statProbe.baselineMedianNs)_ratio=\(String(format: "%.1f", statProbe.medianRatio))_ratioP95=\(String(format: "%.1f", statProbe.p95Ratio))"
             )
         }
 
-        // 二次放大探测：间接函数指针 + 交替 syscall 使 Stalker DBT 开销显著放大，阈值更低即可触发
+        let sysctlProbe = TimingRatioBaseline.evaluatePair(
+            baselineName: "getpid",
+            probeName: "sysctl:kern.proc.pid",
+            ratioThreshold: 14.0
+        ) {
+            _ = cprisk_getpid_direct()
+        } probe: {
+            var info = kinfo_proc()
+            var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, cprisk_getpid_direct()]
+            var size = MemoryLayout<kinfo_proc>.size
+            _ = cprisk_sysctl_direct(&mib, 4, &info, &size, nil, 0, nil)
+        }
+
+        if let sysctlProbe, sysctlProbe.isAnomalous {
+            score += 20
+            methods.append(
+                "kernel_hook_timing_anomaly:probe=\(sysctlProbe.probeName)_baseline=\(sysctlProbe.baselineName)_medianNs=\(sysctlProbe.probeMedianNs)_baselineMedianNs=\(sysctlProbe.baselineMedianNs)_ratio=\(String(format: "%.1f", sysctlProbe.medianRatio))_ratioP95=\(String(format: "%.1f", sysctlProbe.p95Ratio))"
+            )
+        }
+
+        // 二次放大探测：间接函数指针 + 交替 syscall 使 Stalker DBT 开销显著放大，阈值更低即可触发。
         let amplified = TimingRatioBaseline.amplifiedSamples()
         if let ampEval = TimingRatioBaseline.evaluate(
             getpidSamples: amplified.getpid,
@@ -114,7 +98,7 @@ struct KernelHookSideChannel: Detector {
             ratioThreshold: 12.0
         ) {
             if ampEval.isAnomalous {
-                score += 30
+                score += 25
                 methods.append(
                     "kernel_hook_stalker_amplified:ratio=\(String(format: "%.1f", ampEval.medianRatio))_ratioP95=\(String(format: "%.1f", ampEval.p95Ratio))"
                 )
@@ -247,11 +231,15 @@ extension KernelHookSideChannel {
             signals.append(RiskSignal(
                 id: "kernel_hook_timing_anomaly",
                 category: "anti_tamper",
-                score: 40,
-                evidence: ["detail": timingMethods.joined(separator: ",")],
-                state: .soft(confidence: 0.6),
+                score: min(Double(timingMethods.count) * 20, 45),
+                evidence: [
+                    "detail": timingMethods.joined(separator: ","),
+                    "mechanism": "mach_absolute_time_ratio_probe",
+                    "sample_pairs": "\(timingMethods.count)",
+                ],
+                state: .soft(confidence: timingMethods.count > 1 ? 0.75 : 0.65),
                 layer: 2,
-                weightHint: 60
+                weightHint: 68
             ))
         }
 
@@ -299,11 +287,14 @@ extension KernelHookSideChannel {
             signals.append(RiskSignal(
                 id: "kernel_hook_stalker_amplified",
                 category: "anti_tamper",
-                score: 30,
-                evidence: ["detail": amplifiedMethods.joined(separator: ",")],
-                state: .soft(confidence: 0.65),
+                score: 25,
+                evidence: [
+                    "detail": amplifiedMethods.joined(separator: ","),
+                    "mechanism": "mach_absolute_time_stalker_amplified",
+                ],
+                state: .soft(confidence: 0.72),
                 layer: 2,
-                weightHint: 65
+                weightHint: 72
             ))
         }
 

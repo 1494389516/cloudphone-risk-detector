@@ -45,6 +45,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         var enableCallStackValidate: Bool = true
         var enableHoneypotMemory: Bool = true
         var enableKernelHookSideChannel: Bool = true
+        var enableSystemLibrarySegmentLayoutDetect: Bool = true
         var enableLibcPrologueGuard: Bool = true
         var enableDyldImageMonitor: Bool = true
         var enableDylibInjectionDetect: Bool = true
@@ -304,6 +305,12 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         if configuration.enableKernelHookSideChannel {
             isolatedAppend("kernel_hook_sc", &signals) {
                 try KernelHookSideChannel().asSignals()
+            }
+        }
+
+        if configuration.enableSystemLibrarySegmentLayoutDetect {
+            isolatedAppend("system_library_segment_layout", &signals) {
+                try SystemLibrarySegmentLayoutDetector().asSignals()
             }
         }
 
@@ -706,6 +713,7 @@ extension AntiTamperingSignalProvider {
         config.enableFrida = true
         config.enableCodeSignature = false  // 跳过较慢的签名验证
         config.enableMemoryIntegrity = false  // 跳过较慢的内存检查
+        config.enableSystemLibrarySegmentLayoutDetect = false
         config.minScoreThreshold = 15  // 过滤低分信号
         return config
     }
