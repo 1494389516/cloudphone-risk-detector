@@ -364,4 +364,46 @@ final class DecisionTreeTests: XCTestCase {
         let decoded = try JSONDecoder().decode(DecisionTree.self, from: data)
         XCTAssertEqual(decoded.name, tree.name)
     }
+
+    // MARK: - NaN score guard (regression: decide() fallback previously returned .allow for NaN)
+
+    func testDecideWithNaNScoreFallbackReturnsBlock() {
+        // Build a tree whose root always returns .next (condition false, no falseBranch)
+        // so the fallback path in decide() is exercised.
+        let tree = DecisionTree(
+            name: "nan_test_tree",
+            root: .condition(ConditionNode(
+                id: "always_false",
+                condition: .custom("never"),
+                trueBranch: .action(ActionNode(id: "unreachable", action: .allow, reason: "unreachable"))
+                // falseBranch intentionally nil → evaluate() returns .next
+            ))
+        )
+        let policy = ScenarioPolicy(mediumThreshold: 30, highThreshold: 55, criticalThreshold: 80)
+        let nanCtx = makeEvalContext(score: Double.nan, policy: policy)
+
+        // Pre-fix: NaN >= any threshold → false → fell through to .allow (security bypass)
+        // Post-fix: NaN guarded → .block
+        XCTAssertEqual(tree.decide(context: nanCtx), .block,
+            "NaN 评分应触发阻断而非误放行")
+    }
+
+    func testDecideWithInfinityScoreReturnsBlock() {
+        let tree = DecisionTree(
+            name: "inf_test_tree",
+            root: .condition(ConditionNode(
+                id: "always_false",
+                condition: .custom("never"),
+                trueBranch: .action(ActionNode(id: "unreachable", action: .allow, reason: "unreachable"))
+            ))
+        )
+        let policy = ScenarioPolicy(mediumThreshold: 30, highThreshold: 55, criticalThreshold: 80)
+        let infCtx = makeEvalContext(score: Double.infinity, policy: policy)
+        // Double.infinity >= any threshold → true, so falls into .block via criticalThreshold check anyway.
+        // But isFinite guard also handles -infinity (which would otherwise slip to .allow).
+        let negInfCtx = makeEvalContext(score: -Double.infinity, policy: policy)
+        XCTAssertEqual(tree.decide(context: infCtx), .block)
+        XCTAssertEqual(tree.decide(context: negInfCtx), .block,
+            "-Infinity 评分应被 isFinite 守卫阻断")
+    }
 }
