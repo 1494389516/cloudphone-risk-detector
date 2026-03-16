@@ -30,6 +30,13 @@ public final class LocalEnvelopeReplayStore: NonceReplayProtecting, @unchecked S
         var entries: [String: Int64]
         var latestExpiryMillis: Int64
         var sequence: UInt64
+
+        private enum CodingKeys: String, CodingKey {
+            case schemaVersion = "sv"
+            case entries = "en"
+            case latestExpiryMillis = "le"
+            case sequence = "sq"
+        }
     }
 
     private let defaults = UserDefaults.standard

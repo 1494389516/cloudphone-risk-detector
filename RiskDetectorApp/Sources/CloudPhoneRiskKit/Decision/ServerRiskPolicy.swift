@@ -16,10 +16,28 @@ public struct ServerRiskPolicy: Codable, Sendable {
     /// 服务端下发后，客户端用 App Attest key 签名并上报，用于周期性 attestation 刷新
     public let reAttestationChallenge: Data?
 
+    private enum CodingKeys: String, CodingKey {
+        case version = "v"
+        case signalWeights = "sw"
+        case thresholds = "th"
+        case newVPhonePatterns = "vp"
+        case blocklist = "bl"
+        case mutation = "mu"
+        case blindChallenge = "bc"
+        case keyRotationPolicy = "kr"
+        case reAttestationChallenge = "ra"
+    }
+
     public struct PolicyThresholds: Codable, Sendable {
         public let block: Double
         public let challenge: Double
         public let monitor: Double
+
+        private enum CodingKeys: String, CodingKey {
+            case block = "b"
+            case challenge = "c"
+            case monitor = "m"
+        }
 
         public init(block: Double, challenge: Double, monitor: Double) {
             self.block = block
@@ -37,6 +55,13 @@ public struct ServerRiskPolicy: Codable, Sendable {
         public let thresholdJitterBps: Int
         /// 打分抖动范围（basis points）。
         public let scoreJitterBps: Int
+
+        private enum CodingKeys: String, CodingKey {
+            case seed = "s"
+            case shuffleChecks = "sc"
+            case thresholdJitterBps = "tj"
+            case scoreJitterBps = "sj"
+        }
 
         public init(
             seed: String,
@@ -60,6 +85,15 @@ public struct ServerRiskPolicy: Codable, Sendable {
         /// challenge 有效期（毫秒）
         public let challengeTTLMillis: Int64
         public let rules: [BlindRule]
+
+        private enum CodingKeys: String, CodingKey {
+            case enabled = "e"
+            case challengeSalt = "cs"
+            case windowSeconds = "ws"
+            case probePool = "pp"
+            case challengeTTLMillis = "ct"
+            case rules = "r"
+        }
 
         public init(
             enabled: Bool = true,
@@ -89,6 +123,17 @@ public struct ServerRiskPolicy: Codable, Sendable {
         /// 最小能力探针异常数（beta.2 新增）
         public let minCapabilityAnomalyCount: Int
         public let weight: Double
+
+        private enum CodingKeys: String, CodingKey {
+            case id = "i"
+            case allOfSignalIDs = "ao"
+            case anyOfSignalIDs = "ay"
+            case minTamperedCount = "mt"
+            case minDistinctRiskLayers = "ml"
+            case requireCrossLayerInconsistency = "rc"
+            case minCapabilityAnomalyCount = "mc"
+            case weight = "w"
+        }
 
         public init(
             id: String,
@@ -144,6 +189,13 @@ public final class PolicyManager: @unchecked Sendable {
         let cachedAt: TimeInterval
         let isVerifiedByServer: Bool
         let contentHash: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case policy = "p"
+            case cachedAt = "ca"
+            case isVerifiedByServer = "iv"
+            case contentHash = "ch"
+        }
 
         init(
             policy: ServerRiskPolicy,

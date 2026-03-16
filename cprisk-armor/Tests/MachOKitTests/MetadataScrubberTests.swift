@@ -24,18 +24,19 @@ final class MetadataScrubberTests: XCTestCase {
 
         let after = try file.findSwiftTypeMetadata()
 
-        // _InternalHelper: non-public → obfuscated, same length
+        // _InternalHelper: obfuscated, same length
         XCTAssertNotEqual(after[0].name, "_InternalHelper")
         XCTAssertEqual(after[0].name.count, "_InternalHelper".count)
 
-        // CPRiskDetector: public + contains "CPRisk" → preserved
-        XCTAssertEqual(after[1].name, "CPRiskDetector")
+        // CPRiskDetector: now obfuscated (no more SDK-name whitelist)
+        XCTAssertNotEqual(after[1].name, "CPRiskDetector")
+        XCTAssertEqual(after[1].name.count, "CPRiskDetector".count)
 
-        // BusinessLogic: public, no SDK marker → obfuscated, same length
+        // BusinessLogic: obfuscated, same length
         XCTAssertNotEqual(after[2].name, "BusinessLogic")
         XCTAssertEqual(after[2].name.count, "BusinessLogic".count)
 
-        XCTAssertTrue(result.details.contains { $0.contains("2/3") })
+        XCTAssertTrue(result.details.contains { $0.contains("3/3") })
         XCTAssertGreaterThan(result.bytesModified, 0)
     }
 
@@ -79,13 +80,13 @@ final class MetadataScrubberTests: XCTestCase {
         let content = try section.readContent(from: file.data)
         let methods = Self.parseCStrings(from: content)
 
-        // System-prefixed methods preserved
+        // System/non-SDK methods preserved (no SDK marker → left untouched)
         XCTAssertTrue(methods.contains("initWithFrame:"))
         XCTAssertTrue(methods.contains("setTitle:"))
 
-        // Business methods obfuscated (original names gone)
-        XCTAssertFalse(methods.contains("fetchUserData"))
-        XCTAssertFalse(methods.contains("doSomething"))
+        // SDK methods obfuscated (contain SDK markers → names gone)
+        XCTAssertFalse(methods.contains("cpriskCollect"))
+        XCTAssertFalse(methods.contains("CPRiskCheck"))
 
         XCTAssertTrue(result.details.contains { $0.contains("ObjC method names obfuscated: 2/4") })
     }
@@ -135,14 +136,14 @@ final class MetadataScrubberTests: XCTestCase {
         let pass = MetadataScrubberPass()
         let result = try pass.execute(on: file, config: PassConfig())
 
-        // 2 type names + 1 reflstr section + 2 objc methods = 5 items
-        XCTAssertEqual(result.itemsProcessed, 5)
+        // 3 type names + 1 reflstr section + 2 objc methods = 6 items
+        XCTAssertEqual(result.itemsProcessed, 6)
         XCTAssertEqual(result.passName, "MetadataScrubber")
 
-        // bytes: 15 (_InternalHelper) + 13 (BusinessLogic)
+        // bytes: 15 (_InternalHelper) + 14 (CPRiskDetector) + 13 (BusinessLogic)
         //      + 32 (reflstr)
-        //      + 13 (fetchUserData) + 11 (doSomething) = 84
-        XCTAssertEqual(result.bytesModified, 84)
+        //      + 13 (cpriskCollect) + 11 (CPRiskCheck) = 98
+        XCTAssertEqual(result.bytesModified, 98)
     }
 
     // MARK: - Helpers
@@ -295,9 +296,9 @@ final class MetadataScrubberTests: XCTestCase {
 
         // ── __objc_methname content (51 bytes) ──
         d.append(contentsOf: "initWithFrame:".utf8); d.append(0)   // 15
-        d.append(contentsOf: "fetchUserData".utf8);  d.append(0)   // 14  → 29
+        d.append(contentsOf: "cpriskCollect".utf8);  d.append(0)   // 14  → 29
         d.append(contentsOf: "setTitle:".utf8);      d.append(0)   // 10  → 39
-        d.append(contentsOf: "doSomething".utf8);    d.append(0)   // 12  → 51
+        d.append(contentsOf: "CPRiskCheck".utf8);    d.append(0)   // 12  → 51
         assert(d.count == 563)
 
         d.append(Data(count: 1024 - d.count))

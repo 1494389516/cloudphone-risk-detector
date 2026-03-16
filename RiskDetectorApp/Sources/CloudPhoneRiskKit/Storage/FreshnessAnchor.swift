@@ -5,6 +5,11 @@ struct FreshnessState: Codable, Sendable {
     var latestTimestamp: Double
     var sequence: UInt64
 
+    private enum CodingKeys: String, CodingKey {
+        case latestTimestamp = "lt"
+        case sequence = "sq"
+    }
+
     static let zero = FreshnessState(latestTimestamp: 0, sequence: 0)
 
     func dominates(_ other: FreshnessState) -> Bool {

@@ -358,6 +358,7 @@ public enum RiskReportMapper {
             signals: payload.signals,
             hardSignals: hard,
             softSignals: soft,
+            graphPayload: payload.graphPayload,
             challengeBinding: payload.challengeBinding
         )
     }
@@ -562,6 +563,7 @@ private struct PayloadMirror: Decodable {
     var signals: [RiskSignal]
     var server: ServerSignals?
     var local: LocalSignals?
+    var graphPayload: GraphPayload?
     var challengeBinding: ChallengeBindingPayload?
 }
 

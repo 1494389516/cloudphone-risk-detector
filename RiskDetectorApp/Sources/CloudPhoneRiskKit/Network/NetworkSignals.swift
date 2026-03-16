@@ -15,6 +15,13 @@ public struct DetectionSignal<Evidence: Codable & Sendable>: Codable, Sendable {
     public var evidence: Evidence?
     public var confidence: SignalConfidence
 
+    private enum CodingKeys: String, CodingKey {
+        case detected = "d"
+        case method = "m"
+        case evidence = "e"
+        case confidence = "c"
+    }
+
     public init(detected: Bool, method: String, evidence: Evidence? = nil, confidence: SignalConfidence) {
         self.detected = detected
         self.method = method
@@ -26,6 +33,11 @@ public struct DetectionSignal<Evidence: Codable & Sendable>: Codable, Sendable {
 public struct InterfaceTypeSignal: Codable, Sendable {
     public var value: String
     public var method: String
+
+    private enum CodingKeys: String, CodingKey {
+        case value = "v"
+        case method = "m"
+    }
 
     public init(value: String, method: String) {
         self.value = value
@@ -39,6 +51,14 @@ public struct NetworkSignals: Codable, Sendable {
     public var isConstrained: Bool
     public var vpn: DetectionSignal<[String]>
     public var proxy: DetectionSignal<[String: String]>
+
+    private enum CodingKeys: String, CodingKey {
+        case interfaceType = "it"
+        case isExpensive = "ie"
+        case isConstrained = "ic"
+        case vpn = "vp"
+        case proxy = "px"
+    }
 
     public var isVPNActive: Bool { vpn.detected }
     public var proxyEnabled: Bool { proxy.detected }

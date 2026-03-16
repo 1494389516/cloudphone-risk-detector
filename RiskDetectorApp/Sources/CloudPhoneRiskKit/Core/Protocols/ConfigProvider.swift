@@ -28,6 +28,16 @@ public struct ProviderConfig: Sendable, Codable {
     public var scenarios: ScenarioConfigs
     public var signature: String
 
+    private enum CodingKeys: String, CodingKey {
+        case version = "v"
+        case effectiveTime = "et"
+        case expireTime = "xt"
+        case detectors = "dt"
+        case policies = "pl"
+        case scenarios = "sc"
+        case signature = "sg"
+    }
+
     public init(
         version: String,
         effectiveTime: Date,
@@ -62,6 +72,15 @@ public struct ProviderDetectorConfigs: Sendable, Codable {
     public var network: NetworkProviderDetectorConfig
     public var device: DeviceProviderDetectorConfig
     public var environment: EnvironmentProviderDetectorConfig
+
+    private enum CodingKeys: String, CodingKey {
+        case jailbreak = "j"
+        case antiTamper = "at"
+        case behavior = "b"
+        case network = "n"
+        case device = "d"
+        case environment = "ev"
+    }
 
     public init(
         jailbreak: JailbreakProviderDetectorConfig = .default,
@@ -103,6 +122,18 @@ public struct JailbreakProviderDetectorConfig: ProviderDetectorConfig {
     public var enableSchemeDetect: Bool
     public var enableHookDetect: Bool
 
+    private enum CodingKeys: String, CodingKey {
+        case detectorId = "di"
+        case isEnabled = "ie"
+        case threshold = "t"
+        case enableFileDetect = "ef"
+        case enableDyldDetect = "ed"
+        case enableEnvDetect = "ee"
+        case enableSysctlDetect = "es"
+        case enableSchemeDetect = "esc"
+        case enableHookDetect = "eh"
+    }
+
     public init(
         isEnabled: Bool = true,
         threshold: Double = 50,
@@ -138,6 +169,17 @@ public struct AntiTamperProviderDetectorConfig: ProviderDetectorConfig {
     public var enableFridaCheck: Bool
     public var enableEmulatorCheck: Bool
 
+    private enum CodingKeys: String, CodingKey {
+        case detectorId = "di"
+        case isEnabled = "ie"
+        case threshold = "t"
+        case enableCodeIntegrityCheck = "ec"
+        case enableDylibInjectionCheck = "edl"
+        case enableDebuggerCheck = "edb"
+        case enableFridaCheck = "efr"
+        case enableEmulatorCheck = "eem"
+    }
+
     public init(
         isEnabled: Bool = true,
         threshold: Double = 50,
@@ -170,6 +212,18 @@ public struct BehaviorProviderDetectorConfig: ProviderDetectorConfig {
     public var touchIntervalCVLowThreshold: Double
     public var touchIntervalCVHighThreshold: Double
 
+    private enum CodingKeys: String, CodingKey {
+        case detectorId = "di"
+        case isEnabled = "ie"
+        case touchSamplingDuration = "td"
+        case motionSamplingDuration = "md"
+        case minTouchCount = "mt"
+        case touchSpreadLowThreshold = "sl"
+        case touchSpreadHighThreshold = "sh"
+        case touchIntervalCVLowThreshold = "cl"
+        case touchIntervalCVHighThreshold = "ch"
+    }
+
     public init(
         isEnabled: Bool = true,
         touchSamplingDuration: TimeInterval = 30,
@@ -201,6 +255,15 @@ public struct NetworkProviderDetectorConfig: ProviderDetectorConfig {
     public var vpnRiskScore: Double
     public var proxyRiskScore: Double
 
+    private enum CodingKeys: String, CodingKey {
+        case detectorId = "di"
+        case isEnabled = "ie"
+        case detectVPN = "dv"
+        case detectProxy = "dp"
+        case vpnRiskScore = "vr"
+        case proxyRiskScore = "pr"
+    }
+
     public init(
         isEnabled: Bool = true,
         detectVPN: Bool = true,
@@ -225,6 +288,14 @@ public struct DeviceProviderDetectorConfig: ProviderDetectorConfig {
     public var oldDeviceFamilyThreshold: Int
     public var simulatorRiskScore: Double
 
+    private enum CodingKeys: String, CodingKey {
+        case detectorId = "di"
+        case isEnabled = "ie"
+        case detectSimulator = "ds"
+        case oldDeviceFamilyThreshold = "of"
+        case simulatorRiskScore = "sr"
+    }
+
     public init(
         isEnabled: Bool = true,
         detectSimulator: Bool = true,
@@ -246,6 +317,13 @@ public struct EnvironmentProviderDetectorConfig: ProviderDetectorConfig {
     public var detectProxy: Bool
     public var detectJailbreakEnv: Bool
 
+    private enum CodingKeys: String, CodingKey {
+        case detectorId = "di"
+        case isEnabled = "ie"
+        case detectProxy = "dp"
+        case detectJailbreakEnv = "dj"
+    }
+
     public init(
         isEnabled: Bool = true,
         detectProxy: Bool = true,
@@ -264,6 +342,12 @@ public struct PolicyConfigs: Sendable, Codable {
     public var weights: WeightConfig
     public var rules: [RuleConfig]
 
+    private enum CodingKeys: String, CodingKey {
+        case thresholds = "th"
+        case weights = "w"
+        case rules = "r"
+    }
+
     public init(thresholds: ThresholdConfig = .default, weights: WeightConfig = .default, rules: [RuleConfig] = []) {
         self.thresholds = thresholds
         self.weights = weights
@@ -275,6 +359,12 @@ public struct ThresholdConfig: Sendable, Codable {
     public var lowRisk: Double
     public var mediumRisk: Double
     public var highRisk: Double
+
+    private enum CodingKeys: String, CodingKey {
+        case lowRisk = "lr"
+        case mediumRisk = "mr"
+        case highRisk = "hr"
+    }
 
     public init(lowRisk: Double = 40, mediumRisk: Double = 60, highRisk: Double = 80) {
         self.lowRisk = lowRisk
@@ -298,6 +388,15 @@ public struct WeightConfig: Sendable, Codable {
     public var network: Double
     public var device: Double
     public var environment: Double
+
+    private enum CodingKeys: String, CodingKey {
+        case jailbreak = "j"
+        case antiTamper = "at"
+        case behavior = "b"
+        case network = "n"
+        case device = "d"
+        case environment = "ev"
+    }
 
     public init(
         jailbreak: Double = 0.6,
@@ -337,6 +436,15 @@ public struct RuleConfig: Sendable, Codable, Identifiable {
     public var condition: RuleCondition
     public var action: RuleAction
     public var priority: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "i"
+        case name = "n"
+        case description = "ds"
+        case condition = "cn"
+        case action = "ac"
+        case priority = "pr"
+    }
 
     public init(
         id: String,
@@ -382,6 +490,14 @@ public struct ScenarioConfigs: Sendable, Codable {
     public var query: ScenarioConfig
     public var `default`: ScenarioConfig
 
+    private enum CodingKeys: String, CodingKey {
+        case login = "l"
+        case payment = "p"
+        case register = "r"
+        case query = "q"
+        case `default` = "df"
+    }
+
     public init(
         login: ScenarioConfig = .login,
         payment: ScenarioConfig = .payment,
@@ -414,6 +530,15 @@ public struct ScenarioConfig: Sendable, Codable {
     public var customWeights: WeightConfig?
     public var mediumProtocolRiskAction: ProtocolRiskAction
     public var highProtocolRiskAction: ProtocolRiskAction
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled = "e"
+        case threshold = "t"
+        case enabledDetectors = "ed"
+        case customWeights = "cw"
+        case mediumProtocolRiskAction = "ma"
+        case highProtocolRiskAction = "ha"
+    }
 
     public init(
         enabled: Bool = true,
@@ -448,6 +573,14 @@ public struct PolicyConfig: Sendable, Codable {
     public var highProtocolRiskAction: ProtocolRiskAction
     public var enabledDetectors: Set<String>
     public var customWeights: [String: Double]?
+
+    private enum CodingKeys: String, CodingKey {
+        case threshold = "t"
+        case mediumProtocolRiskAction = "ma"
+        case highProtocolRiskAction = "ha"
+        case enabledDetectors = "ed"
+        case customWeights = "cw"
+    }
 
     public init(
         threshold: Double,

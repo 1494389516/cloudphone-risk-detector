@@ -53,6 +53,9 @@ struct ConfigurationView: View {
         .sheet(isPresented: $showExportSheet) {
             exportSheet
         }
+        .onDisappear {
+            settingsVM.save()
+        }
     }
     
     // MARK: - 预设场景
@@ -369,7 +372,7 @@ extension SettingsViewModel {
             }
             return .custom
         }
-        set { }
+        set { applyPreset(newValue) }
     }
     
     func applyPreset(_ preset: PresetMode) {

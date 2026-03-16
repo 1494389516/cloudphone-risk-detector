@@ -8,6 +8,12 @@ public struct TextSegmentReference: Codable, Sendable {
     public let source: String
     public let version: String?
 
+    private enum CodingKeys: String, CodingKey {
+        case expectedHash = "eh"
+        case source = "s"
+        case version = "v"
+    }
+
     public init(expectedHash: String, source: String = "custom", version: String? = nil) {
         self.expectedHash = expectedHash
         self.source = source

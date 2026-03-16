@@ -124,19 +124,19 @@ public struct ReportEnvelope: Codable, Sendable {
     // MARK: - Codable
 
     enum CodingKeys: String, CodingKey {
-        case nonce
-        case ts
-        case sessionToken
-        case payload
-        case reportId
-        case sigVer
-        case keyId
-        case fieldMappingVersion
-        case signature
-        case attestationKeyId
-        case attestationAssertion
-        case trustLevel
-        case reAttestationAssertion
+        case nonce = "n"
+        case ts = "t"
+        case sessionToken = "st"
+        case payload = "p"
+        case reportId = "ri"
+        case sigVer = "sv"
+        case keyId = "ki"
+        case fieldMappingVersion = "fm"
+        case signature = "sg"
+        case attestationKeyId = "ak"
+        case attestationAssertion = "aa"
+        case trustLevel = "tl"
+        case reAttestationAssertion = "ra"
     }
 
     public init(

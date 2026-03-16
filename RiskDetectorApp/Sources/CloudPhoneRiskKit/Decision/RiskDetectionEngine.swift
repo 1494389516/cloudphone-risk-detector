@@ -1141,54 +1141,47 @@ public struct EnginePolicy: Codable, Sendable {
 
     // MARK: - 紧急开关
 
-    /// 紧急熔断开关：启用后所有评估强制返回低风险/allow，用于线上事故时快速止血
     public let killSwitchEnabled: Bool
 
     // MARK: - 全局开关
 
-    /// 是否启用网络信号检测
     public let enableNetworkSignals: Bool
-
-    /// 是否启用行为检测
     public let enableBehaviorDetection: Bool
-
-    /// 是否启用设备指纹检测
     public let enableDeviceFingerprint: Bool
 
     // MARK: - 强制规则
 
-    /// 越狱设备的强制动作（nil表示不强制）
     public let forceActionOnJailbreak: RiskAction?
 
     // MARK: - 场景策略
 
-    /// 各场景的默认策略映射
     public let scenarioPolicies: [RiskScenario: ScenarioPolicy]
-
-    /// 单信号权重覆盖（3.0）
-    /// key = signal.id, value = weight
     public let signalWeightOverrides: [String: Double]
-
-    /// 每版本变形策略（3.0）
     public let mutationStrategy: MutationStrategy?
-
-    /// 服务端盲挑战策略（3.0）
     public let blindChallengePolicy: BlindChallengePolicy?
-
-    /// 服务端黑名单条目（3.0）
-    /// 支持 IP / ASN / AS-ORG / 风险标签等匹配。
     public let serverBlocklist: [String]?
-
-    /// 命中服务端黑名单时的强制动作（3.0）
     public let blocklistAction: RiskAction?
 
     // MARK: - 元数据
 
-    /// 策略名称
     public let name: String
-
-    /// 策略版本
     public let version: String
+
+    private enum CodingKeys: String, CodingKey {
+        case killSwitchEnabled = "ks"
+        case enableNetworkSignals = "en"
+        case enableBehaviorDetection = "eb"
+        case enableDeviceFingerprint = "ef"
+        case forceActionOnJailbreak = "fj"
+        case scenarioPolicies = "sp"
+        case signalWeightOverrides = "wo"
+        case mutationStrategy = "ms"
+        case blindChallengePolicy = "bp"
+        case serverBlocklist = "sb"
+        case blocklistAction = "ba"
+        case name = "n"
+        case version = "v"
+    }
 
     // MARK: - 初始化
 
@@ -1296,6 +1289,13 @@ public struct MutationStrategy: Codable, Sendable {
     public let thresholdJitterBps: Int
     public let scoreJitterBps: Int
 
+    private enum CodingKeys: String, CodingKey {
+        case seed = "s"
+        case shuffleChecks = "sc"
+        case thresholdJitterBps = "tj"
+        case scoreJitterBps = "sj"
+    }
+
     public init(
         seed: String,
         shuffleChecks: Bool = true,
@@ -1314,6 +1314,13 @@ public struct BlindChallengePolicy: Codable, Sendable {
     public let challengeSalt: String
     public let windowSeconds: Int
     public let rules: [BlindChallengeRule]
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled = "e"
+        case challengeSalt = "cs"
+        case windowSeconds = "ws"
+        case rules = "r"
+    }
 
     public init(
         enabled: Bool = true,
@@ -1336,6 +1343,16 @@ public struct BlindChallengeRule: Codable, Sendable {
     public let minDistinctRiskLayers: Int
     public let requireCrossLayerInconsistency: Bool
     public let weight: Double
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "i"
+        case allOfSignalIDs = "ao"
+        case anyOfSignalIDs = "ay"
+        case minTamperedCount = "mt"
+        case minDistinctRiskLayers = "ml"
+        case requireCrossLayerInconsistency = "rc"
+        case weight = "w"
+    }
 
     public init(
         id: String,

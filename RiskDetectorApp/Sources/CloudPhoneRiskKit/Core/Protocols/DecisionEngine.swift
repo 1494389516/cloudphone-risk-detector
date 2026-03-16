@@ -26,6 +26,14 @@ public struct DecisionConfig: Sendable, Codable {
     public var enabledDetectors: Set<String>
     public var extras: [String: String]
 
+    private enum CodingKeys: String, CodingKey {
+        case scenario = "sc"
+        case useRemoteConfig = "ur"
+        case customThreshold = "ct"
+        case enabledDetectors = "ed"
+        case extras = "ex"
+    }
+
     public init(
         scenario: RiskScenario = .default,
         useRemoteConfig: Bool = true,
@@ -54,6 +62,11 @@ public struct FeatureVector: Sendable, Codable {
     public var values: [String: Double]
     public var metadata: [String: String]
 
+    private enum CodingKeys: String, CodingKey {
+        case values = "v"
+        case metadata = "m"
+    }
+
     public init(values: [String: Double] = [:], metadata: [String: String] = [:]) {
         self.values = values
         self.metadata = metadata
@@ -69,6 +82,12 @@ public struct ModelResult: Sendable, Codable {
     public var score: Double
     public var confidence: Double
     public var explanation: [String: String]
+
+    private enum CodingKeys: String, CodingKey {
+        case score = "s"
+        case confidence = "c"
+        case explanation = "e"
+    }
 
     public init(score: Double, confidence: Double, explanation: [String: String] = [:]) {
         self.score = score

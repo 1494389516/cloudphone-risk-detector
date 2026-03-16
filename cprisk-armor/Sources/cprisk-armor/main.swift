@@ -5,6 +5,7 @@ import MetadataScrubber
 import DataSegmentEncryptor
 import IntegrityAnchor
 import StructureObfuscator
+import SymbolStripper
 
 // MARK: - CLI Options
 
@@ -41,6 +42,7 @@ func parseArguments() -> CLIOptions {
         case "--pass3": options.passes.insert(3)
         case "--pass4": options.passes.insert(4)
         case "--pass5": options.passes.insert(5)
+        case "--pass6": options.passes.insert(6)
         case "--all":   options.allPasses = true
         case "--verbose": options.verbose = true
         case "--help":
@@ -68,6 +70,7 @@ func printUsage() {
       --pass3           Pass 3: Data Segment Encryption
       --pass4           Pass 4: Integrity Anchor
       --pass5           Pass 5: Structure Obfuscation
+      --pass6           Pass 6: Symbol Stripping (nlist obfuscation)
       --all             Enable all passes
       --verbose         Verbose output
       --help            Show this help
@@ -121,7 +124,7 @@ guard let inputPath = options.inputPath else {
 
 let outputPath = options.outputPath ?? (inputPath + "_armored")
 let verbose = options.verbose
-let enabledPasses: Set<Int> = options.allPasses ? [1, 2, 3, 4, 5] : options.passes
+let enabledPasses: Set<Int> = options.allPasses ? [1, 2, 3, 4, 5, 6] : options.passes
 
 if enabledPasses.isEmpty {
     fputs("Warning: No passes enabled. Use --all or --passN flags.\n", stderr)
@@ -172,6 +175,7 @@ do {
         (4, IntegrityAnchorPass()),
         (3, DataSegmentEncryptorPass()),
         (5, StructureObfuscatorPass()),
+        (6, SymbolStripperPass()),
     ]
 
     for (index, pass) in passes {

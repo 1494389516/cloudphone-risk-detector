@@ -23,6 +23,15 @@ public struct GraphNodeDescriptor: Codable, Sendable {
     /// 应用安装列表哈希（如可获取，否则省略；iOS 隐私限制下通常不可用）
     public var appListHash: String?
 
+    private enum CodingKeys: String, CodingKey {
+        case hwProfileHash = "hp"
+        case ipHash = "ih"
+        case asnHash = "ah"
+        case accountIdHash = "ai"
+        case bssidHash = "bh"
+        case appListHash = "al"
+    }
+
     public init(
         hwProfileHash: String,
         ipHash: String? = nil,

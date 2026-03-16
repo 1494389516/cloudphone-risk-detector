@@ -5,6 +5,13 @@ public struct RiskHistoryEvent: Codable, Sendable {
     var score: Double
     var isHighRisk: Bool
     var summary: String
+
+    private enum CodingKeys: String, CodingKey {
+        case t = "t"
+        case score = "s"
+        case isHighRisk = "hr"
+        case summary = "sm"
+    }
 }
 
 public struct TimePattern: Codable, Sendable {
@@ -12,6 +19,13 @@ public struct TimePattern: Codable, Sendable {
     public var uniqueHours24h: Int
     public var nightRatio24h: Double?
     public var averageIntervalSeconds24h: Double?
+
+    private enum CodingKeys: String, CodingKey {
+        case events24h = "e"
+        case uniqueHours24h = "uh"
+        case nightRatio24h = "nr"
+        case averageIntervalSeconds24h = "ai"
+    }
 }
 
 // SECURITY-TODO: Migrate to Keychain or FileProtection.complete sandboxed file.
@@ -25,6 +39,13 @@ public final class RiskHistoryStore {
         var events: [RiskHistoryEvent]
         var latestTimestamp: Double
         var sequence: UInt64
+
+        private enum CodingKeys: String, CodingKey {
+            case schemaVersion = "sv"
+            case events = "ev"
+            case latestTimestamp = "lt"
+            case sequence = "sq"
+        }
     }
 
     private struct LoadedState {

@@ -7,6 +7,12 @@ public struct PayloadFieldMapping: Codable, Sendable {
     public let mappings: [String: String]
     public let expiresAtMillis: Int64?
 
+    private enum CodingKeys: String, CodingKey {
+        case version = "v"
+        case mappings = "m"
+        case expiresAtMillis = "ea"
+    }
+
     public init(version: String, mappings: [String: String], expiresAtMillis: Int64? = nil) {
         self.version = version
         self.mappings = mappings

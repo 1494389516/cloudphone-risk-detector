@@ -92,9 +92,9 @@ public enum RiskSignalState: Sendable, Codable, Equatable {
     case tampered
 
     private enum CodingKeys: String, CodingKey {
-        case type
-        case detected
-        case confidence
+        case type = "t"
+        case detected = "d"
+        case confidence = "c"
     }
 
     private enum StateType: String, Codable {
@@ -150,6 +150,16 @@ public struct RiskSignal: Sendable, Codable {
     public var state: RiskSignalState?
     public var layer: Int?
     public var weightHint: Double
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "i"
+        case category = "ca"
+        case score = "s"
+        case evidence = "ev"
+        case state = "st"
+        case layer = "l"
+        case weightHint = "wh"
+    }
 
     public init(
         id: String,
@@ -342,25 +352,18 @@ private struct Payload: Codable {
     var signals: [RiskSignal]
     var tamperedCount: Int
 
-    // 内存语义压缩摘要（1.0=16 hex，1.1=18 hex，纳入签名域）
     var compressedDigestHex: String?
-    // 信号到 bit 映射表版本（服务端解码用）
     var signalMappingVersion: String?
 
-    // v2a: SHA-256 hex of sorted "id:score:state" entries; binds signal values into envelope signature domain.
     var signalsDigest: String?
     var signalsDigestVersion: String?
 
-    // 预留：未来服务端/云端聚合信号（IP 聚合度、ASN、机房属性等）
     var server: ServerSignals?
 
-    // 本地聚合信号（不依赖云端）
     var local: LocalSignals?
 
-    // blind challenge 绑定载荷（beta.4）
     var challengeBinding: ChallengeBindingPayload?
 
-    // 3.0 增量字段
     var gpuName: String?
     var kernelBuild: String?
     var deviceModel: String?
@@ -368,17 +371,50 @@ private struct Payload: Codable {
     var imuVariance: Double?
     var touchForceVar: Double?
 
-    // 3.5 图算法绑定字段
     var accountId: String?
     var sessionId: String?
     var sceneTag: String?
     var behaviorVector: [Double]?
 
-    // 3.5 图风控：端侧生产的图节点描述符（单向哈希，服务端可直接入图）
     var graphNode: GraphNodeDescriptor?
 
-    // 盲区四：__TEXT.__text 哈希供服务端二次校验
     var textSegmentIntegrity: TextSegmentIntegrityPayload?
+
+    private enum CodingKeys: String, CodingKey {
+        case sdkVersion = "sv"
+        case reportId = "ri"
+        case timestamp = "ts"
+        case generatedAt = "ga"
+        case deviceID = "di"
+        case device = "dv"
+        case network = "nw"
+        case behavior = "bh"
+        case jailbreak = "jb"
+        case score = "sc"
+        case isHighRisk = "hr"
+        case summary = "sm"
+        case signals = "sg"
+        case tamperedCount = "tc"
+        case compressedDigestHex = "cd"
+        case signalMappingVersion = "mv"
+        case signalsDigest = "sd"
+        case signalsDigestVersion = "dv2"
+        case server = "sr"
+        case local = "lc"
+        case challengeBinding = "cb"
+        case gpuName = "gn"
+        case kernelBuild = "kb"
+        case deviceModel = "dm"
+        case imuMagnitude = "im"
+        case imuVariance = "iv"
+        case touchForceVar = "tf"
+        case accountId = "ai"
+        case sessionId = "si"
+        case sceneTag = "st"
+        case behaviorVector = "bv"
+        case graphNode = "gd"
+        case textSegmentIntegrity = "ti"
+    }
 
     init(context: RiskContext, report: RiskScoreReport) {
         self.sdkVersion = Version.current
@@ -454,6 +490,15 @@ public struct TextSegmentIntegrityPayload: Codable, Sendable {
     public let usedServerReference: Bool
     /// 客户端本地结论细节，仅供观测，不应作为服务端最终信任依据。
     public let clientDetail: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case currentHash = "ch"
+        case sdkVersion = "sv"
+        case referenceSource = "rs"
+        case referenceVersion = "rv"
+        case usedServerReference = "ur"
+        case clientDetail = "cd"
+    }
 
     public init(
         currentHash: String,
@@ -569,15 +614,31 @@ public struct ChallengeBindingPayload: Codable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case challengeId, seed, probeIds, executedProbeIds, expiresAt, timestamp
-        case capabilityAnomalyCount, qualitySuspicion, totalProbes, tamperedCount, probeRiskContribution
-        case triggerReason, executionStatus, expectedHash
+        case challengeId = "ci"
+        case seed = "s"
+        case probeIds = "pi"
+        case executedProbeIds = "ep"
+        case expiresAt = "ea"
+        case timestamp = "ts"
+        case capabilityAnomalyCount = "ca"
+        case qualitySuspicion = "qs"
+        case totalProbes = "tp"
+        case tamperedCount = "tc"
+        case probeRiskContribution = "pr"
+        case triggerReason = "tr"
+        case executionStatus = "es"
+        case expectedHash = "eh"
     }
 }
 
 public struct LocalSignals: Codable, Sendable {
     public var timePattern: TimePattern?
     public var cloudPhone: CloudPhoneLocalSignals?
+
+    private enum CodingKeys: String, CodingKey {
+        case timePattern = "tp"
+        case cloudPhone = "cp"
+    }
 
     public init(timePattern: TimePattern? = nil, cloudPhone: CloudPhoneLocalSignals? = nil) {
         self.timePattern = timePattern
@@ -602,6 +663,23 @@ public struct ServerSignals: Codable, Sendable {
     public var hwProfileDegree: Int?
     public var devicePageRank: Double?
     public var isInDenseSubgraph: Bool?
+
+    private enum CodingKeys: String, CodingKey {
+        case publicIP = "ip"
+        case asn = "an"
+        case asOrg = "ao"
+        case isDatacenter = "dc"
+        case ipDeviceAgg = "da"
+        case ipAccountAgg = "aa"
+        case geoCountry = "gc"
+        case geoRegion = "gr"
+        case riskTags = "rt"
+        case communityId = "ci"
+        case communityRiskDensity = "cr"
+        case hwProfileDegree = "hd"
+        case devicePageRank = "pr"
+        case isInDenseSubgraph = "ds"
+    }
 
     public init(
         publicIP: String? = nil,
@@ -641,6 +719,13 @@ private struct DetectionResultPayload: Codable {
     var confidence: Double
     var detectedMethods: [String]
     var details: String
+
+    private enum CodingKeys: String, CodingKey {
+        case isJailbroken = "ij"
+        case confidence = "c"
+        case detectedMethods = "dm"
+        case details = "dt"
+    }
 
     init(_ result: DetectionResult) {
         self.isJailbroken = result.isJailbroken

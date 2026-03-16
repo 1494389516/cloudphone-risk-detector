@@ -30,18 +30,15 @@ import Foundation
 ///
 public struct RiskDeviceHistory: Codable, Sendable {
 
-    // MARK: - 历史快照列表
-
-    /// 设备快照历史记录（按时间升序排列）
     public let snapshots: [RiskDeviceSnapshot]
-
-    /// 最大历史记录数量（超过此数量会自动清理旧记录）
     public let maxSnapshots: Int
-
-    /// 历史记录的最大保留时间（秒）
     public let retentionPeriod: TimeInterval
 
-    // MARK: - 初始化
+    private enum CodingKeys: String, CodingKey {
+        case snapshots = "sn"
+        case maxSnapshots = "ms"
+        case retentionPeriod = "rp"
+    }
 
     public init(
         snapshots: [RiskDeviceSnapshot] = [],
@@ -420,47 +417,37 @@ public struct RiskDeviceHistory: Codable, Sendable {
 /// 单个时间点的设备状态快照
 public struct RiskDeviceSnapshot: Codable, Sendable {
 
-    /// 快照时间戳（Unix 时间戳，秒）
     public let timestamp: TimeInterval
-
-    /// 风险分数（0-100）
     public let riskScore: Double
-
-    /// 是否高风险
     public let isHighRisk: Bool
-
-    /// 是否检测到越狱
     public let wasJailbroken: Bool
-
-    /// 越狱置信度
     public let jailbreakConfidence: Double
-
-    /// 设备指纹哈希
     public let fingerprintHash: String
-
-    /// 系统版本
     public let systemVersion: String
-
-    /// 语言代码
     public let languageCode: String
-
-    /// 地区代码
     public let regionCode: String
-
-    /// 时区标识符
     public let timeZoneIdentifier: String
-
-    /// 主要网络接口类型
     public let primaryInterfaceType: String
-
-    /// 是否启用 VPN
     public let hasVPN: Bool
-
-    /// 是否启用代理
     public let hasProxy: Bool
-
-    /// 额外的元数据（可选）
     public let metadata: [String: String]?
+
+    private enum CodingKeys: String, CodingKey {
+        case timestamp = "ts"
+        case riskScore = "rs"
+        case isHighRisk = "hr"
+        case wasJailbroken = "wj"
+        case jailbreakConfidence = "jc"
+        case fingerprintHash = "fh"
+        case systemVersion = "sv"
+        case languageCode = "lc"
+        case regionCode = "rc"
+        case timeZoneIdentifier = "tz"
+        case primaryInterfaceType = "pi"
+        case hasVPN = "vp"
+        case hasProxy = "px"
+        case metadata = "md"
+    }
 
     public init(
         timestamp: TimeInterval,
@@ -533,32 +520,27 @@ public struct RiskDeviceSnapshot: Codable, Sendable {
 // MARK: - 时序特征
 
 public struct HistoryTemporalFeatures: Codable, Sendable {
-    /// 有效快照数量
     public let count: Int
-
-    /// 时间跨度（秒）
     public let timeSpan: TimeInterval
-
-    /// 平均风险分数
     public let meanScore: Double
-
-    /// 风险分数标准差
     public let stdScore: Double
-
-    /// 趋势斜率（分数/秒）
     public let trendSlope: Double
-
-    /// 最高风险分数
     public let maxScore: Double
-
-    /// 最低风险分数
     public let minScore: Double
-
-    /// 高风险事件次数
     public let highRiskCount: Int
-
-    /// 高风险事件比例（0-1）
     public let highRiskRatio: Double
+
+    private enum CodingKeys: String, CodingKey {
+        case count = "c"
+        case timeSpan = "ts"
+        case meanScore = "mn"
+        case stdScore = "sd"
+        case trendSlope = "sl"
+        case maxScore = "mx"
+        case minScore = "mi"
+        case highRiskCount = "hc"
+        case highRiskRatio = "hr"
+    }
 
     public init(
         count: Int,
@@ -638,20 +620,19 @@ public enum HistoryRiskTrend: String, Codable, Sendable {
 // MARK: - 稳定性指标
 
 public struct StabilityMetrics: Codable, Sendable {
-    /// 指纹稳定性（0-1，越高越稳定）
     public let fingerprintStability: Double
-
-    /// 配置稳定性（0-1，越高越稳定）
     public let configurationStability: Double
-
-    /// 网络稳定性（0-1，越高越稳定）
     public let networkStability: Double
-
-    /// 位置稳定性（0-1，越高越稳定）
     public let locationStability: Double
-
-    /// 综合稳定性（0-1，越高越稳定）
     public let overallStability: Double
+
+    private enum CodingKeys: String, CodingKey {
+        case fingerprintStability = "fs"
+        case configurationStability = "cs"
+        case networkStability = "ns"
+        case locationStability = "ls"
+        case overallStability = "os"
+    }
 
     public init(
         fingerprintStability: Double,
@@ -696,20 +677,19 @@ public struct StabilityMetrics: Codable, Sendable {
 // MARK: - 异常事件
 
 public struct HistoryAnomalyEvent: Codable, Sendable {
-    /// 异常类型
     public let type: HistoryAnomalyType
-
-    /// 异常发生时间戳
     public let timestamp: TimeInterval
-
-    /// 异常前的风险分数
     public let previousScore: Double
-
-    /// 异常后的风险分数
     public let currentScore: Double
-
-    /// 异常描述
     public let description: String
+
+    private enum CodingKeys: String, CodingKey {
+        case type = "t"
+        case timestamp = "ts"
+        case previousScore = "ps"
+        case currentScore = "cs"
+        case description = "ds"
+    }
 
     public init(
         type: HistoryAnomalyType,

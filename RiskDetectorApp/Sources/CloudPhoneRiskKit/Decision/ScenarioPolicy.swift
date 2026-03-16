@@ -4,38 +4,25 @@ import Foundation
 /// 定义特定场景下的风控策略：阈值、动作、权重等
 public struct ScenarioPolicy: Codable, Sendable {
 
-    // MARK: - 阈值配置
-
-    /// 中风险阈值（分数 >= 此值判定为中风险）
     public let mediumThreshold: Double
-
-    /// 高风险阈值（分数 >= 此值判定为高风险）
     public let highThreshold: Double
-
-    /// 严重风险阈值（分数 >= 此值判定为严重风险）
     public let criticalThreshold: Double
-
-    // MARK: - 动作映射
-
-    /// 各风险等级对应的标准动作
     public let actionMapping: [InternalRiskLevel: RiskAction]
-
-    // MARK: - 信号权重配置
-
-    /// 各类别信号的权重系数（用于调整不同场景下信号的重要性）
     public let signalWeights: SignalWeights
-
-    // MARK: - 特殊规则
-
-    /// 组合信号规则（如：越狱+VPN = 严重风险）
     public let comboRules: [ComboRule]
-
-    /// 是否启用强制规则（如：越狱设备直接拒绝）
     public let enableForceRules: Bool
-
-    /// 压缩摘要快速判决规则（纯位向量，命中可短路）
-    /// 如：layer2 & 0x0C != 0 --> block
     public let compressedVerdictRules: [CompressedVerdictRule]
+
+    private enum CodingKeys: String, CodingKey {
+        case mediumThreshold = "mt"
+        case highThreshold = "ht"
+        case criticalThreshold = "ct"
+        case actionMapping = "am"
+        case signalWeights = "sw"
+        case comboRules = "cr"
+        case enableForceRules = "ef"
+        case compressedVerdictRules = "cv"
+    }
 
     // MARK: - 初始化
 
@@ -289,16 +276,19 @@ public struct ScenarioPolicy: Codable, Sendable {
 // MARK: - 信号权重配置
 /// 不同类别信号在特定场景下的权重系数
 public struct SignalWeights: Codable, Sendable {
-    /// 越狱信号权重
     public let jailbreak: Double
-    /// 网络信号权重（VPN、代理等）
     public let network: Double
-    /// 行为信号权重
     public let behavior: Double
-    /// 设备信号权重
     public let device: Double
-    /// 时间模式权重
     public let time: Double
+
+    private enum CodingKeys: String, CodingKey {
+        case jailbreak = "j"
+        case network = "n"
+        case behavior = "b"
+        case device = "d"
+        case time = "t"
+    }
 
     public init(
         jailbreak: Double = 1.0,
@@ -345,22 +335,19 @@ public struct SignalWeights: Codable, Sendable {
 // MARK: - 组合规则
 /// 当多个特定信号同时出现时，触发额外的风险加分或强制动作
 public struct ComboRule: Codable, Sendable {
-    /// 规则名称（用于日志和追踪）
     public let name: String
-
-    /// 必须同时存在的信号ID列表
-    /// 如: ["jailbreak", "vpn_active"]
     public let requiredSignals: [String]
-
-    /// 额外的风险分数加成
     public let bonusScore: Double
-
-    /// 强制执行的动作（可选）
-    /// 如果设置，无论分数如何都会执行此动作
     public let forceAction: RiskAction?
-
-    /// 规则描述
     public let description: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case name = "n"
+        case requiredSignals = "rs"
+        case bonusScore = "bs"
+        case forceAction = "fa"
+        case description = "ds"
+    }
 
     public init(
         name: String,

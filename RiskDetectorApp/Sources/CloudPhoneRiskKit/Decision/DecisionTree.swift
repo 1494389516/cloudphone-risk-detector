@@ -188,6 +188,13 @@ public struct ConditionNode: Codable, Sendable {
     public let trueBranch: DecisionTreeNodeType
     public let falseBranch: DecisionTreeNodeType?
 
+    private enum CodingKeys: String, CodingKey {
+        case id = "i"
+        case condition = "c"
+        case trueBranch = "tb"
+        case falseBranch = "fb"
+    }
+
     public init(
         id: String,
         condition: ConditionExpression,
@@ -216,6 +223,12 @@ public struct ActionNode: Codable, Sendable {
     public let action: RiskAction
     public let reason: String
 
+    private enum CodingKeys: String, CodingKey {
+        case id = "i"
+        case action = "a"
+        case reason = "r"
+    }
+
     public init(id: String, action: RiskAction, reason: String) {
         self.id = id
         self.action = action
@@ -231,6 +244,11 @@ public struct ScoreActionThreshold: Codable, Sendable {
     public let threshold: Double
     public let action: RiskAction
 
+    private enum CodingKeys: String, CodingKey {
+        case threshold = "t"
+        case action = "a"
+    }
+
     public init(threshold: Double, action: RiskAction) {
         self.threshold = threshold
         self.action = action
@@ -241,6 +259,12 @@ public struct ScoreActionNode: Codable, Sendable {
     public let id: String
     public let thresholds: [ScoreActionThreshold]
     public let defaultAction: RiskAction
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "i"
+        case thresholds = "th"
+        case defaultAction = "da"
+    }
 
     public init(id: String, thresholds: [(Double, RiskAction)], defaultAction: RiskAction) {
         self.id = id
@@ -271,6 +295,11 @@ public struct SequenceNode: Codable, Sendable {
     public let id: String
     public let children: [DecisionTreeNodeType]
 
+    private enum CodingKeys: String, CodingKey {
+        case id = "i"
+        case children = "ch"
+    }
+
     public init(id: String, children: [DecisionTreeNodeType]) {
         self.id = id
         self.children = children
@@ -291,6 +320,11 @@ public struct SequenceNode: Codable, Sendable {
 public struct ParallelNode: Codable, Sendable {
     public let id: String
     public let children: [DecisionTreeNodeType]
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "i"
+        case children = "ch"
+    }
 
     public init(id: String, children: [DecisionTreeNodeType]) {
         self.id = id
@@ -338,6 +372,12 @@ public struct DecisionTree: Codable, Sendable {
     public let root: DecisionTreeNodeType
     public let name: String
     public let description: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case root = "r"
+        case name = "n"
+        case description = "ds"
+    }
 
     public init(name: String, root: DecisionTreeNodeType, description: String? = nil) {
         self.name = name

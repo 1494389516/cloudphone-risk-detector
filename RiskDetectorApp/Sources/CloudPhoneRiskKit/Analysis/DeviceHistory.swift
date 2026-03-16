@@ -30,6 +30,18 @@ public struct DeviceDetectionSnapshot: Codable, Sendable {
     /// 网络接口类型
     public var networkInterfaceType: String
 
+    private enum CodingKeys: String, CodingKey {
+        case timestamp = "ts"
+        case deviceID = "di"
+        case riskScore = "rs"
+        case isHighRisk = "hr"
+        case jailbreakStatus = "js"
+        case isVPNActive = "va"
+        case isProxyEnabled = "pe"
+        case behaviorSummary = "bs"
+        case networkInterfaceType = "ni"
+    }
+
     public init(
         timestamp: TimeInterval,
         deviceID: String,
@@ -80,6 +92,12 @@ public struct JailbreakStatus: Codable, Sendable {
     public var confidence: Double
     public var detectedMethods: [String]
 
+    private enum CodingKeys: String, CodingKey {
+        case isJailbroken = "ij"
+        case confidence = "c"
+        case detectedMethods = "dm"
+    }
+
     public init(isJailbroken: Bool, confidence: Double, detectedMethods: [String]) {
         self.isJailbroken = isJailbroken
         self.confidence = confidence
@@ -95,6 +113,15 @@ public struct BehaviorSummary: Codable, Sendable {
     public var motionSampleCount: Int
     public var actionCount: Int
     public var touchMotionCorrelation: Double?
+
+    private enum CodingKeys: String, CodingKey {
+        case touchSampleCount = "tc"
+        case tapCount = "tp"
+        case swipeCount = "sw"
+        case motionSampleCount = "ms"
+        case actionCount = "ac"
+        case touchMotionCorrelation = "tm"
+    }
 
     public init(from signals: BehaviorSignals) {
         self.touchSampleCount = signals.touch.sampleCount
@@ -129,6 +156,13 @@ public final class DeviceHistory {
         var snapshots: [DeviceDetectionSnapshot]
         var latestTimestamp: Double
         var sequence: UInt64
+
+        private enum CodingKeys: String, CodingKey {
+            case schemaVersion = "sv"
+            case snapshots = "sn"
+            case latestTimestamp = "lt"
+            case sequence = "sq"
+        }
     }
 
     private let lock = NSLock()
@@ -152,7 +186,10 @@ public final class DeviceHistory {
 
     private init() {
         let paths = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-        let appSupportDirectory = paths[0]
+        guard let appSupportDirectory = paths.first else {
+            Logger.log("DeviceHistory: applicationSupportDirectory unavailable")
+            fatalError("DeviceHistory: applicationSupportDirectory unavailable")
+        }
         do {
             try fileManager.createDirectory(
                 at: appSupportDirectory,
@@ -170,14 +207,15 @@ public final class DeviceHistory {
 
     private func migrateFromDocumentsIfNeeded() {
         let oldPaths = fileManager.urls(for: .documentDirectory, in: .userDomainMask)
-        let oldStore = oldPaths[0].appendingPathComponent("cloudphone_device_history_v1.json")
+        guard let docDir = oldPaths.first else { return }
+        let oldStore = docDir.appendingPathComponent("cloudphone_device_history_v1.json")
         guard fileManager.fileExists(atPath: oldStore.path) else { return }
         do {
             try fileManager.removeItem(at: oldStore)
         } catch {
             Logger.log("DeviceHistory: failed to remove legacy store - \(error.localizedDescription)")
         }
-        let oldHmac = oldPaths[0].appendingPathComponent("cloudphone_device_history_v1.json.hmac")
+        let oldHmac = docDir.appendingPathComponent("cloudphone_device_history_v1.json.hmac")
         do {
             try fileManager.removeItem(at: oldHmac)
         } catch {

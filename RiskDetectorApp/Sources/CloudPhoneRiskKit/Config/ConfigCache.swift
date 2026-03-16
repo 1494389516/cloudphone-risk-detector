@@ -28,6 +28,13 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         let isVerifiedByServer: Bool
         let contentHash: String?
 
+        private enum CodingKeys: String, CodingKey {
+            case config = "c"
+            case cachedAt = "ca"
+            case isVerifiedByServer = "iv"
+            case contentHash = "ch"
+        }
+
         init(config: RemoteConfig, cachedAt: TimeInterval, isVerifiedByServer: Bool = false, contentHash: String? = nil) {
             self.config = config
             self.cachedAt = cachedAt
@@ -35,7 +42,6 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
             self.contentHash = contentHash ?? Self.computeContentHash(for: config)
         }
 
-        // 向后兼容：旧磁盘缓存无可信元数据时降级为 nil/false，由上层按构建类型决定是否接受
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             config = try container.decode(RemoteConfig.self, forKey: .config)
@@ -257,6 +263,11 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
     private struct CacheExport: Codable {
         let exportedAt: TimeInterval
         let entries: [CacheEntry]
+
+        private enum CodingKeys: String, CodingKey {
+            case exportedAt = "ea"
+            case entries = "en"
+        }
     }
 
     private func loadLatestFromDisk() -> CacheEntry? {
@@ -404,6 +415,14 @@ public struct VersionHistoryEntry: Codable, Sendable, Identifiable {
     public let timestamp: TimeInterval
     public let environment: ConfigEnvironment
     public let description: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "i"
+        case version = "v"
+        case timestamp = "ts"
+        case environment = "ev"
+        case description = "ds"
+    }
 
     public var date: Date {
         Date(timeIntervalSince1970: timestamp)

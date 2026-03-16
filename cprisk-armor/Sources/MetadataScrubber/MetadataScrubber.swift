@@ -8,12 +8,12 @@ import MachOKit
 public final class MetadataScrubberPass: ArmorPass {
     public let name = "MetadataScrubber"
 
-    private static let sdkNameMarkers = ["CPRisk", "CloudPhone", "Risk"]
-
-    private static let systemMethodPrefixes = [
-        "init", "set", "get", "viewDid", "application", ".cxx_",
-        "dealloc", "copy", "mutable", "hash", "isEqual",
-        "description", "encode", "decode",
+    private static let sdkMethodMarkers = [
+        "cprisk", "CPRisk", "cloudPhone", "CloudPhone",
+        "riskSignal", "RiskSignal", "riskReport", "RiskReport",
+        "detection", "Detection", "jailbreak", "Jailbreak",
+        "antiTamper", "AntiTamper", "trustChain", "TrustChain",
+        "behavior", "Behavior", "evaluate", "armoring",
     ]
 
     public init() {}
@@ -135,23 +135,17 @@ public final class MetadataScrubberPass: ArmorPass {
 
     private func shouldObfuscateType(_ metadata: SwiftTypeMetadata) -> Bool {
         let name = metadata.name
-        guard !name.isEmpty else { return false }
+        guard name.count > 2 else { return false }
         if name.contains("cprisk_") { return false }
-
-        if metadata.isPublic {
-            for marker in Self.sdkNameMarkers where name.contains(marker) {
-                return false
-            }
-        }
         return true
     }
 
     private static func shouldObfuscateMethod(_ name: String) -> Bool {
         guard !name.isEmpty else { return false }
-        for prefix in systemMethodPrefixes where name.hasPrefix(prefix) {
-            return false
+        for marker in sdkMethodMarkers where name.contains(marker) {
+            return true
         }
-        return true
+        return false
     }
 
     // MARK: - Random Generation

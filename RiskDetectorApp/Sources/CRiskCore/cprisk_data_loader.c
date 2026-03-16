@@ -200,10 +200,7 @@ static int cprisk_parse_loader_descriptor(
         return -1;
     size_t entries_base = sizeof(struct cprisk_armor_loader_header);
     size_t entries_sz = (size_t)count * sizeof(struct cprisk_armor_loader_entry);
-    if (count > 0 && entries_sz / sizeof(struct cprisk_armor_loader_entry) != (size_t)count)
-        return -1;  /* multiplication overflow */
-    if (entries_base + entries_sz < entries_base ||
-        entries_base + entries_sz > (size_t)sec_sz)
+    if (entries_base + entries_sz > (size_t)sec_sz)
         return -1;
 
     *count_out = count;
@@ -433,6 +430,7 @@ int cprisk_load_protected_data(void) {
             if (cprisk_hidden_mprotect(page, span, PROT_NONE) != 0) {
                 s_mprotect_tampered = 1;
                 cprisk_force_integrity_poison();
+                cprisk_hidden_munlock(page, span);
             }
         }
 

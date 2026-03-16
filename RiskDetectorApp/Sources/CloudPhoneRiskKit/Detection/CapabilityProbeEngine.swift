@@ -6,20 +6,23 @@ import MachO
 
 /// 能力探针的执行结果
 public struct ProbeResult: Codable, Sendable {
-    /// 探针 ID
     public let id: String
-    /// 是否成功（不该成功却成功了 = 异常）
     public let succeeded: Bool
-    /// 执行耗时（微秒）
     public let elapsedMicros: UInt64
-    /// errno 值
     public let errnoValue: Int32
-    /// 期望结果（用于判断是否为异常）
     public let expectedOutcome: CapabilityProbeEngine.ProbeExpectation?
-    /// 单探针耗时阈值（微秒）
     public let maxElapsedMicros: UInt64?
-    /// 调用栈帧（用于 B 类探针分析）
     public let callerFrame: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "i"
+        case succeeded = "s"
+        case elapsedMicros = "em"
+        case errnoValue = "ev"
+        case expectedOutcome = "eo"
+        case maxElapsedMicros = "me"
+        case callerFrame = "cf"
+    }
 
     public init(
         id: String,
@@ -44,14 +47,17 @@ public struct ProbeResult: Codable, Sendable {
 
 /// 能力探针的评估分数
 public struct CapabilityScore: Codable, Sendable {
-    /// 不该通过却通过的探针数（A 类异常）
     public let basicAnomalyCount: Int
-    /// Hook 伪造痕迹分（B 类异常）
     public let qualitySuspicion: Int
-    /// 总探针数
     public let totalProbes: Int
-    /// 风险贡献值
     public let riskContribution: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case basicAnomalyCount = "ba"
+        case qualitySuspicion = "qs"
+        case totalProbes = "tp"
+        case riskContribution = "rc"
+    }
 
     public init(
         basicAnomalyCount: Int,

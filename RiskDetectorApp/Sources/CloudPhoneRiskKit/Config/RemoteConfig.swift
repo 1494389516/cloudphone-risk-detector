@@ -106,6 +106,25 @@ public struct RemoteConfig: Codable, Sendable {
     /// 服务端追加的可疑端口（合并到 DynamicFeatureList）
     public let additionalSuspiciousPorts: [Int]?
 
+    private enum CodingKeys: String, CodingKey {
+        case version = "v"
+        case timestamp = "ts"
+        case environment = "env"
+        case description = "ds"
+        case policy = "p"
+        case detector = "dt"
+        case whitelist = "wl"
+        case experiments = "ex"
+        case advanced = "ad"
+        case probeConfig = "pc"
+        case payloadFieldMapping = "pfm"
+        case securityHardening = "sh"
+        case textSegmentHashReference = "thr"
+        case additionalSuspiciousLibraries = "asl"
+        case additionalSuspiciousPaths = "asp"
+        case additionalSuspiciousPorts = "apo"
+    }
+
     // MARK: - 初始化
 
     public init(
@@ -290,6 +309,16 @@ public struct Policy: Codable, Sendable {
     /// 中风险动作列表
     public let mediumRemoteRiskActions: [RemoteRiskAction]
 
+    private enum CodingKeys: String, CodingKey {
+        case threshold = "t"
+        case mediumThreshold = "mt"
+        case timeWindow = "tw"
+        case minDetectionCount = "mc"
+        case weights = "w"
+        case highRemoteRiskActions = "hra"
+        case mediumRemoteRiskActions = "mra"
+    }
+
     // MARK: - 初始化
 
     public init(
@@ -350,6 +379,14 @@ public struct Weights: Codable, Sendable {
 
     /// 时序模式权重
     public let timePattern: Double
+
+    private enum CodingKeys: String, CodingKey {
+        case jailbreak = "j"
+        case network = "n"
+        case behavior = "b"
+        case cloudPhone = "cp"
+        case timePattern = "tp"
+    }
 
     public init(
         jailbreak: Double = 0.6,
@@ -466,6 +503,26 @@ public struct RemoteDetectorConfig: Codable, Sendable {
     /// 是否启用异步检测
     public let enableAsyncDetection: Bool
 
+    private enum CodingKeys: String, CodingKey {
+        case jailbreakThreshold = "jt"
+        case jailbreakEnableFileDetect = "jf"
+        case jailbreakEnableDyldDetect = "jd"
+        case jailbreakEnableEnvDetect = "je"
+        case jailbreakEnableSysctlDetect = "js"
+        case jailbreakEnableSchemeDetect = "jsc"
+        case jailbreakEnableHookDetect = "jh"
+        case enableBehaviorDetect = "eb"
+        case behaviorSampleWindow = "bsw"
+        case touchMinSampleCount = "tms"
+        case motionMinSampleCount = "mms"
+        case enableNetworkSignals = "en"
+        case detectVPN = "dv"
+        case detectProxy = "dp"
+        case enableCloudPhoneDetect = "ecp"
+        case maxDetectionDuration = "mdd"
+        case enableAsyncDetection = "ead"
+    }
+
     // MARK: - 初始化
 
     public init(
@@ -547,6 +604,15 @@ public struct WhitelistRules: Codable, Sendable {
 
     /// IP 白名单
     public let ipWhitelist: [String]
+
+    private enum CodingKeys: String, CodingKey {
+        case deviceIDs = "di"
+        case deviceIDPrefixes = "dp"
+        case blacklistedDeviceIDs = "bd"
+        case trustedVersions = "tv"
+        case minTrustedVersion = "mv"
+        case ipWhitelist = "iw"
+    }
 
     // MARK: - 初始化
 
@@ -739,6 +805,12 @@ public struct ExperimentConfig: Codable, Sendable {
     /// 实验过期时间
     public let experimentsExpiration: TimeInterval?
 
+    private enum CodingKeys: String, CodingKey {
+        case active = "a"
+        case bucketingAlgorithm = "ba"
+        case experimentsExpiration = "ee"
+    }
+
     // MARK: - 初始化
 
     public init(
@@ -829,6 +901,17 @@ public struct Experiment: Codable, Sendable, Identifiable {
     public let createdAt: TimeInterval
     public let updatedAt: TimeInterval
 
+    private enum CodingKeys: String, CodingKey {
+        case id = "i"
+        case key = "k"
+        case name = "n"
+        case description = "d"
+        case traffic = "tf"
+        case variants = "va"
+        case createdAt = "ca"
+        case updatedAt = "ua"
+    }
+
     public init(
         id: String,
         key: String,
@@ -858,6 +941,14 @@ public struct ExperimentVariant: Codable, Sendable, Identifiable {
     public let name: String
     public let description: String?
     public let parameters: [String: String]
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "i"
+        case bucket = "b"
+        case name = "n"
+        case description = "d"
+        case parameters = "pm"
+    }
 
     public init(
         id: String,
@@ -928,6 +1019,16 @@ public struct AdvancedConfig: Codable, Sendable {
     /// 上报间隔（秒）
     public let reportInterval: TimeInterval
 
+    private enum CodingKeys: String, CodingKey {
+        case enablePerformanceMonitoring = "ep"
+        case maxMemoryUsage = "mm"
+        case enableDebugLogging = "dl"
+        case enableDiagnostics = "ed"
+        case reportEndpoint = "re"
+        case reportBatchSize = "rb"
+        case reportInterval = "ri"
+    }
+
     // MARK: - 初始化
 
     public init(
@@ -962,6 +1063,11 @@ public struct ProbeConfig: Codable, Sendable {
     /// 探针列表
     public let probes: [ProbeConfigItem]
 
+    private enum CodingKeys: String, CodingKey {
+        case version = "v"
+        case probes = "p"
+    }
+
     public init(version: String, probes: [ProbeConfigItem]) {
         self.version = version
         self.probes = probes
@@ -982,6 +1088,13 @@ public struct ProbeConfigItem: Codable, Sendable {
 
     /// 权重
     public let weight: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "i"
+        case expectedOutcome = "eo"
+        case maxElapsedUs = "me"
+        case weight = "w"
+    }
 
     public init(id: String, expectedOutcome: String, maxElapsedUs: Int, weight: Int) {
         self.id = id
@@ -1005,6 +1118,13 @@ public struct SecurityHardeningConfig: Codable, Sendable {
 
     /// kill switch：紧急关闭高风险拦截
     public let killSwitchEnabled: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case enableEnvelopeSignatureV2 = "es"
+        case enforcePayloadFieldMapping = "ef"
+        case enableChallengeBinding = "ec"
+        case killSwitchEnabled = "ks"
+    }
 
     public init(
         enableEnvelopeSignatureV2: Bool = true,

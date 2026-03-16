@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
-  <img src="https://img.shields.io/badge/SDK-6.2.0-FF3B30?style=for-the-badge" alt="SDK">
+  <img src="https://img.shields.io/badge/SDK-6.4.0-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
   <img src="https://img.shields.io/badge/License-Proprietary-8E8E93?style=for-the-badge" alt="License">
 </p>
@@ -59,6 +59,8 @@
 | **6.0** | **自研壳保护 + 端云签名绑定** | cprisk-armor 编译后壳工具链（Pass 1 字符串加密 / Pass 3 数据段加密 / Pass 4 完整性锚点）、CRiskCore 运行时解密消费链、内联 SHA-256 消除 CommonCrypto Hook 面、自包含 Mach-O 基址解析阻断 Clean Copy 攻击、Section 伪装隐写、编译期 XOR 盐混淆、armor runtime material 渗透式毒化业务签名（v2a）、9 项安全 Bug 修复 |
 | **6.1** | **壳工业化 + 运行时加固 + 全量回归** | Pass 1 全量敏感字符串加密 + 原位零化、Pass 2 Metadata 抹除（Swift 类型名/反射字符串/ObjC 方法名混淆）、Pass 3 多 Section 真实数据段加密（`__const`/`__cfstring`/`__swift5_fieldmd`）、Pass 5 结构混淆（5-8 假 Section 注入 + 随机布局）、密钥安全清零（`cprisk_secure_zero`）、Anti-Dump 页面保护验证（`vm_region_64`）、运行时完整性重校验（`cprisk_recheck_integrity`）、v2a 验签密钥派生修复、KDF 全链路测试（14 节点）、E2E 集成测试（6 场景）、10 项 Bug 修复、385 测试全绿 |
 | **6.2** | **壳密码学重建 + 全栈安全加固 + 46 项漏洞修复** | ABI v2 壳密码学重建（CLI 强制密钥注入 / HMAC-SHA256 认证标签 / 随机 nonce / IntegrityAnchor HMAC 绑定 rootKey / salt 动态派生 / 密码学安全 seed）、CRiskCore C 层 9 项边界安全加固、运行时反篡改 6 项纵深补强、配置降级 8 项封堵、18 项 Bug 修复 |
+| **6.3** | **逆向对抗纵深 + 符号表混淆** | Pass 6 SymbolStripper（nlist 本地符号表 SDK 标记混淆）、ObjC selector 安全修复（仅混淆 SDK 方法名，系统 selector 保留）、MetadataScrubber 全类型混淆（移除 SDK 公开类型白名单）、Codable 短别名 CodingKeys（80+ struct / 25+ 文件，消除 Small String 指令流泄漏）、92 项壳测试全绿 |
+| **6.4** | **静态库架构 + 全量符号剥离** | SDK 由动态 framework 改为 library.static（消除 dyld 导出符号暴露面）、armor 壳对最终 app 二进制执行、全量 strip（STRIP_STYLE=all）清除所有本地符号、IDA 中 SDK 函数全部显示为 sub_XXXX（与 Android .so 同等效果）、app bundle 不再包含 Frameworks/ 目录 |
 
 ## 架构概览
 
@@ -67,6 +69,7 @@
 │          Layer 0: 自研壳 (cprisk-armor) ABI v2           │
 │   全量字符串加密+HMAC / 多 Section 数据段加密+HMAC       │
 │   完整性锚点 HMAC / Metadata 抹除 / 结构混淆 / Anti-Dump │
+│   Pass 6 符号表混淆 / 短别名 CodingKeys / 全量 strip     │
 │   强制密钥注入 / salt 动态派生 / armor material→毒化(v2a)│
 ├────────────────────────────────────────────────────────┤
 │                   业务应用层                             │
@@ -105,6 +108,57 @@
 | **硬信号** | 本地独立判定，单点即可触发 | 越狱、DRM 降级、ChargeCounter 异常、PLT 篡改、ObjC Swizzle、异常端口劫持、SDK 二进制替换、DYLD Interpose | 80-100 |
 | **软信号** | 需结合场景综合评分 | VPN、行为异常、电压方差低、挂载点异常、时序侧信道、线程枚举异常、指纹突变、随机化检测、行为数据不足 | 30-75 |
 | **服务端信号** | 依赖外部聚合 | 机房 IP、ASN 黑名单、IP 设备聚合度、图社区风险、硬件画像聚集 | 55-100 |
+
+---
+
+## 6.4 新增能力 — 静态库架构 + 全量符号剥离
+
+6.4 将 SDK 交付方式从动态 framework 转为 static library，消除 dyld 导出符号这一根本性暴露面，配合全量 strip 实现 Android .so 级别的逆向对抗效果。
+
+### 6.4 核心改动
+
+| 改动 | 说明 |
+|------|------|
+| **library.static 架构** | `CloudPhoneRiskKit` 与 `CloudPhoneRiskAppCore` 由 `type: framework` 改为 `type: library.static`，SDK 代码静态链入最终 App 二进制 |
+| **消除导出符号暴露面** | 动态 framework 必须通过 `__LINKEDIT` Export Trie 暴露公开 API 符号；静态库链入 App 后无需导出，所有 SDK 符号降为本地符号 |
+| **armor 壳对 App 执行** | `cprisk-armor` 的 `--sectcreate` placeholder 和 postBuildScripts 移至 `RiskDetectorApp` target，壳直接对最终二进制加固 |
+| **全量 strip** | `STRIP_STYLE=all` + 显式 `xcrun strip -x` / `xcrun strip`，剥离所有本地符号与调试信息 |
+| **IDA 效果** | SDK 函数全部显示为 `sub_XXXX`，类型名、方法名均不可见；仅剩系统 undefined imports（约 1448 个） |
+| **bundle 瘦身** | App bundle 不再包含 `Frameworks/` 目录，减少文件数与加载开销 |
+
+### 静态库 vs 动态 framework 逆向对抗对比
+
+| 维度 | 动态 framework | 静态库 (6.4) |
+|------|---------------|-------------|
+| **导出符号** | ~5310 个（含所有 public API + Swift metadata + protocol conformance） | 0 个 |
+| **IDA 函数名** | `CPRiskKit.evaluate()`、`RiskSignal.init()` 等完整可读 | `sub_10000ABCD` |
+| **`nm` 输出** | 数千条 `T` (text) 符号 | 0 条 SDK 符号 |
+| **Frameworks/ 目录** | 存在，可直接提取 .framework 分析 | 不存在 |
+| **strip 效果** | 只能删本地符号，导出符号由 dyld 强制保留 | 全部可删 |
+
+---
+
+## 6.3 新增能力 — 逆向对抗纵深 + 符号表混淆
+
+6.3 针对 IDA 逆向分析中暴露的多层信息泄漏，新增 Pass 6 符号表混淆，并修复 ObjC selector 误伤、MetadataScrubber 白名单遗漏、Codable 指令流泄漏三项问题。
+
+### 6.3 核心改动
+
+| 改动 | 说明 |
+|------|------|
+| **Pass 6: SymbolStripper** | 解析 `LC_SYMTAB` 中的 `nlist` 条目，将包含 SDK 标记（`CPRisk`、`CloudPhone`、`Detection` 等）或 `outlined` 的本地符号名替换为等长随机 hex 字节 |
+| **ObjC selector 安全修复** | `MetadataScrubber.shouldObfuscateMethod()` 从"排除系统前缀白名单"改为"命中 SDK 标记才混淆"，杜绝系统 selector 被误伤导致 `unrecognized selector` crash |
+| **MetadataScrubber 全类型混淆** | 移除保护 `CPRisk`/`CloudPhone`/`Risk` 前缀的白名单，现在所有 Swift 类型名（>2 字符，非 `cprisk_` C 层）均被混淆 |
+| **Codable 短别名 CodingKeys** | 80+ 个 `Codable` struct 显式声明 `CodingKeys` enum，将 `threshold`→`t`、`mediumThreshold`→`mt` 等长属性名替换为 1-3 字符短别名，消除 Swift Small String Optimization 导致的 MOV 立即数字符串泄漏 |
+
+### 信息泄漏四层防御矩阵
+
+| 泄漏层 | 攻击面 | 防御手段 | strip 能处理？ |
+|--------|--------|----------|---------------|
+| **符号表** (`LC_SYMTAB`) | `nm` / IDA 函数列表 | Pass 6 + strip | 能 |
+| **元数据** (`__swift5_types` / `__swift5_reflstr`) | Swift Metadata 还原 | Pass 2 MetadataScrubber | 不能 |
+| **ObjC selector** (`__objc_methname`) | class-dump / IDA ObjC 分析 | Pass 2 SDK selector 混淆 | 不能 |
+| **指令流立即数** (`__text` MOV) | IDA 反编译 / Hex-Rays | 源码级短别名 CodingKeys | 不能 |
 
 ---
 
@@ -160,17 +214,22 @@
 ### 壳保护工作流
 
 ```
-源码 → swift build → SDK.framework (原始 Mach-O)
+源码 → swift build → SDK (library.static) + App 链接
                           ↓
-                    cprisk-armor CLI (5 Pass, ABI v2)
+                    App 二进制 (SDK 代码静态链入)
+                          ↓
+                    cprisk-armor CLI (6 Pass, ABI v2)
                     --key <hex> / --key-file / CPRISK_ARMOR_KEY
                     ┌─ Pass 4: IntegrityAnchor    (HMAC 完整性锚点)
                     ├─ Pass 1: StringEncryptor     (加密 + HMAC + nonce)
                     ├─ Pass 3: DataSegmentEncryptor(加密 + HMAC + nonce)
                     ├─ Pass 2: MetadataScrubber    (元数据抹除)
-                    └─ Pass 5: StructureObfuscator (结构混淆, 安全随机)
+                    ├─ Pass 5: StructureObfuscator (结构混淆, 安全随机)
+                    └─ Pass 6: SymbolStripper      (SDK 符号表混淆)
                           ↓
-                    SDK.framework (加固后 Mach-O)
+                    xcrun strip -x && xcrun strip  (全量符号剥离)
+                          ↓
+                    App 二进制 (加固后, IDA 中 sub_XXXX)
                           ↓
                     运行时 CRiskCore
                     HMAC 验证 → 解密 + 完整性校验 + Anti-Dump
@@ -271,14 +330,15 @@
 .
 ├── cprisk-armor/                         # 编译后壳工具链 (SPM CLI)
 │   ├── Sources/
-│   │   ├── ArmorCLI/                     # CLI 入口 (5 Pass 编排)
+│   │   ├── ArmorCLI/                     # CLI 入口 (6 Pass 编排)
 │   │   ├── MachOKit/                     # Mach-O 读写库
 │   │   ├── StringEncryptor/              # Pass 1: 全量字符串加密
 │   │   ├── MetadataScrubber/             # Pass 2: Metadata 抹除
 │   │   ├── DataSegmentEncryptor/         # Pass 3: 多 Section 数据段加密
 │   │   ├── IntegrityAnchor/              # Pass 4: 完整性锚点
-│   │   └── StructureObfuscator/          # Pass 5: 结构混淆
-│   └── Tests/                            # 85 项单元 + E2E + KDF 链测试
+│   │   ├── StructureObfuscator/          # Pass 5: 结构混淆
+│   │   └── SymbolStripper/              # Pass 6: 符号表混淆
+│   └── Tests/                            # 92 项单元 + E2E + KDF 链测试
 │
 ├── RiskDetectorApp/
 │   ├── App/                              # SwiftUI 示例应用
@@ -328,7 +388,7 @@
 
 ## 安全设计概要
 
-SDK 采用纵深防御架构：**cprisk-armor 自研壳（5 Pass / ABI v2）** 在编译后对二进制执行全量字符串加密（HMAC 认证 + 随机 nonce）、Metadata 抹除、多 Section 数据段加密（HMAC 认证）、完整性锚点（HMAC 绑定 rootKey）与结构混淆，强制密钥注入消除零密钥降级，消除静态分析与逆向还原特征；**Anti-Dump 页面保护**（`vm_region_64`）检测攻击者重映射，**密钥安全清零**覆盖全部中间态敏感材料；**内联 SHA-256 + 自包含 Mach-O 解析**消除 CommonCrypto 与 dyld API 的 Hook 攻击面，阻断 Clean Copy 攻击；**渗透式毒化**将壳完整性 material 绑定到 ReportEnvelope 签名派生链（v2a），篡改即签名失效而非 crash，攻击者无法定位防护点；**字符串全量混淆**（`ObfuscatedJailbreakStrings`）防止静态特征提取；**DualPathValidator 双路/三路验证**确保检测结果不被单点绕过；**HMAC-SHA256 签名**覆盖报告全字段防篡改，**SignedRiskConclusion v2** 将 signals 摘要纳入签名域；**Keychain + AES-GCM 加密存储**保护本地数据与历史记录，**Keychain 策略统一** `AfterFirstUnlockThisDeviceOnly`；**配置签名信任链**（远端 → 缓存 → 运行时）杜绝配置注入，**DEBUG/Release 行为对齐**消除调试放行路径；**__TEXT 段哈希 + SDK 二进制完整性校验 + 基线交叉验证**检测代码篡改与基线投毒；**Provider 注册表封印 + ConditionExpression 封印 + 实例锁定**防止运行时替换；**ServerSignals HMAC 来源校验 + Challenge HMAC 校验**防止注入伪造信号与中间人篡改挑战结果；**动态可疑特征列表**支持服务端热更新检测规则；**Frida 五维对抗**（线程 / 端口 / V8 堆 / Socket / 时序）全覆盖；**LibcPrologueGuard + KernelHookSideChannel** 实现 Inline Hook 穿透与内核级 Hook 侧信道检测；**IntegrityBaselineEnvCheck** 首启环境把关防止基线投毒；**App Attest 强制模式** 消除所有静默降级路径；**行为数据用后清零**防止内存 Dump 提取。
+SDK 采用纵深防御架构：**cprisk-armor 自研壳（6 Pass / ABI v2）** 在编译后对二进制执行全量字符串加密（HMAC 认证 + 随机 nonce）、Metadata 抹除、多 Section 数据段加密（HMAC 认证）、完整性锚点（HMAC 绑定 rootKey）、结构混淆与**符号表混淆**（Pass 6 SymbolStripper），强制密钥注入消除零密钥降级；**SDK 以 library.static 交付**，全部代码静态链入 App 二进制后执行 `strip -x` + `strip` 全量剥离，IDA 中 SDK 函数显示为 `sub_XXXX`，消除静态分析与逆向还原特征；**Codable 短别名 CodingKeys** 消除 Small String Optimization 导致的指令流字符串泄漏；**Anti-Dump 页面保护**（`vm_region_64`）检测攻击者重映射，**密钥安全清零**覆盖全部中间态敏感材料；**内联 SHA-256 + 自包含 Mach-O 解析**消除 CommonCrypto 与 dyld API 的 Hook 攻击面，阻断 Clean Copy 攻击；**渗透式毒化**将壳完整性 material 绑定到 ReportEnvelope 签名派生链（v2a），篡改即签名失效而非 crash，攻击者无法定位防护点；**字符串全量混淆**（`ObfuscatedJailbreakStrings`）防止静态特征提取；**DualPathValidator 双路/三路验证**确保检测结果不被单点绕过；**HMAC-SHA256 签名**覆盖报告全字段防篡改，**SignedRiskConclusion v2** 将 signals 摘要纳入签名域；**Keychain + AES-GCM 加密存储**保护本地数据与历史记录，**Keychain 策略统一** `AfterFirstUnlockThisDeviceOnly`；**配置签名信任链**（远端 → 缓存 → 运行时）杜绝配置注入，**DEBUG/Release 行为对齐**消除调试放行路径；**__TEXT 段哈希 + SDK 二进制完整性校验 + 基线交叉验证**检测代码篡改与基线投毒；**Provider 注册表封印 + ConditionExpression 封印 + 实例锁定**防止运行时替换；**ServerSignals HMAC 来源校验 + Challenge HMAC 校验**防止注入伪造信号与中间人篡改挑战结果；**动态可疑特征列表**支持服务端热更新检测规则；**Frida 五维对抗**（线程 / 端口 / V8 堆 / Socket / 时序）全覆盖；**LibcPrologueGuard + KernelHookSideChannel** 实现 Inline Hook 穿透与内核级 Hook 侧信道检测；**IntegrityBaselineEnvCheck** 首启环境把关防止基线投毒；**App Attest 强制模式** 消除所有静默降级路径；**行为数据用后清零**防止内存 Dump 提取。
 
 ### 盲区三：PhysicalSensorProbe 预热与支付场景 UX
 
@@ -451,4 +511,4 @@ cd RiskDetectorApp && swift build
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 6.2.0 — 壳密码学重建 (ABI v2) + 全栈安全加固 + 46 项漏洞修复</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 6.4.0 — 静态库架构 + 全量符号剥离 + 逆向对抗纵深 (6 Pass)</sub></p>

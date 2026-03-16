@@ -15,6 +15,13 @@ public struct ChallengeTrigger: Sendable {
         public let seed: String
         public let expiresAt: Int64
 
+        private enum CodingKeys: String, CodingKey {
+            case challengeId = "ci"
+            case probeIds = "pi"
+            case seed = "s"
+            case expiresAt = "ea"
+        }
+
         public init(
             challengeId: String,
             probeIds: [String],

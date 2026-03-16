@@ -5,69 +5,52 @@ import Foundation
 /// 风控决策引擎的最终输出，包含综合评估结果和建议动作
 public struct RiskVerdict: Codable, Sendable {
 
-    // MARK: - 核心评估结果
-
-    /// 综合风险分数 (0-100)
-    /// 0 = 无风险, 100 = 最高风险
     public let score: Double
-
-    /// 内部风险等级（4级，更精细控制）
     public let internalLevel: InternalRiskLevel
 
-    /// 公开风险等级（3级，符合协议定义）
     public var level: PublicRiskLevel {
         internalLevel.toPublicRiskLevel()
     }
 
-    /// 内部风险动作（4种，更精细控制）
     public let internalAction: RiskAction
 
-    /// 公开风险动作（3种，符合协议定义）
     public var action: PublicRiskAction {
         internalAction.toPublicRiskAction()
     }
 
-    /// 置信度 (0-1)
-    /// 表示决策的可信程度，基于信号数量和质量
     public let confidence: Double
-
-    // MARK: - 决策依据
-
-    /// 主要风险原因（按重要性排序）
-    /// 如: ["jailbreak_detected", "vpn_active", "behavior_anomaly"]
     public let primaryReasons: [String]
 
-    /// 决策原因（单行，兼容协议）
     public var reason: String {
         primaryReasons.joined(separator: ", ")
     }
 
-    /// 命中的所有风险信号
     public let signals: [RiskSignal]
-
-    /// 使用的场景类型
     public let scenario: RiskScenario
-
-    /// 内存语义压缩摘要（8 字节，用于降低驻留风险）
     public let compressedDigest: Data?
-
-    /// 信号到 bit 的映射表版本（服务端解码用）
     public let mappingVersion: String?
-
-    // MARK: - 元数据
-
-    /// 判决生成时间
     public let timestamp: Date
-
-    /// 用于追踪的请求ID
     public let requestId: String
 
-    /// 额外信息（兼容协议）
     public var extras: [String: String] {
         [
             "requestId": requestId,
             "timestamp": ISO8601DateFormatter().string(from: timestamp)
         ]
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case score = "s"
+        case internalLevel = "il"
+        case internalAction = "ia"
+        case confidence = "c"
+        case primaryReasons = "pr"
+        case signals = "sg"
+        case scenario = "sc"
+        case compressedDigest = "cd"
+        case mappingVersion = "mv"
+        case timestamp = "ts"
+        case requestId = "ri"
     }
 
     // MARK: - 初始化

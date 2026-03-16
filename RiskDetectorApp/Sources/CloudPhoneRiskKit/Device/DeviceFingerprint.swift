@@ -24,6 +24,23 @@ public struct DeviceFingerprint: Codable, Sendable {
     public var hardwareModel: String? = nil
     public var isSimulator: Bool = false
 
+    private enum CodingKeys: String, CodingKey {
+        case systemName = "sn"
+        case systemVersion = "sv"
+        case model = "m"
+        case localizedModel = "lm"
+        case identifierForVendor = "iv"
+        case localeIdentifier = "li"
+        case timeZoneIdentifier = "tz"
+        case timeZoneOffsetSeconds = "to"
+        case screenWidth = "sw"
+        case screenHeight = "sh"
+        case screenScale = "ss"
+        case hardwareMachine = "hm"
+        case hardwareModel = "hd"
+        case isSimulator = "is"
+    }
+
     public static func current() -> DeviceFingerprint {
 #if canImport(UIKit)
         let device = UIDevice.current

@@ -221,6 +221,11 @@ public struct PolicyConfigData: Sendable, Codable {
     public let scenarios: [String: ScenarioPolicyData]
     public let comboRules: [ComboRuleData]
 
+    private enum CodingKeys: String, CodingKey {
+        case scenarios = "s"
+        case comboRules = "cr"
+    }
+
     public init(scenarios: [String: ScenarioPolicyData], comboRules: [ComboRuleData] = []) {
         self.scenarios = scenarios
         self.comboRules = comboRules
@@ -230,6 +235,10 @@ public struct PolicyConfigData: Sendable, Codable {
 /// 场景策略数据
 public struct ScenarioPolicyData: Sendable, Codable {
     public let thresholds: ThresholdsData
+
+    private enum CodingKeys: String, CodingKey {
+        case thresholds = "th"
+    }
 
     public init(thresholds: ThresholdsData) {
         self.thresholds = thresholds
@@ -241,6 +250,12 @@ public struct ThresholdsData: Sendable, Codable {
     public let medium: Double
     public let high: Double
     public let critical: Double
+
+    private enum CodingKeys: String, CodingKey {
+        case medium = "m"
+        case high = "h"
+        case critical = "c"
+    }
 
     public init(medium: Double, high: Double, critical: Double) {
         self.medium = medium
@@ -256,6 +271,13 @@ public struct ComboRuleData: Sendable, Codable {
     public let bonusScore: Double
     public let forceAction: String?
 
+    private enum CodingKeys: String, CodingKey {
+        case name = "n"
+        case requiredSignals = "rs"
+        case bonusScore = "bs"
+        case forceAction = "fa"
+    }
+
     public init(name: String, requiredSignals: [String], bonusScore: Double, forceAction: String? = nil) {
         self.name = name
         self.requiredSignals = requiredSignals
@@ -270,6 +292,13 @@ public struct AdapterDetectorsConfigData: Sendable, Codable {
     public let network: AdapterDetectorConfig?
     public let behavior: AdapterDetectorConfig?
     public let device: AdapterDetectorConfig?
+
+    private enum CodingKeys: String, CodingKey {
+        case jailbreak = "j"
+        case network = "n"
+        case behavior = "b"
+        case device = "d"
+    }
 
     public init(
         jailbreak: AdapterDetectorConfig? = nil,
@@ -288,6 +317,11 @@ public struct AdapterDetectorsConfigData: Sendable, Codable {
 public struct AdapterDetectorConfig: Sendable, Codable {
     public let enabled: Bool
     public let threshold: Double?
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled = "e"
+        case threshold = "t"
+    }
 
     public init(enabled: Bool, threshold: Double? = nil) {
         self.enabled = enabled

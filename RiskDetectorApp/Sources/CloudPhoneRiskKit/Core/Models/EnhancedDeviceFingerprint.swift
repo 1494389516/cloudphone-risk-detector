@@ -166,6 +166,48 @@ public struct EnhancedDeviceFingerprint: Codable, Sendable {
     /// 计算得出的指纹哈希
     public let fingerprintHash: String
 
+    private enum CodingKeys: String, CodingKey {
+        case hardwareMachine = "hm"
+        case hardwareModel = "hd"
+        case cpuPhysicalCores = "cp"
+        case cpuLogicalCores = "cl"
+        case cpuFrequency = "cf"
+        case memorySize = "ms"
+        case diskCapacity = "dc"
+        case diskAvailable = "da"
+        case isSimulator = "is"
+        case systemName = "sn"
+        case systemVersion = "sv"
+        case buildVersion = "bv"
+        case kernelVersion = "kv"
+        case languageCode = "lc"
+        case regionCode = "rc"
+        case localeIdentifier = "li"
+        case timeZoneIdentifier = "tz"
+        case timeZoneOffsetSeconds = "to"
+        case is24HourFormat = "hf"
+        case usesGregorianCalendar = "gc"
+        case networkInterfaceNames = "ni"
+        case hasCellularCapability = "cc"
+        case isWiFiConnected = "wc"
+        case isCellularConnected = "mc"
+        case dnsServers = "ds"
+        case isHTTPProxyEnabled = "hp"
+        case isHTTPSProxyEnabled = "hs"
+        case isSOCKSProxyEnabled = "sp"
+        case isPACProxyEnabled = "pp"
+        case screenWidth = "sw"
+        case screenHeight = "sh"
+        case screenScale = "ss"
+        case screenBrightness = "sb"
+        case supportsHighRefreshRate = "hr"
+        case maximumFramesPerSecond = "mf"
+        case isDarkMode = "dm"
+        case isAutoBrightnessEnabled = "ab"
+        case identifierForVendor = "iv"
+        case fingerprintHash = "fh"
+    }
+
     // MARK: - 初始化
 
     public init(

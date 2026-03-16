@@ -28,6 +28,13 @@ public struct UploadPolicy: Codable, Sendable {
         /// 随机抖动比例，默认 0.2（20%）
         public let jitterRatio: Double
 
+        private enum CodingKeys: String, CodingKey {
+            case highRiskDelayRange = "hr"
+            case mediumRiskDelayRange = "mr"
+            case lowRiskBatchInterval = "lb"
+            case jitterRatio = "jr"
+        }
+
         /// 默认配置
         public static let `default` = PolicyConfig(
             highRiskDelayRange: 0...2,
@@ -57,6 +64,12 @@ public struct UploadPolicy: Codable, Sendable {
 
     /// 当前策略配置
     public let config: PolicyConfig
+
+    private enum CodingKeys: String, CodingKey {
+        case highRiskThreshold = "ht"
+        case mediumRiskThreshold = "mt"
+        case config = "c"
+    }
 
     // MARK: - Initialization
 

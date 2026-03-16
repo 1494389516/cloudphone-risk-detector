@@ -120,7 +120,7 @@ struct TemporalAnalysisView: View {
                     title: "夜间比例",
                     value: String(format: "%.0f%%", (pattern.nightRatio24h ?? 0) * 100),
                     subtitle: "0-5点活动",
-                    color: .indigo
+                    color: Color(red: 0.35, green: 0.32, blue: 0.82)
                 )
             }
             
@@ -373,7 +373,7 @@ struct TemporalAnalysisView: View {
             let date = now.addingTimeInterval(-Double(i * 3600))
             let baseScore = Double.random(in: 10...40)
             let isHighRisk = baseScore > 35
-            let isAnomaly = baseScore > 50 || (i > 0 && abs(data.last?.score ?? 0 - baseScore) > 30)
+            let isAnomaly = baseScore > 50 || (i > 0 && abs((data.last?.score ?? 0) - baseScore) > 30)
             
             data.append(HistoryPoint(
                 date: date,

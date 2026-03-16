@@ -19,59 +19,45 @@ public enum RiskTrend: String, Codable, Sendable {
 // MARK: - 时序特征
 /// 从设备历史数据中计算得到的时序特征
 public struct TemporalFeatures: Codable, Sendable {
-    /// 设备年龄：首次见到设备至今的天数
     public var deviceAgeDays: Int
-
-    /// 总检测次数
     public var totalDetectionCount: Int
-
-    /// 风险趋势
     public var riskTrend: RiskTrend
-
-    /// 首次越狱时间（时间戳，nil 表示从未检测到越狱）
     public var firstJailbreakTime: TimeInterval?
-
-    /// 首次越狱距今的天数
     public var daysSinceFirstJailbreak: Int?
-
-    /// 最近 7 天内的越狱次数
     public var jailbreakCount7Days: Int
-
-    /// 最近 30 天内的越狱次数
     public var jailbreakCount30Days: Int
-
-    /// VPN 使用频率（0-1）
     public var vpnUsageFrequency: Double
-
-    /// VPN 切换次数（最近 7 天内 VPN 状态变化的次数）
     public var vpnSwitchCount7Days: Int
-
-    /// 行为一致性分数（0-1，越高越一致）
     public var behaviorConsistency: Double
-
-    /// 平均风险分数
     public var averageRiskScore: Double
-
-    /// 风险分数标准差
     public var riskScoreStdDev: Double
-
-    /// 最大风险分数
     public var maxRiskScore: Double
-
-    /// 最小风险分数
     public var minRiskScore: Double
-
-    /// 高风险检测次数占比
     public var highRiskRatio: Double
-
-    /// 最近一次检测时间距现在的秒数
     public var secondsSinceLastDetection: TimeInterval
-
-    /// 活跃天数：有检测记录的不同天数
     public var activeDays: Int
-
-    /// 计算时间戳
     public var calculatedAt: TimeInterval
+
+    private enum CodingKeys: String, CodingKey {
+        case deviceAgeDays = "da"
+        case totalDetectionCount = "td"
+        case riskTrend = "rt"
+        case firstJailbreakTime = "fj"
+        case daysSinceFirstJailbreak = "dj"
+        case jailbreakCount7Days = "j7"
+        case jailbreakCount30Days = "j3"
+        case vpnUsageFrequency = "vf"
+        case vpnSwitchCount7Days = "vs"
+        case behaviorConsistency = "bc"
+        case averageRiskScore = "ar"
+        case riskScoreStdDev = "rs"
+        case maxRiskScore = "mx"
+        case minRiskScore = "mn"
+        case highRiskRatio = "hr"
+        case secondsSinceLastDetection = "sl"
+        case activeDays = "ad"
+        case calculatedAt = "ca"
+    }
 
     public init(
         deviceAgeDays: Int,

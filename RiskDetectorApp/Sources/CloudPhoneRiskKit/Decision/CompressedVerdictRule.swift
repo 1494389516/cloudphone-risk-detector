@@ -10,20 +10,19 @@ import Foundation
 /// 可配置为 layerIndex=2, bitMask=0x0C, matchValue=0x04 (jailbreak bit), action=block
 public struct CompressedVerdictRule: Codable, Sendable {
 
-    /// 规则 ID（用于日志与回溯）
     public let id: String
-
-    /// 层索引：1-4 表示 Layer1(硬件)/Layer2(反篡改)/Layer3(行为)/Layer4(服务端)，5 表示 crossLayer，6 表示 byte8 行为熵（1.1）
     public let layerIndex: Int
-
-    /// 位掩码：layer 1-4 使用低 8 位，crossLayer 使用低 32 位，byte8 使用低 3 位（bits 0-2）
     public let bitMask: UInt64
-
-    /// 匹配值：满足 (layerValue & bitMask) == matchValue 时命中
     public let matchValue: UInt64
-
-    /// 命中时的动作
     public let action: RiskAction
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "i"
+        case layerIndex = "li"
+        case bitMask = "bm"
+        case matchValue = "mv"
+        case action = "a"
+    }
 
     public init(
         id: String,

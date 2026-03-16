@@ -16,6 +16,17 @@ public struct SignedRiskConclusion: Codable, Sendable {
     /// v2a: SHA-256 hex of sorted "id:score:state" entries, binding signal values into the signature.
     public let signalsDigest: String?
 
+    private enum CodingKeys: String, CodingKey {
+        case score = "s"
+        case isHighRisk = "hr"
+        case timestamp = "ts"
+        case tampered = "tp"
+        case nonce = "n"
+        case signature = "sg"
+        case signatureVersion = "sv"
+        case signalsDigest = "sd"
+    }
+
     public static func sign(report: CPRiskReport, deviceKey: SymmetricKey) -> SignedRiskConclusion {
         let nonce = UUID().uuidString
         let timestamp = Date().timeIntervalSince1970

@@ -73,15 +73,16 @@ public protocol TemporalAnalyzer: Sendable {
 /// ���义分析的时间范围
 public struct TimeWindow: Sendable, Codable {
     
-    /// 窗口时长（秒）
     public var duration: TimeInterval
-    
-    /// 窗口开始时间（可选，默认为当前时间往前推 duration）
     public var startTime: TimeInterval?
-    
-    /// 窗口结束时间（可选，默认为当前时间）
     public var endTime: TimeInterval?
-    
+
+    private enum CodingKeys: String, CodingKey {
+        case duration = "d"
+        case startTime = "st"
+        case endTime = "et"
+    }
+
     public init(
         duration: TimeInterval,
         startTime: TimeInterval? = nil,
@@ -120,30 +121,26 @@ public struct TimeWindow: Sendable, Codable {
 /// 包含时间模式分析的完整结果
 public struct TemporalAnalysisResult: Sendable, Codable {
     
-    /// 分析窗口
     public var window: TimeWindow
-    
-    /// 事件数量
     public var eventCount: Int
-    
-    /// 时间分布统计
     public var timeDistribution: TimeDistribution
-    
-    /// 频率指标
     public var frequencyMetrics: FrequencyMetrics
-    
-    /// 序列模式
     public var sequencePatterns: [SequencePattern]
-    
-    /// 异常分数 (0-100)
     public var anomalyScore: Double
-    
-    /// 提取的风险信号
     public var riskSignals: [RiskSignal]
-    
-    /// 分析时间戳
     public var analyzedAt: Date
-    
+
+    private enum CodingKeys: String, CodingKey {
+        case window = "w"
+        case eventCount = "ec"
+        case timeDistribution = "td"
+        case frequencyMetrics = "fm"
+        case sequencePatterns = "sp"
+        case anomalyScore = "as"
+        case riskSignals = "rs"
+        case analyzedAt = "aa"
+    }
+
     public init(
         window: TimeWindow,
         eventCount: Int,
@@ -190,21 +187,20 @@ public struct TemporalAnalysisResult: Sendable, Codable {
 /// 描述事件在不同时间维度的分布情况
 public struct TimeDistribution: Sendable, Codable {
     
-    /// 每小时事件计数 (0-23)
     public var hourlyCount: [Int: Int]
-    
-    /// 每周几天事件计数 (1-7, 1=周日)
     public var weekdayCount: [Int: Int]
-    
-    /// 凌晨时段 (0-5点) 事件数
     public var nightCount: Int
-    
-    /// 工作时间 (9-18点) 事件数
     public var workHoursCount: Int
-    
-    /// 活跃小时数（有事件的小时数）
     public var activeHours: Int
-    
+
+    private enum CodingKeys: String, CodingKey {
+        case hourlyCount = "hc"
+        case weekdayCount = "wc"
+        case nightCount = "nc"
+        case workHoursCount = "wh"
+        case activeHours = "ah"
+    }
+
     public init(
         hourlyCount: [Int: Int] = [:],
         weekdayCount: [Int: Int] = [:],
@@ -243,27 +239,24 @@ public struct TimeDistribution: Sendable, Codable {
 /// 描述事件发生的频率特征
 public struct FrequencyMetrics: Sendable, Codable {
     
-    /// 平均间隔（秒）
     public var averageInterval: Double?
-    
-    /// 最小间隔（秒）
     public var minInterval: Double?
-    
-    /// 最大间隔（秒）
     public var maxInterval: Double?
-    
-    /// 间隔方差
     public var intervalVariance: Double?
-    
-    /// 间隔标准差
     public var intervalStdDev: Double?
-    
-    /// 间隔变异系数（CV = std/mean）
     public var intervalCV: Double?
-    
-    /// 每小时平均事件数
     public var eventsPerHour: Double?
-    
+
+    private enum CodingKeys: String, CodingKey {
+        case averageInterval = "ai"
+        case minInterval = "mi"
+        case maxInterval = "xi"
+        case intervalVariance = "iv"
+        case intervalStdDev = "sd"
+        case intervalCV = "cv"
+        case eventsPerHour = "eh"
+    }
+
     public init(
         averageInterval: Double? = nil,
         minInterval: Double? = nil,
@@ -308,27 +301,24 @@ public struct FrequencyMetrics: Sendable, Codable {
 /// 描述事件序列的重复模式
 public struct SequencePattern: Sendable, Codable, Identifiable {
     
-    /// 模式唯一标识
     public let id: String
-    
-    /// 模式类型
     public var type: PatternType
-    
-    /// 模式内容
     public var pattern: [String]
-    
-    /// 出现次数
     public var frequency: Int
-    
-    /// 置信度 (0-1)
     public var confidence: Double
-    
-    /// 首次出现时间
     public var firstSeen: Date
-    
-    /// 最后出现时间
     public var lastSeen: Date
-    
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "i"
+        case type = "t"
+        case pattern = "p"
+        case frequency = "f"
+        case confidence = "c"
+        case firstSeen = "fs"
+        case lastSeen = "ls"
+    }
+
     public enum PatternType: String, Sendable, Codable {
         case periodic = "periodic"           // 周期性
         case fixedInterval = "fixed_interval" // 固定间隔
@@ -362,21 +352,20 @@ public struct SequencePattern: Sendable, Codable, Identifiable {
 /// 描述单个事件是否异常及原因
 public struct TemporalAnomalyDetectionResult: Sendable, Codable {
     
-    /// 是否异常
     public var isAnomalous: Bool
-    
-    /// 异常分数 (0-100)
     public var deviation: Double
-    
-    /// 置信度 (0-1)
     public var confidence: Double
-    
-    /// 异常原因列表
     public var reasons: [AnomalyReason]
-    
-    /// 检测时间
     public var detectedAt: Date
-    
+
+    private enum CodingKeys: String, CodingKey {
+        case isAnomalous = "ia"
+        case deviation = "dv"
+        case confidence = "c"
+        case reasons = "r"
+        case detectedAt = "da"
+    }
+
     public init(
         isAnomalous: Bool,
         deviation: Double,
@@ -409,7 +398,14 @@ public struct AnomalyReason: Sendable, Codable, Identifiable {
     public var type: TemporalAnomalyType
     public var description: String
     public var evidence: [String: String]
-    
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "i"
+        case type = "t"
+        case description = "ds"
+        case evidence = "ev"
+    }
+
     public init(
         id: String = UUID().uuidString,
         type: TemporalAnomalyType,
@@ -457,24 +453,22 @@ public enum TemporalAnomalySeverity: Int, Sendable, Codable {
 /// 描述正常行为的统计基线
 public struct BaselineStatistics: Sendable, Codable {
     
-    /// 平均每日事件数
     public var averageDailyEvents: Double
-    
-    /// 典型活跃小时
     public var typicalActiveHours: Set<Int>
-    
-    /// 典型夜间活动比例
     public var typicalNightRatio: Double
-    
-    /// 典型间隔统计
     public var typicalIntervalStats: IntervalStatistics
-    
-    /// 计算时间
     public var calculatedAt: Date
-    
-    /// 数据范围（天数）
     public var dataRangeDays: Int
-    
+
+    private enum CodingKeys: String, CodingKey {
+        case averageDailyEvents = "ad"
+        case typicalActiveHours = "ta"
+        case typicalNightRatio = "tn"
+        case typicalIntervalStats = "ti"
+        case calculatedAt = "ca"
+        case dataRangeDays = "dr"
+    }
+
     public init(
         averageDailyEvents: Double,
         typicalActiveHours: Set<Int>,
@@ -495,21 +489,20 @@ public struct BaselineStatistics: Sendable, Codable {
 /// 间隔统计
 public struct IntervalStatistics: Sendable, Codable {
     
-    /// 平均间隔
     public var mean: Double
-    
-    /// 标准差
     public var stdDev: Double
-    
-    /// 中位数
     public var median: Double
-    
-    /// P25
     public var p25: Double
-    
-    /// P75
     public var p75: Double
-    
+
+    private enum CodingKeys: String, CodingKey {
+        case mean = "mn"
+        case stdDev = "sd"
+        case median = "md"
+        case p25 = "p2"
+        case p75 = "p7"
+    }
+
     public init(
         mean: Double,
         stdDev: Double,
@@ -577,27 +570,24 @@ public struct TemporalAnalysisConfig: Sendable {
 /// 风险历史事件（扩展版，支持时序分析）
 public struct TemporalRiskHistoryEvent: Sendable, Codable {
     
-    /// 时间戳
     public var timestamp: TimeInterval
-    
-    /// 风险分数
     public var score: Double
-    
-    /// 是否高风险
     public var isHighRisk: Bool
-    
-    /// 摘要
     public var summary: String
-    
-    /// 场景
     public var scenario: RiskScenario?
-    
-    /// 执行的动作
     public var action: RiskAction?
-    
-    /// 额外信息
     public var extras: [String: String]
-    
+
+    private enum CodingKeys: String, CodingKey {
+        case timestamp = "ts"
+        case score = "s"
+        case isHighRisk = "hr"
+        case summary = "sm"
+        case scenario = "sc"
+        case action = "a"
+        case extras = "ex"
+    }
+
     public init(
         timestamp: TimeInterval,
         score: Double,

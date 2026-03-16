@@ -5,6 +5,12 @@ public struct CloudPhoneLocalSignals: Codable, Sendable {
     public var behavior: CloudPhoneBehaviorSignals
     public var time: CloudPhoneTimeSignals
 
+    private enum CodingKeys: String, CodingKey {
+        case device = "d"
+        case behavior = "b"
+        case time = "t"
+    }
+
     public init(
         device: CloudPhoneDeviceSignals,
         behavior: CloudPhoneBehaviorSignals,
@@ -19,6 +25,11 @@ public struct CloudPhoneLocalSignals: Codable, Sendable {
 public struct CloudPhoneDeviceSignals: Codable, Sendable {
     public var isSimulator: DetectionSignal<[String: String]>
     public var oldDeviceModel: DetectionSignal<[String: String]>?
+
+    private enum CodingKeys: String, CodingKey {
+        case isSimulator = "is"
+        case oldDeviceModel = "od"
+    }
 
     public init(
         isSimulator: DetectionSignal<[String: String]>,
@@ -38,6 +49,17 @@ public struct CloudPhoneBehaviorSignals: Codable, Sendable {
     public var swipeTooCurvy: DetectionSignal<[String: String]>
     public var motionTooStill: DetectionSignal<[String: String]>
     public var touchMotionWeakCoupling: DetectionSignal<[String: String]>
+
+    private enum CodingKeys: String, CodingKey {
+        case touchSpreadLow = "sl"
+        case touchSpreadHigh = "sh"
+        case touchIntervalTooRegular = "tr"
+        case touchIntervalTooChaotic = "tc"
+        case swipeTooLinear = "wl"
+        case swipeTooCurvy = "wc"
+        case motionTooStill = "ms"
+        case touchMotionWeakCoupling = "wk"
+    }
 
     public init(
         touchSpreadLow: DetectionSignal<[String: String]>,
@@ -65,6 +87,13 @@ public struct CloudPhoneTimeSignals: Codable, Sendable {
     public var wideHourCoverage24h: DetectionSignal<[String: String]>
     public var nightActivityHigh24h: DetectionSignal<[String: String]>
     public var highFrequency24h: DetectionSignal<[String: String]>
+
+    private enum CodingKeys: String, CodingKey {
+        case highVolume24h = "hv"
+        case wideHourCoverage24h = "wh"
+        case nightActivityHigh24h = "na"
+        case highFrequency24h = "hf"
+    }
 
     public init(
         highVolume24h: DetectionSignal<[String: String]>,

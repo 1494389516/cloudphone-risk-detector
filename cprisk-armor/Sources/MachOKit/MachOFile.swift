@@ -213,6 +213,50 @@ public struct MachOWriteValidation {
     }
 }
 
+// MARK: - Symbol Table Types
+
+public struct SymbolTableInfo {
+    public let symoff: UInt32
+    public let nsyms: UInt32
+    public let stroff: UInt32
+    public let strsize: UInt32
+
+    public init(symoff: UInt32, nsyms: UInt32, stroff: UInt32, strsize: UInt32) {
+        self.symoff = symoff
+        self.nsyms = nsyms
+        self.stroff = stroff
+        self.strsize = strsize
+    }
+}
+
+public struct Nlist64Entry {
+    public let fileOffset: Int
+    public let n_strx: UInt32
+    public let n_type: UInt8
+    public let n_sect: UInt8
+    public let n_desc: Int16
+    public let n_value: UInt64
+
+    public static let N_STAB: UInt8 = 0xE0
+    public static let N_EXT: UInt8  = 0x01
+    public static let N_TYPE_MASK: UInt8 = 0x0E
+    public static let N_UNDF: UInt8 = 0x00
+    public static let N_SECT: UInt8 = 0x0E
+    public static let entrySize = 16
+
+    public var isStab: Bool { (n_type & Self.N_STAB) != 0 }
+    public var isExternal: Bool { (n_type & Self.N_EXT) != 0 }
+    public var typeField: UInt8 { n_type & Self.N_TYPE_MASK }
+    public var isDefinedLocal: Bool { !isStab && !isExternal && typeField == Self.N_SECT }
+}
+
+public struct SymbolEntry {
+    public let nlist: Nlist64Entry
+    public let name: String
+    public let nameFileOffset: Int
+    public let nameLength: Int
+}
+
 // MARK: - MachOFile
 
 public final class MachOFile {
@@ -245,6 +289,99 @@ public final class MachOFile {
 
     public func section(segment segName: String, section secName: String) throws -> Section? {
         try self.segment(named: segName)?.sections.first { $0.sectionName == secName }
+    }
+
+    // MARK: - Symbol Table (LC_SYMTAB) Access
+
+    /// Parse the LC_SYMTAB load command and return offsets/counts.
+    public func findSymbolTable() throws -> SymbolTableInfo? {
+        guard let cmd = loadCommands.first(where: { $0.cmd == LoadCommand.LC_SYMTAB }) else {
+            return nil
+        }
+        let off = Int(cmd.offset)
+        guard cmd.cmdSize >= 24 else {
+            throw MachOError.invalidData("LC_SYMTAB command too small (\(cmd.cmdSize) < 24)")
+        }
+        let symoff = try data.readUInt32(at: off + 8)
+        let nsyms = try data.readUInt32(at: off + 12)
+        let stroff = try data.readUInt32(at: off + 16)
+        let strsize = try data.readUInt32(at: off + 20)
+        return SymbolTableInfo(symoff: symoff, nsyms: nsyms, stroff: stroff, strsize: strsize)
+    }
+
+    /// Read all symbol entries from the nlist64 array with their resolved names.
+    public func readSymbols() throws -> [SymbolEntry] {
+        guard let symtab = try findSymbolTable() else { return [] }
+
+        let symoff = Int(symtab.symoff)
+        let nsyms = Int(symtab.nsyms)
+        let stroff = Int(symtab.stroff)
+        let strsize = Int(symtab.strsize)
+
+        guard symoff >= 0, nsyms >= 0 else { return [] }
+        let tableEnd = symoff + nsyms * Nlist64Entry.entrySize
+        guard tableEnd <= data.count else {
+            throw MachOError.outOfBoundsRead(offset: symoff, size: nsyms * Nlist64Entry.entrySize, dataSize: data.count)
+        }
+        guard stroff >= 0, stroff + strsize <= data.count else {
+            throw MachOError.outOfBoundsRead(offset: stroff, size: strsize, dataSize: data.count)
+        }
+
+        var results = [SymbolEntry]()
+        results.reserveCapacity(nsyms)
+
+        for i in 0..<nsyms {
+            let entryOffset = symoff + i * Nlist64Entry.entrySize
+            let n_strx = try data.readUInt32(at: entryOffset)
+            let n_type = data[entryOffset + 4]
+            let n_sect = data[entryOffset + 5]
+            let descLow = UInt16(data[entryOffset + 6])
+            let descHigh = UInt16(data[entryOffset + 7])
+            let n_desc = Int16(bitPattern: descLow | (descHigh << 8))
+            let n_value = try data.readUInt64(at: entryOffset + 8)
+
+            let nlist = Nlist64Entry(
+                fileOffset: entryOffset,
+                n_strx: n_strx,
+                n_type: n_type,
+                n_sect: n_sect,
+                n_desc: n_desc,
+                n_value: n_value
+            )
+
+            let nameFileOffset = stroff + Int(n_strx)
+            let maxLen = Swift.min(4096, stroff + strsize - Int(n_strx))
+            let name: String
+            let nameLength: Int
+            if Int(n_strx) < strsize, nameFileOffset < data.count, maxLen > 0 {
+                name = try data.readCString(at: nameFileOffset, maxLength: maxLen)
+                nameLength = name.utf8.count
+            } else {
+                name = ""
+                nameLength = 0
+            }
+
+            results.append(SymbolEntry(
+                nlist: nlist,
+                name: name,
+                nameFileOffset: nameFileOffset,
+                nameLength: nameLength
+            ))
+        }
+
+        return results
+    }
+
+    /// Overwrite a symbol's name bytes in the string table with replacement data.
+    /// The replacement must be exactly `entry.nameLength` bytes (does not touch the null terminator).
+    public func obfuscateSymbolName(_ entry: SymbolEntry, with replacement: Data) throws {
+        guard replacement.count == entry.nameLength else {
+            throw MachOError.invalidData(
+                "Replacement length \(replacement.count) != symbol name length \(entry.nameLength)"
+            )
+        }
+        guard entry.nameLength > 0 else { return }
+        try replaceBytes(at: UInt64(entry.nameFileOffset), with: replacement)
     }
 
     // MARK: - C String Scanning

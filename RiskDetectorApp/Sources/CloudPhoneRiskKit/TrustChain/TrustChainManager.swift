@@ -27,6 +27,12 @@ public struct KeyRotationPolicy: Codable, Sendable {
     /// 当前 DeviceKey 版本
     public let deviceKeyVersion: String
 
+    private enum CodingKeys: String, CodingKey {
+        case maxLifetimeSeconds = "ml"
+        case dualKeyWindowSeconds = "dw"
+        case deviceKeyVersion = "dv"
+    }
+
     public init(
         maxLifetimeSeconds: Int = 86400 * 7,
         dualKeyWindowSeconds: Int = 3600,

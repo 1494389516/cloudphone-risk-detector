@@ -47,6 +47,16 @@ public struct AnomalyDetectionResult: Codable, Sendable {
     /// 检测方法
     public var detectionMethod: String
 
+    private enum CodingKeys: String, CodingKey {
+        case isAnomalous = "ia"
+        case type = "t"
+        case severity = "sv"
+        case anomalyScore = "as"
+        case description = "ds"
+        case affectedMetrics = "am"
+        case detectionMethod = "dm"
+    }
+
     public init(
         isAnomalous: Bool,
         type: AnomalyType,

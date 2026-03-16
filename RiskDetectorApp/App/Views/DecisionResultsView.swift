@@ -20,7 +20,7 @@ import CloudPhoneRiskKit
 /// 4. 提供建议操作
 ///
 /// - SeeAlso: `ResultsView` - 当前主流程使用的检测结果展示视图
-@available(iOS 15.0, deprecated, message: "主流程已改用 ResultsView，本视图保留作备用")
+@available(iOS, introduced: 14.0, deprecated, message: "主流程已改用 ResultsView，本视图保留作备用")
 struct DecisionResultsView: View {
     let dto: RiskReportDTO
     @EnvironmentObject var settingsVM: SettingsViewModel
@@ -421,7 +421,7 @@ struct RiskBar: View {
 // MARK: - 信号详情卡片
 
 struct SignalDetailCard: View {
-    let signal: RiskSignalDTO
+    let signal: RiskSignal
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -562,70 +562,4 @@ struct RecommendationCard: View {
                 .fill(Color(.systemBackground))
         )
     }
-}
-
-// MARK: - DTO Extension
-
-struct RiskSignalDTO {
-    let id: String
-    let category: String
-    let score: Double
-    let evidence: [String: String]
-}
-
-// MARK: - Preview
-
-#Preview {
-    NavigationView {
-        DecisionResultsView(dto: mockDTO())
-            .environmentObject(SettingsViewModel())
-    }
-}
-
-private func mockDTO() -> RiskReportDTO {
-    RiskReportDTO(
-        score: 45,
-        isHighRisk: false,
-        summary: "检测到 VPN 连接",
-        generatedAt: "2024-01-15 10:30:00",
-        device: DeviceDTOMock(),
-        network: NetworkDTOMock(),
-        jailbreak: JailbreakDTOMock(),
-        behavior: BehaviorDTOMock(),
-        signals: [
-            RiskSignalDTO(id: "vpn_active", category: "network", score: 10, evidence: [:]),
-            RiskSignalDTO(id: "touch_spread_low", category: "behavior", score: 12, evidence: ["spread": "1.5"])
-        ]
-    )
-}
-
-private struct DeviceDTOMock {
-    // Mock data
-}
-
-private struct NetworkDTOMock {
-    let vpn = (detected: true, method: "test", evidence: ["utun0"] as [String])
-    let proxy = (detected: false, method: "test", evidence: nil as [String: String]?)
-}
-
-private struct JailbreakDTOMock {
-    let isJailbroken = false
-    let confidence = 0.0
-    let methods = [String]()
-}
-
-private struct BehaviorDTOMock {
-    // Mock data
-}
-
-private struct RiskReportDTO {
-    let score: Double
-    let isHighRisk: Bool
-    let summary: String
-    let generatedAt: String
-    let device: DeviceDTOMock
-    let network: NetworkDTOMock
-    let jailbreak: JailbreakDTOMock
-    let behavior: BehaviorDTOMock
-    let signals: [RiskSignalDTO]
 }

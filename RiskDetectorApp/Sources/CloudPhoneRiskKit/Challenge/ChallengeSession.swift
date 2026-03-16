@@ -229,18 +229,19 @@ public final class ChallengeSession: @unchecked Sendable {
 /// 服务端返回的挑战验证结果
 /// 客户端解析并应用，用于回注到下一次 evaluate 的分数调整
 public struct ChallengeVerificationResult: Codable, Sendable {
-    /// 挑战 ID
     public let challengeId: String
-    /// 是否通过验证
     public let passed: Bool
-    /// 失败的探针 ID 列表
     public let failedProbes: [String]
-    /// 服务端返回的分数增量偏移（delta），非绝对分数。
-    /// 客户端将其与 baseScore 相加：finalScore = baseScore + comboBonus + blindBonus + adjustedScore。
-    /// 若服务端误返绝对分（0–100），会导致分数异常；建议服务端明确返回 delta，或与客户端约定语义。
     public let adjustedScore: Double?
-    /// HMAC-SHA256 of "\(challengeId)|\(adjustedScore)|\(passed)" using the challenge key.
     public let hmac: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case challengeId = "ci"
+        case passed = "p"
+        case failedProbes = "fp"
+        case adjustedScore = "as"
+        case hmac = "h"
+    }
 
     public init(
         challengeId: String,

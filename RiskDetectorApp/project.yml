@@ -12,11 +12,79 @@ settings:
     MARKETING_VERSION: "1.0.0"
     CURRENT_PROJECT_VERSION: "1"
 
-packages:
-  CloudPhoneRiskKit:
-    path: .
-
 targets:
+  CRiskCore:
+    type: library.static
+    platform: iOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/CRiskCore
+        includes:
+          - "**/*.c"
+      - path: Sources/CRiskCore/include
+        buildPhase: headers
+        headerVisibility: public
+      - path: BuildSupport/CRiskCore/CRiskCore-umbrella.h
+        buildPhase: headers
+        headerVisibility: public
+      - path: BuildSupport/CRiskCore/module.modulemap
+    settings:
+      base:
+        PRODUCT_NAME: CRiskCore
+        SKIP_INSTALL: NO
+        DEFINES_MODULE: YES
+        CLANG_ENABLE_MODULES: YES
+        MODULEMAP_FILE: "$(SRCROOT)/BuildSupport/CRiskCore/module.modulemap"
+        PUBLIC_HEADERS_FOLDER_PATH: include
+        HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/Sources/CRiskCore/include"
+
+  CloudPhoneRiskKit:
+    type: library.static
+    platform: iOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/CloudPhoneRiskKit
+        includes:
+          - "**/*.swift"
+    dependencies:
+      - target: CRiskCore
+      - sdk: AVFoundation.framework
+      - sdk: AudioToolbox.framework
+      - sdk: CFNetwork.framework
+      - sdk: CoreHaptics.framework
+      - sdk: CoreLocation.framework
+      - sdk: CoreMotion.framework
+      - sdk: CoreTelephony.framework
+      - sdk: CoreVideo.framework
+      - sdk: DeviceCheck.framework
+      - sdk: LocalAuthentication.framework
+      - sdk: Metal.framework
+      - sdk: Network.framework
+      - sdk: Security.framework
+      - sdk: UIKit.framework
+    settings:
+      base:
+        PRODUCT_NAME: CloudPhoneRiskKit
+        SKIP_INSTALL: NO
+        DEFINES_MODULE: YES
+        HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/Sources/CRiskCore/include"
+
+  CloudPhoneRiskAppCore:
+    type: library.static
+    platform: iOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/CloudPhoneRiskAppCore
+        includes:
+          - "**/*.swift"
+    dependencies:
+      - target: CloudPhoneRiskKit
+    settings:
+      base:
+        PRODUCT_NAME: CloudPhoneRiskAppCore
+        SKIP_INSTALL: NO
+        DEFINES_MODULE: YES
+
   RiskDetectorApp:
     type: application
     platform: iOS
@@ -35,11 +103,33 @@ targets:
         DEVELOPMENT_TEAM: ""
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        ARMOR_PLACEHOLDER_DIR: "$(SRCROOT)/BuildSupport/ArmorPlaceholders"
+        OTHER_LDFLAGS: >-
+          $(inherited) -lCRiskCore -lCloudPhoneRiskKit -lCloudPhoneRiskAppCore
+          -Wl,-headerpad,0x4000
+          -Wl,-sectcreate,__DATA,__swift5_types2,$(ARMOR_PLACEHOLDER_DIR)/string_table.bin
+          -Wl,-sectcreate,__DATA,__swift5_proto2,$(ARMOR_PLACEHOLDER_DIR)/loader.bin
+          -Wl,-sectcreate,__DATA,__swift5_mpenum,$(ARMOR_PLACEHOLDER_DIR)/protected_blob.bin
+          -Wl,-sectcreate,__DATA,__swift5_aa,$(ARMOR_PLACEHOLDER_DIR)/anchor_a.bin
+          -Wl,-sectcreate,__DATA,__swift5_ab,$(ARMOR_PLACEHOLDER_DIR)/anchor_b.bin
+          -Wl,-sectcreate,__DATA,__swift5_ac,$(ARMOR_PLACEHOLDER_DIR)/anchor_c.bin
+          -Wl,-sectcreate,__DATA,__swift5_ad,$(ARMOR_PLACEHOLDER_DIR)/anchor_d.bin
+          -Wl,-sectcreate,__DATA,__swift5_acfun,$(ARMOR_PLACEHOLDER_DIR)/full_anchor.bin
+          -Wl,-sectcreate,__DATA,__sw5_builtin2,$(ARMOR_PLACEHOLDER_DIR)/sw5_builtin2.bin
+          -Wl,-sectcreate,__DATA,__sw5_capture2,$(ARMOR_PLACEHOLDER_DIR)/sw5_capture2.bin
+          -Wl,-sectcreate,__DATA,__sw5_typeref2,$(ARMOR_PLACEHOLDER_DIR)/sw5_typeref2.bin
+          -Wl,-sectcreate,__DATA,__objc_imageinfo,$(ARMOR_PLACEHOLDER_DIR)/objc_imageinfo_decoy.bin
+          -Wl,-sectcreate,__DATA,__la_resolver2,$(ARMOR_PLACEHOLDER_DIR)/la_resolver2.bin
+          -Wl,-sectcreate,__DATA,__stub_helper2,$(ARMOR_PLACEHOLDER_DIR)/stub_helper2.bin
+          -Wl,-sectcreate,__DATA,__auth_got2,$(ARMOR_PLACEHOLDER_DIR)/auth_got2.bin
+          -Wl,-sectcreate,__DATA,__nl_catlist,$(ARMOR_PLACEHOLDER_DIR)/nl_catlist.bin
+        STRIP_INSTALLED_PRODUCT: YES
+        STRIP_STYLE: all
+        STRIP_SWIFT_SYMBOLS: YES
+        DEAD_CODE_STRIPPING: YES
     dependencies:
-      - package: CloudPhoneRiskKit
-        product: CloudPhoneRiskKit
-      - package: CloudPhoneRiskKit
-        product: CloudPhoneRiskAppCore
+      - target: CloudPhoneRiskKit
+      - target: CloudPhoneRiskAppCore
     postBuildScripts:
       - name: "cprisk-armor (Release)"
         script: |
@@ -51,22 +141,30 @@ targets:
             exit 0
           fi
           ARMOR_CLI="${PROJECT_DIR}/../cprisk-armor/.build/release/cprisk-armor"
-          FRAMEWORK_BINARY="${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}/Frameworks/CloudPhoneRiskKit.framework/CloudPhoneRiskKit"
+          APP_BINARY="${BUILT_PRODUCTS_DIR}/${EXECUTABLE_PATH}"
           if [ ! -f "${ARMOR_CLI}" ]; then
             echo "warning: cprisk-armor not built at ${ARMOR_CLI}, run: cd cprisk-armor && swift build -c release"
             exit 0
           fi
-          if [ ! -f "${FRAMEWORK_BINARY}" ]; then
-            echo "warning: CloudPhoneRiskKit.framework not found at ${FRAMEWORK_BINARY}, skipping armor"
+          if [ ! -f "${APP_BINARY}" ]; then
+            echo "warning: App binary not found at ${APP_BINARY}, skipping armor"
             exit 0
           fi
-          "${ARMOR_CLI}" --input "${FRAMEWORK_BINARY}" --output "${FRAMEWORK_BINARY}" --all --key "${CPRISK_ARMOR_KEY}"
+          echo "Running cprisk-armor on app binary: ${APP_BINARY}"
+          "${ARMOR_CLI}" --input "${APP_BINARY}" --output "${APP_BINARY}" --all --key "${CPRISK_ARMOR_KEY}"
+          echo "Stripping symbols from app binary..."
+          xcrun strip -x "${APP_BINARY}" 2>/dev/null || true
+          xcrun strip "${APP_BINARY}" 2>/dev/null || true
+          echo "Strip complete."
         basedOnDependencyAnalysis: false
 
 schemes:
   RiskDetectorApp:
     build:
       targets:
+        CRiskCore: all
+        CloudPhoneRiskKit: all
+        CloudPhoneRiskAppCore: all
         RiskDetectorApp: all
     run:
       config: Debug

@@ -1,0 +1,4 @@
+module CRiskCore {
+    umbrella header "CRiskCore-umbrella.h"
+    export *
+}

@@ -3,38 +3,31 @@ import Foundation
 // MARK: - 统计特征
 /// 数值数据的统计特征
 public struct StatisticalFeatures: Codable, Sendable {
-    /// 均值
     public var mean: Double
-
-    /// 中位数
     public var median: Double
-
-    /// 标准差
     public var stdDev: Double
-
-    /// 方差
     public var variance: Double
-
-    /// 最小值
     public var min: Double
-
-    /// 最大值
     public var max: Double
-
-    /// 第 25 百分位数
     public var percentile25: Double
-
-    /// 第 75 百分位数
     public var percentile75: Double
-
-    /// 四分位距 (IQR)
     public var iqr: Double
-
-    /// 变异系数 (CV = stdDev / mean)
     public var coefficientOfVariation: Double
-
-    /// 样本数量
     public var count: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case mean = "mn"
+        case median = "md"
+        case stdDev = "sd"
+        case variance = "vr"
+        case min = "mi"
+        case max = "mx"
+        case percentile25 = "p2"
+        case percentile75 = "p7"
+        case iqr = "iq"
+        case coefficientOfVariation = "cv"
+        case count = "c"
+    }
 
     public init(
         mean: Double,
@@ -120,29 +113,25 @@ public struct StatisticalFeatures: Codable, Sendable {
 // MARK: - 行为基线
 /// 设备行为的历史基线
 public struct BehaviorBaseline: Codable, Sendable {
-    /// 基线创建时间
     public var createdAt: TimeInterval
-
-    /// 基线最后更新时间
     public var updatedAt: TimeInterval
-
-    /// 操作数量统计
     public var actionCountStats: StatisticalFeatures
-
-    /// 点击数量统计
     public var tapCountStats: StatisticalFeatures
-
-    /// 滑动数量统计
     public var swipeCountStats: StatisticalFeatures
-
-    /// 点击-滑动比例统计
     public var tapSwipeRatioStats: StatisticalFeatures
-
-    /// 触摸-运动相关性统计
     public var touchMotionCorrelationStats: StatisticalFeatures?
-
-    /// 用于计算此基线的样本数量
     public var sampleCount: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case createdAt = "ca"
+        case updatedAt = "ua"
+        case actionCountStats = "ac"
+        case tapCountStats = "tc"
+        case swipeCountStats = "sc"
+        case tapSwipeRatioStats = "tr"
+        case touchMotionCorrelationStats = "tm"
+        case sampleCount = "sn"
+    }
 
     public init(
         createdAt: TimeInterval,
