@@ -392,6 +392,8 @@ public struct DecisionTree: Codable, Sendable {
     public func decide(context: EvaluationContext) -> RiskAction {
         switch evaluate(context: context) {
         case .next, .branch:
+            // 非有限分数（NaN/Infinity）直接阻断，防止 NaN 比较全部为 false 导致误放行
+            guard context.score.isFinite else { return .block }
             if context.score >= context.policy.criticalThreshold {
                 return .block
             } else if context.score >= context.policy.highThreshold {
