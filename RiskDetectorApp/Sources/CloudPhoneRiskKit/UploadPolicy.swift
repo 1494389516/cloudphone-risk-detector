@@ -115,8 +115,8 @@ public struct UploadPolicy: Codable, Sendable {
             baseDelay = config.lowRiskBatchInterval
         }
 
-        // 添加随机抖动
-        let jitter = baseDelay * config.jitterRatio * Double.random(in: -1...1)
+        // 添加随机抖动（±0.5 范围，避免抖动量超过延迟本身）
+        let jitter = baseDelay * config.jitterRatio * Double.random(in: -0.5...0.5)
         return max(0, baseDelay + jitter)
     }
 

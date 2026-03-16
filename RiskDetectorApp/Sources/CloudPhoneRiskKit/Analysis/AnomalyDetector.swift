@@ -183,12 +183,9 @@ public final class AnomalyDetector {
         let sorted = samples.sorted()
         let count = sorted.count
 
-        // 计算四分位数
-        let q1Index = count / 4
-        let q3Index = (3 * count) / 4
-
-        let q1 = sorted[min(q1Index, count - 1)]
-        let q3 = sorted[min(q3Index, count - 1)]
+        // 计算四分位数（线性插值，与统计标准一致）
+        let q1 = interpolatedPercentile(sorted: sorted, p: 0.25)
+        let q3 = interpolatedPercentile(sorted: sorted, p: 0.75)
         let iqr = q3 - q1
 
         guard iqr > 0 else {
@@ -438,4 +435,17 @@ private func pow(_ base: Double, _ exp: Double) -> Double {
 
 private func sqrt(_ x: Double) -> Double {
     return Darwin.sqrt(x)
+}
+
+/// 线性插值分位数（等同于 numpy percentile method='linear'）
+private func interpolatedPercentile(sorted: [Double], p: Double) -> Double {
+    guard !sorted.isEmpty else { return 0 }
+    let n = Double(sorted.count)
+    let index = p * (n - 1)
+    let lower = Int(Darwin.floor(index))
+    let upper = Int(Darwin.ceil(index))
+    guard lower >= 0, upper < sorted.count else { return sorted[max(0, min(lower, sorted.count - 1))] }
+    if lower == upper { return sorted[lower] }
+    let weight = index - Double(lower)
+    return sorted[lower] * (1.0 - weight) + sorted[upper] * weight
 }

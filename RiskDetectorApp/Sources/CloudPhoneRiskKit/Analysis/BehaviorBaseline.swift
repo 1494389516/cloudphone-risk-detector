@@ -99,7 +99,7 @@ public struct StatisticalFeatures: Codable, Sendable {
         let index = (p / 100.0) * (count - 1)
         let lower = Int(floor(index))
         let upper = Int(ceil(index))
-        guard lower >= 0, upper < sorted.count else { return sorted[0] }
+        guard lower >= 0, upper < sorted.count else { return 0 }
 
         if lower == upper {
             return sorted[lower]
