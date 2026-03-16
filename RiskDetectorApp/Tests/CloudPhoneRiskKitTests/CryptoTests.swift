@@ -324,3 +324,169 @@ final class CryptoTests: XCTestCase {
         XCTAssertEqual(mapping1.mappings, mapping2.mappings)
     }
 }
+
+// MARK: - SecureEnvelopeValidator Attestation Consistency Tests
+
+final class SecureEnvelopeValidatorAttestationTests: XCTestCase {
+
+    private let signingKey = "test-signing-key-32-bytes-long!!"
+
+    private func makeEnvelope(
+        attestationKeyId: String?,
+        attestationAssertion: Data?
+    ) throws -> ReportEnvelope {
+        let payloadData = try JSONSerialization.data(withJSONObject: ["score": 50])
+        let base = try ReportEnvelope.create(
+            payloadData: payloadData,
+            reportId: "report-attest",
+            sessionToken: "session-attest",
+            signingKey: signingKey,
+            keyId: "key-1",
+            fieldMapping: nil,
+            config: .init()
+        )
+        return ReportEnvelope(
+            nonce: base.nonce,
+            ts: base.ts,
+            sessionToken: base.sessionToken,
+            payload: base.payload,
+            reportId: base.reportId,
+            sigVer: base.sigVer,
+            keyId: base.keyId,
+            fieldMappingVersion: base.fieldMappingVersion,
+            signature: base.signature,
+            attestationKeyId: attestationKeyId,
+            attestationAssertion: attestationAssertion,
+            trustLevel: nil,
+            reAttestationAssertion: nil
+        )
+    }
+
+    func testAttestationConsistency_bothAbsent_passes() throws {
+        let envelope = try makeEnvelope(attestationKeyId: nil, attestationAssertion: nil)
+        let result = CPRiskKit.shared.validateSecureReportEnvelope(
+            envelope,
+            signingKey: signingKey,
+            enableReplayProtection: false,
+            validateAttestationConsistency: true
+        )
+        // Should not fail with attestationIncomplete
+        if case .failure(.reportEnvelope(.attestationIncomplete)) = result {
+            XCTFail("Both absent should pass attestation consistency check")
+        }
+    }
+
+    func testAttestationConsistency_bothPresent_passes() throws {
+        let envelope = try makeEnvelope(
+            attestationKeyId: "key-abc",
+            attestationAssertion: Data("assertion-data".utf8)
+        )
+        let result = CPRiskKit.shared.validateSecureReportEnvelope(
+            envelope,
+            signingKey: signingKey,
+            enableReplayProtection: false,
+            validateAttestationConsistency: true
+        )
+        // Should not fail with attestationIncomplete
+        if case .failure(.reportEnvelope(.attestationIncomplete)) = result {
+            XCTFail("Both present should pass attestation consistency check")
+        }
+    }
+
+    func testAttestationConsistency_keyIdWithoutAssertion_fails() throws {
+        let envelope = try makeEnvelope(attestationKeyId: "key-abc", attestationAssertion: nil)
+        let result = CPRiskKit.shared.validateSecureReportEnvelope(
+            envelope,
+            signingKey: signingKey,
+            enableReplayProtection: false,
+            validateAttestationConsistency: true
+        )
+        guard case .failure(.reportEnvelope(.attestationIncomplete)) = result else {
+            XCTFail("keyId present but assertion absent should return attestationIncomplete")
+            return
+        }
+    }
+
+    func testAttestationConsistency_assertionWithoutKeyId_fails() throws {
+        // This is the new direction fixed by the XOR check
+        let envelope = try makeEnvelope(
+            attestationKeyId: nil,
+            attestationAssertion: Data("assertion-data".utf8)
+        )
+        let result = CPRiskKit.shared.validateSecureReportEnvelope(
+            envelope,
+            signingKey: signingKey,
+            enableReplayProtection: false,
+            validateAttestationConsistency: true
+        )
+        guard case .failure(.reportEnvelope(.attestationIncomplete)) = result else {
+            XCTFail("assertion present but keyId absent should return attestationIncomplete (XOR fix)")
+            return
+        }
+    }
+
+    func testAttestationConsistency_disabled_allowsInconsistentState() throws {
+        let envelope = try makeEnvelope(attestationKeyId: "key-abc", attestationAssertion: nil)
+        let result = CPRiskKit.shared.validateSecureReportEnvelope(
+            envelope,
+            signingKey: signingKey,
+            enableReplayProtection: false,
+            validateAttestationConsistency: false
+        )
+        // With consistency check disabled, should not return attestationIncomplete
+        if case .failure(.reportEnvelope(.attestationIncomplete)) = result {
+            XCTFail("Disabled consistency check should not return attestationIncomplete")
+        }
+    }
+}
+
+// MARK: - ChallengeSession configureChallengeKey Tests
+
+final class ChallengeSessionKeyConfigTests: XCTestCase {
+
+    func testConfigureChallengeKeyDoesNotDeadlock() {
+        let session = ChallengeSession()
+        let key = Data(repeating: 0xAB, count: 32)
+
+        // Configure the key — must not deadlock even under concurrent access
+        let expectation = self.expectation(description: "concurrent configure completes")
+        expectation.expectedFulfillmentCount = 10
+
+        let queue = DispatchQueue(label: "test.concurrent", attributes: .concurrent)
+        for _ in 0..<10 {
+            queue.async {
+                session.configureChallengeKey(key)
+                expectation.fulfill()
+            }
+        }
+        wait(for: [expectation], timeout: 5.0)
+    }
+
+    func testConfigureChallengeKeyEnablesHMACVerification() {
+        let session = ChallengeSession()
+        let key = Data(repeating: 0x01, count: 32)
+        session.configureChallengeKey(key)
+
+        // A result with no HMAC should now return a mismatch signal (key is configured)
+        let result = ChallengeVerificationResult(
+            challengeId: "cid-001",
+            passed: true,
+            failedProbes: [],
+            adjustedScore: nil,
+            hmac: nil
+        )
+        let signal = session.verifyResult(result)
+        XCTAssertNotNil(signal, "Configured key with missing HMAC should produce mismatch signal")
+        XCTAssertEqual(signal?.id, "challenge_hmac_mismatch")
+    }
+
+    func testVerifyResultNilWhenNoKeyConfigured() {
+        let session = ChallengeSession()
+        // Do NOT configure a key — verifyResult should return nil (no-op)
+        let result = ChallengeVerificationResult(
+            challengeId: "cid-002",
+            passed: true
+        )
+        XCTAssertNil(session.verifyResult(result), "Without a configured key, verifyResult should return nil")
+    }
+}

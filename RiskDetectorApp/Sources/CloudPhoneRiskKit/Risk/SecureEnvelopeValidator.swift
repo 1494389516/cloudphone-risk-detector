@@ -257,7 +257,8 @@ extension CPRiskKit {
         if validateAttestationConsistency {
             let hasKeyId = envelope.attestationKeyId.map { !$0.isEmpty } ?? false
             let hasAssertion = envelope.attestationAssertion.map { !$0.isEmpty } ?? false
-            if hasKeyId && !hasAssertion {
+            // keyId 与 assertion 必须同时存在或同时缺失（XOR 表示不一致状态）
+            if hasKeyId != hasAssertion {
                 return .failure(.reportEnvelope(.attestationIncomplete))
             }
         }
