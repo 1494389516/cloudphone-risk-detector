@@ -44,7 +44,8 @@ final class StringEncryptorTests: XCTestCase {
         XCTAssertEqual(StringClassifier.classify("Hello World"), .shouldEncrypt)
         XCTAssertEqual(StringClassifier.classify("test"), .shouldEncrypt)
         XCTAssertEqual(StringClassifier.classify("some_function_name"), .shouldEncrypt)
-        XCTAssertEqual(StringClassifier.classify("CloudPhoneRiskKit"), .shouldEncrypt)
+        // CloudPhoneRiskKit now hits the "riskkit" sensitive keyword → mustEncrypt
+        XCTAssertEqual(StringClassifier.classify("CloudPhoneRiskKit"), .mustEncrypt)
     }
 
     // MARK: - 字符串分类：边界长度
@@ -60,8 +61,9 @@ final class StringEncryptorTests: XCTestCase {
     }
 
     func testClassifyLength257IsSkip() {
+        // Length limit (256) removed — long strings are now shouldEncrypt to catch JSON config literals.
         let str257 = String(repeating: "a", count: 257)
-        XCTAssertEqual(StringClassifier.classify(str257), .skip)
+        XCTAssertEqual(StringClassifier.classify(str257), .shouldEncrypt)
     }
 
     func testClassifyLength3IsSkip() {

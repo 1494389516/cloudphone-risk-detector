@@ -58,6 +58,8 @@ public enum ArmorABI {
         public static let swiftProtocols = "__swift5_proto"
         public static let swiftProtocolConformances = "__swift5_protos"
 
+        public static let swiftTypeRef = "__swift5_typeref"
+
         public static let additionalScrubSections = [
             swiftFieldMetadata,
             swiftBuiltinTypes,
@@ -65,6 +67,7 @@ public enum ArmorABI {
             swiftAssocTypes,
             swiftProtocols,
             swiftProtocolConformances,
+            swiftTypeRef,
         ]
     }
 
