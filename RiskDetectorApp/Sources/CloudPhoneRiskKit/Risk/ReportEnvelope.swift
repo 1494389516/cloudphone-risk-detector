@@ -506,10 +506,10 @@ public struct ReportEnvelope: Codable, Sendable {
     }
 
     private func timingSafeCompare(_ lhs: String, _ rhs: String) -> Bool {
-        guard lhs.count == rhs.count else { return false }
-
         let lhsBytes = Array(lhs.utf8)
         let rhsBytes = Array(rhs.utf8)
+        // 必须比较字节数而非字符数，否则多字节字符会导致越界崩溃
+        guard lhsBytes.count == rhsBytes.count else { return false }
         var result: UInt8 = 0
 
         for i in 0..<lhsBytes.count {
