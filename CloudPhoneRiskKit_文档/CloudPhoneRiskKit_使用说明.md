@@ -1,6 +1,6 @@
 # CloudPhoneRiskKit 6.5 使用与构建说明
 
-iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。6.0 引入自研壳（cprisk-armor）二进制保护与端云签名绑定；6.1 将壳升级为 5 Pass 工业化保护；6.2 对壳执行密码学重建（ABI v2：强制密钥注入 / HMAC 认证 / 随机 nonce / IntegrityAnchor HMAC），共 46 项漏洞修复；6.3 新增 Pass 6 符号表混淆、Codable 短别名 CodingKeys、ObjC selector 安全修复，壳升级为 6 Pass 全链路保护；6.4 将 SDK 架构改为 library.static + 全量 strip，IDA 中 SDK 函数全部显示为 sub_XXXX；6.5 引入白盒 PRF 引擎（5 域 S-box ~160KB，root key 不可逆提取）、AppSigningIdentityDetector 反重打包（TeamID/bundleID/entitlement 一致性 + 基线漂移检测）。
+iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。6.0 引入自研壳（cprisk-armor）二进制保护与端云签名绑定；6.1 将壳升级为 5 Pass 工业化保护；6.2 对壳执行密码学重建（ABI v2：强制密钥注入 / HMAC 认证 / 随机 nonce / IntegrityAnchor HMAC），共 46 项漏洞修复；6.3 新增 Pass 6 符号表混淆、Codable 短别名 CodingKeys、ObjC selector 安全修复，壳升级为 6 Pass 全链路保护；6.4 将 SDK 架构改为 library.static + 全量 strip，IDA 中 SDK 函数全部显示为 sub_XXXX；6.5 引入白盒 PRF 引擎（5 域 S-box ~160KB，root key 不可逆提取）、AppSigningIdentityDetector 反重打包（TeamID/bundleID/entitlement 一致性 + 基线漂移检测）；后续新增 GPU 渲染指纹（Metal Compute Shader 像素哈希，检测虚拟 GPU）、IMU 噪声谱指纹（FFT 频域噪声特征 + 合成数据检测）、行为信号扩充（forceVariance / radiusVariance / swipeSpeedCV 共 11 项启发式，行为分上限提升至 45）、BehaviorThresholds 全量远程可配（13 项阈值 + 按设备型号分组覆盖）、采样窗口最小间隔保护（5s / 缓冲区翻倍）。
 
 ---
 
@@ -92,7 +92,10 @@ export CPRISK_ARMOR_KEY=<hex>; .build/release/cprisk-armor --input ... --output 
 - DRM 能力检测（FairPlay）
 - 电池熵检测（无真实电池硬件）
 - 部分越狱 / 挂载点检测（沙盒行为不同）
-模拟器适合做接入验证和 JSON 结构检查；越狱强度回归 & 行为指纹精度测试请用真机。
+- **GPU 渲染指纹**（`GPURenderFingerprintProvider`，模拟器无 Metal GPU，返回 `gpuRenderUnavailable`）
+- **IMU 噪声谱指纹**（`IMUNoiseSpectrumProvider`，模拟器无真实加速度计，返回 `imuNoiseUnavailable`）
+
+模拟器适合做接入验证和 JSON 结构检查；越狱强度回归 & 行为指纹精度测试 & 硬件指纹采集请用真机。
 
 ---
 
@@ -318,6 +321,60 @@ CPRiskKit.register(provider: MyProvider())
 
 ---
 
+### 12.1 行为阈值远程配置（BehaviorThresholds）
+
+`RemoteDetectorConfig` 中新增 `BehaviorThresholds` 结构体，支持服务端下发全部 13 项行为判定阈值，并可按设备型号分组覆盖（`deviceModelBehaviorOverrides`），无需发版即可调整灵敏度。
+
+**RemoteConfig 下发示例（JSON 片段）：**
+
+```json
+{
+  "detector": {
+    "bt": {
+      "tsl": 2.0,
+      "tsh": 10.0,
+      "ticl": 0.2,
+      "tich": 0.6,
+      "slh": 0.98,
+      "sll": 0.90,
+      "ms": 0.98,
+      "tmc": 0.10,
+      "msc": 0.95,
+      "fv": 1e-6,
+      "rv": 0.005,
+      "sscv": 0.15,
+      "mbs": 45
+    },
+    "dmbo": {
+      "iPhone14,2": { "fv": 5e-7, "rv": 0.003 }
+    }
+  }
+}
+```
+
+**字段说明：**
+
+| JSON 键 | Swift 字段 | 默认值 | 说明 |
+|---------|-----------|--------|------|
+| `tsl` | `touchSpreadLow` | `2.0` | 触点坐标分布下限（过低 → 机器人点击） |
+| `tsh` | `touchSpreadHigh` | `10.0` | 触点坐标分布上限（过高 → 扫屏脚本） |
+| `ticl` | `touchIntervalCVLow` | `0.2` | 点击间隔变异系数下限（过低 → 规律点击） |
+| `tich` | `touchIntervalCVHigh` | `0.6` | 点击间隔变异系数上限（过高 → 异常抖动） |
+| `slh` | `swipeLinearityHigh` | `0.98` | 滑动线性度高阈值（超过 → 完美直线，脚本）|
+| `sll` | `swipeLinearityLow` | `0.90` | 滑动线性度低阈值（低于 → 异常弯曲）|
+| `ms` | `motionStillness` | `0.98` | 运动静止比（超过 → 设备静止/架台操作） |
+| `tmc` | `touchMotionCorrelation` | `0.10` | 触控-运动相关性（低于 → 触控与设备运动解耦）|
+| `msc` | `minStillnessForCorrelation` | `0.95` | 触发相关性校验的最低静止度 |
+| `fv` | `forceVariance` | `1e-6` | 触控压力方差阈值（低于 → 力度完全均匀，脚本）|
+| `rv` | `radiusVariance` | `0.005` | 触控接触半径方差阈值（低于 → 半径完全均匀）|
+| `sscv` | `swipeSpeedCV` | `0.15` | 滑动速度变异系数（低于 → 速度恒定，脚本）|
+| `mbs` | `maxBehaviorScore` | `45` | 行为维度最大可加分上限 |
+
+> **优先级**：`deviceModelBehaviorOverrides[当前型号]` > `behaviorThresholds` > 代码内置默认值。
+> 未下发 `bt` 时，客户端自动使用默认值，不影响正常运行。
+
+---
+
 ## 13. 盲区四：代码段哈希校验与 textSegmentHashReference 配置
 
 ### 13.1 配置说明
@@ -391,7 +448,7 @@ CPRiskKit.shared.setTextSegmentReferenceResolver(SignedReferenceResolver())
 
 ## 14. 注意事项
 
-1. **模拟器限制**：越狱检测在模拟器无实际意义，DRM / 电池 / 部分挂载点检测返回 `unavailable`。
+1. **模拟器限制**：越狱检测在模拟器无实际意义，DRM / 电池 / 部分挂载点 / GPU 渲染指纹 / IMU 噪声谱检测返回 `unavailable`。
 2. **SchemeDetector**：需在宿主 App 的 `Info.plist` 添加 `LSApplicationQueriesSchemes`（如 `cydia`、`sileo`、`filza` 等），否则 `canOpenURL` 始终返回 `false`。
 3. **弱信号原则**：SDK 将不可用 / 无法获取的信号视为弱信号，不会因系统限制直接判定高风险。**强结论建议放在服务端做聚合判断**（IP 聚合、ASN、设备图谱、长连接流量模式等）。
 4. **日志开关**：`CPRiskKit.setLogEnabled(true)` 仅在 `DEBUG` 构建下生效。
@@ -399,6 +456,8 @@ CPRiskKit.shared.setTextSegmentReferenceResolver(SignedReferenceResolver())
 6. **v2a 签名兼容**：服务端需同时支持 `v2`（无壳）和 `v2a`（壳绑定）签名验证；未加壳的 SDK 仍输出 `v2`。
 7. **服务端信号注入**：6.2 起 Release 下旧 `setExternalServerSignals()` 为 no-op，需使用 `setExternalServerSignalsVerified()` + HMAC 签名。
 8. **动态特征列表**：可通过 RemoteConfig 下发 `additionalSuspiciousLibraries` / `additionalSuspiciousPaths` / `additionalSuspiciousPorts` 扩展检测规则，无需发版。
+9. **行为阈值配置**：`BehaviorThresholds` 13 项阈值均有内置默认值，未下发时不影响评分。设备型号级 override（`deviceModelBehaviorOverrides`）优先级最高，适合针对特定机型微调灵敏度，避免误判（如 iPad Pro 的 ApplePencil 力度分布与手指有差异）。行为分上限由 `mbs`（`maxBehaviorScore`）控制，默认 45，可远程下调以降低行为维度权重。
+10. **GPU / IMU 指纹缓存**：`GPURenderFingerprintProvider` 和 `IMUNoiseSpectrumProvider` 均实现了结果缓存，首次采集后同一进程内复用，不重复触发 Metal 渲染 / FFT 采样；若需强制刷新，重启 App 进程即可。
 
 ---
 
