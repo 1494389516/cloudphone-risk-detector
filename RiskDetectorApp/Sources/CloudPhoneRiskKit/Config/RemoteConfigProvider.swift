@@ -9,7 +9,7 @@ public final class RemoteConfigProvider: @unchecked Sendable {
     public let cacheValidityDuration: TimeInterval
     public let remoteEnabled: Bool
 
-    private let lock = NSLock()
+    private let lock = UnfairLock()
     private var _currentConfig: RemoteConfig
     private var _isFetching = false
     private let cache: ConfigCaching
@@ -407,11 +407,32 @@ private struct ConfigValidator {
         }
     }
 
+    /// 安全下限常量（防止远程配置将阈值调至 0 从而关闭检测）
+    private static let minimumPolicyThreshold: Double = 15
+    private static let minimumJailbreakThreshold: Double = 10
+
     func validateSecurity(_ config: RemoteConfig) throws {
         if config.whitelist.deviceIDs.count > 10000 {
             throw ConfigError.validationFailed(
                 underlying: NSError(domain: "RemoteConfigProvider", code: -1, userInfo: [
                     NSLocalizedDescriptionKey: "whitelist size too large"
+                ])
+            )
+        }
+
+        // 阈值下限保护：阻止远程配置通过极高阈值变相关闭所有检测
+        if config.policy.threshold < Self.minimumPolicyThreshold {
+            throw ConfigError.validationFailed(
+                underlying: NSError(domain: "RemoteConfigProvider", code: -2, userInfo: [
+                    NSLocalizedDescriptionKey: "policy.threshold \(config.policy.threshold) below security floor \(Self.minimumPolicyThreshold)"
+                ])
+            )
+        }
+
+        if config.detector.jailbreakThreshold < Self.minimumJailbreakThreshold {
+            throw ConfigError.validationFailed(
+                underlying: NSError(domain: "RemoteConfigProvider", code: -3, userInfo: [
+                    NSLocalizedDescriptionKey: "detector.jailbreakThreshold \(config.detector.jailbreakThreshold) below security floor \(Self.minimumJailbreakThreshold)"
                 ])
             )
         }

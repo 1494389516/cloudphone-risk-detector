@@ -68,7 +68,7 @@ final class RiskSignalProviderRegistry {
     /// 连续失败阈值，超过后跳过该 provider
     private static let maxConsecutiveFailures = 3
 
-    private let lock = NSLock()
+    private let lock = UnfairLock()
     private var providers: [RiskSignalProvider] = []
     private(set) var isSealed = false
     private var sealedProviderTypes: [String: ObjectIdentifier] = [:]

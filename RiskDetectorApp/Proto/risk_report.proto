@@ -1,4 +1,4 @@
-// CloudPhoneRiskKit 4.4 - gRPC/JSON 上报协议
+// CloudPhoneRiskKit 6.5 - gRPC/JSON 上报协议
 // 用于 HTTP/2 或 gRPC 传输层，内层 JSON 作为业务载荷。
 // 不依赖 grpc-swift，客户端使用手动 JSON 编码发送。
 
@@ -22,8 +22,133 @@ message UploadRiskReportRequest {
   bytes payload_json = 12;
   string signature = 13;
   bytes payload_sha256 = 14;
+
+  // SDK 4.4+ App Attest 硬件信任根
+  string attestation_key_id = 15;
+  bytes attestation_assertion = 16;
+
+  // SDK 5.0+ 端侧信任等级
+  TrustLevel trust_level = 17;
+
+  // SDK 6.5+ 压缩裁决摘要（8 字节位向量，快速判决路径）
+  bytes compressed_verdict_digest = 18;
+
+  // SDK 6.5+ 信号证据（结构化，替代 payload_json 中的扁平信号列表）
+  repeated RiskSignalEntry signals = 19;
+
+  // 预留字段号 100-200 给未来的信号扩展
+  reserved 100 to 200;
 }
 
-// 签名语义（不变）：sigVer|nonce|ts|sessionToken|reportId|keyId|fieldMappingVersion|canonicalPayloadJSON
+// 端侧信任等级
+enum TrustLevel {
+  TRUST_LEVEL_UNSPECIFIED = 0;
+  TRUST_LEVEL_HARDWARE = 1;     // Secure Enclave + App Attest 完整信任链
+  TRUST_LEVEL_DERIVED = 2;      // DeviceKey 派生（无硬件证明）
+  TRUST_LEVEL_DEGRADED = 3;     // Keychain 被清或 attestation 过期
+}
+
+// 结构化风险信号条目
+message RiskSignalEntry {
+  string signal_id = 1;
+  string category = 2;
+  double score = 3;
+  int32 layer = 4;
+
+  // 信号证据（不同类型的信号携带不同证据结构）
+  oneof evidence {
+    JailbreakEvidence jailbreak = 10;
+    BehaviorEvidence behavior = 11;
+    NetworkEvidence network = 12;
+    AntiTamperEvidence anti_tamper = 13;
+    DeviceEvidence device = 14;
+    GraphEvidence graph = 15;
+    GenericEvidence generic = 20;
+  }
+
+  // 预留字段号 30-50 给未来的证据类型
+  reserved 30 to 50;
+}
+
+// 越狱检测证据
+message JailbreakEvidence {
+  repeated string detected_methods = 1;
+  double confidence = 2;
+  bool is_jailbroken = 3;
+}
+
+// 行为检测证据
+message BehaviorEvidence {
+  int32 touch_sample_count = 1;
+  int32 motion_sample_count = 2;
+  double touch_motion_correlation = 3;
+  double interval_cv = 4;
+  double stillness_ratio = 5;
+  string sample_sufficiency = 6;  // sufficient / insufficient / none
+}
+
+// 网络检测证据
+message NetworkEvidence {
+  bool vpn_active = 1;
+  bool proxy_enabled = 2;
+  string interface_type = 3;
+  repeated string vpn_interfaces = 4;
+}
+
+// 反篡改检测证据
+message AntiTamperEvidence {
+  string mechanism = 1;          // 检测机制（如 mach_absolute_time_ratio_probe）
+  string detail = 2;             // 详细检测结果
+  double confidence = 3;
+  repeated string detected_libraries = 4;
+}
+
+// 设备特征证据
+message DeviceEvidence {
+  string hardware_machine = 1;
+  bool is_simulator = 2;
+  string anomaly_type = 3;       // 异常类型描述
+  map<string, string> attributes = 4;
+}
+
+// 图聚合证据
+message GraphEvidence {
+  string community_id = 1;
+  double risk_density = 2;
+  int32 cluster_size = 3;
+  double pagerank_score = 4;
+}
+
+// 通用证据（兜底，用于自定义 Provider）
+message GenericEvidence {
+  map<string, string> attributes = 1;
+}
+
+// 上报响应
+message UploadRiskReportResponse {
+  bool accepted = 1;
+  string error_code = 2;
+  string error_message = 3;
+
+  // 服务端可选下发挑战
+  BlindChallenge next_challenge = 4;
+
+  // 服务端是否要求重新 attestation
+  bool should_refresh_attestation = 5;
+  string re_attestation_challenge = 6;
+
+  // 预留字段号 20-50 给未来的服务端下发指令
+  reserved 20 to 50;
+}
+
+// 挑战式验证
+message BlindChallenge {
+  string challenge_id = 1;
+  repeated string probe_ids = 2;
+  int64 expires_at = 3;
+  bytes hmac = 4;
+}
+
+// 签名语义（不变）：sigVer|nonce|ts|sessionToken|reportId|keyId|fieldMappingVersion|attestationKeyId|canonicalPayloadJSON
 // payload_json 使用 bytes：JSON 传输时可用 base64 编码；避免 UTF-8/转义/空白差异影响签名。
 // 服务端验签顺序：ts -> nonce -> session_token -> canonical -> signature -> device_id/scene 一致性
