@@ -149,6 +149,39 @@ enum RiskScorer {
         var total: Double = 0
         var signals: [RiskSignal] = []
 
+        // 样本不足时跳过高置信度启发式，仅产出 insufficient_data 软信号
+        // 防止低样本量下 Pearson 相关等统计量产生不稳定的误判
+        switch behavior.sampleSufficiency {
+        case .none:
+            return (insufficientDataScore, [RiskSignal(
+                id: SignalID.insufficientBehaviorData,
+                category: SignalCategory.behavior,
+                score: insufficientDataScore,
+                evidence: [
+                    "tapCount": "\(behavior.touch.tapCount)",
+                    "sampleCount": "\(behavior.touch.sampleCount)",
+                    "motionSampleCount": "\(behavior.motion.sampleCount)",
+                    "reason": "no_samples",
+                ]
+            )])
+        case .insufficient:
+            // 样本不足：仅产出 insufficient_data 信号，跳过所有启发式
+            return (insufficientDataScore, [RiskSignal(
+                id: SignalID.insufficientBehaviorData,
+                category: SignalCategory.behavior,
+                score: insufficientDataScore,
+                evidence: [
+                    "tapCount": "\(behavior.touch.tapCount)",
+                    "sampleCount": "\(behavior.touch.sampleCount)",
+                    "motionSampleCount": "\(behavior.motion.sampleCount)",
+                    "reason": "below_minimum_threshold",
+                    "minimumRequired": "\(BehaviorSignals.minimumTouchSamples)",
+                ]
+            )])
+        case .sufficient:
+            break // 样本充足，继续执行启发式分析
+        }
+
         if let spread = behavior.touch.coordinateSpread, spread < touchSpreadLowThreshold {
             total += touchSpreadLowScore
             signals.append(RiskSignal(id: SignalID.touchSpreadLow, category: SignalCategory.behavior, score: touchSpreadLowScore, evidence: ["spread": "\(spread)"]))
@@ -194,20 +227,8 @@ enum RiskScorer {
             signals.append(RiskSignal(id: SignalID.touchMotionWeakCoupling, category: SignalCategory.behavior, score: touchMotionWeakCouplingScore, evidence: ["corr": "\(corr)"]))
         }
 
-        let totalActions = behavior.touch.tapCount + behavior.touch.swipeCount
-        if totalActions < minTotalActions, behavior.touch.sampleCount < minSampleCount {
-            total += insufficientDataScore
-            signals.append(RiskSignal(
-                id: SignalID.insufficientBehaviorData,
-                category: SignalCategory.behavior,
-                score: insufficientDataScore,
-                evidence: [
-                    "tapCount": "\(behavior.touch.tapCount)",
-                    "swipeCount": "\(behavior.touch.swipeCount)",
-                    "sampleCount": "\(behavior.touch.sampleCount)"
-                ]
-            ))
-        }
+        // 注意：低样本量保护已在函数入口通过 sampleSufficiency 处理，
+        // 走到这里的行为数据已满足最小样本量要求。
 
         return (min(total, maxBehaviorScore), signals)
     }
