@@ -7,7 +7,7 @@ final class GPURenderFingerprintProvider: RiskSignalProvider {
     static let shared = GPURenderFingerprintProvider()
     let id = "gpu_render_fingerprint"
 
-    private let lock = NSLock()
+    private let lock = UnfairLock()
     private var cachedFingerprint: String?
     private var cacheTime: TimeInterval = 0
     private let cacheTTL: TimeInterval = 300
@@ -103,7 +103,8 @@ final class GPURenderFingerprintProvider: RiskSignalProvider {
 
         let semaphore = DispatchSemaphore(value: 0)
         buffer.addCompletedHandler { _ in semaphore.signal() }
-        if semaphore.wait(timeout: .now() + 3.0) == .timedOut {
+        // Use 2s timeout (< ProviderRegistry's 3s) to avoid racing the registry deadline
+        if semaphore.wait(timeout: .now() + 2.0) == .timedOut {
             return nil
         }
 

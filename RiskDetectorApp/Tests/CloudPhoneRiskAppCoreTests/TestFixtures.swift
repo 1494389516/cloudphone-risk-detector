@@ -55,7 +55,10 @@ enum TestFixtures {
         swipeCount: Int = 5,
         coordinateSpread: Double? = 50.0,
         intervalCV: Double? = 0.35,
-        averageLinearity: Double? = 0.95
+        averageLinearity: Double? = 0.95,
+        forceVariance: Double? = nil,
+        majorRadiusVariance: Double? = nil,
+        swipeSpeedCV: Double? = nil
     ) -> TouchMetrics {
         TouchMetrics(
             sampleCount: sampleCount,
@@ -64,8 +67,9 @@ enum TestFixtures {
             coordinateSpread: coordinateSpread,
             intervalCV: intervalCV,
             averageLinearity: averageLinearity,
-            forceVariance: nil,
-            majorRadiusVariance: nil
+            forceVariance: forceVariance,
+            majorRadiusVariance: majorRadiusVariance,
+            swipeSpeedCV: swipeSpeedCV
         )
     }
 

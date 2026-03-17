@@ -12,7 +12,7 @@ final class IMUNoiseSpectrumProvider: RiskSignalProvider {
     private let sampleCount = 256
     private let samplingTimeout: TimeInterval = 4.0
 
-    private let lock = NSLock()
+    private let lock = UnfairLock()
     private var cachedResult: CachedResult?
     private let cacheTTL: TimeInterval = 120
 

@@ -410,6 +410,8 @@ private struct ConfigValidator {
     /// 安全下限常量（防止远程配置将阈值调至 0 从而关闭检测）
     private static let minimumPolicyThreshold: Double = 15
     private static let minimumJailbreakThreshold: Double = 10
+    /// BehaviorThresholds 最大行为分下限（防止通过 maxBehaviorScore=0 废掉行为检测）
+    private static let minimumMaxBehaviorScore: Double = 10
 
     func validateSecurity(_ config: RemoteConfig) throws {
         if config.whitelist.deviceIDs.count > 10000 {
@@ -435,6 +437,17 @@ private struct ConfigValidator {
                     NSLocalizedDescriptionKey: "detector.jailbreakThreshold \(config.detector.jailbreakThreshold) below security floor \(Self.minimumJailbreakThreshold)"
                 ])
             )
+        }
+
+        // BehaviorThresholds 下限保护：防止攻击者通过篡改远程配置废掉行为评分
+        if let bt = config.detector.behaviorThresholds {
+            if bt.maxBehaviorScore < Self.minimumMaxBehaviorScore {
+                throw ConfigError.validationFailed(
+                    underlying: NSError(domain: "RemoteConfigProvider", code: -4, userInfo: [
+                        NSLocalizedDescriptionKey: "behaviorThresholds.maxBehaviorScore \(bt.maxBehaviorScore) below security floor \(Self.minimumMaxBehaviorScore)"
+                    ])
+                )
+            }
         }
     }
 }

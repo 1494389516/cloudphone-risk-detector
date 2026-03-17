@@ -280,7 +280,10 @@ final class TouchCapture {
     func stop() {}
     func clearSensitiveData() {}
     func snapshotAndReset() -> TouchMetrics {
-        TouchMetrics(
+        snapshotDetailAndReset().metrics
+    }
+    func snapshotDetailAndReset() -> (metrics: TouchMetrics, actionTimestamps: [TimeInterval]) {
+        let metrics = TouchMetrics(
             sampleCount: 0,
             tapCount: 0,
             swipeCount: 0,
@@ -291,6 +294,7 @@ final class TouchCapture {
             majorRadiusVariance: nil,
             swipeSpeedCV: nil
         )
+        return (metrics, [])
     }
 }
 #endif
