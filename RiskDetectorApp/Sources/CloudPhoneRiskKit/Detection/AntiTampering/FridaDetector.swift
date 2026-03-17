@@ -105,9 +105,8 @@ struct FridaDetector: Detector {
     }
 
     private func fileExists(path: String) -> Bool {
-        var st = stat()
         var rawErrno: CInt = 0
-        let result = path.withCString { cprisk_stat_direct($0, &st, &rawErrno) }
+        let result = path.withCString { cprisk_access_direct($0, F_OK, &rawErrno) }
         if result == 0 { return true }
         if rawErrno == ENOENT || rawErrno == ENOTDIR { return false }
         Logger.log("[FridaDetector] fileExists(\(path)) errno=\(rawErrno), treating as non-existent")

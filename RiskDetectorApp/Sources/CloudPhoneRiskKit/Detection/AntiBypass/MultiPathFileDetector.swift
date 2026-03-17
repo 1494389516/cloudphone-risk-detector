@@ -4,8 +4,6 @@ import Foundation
 struct MultiPathFileDetector: Detector {
     enum DetectionMethod: String, CaseIterable {
         case fileManager
-        case stat
-        case lstat
         case access
         case fopen
     }
@@ -52,8 +50,6 @@ struct MultiPathFileDetector: Detector {
     private func checkPathWithAllMethods(_ path: String) -> MultiPathResult {
         var methodResults: [DetectionMethod: Bool] = [:]
         methodResults[.fileManager] = FileManager.default.fileExists(atPath: path)
-        methodResults[.stat] = checkViaStat(path)
-        methodResults[.lstat] = checkViaLstat(path)
         methodResults[.access] = access(path, F_OK) == 0
         methodResults[.fopen] = checkViaFopen(path)
 
@@ -77,16 +73,6 @@ struct MultiPathFileDetector: Detector {
             isHooked: !hookMethods.isEmpty,
             hookMethods: hookMethods
         )
-    }
-
-    private func checkViaStat(_ path: String) -> Bool {
-        var st = stat()
-        return stat(path, &st) == 0
-    }
-
-    private func checkViaLstat(_ path: String) -> Bool {
-        var st = stat()
-        return lstat(path, &st) == 0
     }
 
     private func checkViaFopen(_ path: String) -> Bool {

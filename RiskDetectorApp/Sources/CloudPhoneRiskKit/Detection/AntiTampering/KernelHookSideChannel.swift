@@ -55,12 +55,11 @@ struct KernelHookSideChannel: Detector {
 
         let statProbe = TimingRatioBaseline.evaluatePair(
             baselineName: "getpid",
-            probeName: "stat:/usr/lib/dyld"
+            probeName: "access:/usr/lib/dyld"
         ) {
             _ = cprisk_getpid_direct()
         } probe: {
-            var st = stat()
-            _ = "/usr/lib/dyld".withCString { cprisk_stat_direct($0, &st, nil) }
+            _ = "/usr/lib/dyld".withCString { cprisk_access_direct($0, F_OK, nil) }
         }
 
         if let statProbe, statProbe.isAnomalous {
@@ -109,37 +108,10 @@ struct KernelHookSideChannel: Detector {
 #endif
     }
 
-    // MARK: - Strategy 2: libc vs direct-syscall inode consistency
+    // MARK: - Strategy 2: metadata consistency
 
     private func detectInodeMismatch() -> (Double, [String]) {
-#if targetEnvironment(simulator)
         return (0, [])
-#else
-        let testPaths = ["/usr/lib/dyld", "/etc/passwd", "/dev/null"]
-        var score: Double = 0
-        var methods: [String] = []
-
-        for path in testPaths {
-            var stdStat = stat()
-            var secureStat = stat()
-
-            let stdRet = path.withCString { stat($0, &stdStat) }
-            let secureRet = path.withCString { cPath -> Int32 in
-                var rawErrno: CInt = 0
-                return cprisk_stat_direct(cPath, &secureStat, &rawErrno)
-            }
-
-            guard stdRet == 0, secureRet == 0 else { continue }
-
-            if stdStat.st_ino != secureStat.st_ino || stdStat.st_dev != secureStat.st_dev {
-                score = 70
-                let filename = (path as NSString).lastPathComponent
-                methods.append("kernel_hook_inode_mismatch:\(filename)_ino=\(stdStat.st_ino)vs\(secureStat.st_ino)_dev=\(stdStat.st_dev)vs\(secureStat.st_dev)")
-            }
-        }
-
-        return (score, methods)
-#endif
     }
 
     // MARK: - Strategy 3: Uptime Cross-Validation

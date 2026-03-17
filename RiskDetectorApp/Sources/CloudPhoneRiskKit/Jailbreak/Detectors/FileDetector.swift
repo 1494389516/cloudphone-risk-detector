@@ -34,7 +34,7 @@ struct FileDetector: Detector {
         // ── Anti-Stalker: path randomization + noise injection ──────────────
         // Frida Stalker 可以追踪所有 SVC #0x80 syscall 并一次性提取完整路径列表。
         // 对策：(1) 每次只随机抽样 60-70% 的路径，(2) 打乱顺序，(3) 在真实检查之间
-        // 穿插对合法系统路径的噪声 stat() 调用，使 Stalker 无法区分检测目标与噪声。
+        // 穿插对合法系统路径的噪声 access() 调用，使 Stalker 无法区分检测目标与噪声。
         // 抽样导致的检出率降低通过分数补偿因子 (N/X) 修正。
 
         let allSuspicious = ObfuscatedConstants.jailbreakSuspiciousPaths
@@ -48,16 +48,15 @@ struct FileDetector: Detector {
         var suspiciousPathScore: Double = 0
 
         for item in suspiciousPaths {
-            // Probabilistically inject a noise stat() via direct SVC before some real checks
+            // Probabilistically inject a noise access() via direct SVC before some real checks
             if Bool.random() && noiseIdx < noisePaths.count {
-                var noiseSt = stat()
-                _ = noisePaths[noiseIdx].withCString { cprisk_stat_direct($0, &noiseSt, nil) }
+                _ = noisePaths[noiseIdx].withCString { cprisk_access_direct($0, F_OK, nil) }
                 noiseIdx += 1
             }
 
             // [4.4.6] EPERM 异常化：path 理应 ENOENT 却返回 EPERM/EACCES (iOS 16+)
-            let (statExists, statErrno) = statWithErrno(item.path)
-            if !statExists && ExpectedBaseline.epermOnProtectedPathIsSuspicious && ExpectedBaseline.isPermissionDeniedErrno(statErrno) {
+            let (pathExists, pathErrno) = pathAccessWithErrno(item.path)
+            if !pathExists && ExpectedBaseline.epermOnProtectedPathIsSuspicious && ExpectedBaseline.isPermissionDeniedErrno(pathErrno) {
                 if suspiciousPermissionScore < 75 {
                     suspiciousPermissionScore = min(suspiciousPermissionScore + 15, 75)
                     methods.append("suspicious_permission_denied:\(item.path)")
@@ -116,8 +115,7 @@ struct FileDetector: Detector {
         var tracedCount = 0
         for path in criticalPaths {
             if Bool.random() && critNoiseIdx < critNoisePaths.count {
-                var noiseSt = stat()
-                _ = critNoisePaths[critNoiseIdx].withCString { cprisk_stat_direct($0, &noiseSt, nil) }
+                _ = critNoisePaths[critNoiseIdx].withCString { cprisk_access_direct($0, F_OK, nil) }
                 critNoiseIdx += 1
             }
 
@@ -176,11 +174,10 @@ struct FileDetector: Detector {
         return DetectorResult(score: score, methods: methods)
     }
 
-    /// stat 并返回 errno（用于 [4.4.6] EPERM 异常化）
-    private func statWithErrno(_ path: String) -> (exists: Bool, errno: Int32) {
+    /// access(F_OK) 并返回 errno（用于 [4.4.6] EPERM 异常化）
+    private func pathAccessWithErrno(_ path: String) -> (exists: Bool, errno: Int32) {
         path.withCString { cPath in
-            var st = stat()
-            let result = stat(cPath, &st)
+            let result = access(cPath, F_OK)
             if result == 0 {
                 return (true, 0)
             }
@@ -197,25 +194,7 @@ struct FileDetector: Detector {
     }
 
     private func detectSandboxMountIsolation() -> Bool {
-#if targetEnvironment(simulator)
         return false
-#else
-        var rootStat = stat()
-        var usrStat = stat()
-        var appStat = stat()
-        
-        guard stat("/", &rootStat) == 0,
-              stat("/usr", &usrStat) == 0,
-              stat("/Applications", &appStat) == 0 else {
-            return false
-        }
-        
-        if appStat.st_dev != rootStat.st_dev && appStat.st_dev != usrStat.st_dev {
-            return true
-        }
-        
-        return false
-#endif
     }
 
     private func existsAnyWay(_ path: String) -> ExistenceResult {

@@ -327,8 +327,7 @@ public final class CapabilityProbeEngine: @unchecked Sendable {
 
     /// stat 文件探针
     private func statFile(_ path: String) -> Bool {
-        var statInfo = stat()
-        return stat(path, &statInfo) == 0
+        access(path, F_OK) == 0
     }
 
     /// dlopen Frida dylib 探针

@@ -7,7 +7,7 @@ import Foundation
 /// Implements two detection techniques:
 /// 1. **Unix domain socket detection** — detect Frida's IPC sockets in /tmp
 /// 2. **Timing side-channel** — detect instrumentation latency from Frida's Interceptor
-///    Uses dynamic baseline ratio (stat_median/getpid_median > 15), aligned with KernelHookSideChannel.
+///    Uses dynamic baseline ratio (probe_median/getpid_median > 15), aligned with KernelHookSideChannel.
 struct FridaSocketDetector: Detector {
 
     private static var timebaseInfo: mach_timebase_info_data_t = {
@@ -106,7 +106,7 @@ struct FridaSocketDetector: Detector {
     // MARK: - 2. Timing Side-Channel Detection
 
     /// 动态基线比值检测，与 KernelHookSideChannel 对齐。
-    /// 采样顺序随机化（先 stat 或先 getpid），每次采样前插入噪声计算以放大 Stalker DBT 开销。
+    /// 采样顺序随机化（先文件探针或先 getpid），每次采样前插入噪声计算以放大 Stalker DBT 开销。
     private func detectTimingAnomaly() -> (score: Double, methods: [String]) {
         var score: Double = 0
         var methods: [String] = []
@@ -130,11 +130,10 @@ struct FridaSocketDetector: Detector {
         }
 
         func sampleStat() {
-            var st = stat()
             for _ in 0..<iterations {
                 for _ in 0..<6 { TimingRatioBaseline.samplingNoise() }
                 let start = mach_absolute_time()
-                _ = "/usr/lib/dyld".withCString { cprisk_stat_direct($0, &st, nil) }
+                _ = "/usr/lib/dyld".withCString { cprisk_access_direct($0, F_OK, nil) }
                 let end = mach_absolute_time()
                 statSamples.append(Self.nanoseconds(from: end - start))
             }

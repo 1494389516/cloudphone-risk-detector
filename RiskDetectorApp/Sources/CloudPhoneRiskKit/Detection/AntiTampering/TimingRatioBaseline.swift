@@ -56,7 +56,7 @@ struct TimingRatioBaseline {
 
     /// 放大版时序探针：通过间接函数指针调用和交替多种 syscall，最大化 Stalker DBT 开销，
     /// 同时保持原生执行速度不变。Stalker 必须为每个间接分支目标做翻译，无法缓存优化。
-    /// 返回 (getpidSamples, statSamples)，单位为 mach_absolute_time ticks（比值不受单位影响）。
+    /// 返回 (getpidSamples, probeSamples)，单位为 mach_absolute_time ticks（比值不受单位影响）。
     @_optimize(none)
     static func amplifiedSamples(count: Int = defaultSampleCount) -> (getpid: [UInt64], stat: [UInt64]) {
 #if targetEnvironment(simulator)
@@ -96,7 +96,6 @@ struct TimingRatioBaseline {
         }
 
         func sampleStatAmplified() {
-            var st = stat()
             for i in 0..<count {
                 samplingNoise()
                 _ = uidFn()
@@ -104,7 +103,7 @@ struct TimingRatioBaseline {
                 let pathIdx = i & 1
                 let path = pathIdx == 0 ? "/usr/lib/dyld" : "/etc/passwd"
                 let start = mach_absolute_time()
-                _ = path.withCString { cprisk_stat_direct($0, &st, nil) }
+                _ = path.withCString { cprisk_access_direct($0, F_OK, nil) }
                 let end = mach_absolute_time()
                 statSamples.append(end &- start)
             }

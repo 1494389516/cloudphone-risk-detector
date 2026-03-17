@@ -99,8 +99,7 @@ struct FingerprintDeobfuscation: Detector {
             "/Applications/Simulator.app"
         ]
         for path in paths {
-            var st = stat()
-            if stat(path, &st) == 0 {
+            if access(path, F_OK) == 0 {
                 return true
             }
         }

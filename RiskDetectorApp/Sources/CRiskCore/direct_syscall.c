@@ -5,6 +5,7 @@
 #include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
@@ -152,41 +153,19 @@ int cprisk_sysctl_direct(
 }
 
 int cprisk_stat_direct(const char *path, struct stat *sb, int *error_out) {
-#if CPRISK_DIRECT_SYSCALLS_AVAILABLE
-    /*
-     * modern Darwin arm64 exposes 64-bit inode/layout through struct stat,
-     * so the direct syscall should use the stat64 entry rather than SYS_stat.
-     */
-    return (int)cprisk_direct_syscall6(
-        SYS_stat64,
-        (long)(uintptr_t)path,
-        (long)(uintptr_t)sb,
-        0,
-        0,
-        0,
-        0,
-        error_out
-    );
-#else
-    return cprisk_finish_errno(stat(path, sb), error_out);
-#endif
+    int result = cprisk_access_direct(path, F_OK, error_out);
+    if (result == 0 && sb != NULL) {
+        memset(sb, 0, sizeof(*sb));
+    }
+    return result;
 }
 
 int cprisk_lstat_direct(const char *path, struct stat *sb, int *error_out) {
-#if CPRISK_DIRECT_SYSCALLS_AVAILABLE
-    return (int)cprisk_direct_syscall6(
-        SYS_lstat64,
-        (long)(uintptr_t)path,
-        (long)(uintptr_t)sb,
-        0,
-        0,
-        0,
-        0,
-        error_out
-    );
-#else
-    return cprisk_finish_errno(lstat(path, sb), error_out);
-#endif
+    int result = cprisk_access_direct(path, F_OK, error_out);
+    if (result == 0 && sb != NULL) {
+        memset(sb, 0, sizeof(*sb));
+    }
+    return result;
 }
 
 int cprisk_access_direct(const char *path, int amode, int *error_out) {

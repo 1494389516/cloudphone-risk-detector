@@ -493,7 +493,7 @@ SDK 在对抗安全的同时兼顾业务可用性，内置多层灰度与降级�
 
 | 文档 | 路径 |
 |------|------|
-| SDK 使用与构建说明 | `CloudPhoneRiskKit_使用说明.md` |
+| SDK 使用与构建说明 | `CloudPhoneRiskKit_文档/CloudPhoneRiskKit_使用说明.md` |
 
 ---
 
