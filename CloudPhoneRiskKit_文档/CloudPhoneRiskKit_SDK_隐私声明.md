@@ -37,6 +37,12 @@
 
 需要特别注意：
 
+> **① SDK 不会触发 ATT（广告追踪弹窗）。** manifest 中 `NSPrivacyTracking = false`，不存在 `NSPrivacyTrackingDomains`，不请求广告追踪授权。宿主 App 集成本 SDK 不会因此被要求向用户弹出 ATT 权限框。
+>
+> **② SDK 的 manifest 是宿主 App 合规的参考基线，不是宿主 App 的 Privacy Label。** 宿主 App 必须在自己的 app-level `PrivacyInfo.xcprivacy` 中手工承接 `DeviceID`、`UserDefaults`、`SystemBootTime` 这三项。静态库 / 源码集成下 Xcode 不会自动合并，需宿主 App 主动完成。
+>
+> **③ 风险报告上传会改变 Privacy Label 的填写要求。** 如果宿主 App 调用 `buildSecureReportEnvelope` 等接口上传风险报告，App Store Connect 中的 `DeviceID` 条目**必须声明**，`Linked` 字段取决于是否与账号 ID 一同上传（若是，应填 `true`）。
+>
 > SDK 是否“收集并上传”某类数据，最终取决于宿主 App 的集成方式和调用路径。  
 > SDK 本身生成或持有某些字段，不等于这些字段一定会离开设备。
 

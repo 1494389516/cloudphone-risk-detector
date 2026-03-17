@@ -15,6 +15,14 @@
 2. **宿主 App 声明**：宿主 App 最终是否把这些数据上传、是否和账号关联、是否触发额外权限申请。
 3. **分发方式责任**：如果是静态库或源码集成，宿主 App 要更主动地合并/承接 privacy manifest；如果是二进制 SDK，还要处理签名连续性。
 
+在开始之前，有三个最关键的认知要先对齐：
+
+> **① SDK 不会触发 ATT（广告追踪弹窗）。** `NSPrivacyTracking = false`，也没有声明 `NSPrivacyTrackingDomains`，不请求广告追踪授权。这是集成本 SDK 对宿主 App 合规友好度最高的一点，直接意味着不会因集成本 SDK 而对用户弹出 ATT 权限框。
+>
+> **② SDK 的 manifest 是你合规的参考基线，不是你的 Privacy Label。** 宿主 App 必须在自己的 app-level `PrivacyInfo.xcprivacy` 中承接 `DeviceID`、`UserDefaults`、`SystemBootTime` 这三项。静态库 / 源码集成下 Xcode 不会自动合并 SDK 的 manifest，这件事必须由宿主 App 手工完成。
+>
+> **③ 风险报告上传会改变 Privacy Label 的填写要求。** 如果宿主 App 调用 `buildSecureReportEnvelope` 等接口把风险报告上传服务端，App Store Connect 中的 `DeviceID` 条目从"可以不声明"变成**必须声明**。`Linked` 字段取决于是否与账号 ID 一同上传——若是，应填 `true`；若仅关联设备、不关联账号，可填 `false`。
+
 最容易踩坑的不是“manifest 有没有文件”，而是这三件事混在一起：
 
 - 把 SDK manifest 当成宿主 App 的 Privacy Label
