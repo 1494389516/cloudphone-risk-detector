@@ -371,7 +371,7 @@ struct DualPathValidator {
             || (secureAccessExists != nil && secureAccessExists != stdAccessExists)
         let tampered = secureUnavailableButStdHasValue || mismatchWhenBothAvailable
         if tampered { LibcPrologueGuard.invalidateCache() }
-        let exists = secureAccessExists ?? stdAccessExists || fileManagerExists
+        let exists = (secureAccessExists ?? stdAccessExists) || fileManagerExists
         return (exists, tampered, bypassed, traced, hooked)
     }
 }
