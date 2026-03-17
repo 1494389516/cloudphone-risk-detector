@@ -376,7 +376,8 @@ final class RiskHistoryStoreFreshnessTests: XCTestCase {
         // End-to-end: append an event, then verify store can still load it
         // even after a simulated clock adjustment (which would wrongly trigger
         // the old || condition)
-        let defaults = UserDefaults(suiteName: "test_freshness_\(UUID().uuidString)")!
+        let suiteName = "test_freshness_\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
         let store = RiskHistoryStore(defaults: defaults)
         let now = Date().timeIntervalSince1970
 
@@ -387,6 +388,6 @@ final class RiskHistoryStoreFreshnessTests: XCTestCase {
         XCTAssertEqual(pattern.events24h, 1, "Appended event should be visible in pattern")
 
         // Clean up
-        defaults.removePersistentDomain(forName: defaults.suiteName!)
+        defaults.removePersistentDomain(forName: suiteName)
     }
 }

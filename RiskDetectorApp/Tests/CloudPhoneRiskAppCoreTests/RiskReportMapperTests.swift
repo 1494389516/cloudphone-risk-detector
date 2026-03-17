@@ -298,7 +298,7 @@ final class RiskReportMapperTests: XCTestCase {
         let report = RiskScorer.score(context: context, config: TestFixtures.defaultRiskConfig)
         let cprReport = CPRiskReport(context: context, report: report)
 
-        let jsonData = cprReport.jsonData(prettyPrinted: false)
+        let jsonData = cprReport.unencryptedPayloadData(prettyPrinted: false)
         let dtoFromJSON = RiskReportMapper.dto(from: jsonData)
         let dtoFromReport = RiskReportMapper.dto(from: cprReport)
 

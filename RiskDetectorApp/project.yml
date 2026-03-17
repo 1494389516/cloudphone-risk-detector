@@ -37,6 +37,9 @@ targets:
         MODULEMAP_FILE: "$(SRCROOT)/BuildSupport/CRiskCore/module.modulemap"
         PUBLIC_HEADERS_FOLDER_PATH: include
         HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/Sources/CRiskCore/include"
+      configs:
+        Release:
+          CC: "$(SRCROOT)/BuildSupport/Scripts/clang"
 
   CloudPhoneRiskKit:
     type: library.static
@@ -68,6 +71,9 @@ targets:
         SKIP_INSTALL: NO
         DEFINES_MODULE: YES
         HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/Sources/CRiskCore/include"
+      configs:
+        Release:
+          SWIFT_EXEC: "$(SRCROOT)/BuildSupport/Scripts/swiftc"
 
   CloudPhoneRiskAppCore:
     type: library.static
@@ -84,6 +90,9 @@ targets:
         PRODUCT_NAME: CloudPhoneRiskAppCore
         SKIP_INSTALL: NO
         DEFINES_MODULE: YES
+      configs:
+        Release:
+          SWIFT_EXEC: "$(SRCROOT)/BuildSupport/Scripts/swiftc"
 
   RiskDetectorApp:
     type: application
@@ -103,9 +112,10 @@ targets:
         DEVELOPMENT_TEAM: ""
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        ENABLE_APP_INTENTS_METADATA_GENERATION: NO
         ARMOR_PLACEHOLDER_DIR: "$(SRCROOT)/BuildSupport/ArmorPlaceholders"
         OTHER_LDFLAGS: >-
-          $(inherited) -lCRiskCore -lCloudPhoneRiskKit -lCloudPhoneRiskAppCore
+          $(inherited) -lCRiskCore
           -Wl,-headerpad,0x4000
           -Wl,-sectcreate,__DATA,__swift5_types2,$(ARMOR_PLACEHOLDER_DIR)/string_table.bin
           -Wl,-sectcreate,__DATA,__swift5_proto2,$(ARMOR_PLACEHOLDER_DIR)/loader.bin
@@ -131,35 +141,18 @@ targets:
         STRIP_STYLE: all
         STRIP_SWIFT_SYMBOLS: YES
         DEAD_CODE_STRIPPING: YES
+      configs:
+        Release:
+          SWIFT_EXEC: "$(SRCROOT)/BuildSupport/Scripts/swiftc"
     dependencies:
       - target: CloudPhoneRiskKit
       - target: CloudPhoneRiskAppCore
+      - sdk: AppIntents.framework
+        weak: true
     postBuildScripts:
       - name: "cprisk-armor (Release)"
         script: |
-          if [ "${CONFIGURATION}" != "Release" ]; then
-            exit 0
-          fi
-          if [ -z "${CPRISK_ARMOR_KEY}" ]; then
-            echo "warning: CPRISK_ARMOR_KEY not set, skipping cprisk-armor (Release build unarmored)"
-            exit 0
-          fi
-          ARMOR_CLI="${PROJECT_DIR}/../cprisk-armor/.build/release/cprisk-armor"
-          APP_BINARY="${BUILT_PRODUCTS_DIR}/${EXECUTABLE_PATH}"
-          if [ ! -f "${ARMOR_CLI}" ]; then
-            echo "warning: cprisk-armor not built at ${ARMOR_CLI}, run: cd cprisk-armor && swift build -c release"
-            exit 0
-          fi
-          if [ ! -f "${APP_BINARY}" ]; then
-            echo "warning: App binary not found at ${APP_BINARY}, skipping armor"
-            exit 0
-          fi
-          echo "Running cprisk-armor on app binary: ${APP_BINARY}"
-          "${ARMOR_CLI}" --input "${APP_BINARY}" --output "${APP_BINARY}" --all --key "${CPRISK_ARMOR_KEY}"
-          echo "Stripping symbols from app binary..."
-          xcrun strip -x "${APP_BINARY}" 2>/dev/null || true
-          xcrun strip "${APP_BINARY}" 2>/dev/null || true
-          echo "Strip complete."
+          "${SRCROOT}/BuildSupport/Scripts/cprisk-release-postbuild.sh"
         basedOnDependencyAnalysis: false
 
   CloudPhoneRiskKitTests:

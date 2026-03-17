@@ -50,6 +50,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         var enableLibcPrologueGuard: Bool = true
         var enableDyldImageMonitor: Bool = true
         var enableDylibInjectionDetect: Bool = true
+        var enableAntiDebugWatchdog: Bool = true
         var minScoreThreshold: Double = 0
         
         public static let `default` = Configuration()
@@ -348,6 +349,12 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         if configuration.enableDylibInjectionDetect {
             isolatedAppend("dylib_injection", &signals) {
                 try DylibInjectionDetector().asSignals()
+            }
+        }
+
+        if configuration.enableAntiDebugWatchdog {
+            isolatedAppend("anti_debug_watchdog", &signals) {
+                antiDebugWatchdogSignals(from: CPRiskKit.shared.antiDebugWatchdogSnapshot())
             }
         }
 
@@ -699,6 +706,127 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
             return 15
         }
     }
+
+    func antiDebugWatchdogSignals(from snapshot: CPRiskKit.AntiDebugWatchdogSnapshot) -> [RiskSignal] {
+        guard snapshot.supported, snapshot.hasAnyAnomaly else {
+            return []
+        }
+
+        let tracedFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACED)) != 0
+        let denyAttachFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DENY_ATTACH)) != 0
+        let exceptionPortFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_PORT)) != 0
+        let exceptionQueryFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_QUERY)) != 0
+
+        var maxScore = 0.0
+        var anomalyKinds: [String] = []
+        var signals: [RiskSignal] = []
+
+        if tracedFlag || snapshot.lastTraced {
+            let score = 95.0
+            maxScore = max(maxScore, score)
+            anomalyKinds.append("traced")
+            signals.append(
+                RiskSignal(
+                    id: SignalID.antiDebugWatchdogTraced,
+                    category: "anti_tamper",
+                    score: score,
+                    evidence: [
+                        "iteration_count": "\(snapshot.iterationCount)",
+                        "traced_event_count": "\(snapshot.tracedEventCount)",
+                        "running": "\(snapshot.running)",
+                    ],
+                    state: .tampered,
+                    layer: 2,
+                    weightHint: 98
+                )
+            )
+        }
+
+        if denyAttachFlag {
+            let score = 70.0
+            maxScore = max(maxScore, score)
+            anomalyKinds.append("deny_attach")
+            signals.append(
+                RiskSignal(
+                    id: SignalID.antiDebugWatchdogDenyAttachFailed,
+                    category: "anti_tamper",
+                    score: score,
+                    evidence: [
+                        "result": "\(snapshot.lastDenyAttachResult)",
+                        "errno": "\(snapshot.lastDenyAttachErrno)",
+                        "error_count": "\(snapshot.denyAttachErrorCount)",
+                    ],
+                    state: .tampered,
+                    layer: 2,
+                    weightHint: 92
+                )
+            )
+        }
+
+        if exceptionPortFlag {
+            let score = snapshot.lastExceptionHijackDetected ? 88.0 : 72.0
+            maxScore = max(maxScore, score)
+            anomalyKinds.append("exception_port")
+            signals.append(
+                RiskSignal(
+                    id: SignalID.antiDebugWatchdogExceptionPort,
+                    category: "anti_tamper",
+                    score: score,
+                    evidence: [
+                        "healthy": "\(snapshot.lastExceptionPortHealthy)",
+                        "reclaim_attempted": "\(snapshot.lastExceptionReclaimAttempted)",
+                        "hijack_detected": "\(snapshot.lastExceptionHijackDetected)",
+                        "register_kr": "\(snapshot.lastExceptionRegisterKernReturn)",
+                    ],
+                    state: .tampered,
+                    layer: 2,
+                    weightHint: 95
+                )
+            )
+        }
+
+        if exceptionQueryFlag {
+            let score = 55.0
+            maxScore = max(maxScore, score)
+            anomalyKinds.append("exception_query")
+            signals.append(
+                RiskSignal(
+                    id: SignalID.antiDebugWatchdogExceptionQuery,
+                    category: "anti_tamper",
+                    score: score,
+                    evidence: [
+                        "query_succeeded": "\(snapshot.lastExceptionQuerySucceeded)",
+                        "query_kr": "\(snapshot.lastExceptionQueryKernReturn)",
+                        "exception_anomaly_count": "\(snapshot.exceptionAnomalyCount)",
+                    ],
+                    state: .soft(confidence: 0.85),
+                    layer: 2,
+                    weightHint: 78
+                )
+            )
+        }
+
+        signals.insert(
+            RiskSignal(
+                id: SignalID.antiDebugWatchdogAnomaly,
+                category: "anti_tamper",
+                score: maxScore,
+                evidence: [
+                    "anomaly_flags": "\(snapshot.anomalyFlags)",
+                    "anomaly_kinds": anomalyKinds.joined(separator: ","),
+                    "thread_active": "\(snapshot.threadActive)",
+                    "interval_seconds": "\(snapshot.intervalSeconds)",
+                    "last_check_monotonic_ns": "\(snapshot.lastCheckMonotonicNs)",
+                ],
+                state: .tampered,
+                layer: 2,
+                weightHint: 94
+            ),
+            at: 0
+        )
+
+        return signals
+    }
 }
 
 // MARK: - 便捷扩展
@@ -728,6 +856,7 @@ extension AntiTamperingSignalProvider {
         config.enableAppSigningIdentity = true  // entitlement/bundle 校验开销低，性能模式保留
         config.enableMemoryIntegrity = false  // 跳过较慢的内存检查
         config.enableSystemLibrarySegmentLayoutDetect = false
+        config.enableAntiDebugWatchdog = true
         config.minScoreThreshold = 15  // 过滤低分信号
         return config
     }

@@ -29,6 +29,50 @@ int cprisk_deny_attach_status(int *error_out);
 /// Returns 1 if traced, 0 if not traced or on query failure/simulator.
 int cprisk_is_being_traced(void);
 
+enum {
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_NONE = 0u,
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACED = 1u << 0,
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DENY_ATTACH = 1u << 1,
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_PORT = 1u << 2,
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_QUERY = 1u << 3,
+};
+
+typedef struct cprisk_exception_handler_snapshot {
+    uint32_t supported;
+    uint32_t registered;
+    uint32_t port_matches;
+    uint32_t last_query_succeeded;
+    uint32_t last_reclaim_attempted;
+    uint32_t last_hijack_detected;
+    int32_t last_query_kern_return;
+    int32_t last_register_kern_return;
+    uint64_t verify_count;
+    uint64_t reclaim_count;
+} cprisk_exception_handler_snapshot_t;
+
+typedef struct cprisk_anti_debug_watchdog_snapshot {
+    uint32_t supported;
+    uint32_t running;
+    uint32_t thread_active;
+    uint32_t stop_requested;
+    uint32_t interval_seconds;
+    uint32_t anomaly_flags;
+    uint32_t last_traced;
+    uint32_t last_exception_port_healthy;
+    uint32_t last_exception_query_succeeded;
+    uint32_t last_exception_reclaim_attempted;
+    uint32_t last_exception_hijack_detected;
+    int32_t last_deny_attach_result;
+    int32_t last_deny_attach_errno;
+    int32_t last_exception_query_kern_return;
+    int32_t last_exception_register_kern_return;
+    uint64_t iteration_count;
+    uint64_t traced_event_count;
+    uint64_t deny_attach_error_count;
+    uint64_t exception_anomaly_count;
+    uint64_t last_check_monotonic_ns;
+} cprisk_anti_debug_watchdog_snapshot_t;
+
 /// Invoke sysctlbyname via direct BSD syscall on arm64 Apple targets.
 /// Returns 0 on success, -1 on error. When error_out is non-null, it receives
 /// the raw BSD errno from the direct syscall path (or errno on fallback builds).
@@ -104,6 +148,25 @@ void cprisk_register_exception_handler(void);
 /// Verify current EXC_BREAKPOINT handler is still ours; re-register if hijacked.
 /// Call periodically (e.g. in evaluate() or a background check).
 void cprisk_verify_exception_handler(void);
+
+/// Copy the latest exception-handler state snapshot into out_snapshot.
+/// Returns 0 on success, -1 when out_snapshot is NULL.
+int cprisk_get_exception_handler_snapshot(cprisk_exception_handler_snapshot_t *out_snapshot);
+
+/// Start the anti-debug watchdog thread. The watchdog is idempotent:
+/// repeated calls while running do not create additional threads.
+/// Returns 0 on success/already-running/no-op platforms, -1 on thread creation failure.
+int cprisk_start_anti_debug_watchdog(void);
+
+/// Request the anti-debug watchdog to stop and wait for the thread to exit.
+/// Safe to call multiple times.
+void cprisk_stop_anti_debug_watchdog(void);
+
+/// Copy the latest anti-debug watchdog state into out_snapshot.
+/// Returns 0 on success, -1 when out_snapshot is NULL.
+int cprisk_get_anti_debug_watchdog_snapshot(
+    cprisk_anti_debug_watchdog_snapshot_t *out_snapshot
+);
 
 /// Finds the current image's Mach-O header in memory, makes it writable,
 /// and zeroes out the magic number and key load commands to thwart memory dumping.

@@ -1322,108 +1322,24 @@ extension RemoteConfig {
 
     /// 示例配置 JSON（用于文档和测试）
     public static var sampleJSON: String {
-        return """
-        {
-            "version": 1,
-            "timestamp": \(Date().timeIntervalSince1970),
-            "environment": "production",
-            "description": "示例生产环境配置",
-            "policy": {
-                "threshold": 60,
-                "mediumThreshold": 40,
-                "timeWindow": 86400,
-                "minDetectionCount": 3,
-                "weights": {
-                    "jailbreak": 0.6,
-                    "network": 0.15,
-                    "behavior": 0.15,
-                    "cloudPhone": 0.05,
-                    "timePattern": 0.05
-                },
-                "highRemoteRiskActions": ["block", "log"],
-                "mediumRemoteRiskActions": ["challenge", "log"]
-            },
-            "detector": {
-                "jailbreakThreshold": 50,
-                "jailbreakEnableFileDetect": true,
-                "jailbreakEnableDyldDetect": true,
-                "jailbreakEnableEnvDetect": true,
-                "jailbreakEnableSysctlDetect": true,
-                "jailbreakEnableSchemeDetect": true,
-                "jailbreakEnableHookDetect": true,
-                "enableBehaviorDetect": true,
-                "behaviorSampleWindow": 100,
-                "touchMinSampleCount": 6,
-                "motionMinSampleCount": 10,
-                "enableNetworkSignals": true,
-                "detectVPN": true,
-                "detectProxy": true,
-                "enableCloudPhoneDetect": true,
-                "maxDetectionDuration": 3000,
-                "enableAsyncDetection": false
-            },
-            "whitelist": {
-                "deviceIDs": [],
-                "deviceIDPrefixes": [],
-                "blacklistedDeviceIDs": [],
-                "trustedVersions": [],
-                "minTrustedVersion": null,
-                "ipWhitelist": []
-            },
-            "experiments": {
-                "active": [
-                    {
-                        "id": "exp_001",
-                        "key": "new_algorithm",
-                        "name": "新算法实验",
-                        "description": "测试新的风险评分算法",
-                        "traffic": 0.1,
-                        "variants": [
-                            {
-                                "id": "variant_control",
-                                "bucket": 0,
-                                "name": "对照组",
-                                "parameters": {}
-                            },
-                            {
-                                "id": "variant_treatment",
-                                "bucket": 1,
-                                "name": "实验组",
-                                "parameters": {
-                                    "algorithm": "v2",
-                                    "threshold": "55"
-                                }
-                            }
-                        ],
-                        "createdAt": \(Date().timeIntervalSince1970),
-                        "updatedAt": \(Date().timeIntervalSince1970)
-                    }
-                ],
-                "bucketingAlgorithm": "consistentHash",
-                "experimentsExpiration": null
-            },
-            "advanced": {
-                "enablePerformanceMonitoring": false,
-                "maxMemoryUsage": 50,
-                "enableDebugLogging": false,
-                "enableDiagnostics": false,
-                "reportEndpoint": null,
-                "reportBatchSize": 10,
-                "reportInterval": 60
-            },
-            "probeConfig": null,
-            "payloadFieldMapping": null,
-            "securityHardening": {
-                "enableEnvelopeSignatureV2": true,
-                "enforcePayloadFieldMapping": false,
-                "enableChallengeBinding": true,
-                "killSwitchEnabled": false
-            },
-            "textSegmentHashReference": {
+        let sample = RemoteConfig(
+            version: 1,
+            timestamp: Date().timeIntervalSince1970,
+            environment: .production,
+            description: "示例生产环境配置",
+            policy: .default,
+            detector: .default,
+            whitelist: .default,
+            experiments: .default,
+            advanced: .default,
+            probeConfig: nil,
+            payloadFieldMapping: nil,
+            securityHardening: .default,
+            textSegmentHashReference: [
                 "5.2.0": "a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456",
-                "5.3.0": "f6e5d4c3b2a1987654321098765432109876543210fedcba09876543210fedcba"
-            }
-        }
-        """
+                "5.3.0": "f6e5d4c3b2a1987654321098765432109876543210fedcba09876543210fedcba",
+            ]
+        )
+        return sample.toJSONString(prettyPrinted: true) ?? "{}"
     }
 }

@@ -53,6 +53,10 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
 
     @available(*, deprecated, message: "Use setVerified(_:signature:) instead")
     func set(_ signals: ServerSignals?) {
+        setDebugBypassingVerification(signals)
+    }
+
+    func setDebugBypassingVerification(_ signals: ServerSignals?) {
         if signals == nil {
             clear()
             return

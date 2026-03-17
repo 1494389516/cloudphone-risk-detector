@@ -488,6 +488,7 @@ cprisk-armor --input <app_binary> --output <output> --pass3 --pass4 --pass5 --pa
 | 异常端口保护 | `cprisk_register_exception_handler()` | 中 — 抢占 EXC_BREAKPOINT 处理权 | 可开，但可能影响苹果 crash reporting |
 | 完整性重校验 | `cprisk_recheck_integrity()` | 低 — 标准反篡改手段 | 始终开启 |
 | Anti-Debug | `cprisk_deny_attach()` | 低 — `ptrace(PT_DENY_ATTACH)` 是公开 API | 始终开启 |
+| 反调试 Watchdog | `cprisk_start_anti_debug_watchdog()` | 低 — 周期性重调 ptrace + exception port 检测，异常转 RiskSignal | 始终开启 |
 
 ### 11.6 合规参考：同类商用 SDK 的保护等级
 

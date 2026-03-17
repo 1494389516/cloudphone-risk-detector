@@ -96,10 +96,12 @@ public struct StatisticalFeatures: Codable, Sendable {
     private static func percentile(sorted: [Double], p: Double) -> Double {
         guard !sorted.isEmpty else { return 0 }
         let count = Double(sorted.count)
-        let index = (p / 100.0) * (count - 1)
+        let index = Swift.max(0, Swift.min(((p / 100.0) * count) - 0.5, count - 1))
         let lower = Int(floor(index))
         let upper = Int(ceil(index))
-        guard lower >= 0, upper < sorted.count else { return 0 }
+        guard lower >= 0, upper < sorted.count else {
+            return sorted[Swift.max(0, Swift.min(lower, sorted.count - 1))]
+        }
 
         if lower == upper {
             return sorted[lower]

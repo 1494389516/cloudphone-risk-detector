@@ -45,7 +45,7 @@ public final class RiskDetectionService {
     ) {
         evaluateAsync(config: config) { report in
             let dto = RiskReportMapper.dto(from: report)
-            let json = String(data: report.jsonData(prettyPrinted: true), encoding: .utf8) ?? "{}"
+            let json = report.unencryptedPayloadString(prettyPrinted: true)
             let path = save ? self.save(report: report, config: config) : nil
             completion(RiskDetectionRunResult(dto: dto, json: json, savedPath: path))
         }
@@ -58,7 +58,7 @@ public final class RiskDetectionService {
         CPRiskStore.shared.encryptionEnabled = config.storeEncryptionEnabled
         CPRiskStore.shared.maxFiles = config.storeMaxFiles
         let path = CPRiskStore.shared.save(report, error: nil)
-        if let path, let dto = RiskReportMapper.dto(from: report.jsonData(prettyPrinted: false)) {
+        if let path, let dto = RiskReportMapper.dto(from: report.unencryptedPayloadData(prettyPrinted: false)) {
             RiskReportSummaryIO.writeMeta(for: dto, reportPath: path)
         }
         return path
@@ -68,8 +68,8 @@ public final class RiskDetectionService {
         let filename = "risk-\(iso8601Now()).json"
         let url = dir.appendingPathComponent(filename)
         do {
-            try report.jsonData(prettyPrinted: true).write(to: url, options: [.atomic])
-            if let dto = RiskReportMapper.dto(from: report.jsonData(prettyPrinted: false)) {
+            try report.unencryptedPayloadData(prettyPrinted: true).write(to: url, options: [.atomic])
+            if let dto = RiskReportMapper.dto(from: report.unencryptedPayloadData(prettyPrinted: false)) {
                 RiskReportSummaryIO.writeMeta(for: dto, reportPath: url.path)
             }
             return url.path

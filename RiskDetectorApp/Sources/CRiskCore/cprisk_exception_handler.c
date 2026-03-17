@@ -29,6 +29,18 @@
 static mach_port_t s_exception_port = MACH_PORT_NULL;
 static atomic_int s_registered = 0;
 static pthread_mutex_t s_mutex = PTHREAD_MUTEX_INITIALIZER;
+static cprisk_exception_handler_snapshot_t s_status = {
+    .supported = 1u,
+    .registered = 0u,
+    .port_matches = 0u,
+    .last_query_succeeded = 0u,
+    .last_reclaim_attempted = 0u,
+    .last_hijack_detected = 0u,
+    .last_query_kern_return = (int32_t)KERN_FAILURE,
+    .last_register_kern_return = (int32_t)KERN_FAILURE,
+    .verify_count = 0u,
+    .reclaim_count = 0u,
+};
 
 #define EXC_EXCEPTION_RAISE_STATE_IDENTITY 2403
 #define MACH_EXCEPTION_RAISE_STATE_IDENTITY 2407
@@ -147,18 +159,26 @@ static void *exception_handler_thread(void *arg) {
 }
 
 /* Caller must hold s_mutex. */
-static void register_locked(void) {
+static void register_locked(int reclaiming) {
     if (atomic_load(&s_registered))
         return;
 
+    s_status.last_reclaim_attempted = reclaiming ? 1u : 0u;
+    s_status.last_register_kern_return = (int32_t)KERN_FAILURE;
+    s_status.registered = 0u;
+    s_status.port_matches = 0u;
+
     kern_return_t kr = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &s_exception_port);
-    if (kr != KERN_SUCCESS)
+    if (kr != KERN_SUCCESS) {
+        s_status.last_register_kern_return = (int32_t)kr;
         return;
+    }
 
     kr = mach_port_insert_right(mach_task_self(), s_exception_port, s_exception_port, MACH_MSG_TYPE_MAKE_SEND);
     if (kr != KERN_SUCCESS) {
         mach_port_deallocate(mach_task_self(), s_exception_port);
         s_exception_port = MACH_PORT_NULL;
+        s_status.last_register_kern_return = (int32_t)kr;
         return;
     }
 
@@ -172,6 +192,7 @@ static void register_locked(void) {
     kr = task_swap_exception_ports(mach_task_self(), mask, s_exception_port,
                                    EXCEPTION_STATE_IDENTITY | MACH_EXCEPTION_CODES, ARM_THREAD_STATE64,
                                    old_masks, &old_count, old_ports, old_behaviors, old_flavors);
+    s_status.last_register_kern_return = (int32_t)kr;
 
     if (kr != KERN_SUCCESS) {
         mach_port_deallocate(mach_task_self(), s_exception_port);
@@ -189,11 +210,16 @@ static void register_locked(void) {
     pthread_detach(th);
 
     atomic_store(&s_registered, 1);
+    s_status.registered = 1u;
+    s_status.port_matches = 1u;
+    if (reclaiming) {
+        s_status.reclaim_count += 1u;
+    }
 }
 
 void cprisk_register_exception_handler(void) {
     pthread_mutex_lock(&s_mutex);
-    register_locked();
+    register_locked(0);
     pthread_mutex_unlock(&s_mutex);
 }
 
@@ -218,9 +244,17 @@ static void cprisk_early_exception_port_reclaim(void) {
 void cprisk_verify_exception_handler(void) {
     pthread_mutex_lock(&s_mutex);
     if (!atomic_load(&s_registered) || s_exception_port == MACH_PORT_NULL) {
+        s_status.registered = 0u;
+        s_status.port_matches = 0u;
+        s_status.last_query_succeeded = 0u;
         pthread_mutex_unlock(&s_mutex);
         return;
     }
+
+    s_status.verify_count += 1u;
+    s_status.last_query_succeeded = 0u;
+    s_status.last_reclaim_attempted = 0u;
+    s_status.last_hijack_detected = 0u;
 
     exception_mask_t mask = EXC_MASK_BREAKPOINT | EXC_MASK_BAD_ACCESS;
     exception_mask_t masks[EXC_TYPES_COUNT];
@@ -231,13 +265,19 @@ void cprisk_verify_exception_handler(void) {
 
     kern_return_t kr = task_get_exception_ports(mach_task_self(), mask, masks, &count,
                                                  ports, behaviors, flavors);
+    s_status.last_query_kern_return = (int32_t)kr;
     if (kr != KERN_SUCCESS) {
         pthread_mutex_unlock(&s_mutex);
         return;
     }
 
+    s_status.last_query_succeeded = 1u;
+    s_status.registered = 1u;
+
     for (mach_msg_type_number_t i = 0; i < count; i++) {
         if ((masks[i] & (EXC_MASK_BREAKPOINT | EXC_MASK_BAD_ACCESS)) && ports[i] != s_exception_port) {
+            s_status.last_hijack_detected = 1u;
+            s_status.port_matches = 0u;
             atomic_store(&s_registered, 0);
             if (s_exception_port != MACH_PORT_NULL) {
                 mach_port_deallocate(mach_task_self(), s_exception_port);
@@ -248,14 +288,26 @@ void cprisk_verify_exception_handler(void) {
                 if (ports[j] != MACH_PORT_NULL)
                     mach_port_deallocate(mach_task_self(), ports[j]);
             }
-            register_locked();
+            register_locked(1);
             pthread_mutex_unlock(&s_mutex);
             return;
         }
         if (ports[i] != MACH_PORT_NULL)
             mach_port_deallocate(mach_task_self(), ports[i]);
     }
+    s_status.port_matches = 1u;
     pthread_mutex_unlock(&s_mutex);
+}
+
+int cprisk_get_exception_handler_snapshot(cprisk_exception_handler_snapshot_t *out_snapshot) {
+    if (out_snapshot == NULL) {
+        return -1;
+    }
+
+    pthread_mutex_lock(&s_mutex);
+    *out_snapshot = s_status;
+    pthread_mutex_unlock(&s_mutex);
+    return 0;
 }
 
 #else
@@ -266,6 +318,15 @@ void cprisk_register_exception_handler(void) {
 
 void cprisk_verify_exception_handler(void) {
     (void)0;
+}
+
+int cprisk_get_exception_handler_snapshot(cprisk_exception_handler_snapshot_t *out_snapshot) {
+    if (out_snapshot == NULL) {
+        return -1;
+    }
+
+    memset(out_snapshot, 0, sizeof(*out_snapshot));
+    return 0;
 }
 
 #endif

@@ -1,6 +1,6 @@
 # CloudPhoneRiskKit 6.5 使用与构建说明
 
-iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。6.0 引入自研壳（cprisk-armor）二进制保护与端云签名绑定；6.1 将壳升级为 5 Pass 工业化保护；6.2 对壳执行密码学重建（ABI v2：强制密钥注入 / HMAC 认证 / 随机 nonce / IntegrityAnchor HMAC），共 46 项漏洞修复；6.3 新增 Pass 6 符号表混淆、Codable 短别名 CodingKeys、ObjC selector 安全修复，壳升级为 6 Pass 全链路保护；6.4 将 SDK 架构改为 library.static + 全量 strip，IDA 中 SDK 函数全部显示为 sub_XXXX；6.5 引入白盒 PRF 引擎（5 域 S-box ~160KB，root key 不可逆提取）、AppSigningIdentityDetector 反重打包（TeamID/bundleID/entitlement 一致性 + 基线漂移检测）；后续新增 GPU 渲染指纹（Metal Compute Shader 像素哈希，检测虚拟 GPU）、IMU 噪声谱指纹（FFT 频域噪声特征 + 合成数据检测）、行为信号扩充（forceVariance / radiusVariance / swipeSpeedCV 共 11 项启发式，行为分上限提升至 45）、BehaviorThresholds 全量远程可配（13 项阈值 + 按设备型号分组覆盖）、采样窗口最小间隔保护（5s / 缓冲区翻倍）。
+iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。6.0 引入自研壳（cprisk-armor）二进制保护与端云签名绑定；6.1 将壳升级为 5 Pass 工业化保护；6.2 对壳执行密码学重建（ABI v2：强制密钥注入 / HMAC 认证 / 随机 nonce / IntegrityAnchor HMAC），共 46 项漏洞修复；6.3 新增 Pass 6 符号表混淆、Codable 短别名 CodingKeys、ObjC selector 安全修复，壳升级为 6 Pass 全链路保护；6.4 将 SDK 架构改为 library.static + 全量 strip，IDA 中 SDK 函数全部显示为 sub_XXXX；6.5 引入白盒 PRF 引擎（5 域 S-box ~160KB，root key 不可逆提取）、AppSigningIdentityDetector 反重打包（TeamID/bundleID/entitlement 一致性 + 基线漂移检测）；后续新增 GPU 渲染指纹（Metal Compute Shader 像素哈希，检测虚拟 GPU）、IMU 噪声谱指纹（FFT 频域噪声特征 + 合成数据检测）、行为信号扩充（forceVariance / radiusVariance / swipeSpeedCV 共 11 项启发式，行为分上限提升至 45）、BehaviorThresholds 全量远程可配（13 项阈值 + 按设备型号分组覆盖）、采样窗口最小间隔保护（5s / 缓冲区翻倍）、反调试 watchdog 线程（CRiskCore 内每 3s 重调 ptrace/exception port 检测，异常自动转 RiskSignal 进入评分）。
 
 ---
 
@@ -70,6 +70,23 @@ export CPRISK_ARMOR_KEY=<hex>; .build/release/cprisk-armor --input ... --output 
 3. 运行时需同时配置 `CPRISKKIT_ARMOR_ROOT_KEY_HEX`（与 `CPRISK_ARMOR_KEY` 相同密钥），供 CRiskCore 解密消费。
 
 未设置 `CPRISK_ARMOR_KEY` 时，脚本会跳过加固并输出 warning，不影响构建。
+
+### 2.4.1.1 可选的 Release metadata 收敛 / Hikari 编译接入
+
+为避免影响默认本地开发，工程只在 **Release + 显式环境变量** 下启用额外收敛：
+
+- `CPRISK_ENABLE_SWIFT_METADATA_CONVERGENCE=1`
+  - 通过 Swift compiler wrapper 追加 `-disable-reflection-metadata` / `-disable-reflection-names`
+  - 目标：减少 Swift 运行时反射 metadata 暴露
+  - 边界：可能影响 `Mirror` 或依赖字段名反射的代码
+
+- `CPRISK_ENABLE_HIKARI=1`
+  - 若同时提供 `HIKARI_SWIFTC` / `HIKARI_CLANG`，Release 编译会切到自定义 `swiftc` / `clang` wrapper
+  - 若未提供或路径不可执行，只打印 warning 并自动回退到系统编译器，不阻断构建
+
+详细变量与 SwiftPM 接入方式见：
+
+- `RiskDetectorApp/BuildSupport/ProtectedRelease.md`
 
 ### 2.4.2 手动执行（可选）
 
@@ -219,7 +236,7 @@ let envelope = try await CPRiskKit.shared.buildSecureReportEnvelopeWithAttestati
 
 ## 8.1 壳保护与 v2a 签名 (6.0 / 6.1 / 6.2 / 6.5)
 
-自研壳在运行时由 CRiskCore 自动完成 HMAC 验证、解密与完整性校验，无需调用方额外操作。SDK 在 `start()` / `evaluate()` 时自动初始化 armor runtime。6.1 新增 Anti-Dump 页面保护、密钥安全清零和运行时完整性重校验。6.2 升级 ABI v2：每个加密项附带 HMAC 认证标签 + 随机 nonce，解密前先验 HMAC 完整性；完整性锚点改为 HMAC 绑定 rootKey，无密钥不可恢复 fullHash。6.3 新增 Pass 6 符号表混淆与 Codable 短别名防御。6.4 壳对最终 App 二进制执行加固，配合全量 strip 实现 `sub_XXXX` 级别逆向对抗。6.5 引入白盒 PRF 引擎：anchor 校验、字符串解密密钥、数据段加载密钥、签名材料（runtime material）全部通过白盒 PRF 派生，root key 融入 ~160KB S-box 表不可逆提取，内存 dump 无法还原原始密钥；白盒不可用时自动 fallback 到 legacy HMAC 路径。
+自研壳在运行时由 CRiskCore 自动完成 HMAC 验证、解密与完整性校验，无需调用方额外操作。SDK 在 `start()` / `evaluate()` 时自动初始化 armor runtime。6.1 新增 Anti-Dump 页面保护、密钥安全清零和运行时完整性重校验。6.2 升级 ABI v2：每个加密项附带 HMAC 认证标签 + 随机 nonce，解密前先验 HMAC 完整性；完整性锚点改为 HMAC 绑定 rootKey，无密钥不可恢复 fullHash。6.3 新增 Pass 6 符号表混淆与 Codable 短别名防御。6.4 壳对最终 App 二进制执行加固，配合全量 strip 实现 `sub_XXXX` 级别逆向对抗。6.5 引入白盒 PRF 引擎：anchor 校验、字符串解密密钥、数据段加载密钥、签名材料（runtime material）全部通过白盒 PRF 派生，root key 融入 ~160KB S-box 表不可逆提取，内存 dump 无法还原原始密钥；白盒不可用时自动 fallback 到 legacy HMAC 路径。6.5 起 CRiskCore 启动反调试 watchdog 线程，每 3s 重调 `ptrace(PT_DENY_ATTACH)` 并检测 exception port 异常，检测到异常时自动转为 RiskSignal 参与评分。
 
 **ReportEnvelope v2a 签名**：壳完整性 material 会自动混入 `buildSecureReportEnvelope` 的 HMAC 签名密钥派生链：
 
@@ -311,7 +328,7 @@ CPRiskKit.register(provider: MyProvider())
 | `threshold` | `Double` | `60` | 高风险总分阈值 |
 | `enableBehaviorDetect` | `Bool` | `true` | 行为指纹采集 |
 | `enableNetworkSignals` | `Bool` | `true` | 网络信号采集 |
-| `enableAntiTamper` | `Bool` | `true` | 反篡改 / Hook 检测 |
+| `enableAntiTamper` | `Bool` | `true` | 反篡改 / Hook 检测（含反调试 watchdog 线程） |
 | `enableTemporalAnalysis` | `Bool` | `false` | 时序模式分析 |
 | `enableRemoteConfig` | `Bool` | `false` | 远程配置拉取 |
 | `defaultScenario` | `RiskScenario` | `.default` | 默认评估场景 |
@@ -458,6 +475,7 @@ CPRiskKit.shared.setTextSegmentReferenceResolver(SignedReferenceResolver())
 8. **动态特征列表**：可通过 RemoteConfig 下发 `additionalSuspiciousLibraries` / `additionalSuspiciousPaths` / `additionalSuspiciousPorts` 扩展检测规则，无需发版。
 9. **行为阈值配置**：`BehaviorThresholds` 13 项阈值均有内置默认值，未下发时不影响评分。设备型号级 override（`deviceModelBehaviorOverrides`）优先级最高，适合针对特定机型微调灵敏度，避免误判（如 iPad Pro 的 ApplePencil 力度分布与手指有差异）。行为分上限由 `mbs`（`maxBehaviorScore`）控制，默认 45，可远程下调以降低行为维度权重。
 10. **GPU / IMU 指纹缓存**：`GPURenderFingerprintProvider` 和 `IMUNoiseSpectrumProvider` 均实现了结果缓存，首次采集后同一进程内复用，不重复触发 Metal 渲染 / FFT 采样；若需强制刷新，重启 App 进程即可。
+11. **反调试 watchdog**：`start()` 时自动启动，`stop()` 时停止；watchdog 检测到的异常（被调试、exception port 被篡改等）会通过 `AntiTamperingSignalProvider` 转为 `antiDebugWatchdogTraced`、`antiDebugWatchdogExceptionPort` 等 RiskSignal，参与评分。
 
 ---
 

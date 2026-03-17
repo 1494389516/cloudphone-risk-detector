@@ -214,6 +214,79 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertTrue(detector.debuggerPorts.contains(27043))
     }
 
+    func testAntiDebugWatchdogSnapshotWithoutAnomalyProducesNoSignals() {
+        let provider = AntiTamperingSignalProvider()
+        let snapshot = CPRiskKit.AntiDebugWatchdogSnapshot(
+            supported: true,
+            running: true,
+            threadActive: true,
+            intervalSeconds: 3,
+            anomalyFlags: 0,
+            iterationCount: 4,
+            tracedEventCount: 0,
+            denyAttachErrorCount: 0,
+            exceptionAnomalyCount: 0,
+            lastDenyAttachResult: 0,
+            lastDenyAttachErrno: 0,
+            lastTraced: false,
+            lastExceptionPortHealthy: true,
+            lastExceptionQuerySucceeded: true,
+            lastExceptionReclaimAttempted: false,
+            lastExceptionHijackDetected: false,
+            lastExceptionQueryKernReturn: 0,
+            lastExceptionRegisterKernReturn: 0,
+            lastCheckMonotonicNs: 42
+        )
+
+        XCTAssertTrue(provider.antiDebugWatchdogSignals(from: snapshot).isEmpty)
+    }
+
+    func testAntiDebugWatchdogSnapshotProducesDetailedSignals() {
+        let provider = AntiTamperingSignalProvider()
+        let flags = UInt32(1 << 0)
+            | UInt32(1 << 1)
+            | UInt32(1 << 2)
+            | UInt32(1 << 3)
+        let snapshot = CPRiskKit.AntiDebugWatchdogSnapshot(
+            supported: true,
+            running: true,
+            threadActive: true,
+            intervalSeconds: 3,
+            anomalyFlags: flags,
+            iterationCount: 7,
+            tracedEventCount: 2,
+            denyAttachErrorCount: 1,
+            exceptionAnomalyCount: 3,
+            lastDenyAttachResult: -1,
+            lastDenyAttachErrno: 1,
+            lastTraced: true,
+            lastExceptionPortHealthy: false,
+            lastExceptionQuerySucceeded: false,
+            lastExceptionReclaimAttempted: true,
+            lastExceptionHijackDetected: true,
+            lastExceptionQueryKernReturn: 5,
+            lastExceptionRegisterKernReturn: 6,
+            lastCheckMonotonicNs: 99
+        )
+
+        let signals = provider.antiDebugWatchdogSignals(from: snapshot)
+        let ids = Set(signals.map { $0.id })
+
+        XCTAssertTrue(ids.contains(SignalID.antiDebugWatchdogAnomaly))
+        XCTAssertTrue(ids.contains(SignalID.antiDebugWatchdogTraced))
+        XCTAssertTrue(ids.contains(SignalID.antiDebugWatchdogDenyAttachFailed))
+        XCTAssertTrue(ids.contains(SignalID.antiDebugWatchdogExceptionPort))
+        XCTAssertTrue(ids.contains(SignalID.antiDebugWatchdogExceptionQuery))
+
+        guard let summary = signals.first(where: { $0.id == SignalID.antiDebugWatchdogAnomaly }) else {
+            return XCTFail("missing anti_debug_watchdog_anomaly summary signal")
+        }
+        XCTAssertEqual(summary.category, "anti_tamper")
+        XCTAssertEqual(summary.state, RiskSignalState.tampered)
+        XCTAssertEqual(summary.layer, 2)
+        XCTAssertEqual(summary.evidence["anomaly_kinds"], "traced,deny_attach,exception_port,exception_query")
+    }
+
     // MARK: - FridaDetector Logic Tests
 
     func testFridaDetectorKnownPorts() {

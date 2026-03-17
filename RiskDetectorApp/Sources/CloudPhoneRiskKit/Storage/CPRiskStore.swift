@@ -38,7 +38,7 @@ public final class CPRiskStore: NSObject {
             if encryptionEnabled {
                 data = try report.encryptedData()
             } else {
-                data = report.jsonData(prettyPrinted: true)
+                data = report.unencryptedPayloadData(prettyPrinted: true)
             }
 
             try data.write(to: url, options: [.atomic])

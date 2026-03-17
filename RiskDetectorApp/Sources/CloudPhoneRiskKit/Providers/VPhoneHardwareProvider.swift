@@ -30,8 +30,8 @@ struct SystemHardwareProbe: V3HardwareProbe {
     }
 
     func ioKitModel() -> String {
-#if canImport(IOKit)
-        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPlatformExpertDevice"))
+#if canImport(IOKit) && os(macOS) && !targetEnvironment(macCatalyst)
+        let service = IOServiceGetMatchingService(ioKitMainPort(), IOServiceMatching("IOPlatformExpertDevice"))
         defer { IOObjectRelease(service) }
         guard service != IO_OBJECT_NULL else { return "" }
         guard
@@ -62,6 +62,16 @@ struct SystemHardwareProbe: V3HardwareProbe {
             }
         }
     }
+
+#if canImport(IOKit) && os(macOS) && !targetEnvironment(macCatalyst)
+    private func ioKitMainPort() -> mach_port_t {
+        if #available(macOS 12.0, *) {
+            return kIOMainPortDefault
+        }
+        // `kIOMasterPortDefault` is a deprecated alias for MACH_PORT_NULL.
+        return 0
+    }
+#endif
 }
 
 final class VPhoneHardwareProvider: RiskSignalProvider {

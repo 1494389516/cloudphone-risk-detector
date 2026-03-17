@@ -168,6 +168,32 @@ public final class CPRiskKit: NSObject {
         let attemptCount: Int
     }
 
+    public struct AntiDebugWatchdogSnapshot: Sendable {
+        public let supported: Bool
+        public let running: Bool
+        public let threadActive: Bool
+        public let intervalSeconds: UInt32
+        public let anomalyFlags: UInt32
+        public let iterationCount: UInt64
+        public let tracedEventCount: UInt64
+        public let denyAttachErrorCount: UInt64
+        public let exceptionAnomalyCount: UInt64
+        public let lastDenyAttachResult: Int32
+        public let lastDenyAttachErrno: Int32
+        public let lastTraced: Bool
+        public let lastExceptionPortHealthy: Bool
+        public let lastExceptionQuerySucceeded: Bool
+        public let lastExceptionReclaimAttempted: Bool
+        public let lastExceptionHijackDetected: Bool
+        public let lastExceptionQueryKernReturn: Int32
+        public let lastExceptionRegisterKernReturn: Int32
+        public let lastCheckMonotonicNs: UInt64
+
+        public var hasAnyAnomaly: Bool {
+            anomalyFlags != 0
+        }
+    }
+
     private struct ArmorRootKeyResolution {
         let keyData: Data?
         let source: ArmorRootKeySource
@@ -220,6 +246,10 @@ public final class CPRiskKit: NSObject {
 #endif
         cprisk_deny_attach()
         cprisk_register_exception_handler()
+        let watchdogStartResult = cprisk_start_anti_debug_watchdog()
+        if watchdogStartResult != 0 {
+            Logger.log("anti_debug_watchdog.start failed rc=\(watchdogStartResult)")
+        }
         _ = ensureArmorRuntimeStarted(trigger: "start")
         DyldImageMonitor.shared.start()
         BuildConfig.configureForRelease()
@@ -246,6 +276,7 @@ public final class CPRiskKit: NSObject {
     @objc public func stop() {
         Logger.log("stop()")
         removeGraphFeedbackReEvaluateObserver()
+        cprisk_stop_anti_debug_watchdog()
         resetArmorRuntime()
 #if canImport(UIKit)
         motionSampler.stop()
@@ -291,7 +322,7 @@ public final class CPRiskKit: NSObject {
         geoRegion: String?,
         riskTags: [String]?
     ) {
-        ExternalServerAggregateProvider.shared.set(
+        ExternalServerAggregateProvider.shared.setDebugBypassingVerification(
             ServerSignals(
                 publicIP: publicIP,
                 asn: asn,
@@ -805,7 +836,7 @@ public final class CPRiskKit: NSObject {
             throw SecureUploadError.payloadFieldMappingRequired
         }
 
-        var payloadData = report.jsonData(prettyPrinted: false)
+        var payloadData = report.unencryptedPayloadData(prettyPrinted: false)
         if !hardening.enableChallengeBinding {
             payloadData = try removingPayloadKey("challengeBinding", from: payloadData)
         }
@@ -1090,6 +1121,32 @@ public final class CPRiskKit: NSObject {
             debugFallbackUsed: snapshot.debugFallbackUsed,
             anchorPresent: snapshot.anchorPresent,
             attemptCount: snapshot.attemptCount
+        )
+    }
+
+    public func antiDebugWatchdogSnapshot() -> AntiDebugWatchdogSnapshot {
+        var raw = cprisk_anti_debug_watchdog_snapshot_t()
+        _ = cprisk_get_anti_debug_watchdog_snapshot(&raw)
+        return AntiDebugWatchdogSnapshot(
+            supported: raw.supported != 0,
+            running: raw.running != 0,
+            threadActive: raw.thread_active != 0,
+            intervalSeconds: raw.interval_seconds,
+            anomalyFlags: raw.anomaly_flags,
+            iterationCount: raw.iteration_count,
+            tracedEventCount: raw.traced_event_count,
+            denyAttachErrorCount: raw.deny_attach_error_count,
+            exceptionAnomalyCount: raw.exception_anomaly_count,
+            lastDenyAttachResult: raw.last_deny_attach_result,
+            lastDenyAttachErrno: raw.last_deny_attach_errno,
+            lastTraced: raw.last_traced != 0,
+            lastExceptionPortHealthy: raw.last_exception_port_healthy != 0,
+            lastExceptionQuerySucceeded: raw.last_exception_query_succeeded != 0,
+            lastExceptionReclaimAttempted: raw.last_exception_reclaim_attempted != 0,
+            lastExceptionHijackDetected: raw.last_exception_hijack_detected != 0,
+            lastExceptionQueryKernReturn: raw.last_exception_query_kern_return,
+            lastExceptionRegisterKernReturn: raw.last_exception_register_kern_return,
+            lastCheckMonotonicNs: raw.last_check_monotonic_ns
         )
     }
 

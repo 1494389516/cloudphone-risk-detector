@@ -208,15 +208,13 @@ public struct RiskDeviceHistory: Codable, Sendable {
         // 趋势斜率判断（单位：分数/小时）
         let slopePerHour = features.trendSlope * 3600
 
-        // 波动性判断
-        let isVolatile = features.stdScore > 20
-
-        if isVolatile {
-            return .volatile
-        } else if slopePerHour > 0.5 {
+        // 先识别明确的单向趋势，再把无明显方向但方差过大的序列归类为 volatile。
+        if slopePerHour > 0.5 {
             return .escalating
         } else if slopePerHour < -0.5 {
             return .deescalating
+        } else if features.stdScore > 20 {
+            return .volatile
         } else {
             return .stable
         }

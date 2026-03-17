@@ -6,6 +6,18 @@ import CRiskCore
 final class ArmorRuntimeLifecycleTests: XCTestCase {
     private let armorRootKeyDefaultsKey = "com.cloudphone.riskkit.armor.root_key_hex"
 
+    private func waitForWatchdogSnapshot(
+        timeout: TimeInterval = 1.0
+    ) -> CPRiskKit.AntiDebugWatchdogSnapshot {
+        var snapshot = CPRiskKit.shared.antiDebugWatchdogSnapshot()
+        let deadline = Date().addingTimeInterval(timeout)
+        while snapshot.supported && snapshot.running && snapshot.iterationCount == 0 && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+            snapshot = CPRiskKit.shared.antiDebugWatchdogSnapshot()
+        }
+        return snapshot
+    }
+
     override func setUp() {
         super.setUp()
         UserDefaults.standard.removeObject(forKey: armorRootKeyDefaultsKey)
@@ -64,6 +76,39 @@ final class ArmorRuntimeLifecycleTests: XCTestCase {
         let stoppedSnapshot = CPRiskKit.shared.debugArmorRuntimeSnapshot()
         XCTAssertEqual(stoppedSnapshot.status, "inactive")
         XCTAssertEqual(stoppedSnapshot.attemptCount, 0)
+    }
+
+    func testAntiDebugWatchdogFollowsStartStopLifecycle() {
+        let initialSnapshot = CPRiskKit.shared.antiDebugWatchdogSnapshot()
+        XCTAssertFalse(initialSnapshot.running)
+        XCTAssertFalse(initialSnapshot.threadActive)
+
+        CPRiskKit.shared.start()
+        let startedSnapshot = waitForWatchdogSnapshot()
+
+        if startedSnapshot.supported {
+            XCTAssertTrue(startedSnapshot.running, "watchdog should be marked running after start()")
+            XCTAssertEqual(startedSnapshot.intervalSeconds, 3)
+            XCTAssertGreaterThan(startedSnapshot.iterationCount, 0, "watchdog should execute at least one iteration")
+        } else {
+            XCTAssertFalse(startedSnapshot.running, "unsupported platforms should degrade to no-op")
+        }
+
+        CPRiskKit.shared.start()
+        let restartedSnapshot = CPRiskKit.shared.antiDebugWatchdogSnapshot()
+        if restartedSnapshot.supported {
+            XCTAssertTrue(restartedSnapshot.running, "repeated start() must not stop the existing watchdog")
+            XCTAssertGreaterThanOrEqual(
+                restartedSnapshot.iterationCount,
+                startedSnapshot.iterationCount,
+                "repeated start() must not reset watchdog progress while already running"
+            )
+        }
+
+        CPRiskKit.shared.stop()
+        let stoppedSnapshot = CPRiskKit.shared.antiDebugWatchdogSnapshot()
+        XCTAssertFalse(stoppedSnapshot.running)
+        XCTAssertFalse(stoppedSnapshot.threadActive)
     }
 
     // MARK: - Integrity Re-check
