@@ -66,6 +66,7 @@ public struct TouchMetrics: Codable, Sendable {
     public var averageLinearity: Double?
     public var forceVariance: Double?
     public var majorRadiusVariance: Double?
+    public var swipeSpeedCV: Double?
 
     private enum CodingKeys: String, CodingKey {
         case sampleCount = "sc"
@@ -76,6 +77,7 @@ public struct TouchMetrics: Codable, Sendable {
         case averageLinearity = "al"
         case forceVariance = "fv"
         case majorRadiusVariance = "mr"
+        case swipeSpeedCV = "ss"
     }
 }
 

@@ -23,6 +23,9 @@ public enum SignalID {
     static let motionTooStill = "motion_too_still"
     static let touchMotionWeakCoupling = "touch_motion_weak_coupling"
     static let insufficientBehaviorData = "insufficient_behavior_data"
+    static let forceTooUniform = "force_too_uniform"
+    static let radiusTooUniform = "radius_too_uniform"
+    static let swipeSpeedTooRegular = "swipe_speed_too_regular"
 
     // Time Pattern
     static let highVolume24h = "high_volume_24h"
@@ -51,6 +54,16 @@ public enum SignalID {
 
     /// Signal suppression detection (SDK 5.5)
     static let signalSuppressionDetected = "signal_suppression_detected"
+
+    // GPU Render Fingerprint (SDK 6.5)
+    static let gpuRenderFingerprint = "gpu_render_fingerprint"
+    static let gpuRenderUnavailable = "gpu_render_unavailable"
+
+    // IMU Noise Spectrum (SDK 6.5)
+    static let imuNoiseFingerprint = "imu_noise_fingerprint"
+    static let imuNoiseSynthetic = "imu_noise_synthetic"
+    static let imuNoiseUnavailable = "imu_noise_unavailable"
+    static let imuNoiseInsufficient = "imu_noise_insufficient"
 }
 
 // MARK: - Signal Categories

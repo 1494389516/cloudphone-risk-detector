@@ -438,6 +438,72 @@ public enum RemoteRiskAction: String, Codable, Sendable {
     }
 }
 
+// MARK: - 行为阈值配置
+
+public struct BehaviorThresholds: Codable, Sendable {
+    public let touchSpreadLow: Double
+    public let touchSpreadHigh: Double
+    public let touchIntervalCVLow: Double
+    public let touchIntervalCVHigh: Double
+    public let swipeLinearityHigh: Double
+    public let swipeLinearityLow: Double
+    public let motionStillness: Double
+    public let touchMotionCorrelation: Double
+    public let minStillnessForCorrelation: Double
+    public let forceVariance: Double
+    public let radiusVariance: Double
+    public let swipeSpeedCV: Double
+    public let maxBehaviorScore: Double
+
+    private enum CodingKeys: String, CodingKey {
+        case touchSpreadLow = "tsl"
+        case touchSpreadHigh = "tsh"
+        case touchIntervalCVLow = "ticl"
+        case touchIntervalCVHigh = "tich"
+        case swipeLinearityHigh = "slh"
+        case swipeLinearityLow = "sll"
+        case motionStillness = "ms"
+        case touchMotionCorrelation = "tmc"
+        case minStillnessForCorrelation = "msc"
+        case forceVariance = "fv"
+        case radiusVariance = "rv"
+        case swipeSpeedCV = "sscv"
+        case maxBehaviorScore = "mbs"
+    }
+
+    public init(
+        touchSpreadLow: Double = 2.0,
+        touchSpreadHigh: Double = 10.0,
+        touchIntervalCVLow: Double = 0.2,
+        touchIntervalCVHigh: Double = 0.6,
+        swipeLinearityHigh: Double = 0.98,
+        swipeLinearityLow: Double = 0.90,
+        motionStillness: Double = 0.98,
+        touchMotionCorrelation: Double = 0.10,
+        minStillnessForCorrelation: Double = 0.95,
+        forceVariance: Double = 1e-6,
+        radiusVariance: Double = 0.005,
+        swipeSpeedCV: Double = 0.15,
+        maxBehaviorScore: Double = 45
+    ) {
+        self.touchSpreadLow = touchSpreadLow
+        self.touchSpreadHigh = touchSpreadHigh
+        self.touchIntervalCVLow = touchIntervalCVLow
+        self.touchIntervalCVHigh = touchIntervalCVHigh
+        self.swipeLinearityHigh = swipeLinearityHigh
+        self.swipeLinearityLow = swipeLinearityLow
+        self.motionStillness = motionStillness
+        self.touchMotionCorrelation = touchMotionCorrelation
+        self.minStillnessForCorrelation = minStillnessForCorrelation
+        self.forceVariance = forceVariance
+        self.radiusVariance = radiusVariance
+        self.swipeSpeedCV = swipeSpeedCV
+        self.maxBehaviorScore = maxBehaviorScore
+    }
+
+    public static let `default` = BehaviorThresholds()
+}
+
 // MARK: - 检测器配置
 
 public struct RemoteDetectorConfig: Codable, Sendable {
@@ -503,6 +569,14 @@ public struct RemoteDetectorConfig: Codable, Sendable {
     /// 是否启用异步检测
     public let enableAsyncDetection: Bool
 
+    // MARK: - 行为阈值配置
+
+    /// 行为检测阈值（服务端下发覆盖默认值）
+    public let behaviorThresholds: BehaviorThresholds?
+
+    /// 按设备型号分组的行为阈值覆盖（key 为设备型号标识符，如 "iPhone15,2"）
+    public let deviceModelBehaviorOverrides: [String: BehaviorThresholds]?
+
     private enum CodingKeys: String, CodingKey {
         case jailbreakThreshold = "jt"
         case jailbreakEnableFileDetect = "jf"
@@ -521,6 +595,8 @@ public struct RemoteDetectorConfig: Codable, Sendable {
         case enableCloudPhoneDetect = "ecp"
         case maxDetectionDuration = "mdd"
         case enableAsyncDetection = "ead"
+        case behaviorThresholds = "bt"
+        case deviceModelBehaviorOverrides = "dmbo"
     }
 
     // MARK: - 初始化
@@ -542,7 +618,9 @@ public struct RemoteDetectorConfig: Codable, Sendable {
         detectProxy: Bool = true,
         enableCloudPhoneDetect: Bool = true,
         maxDetectionDuration: Int = 3000,
-        enableAsyncDetection: Bool = false
+        enableAsyncDetection: Bool = false,
+        behaviorThresholds: BehaviorThresholds? = nil,
+        deviceModelBehaviorOverrides: [String: BehaviorThresholds]? = nil
     ) {
         self.jailbreakThreshold = jailbreakThreshold
         self.jailbreakEnableFileDetect = jailbreakEnableFileDetect
@@ -561,6 +639,8 @@ public struct RemoteDetectorConfig: Codable, Sendable {
         self.enableCloudPhoneDetect = enableCloudPhoneDetect
         self.maxDetectionDuration = maxDetectionDuration
         self.enableAsyncDetection = enableAsyncDetection
+        self.behaviorThresholds = behaviorThresholds
+        self.deviceModelBehaviorOverrides = deviceModelBehaviorOverrides
     }
 
     // MARK: - 默认配置
@@ -1179,7 +1259,8 @@ extension RemoteConfig {
             ),
             enableBehaviorDetect: detector.enableBehaviorDetect,
             enableNetworkSignals: detector.enableNetworkSignals,
-            threshold: policy.threshold
+            threshold: policy.threshold,
+            behaviorThresholds: detector.behaviorThresholds
         )
     }
 
@@ -1217,7 +1298,9 @@ extension RemoteDetectorConfig {
             detectProxy: detectProxy,
             enableCloudPhoneDetect: enableCloudPhoneDetect,
             maxDetectionDuration: maxDetectionDuration,
-            enableAsyncDetection: enableAsyncDetection
+            enableAsyncDetection: enableAsyncDetection,
+            behaviorThresholds: behaviorThresholds,
+            deviceModelBehaviorOverrides: deviceModelBehaviorOverrides
         )
     }
 }

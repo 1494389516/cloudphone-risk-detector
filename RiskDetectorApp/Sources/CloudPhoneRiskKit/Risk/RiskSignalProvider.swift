@@ -97,6 +97,8 @@ final class RiskSignalProviderRegistry {
         "audio_route",
         "display_mux",
         "baseband_isolation",
+        "gpu_render_fingerprint",
+        "imu_noise_spectrum",
     ]
 
     func seal() {

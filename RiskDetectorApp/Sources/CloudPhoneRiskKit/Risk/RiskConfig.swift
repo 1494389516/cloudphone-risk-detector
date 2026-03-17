@@ -14,6 +14,7 @@ public struct RiskConfig: Sendable {
     public var enableBehaviorDetect: Bool
     public var enableNetworkSignals: Bool
     public var threshold: Double
+    public var behaviorThresholds: BehaviorThresholds?
 
     /// 阈值合法范围
     public static let thresholdRange: ClosedRange<Double> = 0...100
@@ -22,7 +23,8 @@ public struct RiskConfig: Sendable {
         jailbreak: JailbreakConfig = .default,
         enableBehaviorDetect: Bool = true,
         enableNetworkSignals: Bool = true,
-        threshold: Double = RiskConfig.defaultThreshold
+        threshold: Double = RiskConfig.defaultThreshold,
+        behaviorThresholds: BehaviorThresholds? = nil
     ) {
         self.jailbreak = jailbreak
         self.enableBehaviorDetect = enableBehaviorDetect
@@ -32,6 +34,7 @@ public struct RiskConfig: Sendable {
         if threshold != clampedThreshold {
             Logger.log("RiskConfig: threshold \(threshold) clamped to \(clampedThreshold)")
         }
+        self.behaviorThresholds = behaviorThresholds
     }
 
     public static let `default` = RiskConfig()

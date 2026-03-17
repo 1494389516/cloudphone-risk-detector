@@ -1110,6 +1110,8 @@ public final class CPRiskKit: NSObject {
         RiskSignalProviderRegistry.shared.register(EnvironmentConsistencyProvider.shared)
         RiskSignalProviderRegistry.shared.register(AudioRouteProvider.shared)
         RiskSignalProviderRegistry.shared.register(BasebandIsolationProvider.shared)
+        RiskSignalProviderRegistry.shared.register(GPURenderFingerprintProvider.shared)
+        RiskSignalProviderRegistry.shared.register(IMUNoiseSpectrumProvider.shared)
 
         if config.enableTemporalAnalysis {
             RiskSignalProviderRegistry.shared.register(TimePatternProvider.shared)

@@ -19,6 +19,12 @@ final class TouchCapture {
     private var forces: [Double] = []
     private var majorRadii: [Double] = []
 
+    private let minSnapshotInterval: TimeInterval = 5.0
+    private var lastSnapshotTime: TimeInterval = 0
+    private var cachedSnapshot: (metrics: TouchMetrics, actionTimestamps: [TimeInterval])?
+    private var swipeSpeeds: [Double] = []
+    private var currentSwipeStartTime: TimeInterval = 0
+
     func start() {
         lock.lock()
         defer { lock.unlock() }
@@ -52,11 +58,17 @@ final class TouchCapture {
         lock.lock()
         defer { lock.unlock() }
 
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - lastSnapshotTime < minSnapshotInterval, let cached = cachedSnapshot {
+            return cached
+        }
+
         let spread = TouchMath.coordinateSpread(points: touchPoints)
         let intervalCV = TouchMath.intervalCoefficientOfVariation(timestamps: tapTimestamps)
         let avgLinearity = swipeLinearities.isEmpty ? nil : (swipeLinearities.reduce(0, +) / Double(swipeLinearities.count))
         let forceVar = TouchMath.variance(values: forces)
         let radiusVar = TouchMath.variance(values: majorRadii)
+        let speedCV = TouchMath.coefficientOfVariation(values: swipeSpeeds)
 
         let metrics = TouchMetrics(
             sampleCount: touchPoints.count,
@@ -66,7 +78,8 @@ final class TouchCapture {
             intervalCV: intervalCV,
             averageLinearity: avgLinearity,
             forceVariance: forceVar,
-            majorRadiusVariance: radiusVar
+            majorRadiusVariance: radiusVar,
+            swipeSpeedCV: speedCV
         )
         #if DEBUG
         Logger.log("behavior.touch: samples=\(metrics.sampleCount) taps=\(metrics.tapCount) swipes=\(metrics.swipeCount) spread=\(metrics.coordinateSpread?.description ?? "nil") intervalCV=\(metrics.intervalCV?.description ?? "nil") avgLinearity=\(metrics.averageLinearity?.description ?? "nil")")
@@ -83,8 +96,12 @@ final class TouchCapture {
         actionTimestamps.removeAll(keepingCapacity: true)
         forces.removeAll(keepingCapacity: true)
         majorRadii.removeAll(keepingCapacity: true)
+        swipeSpeeds.removeAll(keepingCapacity: true)
 
-        return (metrics, actions)
+        lastSnapshotTime = now
+        let result = (metrics, actions)
+        cachedSnapshot = result
+        return result
     }
 
     func clearSensitiveData() {
@@ -101,8 +118,12 @@ final class TouchCapture {
         zeroBuffer(&actionTimestamps)
         zeroBuffer(&forces)
         zeroBuffer(&majorRadii)
+        zeroBuffer(&swipeSpeeds)
         swipeCount = 0
         tapCount = 0
+        currentSwipeStartTime = 0
+        lastSnapshotTime = 0
+        cachedSnapshot = nil
     }
 
     private func zeroBuffer<T>(_ array: inout [T]) {
@@ -118,14 +139,14 @@ final class TouchCapture {
 
     private func record(touch: UITouch) {
         // Avoid unbounded growth if the caller forgets to evaluate for a long time.
-        if touchPoints.count > 5000 {
-            touchPoints.removeFirst(touchPoints.count - 3000)
+        if touchPoints.count > 10000 {
+            touchPoints.removeFirst(touchPoints.count - 6000)
         }
-        if tapTimestamps.count > 2000 {
-            tapTimestamps.removeFirst(tapTimestamps.count - 1200)
+        if tapTimestamps.count > 4000 {
+            tapTimestamps.removeFirst(tapTimestamps.count - 2400)
         }
-        if swipeLinearities.count > 2000 {
-            swipeLinearities.removeFirst(swipeLinearities.count - 1200)
+        if swipeLinearities.count > 4000 {
+            swipeLinearities.removeFirst(swipeLinearities.count - 2400)
         }
 
         let p = touch.location(in: touch.view)
@@ -134,6 +155,7 @@ final class TouchCapture {
         switch touch.phase {
         case .began:
             currentSwipePath = [p]
+            currentSwipeStartTime = touch.timestamp
         case .moved:
             if currentSwipePath.count < 500 {
                 currentSwipePath.append(p)
@@ -145,6 +167,10 @@ final class TouchCapture {
             if currentSwipePath.count >= 2 {
                 swipeCount += 1
                 swipeLinearities.append(TouchMath.linearity(path: currentSwipePath) ?? 1.0)
+                let duration = touch.timestamp - currentSwipeStartTime
+                if let speed = TouchMath.averageSwipeSpeed(path: currentSwipePath, duration: duration) {
+                    swipeSpeeds.append(speed)
+                }
                 actionTimestamps.append(touch.timestamp)
             } else {
                 tapCount += 1
@@ -227,6 +253,23 @@ private enum TouchMath {
         let v = values.map { pow($0 - mean, 2) }.reduce(0, +) / Double(values.count)
         return v
     }
+
+    static func coefficientOfVariation(values: [Double]) -> Double? {
+        guard values.count >= 3 else { return nil }
+        let mean = values.reduce(0, +) / Double(values.count)
+        guard mean > 0 else { return nil }
+        let variance = values.map { pow($0 - mean, 2) }.reduce(0, +) / Double(values.count)
+        return sqrt(variance) / mean
+    }
+
+    static func averageSwipeSpeed(path: [CGPoint], duration: TimeInterval) -> Double? {
+        guard path.count >= 2, duration > 0 else { return nil }
+        var totalDistance: CGFloat = 0
+        for i in 0..<(path.count - 1) {
+            totalDistance += hypot(path[i + 1].x - path[i].x, path[i + 1].y - path[i].y)
+        }
+        return Double(totalDistance) / duration
+    }
 }
 #else
 
@@ -245,7 +288,8 @@ final class TouchCapture {
             intervalCV: nil,
             averageLinearity: nil,
             forceVariance: nil,
-            majorRadiusVariance: nil
+            majorRadiusVariance: nil,
+            swipeSpeedCV: nil
         )
     }
 }

@@ -15,7 +15,11 @@ final class MotionSampler {
     private var stillCount = 0
     private var energySum = 0.0
     private var series: [MotionSample] = []
-    private let seriesMax = 2000
+    private let seriesMax = 3600
+
+    private let minSnapshotInterval: TimeInterval = 5.0
+    private var lastSnapshotTime: TimeInterval = 0
+    private var cachedSnapshot: (metrics: MotionMetrics, series: [MotionSample])?
 
     func start() {
         lock.lock()
@@ -60,6 +64,12 @@ final class MotionSampler {
     func snapshotDetailAndReset() -> (metrics: MotionMetrics, series: [MotionSample]) {
         lock.lock()
         defer { lock.unlock() }
+
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - lastSnapshotTime < minSnapshotInterval, let cached = cachedSnapshot {
+            return cached
+        }
+
         guard sampleCount > 0 else { return (.empty, []) }
 
         let stillness = Double(stillCount) / Double(sampleCount)
@@ -72,7 +82,11 @@ final class MotionSampler {
         stillCount = 0
         energySum = 0
         series.removeAll(keepingCapacity: true)
-        return (metrics, outSeries)
+
+        lastSnapshotTime = now
+        let result = (metrics, outSeries)
+        cachedSnapshot = result
+        return result
     }
 
     func clearSensitiveData() {
@@ -90,6 +104,8 @@ final class MotionSampler {
         sampleCount = 0
         stillCount = 0
         energySum = 0
+        lastSnapshotTime = 0
+        cachedSnapshot = nil
     }
 
     private func consume(motion: CMDeviceMotion) {

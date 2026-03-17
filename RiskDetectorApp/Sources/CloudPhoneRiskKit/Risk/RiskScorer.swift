@@ -7,7 +7,7 @@ import Foundation
 // Scoring Pipeline:
 //   1. Jailbreak confidence → ×jailbreakWeight (capped at scoreCap)
 //   2. Network signals      → VPN +vpnScore, Proxy +proxyScore (if enabled)
-//   3. Behavior analysis    → up to +maxBehaviorScore from 8 heuristics (capped)
+//   3. Behavior analysis    → up to +maxBehaviorScore from 11 heuristics (capped)
 //   4. Extra signals        → up to +maxExtraSignalsScore from providers (de-duped)
 //   5. Total capped at scoreCap
 //
@@ -28,32 +28,30 @@ enum RiskScorer {
     /// 扩展信号（provider）最大分值
     private static let maxExtraSignalsScore: Double = 20
 
-    // MARK: - Behavior Thresholds
+    // MARK: - Behavior Scores (fixed point values, not remotely configurable)
 
-    private static let touchSpreadLowThreshold: Double = 2.0
     private static let touchSpreadLowScore: Double = 12
-    private static let touchSpreadHighThreshold: Double = 10.0
     private static let touchSpreadHighScore: Double = 4
-    private static let touchIntervalCVLowThreshold: Double = 0.2
     private static let touchIntervalRegularScore: Double = 10
-    private static let touchIntervalCVHighThreshold: Double = 0.6
     private static let touchIntervalChaoticScore: Double = 4
-    private static let swipeLinearityHighThreshold: Double = 0.98
-    private static let swipeLinearityLowThreshold: Double = 0.90
-    private static let minSwipesForLinearity = 3
     private static let swipeTooLinearScore: Double = 8
     private static let swipeTooCurvyScore: Double = 4
-    private static let motionStillnessThreshold: Double = 0.98
-    private static let minActionsForStillness = 10
     private static let motionTooStillScore: Double = 10
-    private static let touchMotionCorrelationThreshold: Double = 0.10
-    private static let minActionsForCorrelation = 10
-    private static let minStillnessForCorrelation: Double = 0.95
     private static let touchMotionWeakCouplingScore: Double = 8
+    private static let forceTooUniformScore: Double = 10
+    private static let radiusTooUniformScore: Double = 8
+    private static let swipeSpeedTooRegularScore: Double = 6
+    private static let insufficientDataScore: Double = 5
+
+    // MARK: - Behavior Sample Counts (fixed)
+
+    private static let minSwipesForLinearity = 3
+    private static let minActionsForStillness = 10
+    private static let minActionsForCorrelation = 10
+    private static let minForceSamples = 6
+    private static let minRadiusSamples = 6
     private static let minTotalActions = 3
     private static let minSampleCount = 5
-    private static let insufficientDataScore: Double = 5
-    private static let maxBehaviorScore: Double = 30
 
     static func score(context: RiskContext, config: RiskConfig, extraSignals: [RiskSignal] = []) -> RiskScoreReport {
         var total: Double = 0
@@ -99,7 +97,8 @@ enum RiskScorer {
         }
 
         if config.enableBehaviorDetect {
-            let b = behaviorScore(behavior: context.behavior)
+            let thresholds = config.behaviorThresholds ?? .default
+            let b = behaviorScore(behavior: context.behavior, thresholds: thresholds)
             total += b.score
             signals.append(contentsOf: b.signals)
             #if DEBUG
@@ -145,7 +144,7 @@ enum RiskScorer {
         )
     }
 
-    private static func behaviorScore(behavior: BehaviorSignals) -> (score: Double, signals: [RiskSignal]) {
+    private static func behaviorScore(behavior: BehaviorSignals, thresholds: BehaviorThresholds) -> (score: Double, signals: [RiskSignal]) {
         var total: Double = 0
         var signals: [RiskSignal] = []
 
@@ -182,55 +181,88 @@ enum RiskScorer {
             break // 样本充足，继续执行启发式分析
         }
 
-        if let spread = behavior.touch.coordinateSpread, spread < touchSpreadLowThreshold {
+        if let spread = behavior.touch.coordinateSpread, spread < thresholds.touchSpreadLow {
             total += touchSpreadLowScore
             signals.append(RiskSignal(id: SignalID.touchSpreadLow, category: SignalCategory.behavior, score: touchSpreadLowScore, evidence: ["spread": "\(spread)"]))
         }
 
-        if let spread = behavior.touch.coordinateSpread, spread > touchSpreadHighThreshold {
+        if let spread = behavior.touch.coordinateSpread, spread > thresholds.touchSpreadHigh {
             total += touchSpreadHighScore
             signals.append(RiskSignal(id: SignalID.touchSpreadHigh, category: SignalCategory.behavior, score: touchSpreadHighScore, evidence: ["spread": "\(spread)"]))
         }
 
-        if let cv = behavior.touch.intervalCV, cv < touchIntervalCVLowThreshold {
+        if let cv = behavior.touch.intervalCV, cv < thresholds.touchIntervalCVLow {
             total += touchIntervalRegularScore
             signals.append(RiskSignal(id: SignalID.touchIntervalTooRegular, category: SignalCategory.behavior, score: touchIntervalRegularScore, evidence: ["cv": "\(cv)"]))
         }
 
-        if let cv = behavior.touch.intervalCV, cv > touchIntervalCVHighThreshold {
+        if let cv = behavior.touch.intervalCV, cv > thresholds.touchIntervalCVHigh {
             total += touchIntervalChaoticScore
             signals.append(RiskSignal(id: SignalID.touchIntervalTooChaotic, category: SignalCategory.behavior, score: touchIntervalChaoticScore, evidence: ["cv": "\(cv)"]))
         }
 
-        if let lin = behavior.touch.averageLinearity, lin > swipeLinearityHighThreshold, behavior.touch.swipeCount >= minSwipesForLinearity {
+        if let lin = behavior.touch.averageLinearity, lin > thresholds.swipeLinearityHigh, behavior.touch.swipeCount >= minSwipesForLinearity {
             total += swipeTooLinearScore
             signals.append(RiskSignal(id: SignalID.swipeTooLinear, category: SignalCategory.behavior, score: swipeTooLinearScore, evidence: ["avg_linearity": "\(lin)"]))
         }
 
-        if let lin = behavior.touch.averageLinearity, lin < swipeLinearityLowThreshold, behavior.touch.swipeCount >= minSwipesForLinearity {
+        if let lin = behavior.touch.averageLinearity, lin < thresholds.swipeLinearityLow, behavior.touch.swipeCount >= minSwipesForLinearity {
             total += swipeTooCurvyScore
             signals.append(RiskSignal(id: SignalID.swipeTooCurvy, category: SignalCategory.behavior, score: swipeTooCurvyScore, evidence: ["avg_linearity": "\(lin)"]))
         }
 
-        if let still = behavior.motion.stillnessRatio, still > motionStillnessThreshold, (behavior.touch.tapCount + behavior.touch.swipeCount) >= minActionsForStillness {
+        if let still = behavior.motion.stillnessRatio, still > thresholds.motionStillness, (behavior.touch.tapCount + behavior.touch.swipeCount) >= minActionsForStillness {
             total += motionTooStillScore
             signals.append(RiskSignal(id: SignalID.motionTooStill, category: SignalCategory.behavior, score: motionTooStillScore, evidence: ["stillness": "\(still)"]))
         }
 
         if
             let corr = behavior.touchMotionCorrelation,
-            corr < touchMotionCorrelationThreshold,
+            corr < thresholds.touchMotionCorrelation,
             behavior.actionCount >= minActionsForCorrelation,
-            (behavior.motion.stillnessRatio ?? 0) > minStillnessForCorrelation
+            (behavior.motion.stillnessRatio ?? 0) > thresholds.minStillnessForCorrelation
         {
             total += touchMotionWeakCouplingScore
             signals.append(RiskSignal(id: SignalID.touchMotionWeakCoupling, category: SignalCategory.behavior, score: touchMotionWeakCouplingScore, evidence: ["corr": "\(corr)"]))
         }
 
-        // 注意：低样本量保护已在函数入口通过 sampleSufficiency 处理，
-        // 走到这里的行为数据已满足最小样本量要求。
+        if let forceVar = behavior.touch.forceVariance,
+           behavior.touch.tapCount + behavior.touch.swipeCount >= minForceSamples,
+           forceVar < thresholds.forceVariance {
+            total += forceTooUniformScore
+            signals.append(RiskSignal(id: SignalID.forceTooUniform, category: SignalCategory.behavior, score: forceTooUniformScore, evidence: ["force_variance": "\(forceVar)"]))
+        }
 
-        return (min(total, maxBehaviorScore), signals)
+        if let radiusVar = behavior.touch.majorRadiusVariance,
+           behavior.touch.tapCount + behavior.touch.swipeCount >= minRadiusSamples,
+           radiusVar < thresholds.radiusVariance {
+            total += radiusTooUniformScore
+            signals.append(RiskSignal(id: SignalID.radiusTooUniform, category: SignalCategory.behavior, score: radiusTooUniformScore, evidence: ["radius_variance": "\(radiusVar)"]))
+        }
+
+        if let speedCV = behavior.touch.swipeSpeedCV,
+           behavior.touch.swipeCount >= minSwipesForLinearity,
+           speedCV < thresholds.swipeSpeedCV {
+            total += swipeSpeedTooRegularScore
+            signals.append(RiskSignal(id: SignalID.swipeSpeedTooRegular, category: SignalCategory.behavior, score: swipeSpeedTooRegularScore, evidence: ["speed_cv": "\(speedCV)"]))
+        }
+
+        let totalActions = behavior.touch.tapCount + behavior.touch.swipeCount
+        if totalActions < minTotalActions, behavior.touch.sampleCount < minSampleCount {
+            total += insufficientDataScore
+            signals.append(RiskSignal(
+                id: SignalID.insufficientBehaviorData,
+                category: SignalCategory.behavior,
+                score: insufficientDataScore,
+                evidence: [
+                    "tapCount": "\(behavior.touch.tapCount)",
+                    "swipeCount": "\(behavior.touch.swipeCount)",
+                    "sampleCount": "\(behavior.touch.sampleCount)"
+                ]
+            ))
+        }
+
+        return (min(total, thresholds.maxBehaviorScore), signals)
     }
 
     private static func summary(score: Double, isHighRisk: Bool, jailbreak: DetectionResult) -> String {

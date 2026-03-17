@@ -92,7 +92,6 @@ export CPRISK_ARMOR_KEY=<hex>; .build/release/cprisk-armor --input ... --output 
 - DRM 能力检测（FairPlay）
 - 电池熵检测（无真实电池硬件）
 - 部分越狱 / 挂载点检测（沙盒行为不同）
-
 模拟器适合做接入验证和 JSON 结构检查；越狱强度回归 & 行为指纹精度测试请用真机。
 
 ---
