@@ -158,6 +158,37 @@ targets:
           echo "Strip complete."
         basedOnDependencyAnalysis: false
 
+  CloudPhoneRiskKitTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests/CloudPhoneRiskKitTests
+    dependencies:
+      - target: CloudPhoneRiskKit
+      - target: CRiskCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cloudphonerisk.CloudPhoneRiskKitTests
+        ENABLE_TESTABILITY: YES
+        GENERATE_INFOPLIST_FILE: YES
+
+  CloudPhoneRiskAppCoreTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests/CloudPhoneRiskAppCoreTests
+    dependencies:
+      - target: CloudPhoneRiskAppCore
+      - target: CloudPhoneRiskKit
+      - target: CRiskCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cloudphonerisk.CloudPhoneRiskAppCoreTests
+        ENABLE_TESTABILITY: YES
+        GENERATE_INFOPLIST_FILE: YES
+
 schemes:
   RiskDetectorApp:
     build:
@@ -170,6 +201,9 @@ schemes:
       config: Debug
     test:
       config: Debug
+      targets:
+        - CloudPhoneRiskKitTests
+        - CloudPhoneRiskAppCoreTests
     profile:
       config: Release
     analyze:

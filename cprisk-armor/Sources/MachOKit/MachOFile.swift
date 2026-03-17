@@ -443,7 +443,9 @@ public final class MachOFile {
 
             guard nameFileOffset >= 0, nameFileOffset < data.count else { continue }
 
-            let name = try data.readCString(at: nameFileOffset, maxLength: 256)
+            // Scan until \0 to get full type name; cap at 4096 to avoid pathological inputs.
+            let maxLen = Swift.min(4096, data.count - nameFileOffset)
+            let name = try data.readCString(at: nameFileOffset, maxLength: maxLen)
             results.append(SwiftTypeMetadata(
                 offset: UInt64(descriptorFileOffset),
                 nameOffset: UInt64(nameFileOffset),
@@ -720,15 +722,22 @@ public final class MachOFile {
         alignment: Int
     ) -> (fileOffset: Int, vmAddress: UInt64)? {
         guard contentLength > 0 else { return nil }
-
+        guard segment.fileOffset <= UInt64(Int.max), segment.fileSize <= UInt64(Int.max) else {
+            return nil
+        }
         let segStart = Int(segment.fileOffset)
-        let segEnd = segStart + Int(segment.fileSize)
-        guard segStart >= 0, segEnd > segStart else { return nil }
+        let segSize = Int(segment.fileSize)
+        let (segEnd, segOverflow) = segStart.addingReportingOverflow(segSize)
+        guard !segOverflow, segEnd > segStart else { return nil }
 
         let occupied: [(start: Int, end: Int)] = segment.sections.compactMap { section in
+            guard section.offset <= UInt64(Int.max), section.size <= UInt64(Int.max) else {
+                return nil
+            }
             let start = Int(section.offset)
-            let end = start + Int(section.size)
-            guard section.storesDataInFile, section.size > 0, start >= segStart, end <= segEnd else {
+            let sizeInt = Int(section.size)
+            let (end, overflow) = start.addingReportingOverflow(sizeInt)
+            guard !overflow, section.storesDataInFile, section.size > 0, start >= segStart, end <= segEnd else {
                 return nil
             }
             return (start, end)

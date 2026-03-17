@@ -1,4 +1,5 @@
 import CryptoKit
+import DataSegmentEncryptor
 import Foundation
 import IntegrityAnchor
 import MachOKit
@@ -7,8 +8,9 @@ import XCTest
 
 // MARK: - KDF 全链路测试
 
-/// 验证壳工具链从 rootKey → stringKey → anchor → loaderKey 的完整密钥派生链路。
-/// 所有密钥派生逻辑在测试中独立重新实现，不依赖 Pass 的 private 函数。
+/// 验证壳工具链从 rootKey → stringKey / anchor → anchor-bound accumulator → loaderKey
+/// 的完整密钥派生链路。
+/// 核心逻辑通过 build-tool helper 与测试侧镜像实现交叉验证，避免只测单边实现。
 final class KDFChainTests: XCTestCase {
 
     // MARK: - 固定测试常量
@@ -16,9 +18,8 @@ final class KDFChainTests: XCTestCase {
     static let testRootKey = Data(repeating: 0xAB, count: 32)
     static let pass1Salt = "cprisk.pass1.key.v1"
     static let pass3Salt = "cprisk.pass3.key.v1"
-    static let pass4MaskSalt = "cprisk.pass4.mask.v1"
-    static let bootstrapStringID: UInt32 = 1
-    static let bootstrapValue = "cprisk-bootstrap-v1"
+    static let accumulatorDomain = "cprisk.pass1.acc.v2"
+    static let accumulatorRotation = 7
 
     // MARK: - Test 1: Pass 1 String Key Derivation
 
@@ -153,13 +154,24 @@ final class KDFChainTests: XCTestCase {
         let normalizedKey = Self.normalizedRootKey(rootKey)
         let fullAnchorHash = Self.sha256(Data("test-anchor-content".utf8))
         let integrityHash = Self.sha256(fullAnchorHash + fullAnchorHash + fullAnchorHash)
-        let stringAccumulator = Self.bootstrapAccumulator()
+        let anchorAccumulator = anchorBoundAccumulator(
+            rootKey: rootKey,
+            fullAnchorHash: fullAnchorHash,
+            integrityHash: integrityHash
+        )
+        let expectedAccumulator = Self.manualAnchorBoundAccumulator(
+            rootKey: rootKey,
+            fullAnchorHash: fullAnchorHash,
+            integrityHash: integrityHash
+        )
+        XCTAssertEqual(anchorAccumulator, expectedAccumulator,
+                       "anchor-bound accumulator must match the mirrored SHA256/rotl64 contract")
 
         let loaderKey = Self.deriveLoaderKey(
             rootKey: rootKey,
             fullAnchorHash: fullAnchorHash,
             integrityHash: integrityHash,
-            stringAccumulator: stringAccumulator
+            anchorAccumulator: anchorAccumulator
         )
         XCTAssertEqual(loaderKey.count, 32, "loaderKey must be 32 bytes")
 
@@ -167,7 +179,7 @@ final class KDFChainTests: XCTestCase {
         expectedSeed.append(normalizedKey)
         expectedSeed.append(fullAnchorHash)
         expectedSeed.append(integrityHash)
-        Self.appendUInt64(stringAccumulator, to: &expectedSeed)
+        Self.appendUInt64(anchorAccumulator, to: &expectedSeed)
         let expectedKey = Self.sha256(expectedSeed)
 
         XCTAssertEqual(loaderKey, expectedKey,
@@ -176,24 +188,32 @@ final class KDFChainTests: XCTestCase {
 
     func testPass3LoaderKeyDependsOnAnchor() {
         let rootKey = Self.testRootKey
-        let stringAcc = Self.bootstrapAccumulator()
-
         let anchor1 = Self.sha256(Data("anchor-content-1".utf8))
         let integrity1 = Self.sha256(anchor1 + anchor1 + anchor1)
+        let anchorAccumulator1 = anchorBoundAccumulator(
+            rootKey: rootKey,
+            fullAnchorHash: anchor1,
+            integrityHash: integrity1
+        )
         let key1 = Self.deriveLoaderKey(
             rootKey: rootKey,
             fullAnchorHash: anchor1,
             integrityHash: integrity1,
-            stringAccumulator: stringAcc
+            anchorAccumulator: anchorAccumulator1
         )
 
         let anchor2 = Self.sha256(Data("anchor-content-2".utf8))
         let integrity2 = Self.sha256(anchor2 + anchor2 + anchor2)
+        let anchorAccumulator2 = anchorBoundAccumulator(
+            rootKey: rootKey,
+            fullAnchorHash: anchor2,
+            integrityHash: integrity2
+        )
         let key2 = Self.deriveLoaderKey(
             rootKey: rootKey,
             fullAnchorHash: anchor2,
             integrityHash: integrity2,
-            stringAccumulator: stringAcc
+            anchorAccumulator: anchorAccumulator2
         )
 
         XCTAssertNotEqual(key1, key2,
@@ -210,6 +230,107 @@ final class KDFChainTests: XCTestCase {
         triple.append(fullAnchorHash)
         XCTAssertEqual(triple.count, 96)
         XCTAssertEqual(integrityHash, Self.sha256(triple))
+    }
+
+    func testAnchorBoundAccumulatorDeterminismAndCalculation() {
+        let rootKey = Self.testRootKey
+        let fullAnchorHash = Self.sha256(Data("test-anchor-content".utf8))
+        let integrityHash = Self.sha256(fullAnchorHash + fullAnchorHash + fullAnchorHash)
+
+        let acc1 = anchorBoundAccumulator(
+            rootKey: rootKey,
+            fullAnchorHash: fullAnchorHash,
+            integrityHash: integrityHash
+        )
+        let acc2 = anchorBoundAccumulator(
+            rootKey: rootKey,
+            fullAnchorHash: fullAnchorHash,
+            integrityHash: integrityHash
+        )
+        let expected = Self.manualAnchorBoundAccumulator(
+            rootKey: rootKey,
+            fullAnchorHash: fullAnchorHash,
+            integrityHash: integrityHash
+        )
+
+        XCTAssertEqual(acc1, acc2, "same root/anchor/integrity inputs must produce same accumulator")
+        XCTAssertEqual(acc1, expected,
+                       "accumulator must match rotl64(LE64(SHA256(domain||root||anchor||integrity)[0:8]), 7)")
+    }
+
+    func testAnchorBoundAccumulatorChangesWithAnyInputByte() {
+        let rootKey = Self.testRootKey
+        let fullAnchorHash = Self.sha256(Data("test-anchor-content".utf8))
+        let integrityHash = Self.sha256(fullAnchorHash + fullAnchorHash + fullAnchorHash)
+        let baseline = anchorBoundAccumulator(
+            rootKey: rootKey,
+            fullAnchorHash: fullAnchorHash,
+            integrityHash: integrityHash
+        )
+
+        var mutatedRootKey = rootKey
+        mutatedRootKey[0] ^= 0x01
+        XCTAssertNotEqual(
+            baseline,
+            anchorBoundAccumulator(
+                rootKey: mutatedRootKey,
+                fullAnchorHash: fullAnchorHash,
+                integrityHash: integrityHash
+            ),
+            "changing any rootKey byte must change the accumulator"
+        )
+
+        var mutatedAnchor = fullAnchorHash
+        mutatedAnchor[0] ^= 0x01
+        XCTAssertNotEqual(
+            baseline,
+            anchorBoundAccumulator(
+                rootKey: rootKey,
+                fullAnchorHash: mutatedAnchor,
+                integrityHash: integrityHash
+            ),
+            "changing any fullAnchorHash byte must change the accumulator"
+        )
+
+        var mutatedIntegrity = integrityHash
+        mutatedIntegrity[0] ^= 0x01
+        XCTAssertNotEqual(
+            baseline,
+            anchorBoundAccumulator(
+                rootKey: rootKey,
+                fullAnchorHash: fullAnchorHash,
+                integrityHash: mutatedIntegrity
+            ),
+            "changing any integrityHash byte must change the accumulator"
+        )
+    }
+
+    func testLoaderKeyIsSensitiveToAnchorBoundAccumulator() {
+        let rootKey = Self.testRootKey
+        let fullAnchorHash = Self.sha256(Data("test-anchor-content".utf8))
+        let integrityHash = Self.sha256(fullAnchorHash + fullAnchorHash + fullAnchorHash)
+        let anchorAccumulator = anchorBoundAccumulator(
+            rootKey: rootKey,
+            fullAnchorHash: fullAnchorHash,
+            integrityHash: integrityHash
+        )
+        let perturbedAccumulator = anchorAccumulator ^ 0x0102_0408_1020_4080
+
+        let key1 = Self.deriveLoaderKey(
+            rootKey: rootKey,
+            fullAnchorHash: fullAnchorHash,
+            integrityHash: integrityHash,
+            anchorAccumulator: anchorAccumulator
+        )
+        let key2 = Self.deriveLoaderKey(
+            rootKey: rootKey,
+            fullAnchorHash: fullAnchorHash,
+            integrityHash: integrityHash,
+            anchorAccumulator: perturbedAccumulator
+        )
+
+        XCTAssertNotEqual(anchorAccumulator, perturbedAccumulator)
+        XCTAssertNotEqual(key1, key2, "loaderKey must change when the anchor-bound accumulator changes")
     }
 
     // MARK: - Test 6: Full KDF Chain Consistency
@@ -244,6 +365,20 @@ final class KDFChainTests: XCTestCase {
         let expectedHmac = ArmorABI.hmacSHA256(key: normalizedKey, message: originalTextHash)
         XCTAssertEqual(fullHashContent, expectedHmac,
                        "stored HMAC must match HMAC-SHA256(rootKey, textHash)")
+
+        let integrityHash = Self.sha256(originalTextHash + originalTextHash + originalTextHash)
+        let actualAccumulator = anchorBoundAccumulator(
+            rootKey: rootKey,
+            fullAnchorHash: originalTextHash,
+            integrityHash: integrityHash
+        )
+        let expectedAccumulator = Self.manualAnchorBoundAccumulator(
+            rootKey: rootKey,
+            fullAnchorHash: originalTextHash,
+            integrityHash: integrityHash
+        )
+        XCTAssertEqual(actualAccumulator, expectedAccumulator,
+                       "full-chain accumulator must stay in sync with the mirrored contract")
 
         for (i, sectionName) in ArmorABI.Integrity.splitSectionNames.enumerated() {
             let section = try XCTUnwrap(
@@ -323,27 +458,16 @@ final class KDFChainTests: XCTestCase {
         XCTAssertNotEqual(hash1, hash2,
                           "modifying 1 byte of __TEXT.__text must change the anchor hash")
 
-        let stringAcc = Self.bootstrapAccumulator()
         let integ1 = Self.sha256(hash1 + hash1 + hash1)
         let integ2 = Self.sha256(hash2 + hash2 + hash2)
+        let acc1 = anchorBoundAccumulator(rootKey: rootKey, fullAnchorHash: hash1, integrityHash: integ1)
+        let acc2 = anchorBoundAccumulator(rootKey: rootKey, fullAnchorHash: hash2, integrityHash: integ2)
         let lk1 = Self.deriveLoaderKey(rootKey: rootKey, fullAnchorHash: hash1,
-                                       integrityHash: integ1, stringAccumulator: stringAcc)
+                                       integrityHash: integ1, anchorAccumulator: acc1)
         let lk2 = Self.deriveLoaderKey(rootKey: rootKey, fullAnchorHash: hash2,
-                                       integrityHash: integ2, stringAccumulator: stringAcc)
+                                       integrityHash: integ2, anchorAccumulator: acc2)
         XCTAssertNotEqual(lk1, lk2,
                           "different anchor hash must cascade to different loader key")
-    }
-
-    func testBootstrapAccumulatorCalculation() {
-        let digest = Self.sha256(Data(Self.bootstrapValue.utf8))
-        var value: UInt64 = 0
-        _ = withUnsafeMutableBytes(of: &value) { target in
-            digest.prefix(MemoryLayout<UInt64>.size).copyBytes(to: target)
-        }
-        let expected = Self.rotl64(value, by: Int(Self.bootstrapStringID % 64))
-        let actual = Self.bootstrapAccumulator()
-        XCTAssertEqual(actual, expected,
-                       "bootstrapAccumulator must match rotl64(SHA256(bootstrapValue)[0:8], 1)")
     }
 
     // MARK: - Helpers (replicating private Pass logic for testing)
@@ -391,23 +515,32 @@ final class KDFChainTests: XCTestCase {
         rootKey: Data?,
         fullAnchorHash: Data,
         integrityHash: Data,
-        stringAccumulator: UInt64
+        anchorAccumulator: UInt64
     ) -> Data {
         var seed = Data(pass3Salt.utf8)
         seed.append(normalizedRootKey(rootKey))
         seed.append(fullAnchorHash)
         seed.append(integrityHash)
-        appendUInt64(stringAccumulator, to: &seed)
+        appendUInt64(anchorAccumulator, to: &seed)
         return sha256(seed)
     }
 
-    private static func bootstrapAccumulator() -> UInt64 {
-        let digest = sha256(Data(bootstrapValue.utf8))
+    private static func manualAnchorBoundAccumulator(
+        rootKey: Data?,
+        fullAnchorHash: Data,
+        integrityHash: Data
+    ) -> UInt64 {
+        var seed = Data(accumulatorDomain.utf8)
+        seed.append(normalizedRootKey(rootKey))
+        seed.append(fullAnchorHash)
+        seed.append(integrityHash)
+
+        let digest = sha256(seed)
         var value: UInt64 = 0
         _ = withUnsafeMutableBytes(of: &value) { target in
             digest.prefix(MemoryLayout<UInt64>.size).copyBytes(to: target)
         }
-        return rotl64(value, by: Int(bootstrapStringID % 64))
+        return rotl64(value, by: accumulatorRotation)
     }
 
     private static func rotl64(_ value: UInt64, by amount: Int) -> UInt64 {

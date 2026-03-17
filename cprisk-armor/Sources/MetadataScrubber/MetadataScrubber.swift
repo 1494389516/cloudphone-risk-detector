@@ -8,12 +8,19 @@ import MachOKit
 public final class MetadataScrubberPass: ArmorPass {
     public let name = "MetadataScrubber"
 
-    private static let sdkMethodMarkers = [
-        "cprisk", "CPRisk", "cloudPhone", "CloudPhone",
-        "riskSignal", "RiskSignal", "riskReport", "RiskReport",
-        "detection", "Detection", "jailbreak", "Jailbreak",
-        "antiTamper", "AntiTamper", "trustChain", "TrustChain",
-        "behavior", "Behavior", "evaluate", "armoring",
+    /// ObjC method prefixes that must be preserved for runtime correctness.
+    private static let systemMethodPrefixes = [
+        "init", ".cxx_destruct",
+        "viewDid", "viewWill", "layout", "draw",
+        "encode", "decode", "awakeFromNib",
+        "application:", "scene:",
+        "tableView:", "collectionView:", "scrollView:",
+        "textField:", "picker:",
+        "dealloc", "description", "debugDescription",
+        "hash", "isEqual:", "copy", "mutableCopy",
+        "responds", "performs", "class", "super", "self",
+        "zone", "retain", "release", "autorelease", "forward",
+        "observeValue", "setValue:forKey", "valueForKey",
     ]
 
     public init() {}
@@ -35,11 +42,25 @@ public final class MetadataScrubberPass: ArmorPass {
             details.append("Reflection strings scrubbed: \(reflBytes) bytes")
         }
 
+        let extraBytes = try scrubAdditionalMetadataSections(in: file)
+        if extraBytes > 0 {
+            itemsProcessed += 1
+            bytesModified += extraBytes
+            details.append("Additional metadata sections scrubbed: \(extraBytes) bytes")
+        }
+
         let methResult = try scrubObjCMethodNames(in: file)
         if methResult.total > 0 {
             itemsProcessed += methResult.obfuscated
             bytesModified += methResult.bytes
             details.append("ObjC method names obfuscated: \(methResult.obfuscated)/\(methResult.total)")
+        }
+
+        let constResult = try scrubConstSectionModuleNames(in: file)
+        if constResult.total > 0 {
+            itemsProcessed += constResult.scrubbed
+            bytesModified += constResult.bytes
+            details.append("__const module name strings scrubbed: \(constResult.scrubbed)/\(constResult.total)")
         }
 
         return PassResult(
@@ -80,11 +101,44 @@ public final class MetadataScrubberPass: ArmorPass {
             section: ArmorABI.MetadataSections.swiftReflectionStrings
         ) else { return 0 }
 
+        guard section.size <= UInt64(Int.max) else {
+            throw MachOError.integerOverflow("section \(section.sectionName) size exceeds Int.max")
+        }
         let size = Int(section.size)
         guard size > 0 else { return 0 }
 
         try file.replaceBytes(at: UInt64(section.offset), with: Self.randomBytes(count: size))
         return size
+    }
+
+    // MARK: - B2. Additional Metadata Section Scrubbing
+
+    /// Randomize content of additional Swift metadata sections that may leak type/field names.
+    /// These sections (__swift5_fieldmd, __swift5_builtin, __swift5_capture, __swift5_assocty,
+    /// __swift5_proto, __swift5_protos, __swift5_typeref) contain descriptors / mangled-name
+    /// strings with embedded type and protocol references. Rather than parsing each complex
+    /// descriptor format, we overwrite the full section content with random bytes — safe because
+    /// the SDK binary is re-signed after armoring and these sections are not required for correct
+    /// execution of our own code. NOTE: __swift5_types (relative-pointer table) is intentionally
+    /// excluded here; it is required at runtime and is verified by testSwiftTypesRelativePointersUntouched.
+    private func scrubAdditionalMetadataSections(in file: MachOFile) throws -> Int {
+        var totalBytes = 0
+
+        for sectionName in ArmorABI.MetadataSections.additionalScrubSections {
+            for segName in ["__TEXT", "__DATA"] {
+                guard let section = try file.section(segment: segName, section: sectionName) else {
+                    continue
+                }
+                guard section.size <= UInt64(Int.max) else { continue }
+                let size = Int(section.size)
+                guard size > 0 else { continue }
+
+                try file.replaceBytes(at: UInt64(section.offset), with: Self.randomBytes(count: size))
+                totalBytes += size
+            }
+        }
+
+        return totalBytes
     }
 
     // MARK: - C. ObjC Method Name Obfuscation
@@ -140,12 +194,174 @@ public final class MetadataScrubberPass: ArmorPass {
         return true
     }
 
+    /// Default-obfuscate: all methods are obfuscated UNLESS they match a system prefix or are single-char.
     private static func shouldObfuscateMethod(_ name: String) -> Bool {
-        guard !name.isEmpty else { return false }
-        for marker in sdkMethodMarkers where name.contains(marker) {
+        guard name.count > 1 else { return false }
+        for prefix in systemMethodPrefixes where name.hasPrefix(prefix) {
+            return false
+        }
+        return true
+    }
+
+    // MARK: - D. __const Section Module Name Scrubbing
+
+    /// Business module name keywords to scrub from Swift type descriptor C strings.
+    ///
+    /// These appear as `module name` fields in `__TEXT,__const` type descriptors and are
+    /// directly readable in IDA/Hopper. We overwrite the content bytes with random hex
+    /// while preserving the null terminator so the surrounding record layout is intact.
+    private static let constSectionScrubKeywords: [String] = [
+        "CloudPhoneRisk",
+        "RiskDetector",
+        "CRiskCore",
+        "RiskAppCore",
+    ]
+
+    /// Minimum length for a generic "Risk"-containing string to be eligible for scrubbing.
+    private static let riskSubstringMinLength = 5
+
+    /// Raw byte-level keyword search for slices that failed UTF-8/Latin-1 decode.
+    /// Matches keywords case-insensitively (ASCII only).
+    private static func rawSliceContainsScrubKeyword(_ slice: Data, length: Int) -> Bool {
+        for keyword in constSectionScrubKeywords {
+            let kw = keyword.lowercased()
+            let kwBytes = Array(kw.utf8)
+            guard length >= kwBytes.count else { continue }
+            for i in 0...(length - kwBytes.count) {
+                var match = true
+                for j in 0..<kwBytes.count {
+                    let b = slice[i + j]
+                    let kb = kwBytes[j]
+                    if b == kb { continue }
+                    if (65...90).contains(b) && b + 32 == kb { continue }
+                    if (97...122).contains(b) && b - 32 == kb { continue }
+                    match = false
+                    break
+                }
+                if match { return true }
+            }
+        }
+        if length > riskSubstringMinLength {
+            let riskBytes = Array("risk".utf8)
+            guard length >= riskBytes.count else { return false }
+            for i in 0...(length - riskBytes.count) {
+                var match = true
+                for j in 0..<riskBytes.count {
+                    let b = slice[i + j]
+                    let kb = riskBytes[j]
+                    if b == kb { continue }
+                    if (65...90).contains(b) && b + 32 == kb { continue }
+                    if (97...122).contains(b) && b - 32 == kb { continue }
+                    match = false
+                    break
+                }
+                if match { return true }
+            }
+        }
+        return false
+    }
+
+    /// Returns true when a C string found in `__TEXT,__const` should be overwritten.
+    ///
+    /// Rules (evaluated in order):
+    /// 1. Exact keyword prefix/substring match against `constSectionScrubKeywords`.
+    /// 2. Contains "Risk" and length > `riskSubstringMinLength` (catches RiskSignal, RiskDetector, etc.).
+    private static func shouldScrubConstString(_ string: String) -> Bool {
+        for keyword in constSectionScrubKeywords where string.contains(keyword) {
+            return true
+        }
+        if string.count > riskSubstringMinLength, string.contains("Risk") {
             return true
         }
         return false
+    }
+
+    /// Scan `__TEXT,__const` and `__DATA_CONST,__const` for C strings that contain
+    /// business module names and overwrite their content bytes with random hex,
+    /// preserving each null terminator so surrounding record layout is intact.
+    ///
+    /// - Returns: `(total, scrubbed, bytes)` counts for reporting.
+    private func scrubConstSectionModuleNames(
+        in file: MachOFile
+    ) throws -> (total: Int, scrubbed: Int, bytes: Int) {
+        var total = 0
+        var scrubbed = 0
+        var bytes = 0
+
+        let candidates: [(String, String)] = [
+            ("__TEXT", "__const"),
+            ("__DATA_CONST", "__const"),
+        ]
+
+        for (segName, sectName) in candidates {
+            guard let section = try file.section(segment: segName, section: sectName) else {
+                continue
+            }
+            let r = try scrubConstSection(section, in: file)
+            total    += r.total
+            scrubbed += r.scrubbed
+            bytes    += r.bytes
+        }
+
+        return (total, scrubbed, bytes)
+    }
+
+    private func scrubConstSection(
+        _ section: Section,
+        in file: MachOFile
+    ) throws -> (total: Int, scrubbed: Int, bytes: Int) {
+        let content = try section.readContent(from: file.data)
+        guard !content.isEmpty else { return (0, 0, 0) }
+
+        let sectionFileOffset = UInt64(section.offset)
+        var total = 0
+        var scrubbed = 0
+        var bytes = 0
+        var position = 0
+
+        while position < content.count {
+            // Locate end of current C string (null terminator).
+            var end = position
+            while end < content.count && content[end] != 0 {
+                end += 1
+            }
+
+            let length = end - position
+            if length > 0 {
+                total += 1
+                let slice = content.subdata(in: position..<end)
+                // Try UTF-8 first; fall back to Latin-1 so non-UTF8 records are still scanned.
+                let str = String(data: slice, encoding: .utf8)
+                    ?? String(data: slice, encoding: .isoLatin1)
+                    ?? ""
+                var shouldScrub = false
+                if !str.isEmpty {
+                    shouldScrub = Self.shouldScrubConstString(str)
+                    if !shouldScrub {
+                        // Raw byte-level search for business keywords in non-UTF8 records.
+                        let lower = str.lowercased()
+                        shouldScrub = Self.constSectionScrubKeywords.contains(where: { lower.contains($0.lowercased()) })
+                            || (lower.count > Self.riskSubstringMinLength && lower.contains("risk"))
+                    }
+                } else {
+                    // Decoding failed: do raw byte-level keyword match to avoid missing hits.
+                    shouldScrub = Self.rawSliceContainsScrubKeyword(slice, length: length)
+                }
+                if shouldScrub {
+                    try file.replaceBytes(
+                        at: sectionFileOffset + UInt64(position),
+                        with: Self.randomHexBytes(count: length)
+                    )
+                    scrubbed += 1
+                    bytes += length
+                }
+            }
+
+            // Advance past null terminator (or past lone null bytes used as padding).
+            position = end + 1
+        }
+
+        return (total, scrubbed, bytes)
     }
 
     // MARK: - Random Generation

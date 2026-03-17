@@ -68,7 +68,9 @@ public final class StructureObfuscatorPass: ArmorPass {
         } else {
             var randomBytes: UInt64 = 0
             let status = SecRandomCopyBytes(kSecRandomDefault, MemoryLayout<UInt64>.size, &randomBytes)
-            precondition(status == errSecSuccess, "SecRandomCopyBytes failed")
+            guard status == errSecSuccess else {
+                throw MachOError.invalidData("SecRandomCopyBytes failed: \(status)")
+            }
             seed = randomBytes == 0 ? 1 : randomBytes
         }
         if config.verbose { print("    [StructureObfuscator] seed = \(seed)") }

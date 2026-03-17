@@ -7,7 +7,7 @@ private let rtldDefault = UnsafeMutableRawPointer(bitPattern: -2)
 
 enum LibcPrologueGuard {
     private static let criticalSymbols = [
-        "stat", "lstat", "access", "sysctlbyname", "sysctl", "dladdr", "backtrace"
+        "access", "sysctlbyname", "sysctl", "dladdr", "backtrace"
     ]
 
     private static let lock = NSLock()
@@ -208,9 +208,8 @@ enum SVCDirectCall {
     /// 直 syscall 不可用或失败时返回 nil（安全路径不可用），不静默回退到标准 libc。
     static func secureStat(_ path: String) -> Bool? {
         return path.withCString { cPath in
-            var st = stat()
             var rawErrno: CInt = 0
-            let result = cprisk_stat_direct(cPath, &st, &rawErrno)
+            let result = cprisk_stat_direct(cPath, nil, &rawErrno)
             if result == 0 { return true }
             if rawErrno == ENOENT || rawErrno == ENOTDIR { return false }
             return nil
@@ -221,29 +220,18 @@ enum SVCDirectCall {
     /// 直 syscall 不可用或失败时返回 nil（安全路径不可用），不静默回退到标准 libc。
     static func secureLstat(_ path: String) -> Bool? {
         return path.withCString { cPath in
-            var st = stat()
             var rawErrno: CInt = 0
-            let result = cprisk_lstat_direct(cPath, &st, &rawErrno)
+            let result = cprisk_lstat_direct(cPath, nil, &rawErrno)
             if result == 0 { return true }
             if rawErrno == ENOENT || rawErrno == ENOTDIR { return false }
             return nil
         }
     }
 
-    /// 通过 CRiskCore 的 arm64 直 syscall 路径调用 lstat，返回 inode/st_dev/st_size。
-    /// 供 DualPathBaselineStore 基线采集与校验使用，确保与 validateFileStat 路径一致。
-    /// 成功返回详情；ENOENT/ENOTDIR 或安全路径不可用时返回 nil。
+    /// App Store 兼容路径不再依赖文件元数据类 API，因此不暴露 inode/st_dev/st_size。
+    /// 若后续需要恢复元数据基线能力，应在企业分发构建中单独启用。
     static func secureLstatDetail(path: String) -> (inode: UInt64, stDev: UInt32, stSize: Int64)? {
-        return path.withCString { cPath in
-            var st = stat()
-            var rawErrno: CInt = 0
-            let result = cprisk_lstat_direct(cPath, &st, &rawErrno)
-            if result == 0 {
-                return (UInt64(st.st_ino), UInt32(st.st_dev), st.st_size)
-            }
-            if rawErrno == ENOENT || rawErrno == ENOTDIR { return nil }
-            return nil
-        }
+        nil
     }
 
     /// 通过 CRiskCore 的 arm64 直 syscall 路径调用 access。
@@ -351,53 +339,39 @@ struct DualPathValidator {
         return (secure ?? std, tampered, bypassed, traced, hooked)
     }
 
-    /// 同时调用标准 stat/lstat/access 与加固版本，结果不一致则判定为 tampered。
-    /// 当 secure 路径返回 nil（dlsym 失败，安全路径不可用）且 std 有值时，判定 tampered=true。
+    /// 同时调用高层 fileExists / 标准 access / 加固 access，结果不一致则判定为 tampered。
+    /// 当 secure 路径返回 nil（安全路径不可用）且标准路径有值时，判定 tampered=true。
     static func validateFileStat(path: String) -> (exists: Bool, tampered: Bool, bypassed: Bool, traced: Bool, inlineHooked: Bool) {
         let hooked = inlineHookDetected
 
-        var stdExists = false
-        var stdLstatExists = false
+        var fileManagerExists = false
         var stdAccessExists = false
 
         let t1 = measure {
-            var stStd = stat()
-            stdExists = path.withCString { stat($0, &stStd) == 0 }
+            fileManagerExists = FileManager.default.fileExists(atPath: path)
         }
         let t2 = measure {
-            var stLstatStd = stat()
-            stdLstatExists = path.withCString { lstat($0, &stLstatStd) == 0 }
-        }
-        let t3 = measure {
             stdAccessExists = path.withCString { access($0, F_OK) == 0 }
         }
 
-        var secureStatExists: Bool?
-        var secureLstatExists: Bool?
         var secureAccessExists: Bool?
 
-        let t4 = measure { secureStatExists = SVCDirectCall.secureStat(path) }
-        let t5 = measure { secureLstatExists = SVCDirectCall.secureLstat(path) }
-        let t6 = measure { secureAccessExists = SVCDirectCall.secureAccess(path) }
+        let t3 = measure { secureAccessExists = SVCDirectCall.secureAccess(path) }
 
-        // 50 纳秒：检测「时序注入绕过」，任一 syscall 异常快则 bypassed（非 stat 延迟阈值）
-        let bypassed = t1 < 50 || t2 < 50 || t3 < 50 || t4 < 50 || t5 < 50 || t6 < 50
-        let traced = isTracedTiming(t1, t2, t3, t4, t5, t6)
+        // 50 纳秒：检测「时序注入绕过」，任一探针异常快则 bypassed。
+        let bypassed = t1 < 50 || t2 < 50 || t3 < 50
+        let traced = isTracedTiming(t1, t2, t3)
 
         // 安全路径返回 nil 且 std 有值：安全路径失效本身即异常，判定 tampered
         let secureUnavailableButStdHasValue =
-            (secureStatExists == nil && stdExists)
-            || (secureLstatExists == nil && stdLstatExists)
-            || (secureAccessExists == nil && stdAccessExists)
+            secureAccessExists == nil && (fileManagerExists || stdAccessExists)
         // 双路均有值时，结果不一致则 tampered
         let mismatchWhenBothAvailable =
-            (secureStatExists != nil && secureStatExists != stdExists)
-            || (secureLstatExists != nil && secureLstatExists != stdLstatExists)
+            (secureAccessExists != nil && secureAccessExists != fileManagerExists)
             || (secureAccessExists != nil && secureAccessExists != stdAccessExists)
         let tampered = secureUnavailableButStdHasValue || mismatchWhenBothAvailable
         if tampered { LibcPrologueGuard.invalidateCache() }
-        let exists = (secureStatExists ?? stdExists) || (secureLstatExists ?? stdLstatExists)
-            || (secureAccessExists ?? stdAccessExists)
+        let exists = secureAccessExists ?? stdAccessExists || fileManagerExists
         return (exists, tampered, bypassed, traced, hooked)
     }
 }

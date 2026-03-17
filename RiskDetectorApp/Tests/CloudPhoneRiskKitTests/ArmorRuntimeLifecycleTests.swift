@@ -25,15 +25,26 @@ final class ArmorRuntimeLifecycleTests: XCTestCase {
         XCTAssertEqual(snapshot.trigger, "evaluate")
         XCTAssertEqual(snapshot.attemptCount, 1)
         XCTAssertNotEqual(snapshot.status, "inactive")
-        XCTAssertTrue(
-            report.signals.contains { signal in
-                signal.id == "armor_runtime_unavailable" || signal.id == "armor_runtime_init_failed"
-            },
-            "evaluate-only path should surface armor runtime degradation instead of silent success"
-        )
+
+        let armorDegradationSignals = report.signals.filter {
+            $0.id == "armor_runtime_unavailable" || $0.id == "armor_runtime_init_failed"
+        }
+        if snapshot.status == "active" {
+            XCTAssertTrue(armorDegradationSignals.isEmpty,
+                          "active armor runtime should not emit degradation signals")
+        } else {
+            XCTAssertFalse(armorDegradationSignals.isEmpty,
+                           "non-active armor runtime must surface degradation instead of silent success")
+        }
 
         if ProcessInfo.processInfo.environment["CPRISKKIT_ARMOR_ROOT_KEY_HEX"] == nil {
-            XCTAssertTrue(snapshot.debugFallbackUsed, "debug builds should fall back to the test root key")
+            if snapshot.status == "active" {
+                XCTAssertFalse(snapshot.debugFallbackUsed,
+                               "active armor runtime should not use debug fallback")
+            } else {
+                XCTAssertTrue(snapshot.debugFallbackUsed,
+                             "non-active armor in debug builds should fall back to the test root key")
+            }
         }
     }
 
@@ -71,7 +82,7 @@ final class ArmorRuntimeLifecycleTests: XCTestCase {
         )
 
         let poisoned = cprisk_is_integrity_poisoned()
-        XCTAssertEqual(poisoned, 0, "integrity should not be poisoned in a clean test run")
+        XCTAssertEqual(poisoned, 0, "visible poison flag should stay clear in a clean test run")
     }
 
     func testRecheckIntegrityWithoutInitReturnsNoSavedHash() {

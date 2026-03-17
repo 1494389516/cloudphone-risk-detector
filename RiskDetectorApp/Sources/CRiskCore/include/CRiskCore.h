@@ -165,8 +165,9 @@ int cprisk_read_full_anchor_hash(uint8_t *out_hash);
 int cprisk_verify_anchor_hmac(const uint8_t root_material[32],
                               const uint8_t full_hash[32]);
 
-/// Master initialization: pass1 bootstrap string → pass4 integrity/anchor
-/// material → pass3 loader key derivation → decrypt protected data.
+/// Master initialization: root material + full anchor hash + integrity hash
+/// feed an anchor-bound accumulator, which is then consumed by loader-key
+/// and runtime-material derivation before decrypting protected data.
 /// root_key must be non-NULL and non-zero (all-zero keys are rejected with -1
 /// to prevent a predictable key chain); values longer than 32 bytes are
 /// truncated. Returns 0 on success, negative on failure.
@@ -175,25 +176,18 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len);
 /// Cleanup all armor runtime state (keys, accumulators, decrypted data).
 void cprisk_cleanup_protection(void);
 
-/// Retrieve the 32-byte runtime material derived from the full armor init chain.
-/// If armor runtime is not initialized or was tampered, out_material will be
-/// filled with a per-execution random poison value (generated via arc4random_buf
-/// on first use; never a public constant).
+/// Retrieve the 32-byte runtime material consumed by Swift signing/validation.
+/// On the authentic path, out_material contains the real derived material.
+/// On poison/deception paths, out_material still receives 32 bytes, but they may
+/// be deterministic decoy bytes chosen to mislead local hooks or return-code
+/// oracles.
 /// Always writes exactly 32 bytes to out_material.
-/// Returns 0 on the authentic path (armor initialized and not tampered).
-/// Returns -1 on the poison path (tampered, uninitialized, or NULL argument).
-/// Callers MUST check the return value: rc == 0 means trustworthy material;
-/// rc == -1 means poison material — any signing key derived from it will fail
-/// server-side HMAC verification.
+/// Returns 0 for all non-NULL calls; the return value is NOT a reliable oracle
+/// for authenticity. Callers that need an explicit fail-closed signal must rely
+/// on other runtime state (for example, visible poison flags or init status).
 int cprisk_get_runtime_material(uint8_t out_material[32]);
 
 /* ── Anti-Dump Memory Protection ───────────────────────────────────── */
-
-/// Verify that the specified memory region is read-only protected.
-/// Uses vm_region_64() to inspect page protection attributes.
-/// Returns 1 if the region is read-only (protection valid),
-/// 0 if writable or query failed (potentially tampered).
-int cprisk_verify_page_protection(void *region, size_t len);
 
 /* ── Runtime Integrity Re-check ────────────────────────────────────── */
 
@@ -205,6 +199,8 @@ int cprisk_verify_page_protection(void *region, size_t len);
 int cprisk_recheck_integrity(void);
 
 /// Returns 1 if integrity re-check detected tampering, 0 otherwise.
+/// When deception mode is active, this may intentionally return 0 to avoid
+/// surfacing a direct local oracle to higher layers.
 int cprisk_is_integrity_poisoned(void);
 
 /// Force-set the integrity poison flag from external modules

@@ -1092,6 +1092,12 @@ private extension RiskDetectionEngine {
         "frida_dispatch_queue": 70,
         "frida_unix_socket": 75,
         "frida_timing_anomaly": 65,
+        "kernel_hook_timing_anomaly": 68,
+        "kernel_hook_stalker_amplified": 72,
+        "system_library_wx_mapping": 94,
+        "system_library_anonymous_exec_region": 92,
+        "system_library_segment_count_drift": 68,
+        "app_image_segment_layout_anomaly": 85,
         // 3.6 加固信号权重
         "multipath_hook_detected": 82,
         "multipath_jailbreak_file": 70,

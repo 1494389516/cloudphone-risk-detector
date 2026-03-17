@@ -23,15 +23,21 @@ public enum StringClassifier {
         "hook", "inject", "debug", "ptrace", "svc",
         "kernel", "passwd", "shadow", "bash", "ssh",
         "apt", "dpkg", "http",
+        // Business module identifiers
+        "cloudphone", "riskkit", "riskdetect", "risksignal",
+        "criskcore", "graphrisk", "riskverdict", "riskappcore",
+        // Detection config keys embedded in JSON literals
+        "enablecloudphone", "jailbreakthreshold", "enablebehaviordetect",
+        "enablenetworksignals", "cloudphonerisk",
     ]
 
     /// 按以下优先级判断字符串敏感度：
     ///  1. 单字符 → skip
     ///  2. 纯数字 → skip
-    ///  3. 非 ASCII 可打印 → skip
-    ///  4. 包含 "/" 或敏感关键词 → mustEncrypt
-    ///  5. ObjC selector 风格（含 ":"） → skip
-    ///  6. 长度 ∈ [4, 256] → shouldEncrypt
+    ///  3. 包含 "/" 或敏感关键词 → mustEncrypt（在 ASCII 检查之前，覆盖含中文的 JSON 配置）
+    ///  4. 非 ASCII 可打印 → skip
+    ///  5. ObjC selector 风格（含 ":" 且长度 < 100） → skip
+    ///  6. 长度 ≥ 4 → shouldEncrypt（移除 256 字节上限，覆盖长 JSON 字面量）
     ///  7. 其余 → skip
     public static func classify(_ value: String) -> StringSensitivity {
         let length = value.count
@@ -40,21 +46,24 @@ public enum StringClassifier {
 
         if value.allSatisfy(\.isNumber) { return .skip }
 
-        let isASCIIPrintable = value.utf8.allSatisfy { byte in
-            byte == 0x09 || byte == 0x0A || byte == 0x0D || (0x20...0x7E).contains(byte)
-        }
-        guard isASCIIPrintable else { return .skip }
-
         if value.contains("/") { return .mustEncrypt }
 
+        // Sensitive keyword check must happen BEFORE the ASCII guard so that JSON config
+        // strings containing CJK characters (e.g. Chinese description fields) are still caught.
         let lower = value.lowercased()
         for keyword in sensitiveKeywords {
             if lower.contains(keyword) { return .mustEncrypt }
         }
 
-        if value.contains(":") { return .skip }
+        let isASCIIPrintable = value.utf8.allSatisfy { byte in
+            byte == 0x09 || byte == 0x0A || byte == 0x0D || (0x20...0x7E).contains(byte)
+        }
+        guard isASCIIPrintable else { return .skip }
 
-        guard length >= 4, length <= 256 else { return .skip }
+        // Skip ObjC selector-style strings (short, contain ":") but not long JSON blobs.
+        if value.contains(":"), length < 100 { return .skip }
+
+        guard length >= 4 else { return .skip }
 
         return .shouldEncrypt
     }
@@ -95,7 +104,7 @@ public final class StringEncryptorPass: ArmorPass {
 
         for record in records {
             let plaintext = Data(record.value.utf8)
-            let nonce = generateNonce()
+            let nonce = try generateNonce()
             let encrypted = xor(
                 plaintext,
                 makeKeystream(key: stringKey, stringID: record.id, nonce: nonce, length: plaintext.count)
@@ -186,10 +195,12 @@ private func normalizedRootKey(_ rootKey: Data?) -> Data {
     return key
 }
 
-private func generateNonce() -> Data {
+private func generateNonce() throws -> Data {
     var bytes = [UInt8](repeating: 0, count: ArmorABI.nonceSize)
     let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-    precondition(status == errSecSuccess, "SecRandomCopyBytes failed")
+    guard status == errSecSuccess else {
+        throw MachOError.invalidData("SecRandomCopyBytes failed: \(status)")
+    }
     return Data(bytes)
 }
 

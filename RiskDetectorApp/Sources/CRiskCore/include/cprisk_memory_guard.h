@@ -17,6 +17,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define CPRISK_GUARD_MAX_TRAPS 16
 
 struct cprisk_guard_trap {
@@ -37,5 +41,9 @@ int  cprisk_verify_page_protection(void *region, size_t len);
 int  cprisk_install_memory_trap(void *region, size_t len,
                                 struct cprisk_guard_state *state);
 void cprisk_remove_memory_trap(struct cprisk_guard_state *state);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* CPRISK_MEMORY_GUARD_H */

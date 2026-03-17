@@ -7,16 +7,19 @@ final class SecureBuffer {
     private var buffer: [UInt8]
 
     init(size: Int) {
-        self.buffer = [UInt8](repeating: 0, count: max(0, size))
+        // 保证至少分配 1 字节，使 withUnsafeMutableBytes.baseAddress 始终非 nil，
+        // 消除 dummy 指针 fallback（调用方可能写入超过 1 字节导致越界）。
+        self.buffer = [UInt8](repeating: 0, count: max(1, size))
     }
 
     func use<T>(_ block: (UnsafeMutableRawPointer) -> T) -> T {
-        let result: T
-        if let base = buffer.withUnsafeMutableBytes({ $0.baseAddress }) {
-            result = block(base)
-        } else {
-            var dummy: UInt8 = 0
-            result = withUnsafeMutablePointer(to: &dummy) { block(UnsafeMutableRawPointer($0)) }
+        let result: T = buffer.withUnsafeMutableBytes { raw in
+            // buffer 至少 1 字节，baseAddress 在正常情况下不为 nil；
+            // 若仍为 nil（理论上不可能），用 preconditionFailure 明确暴露问题而非静默越界。
+            guard let base = raw.baseAddress else {
+                preconditionFailure("SecureBuffer: baseAddress is nil, buffer is in inconsistent state")
+            }
+            return block(base)
         }
         secureZero(&buffer)
         return result

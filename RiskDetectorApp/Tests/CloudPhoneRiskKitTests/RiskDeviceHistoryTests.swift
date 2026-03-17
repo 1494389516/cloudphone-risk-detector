@@ -70,7 +70,7 @@ final class RiskDeviceHistoryTests: XCTestCase {
         h = h.addingSnapshot(makeSnapshot(timestamp: now - 100, score: 30))
 
         XCTAssertEqual(h.snapshots.count, 1, "超出保留期的快照应被清除")
-        XCTAssertEqual(h.snapshots.first?.riskScore, 30.0, accuracy: 0.001)
+        XCTAssertEqual(h.snapshots.first?.riskScore ?? -1, 30.0, accuracy: 0.001)
     }
 
     // MARK: latestSnapshot / earliestSnapshot
@@ -80,7 +80,7 @@ final class RiskDeviceHistoryTests: XCTestCase {
         let h = RiskDeviceHistory()
             .addingSnapshot(makeSnapshot(timestamp: now - 1000, score: 10))
             .addingSnapshot(makeSnapshot(timestamp: now, score: 70))
-        XCTAssertEqual(h.latestSnapshot?.riskScore, 70.0, accuracy: 0.001)
+        XCTAssertEqual(h.latestSnapshot?.riskScore ?? -1, 70.0, accuracy: 0.001)
     }
 
     func testEarliestSnapshotReturnsOldest() {
@@ -88,7 +88,7 @@ final class RiskDeviceHistoryTests: XCTestCase {
         let h = RiskDeviceHistory()
             .addingSnapshot(makeSnapshot(timestamp: now - 1000, score: 10))
             .addingSnapshot(makeSnapshot(timestamp: now, score: 70))
-        XCTAssertEqual(h.earliestSnapshot?.riskScore, 10.0, accuracy: 0.001)
+        XCTAssertEqual(h.earliestSnapshot?.riskScore ?? -1, 10.0, accuracy: 0.001)
     }
 
     func testLatestSnapshotNilWhenEmpty() {
@@ -248,7 +248,7 @@ final class ServerRiskPolicyTests: XCTestCase {
         let retrieved = PolicyManager.shared.activePolicy
         XCTAssertNotNil(retrieved)
         XCTAssertEqual(retrieved?.version, 1)
-        XCTAssertEqual(retrieved?.signalWeights["jailbreak"], 50.0, accuracy: 0.001)
+        XCTAssertEqual(retrieved?.signalWeights["jailbreak"] ?? -1, 50.0, accuracy: 0.001)
         PolicyManager.shared.clear()
     }
 

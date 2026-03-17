@@ -51,6 +51,24 @@ public enum ArmorABI {
         public static let swiftTypes = "__swift5_types"
         public static let swiftReflectionStrings = "__swift5_reflstr"
         public static let objcMethodNames = "__objc_methname"
+        public static let swiftFieldMetadata = "__swift5_fieldmd"
+        public static let swiftBuiltinTypes = "__swift5_builtin"
+        public static let swiftCapture = "__swift5_capture"
+        public static let swiftAssocTypes = "__swift5_assocty"
+        public static let swiftProtocols = "__swift5_proto"
+        public static let swiftProtocolConformances = "__swift5_protos"
+
+        public static let swiftTypeRef = "__swift5_typeref"
+
+        public static let additionalScrubSections = [
+            swiftFieldMetadata,
+            swiftBuiltinTypes,
+            swiftCapture,
+            swiftAssocTypes,
+            swiftProtocols,
+            swiftProtocolConformances,
+            swiftTypeRef,
+        ]
     }
 
     public enum StringTable {

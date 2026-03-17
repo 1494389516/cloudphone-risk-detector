@@ -5,7 +5,7 @@ import XCTest
 @testable import CloudPhoneRiskKit
 
 /// 壳与 SDK 的集成测试：验证 armor runtime material、v2a 签名版本、
-/// 以及壳初始化失败时的风险信号注入行为。
+/// 以及壳初始化失败或 decoy 回退时的风险信号注入行为。
 final class ArmorIntegrationTests: XCTestCase {
 
     // MARK: - Setup / Teardown
@@ -20,10 +20,10 @@ final class ArmorIntegrationTests: XCTestCase {
         super.tearDown()
     }
 
-    // MARK: - Test 1: Runtime Material Not Poison
+    // MARK: - Test 1: Runtime Material Always Returns Bytes
 
     /// 验证 `cprisk_get_runtime_material()` 返回值的行为。
-    /// 在测试环境中壳未加固，走 poison 路径；但返回值与成功路径一致（rc == 0），
+    /// 在测试环境中壳未加固时通常走 decoy 路径；但返回值与成功路径一致（rc == 0），
     /// 防止攻击者通过返回值区分。函数必须可调用且写入 32 字节。
     func testArmorRuntimeMaterialReturnsValidBuffer() {
         var material = [UInt8](repeating: 0, count: 32)
@@ -32,9 +32,9 @@ final class ArmorIntegrationTests: XCTestCase {
         let materialData = Data(material)
         XCTAssertEqual(materialData.count, 32, "material must always be 32 bytes")
         XCTAssertFalse(materialData.allSatisfy({ $0 == 0 }),
-                       "material must not be all zeros (even poison is non-zero)")
-        // Poison path returns 0 (same as success) to prevent oracle attacks
-        XCTAssertEqual(rc, 0, "cprisk_get_runtime_material must return 0 on both success and poison paths")
+                       "material must not be all zeros (even decoy material is non-zero)")
+        // Decoy path returns 0 (same as success) to prevent oracle attacks
+        XCTAssertEqual(rc, 0, "cprisk_get_runtime_material must return 0 on both success and decoy paths")
     }
 
     /// 验证初始化后 runtime material 的可获取性。
@@ -48,8 +48,8 @@ final class ArmorIntegrationTests: XCTestCase {
             return Int32(cprisk_init_protection(ptr, rootKey.count))
         }
 
-        // In test environment (no armor sections), expected to fail gracefully
-        // Valid codes: 0 (success), -2..-7 (string decryptor, bootstrap, integrity, anchor, loader, load)
+        // In test environment, armor may be absent or incomplete; init must fail gracefully.
+        // Valid codes: 0 (success) or reserved failure range -2..-7.
         XCTAssertTrue(
             rc == 0 || (rc >= -7 && rc <= -2),
             "cprisk_init_protection must return valid code (0 or -2..-7), got \(rc)"
@@ -59,7 +59,7 @@ final class ArmorIntegrationTests: XCTestCase {
             var material = [UInt8](repeating: 0, count: 32)
             let materialRc = cprisk_get_runtime_material(&material)
             XCTAssertEqual(materialRc, 0,
-                           "get_runtime_material returns 0 on poison path (constant-time, no oracle)")
+                           "get_runtime_material returns 0 on decoy path (constant-time, no oracle)")
         }
 
         cprisk_cleanup_protection()
@@ -71,6 +71,10 @@ final class ArmorIntegrationTests: XCTestCase {
     /// Release 默认 "v2a"；DEBUG 下受 `enableEnvelopeSignatureV2` 控制。
     func testV2aSignatureVersionEmitted() throws {
         CPRiskKit.shared.start()
+        let snapshot = CPRiskKit.shared.debugArmorRuntimeSnapshot()
+        guard snapshot.status == "active" else {
+            throw XCTSkip("当前测试二进制未提供可用 armor runtime，跳过 v2a active-path 断言（需 Release 加固构建或设置 CPRISKKIT_ARMOR_ROOT_KEY_HEX）")
+        }
 
         let report = CPRiskKit.shared.evaluate()
         XCTAssertFalse(report.reportID.isEmpty, "report must have a valid reportID")
@@ -99,9 +103,13 @@ final class ArmorIntegrationTests: XCTestCase {
     }
 
     /// 验证 effectiveSigningKey 确实由 armor material 混入。
-    /// 即便 armor 失败（poison），签名密钥也应该被 HMAC 派生过。
+    /// active runtime 下，签名密钥必须由 `cprisk_get_runtime_material()` 返回的 32 字节参与 HMAC 派生。
     func testEffectiveSigningKeyDerivedFromArmorMaterial() throws {
         CPRiskKit.shared.start()
+        let snapshot = CPRiskKit.shared.debugArmorRuntimeSnapshot()
+        guard snapshot.status == "active" else {
+            throw XCTSkip("当前测试二进制未提供可用 armor runtime，跳过 active-path 派生密钥断言（需 Release 加固构建或设置 CPRISKKIT_ARMOR_ROOT_KEY_HEX）")
+        }
 
         let report = CPRiskKit.shared.evaluate()
         let baseKey = "test-base-signing-key"
@@ -112,7 +120,7 @@ final class ArmorIntegrationTests: XCTestCase {
             signingKey: baseKey
         )
 
-        // Reconstruct the expected effective key using poison material
+        // Reconstruct the expected effective key using the bytes returned by runtime
         var material = [UInt8](repeating: 0, count: 32)
         _ = cprisk_get_runtime_material(&material)
         let materialData = Data(material)

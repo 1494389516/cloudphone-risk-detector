@@ -77,6 +77,8 @@ public final class CPRiskKit: NSObject {
 
     private let evaluateQueue = DispatchQueue(label: "CloudPhoneRiskKit.Evaluate", qos: .utility)
     private let stateLock = NSLock()
+    /// 保护 cprisk_init_protection 单次执行，避免在持 stateLock 期间调用可能阻塞的 C 函数
+    private let armorInitLock = NSLock()
 
     /// Throttle cprisk_verify_exception_handler to avoid syscall on every evaluate().
     private static let verifyThrottleInterval: TimeInterval = 5.0
@@ -102,7 +104,10 @@ public final class CPRiskKit: NSObject {
         "frida_heap", "frida_stalker", "frida_socket", "frida_thread",
         "hook_detected", "objc_swizzle", "rwx_memory",
         "armor_runtime_init_failed", "integrity_runtime_tampered",
-        "code_signature_invalid", "text_segment_tampered"
+        "code_signature_invalid", "text_segment_tampered",
+        "kernel_hook_timing_anomaly", "kernel_hook_stalker_amplified",
+        "system_library_wx_mapping", "system_library_anonymous_exec_region",
+        "app_image_segment_layout_anomaly"
     ]
 
     private static let remoteConfigEndpointKey = "com.cloudphone.riskkit.remote.endpoint"
@@ -564,7 +569,8 @@ public final class CPRiskKit: NSObject {
         cprisk_deny_attach()
         cprisk_register_exception_handler()
         let armorRuntimeSnapshot = ensureArmorRuntimeStarted(trigger: "evaluate")
-        // Recheck integrity when armor runtime is active; on tampering, material is poisoned.
+        // Recheck integrity when armor runtime is active; on tampering, material may
+        // silently switch to decoy bytes instead of surfacing a direct return-code oracle.
         if armorRuntimeSnapshot.status == .active {
             _ = cprisk_recheck_integrity()
         }
@@ -605,9 +611,7 @@ public final class CPRiskKit: NSObject {
         if cprisk_is_integrity_poisoned() != 0 {
             extraSignals.append(Self.integrityRecheckPoisonedSignal())
         }
-        if cprisk_is_mprotect_tampered() != 0 {
-            extraSignals.append(Self.mprotectTamperedSignal())
-        }
+        // memory_protection_tampered 由 AntiTamperingSignalProvider 统一注入，此处不再重复追加
         extraSignals.append(capabilityRuntime.score.toSignal())
         extraSignals.append(contentsOf: extraSignalsForGraph)
         extraSignals.append(contentsOf: ChallengeResultStore.shared.consumePendingMismatchSignals())
@@ -830,10 +834,10 @@ public final class CPRiskKit: NSObject {
                 signatureVersion = "v2a"
                 #endif
             } else if requireArmor {
-                Logger.log("buildSecureReportEnvelope: armor material poisoned (cprisk_get_runtime_material failed)")
+                Logger.log("buildSecureReportEnvelope: armor material marked poisoned by runtime state")
                 throw SecureUploadError.armorRuntimeUnavailable(reason: "material_poisoned")
             } else {
-                Logger.log("buildSecureReportEnvelope: armor material poisoned, degrading to v2 signature")
+                Logger.log("buildSecureReportEnvelope: armor material marked poisoned, degrading to v2 signature")
                 effectiveSigningKey = signingKey
                 signatureVersion = "v2"
             }
@@ -1136,7 +1140,9 @@ public final class CPRiskKit: NSObject {
         let attemptCount = armorRuntimeSnapshot.attemptCount + 1
         let anchorPresent = Self.hasArmorAnchor()
         let keyResolution = Self.resolveArmorRootKey()
+        stateLock.unlock()
 
+        // 在锁外构建 snapshot，避免持 stateLock 期间调用可能阻塞的 cprisk_init_protection
         let snapshot: ArmorRuntimeSnapshot
         if let failureReason = keyResolution.failureReason {
             snapshot = ArmorRuntimeSnapshot(
@@ -1150,12 +1156,23 @@ public final class CPRiskKit: NSObject {
                 attemptCount: attemptCount
             )
         } else if let keyData = keyResolution.keyData {
+            armorInitLock.lock()
+            stateLock.lock()
+            if armorRuntimeSnapshot.status != .inactive {
+                let existing = armorRuntimeSnapshot
+                stateLock.unlock()
+                armorInitLock.unlock()
+                return existing
+            }
+            stateLock.unlock()
+
             let initCode = keyData.withUnsafeBytes { rawBuffer -> Int32 in
                 guard let baseAddress = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
                     return -1
                 }
                 return Int32(cprisk_init_protection(baseAddress, keyData.count))
             }
+
             snapshot = Self.makeArmorRuntimeSnapshot(
                 trigger: trigger,
                 initCode: initCode,
@@ -1164,6 +1181,10 @@ public final class CPRiskKit: NSObject {
                 anchorPresent: anchorPresent,
                 attemptCount: attemptCount
             )
+            stateLock.lock()
+            armorRuntimeSnapshot = snapshot
+            stateLock.unlock()
+            armorInitLock.unlock()
         } else {
             snapshot = ArmorRuntimeSnapshot(
                 status: .unavailable,
@@ -1177,11 +1198,15 @@ public final class CPRiskKit: NSObject {
             )
         }
 
-        armorRuntimeSnapshot = snapshot
+        stateLock.lock()
+        if armorRuntimeSnapshot.status == .inactive {
+            armorRuntimeSnapshot = snapshot
+        }
+        let finalSnapshot = armorRuntimeSnapshot
         stateLock.unlock()
 
-        Self.logArmorRuntimeSnapshot(snapshot)
-        return snapshot
+        Self.logArmorRuntimeSnapshot(finalSnapshot)
+        return finalSnapshot
     }
 
     private func resetArmorRuntime() {
@@ -1809,16 +1834,16 @@ public final class CPRiskKit: NSObject {
             reason = "invalid_root_key"
         case -2:
             status = .failed
-            reason = "string_decryptor_init_failed"
-        case -3:
-            status = .failed
-            reason = "bootstrap_decrypt_failed"
-        case -4:
-            status = .failed
             reason = "integrity_hash_failed"
-        case -5:
+        case -3:
             status = anchorPresent ? .failed : .unavailable
             reason = anchorPresent ? "full_anchor_read_failed" : "armor_payload_missing"
+        case -4:
+            status = .failed
+            reason = "anchor_hmac_failed"
+        case -5:
+            status = .failed
+            reason = "anchor_accumulator_failed"
         case -6:
             status = .failed
             reason = "data_loader_init_failed"
@@ -1903,7 +1928,8 @@ public final class CPRiskKit: NSObject {
     }
 
     /// Signal emitted when cprisk_recheck_integrity() detected runtime tampering.
-    /// Material is poisoned; envelope signing will use wrong key → server verification fails.
+    /// Runtime material may become visible-poison or hidden-decoy; in both cases
+    /// envelope signing eventually uses the wrong key and server verification fails.
     private static func integrityRecheckPoisonedSignal() -> RiskSignal {
         RiskSignal(
             id: "integrity_runtime_tampered",
@@ -1961,15 +1987,19 @@ public final class CPRiskKit: NSObject {
 
     private static func armorRuntimeMaterial() -> (material: Data, authentic: Bool) {
         var buffer = [UInt8](repeating: 0, count: 32)
-        let rc = cprisk_get_runtime_material(&buffer)
-        return (Data(buffer), rc == 0)
+        _ = cprisk_get_runtime_material(&buffer)
+        let authentic = cprisk_is_integrity_poisoned() == 0
+        return (Data(buffer), authentic)
     }
 
     /// Derive an effective signing key by HMAC(armorMaterial, baseKey).
-    /// If armor was tampered/skipped, armorMaterial is poisoned -> effectiveKey is wrong
-    /// -> server-side HMAC verification fails.
+    /// If armor switches to visible poison or hidden decoy material, effectiveKey
+    /// becomes wrong and server-side HMAC verification fails.
     private static func deriveEffectiveSigningKey(baseKey: String, armorMaterial: Data) -> String {
-        guard let keyData = baseKey.data(using: .utf8) else { return baseKey }
+        guard let keyData = baseKey.data(using: .utf8) else {
+            Logger.log("deriveEffectiveSigningKey: UTF-8 encoding failed for baseKey, using empty string")
+            return ""
+        }
         let derived = HMAC<SHA256>.authenticationCode(
             for: keyData,
             using: SymmetricKey(data: armorMaterial)
@@ -1980,9 +2010,11 @@ public final class CPRiskKit: NSObject {
     /// 返回 v2a 信封验签所需的派生密钥。
     /// 确保 armor runtime 已启动，并用 baseKey + armor material 派生。
     /// 供 validateSecureReportEnvelope 在 sigVer == "v2a" 时使用。
-    /// armor 被篡改或未初始化时返回 nil，调用方应将此视为验签失败。
+    /// 若 runtime 未激活或显式暴露 poisoned 状态则返回 nil；若 deception 已激活，
+    /// 这里可能继续返回基于 decoy material 的派生密钥，让失败延后表现为签名不匹配。
     func effectiveSigningKeyForV2aValidation(baseKey: String) -> String? {
-        _ = ensureArmorRuntimeStarted(trigger: "validate_envelope")
+        let snapshot = ensureArmorRuntimeStarted(trigger: "validate_envelope")
+        guard snapshot.status == .active else { return nil }
         let (armorMaterial, authentic) = Self.armorRuntimeMaterial()
         guard authentic else { return nil }
         return Self.deriveEffectiveSigningKey(baseKey: baseKey, armorMaterial: armorMaterial)

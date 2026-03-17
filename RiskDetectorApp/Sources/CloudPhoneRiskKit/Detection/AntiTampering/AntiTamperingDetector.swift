@@ -104,7 +104,7 @@ struct AntiTamperingDetector: Detector {
         )
     }
 
-    /// 动态基线比值检测：先对 getpid 采样建立基准，再用「stat 耗时/getpid_median」比值判断。
+    /// 动态基线比值检测：先对 getpid 采样建立基准，再用「文件探针耗时/getpid_median」比值判断。
     /// 避免 50ms 绝对值在低端机/冷启动/后台复起时误报，与 KernelHookSideChannel 对齐。
     private func hasTimingAnomaly() -> Bool {
         let iterations = TimingRatioBaseline.defaultSampleCount
@@ -119,10 +119,9 @@ struct AntiTamperingDetector: Detector {
 
         var statSamples: [UInt64] = []
         statSamples.reserveCapacity(iterations)
-        var st = stat()
         for _ in 0..<iterations {
             let start = DispatchTime.now().uptimeNanoseconds
-            _ = "/usr/lib/dyld".withCString { cprisk_stat_direct($0, &st, nil) }
+            _ = "/usr/lib/dyld".withCString { cprisk_access_direct($0, F_OK, nil) }
             let end = DispatchTime.now().uptimeNanoseconds
             statSamples.append(end - start)
         }

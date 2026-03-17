@@ -99,6 +99,84 @@ final class AntiTamperingTests: XCTestCase {
         ))
     }
 
+    func testTimingRatioBaselineEvaluatePairExposesNamesAndRatios() {
+        var baselineCounter = 0
+        var probeCounter = 0
+        let evaluation = TimingRatioBaseline.evaluatePair(
+            baselineName: "baseline",
+            probeName: "probe",
+            sampleCount: 6,
+            warmupCount: 1,
+            noiseIterations: 1,
+            ratioThreshold: 0.1
+        ) {
+            baselineCounter += 1
+            var value = baselineCounter
+            for _ in 0..<100 {
+                value &+= 1
+            }
+        } probe: {
+            probeCounter += 1
+            var value = probeCounter
+            for _ in 0..<500 {
+                value &+= 3
+            }
+        }
+
+        guard let evaluation else {
+            XCTFail("pair evaluation should not be nil")
+            return
+        }
+        XCTAssertEqual(evaluation.baselineName, "baseline")
+        XCTAssertEqual(evaluation.probeName, "probe")
+        XCTAssertEqual(evaluation.sampleCount, 6)
+        XCTAssertGreaterThan(evaluation.baselineMedianNs, 0)
+        XCTAssertGreaterThan(evaluation.probeMedianNs, 0)
+        XCTAssertTrue(evaluation.medianRatio > 0)
+    }
+
+    func testSystemLibrarySegmentLayoutThresholdsAreConservative() {
+        let normal = SystemLibrarySegmentLayoutDetector.ImageLayoutSnapshot(
+            id: "foundation",
+            displayName: "Foundation",
+            path: "/System/Library/Frameworks/Foundation.framework/Foundation",
+            kind: .systemLibrary,
+            declaredSegmentCount: 5,
+            executableSegmentCount: 1,
+            runtimeRegionCount: 8,
+            executableRegionCount: 3,
+            readOnlyRegionCount: 2,
+            readWriteRegionCount: 2,
+            writableExecutableRegionCount: 0,
+            anonymousExecutableRegionCount: 0,
+            textWritableRegionCount: 0,
+            dataExecutableRegionCount: 0
+        )
+        XCTAssertFalse(SystemLibrarySegmentLayoutDetector.isRegionCountDriftSuspicious(normal))
+        XCTAssertFalse(SystemLibrarySegmentLayoutDetector.isExecutableDistributionSuspicious(normal))
+        XCTAssertFalse(SystemLibrarySegmentLayoutDetector.hasCriticalPermissionAnomaly(normal))
+
+        let suspicious = SystemLibrarySegmentLayoutDetector.ImageLayoutSnapshot(
+            id: "dyld",
+            displayName: "dyld",
+            path: "/usr/lib/dyld",
+            kind: .systemLibrary,
+            declaredSegmentCount: 4,
+            executableSegmentCount: 1,
+            runtimeRegionCount: 12,
+            executableRegionCount: 4,
+            readOnlyRegionCount: 3,
+            readWriteRegionCount: 2,
+            writableExecutableRegionCount: 1,
+            anonymousExecutableRegionCount: 1,
+            textWritableRegionCount: 1,
+            dataExecutableRegionCount: 0
+        )
+        XCTAssertTrue(SystemLibrarySegmentLayoutDetector.isRegionCountDriftSuspicious(suspicious))
+        XCTAssertTrue(SystemLibrarySegmentLayoutDetector.isExecutableDistributionSuspicious(suspicious))
+        XCTAssertTrue(SystemLibrarySegmentLayoutDetector.hasCriticalPermissionAnomaly(suspicious))
+    }
+
     // MARK: - DebuggerDetector Logic Tests
 
     func testDebuggerParentTokenMatching() {
@@ -226,6 +304,21 @@ final class AntiTamperingTests: XCTestCase {
         }
     }
 
+    func testSystemLibrarySegmentLayoutSignalConversion() throws {
+        let detector = SystemLibrarySegmentLayoutDetector()
+        let signals = try detector.asSignals()
+        for signal in signals {
+            XCTAssertEqual(signal.category, "anti_tamper")
+            XCTAssertEqual(signal.layer, 2)
+            XCTAssertTrue(
+                signal.id == "system_library_wx_mapping" ||
+                signal.id == "system_library_anonymous_exec_region" ||
+                signal.id == "system_library_segment_count_drift" ||
+                signal.id == "app_image_segment_layout_anomaly"
+            )
+        }
+    }
+
     // MARK: - ObjCSwizzleDetector Tests
 
     func testObjCSwizzleMethodChecksCompleteness() throws {
@@ -278,6 +371,7 @@ final class AntiTamperingTests: XCTestCase {
             FridaHeapDetector(),
             FridaThreadDetector(),
             FridaSocketDetector(),
+            SystemLibrarySegmentLayoutDetector(),
             ObjCSwizzleDetector(),
             SensorReplayDetector(),
         ]
@@ -298,18 +392,28 @@ final class AntiTamperingTests: XCTestCase {
 
     func testAmplifiedSamplesReturnsCorrectCount() {
         let samples = TimingRatioBaseline.amplifiedSamples(count: 10)
+#if targetEnvironment(simulator)
+        XCTAssertEqual(samples.getpid.count, 0)
+        XCTAssertEqual(samples.stat.count, 0)
+#else
         XCTAssertEqual(samples.getpid.count, 10)
         XCTAssertEqual(samples.stat.count, 10)
+#endif
     }
 
     func testAmplifiedSamplesProducesNonZeroValues() {
         let samples = TimingRatioBaseline.amplifiedSamples(count: 5)
+#if targetEnvironment(simulator)
+        XCTAssertTrue(samples.getpid.isEmpty)
+        XCTAssertTrue(samples.stat.isEmpty)
+#else
         for s in samples.getpid {
             XCTAssertGreaterThan(s, 0)
         }
         for s in samples.stat {
             XCTAssertGreaterThan(s, 0)
         }
+#endif
     }
 
     func testAmplifiedEvaluationWithNormalRatio() {
