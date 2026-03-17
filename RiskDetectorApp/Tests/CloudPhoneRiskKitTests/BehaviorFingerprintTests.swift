@@ -336,4 +336,64 @@ final class BehaviorFingerprintTests: XCTestCase {
         )
         XCTAssertEqual(behavior.sampleSufficiency, .sufficient)
     }
+
+    // MARK: - Sufficiency Gates New Heuristics
+
+    func testInsufficientSamples_BlocksNewHeuristics() {
+        // sampleCount=14 (just below minimumTouchSamples=15) with extreme values
+        // sampleSufficiency should gate ALL heuristics including force/radius/swipeSpeed
+        let touch = TestFixtures.makeTouchMetrics(
+            sampleCount: 14, tapCount: 4, swipeCount: 5,
+            coordinateSpread: 0.1,     // would trigger touchSpreadLow
+            forceVariance: 0,          // would trigger forceTooUniform
+            majorRadiusVariance: 0,    // would trigger radiusTooUniform
+            swipeSpeedCV: 0.001        // would trigger swipeSpeedTooRegular
+        )
+        let context = TestFixtures.makeRiskContext(touch: touch)
+        let config = RiskConfig(
+            jailbreak: .default,
+            enableBehaviorDetect: true,
+            enableNetworkSignals: false,
+            threshold: 60
+        )
+        let report = RiskScorer.score(context: context, config: config)
+
+        // Should only have insufficient_behavior_data, no force/radius/speed signals
+        XCTAssertNil(report.signals.first { $0.id == SignalID.forceTooUniform },
+                     "forceTooUniform must not fire when sampleSufficiency is .insufficient")
+        XCTAssertNil(report.signals.first { $0.id == SignalID.radiusTooUniform },
+                     "radiusTooUniform must not fire when sampleSufficiency is .insufficient")
+        XCTAssertNil(report.signals.first { $0.id == SignalID.swipeSpeedTooRegular },
+                     "swipeSpeedTooRegular must not fire when sampleSufficiency is .insufficient")
+        XCTAssertNil(report.signals.first { $0.id == SignalID.touchSpreadLow },
+                     "touchSpreadLow must not fire when sampleSufficiency is .insufficient")
+
+        let insufficientSignals = report.signals.filter { $0.id == SignalID.insufficientBehaviorData }
+        XCTAssertEqual(insufficientSignals.count, 1)
+    }
+
+    func testSufficientSamples_AtExactBoundary() {
+        // sampleCount=15, actionCount=8 — exactly at boundary, should be .sufficient
+        let touch = TestFixtures.makeTouchMetrics(
+            sampleCount: 15, tapCount: 5, swipeCount: 3,
+            forceVariance: 0  // should trigger forceTooUniform since sufficient + 8 actions >= 6
+        )
+        let context = TestFixtures.makeRiskContext(touch: touch)
+        let config = RiskConfig(
+            jailbreak: .default,
+            enableBehaviorDetect: true,
+            enableNetworkSignals: false,
+            threshold: 60
+        )
+        let report = RiskScorer.score(context: context, config: config)
+
+        // At exact boundary (15 samples, 8 actions), heuristics SHOULD fire
+        let forceSignal = report.signals.first { $0.id == SignalID.forceTooUniform }
+        XCTAssertNotNil(forceSignal,
+                        "At exact sufficiency boundary, forceTooUniform should fire")
+
+        let insufficientSignals = report.signals.filter { $0.id == SignalID.insufficientBehaviorData }
+        XCTAssertEqual(insufficientSignals.count, 0,
+                       "At exact sufficiency boundary, no insufficient signal should appear")
+    }
 }

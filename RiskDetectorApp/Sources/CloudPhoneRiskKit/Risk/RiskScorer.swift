@@ -50,8 +50,6 @@ enum RiskScorer {
     private static let minActionsForCorrelation = 10
     private static let minForceSamples = 6
     private static let minRadiusSamples = 6
-    private static let minTotalActions = 3
-    private static let minSampleCount = 5
 
     static func score(context: RiskContext, config: RiskConfig, extraSignals: [RiskSignal] = []) -> RiskScoreReport {
         var total: Double = 0

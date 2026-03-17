@@ -38,19 +38,18 @@ final class GPURenderFingerprintProvider: RiskSignalProvider {
 
     private func fingerprint() -> String? {
         let now = ProcessInfo.processInfo.systemUptime
-        lock.lock()
-        if now - cacheTime < cacheTTL, let cached = cachedFingerprint {
-            lock.unlock()
-            return cached
+        let cached: String? = lock.withLock {
+            if now - cacheTime < cacheTTL { return cachedFingerprint }
+            return nil
         }
-        lock.unlock()
+        if let cached { return cached }
 
         guard let result = renderFingerprint() else { return nil }
 
-        lock.lock()
-        cachedFingerprint = result
-        cacheTime = ProcessInfo.processInfo.systemUptime
-        lock.unlock()
+        lock.withLock {
+            cachedFingerprint = result
+            cacheTime = ProcessInfo.processInfo.systemUptime
+        }
         return result
     }
 
