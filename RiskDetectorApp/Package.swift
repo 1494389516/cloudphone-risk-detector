@@ -17,6 +17,9 @@ let package = Package(
             targets: ["CloudPhoneRiskAppCore"]
         ),
     ],
+    dependencies: [
+        .package(path: "../cprisk-armor"),
+    ],
     targets: [
         .target(
             name: "CRiskCore",
@@ -36,7 +39,10 @@ let package = Package(
         ),
         .testTarget(
             name: "CloudPhoneRiskKitTests",
-            dependencies: ["CloudPhoneRiskKit"]
+            dependencies: [
+                "CloudPhoneRiskKit",
+                .product(name: "MachOKit", package: "cprisk-armor"),
+            ]
         ),
         .testTarget(
             name: "CloudPhoneRiskAppCoreTests",

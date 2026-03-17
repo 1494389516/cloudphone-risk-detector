@@ -187,6 +187,91 @@ void cprisk_cleanup_protection(void);
 /// on other runtime state (for example, visible poison flags or init status).
 int cprisk_get_runtime_material(uint8_t out_material[32]);
 
+/// Returns 1 when authentic runtime material was successfully derived during
+/// init and is currently available to helper pipelines, 0 otherwise.
+/// Unlike cprisk_get_runtime_material(), this does not expose any bytes.
+int cprisk_runtime_material_ready(void);
+
+/* ── White-box Frontend / Signing Helpers ─────────────────────────── */
+
+/// Returns a compile-time/runtime capability bitmask for the current armor
+/// runtime. The bitset advertises helper availability and whether reserved
+/// white-box metadata sections are present in the current image.
+uint32_t cprisk_get_armor_capabilities(void);
+
+/// Populate a minimal white-box probe snapshot.
+/// abi_version describes the reserved white-box metadata ABI, capabilities is a
+/// bitmask of helper/support flags, flags carries probe state such as
+/// COMPILED / METADATA_PRESENT / ENGINE_READY, and metadata_version surfaces
+/// the embedded metadata header version when present.
+/// Returns 0 on success, -1 when out_probe is NULL.
+int cprisk_whitebox_probe(struct cprisk_whitebox_probe_result *out_probe);
+
+/// Returns 1 only when a valid white-box metadata section is embedded and marks
+/// the future engine as ready; current placeholder builds typically return 0.
+int cprisk_whitebox_available(void);
+
+/// Evaluate one white-box PRF domain against a 32-byte input state.
+/// Returns 0 on success, -1 on validation failure, unknown domain, or null out.
+int cprisk_whitebox_evaluate_domain(
+    uint32_t domain_id,
+    const uint8_t input[32],
+    uint8_t out[32]
+);
+
+/// Derive a 32-byte effective signing key from the current runtime material and
+/// the caller-provided base key. This is the C-side equivalent of the former
+/// Swift HMAC(runtime_material, base_key_utf8) step.
+/// Returns 0 on success, -1 on failure.
+int cprisk_derive_effective_signing_key(
+    const uint8_t *base_key,
+    size_t base_key_len,
+    uint8_t out_key[32]
+);
+
+/// Same derivation as cprisk_derive_effective_signing_key(), but hex-encodes
+/// the resulting 32-byte key into out_hex (64 chars + trailing NUL).
+/// Returns 0 on success, -1 on failure.
+int cprisk_derive_effective_signing_key_hex(
+    const uint8_t *base_key,
+    size_t base_key_len,
+    char out_hex[CPRISK_ARMOR_HEX_ENCODED_HASH_SIZE + 1]
+);
+
+/// Generic HMAC-SHA256 helper that writes lower-case hex into out_hex
+/// (64 chars + trailing NUL). Returns 0 on success, -1 on failure.
+int cprisk_hmac_sha256_hex(
+    const uint8_t *key,
+    size_t key_len,
+    const uint8_t *msg,
+    size_t msg_len,
+    char out_hex[CPRISK_ARMOR_HEX_ENCODED_HASH_SIZE + 1]
+);
+
+/// Derive the effective signing key from runtime material inside C, then HMAC
+/// the supplied message and return the lower-case hex digest in out_hex.
+/// This is the preferred bridge for v2a-style envelope signing because Swift
+/// no longer needs to hold runtime_material or perform the derivation itself.
+/// Returns 0 on success, -1 on failure.
+int cprisk_sign_with_derived_key(
+    const uint8_t *base_key,
+    size_t base_key_len,
+    const uint8_t *msg,
+    size_t msg_len,
+    char out_hex[CPRISK_ARMOR_HEX_ENCODED_HASH_SIZE + 1]
+);
+
+/// Same helper pipeline as cprisk_sign_with_derived_key(), but compares the
+/// computed hex digest with expected_hex in constant time.
+/// Returns 0 on success (match), -1 on mismatch or failure.
+int cprisk_verify_with_derived_key(
+    const uint8_t *base_key,
+    size_t base_key_len,
+    const uint8_t *msg,
+    size_t msg_len,
+    const char *expected_hex
+);
+
 /* ── Anti-Dump Memory Protection ───────────────────────────────────── */
 
 /* ── Runtime Integrity Re-check ────────────────────────────────────── */
@@ -223,6 +308,27 @@ int cprisk_check_init_timing(void);
 
 /// Thin wrapper around cprisk_secure_zero() exposed for testing.
 void cprisk_test_secure_zero(void *buf, size_t len);
+
+/// Inject a test-only white-box bundle so runtime probe/available/evaluate
+/// paths can exercise the real validator without requiring the current test
+/// process image to be linked with reserved white-box sections.
+/// The function copies all four buffers and owns them until
+/// cprisk_test_clear_whitebox_bundle() is called.
+/// Returns 0 on success, -1 on invalid input or allocation failure.
+int cprisk_test_set_whitebox_bundle(
+    const uint8_t *meta,
+    size_t meta_len,
+    const uint8_t *code,
+    size_t code_len,
+    const uint8_t *data,
+    size_t data_len,
+    const uint8_t *tag,
+    size_t tag_len
+);
+
+/// Clear the injected test-only white-box bundle and restore normal runtime
+/// behavior that reads white-box sections from the current image.
+void cprisk_test_clear_whitebox_bundle(void);
 
 /* ── Image address check (dladdr-free) ───────────────────────────────── */
 

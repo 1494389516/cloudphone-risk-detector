@@ -105,6 +105,7 @@ public final class CPRiskKit: NSObject {
         "hook_detected", "objc_swizzle", "rwx_memory",
         "armor_runtime_init_failed", "integrity_runtime_tampered",
         "code_signature_invalid", "text_segment_tampered",
+        "app_signing_identity_tampered", "app_signing_baseline_changed",
         "kernel_hook_timing_anomaly", "kernel_hook_stalker_amplified",
         "system_library_wx_mapping", "system_library_anonymous_exec_region",
         "app_image_segment_layout_anomaly"
@@ -214,7 +215,9 @@ public final class CPRiskKit: NSObject {
     /// 启动自动采集（全局触摸 + 传感器）。
     /// 建议在 `application(_:didFinishLaunchingWithOptions:)` 里尽早调用。
     @objc public func start() {
+#if os(iOS) && !targetEnvironment(macCatalyst)
         cprisk_erase_macho_header()
+#endif
         cprisk_deny_attach()
         cprisk_register_exception_handler()
         _ = ensureArmorRuntimeStarted(trigger: "start")
@@ -818,16 +821,21 @@ public final class CPRiskKit: NSObject {
         )
 
         let armorSnapshot = ensureArmorRuntimeStarted(trigger: "build_envelope")
-        let effectiveSigningKey: String
         let signatureVersion: String
+        let signatureProvider: ((Data) throws -> String)?
 
         if armorSnapshot.status == .active {
-            let (armorMaterial, authentic) = Self.armorRuntimeMaterial()
+            let authentic = cprisk_is_integrity_poisoned() == 0
             if authentic {
-                effectiveSigningKey = Self.deriveEffectiveSigningKey(
-                    baseKey: signingKey,
-                    armorMaterial: armorMaterial
-                )
+                signatureProvider = { signatureInput in
+                    guard let signature = Self.signWithArmorDerivedKey(
+                        baseKey: signingKey,
+                        signatureInput: signatureInput
+                    ) else {
+                        throw ReportEnvelope.ReportEnvelopeError.signingFailed
+                    }
+                    return signature
+                }
                 #if DEBUG
                 signatureVersion = hardening.enableEnvelopeSignatureV2 ? "v2a" : "v1"
                 #else
@@ -838,7 +846,7 @@ public final class CPRiskKit: NSObject {
                 throw SecureUploadError.armorRuntimeUnavailable(reason: "material_poisoned")
             } else {
                 Logger.log("buildSecureReportEnvelope: armor material marked poisoned, degrading to v2 signature")
-                effectiveSigningKey = signingKey
+                signatureProvider = nil
                 signatureVersion = "v2"
             }
         } else if requireArmor {
@@ -846,7 +854,7 @@ public final class CPRiskKit: NSObject {
             throw SecureUploadError.armorRuntimeUnavailable(reason: armorSnapshot.reason)
         } else {
             Logger.log("buildSecureReportEnvelope: armor unavailable, degrading to v2 signature (status=\(armorSnapshot.status.rawValue))")
-            effectiveSigningKey = signingKey
+            signatureProvider = nil
             signatureVersion = "v2"
         }
 
@@ -856,12 +864,13 @@ public final class CPRiskKit: NSObject {
             payloadData: payloadData,
             reportId: report.reportID,
             sessionToken: sessionToken,
-            signingKey: effectiveSigningKey,
+            signingKey: signingKey,
             keyId: effectiveKeyId,
             fieldMapping: mapping,
             attestationKeyId: attestationKeyId,
             trustLevel: trustLevel,
-            config: envelopeConfig
+            config: envelopeConfig,
+            signatureProvider: signatureProvider
         )
     }
 
@@ -1927,15 +1936,16 @@ public final class CPRiskKit: NSObject {
         )
     }
 
-    /// Signal emitted when cprisk_recheck_integrity() detected runtime tampering.
-    /// Runtime material may become visible-poison or hidden-decoy; in both cases
-    /// envelope signing eventually uses the wrong key and server verification fails.
+    /// Signal emitted when the integrity poison flag is set.
+    /// The poison source may be runtime recheck mismatch or an upper-layer
+    /// hard tamper decision, and in both cases envelope signing eventually uses
+    /// the wrong key and server verification fails.
     private static func integrityRecheckPoisonedSignal() -> RiskSignal {
         RiskSignal(
             id: "integrity_runtime_tampered",
             category: "integrity",
             score: 85,
-            evidence: ["reason": "recheck_hash_mismatch"],
+            evidence: ["reason": "integrity_poison_flag_set"],
             state: .tampered,
             layer: 2,
             weightHint: 85
@@ -1983,41 +1993,99 @@ public final class CPRiskKit: NSObject {
         return SHA256.hash(data: data).compactMap { String(format: "%02x", $0) }.joined()
     }
 
-    // MARK: - Armor Runtime Material for Envelope Signing
+    // MARK: - Armor-backed Envelope Signing
 
-    private static func armorRuntimeMaterial() -> (material: Data, authentic: Bool) {
-        var buffer = [UInt8](repeating: 0, count: 32)
-        _ = cprisk_get_runtime_material(&buffer)
-        let authentic = cprisk_is_integrity_poisoned() == 0
-        return (Data(buffer), authentic)
-    }
-
-    /// Derive an effective signing key by HMAC(armorMaterial, baseKey).
-    /// If armor switches to visible poison or hidden decoy material, effectiveKey
-    /// becomes wrong and server-side HMAC verification fails.
-    private static func deriveEffectiveSigningKey(baseKey: String, armorMaterial: Data) -> String {
-        guard let keyData = baseKey.data(using: .utf8) else {
-            Logger.log("deriveEffectiveSigningKey: UTF-8 encoding failed for baseKey, using empty string")
-            return ""
+    private static func clearCStringBuffer(_ buffer: inout [CChar]) {
+        for index in buffer.indices {
+            buffer[index] = 0
         }
-        let derived = HMAC<SHA256>.authenticationCode(
-            for: keyData,
-            using: SymmetricKey(data: armorMaterial)
-        )
-        return Data(derived).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// 返回 v2a 信封验签所需的派生密钥。
-    /// 确保 armor runtime 已启动，并用 baseKey + armor material 派生。
-    /// 供 validateSecureReportEnvelope 在 sigVer == "v2a" 时使用。
-    /// 若 runtime 未激活或显式暴露 poisoned 状态则返回 nil；若 deception 已激活，
-    /// 这里可能继续返回基于 decoy material 的派生密钥，让失败延后表现为签名不匹配。
-    func effectiveSigningKeyForV2aValidation(baseKey: String) -> String? {
+    private static func signWithArmorDerivedKey(baseKey: String, signatureInput: Data) -> String? {
+        guard var keyData = baseKey.data(using: .utf8) else {
+            Logger.log("armor_sign: UTF-8 encoding failed for baseKey")
+            return nil
+        }
+        defer { secureZeroData(&keyData) }
+
+        var signatureBuffer = [CChar](
+            repeating: 0,
+            count: Int(CPRISK_ARMOR_HEX_ENCODED_HASH_SIZE) + 1
+        )
+        defer { clearCStringBuffer(&signatureBuffer) }
+
+        let rc = signatureBuffer.withUnsafeMutableBufferPointer { signaturePtr in
+            keyData.withUnsafeBytes { keyRaw in
+                signatureInput.withUnsafeBytes { inputRaw in
+                    cprisk_sign_with_derived_key(
+                        keyRaw.bindMemory(to: UInt8.self).baseAddress,
+                        keyData.count,
+                        inputRaw.bindMemory(to: UInt8.self).baseAddress,
+                        signatureInput.count,
+                        signaturePtr.baseAddress
+                    )
+                }
+            }
+        }
+        guard rc == 0 else {
+            Logger.log("armor_sign: cprisk_sign_with_derived_key failed rc=\(rc)")
+            return nil
+        }
+        return String(cString: signatureBuffer)
+    }
+
+    private static func verifyWithArmorDerivedKey(
+        baseKey: String,
+        signatureInput: Data,
+        expectedSignature: String
+    ) -> Bool {
+        guard var keyData = baseKey.data(using: .utf8) else {
+            Logger.log("armor_verify: UTF-8 encoding failed for baseKey")
+            return false
+        }
+        defer { secureZeroData(&keyData) }
+
+        var expectedCString = Array(expectedSignature.utf8CString)
+        defer { clearCStringBuffer(&expectedCString) }
+
+        let rc = expectedCString.withUnsafeBufferPointer { signaturePtr in
+            keyData.withUnsafeBytes { keyRaw in
+                signatureInput.withUnsafeBytes { inputRaw in
+                    cprisk_verify_with_derived_key(
+                        keyRaw.bindMemory(to: UInt8.self).baseAddress,
+                        keyData.count,
+                        inputRaw.bindMemory(to: UInt8.self).baseAddress,
+                        signatureInput.count,
+                        signaturePtr.baseAddress
+                    )
+                }
+            }
+        }
+        return rc == 0
+    }
+
+    /// v2a 本地验签走 C helper，Swift 不再直接持有 runtime material 或派生后的 effective key。
+    func validateEnvelopeWithArmorDerivedSignature(
+        _ envelope: ReportEnvelope,
+        baseKey: String,
+        nonceStore: NonceReplayProtecting? = nil,
+        config: ReportEnvelope.Config = ReportEnvelope.Config()
+    ) -> Result<Void, ReportEnvelope.ReportEnvelopeError> {
         let snapshot = ensureArmorRuntimeStarted(trigger: "validate_envelope")
-        guard snapshot.status == .active else { return nil }
-        let (armorMaterial, authentic) = Self.armorRuntimeMaterial()
-        guard authentic else { return nil }
-        return Self.deriveEffectiveSigningKey(baseKey: baseKey, armorMaterial: armorMaterial)
+        guard snapshot.status == .active else { return .failure(.signingFailed) }
+        guard cprisk_is_integrity_poisoned() == 0 else { return .failure(.signingFailed) }
+
+        return envelope.validate(
+            signatureValidator: { signatureInput, signatureHex in
+                Self.verifyWithArmorDerivedKey(
+                    baseKey: baseKey,
+                    signatureInput: signatureInput,
+                    expectedSignature: signatureHex
+                )
+            },
+            nonceStore: nonceStore,
+            config: config
+        )
     }
 }
 

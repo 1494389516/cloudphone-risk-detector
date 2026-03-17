@@ -163,7 +163,41 @@
 
 ### 7.3 Review Notes 建议口径
 
-建议宿主 App 在 `Review Notes` 里主动写明：
+建议宿主 App 在 `Review Notes` 里主动写明。以下提供两种口径，按业务需要选用。
+
+#### 口径 A：完整版（推荐，全量开启 armor 保护时使用）
+
+适用场景：SDK 全量启用 cprisk-armor 运行时保护（字符串加密、数据段加密、完整性校验、Mach-O header 擦除、JIT 按页解密等），不做任何裁剪。
+
+```text
+This app integrates CloudPhoneRiskKit, a fraud-prevention and device-integrity SDK.
+
+The SDK uses runtime integrity verification techniques — including code-section hash
+validation, encrypted string tables, and protected data segments — to detect jailbreak,
+hooking, dynamic instrumentation, and cloud-phone/emulator environments. These techniques
+are consistent with banking and financial app security standards (e.g. Promon SHIELD,
+Guardsquare iXGuard) and are used exclusively for fraud prevention and runtime tamper
+detection, not for hiding functionality from App Review.
+
+The SDK does not use any private APIs. It does not perform advertising tracking
+(NSPrivacyTracking = false). Device-side risk signals such as device identifier,
+runtime integrity status, environment consistency signals, and optional motion or
+biometric-capability signals are collected solely for security purposes.
+
+All runtime protection mechanisms serve a single goal: ensuring that the fraud-prevention
+logic has not been tampered with by attackers, so that risk assessments remain trustworthy.
+```
+
+如果启用了 scheme 查询，在上面基础上追加：
+
+```text
+Queried URL schemes (e.g. cydia, sileo) are used solely for device integrity verification.
+They are not used to profile installed apps for analytics or advertising.
+```
+
+#### 口径 B：精简版（裁剪部分 armor 能力时使用）
+
+适用场景：App Store 构建关闭了 `cprisk_erase_macho_header` 和 `cprisk_jit_decrypt_page`，只保留字符串加密 + 数据段预解密 + 完整性校验 + 符号剥离。
 
 ```text
 This app integrates CloudPhoneRiskKit for device integrity verification and fraud-prevention.
@@ -173,13 +207,6 @@ environment consistency signals, and optional motion or biometric-capability sig
 
 These signals are used for security and fraud-prevention purposes only, not for advertising tracking.
 Any queried URL schemes are limited to jailbreak or device-integrity checks.
-```
-
-如果启用了 scheme 查询，再补一段：
-
-```text
-Queried URL schemes are used solely for device integrity verification and compatibility checks.
-They are not used to profile installed apps for analytics or advertising.
 ```
 
 ---
@@ -337,7 +364,144 @@ codesign -dvv "/path/to/CloudPhoneRiskKit.xcframework"
 
 ---
 
-## 11. 常见误区
+## 11. cprisk-armor 二进制加固与 App Store 合规
+
+### 11.1 加固目标：宿主 App 二进制，不是 SDK 本身
+
+`cprisk-armor` 是编译后壳保护工具。6.4 起，壳的加固目标是**最终的宿主 App 二进制**（而非 SDK 的 framework / 静态库产物）。
+
+```
+SDK 源码 ──编译链接进──→ 宿主 App 二进制 ──cprisk-armor──→ 加固后的 App 二进制 ──提审──→ App Store
+```
+
+因此：
+
+- **壳的合规责任最终由宿主 App（提审方）承担**
+- SDK 提供方的责任是：提供合规的默认配置、明确告知每个 Pass 的审核风险、在文档中给出 Review Notes 口径
+
+### 11.2 两个构建 Profile
+
+建议向宿主 App 提供两套预设 Profile，由宿主方根据自身 App 类型和审核历史选择。
+
+#### Profile A：Full Armor（全量保护）
+
+```bash
+cprisk-armor --input <app_binary> --output <output> --all --key <hex>
+```
+
+| Pass | 名称 | 启用 |
+|------|------|------|
+| Pass 1 | 字符串加密 | 是 |
+| Pass 2 | 元数据擦除 | 是 |
+| Pass 3 | 数据段加密 | 是 |
+| Pass 4 | 完整性锚点 + 白盒 PRF（6.5） | 是 |
+| Pass 5 | 结构混淆 | 是 |
+| Pass 6 | 符号剥离 | 是 |
+
+运行时能力全量开启：Mach-O Header 擦除、JIT 按页解密、异常端口保护。
+
+**适用场景**：
+
+- 金融 / 银行 / 支付类 App（苹果对安全防护容忍度最高）
+- 已有审核历史的大型 App（审核系统对已通过的 App 更宽松）
+- 对逆向对抗有硬需求的场景（反作弊、反薅羊毛）
+
+**审核风险**：低至中。与 Promon SHIELD、Guardsquare iXGuard 等商用安全 SDK 的保护等级一致，大量银行 App 采用同等甚至更激进的保护手段并在 App Store 正常运行。
+
+**Review Notes 使用口径 A（完整版）。**
+
+#### Profile B：AppStore Safe（保守策略）
+
+```bash
+cprisk-armor --input <app_binary> --output <output> --pass3 --pass4 --pass5 --pass6 --key <hex>
+```
+
+| Pass | 名称 | 启用 | 说明 |
+|------|------|------|------|
+| Pass 1 | 字符串加密 | **否** | 关闭后苹果静态扫描器可正常扫描字符串，不会触发"隐藏内容"怀疑 |
+| Pass 2 | 元数据擦除 | **否** | 关闭后 ObjC metadata 保持完整，苹果可正常分析类/方法结构 |
+| Pass 3 | 数据段加密 | 是 | `__DATA` 段加密，运行时解密，苹果静态分析不受影响 |
+| Pass 4 | 完整性锚点 + 白盒 PRF（6.5） | 是 | 完整性校验链 + 白盒 S-box 表正常工作 |
+| Pass 5 | 结构混淆 | 是 | Mach-O 结构层面混淆 |
+| Pass 6 | 符号剥离 | 是 | 等价于 `strip -x`，完全标准操作 |
+
+**适用场景**：
+
+- 新 App / 首次提审 / 无审核历史
+- 小团队 / 独立开发者
+- 非金融类 App（工具、社交、电商等）
+- 对审核通过率要求高于对抗强度的场景
+
+**审核风险**：极低。保留的 Pass 均为业界标准做法，苹果扫描器可正常工作。
+
+**Review Notes 使用口径 B（精简版）。**
+
+### 11.3 为什么这么分
+
+苹果审核二进制的核心链路：
+
+1. **静态分析**：对 IPA 内的 Mach-O 执行 `otool` 风格扫描，检查私有 API 符号引用、字符串中的敏感 API 名
+2. **签名校验**：验证 code signature 完整性
+3. **动态沙盒测试**：有限度运行 App，检查运行时行为
+4. **人工审核**：当静态分析触发 flag 时介入
+
+各 Pass 对这条链路的影响：
+
+| Pass | 对静态分析的影响 | 对动态测试的影响 | 是否可能触发 flag |
+|------|-----------------|-----------------|-------------------|
+| Pass 1 字符串加密 | 苹果扫不到明文字符串，**无法判断是否调用私有 API** | 运行时解密，功能正常 | **可能** — 这是最容易引起"你在藏什么"怀疑的一个 |
+| Pass 2 元数据擦除 | class/protocol/method name 缺失，反射信息不全 | ObjC runtime 信息减少 | **可能** — 苹果可能依赖 metadata 做分析 |
+| Pass 3 数据段加密 | `__DATA` 内容是密文 | 运行时解密后正常 | 不太可能 |
+| Pass 4 完整性锚点 + 白盒 | 多了非标准 section（含 ~160KB 白盒 S-box） | 不影响执行 | 不太可能 |
+| Pass 5 结构混淆 | segment/section 布局异常 | 不影响 dyld 加载 | 不太可能 |
+| Pass 6 符号剥离 | nlist 表被混淆 | 不影响执行 | 不太可能 |
+
+**结论**：Pass 1（字符串加密）和 Pass 2（元数据擦除）是唯二可能影响苹果静态扫描器正常工作的 Pass。AppStore Safe Profile 关闭这两个，保留其余四个，既能提供有效保护（完整性校验 + 数据加密 + 结构混淆 + 符号剥离），又不干扰苹果的审核流程。
+
+### 11.4 渐进开启策略
+
+对于首次提审的 App，推荐以下路径：
+
+1. **首次提审**：使用 Profile B（AppStore Safe），确保顺利通过
+2. **建立审核历史后**：下一版本开启 Pass 6 + Pass 5 + Pass 3（如果 Profile B 已包含则保持）
+3. **稳定后**：逐步开启 Pass 1（字符串加密）
+4. **完全稳定后**：开启 Pass 2（元数据擦除），达到 Full Armor 等级
+
+每次升级之间至少间隔一个正常审核周期。苹果对已有审核历史的 App 后续更新的审核强度通常低于首次提审。
+
+### 11.5 运行时能力的合规说明
+
+除了构建时的 6 个 Pass，SDK 的 CRiskCore 运行时还包含以下能力：
+
+| 运行时能力 | 实现 | 合规风险 | 建议 |
+|-----------|------|---------|------|
+| Mach-O Header 擦除 | `cprisk_erase_macho_header()` | 中高 — 阻碍内存 dump，但只影响运行时，不影响提审时静态分析 | 金融 App 可开；普通 App 谨慎 |
+| JIT 按页解密 | `cprisk_jit_decrypt_page()` | 中 — `mprotect` 切换读写权限，不违反 W^X（不会同时可写可执行） | 可开，iOS 本身允许 `mprotect` |
+| 异常端口保护 | `cprisk_register_exception_handler()` | 中 — 抢占 EXC_BREAKPOINT 处理权 | 可开，但可能影响苹果 crash reporting |
+| 完整性重校验 | `cprisk_recheck_integrity()` | 低 — 标准反篡改手段 | 始终开启 |
+| Anti-Debug | `cprisk_deny_attach()` | 低 — `ptrace(PT_DENY_ATTACH)` 是公开 API | 始终开启 |
+
+### 11.6 合规参考：同类商用 SDK 的保护等级
+
+以下商用安全 SDK 均在 App Store 上正常运行，其保护手段覆盖范围等于或超过 cprisk-armor Full Armor：
+
+| 商用 SDK | 代码混淆 | 字符串加密 | 数据加密 | 完整性校验 | 反调试 | 反 Hook | 反重打包 | 截屏防护 | 安全键盘 |
+|---------|---------|-----------|---------|-----------|--------|---------|---------|---------|---------|
+| **Promon SHIELD** | 控制流混淆 | 有 | 有 | 有 | 有 | 有 | 有 | 有 | 有 |
+| **Guardsquare iXGuard** | 控制流 + 算术混淆 | 有 | 资源全量加密 | 有 | 有 | 系统库内存完整性 | 有 | 有 | — |
+| **Appdome ONEShield** | 有 | 有 | 有 | 有 | 有 | 有 | 有 | 有 | 有 |
+| **cprisk-armor (Full)** | — | 有 | 数据段加密 | 三路径哈希 + HMAC + 白盒 PRF（6.5） | 有 | Prologue Guard | AppSigningIdentity（6.5） | — | — |
+
+cprisk-armor 在控制流混淆、反重打包、截屏防护、安全键盘等方面比上述商用方案覆盖面更窄。苹果允许上述商用方案的全量保护通过审核，cprisk-armor 不会比它们更激进。
+
+---
+
+## 12. 常见误区
+
+### 误区 4：壳加固后苹果一定会拒审
+
+不对。
+Promon SHIELD、Guardsquare iXGuard、Appdome ONEShield 等商用安全 SDK 的保护等级等于或超过 cprisk-armor，大量银行/支付/游戏 App 采用并在 App Store 正常运行。苹果拒审的理由是"私有 API / 隐藏功能 / 元数据欺骗"，不是"二进制有保护"。
 
 ### 误区 1：SDK 自带 manifest，所以宿主 App 什么都不用做
 
@@ -361,7 +525,7 @@ codesign -dvv "/path/to/CloudPhoneRiskKit.xcframework"
 
 ---
 
-## 12. 对外沟通时推荐怎么说
+## 13. 对外沟通时推荐怎么说
 
 如果你把这份指南发给客户，最适合的一句话是：
 
@@ -371,7 +535,7 @@ codesign -dvv "/path/to/CloudPhoneRiskKit.xcframework"
 
 ---
 
-## 13. 相关配套文档
+## 14. 相关配套文档
 
 建议与本指南一起放在 `CloudPhoneRiskKit_文档/` 目录中交付：
 

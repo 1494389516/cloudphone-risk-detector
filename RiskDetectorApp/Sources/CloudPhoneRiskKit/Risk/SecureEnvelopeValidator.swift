@@ -263,22 +263,21 @@ extension CPRiskKit {
             }
         }
 
-        // v2a 签名使用 armor material 派生的密钥，验签时需用 baseKey 派生 effectiveKey。
-        // cprisk_get_runtime_material() 的返回码不再是 authenticity oracle；只有当 runtime
-        // 未激活或显式暴露 visible-poison 状态时，effectiveSigningKeyForV2aValidation 才返回 nil。
-        // 若 deception 已激活，这里会继续拿 decoy material 派生密钥，最终更像普通签名不匹配。
-        let effectiveKey: String
-        if envelope.sigVer == "v2a" {
-            guard let derived = effectiveSigningKeyForV2aValidation(baseKey: signingKey) else {
-                return .failure(.reportEnvelope(.signingFailed))
-            }
-            effectiveKey = derived
-        } else {
-            effectiveKey = signingKey
-        }
-
         let replayStore = enableReplayProtection ? (nonceStore ?? LocalEnvelopeReplayStore.shared) : nil
-        let result = envelope.validate(signingKey: effectiveKey, nonceStore: replayStore, config: config)
+        let result: Result<Void, ReportEnvelope.ReportEnvelopeError>
+
+        // v2a 签名改为优先走 CRiskCore helper：runtime material 的读取、effective key 派生、
+        // 以及最终 HMAC 验签都尽量收口到 C 层，Swift 侧不再直接拿到可用派生密钥。
+        if envelope.sigVer == "v2a" {
+            result = validateEnvelopeWithArmorDerivedSignature(
+                envelope,
+                baseKey: signingKey,
+                nonceStore: replayStore,
+                config: config
+            )
+        } else {
+            result = envelope.validate(signingKey: signingKey, nonceStore: replayStore, config: config)
+        }
         switch result {
         case .success:
             return .success(())

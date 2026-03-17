@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import MachOKit
 import StringEncryptor
@@ -212,6 +213,79 @@ final class E2EArmorTests: XCTestCase {
         XCTAssertNotEqual(hash1, hash2, "Anchor hash must change when __text is modified")
     }
 
+    func testWhiteBoxMetadataPayloadSizeMatchesRuntimeContract() throws {
+        let inputURL = try Self.writeFixture(named: "e2e_whitebox_payload")
+        defer { try? FileManager.default.removeItem(at: inputURL) }
+
+        let file = try MachOFile(url: inputURL)
+        let config = PassConfig(encryptionKey: Data("test-whitebox-key".utf8))
+
+        _ = try IntegrityAnchorPass().execute(on: file, config: config)
+
+        let metadataSection = try XCTUnwrap(
+            try file.section(segment: "__DATA", section: ArmorABI.WhiteBox.Sections.metadata)
+        )
+        let codeSection = try XCTUnwrap(
+            try file.section(segment: "__DATA", section: ArmorABI.WhiteBox.Sections.code)
+        )
+        let dataSection = try XCTUnwrap(
+            try file.section(segment: "__DATA", section: ArmorABI.WhiteBox.Sections.data)
+        )
+        let tagSection = try XCTUnwrap(
+            try file.section(segment: "__DATA", section: ArmorABI.WhiteBox.Sections.tag)
+        )
+
+        let metadata = try metadataSection.readContent(from: file.data)
+        XCTAssertGreaterThanOrEqual(metadata.count, 16)
+
+        let payloadSize = metadata.readLE32(at: 12)
+        XCTAssertEqual(payloadSize, UInt32(codeSection.size + dataSection.size),
+                       "payloadSize must cover only white-box code+data so CRiskCore validation passes")
+        XCTAssertNotEqual(payloadSize, UInt32(codeSection.size + dataSection.size + tagSection.size),
+                          "payloadSize must exclude the detached white-box tag section")
+    }
+
+    func testWhiteBoxMetadataConfigDigestMatchesRuntimeContract() throws {
+        let inputURL = try Self.writeFixture(named: "e2e_whitebox_config_digest")
+        defer { try? FileManager.default.removeItem(at: inputURL) }
+
+        let file = try MachOFile(url: inputURL)
+        let config = PassConfig(encryptionKey: Data("test-whitebox-config".utf8))
+
+        _ = try IntegrityAnchorPass().execute(on: file, config: config)
+
+        let metadataSection = try XCTUnwrap(
+            try file.section(segment: "__DATA", section: ArmorABI.WhiteBox.Sections.metadata)
+        )
+        let codeSection = try XCTUnwrap(
+            try file.section(segment: "__DATA", section: ArmorABI.WhiteBox.Sections.code)
+        )
+        let dataSection = try XCTUnwrap(
+            try file.section(segment: "__DATA", section: ArmorABI.WhiteBox.Sections.data)
+        )
+        let tagSection = try XCTUnwrap(
+            try file.section(segment: "__DATA", section: ArmorABI.WhiteBox.Sections.tag)
+        )
+
+        let metadata = try metadataSection.readContent(from: file.data)
+        let code = try codeSection.readContent(from: file.data)
+        let data = try dataSection.readContent(from: file.data)
+        let tag = try tagSection.readContent(from: file.data)
+
+        XCTAssertGreaterThanOrEqual(metadata.count, 48)
+
+        var expectedDigest = Data()
+        expectedDigest.append(code)
+        expectedDigest.append(data)
+        expectedDigest.append(tag)
+
+        XCTAssertEqual(
+            metadata.subdata(in: 16..<48),
+            Data(SHA256.hash(data: expectedDigest)),
+            "configDigest must bind white-box code, data, and detached tag so the runtime can reject tampered metadata"
+        )
+    }
+
     // MARK: - Structure Obfuscator Decoy Sections
 
     func testStructureObfuscatorAddsFakeSections() throws {
@@ -382,6 +456,12 @@ final class E2EArmorTests: XCTestCase {
 // MARK: - Data Helpers
 
 private extension Data {
+    func readLE32(at offset: Int) -> UInt32 {
+        subdata(in: offset..<(offset + 4)).withUnsafeBytes {
+            UInt32(littleEndian: $0.load(as: UInt32.self))
+        }
+    }
+
     mutating func appendLE(_ value: UInt32) {
         var le = value.littleEndian
         append(Data(bytes: &le, count: 4))

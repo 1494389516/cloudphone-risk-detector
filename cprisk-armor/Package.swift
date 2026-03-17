@@ -5,6 +5,7 @@ let package = Package(
     name: "cprisk-armor",
     platforms: [.macOS(.v14)],
     products: [
+        .library(name: "MachOKit", targets: ["MachOKit"]),
         .executable(name: "cprisk-armor", targets: ["cprisk-armor"])
     ],
     targets: [

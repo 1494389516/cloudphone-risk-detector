@@ -210,6 +210,32 @@ public struct ReportEnvelope: Codable, Sendable {
         trustLevel: TrustLevel? = nil,
         config: Config = Config()
     ) throws -> ReportEnvelope {
+        try create(
+            payloadData: payloadData,
+            reportId: reportId,
+            sessionToken: sessionToken,
+            signingKey: signingKey,
+            keyId: keyId,
+            fieldMapping: fieldMapping,
+            attestationKeyId: attestationKeyId,
+            trustLevel: trustLevel,
+            config: config,
+            signatureProvider: nil
+        )
+    }
+
+    internal static func create(
+        payloadData: Data,
+        reportId: String,
+        sessionToken: String,
+        signingKey: String,
+        keyId: String = "k1",
+        fieldMapping: PayloadFieldMapping? = nil,
+        attestationKeyId: String? = nil,
+        trustLevel: TrustLevel? = nil,
+        config: Config = Config(),
+        signatureProvider: ((Data) throws -> String)?
+    ) throws -> ReportEnvelope {
         let nonce = UUID().uuidString
         let ts = currentTimestampMillis()
 
@@ -233,15 +259,17 @@ public struct ReportEnvelope: Codable, Sendable {
             canonicalPayload: canonicalPayload
         )
 
-        guard let signatureData = signatureInput.data(using: .utf8) else {
-            throw ReportEnvelopeError.signingFailed
+        let signatureData = try signatureInputData(from: signatureInput)
+        let signatureHex: String
+        if let signatureProvider {
+            signatureHex = try signatureProvider(signatureData)
+        } else {
+            guard var keyData = signingKey.data(using: .utf8) else {
+                throw ReportEnvelopeError.signingFailed
+            }
+            defer { secureZeroData(&keyData) }
+            signatureHex = hmacHex(message: signatureData, keyData: keyData)
         }
-        guard var keyData = signingKey.data(using: .utf8) else {
-            throw ReportEnvelopeError.signingFailed
-        }
-        defer { secureZeroData(&keyData) }
-
-        let signatureHex = hmacHex(message: signatureData, keyData: keyData)
 
         return ReportEnvelope(
             nonce: nonce,
@@ -376,7 +404,7 @@ public struct ReportEnvelope: Codable, Sendable {
             attestationKeyId: attestationKeyId,
             canonicalPayload: canonicalPayload
         )
-        guard let signatureData = signatureInput.data(using: .utf8) else {
+        guard let signatureData = try? Self.signatureInputData(from: signatureInput) else {
             return false
         }
         let expectedSignature = Self.hmacHex(message: signatureData, keyData: keyDataCopy)
@@ -406,6 +434,53 @@ public struct ReportEnvelope: Codable, Sendable {
         }
 
         guard verifySignature(signingKey) else {
+            return .failure(.signatureMismatch)
+        }
+
+        guard !isExpired(config) else {
+            return .failure(.nonceExpired)
+        }
+
+        if let nonceStore {
+            let expiresAt = ts + config.nonceExpirationMillis
+            let consumed = nonceStore.consumeIfNew(
+                sessionToken: sessionToken,
+                nonce: nonce,
+                expiresAtMillis: expiresAt
+            )
+            guard consumed else {
+                return .failure(.replayDetected)
+            }
+        }
+
+        return .success(())
+    }
+
+    internal func validate(
+        signatureValidator: (Data, String) -> Bool,
+        nonceStore: NonceReplayProtecting? = nil,
+        config: Config = Config()
+    ) -> Result<Void, ReportEnvelopeError> {
+        guard isTimestampValid(config) else {
+            return .failure(.timestampOutOfRange)
+        }
+
+        guard let canonicalPayload = try? Self.canonicalJSONString(from: payload) else {
+            return .failure(.signatureMismatch)
+        }
+        let signatureInput = Self.buildSignatureInput(
+            sigVer: sigVer,
+            nonce: nonce,
+            ts: ts,
+            sessionToken: sessionToken,
+            reportId: reportId,
+            keyId: keyId,
+            fieldMappingVersion: fieldMappingVersion,
+            attestationKeyId: attestationKeyId,
+            canonicalPayload: canonicalPayload
+        )
+        guard let signatureData = try? Self.signatureInputData(from: signatureInput),
+              signatureValidator(signatureData, signature) else {
             return .failure(.signatureMismatch)
         }
 
@@ -487,6 +562,13 @@ public struct ReportEnvelope: Codable, Sendable {
         let key = SymmetricKey(data: keyData)
         let digest = HMAC<SHA256>.authenticationCode(for: message, using: key)
         return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func signatureInputData(from signatureInput: String) throws -> Data {
+        guard let signatureData = signatureInput.data(using: .utf8) else {
+            throw ReportEnvelopeError.signingFailed
+        }
+        return signatureData
     }
 
     private static func currentTimestampMillis() -> Int64 {

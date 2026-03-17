@@ -7,8 +7,6 @@ private enum DataArmorSeed {
     static let blobMagic: UInt32 = 0x43504244
     static let accumulatorVersion: UInt32 = 2
     static let accumulatorRotation: UInt32 = 7
-    // Build-tool only — this domain tag does not appear in the final SDK binary.
-    static let accumulatorDomain = "cprisk.pass1.acc.v2"
 }
 
 /// Pass 3: emit a minimal real protected `__DATA` payload and loader descriptor.
@@ -24,13 +22,14 @@ public final class DataSegmentEncryptorPass: ArmorPass {
     public func execute(on file: MachOFile, config: PassConfig) throws -> PassResult {
         let fullAnchorHash = try readFullAnchorHash(from: file)
         let integrityHash = sha256(fullAnchorHash + fullAnchorHash + fullAnchorHash)
+        let whitebox = ArmorWhiteBox.build(rootKey: config.encryptionKey)
         let anchorAccumulator = anchorBoundAccumulator(
-            rootKey: config.encryptionKey,
+            whitebox: whitebox,
             fullAnchorHash: fullAnchorHash,
             integrityHash: integrityHash
         )
         let loaderKey = deriveLoaderKey(
-            rootKey: config.encryptionKey,
+            whitebox: whitebox,
             fullAnchorHash: fullAnchorHash,
             integrityHash: integrityHash,
             anchorAccumulator: anchorAccumulator
@@ -115,7 +114,7 @@ public final class DataSegmentEncryptorPass: ArmorPass {
                 + "\(ArmorABI.dataSegmentName).\(ArmorABI.Loader.sectionName)"
         )
         details.append(
-            "Loader key is chained from the anchor-bound accumulator plus pass4 anchor material"
+            "Loader key is chained from the white-box accumulator seed plus pass4 anchor material"
         )
 
         return PassResult(
@@ -168,32 +167,27 @@ package func anchorBoundAccumulator(
     fullAnchorHash: Data,
     integrityHash: Data
 ) -> UInt64 {
-    var seed = Data(DataArmorSeed.accumulatorDomain.utf8)
-    seed.append(normalizedRootKey(rootKey))
-    seed.append(fullAnchorHash)
-    seed.append(integrityHash)
-
-    let digest = sha256(seed)
-    var value: UInt64 = 0
-    _ = withUnsafeMutableBytes(of: &value) { target in
-        digest.prefix(MemoryLayout<UInt64>.size).copyBytes(to: target)
-    }
-    return rotl64(value, by: Int(DataArmorSeed.accumulatorRotation))
+    let whitebox = ArmorWhiteBox.build(rootKey: rootKey)
+    return anchorBoundAccumulator(
+        whitebox: whitebox,
+        fullAnchorHash: fullAnchorHash,
+        integrityHash: integrityHash
+    )
 }
 
-// Build-tool only — this salt does not appear in the final SDK binary.
-private func deriveLoaderKey(
+package func deriveLoaderKey(
     rootKey: Data?,
     fullAnchorHash: Data,
     integrityHash: Data,
     anchorAccumulator: UInt64
 ) -> Data {
-    var seed = Data("cprisk.pass3.key.v1".utf8)
-    seed.append(normalizedRootKey(rootKey))
-    seed.append(fullAnchorHash)
-    seed.append(integrityHash)
-    appendUInt64(anchorAccumulator, to: &seed)
-    return sha256(seed)
+    let whitebox = ArmorWhiteBox.build(rootKey: rootKey)
+    return deriveLoaderKey(
+        whitebox: whitebox,
+        fullAnchorHash: fullAnchorHash,
+        integrityHash: integrityHash,
+        anchorAccumulator: anchorAccumulator
+    )
 }
 
 private func stableKeyID(segment: String, section: String) -> UInt32 {
@@ -235,26 +229,12 @@ private func makeKeystream(key: Data, keyID: UInt32, nonce: Data, length: Int) -
     return output
 }
 
-private func rotl64(_ value: UInt64, by amount: Int) -> UInt64 {
-    guard amount != 0 else { return value }
-    return (value << amount) | (value >> (64 - amount))
-}
-
 private func xor(_ lhs: Data, _ rhs: Data) -> Data {
     Data(zip(lhs, rhs).map(^))
 }
 
 private func sha256(_ data: Data) -> Data {
     Data(SHA256.hash(data: data))
-}
-
-private func normalizedRootKey(_ rootKey: Data?) -> Data {
-    var key = Data(repeating: 0, count: ArmorABI.keySize)
-    guard let rootKey else { return key }
-
-    let prefix = rootKey.prefix(ArmorABI.keySize)
-    key.replaceSubrange(0..<prefix.count, with: prefix)
-    return key
 }
 
 private func appendUInt32(_ value: UInt32, to data: inout Data) {
@@ -265,4 +245,32 @@ private func appendUInt32(_ value: UInt32, to data: inout Data) {
 private func appendUInt64(_ value: UInt64, to data: inout Data) {
     var littleEndian = value.littleEndian
     withUnsafeBytes(of: &littleEndian) { data.append(contentsOf: $0) }
+}
+
+private func anchorBoundAccumulator(
+    whitebox: ArmorWhiteBoxBundle,
+    fullAnchorHash: Data,
+    integrityHash: Data
+) -> UInt64 {
+    var digest = Data()
+    digest.append(fullAnchorHash)
+    digest.append(integrityHash)
+    let accDigest = sha256(digest)
+    let accSeed = whitebox.prf(domain: .anchorAccumulatorSeed, input: accDigest)
+    let value = ArmorWhiteBox.littleEndianUInt64(from: accSeed)
+    return ArmorWhiteBox.rotl64(value, by: Int(DataArmorSeed.accumulatorRotation))
+}
+
+private func deriveLoaderKey(
+    whitebox: ArmorWhiteBoxBundle,
+    fullAnchorHash: Data,
+    integrityHash: Data,
+    anchorAccumulator: UInt64
+) -> Data {
+    var digest = Data()
+    digest.append(fullAnchorHash)
+    digest.append(integrityHash)
+    ArmorWhiteBox.appendLittleEndian(anchorAccumulator, to: &digest)
+    let loaderDigest = sha256(digest)
+    return whitebox.prf(domain: .loaderKey, input: loaderDigest)
 }

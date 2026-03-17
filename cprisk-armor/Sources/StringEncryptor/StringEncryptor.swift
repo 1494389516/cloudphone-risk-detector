@@ -149,7 +149,7 @@ public final class StringEncryptorPass: ArmorPass {
             bytesModified: payload.count,
             details: [
                 "Wrote encrypted string table to \(ArmorABI.dataSegmentName).\(ArmorABI.StringTable.sectionName)",
-                "Bootstrap string id \(StringBootstrap.id) is reserved for runtime key chaining",
+                "Bootstrap string id \(StringBootstrap.id) is retained for compatibility with the existing table layout",
                 "Encrypted \(encryptedFromCString) __cstring entries (zero-filled \(zeroFilledCount) original positions)",
             ]
         )
@@ -179,20 +179,12 @@ public final class StringEncryptorPass: ArmorPass {
 
 // MARK: - 密钥派生与加密辅助（仅构建工具侧使用）
 
-// Build-tool only — this salt does not appear in the final SDK binary.
 private func deriveStringKey(rootKey: Data?) -> Data {
-    var seed = Data("cprisk.pass1.key.v1".utf8)
-    seed.append(normalizedRootKey(rootKey))
-    return sha256(seed)
-}
-
-private func normalizedRootKey(_ rootKey: Data?) -> Data {
-    var key = Data(repeating: 0, count: ArmorABI.keySize)
-    guard let rootKey else { return key }
-
-    let prefix = rootKey.prefix(ArmorABI.keySize)
-    key.replaceSubrange(0..<prefix.count, with: prefix)
-    return key
+    let whitebox = ArmorWhiteBox.build(rootKey: rootKey)
+    return whitebox.prf(
+        domain: .pass1StringKey,
+        input: Data(repeating: 0, count: ArmorABI.hashSize)
+    )
 }
 
 private func generateNonce() throws -> Data {

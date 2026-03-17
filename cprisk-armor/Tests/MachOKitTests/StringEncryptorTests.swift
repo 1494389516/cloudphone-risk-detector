@@ -272,14 +272,11 @@ final class StringEncryptorTests: XCTestCase {
         }
     }
 
-    /// 密钥派生（与 StringEncryptorPass 内部逻辑保持一致）
     private static func deriveStringKey(rootKey: Data) -> Data {
-        var seed = Data("cprisk.pass1.key.v1".utf8)
-        var key = Data(repeating: 0, count: 32)
-        let prefix = rootKey.prefix(32)
-        key.replaceSubrange(0..<prefix.count, with: prefix)
-        seed.append(key)
-        return Data(SHA256.hash(data: seed))
+        ArmorWhiteBox.build(rootKey: rootKey).prf(
+            domain: .pass1StringKey,
+            input: Data(repeating: 0, count: ArmorABI.hashSize)
+        )
     }
 
     private static func makeKeystream(key: Data, stringID: UInt32, nonce: Data = Data(), length: Int) -> Data {

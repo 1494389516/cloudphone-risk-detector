@@ -85,6 +85,20 @@ static uint64_t cprisk_rotl64_i(uint64_t value, unsigned int shift) {
     return (value << shift) | (value >> (64U - shift));
 }
 
+enum {
+    CPRISK_WHITEBOX_DOMAIN_ANCHOR_TAG_I = 1u,
+    CPRISK_WHITEBOX_DOMAIN_PASS1_STRING_KEY_I = 2u,
+    CPRISK_WHITEBOX_DOMAIN_ANCHOR_ACCUMULATOR_SEED_I = 3u,
+    CPRISK_WHITEBOX_DOMAIN_LOADER_KEY_I = 4u,
+    CPRISK_WHITEBOX_DOMAIN_RUNTIME_MATERIAL_I = 5u
+};
+
+int cprisk_whitebox_evaluate_domain(
+    uint32_t domain_id,
+    const uint8_t input[32],
+    uint8_t out[32]
+);
+
 static int cprisk_derive_pass1_string_key_i(
     const uint8_t root_material[CPRISK_ARMOR_KEY_SIZE],
     uint8_t out_key[CPRISK_ARMOR_KEY_SIZE]
@@ -288,6 +302,272 @@ static void cprisk_derive_runtime_material_i(
     cprisk_secure_zero(data_le, sizeof(data_le));
 }
 
+static void cprisk_sha256_concat2_i(
+    const uint8_t *a,
+    size_t a_len,
+    const uint8_t *b,
+    size_t b_len,
+    uint8_t out_hash[CPRISK_ARMOR_HASH_SIZE]
+) {
+    cprisk_sha256_ctx ctx;
+    cprisk_sha256_init(&ctx);
+    cprisk_sha256_update(&ctx, a, a_len);
+    cprisk_sha256_update(&ctx, b, b_len);
+    cprisk_sha256_final(&ctx, out_hash);
+}
+
+static void cprisk_sha256_concat3_i(
+    const uint8_t *a,
+    size_t a_len,
+    const uint8_t *b,
+    size_t b_len,
+    const uint8_t *c,
+    size_t c_len,
+    uint8_t out_hash[CPRISK_ARMOR_HASH_SIZE]
+) {
+    cprisk_sha256_ctx ctx;
+    cprisk_sha256_init(&ctx);
+    cprisk_sha256_update(&ctx, a, a_len);
+    cprisk_sha256_update(&ctx, b, b_len);
+    cprisk_sha256_update(&ctx, c, c_len);
+    cprisk_sha256_final(&ctx, out_hash);
+}
+
+static void cprisk_sha256_concat4_i(
+    const uint8_t *a,
+    size_t a_len,
+    const uint8_t *b,
+    size_t b_len,
+    const uint8_t *c,
+    size_t c_len,
+    const uint8_t *d,
+    size_t d_len,
+    uint8_t out_hash[CPRISK_ARMOR_HASH_SIZE]
+) {
+    cprisk_sha256_ctx ctx;
+    cprisk_sha256_init(&ctx);
+    cprisk_sha256_update(&ctx, a, a_len);
+    cprisk_sha256_update(&ctx, b, b_len);
+    cprisk_sha256_update(&ctx, c, c_len);
+    cprisk_sha256_update(&ctx, d, d_len);
+    cprisk_sha256_final(&ctx, out_hash);
+}
+
+static int cprisk_verify_anchor_whitebox_i(
+    const uint8_t full_hash[CPRISK_ARMOR_HASH_SIZE]
+) {
+    const struct mach_header_64 *hdr = cprisk_own_hdr_i();
+    if (!hdr)
+        return -1;
+
+    unsigned long sz = 0;
+    const uint8_t *sec = cprisk_find_section(
+        hdr, CPRISK_ARMOR_SEGMENT_DATA, CPRISK_ARMOR_SECTION_FULL_HASH, &sz);
+    if (!sec || sz != CPRISK_ARMOR_HASH_SIZE)
+        return -1;
+
+    uint8_t computed_tag[CPRISK_ARMOR_HASH_SIZE];
+    if (cprisk_whitebox_evaluate_domain(
+            CPRISK_WHITEBOX_DOMAIN_ANCHOR_TAG_I,
+            full_hash,
+            computed_tag) != 0) {
+        return -1;
+    }
+
+    const int rc = cprisk_hmac_verify(sec, computed_tag, CPRISK_ARMOR_HASH_SIZE);
+    cprisk_secure_zero(computed_tag, sizeof(computed_tag));
+    return rc;
+}
+
+static int cprisk_init_protection_legacy_i(
+    const uint8_t root_material[CPRISK_ARMOR_KEY_SIZE],
+    const uint8_t full_anchor_hash[CPRISK_ARMOR_HASH_SIZE],
+    const uint8_t integrity[CPRISK_ARMOR_HASH_SIZE]
+) {
+    uint8_t loader_key[CPRISK_ARMOR_KEY_SIZE];
+    uint64_t string_acc = 0;
+    int rc = -1;
+    memset(loader_key, 0, sizeof(loader_key));
+
+    if (cprisk_verify_anchor_hmac(root_material, full_anchor_hash) != 0) {
+        rc = -4;
+        goto cleanup;
+    }
+
+    string_acc = cprisk_anchor_bound_accumulator_i(
+        root_material, full_anchor_hash, integrity);
+
+    {
+        uint8_t pass1_string_key[CPRISK_ARMOR_KEY_SIZE];
+        cprisk_derive_pass1_string_key_i(root_material, pass1_string_key);
+        if (cprisk_init_string_decryptor(pass1_string_key, CPRISK_ARMOR_KEY_SIZE) != 0) {
+            cprisk_secure_zero(pass1_string_key, sizeof(pass1_string_key));
+            rc = -5;
+            goto cleanup;
+        }
+        cprisk_secure_zero(pass1_string_key, sizeof(pass1_string_key));
+    }
+
+    cprisk_prepare_deception_material_i(
+        root_material, full_anchor_hash, integrity);
+
+    cprisk_derive_loader_key_i(
+        root_material,
+        full_anchor_hash,
+        integrity,
+        string_acc,
+        loader_key);
+
+    if (cprisk_init_data_loader(loader_key, CPRISK_ARMOR_KEY_SIZE) != 0) {
+        rc = -6;
+        goto cleanup;
+    }
+
+    if (cprisk_load_protected_data() < 0) {
+        cprisk_unload_protected_data();
+        rc = -7;
+        goto cleanup;
+    }
+
+    cprisk_derive_runtime_material_i(
+        root_material,
+        full_anchor_hash,
+        integrity,
+        string_acc,
+        cprisk_get_data_integrity_accumulator(),
+        s_runtime_material);
+    s_runtime_material_ready = 1;
+    rc = 0;
+
+cleanup:
+    cprisk_secure_zero(loader_key, sizeof(loader_key));
+    return rc;
+}
+
+static int cprisk_init_protection_whitebox_i(
+    const uint8_t root_material[CPRISK_ARMOR_KEY_SIZE],
+    const uint8_t full_anchor_hash[CPRISK_ARMOR_HASH_SIZE],
+    const uint8_t integrity[CPRISK_ARMOR_HASH_SIZE]
+) {
+    uint8_t pass1_key[CPRISK_ARMOR_KEY_SIZE];
+    uint8_t acc_digest[CPRISK_ARMOR_HASH_SIZE];
+    uint8_t acc_seed[CPRISK_ARMOR_HASH_SIZE];
+    uint8_t loader_digest[CPRISK_ARMOR_HASH_SIZE];
+    uint8_t loader_key[CPRISK_ARMOR_KEY_SIZE];
+    uint8_t runtime_digest[CPRISK_ARMOR_HASH_SIZE];
+    uint8_t anchor_acc_le[8];
+    uint8_t string_acc_le[8];
+    uint8_t data_acc_le[8];
+    uint64_t anchor_accumulator = 0;
+    int rc = -1;
+
+    memset(pass1_key, 0, sizeof(pass1_key));
+    memset(acc_digest, 0, sizeof(acc_digest));
+    memset(acc_seed, 0, sizeof(acc_seed));
+    memset(loader_digest, 0, sizeof(loader_digest));
+    memset(loader_key, 0, sizeof(loader_key));
+    memset(runtime_digest, 0, sizeof(runtime_digest));
+    memset(anchor_acc_le, 0, sizeof(anchor_acc_le));
+    memset(string_acc_le, 0, sizeof(string_acc_le));
+    memset(data_acc_le, 0, sizeof(data_acc_le));
+
+    if (cprisk_verify_anchor_whitebox_i(full_anchor_hash) != 0) {
+        rc = -4;
+        goto cleanup;
+    }
+
+    if (cprisk_whitebox_evaluate_domain(
+            CPRISK_WHITEBOX_DOMAIN_PASS1_STRING_KEY_I,
+            NULL,
+            pass1_key) != 0) {
+        rc = -5;
+        goto cleanup;
+    }
+    if (cprisk_init_string_decryptor(pass1_key, CPRISK_ARMOR_KEY_SIZE) != 0) {
+        rc = -5;
+        goto cleanup;
+    }
+
+    cprisk_prepare_deception_material_i(
+        root_material, full_anchor_hash, integrity);
+
+    cprisk_sha256_concat2_i(full_anchor_hash,
+                            CPRISK_ARMOR_HASH_SIZE,
+                            integrity,
+                            CPRISK_ARMOR_HASH_SIZE,
+                            acc_digest);
+    if (cprisk_whitebox_evaluate_domain(
+            CPRISK_WHITEBOX_DOMAIN_ANCHOR_ACCUMULATOR_SEED_I,
+            acc_digest,
+            acc_seed) != 0) {
+        rc = -6;
+        goto cleanup;
+    }
+    anchor_accumulator = cprisk_rotl64_i(cprisk_u64_from_le_i(acc_seed), 7U);
+    cprisk_u64_to_le_i(anchor_accumulator, anchor_acc_le);
+
+    cprisk_sha256_concat3_i(full_anchor_hash,
+                            CPRISK_ARMOR_HASH_SIZE,
+                            integrity,
+                            CPRISK_ARMOR_HASH_SIZE,
+                            anchor_acc_le,
+                            sizeof(anchor_acc_le),
+                            loader_digest);
+    if (cprisk_whitebox_evaluate_domain(
+            CPRISK_WHITEBOX_DOMAIN_LOADER_KEY_I,
+            loader_digest,
+            loader_key) != 0) {
+        rc = -6;
+        goto cleanup;
+    }
+
+    if (cprisk_init_data_loader(loader_key, CPRISK_ARMOR_KEY_SIZE) != 0) {
+        rc = -6;
+        goto cleanup;
+    }
+
+    if (cprisk_load_protected_data() < 0) {
+        cprisk_unload_protected_data();
+        rc = -7;
+        goto cleanup;
+    }
+
+    cprisk_u64_to_le_i(cprisk_get_string_integrity_accumulator(), string_acc_le);
+    cprisk_u64_to_le_i(cprisk_get_data_integrity_accumulator(), data_acc_le);
+    cprisk_sha256_concat4_i(full_anchor_hash,
+                            CPRISK_ARMOR_HASH_SIZE,
+                            integrity,
+                            CPRISK_ARMOR_HASH_SIZE,
+                            string_acc_le,
+                            sizeof(string_acc_le),
+                            data_acc_le,
+                            sizeof(data_acc_le),
+                            runtime_digest);
+    if (cprisk_whitebox_evaluate_domain(
+            CPRISK_WHITEBOX_DOMAIN_RUNTIME_MATERIAL_I,
+            runtime_digest,
+            s_runtime_material) != 0) {
+        cprisk_unload_protected_data();
+        rc = -7;
+        goto cleanup;
+    }
+
+    s_runtime_material_ready = 1;
+    rc = 0;
+
+cleanup:
+    cprisk_secure_zero(pass1_key, sizeof(pass1_key));
+    cprisk_secure_zero(acc_digest, sizeof(acc_digest));
+    cprisk_secure_zero(acc_seed, sizeof(acc_seed));
+    cprisk_secure_zero(loader_digest, sizeof(loader_digest));
+    cprisk_secure_zero(loader_key, sizeof(loader_key));
+    cprisk_secure_zero(runtime_digest, sizeof(runtime_digest));
+    cprisk_secure_zero(anchor_acc_le, sizeof(anchor_acc_le));
+    cprisk_secure_zero(string_acc_le, sizeof(string_acc_le));
+    cprisk_secure_zero(data_acc_le, sizeof(data_acc_le));
+    return rc;
+}
+
 /* ── Path A: Mach VM read ──────────────────────────────────────────── */
 
 /* vm_size_t is 32-bit on Darwin; avoid truncation when sz > UINT32_MAX */
@@ -483,10 +763,8 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
     uint64_t t_start = cprisk_monotonic_ns();
 
     uint8_t root_material[CPRISK_ARMOR_KEY_SIZE];
-    uint8_t loader_key[CPRISK_ARMOR_KEY_SIZE];
     uint8_t integrity[CPRISK_ARMOR_HASH_SIZE];
     uint8_t full_anchor_hash[CPRISK_ARMOR_HASH_SIZE];
-    uint64_t string_acc = 0;
     int rc = -1;
 
     s_integrity_poisoned = 0;
@@ -525,58 +803,17 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
         goto cleanup;
     }
 
-    /* Verify HMAC anchor tag against reconstructed full hash */
-    if (cprisk_verify_anchor_hmac(root_material, full_anchor_hash) != 0) {
-        rc = -4;
-        goto cleanup;
+    if (cprisk_whitebox_available() != 0) {
+        rc = cprisk_init_protection_whitebox_i(
+            root_material,
+            full_anchor_hash,
+            integrity);
+    } else {
+        rc = cprisk_init_protection_legacy_i(
+            root_material,
+            full_anchor_hash,
+            integrity);
     }
-
-    string_acc = cprisk_anchor_bound_accumulator_i(
-        root_material, full_anchor_hash, integrity);
-
-    /* Pass 1 string key: SHA256("cprisk.pass1.key.v1" || root_material), matches build-tool */
-    {
-        uint8_t pass1_string_key[CPRISK_ARMOR_KEY_SIZE];
-        cprisk_derive_pass1_string_key_i(root_material, pass1_string_key);
-        if (cprisk_init_string_decryptor(pass1_string_key, CPRISK_ARMOR_KEY_SIZE) != 0) {
-            cprisk_secure_zero(pass1_string_key, sizeof(pass1_string_key));
-            rc = -5;
-            goto cleanup;
-        }
-        cprisk_secure_zero(pass1_string_key, sizeof(pass1_string_key));
-    }
-
-    cprisk_prepare_deception_material_i(
-        root_material, full_anchor_hash, integrity);
-
-    cprisk_derive_loader_key_i(
-        root_material,
-        full_anchor_hash,
-        integrity,
-        string_acc,
-        loader_key);
-
-    if (cprisk_init_data_loader(loader_key, CPRISK_ARMOR_KEY_SIZE) != 0) {
-        rc = -6;
-        goto cleanup;
-    }
-
-    int loaded = cprisk_load_protected_data();
-    if (loaded < 0) {
-        cprisk_unload_protected_data();
-        rc = -7;
-        goto cleanup;
-    }
-
-    cprisk_derive_runtime_material_i(
-        root_material,
-        full_anchor_hash,
-        integrity,
-        string_acc,
-        cprisk_get_data_integrity_accumulator(),
-        s_runtime_material);
-    s_runtime_material_ready = 1;
-    rc = 0;
 
 cleanup:
     if (rc != 0) {
@@ -585,7 +822,6 @@ cleanup:
     }
 
     cprisk_secure_zero(root_material, sizeof(root_material));
-    cprisk_secure_zero(loader_key, sizeof(loader_key));
     cprisk_secure_zero(integrity, sizeof(integrity));
     cprisk_secure_zero(full_anchor_hash, sizeof(full_anchor_hash));
 
@@ -619,6 +855,10 @@ int cprisk_get_runtime_material(uint8_t out_material[32]) {
 
     memcpy(out_material, s_runtime_material, CPRISK_ARMOR_HASH_SIZE);
     return 0;
+}
+
+int cprisk_runtime_material_ready(void) {
+    return s_runtime_material_ready ? 1 : 0;
 }
 
 int cprisk_recheck_integrity(void) {

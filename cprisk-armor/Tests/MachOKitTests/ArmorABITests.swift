@@ -58,12 +58,59 @@ final class ArmorABITests: XCTestCase {
         XCTAssertTrue(lanes.allSatisfy { $0.count == ArmorABI.Integrity.splitLaneSize })
         XCTAssertEqual(Data(lanes.joined()), digest)
 
-        let rootKey = Data(repeating: 0xA5, count: ArmorABI.keySize)
-        let hmacSection = ArmorABI.Integrity.hmacFullHashSection(rootKey: rootKey, fullHash: digest)
+        let anchorTag = Data(repeating: 0xA5, count: ArmorABI.hashSize)
+        let section = ArmorABI.Integrity.anchorTagSection(anchorTag)
 
-        XCTAssertEqual(hmacSection.count, ArmorABI.Integrity.hmacFullHashSectionSize)
+        XCTAssertEqual(section.count, ArmorABI.Integrity.hmacFullHashSectionSize)
+        XCTAssertEqual(section, anchorTag)
+    }
 
-        let expectedHmac = ArmorABI.hmacSHA256(key: rootKey, message: digest)
-        XCTAssertEqual(hmacSection, expectedHmac)
+    func testWhiteBoxDescriptorSerializationMatchesABI() {
+        let permutation = Data((0..<ArmorABI.WhiteBox.permutationSize).map { UInt8($0) })
+        let finalMask = Data(repeating: 0xA1, count: ArmorABI.hashSize)
+        let roundConstants = Data(repeating: 0xB2, count: ArmorABI.WhiteBox.roundConstantSize)
+        let recordDigest = Data(repeating: 0xC3, count: ArmorABI.hashSize)
+        let descriptor = ArmorABI.WhiteBox.Descriptor(
+            domainID: ArmorABI.WhiteBox.Domain.loaderKey.rawValue,
+            tableOffset: 0x01020304,
+            tableLength: 0x00008000,
+            permutation: permutation,
+            finalMask: finalMask,
+            roundConstants: roundConstants,
+            recordDigest: recordDigest
+        ).serialized()
+
+        XCTAssertEqual(descriptor.count, ArmorABI.WhiteBox.Descriptor.serializedSize)
+        XCTAssertEqual(readLE32(descriptor, at: 0), ArmorABI.WhiteBox.Domain.loaderKey.rawValue)
+        XCTAssertEqual(readLE32(descriptor, at: 4), ArmorABI.WhiteBox.roundCount)
+        XCTAssertEqual(readLE32(descriptor, at: 8), 0x01020304)
+        XCTAssertEqual(readLE32(descriptor, at: 12), 0x00008000)
+        XCTAssertEqual(descriptor.subdata(in: 16..<48), permutation)
+        XCTAssertEqual(descriptor.subdata(in: 48..<80), finalMask)
+        XCTAssertEqual(descriptor.subdata(in: 80..<208), roundConstants)
+        XCTAssertEqual(descriptor.subdata(in: 208..<240), recordDigest)
+    }
+
+    func testWhiteBoxHeaderPayloadSizeExcludesDetachedTagSection() {
+        let configDigest = Data(repeating: 0x5A, count: ArmorABI.hashSize)
+        let header = ArmorABI.WhiteBox.Header(
+            flags: ArmorABI.WhiteBox.engineReadyFlag | ArmorABI.WhiteBox.signingPipelineFlag,
+            payloadSize: 0x11223344,
+            configDigest: configDigest
+        ).serialized()
+
+        XCTAssertEqual(header.count, 48)
+        XCTAssertEqual(readLE32(header, at: 0), ArmorABI.WhiteBox.magic)
+        XCTAssertEqual(readLE32(header, at: 4), ArmorABI.WhiteBox.abiVersion)
+        XCTAssertEqual(
+            readLE32(header, at: 8),
+            ArmorABI.WhiteBox.engineReadyFlag | ArmorABI.WhiteBox.signingPipelineFlag
+        )
+        XCTAssertEqual(
+            readLE32(header, at: 12),
+            0x11223344,
+            "payload_size is reserved for white-box code+data only; the detached tag is validated separately"
+        )
+        XCTAssertEqual(header.subdata(in: 16..<48), configDigest)
     }
 }

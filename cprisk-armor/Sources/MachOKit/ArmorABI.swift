@@ -33,6 +33,10 @@ public enum ArmorABI {
         public static let anchorC = "__swift5_ac"
         public static let anchorD = "__swift5_ad"
         public static let fullAnchorHash = "__swift5_acfun"
+        public static let whiteboxMeta = "__swift5_awbm"
+        public static let whiteboxCode = "__swift5_awbc"
+        public static let whiteboxData = "__swift5_awbd"
+        public static let whiteboxTag = "__swift5_awbt"
 
         public static let splitAnchorSections = [
             anchorA,
@@ -44,7 +48,149 @@ public enum ArmorABI {
         public static let allCustom: Set<String> = [
             stringTable, loader, protectedBlob,
             anchorA, anchorB, anchorC, anchorD, fullAnchorHash,
+            whiteboxMeta, whiteboxCode, whiteboxData, whiteboxTag,
         ]
+    }
+
+    public enum WhiteBox {
+        public static let abiVersion: UInt32 = 1
+        public static let magic: UInt32 = 0x43505742
+        public static let engineReadyFlag: UInt32 = 0x0000_0001
+        public static let signingPipelineFlag: UInt32 = 0x0000_0002
+        public static let roundCount: UInt32 = 4
+        public static let stateSize = ArmorABI.hashSize
+        public static let permutationSize = ArmorABI.hashSize
+        public static let roundConstantSize = Int(roundCount) * ArmorABI.hashSize
+        public static let tableValueCount = 256
+        public static let tagContext = "cprisk.whitebox.tag.v1"
+
+        public static let capabilityDeriveKey: UInt32 = 0x0000_0001
+        public static let capabilitySignHelper: UInt32 = 0x0000_0002
+        public static let capabilityVerifyHelper: UInt32 = 0x0000_0004
+        public static let capabilityFramework: UInt32 = 0x0000_0010
+        public static let capabilitySectionLayout: UInt32 = 0x0000_0020
+
+        public static let probeCompiledFlag: UInt32 = 0x0000_0001
+        public static let probeMetadataPresentFlag: UInt32 = 0x0000_0002
+        public static let probeMetadataValidFlag: UInt32 = 0x0000_0004
+        public static let probeEngineReadyFlag: UInt32 = 0x0000_0008
+
+        public static let hexEncodedHashSize = ArmorABI.hashSize * 2
+
+        public enum Domain: UInt32, CaseIterable {
+            case anchorTag = 1
+            case pass1StringKey = 2
+            case anchorAccumulatorSeed = 3
+            case loaderKey = 4
+            case runtimeMaterial = 5
+        }
+
+        public enum Sections {
+            public static let metadata = ArmorABI.Sections.whiteboxMeta
+            public static let code = ArmorABI.Sections.whiteboxCode
+            public static let data = ArmorABI.Sections.whiteboxData
+            public static let tag = ArmorABI.Sections.whiteboxTag
+
+            public static let allReserved = [metadata, code, data, tag]
+        }
+
+        /// Packed layout:
+        /// { magic, version, flags, payload_size, config_digest[32] }.
+        /// `payload_size` only covers the white-box payload body (`code + data`).
+        /// The detached `tag` section is authenticated independently and must
+        /// not be folded into this field, otherwise the runtime validator will
+        /// reject the bundle as ABI-inconsistent.
+        public struct Header {
+            public let magic: UInt32
+            public let version: UInt32
+            public let flags: UInt32
+            public let payloadSize: UInt32
+            public let configDigest: Data
+
+            public init(
+                magic: UInt32 = WhiteBox.magic,
+                version: UInt32 = WhiteBox.abiVersion,
+                flags: UInt32 = 0,
+                payloadSize: UInt32 = 0,
+                configDigest: Data = Data(repeating: 0, count: ArmorABI.hashSize)
+            ) {
+                precondition(configDigest.count == ArmorABI.hashSize, "configDigest must be 32 bytes")
+                self.magic = magic
+                self.version = version
+                self.flags = flags
+                self.payloadSize = payloadSize
+                self.configDigest = configDigest
+            }
+
+            public func serialized() -> Data {
+                var data = Data()
+                data.appendLittleEndian(magic)
+                data.appendLittleEndian(version)
+                data.appendLittleEndian(flags)
+                data.appendLittleEndian(payloadSize)
+                data.append(configDigest)
+                return data
+            }
+        }
+
+        /// Packed layout:
+        /// { domain_id, round_count, table_offset, table_length,
+        ///   permutation[32], final_mask[32], round_constants[128],
+        ///   record_digest[32] }.
+        public struct Descriptor {
+            public static let serializedSize = 16
+                + WhiteBox.permutationSize
+                + ArmorABI.hashSize
+                + WhiteBox.roundConstantSize
+                + ArmorABI.hashSize
+
+            public let domainID: UInt32
+            public let roundCount: UInt32
+            public let tableOffset: UInt32
+            public let tableLength: UInt32
+            public let permutation: Data
+            public let finalMask: Data
+            public let roundConstants: Data
+            public let recordDigest: Data
+
+            public init(
+                domainID: UInt32,
+                roundCount: UInt32 = WhiteBox.roundCount,
+                tableOffset: UInt32,
+                tableLength: UInt32,
+                permutation: Data,
+                finalMask: Data,
+                roundConstants: Data,
+                recordDigest: Data
+            ) {
+                precondition(permutation.count == WhiteBox.permutationSize, "permutation must be 32 bytes")
+                precondition(finalMask.count == ArmorABI.hashSize, "finalMask must be 32 bytes")
+                precondition(roundConstants.count == WhiteBox.roundConstantSize,
+                             "roundConstants must be 128 bytes")
+                precondition(recordDigest.count == ArmorABI.hashSize, "recordDigest must be 32 bytes")
+                self.domainID = domainID
+                self.roundCount = roundCount
+                self.tableOffset = tableOffset
+                self.tableLength = tableLength
+                self.permutation = permutation
+                self.finalMask = finalMask
+                self.roundConstants = roundConstants
+                self.recordDigest = recordDigest
+            }
+
+            public func serialized() -> Data {
+                var data = Data()
+                data.appendLittleEndian(domainID)
+                data.appendLittleEndian(roundCount)
+                data.appendLittleEndian(tableOffset)
+                data.appendLittleEndian(tableLength)
+                data.append(permutation)
+                data.append(finalMask)
+                data.append(roundConstants)
+                data.append(recordDigest)
+                return data
+            }
+        }
     }
 
     public enum MetadataSections {
@@ -255,6 +401,10 @@ public enum ArmorABI {
                 set.insert(s)
             }
             set.insert(Sections.fullAnchorHash)
+            set.insert(Sections.whiteboxMeta)
+            set.insert(Sections.whiteboxCode)
+            set.insert(Sections.whiteboxData)
+            set.insert(Sections.whiteboxTag)
             return set
         }()
 
@@ -284,12 +434,11 @@ public enum ArmorABI {
             }
         }
 
-        /// HMAC anchor section stores HMAC-SHA256(rootKey, fullHash) — 32 bytes.
-        /// The runtime reconstructs fullHash from split lanes, re-derives the
-        /// HMAC with its own root key, and compares in constant time.
-        public static func hmacFullHashSection(rootKey: Data, fullHash: Data) -> Data {
-            precondition(fullHash.count == ArmorABI.hashSize, "fullHash must be 32 bytes")
-            return hmacSHA256(key: rootKey, message: fullHash)
+        /// `__swift5_acfun` stores the 32-byte anchor tag emitted by the
+        /// white-box PRF for the `anchor_tag` domain.
+        public static func anchorTagSection(_ anchorTag: Data) -> Data {
+            precondition(anchorTag.count == ArmorABI.hashSize, "anchorTag must be 32 bytes")
+            return anchorTag
         }
     }
 

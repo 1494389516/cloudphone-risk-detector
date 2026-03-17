@@ -115,10 +115,14 @@ targets:
           -Wl,-sectcreate,__DATA,__swift5_ac,$(ARMOR_PLACEHOLDER_DIR)/anchor_c.bin
           -Wl,-sectcreate,__DATA,__swift5_ad,$(ARMOR_PLACEHOLDER_DIR)/anchor_d.bin
           -Wl,-sectcreate,__DATA,__swift5_acfun,$(ARMOR_PLACEHOLDER_DIR)/full_anchor.bin
+          -Wl,-sectcreate,__DATA,__swift5_awbm,$(ARMOR_PLACEHOLDER_DIR)/whitebox_meta.bin
+          -Wl,-sectcreate,__DATA,__swift5_awbc,$(ARMOR_PLACEHOLDER_DIR)/whitebox_code.bin
+          -Wl,-sectcreate,__DATA,__swift5_awbd,$(ARMOR_PLACEHOLDER_DIR)/whitebox_data.bin
+          -Wl,-sectcreate,__DATA,__swift5_awbt,$(ARMOR_PLACEHOLDER_DIR)/whitebox_tag.bin
           -Wl,-sectcreate,__DATA,__sw5_builtin2,$(ARMOR_PLACEHOLDER_DIR)/sw5_builtin2.bin
           -Wl,-sectcreate,__DATA,__sw5_capture2,$(ARMOR_PLACEHOLDER_DIR)/sw5_capture2.bin
           -Wl,-sectcreate,__DATA,__sw5_typeref2,$(ARMOR_PLACEHOLDER_DIR)/sw5_typeref2.bin
-          -Wl,-sectcreate,__DATA,__objc_imageinfo,$(ARMOR_PLACEHOLDER_DIR)/objc_imageinfo_decoy.bin
+         
           -Wl,-sectcreate,__DATA,__la_resolver2,$(ARMOR_PLACEHOLDER_DIR)/la_resolver2.bin
           -Wl,-sectcreate,__DATA,__stub_helper2,$(ARMOR_PLACEHOLDER_DIR)/stub_helper2.bin
           -Wl,-sectcreate,__DATA,__auth_got2,$(ARMOR_PLACEHOLDER_DIR)/auth_got2.bin

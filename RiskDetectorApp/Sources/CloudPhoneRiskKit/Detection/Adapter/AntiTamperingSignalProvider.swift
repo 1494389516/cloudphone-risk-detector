@@ -25,6 +25,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         var enableDebugger: Bool = true
         var enableFrida: Bool = true
         var enableCodeSignature: Bool = true
+        var enableAppSigningIdentity: Bool = true
         var enableMemoryIntegrity: Bool = true
         var enableRWXMemoryScan: Bool = true
         var enablePLTIntegrity: Bool = true
@@ -95,6 +96,12 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         if configuration.enableCodeSignature {
             isolatedAppend("code_signature", &signals) {
                 try detectCodeSignatureIssues(baseScore: baseJailbreakScore)
+            }
+        }
+
+        if configuration.enableAppSigningIdentity {
+            isolatedAppend("app_signing_identity", &signals) {
+                try detectAppSigningIdentityIssues(baseScore: baseJailbreakScore)
             }
         }
         
@@ -596,6 +603,11 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         
         return signals
     }
+
+    /// App 签名身份一致性检测
+    private func detectAppSigningIdentityIssues(baseScore: Double) throws -> [RiskSignal] {
+        try AppSigningIdentityDetector().asSignals()
+    }
     
     /// 内存完整性检查
     private func detectMemoryIntegrityIssues(baseScore: Double) throws -> [RiskSignal] {
@@ -700,6 +712,7 @@ extension AntiTamperingSignalProvider {
         config.enableDebugger = true
         config.enableFrida = true
         config.enableCodeSignature = true
+        config.enableAppSigningIdentity = true
         config.enableMemoryIntegrity = true
         config.minScoreThreshold = 0  // 不过滤任何信号
         return config
@@ -712,6 +725,7 @@ extension AntiTamperingSignalProvider {
         config.enableDebugger = true
         config.enableFrida = true
         config.enableCodeSignature = false  // 跳过较慢的签名验证
+        config.enableAppSigningIdentity = true  // entitlement/bundle 校验开销低，性能模式保留
         config.enableMemoryIntegrity = false  // 跳过较慢的内存检查
         config.enableSystemLibrarySegmentLayoutDetect = false
         config.minScoreThreshold = 15  // 过滤低分信号

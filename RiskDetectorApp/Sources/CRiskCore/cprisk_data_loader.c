@@ -78,6 +78,7 @@ struct cprisk_loader_target {
 /* ── state ─────────────────────────────────────────────────────────── */
 
 static pthread_mutex_t s_loader_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_once_t s_erase_header_once = PTHREAD_ONCE_INIT;
 
 static uint8_t  s_ldr_key[CPRISK_ARMOR_KEY_SIZE];
 static int      s_ldr_ready;
@@ -640,7 +641,7 @@ void cprisk_unload_protected_data(void) {
     pthread_mutex_unlock(&s_loader_mutex);
 }
 
-void cprisk_erase_macho_header(void) {
+static void cprisk_erase_macho_header_once(void) {
     const struct mach_header_64 *hdr = cprisk_own_hdr_l();
     if (!hdr)
         return;
@@ -698,3 +699,6 @@ void cprisk_erase_macho_header(void) {
     }
 }
 
+void cprisk_erase_macho_header(void) {
+    (void)pthread_once(&s_erase_header_once, cprisk_erase_macho_header_once);
+}

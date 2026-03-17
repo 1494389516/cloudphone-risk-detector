@@ -1,6 +1,7 @@
 import CryptoKit
 import CRiskCore
 import Foundation
+import MachOKit
 import XCTest
 @testable import CloudPhoneRiskKit
 
@@ -13,9 +14,11 @@ final class ArmorIntegrationTests: XCTestCase {
     override func setUp() {
         super.setUp()
         CPRiskKit.shared.stop()
+        cprisk_test_clear_whitebox_bundle()
     }
 
     override func tearDown() {
+        cprisk_test_clear_whitebox_bundle()
         CPRiskKit.shared.stop()
         super.tearDown()
     }
@@ -63,6 +66,147 @@ final class ArmorIntegrationTests: XCTestCase {
         }
 
         cprisk_cleanup_protection()
+    }
+
+    /// 验证白盒前置 ABI/能力探测接口已接通。
+    /// 当前工程版未嵌入真实 white-box 表，但 probe 至少应返回编译态 capability 与稳定 ABI 版本。
+    func testWhiteboxProbeExposesFrontendCapabilities() {
+        var probe = cprisk_whitebox_probe_result(
+            abi_version: 0,
+            capabilities: 0,
+            flags: 0,
+            metadata_version: 0
+        )
+        let rc = cprisk_whitebox_probe(&probe)
+        XCTAssertEqual(rc, 0, "whitebox probe must be callable")
+        XCTAssertEqual(
+            probe.abi_version,
+            UInt32(CPRISK_ARMOR_WHITEBOX_ABI_VERSION),
+            "whitebox frontend ABI version must match header constant"
+        )
+        XCTAssertNotEqual(
+            probe.flags & UInt32(CPRISK_WHITEBOX_PROBE_FLAG_COMPILED),
+            0,
+            "frontend probe must advertise compiled support"
+        )
+        XCTAssertNotEqual(
+            probe.capabilities & UInt32(CPRISK_ARMOR_CAP_RUNTIME_DERIVE_KEY),
+            0,
+            "derive-key capability must be exposed"
+        )
+        XCTAssertNotEqual(
+            probe.capabilities & UInt32(CPRISK_ARMOR_CAP_RUNTIME_SIGN_HELPER),
+            0,
+            "sign helper capability must be exposed"
+        )
+        XCTAssertNotEqual(
+            probe.capabilities & UInt32(CPRISK_ARMOR_CAP_RUNTIME_VERIFY_HELPER),
+            0,
+            "verify helper capability must be exposed"
+        )
+    }
+
+    /// 验证 `available()` 与 `probe.flags` 的语义保持一致：
+    /// 只有当完整 white-box payload 可校验、可执行时，available 才返回 1。
+    func testWhiteboxAvailabilityMatchesProbeState() {
+        var probe = cprisk_whitebox_probe_result(
+            abi_version: 0,
+            capabilities: 0,
+            flags: 0,
+            metadata_version: 0
+        )
+        XCTAssertEqual(cprisk_whitebox_probe(&probe), 0)
+
+        let available = cprisk_whitebox_available()
+        XCTAssertTrue(available == 0 || available == 1, "available must be a boolean-like value")
+
+        let metadataValid = (probe.flags & UInt32(CPRISK_WHITEBOX_PROBE_FLAG_METADATA_VALID)) != 0
+        let engineReady = (probe.flags & UInt32(CPRISK_WHITEBOX_PROBE_FLAG_ENGINE_READY)) != 0
+        let layoutCap = (probe.capabilities & UInt32(CPRISK_ARMOR_CAP_WHITEBOX_SECTION_LAYOUT)) != 0
+
+        XCTAssertEqual(engineReady, available != 0, "ENGINE_READY flag must match cprisk_whitebox_available()")
+        if available != 0 {
+            XCTAssertTrue(metadataValid, "available white-box payload must also be metadata-valid")
+            XCTAssertTrue(layoutCap, "available white-box payload must advertise section-layout capability")
+        }
+    }
+
+    func testInjectedWhiteboxBundleDrivesProbeAndAvailabilityActivePath() {
+        let fixture = WhiteBoxFixtureBuilder.build(rootKey: Data(repeating: 0x42, count: ArmorABI.keySize))
+        injectWhiteboxFixture(fixture)
+
+        var probe = cprisk_whitebox_probe_result(
+            abi_version: 0,
+            capabilities: 0,
+            flags: 0,
+            metadata_version: 0
+        )
+        XCTAssertEqual(cprisk_whitebox_probe(&probe), 0)
+        XCTAssertEqual(cprisk_whitebox_available(), 1)
+        XCTAssertNotEqual(probe.flags & UInt32(CPRISK_WHITEBOX_PROBE_FLAG_METADATA_PRESENT), 0)
+        XCTAssertNotEqual(probe.flags & UInt32(CPRISK_WHITEBOX_PROBE_FLAG_METADATA_VALID), 0)
+        XCTAssertNotEqual(probe.flags & UInt32(CPRISK_WHITEBOX_PROBE_FLAG_ENGINE_READY), 0)
+        XCTAssertNotEqual(probe.capabilities & UInt32(CPRISK_ARMOR_CAP_WHITEBOX_SECTION_LAYOUT), 0)
+        XCTAssertEqual(probe.metadata_version, UInt32(CPRISK_ARMOR_WHITEBOX_ABI_VERSION))
+    }
+
+    func testInjectedWhiteboxBundleRejectsTamperedConfigDigest() {
+        let fixture = WhiteBoxFixtureBuilder.build(rootKey: Data(repeating: 0x31, count: ArmorABI.keySize))
+        var tamperedMeta = fixture.metadataSection
+        tamperedMeta[16] ^= 0xFF
+
+        let rc = tamperedMeta.withUnsafeBytes { metaRaw -> Int32 in
+            fixture.whiteboxCode.withUnsafeBytes { codeRaw in
+                fixture.whiteboxData.withUnsafeBytes { dataRaw in
+                    fixture.whiteboxTag.withUnsafeBytes { tagRaw in
+                        cprisk_test_set_whitebox_bundle(
+                            metaRaw.bindMemory(to: UInt8.self).baseAddress,
+                            tamperedMeta.count,
+                            codeRaw.bindMemory(to: UInt8.self).baseAddress,
+                            fixture.whiteboxCode.count,
+                            dataRaw.bindMemory(to: UInt8.self).baseAddress,
+                            fixture.whiteboxData.count,
+                            tagRaw.bindMemory(to: UInt8.self).baseAddress,
+                            fixture.whiteboxTag.count
+                        )
+                    }
+                }
+            }
+        }
+        XCTAssertEqual(rc, 0, "tampered bundle injection itself must succeed so runtime validation can reject it")
+
+        var probe = cprisk_whitebox_probe_result(
+            abi_version: 0,
+            capabilities: 0,
+            flags: 0,
+            metadata_version: 0
+        )
+        XCTAssertEqual(cprisk_whitebox_probe(&probe), 0)
+        XCTAssertEqual(cprisk_whitebox_available(), 0)
+        XCTAssertNotEqual(probe.flags & UInt32(CPRISK_WHITEBOX_PROBE_FLAG_METADATA_PRESENT), 0)
+        XCTAssertEqual(probe.flags & UInt32(CPRISK_WHITEBOX_PROBE_FLAG_METADATA_VALID), 0)
+        XCTAssertEqual(probe.flags & UInt32(CPRISK_WHITEBOX_PROBE_FLAG_ENGINE_READY), 0)
+    }
+
+    func testInjectedWhiteboxBundleMatchesProducerPRFByteForByte() {
+        let fixture = WhiteBoxFixtureBuilder.build(rootKey: Data(repeating: 0x7A, count: ArmorABI.keySize))
+        injectWhiteboxFixture(fixture)
+
+        let input = Data((0..<ArmorABI.hashSize).map { UInt8(($0 * 7) & 0xFF) })
+
+        for domain in ArmorABI.WhiteBox.Domain.allCases {
+            let expected = fixture.prf(domain: domain, input: input)
+            var actual = [UInt8](repeating: 0, count: ArmorABI.hashSize)
+            let rc = input.withUnsafeBytes { inputRaw in
+                cprisk_whitebox_evaluate_domain(
+                    domain.rawValue,
+                    inputRaw.bindMemory(to: UInt8.self).baseAddress,
+                    &actual
+                )
+            }
+            XCTAssertEqual(rc, 0, "runtime evaluation must succeed for domain \(domain.rawValue)")
+            XCTAssertEqual(Data(actual), expected, "runtime output must match Swift producer for domain \(domain.rawValue)")
+        }
     }
 
     // MARK: - Test 2: v2a Signature Version Emitted
@@ -150,6 +294,83 @@ final class ArmorIntegrationTests: XCTestCase {
         }
     }
 
+    /// 直接验证 C 层签名 helper：
+    /// `cprisk_sign_with_derived_key` / `cprisk_verify_with_derived_key` 在 active runtime 下应能往返成功。
+    func testCSigningHelpersRoundTripWhenRuntimeActive() throws {
+        let rootKey = Data(repeating: 0x42, count: 32)
+        let initRC = rootKey.withUnsafeBytes { rawBuffer -> Int32 in
+            guard let ptr = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+                return -1
+            }
+            return Int32(cprisk_init_protection(ptr, rootKey.count))
+        }
+        defer { cprisk_cleanup_protection() }
+
+        guard initRC == 0 else {
+            throw XCTSkip("当前测试二进制未初始化出可用 runtime（initRC=\(initRC)），跳过 C helper 往返断言")
+        }
+
+        let baseKey = Data("c-helper-base-key".utf8)
+        let message = Data("whitebox-helper-roundtrip".utf8)
+        var signatureBuffer = [CChar](repeating: 0, count: Int(CPRISK_ARMOR_HEX_ENCODED_HASH_SIZE) + 1)
+
+        let signRC = signatureBuffer.withUnsafeMutableBufferPointer { signaturePtr in
+            baseKey.withUnsafeBytes { keyRaw in
+                message.withUnsafeBytes { msgRaw in
+                    cprisk_sign_with_derived_key(
+                        keyRaw.bindMemory(to: UInt8.self).baseAddress,
+                        baseKey.count,
+                        msgRaw.bindMemory(to: UInt8.self).baseAddress,
+                        message.count,
+                        signaturePtr.baseAddress
+                    )
+                }
+            }
+        }
+        guard signRC == 0 else {
+            XCTFail("cprisk_sign_with_derived_key must succeed on active runtime, rc=\(signRC)")
+            return
+        }
+
+        let signatureHex = String(cString: signatureBuffer)
+        guard signatureHex.count == Int(CPRISK_ARMOR_HEX_ENCODED_HASH_SIZE) else {
+            XCTFail("signature must be 64 hex chars, got \(signatureHex.count)")
+            return
+        }
+
+        var signatureCString = Array(signatureHex.utf8CString)
+        let verifyRC = signatureCString.withUnsafeBufferPointer { signaturePtr in
+            baseKey.withUnsafeBytes { keyRaw in
+                message.withUnsafeBytes { msgRaw in
+                    cprisk_verify_with_derived_key(
+                        keyRaw.bindMemory(to: UInt8.self).baseAddress,
+                        baseKey.count,
+                        msgRaw.bindMemory(to: UInt8.self).baseAddress,
+                        message.count,
+                        signaturePtr.baseAddress
+                    )
+                }
+            }
+        }
+        XCTAssertEqual(verifyRC, 0, "cprisk_verify_with_derived_key must accept the helper-generated signature")
+
+        signatureCString[0] = (signatureCString[0] == CChar(97)) ? CChar(98) : CChar(97)
+        let mismatchRC = signatureCString.withUnsafeBufferPointer { signaturePtr in
+            baseKey.withUnsafeBytes { keyRaw in
+                message.withUnsafeBytes { msgRaw in
+                    cprisk_verify_with_derived_key(
+                        keyRaw.bindMemory(to: UInt8.self).baseAddress,
+                        baseKey.count,
+                        msgRaw.bindMemory(to: UInt8.self).baseAddress,
+                        message.count,
+                        signaturePtr.baseAddress
+                    )
+                }
+            }
+        }
+        XCTAssertEqual(mismatchRC, -1, "tampered signature must fail constant-time verification")
+    }
+
     // MARK: - Test 3: Armor Failure Injects Risk Signal
 
     /// 验证壳初始化失败时，SDK 会在 evaluate() 的信号列表中注入 armor 风险信号。
@@ -223,5 +444,27 @@ final class ArmorIntegrationTests: XCTestCase {
         let snapshot2 = CPRiskKit.shared.debugArmorRuntimeSnapshot()
         XCTAssertGreaterThan(snapshot2.attemptCount, 0)
         XCTAssertNotEqual(snapshot2.status, "inactive")
+    }
+
+    private func injectWhiteboxFixture(_ fixture: WhiteBoxFixtureBundle) {
+        let rc = fixture.metadataSection.withUnsafeBytes { metaRaw in
+            fixture.whiteboxCode.withUnsafeBytes { codeRaw in
+                fixture.whiteboxData.withUnsafeBytes { dataRaw in
+                    fixture.whiteboxTag.withUnsafeBytes { tagRaw in
+                        cprisk_test_set_whitebox_bundle(
+                            metaRaw.bindMemory(to: UInt8.self).baseAddress,
+                            fixture.metadataSection.count,
+                            codeRaw.bindMemory(to: UInt8.self).baseAddress,
+                            fixture.whiteboxCode.count,
+                            dataRaw.bindMemory(to: UInt8.self).baseAddress,
+                            fixture.whiteboxData.count,
+                            tagRaw.bindMemory(to: UInt8.self).baseAddress,
+                            fixture.whiteboxTag.count
+                        )
+                    }
+                }
+            }
+        }
+        XCTAssertEqual(rc, 0, "test white-box bundle injection must succeed")
     }
 }

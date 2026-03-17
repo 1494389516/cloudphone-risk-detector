@@ -1,6 +1,6 @@
-# CloudPhoneRiskKit 6.4 使用与构建说明
+# CloudPhoneRiskKit 6.5 使用与构建说明
 
-iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。6.0 引入自研壳（cprisk-armor）二进制保护与端云签名绑定；6.1 将壳升级为 5 Pass 工业化保护；6.2 对壳执行密码学重建（ABI v2：强制密钥注入 / HMAC 认证 / 随机 nonce / IntegrityAnchor HMAC），共 46 项漏洞修复；6.3 新增 Pass 6 符号表混淆、Codable 短别名 CodingKeys、ObjC selector 安全修复，壳升级为 6 Pass 全链路保护；6.4 将 SDK 架构改为 library.static + 全量 strip，IDA 中 SDK 函数全部显示为 sub_XXXX，达到 Android .so 级别逆向对抗效果。
+iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。6.0 引入自研壳（cprisk-armor）二进制保护与端云签名绑定；6.1 将壳升级为 5 Pass 工业化保护；6.2 对壳执行密码学重建（ABI v2：强制密钥注入 / HMAC 认证 / 随机 nonce / IntegrityAnchor HMAC），共 46 项漏洞修复；6.3 新增 Pass 6 符号表混淆、Codable 短别名 CodingKeys、ObjC selector 安全修复，壳升级为 6 Pass 全链路保护；6.4 将 SDK 架构改为 library.static + 全量 strip，IDA 中 SDK 函数全部显示为 sub_XXXX；6.5 引入白盒 PRF 引擎（5 域 S-box ~160KB，root key 不可逆提取）、AppSigningIdentityDetector 反重打包（TeamID/bundleID/entitlement 一致性 + 基线漂移检测）。
 
 ---
 
@@ -39,7 +39,7 @@ open RiskDetectorApp.xcodeproj
 
 ### 2.4 壳工具链构建 (cprisk-armor)
 
-cprisk-armor 是编译后壳保护工具链，对 Mach-O 二进制执行 6 Pass 加固（字符串加密、Metadata 抹除、数据段加密、完整性锚点、结构混淆、符号表混淆）。6.4 起 SDK 以静态库交付，壳对最终 App 二进制执行加固。
+cprisk-armor 是编译后壳保护工具链，对 Mach-O 二进制执行 6 Pass 加固（字符串加密、Metadata 抹除、数据段加密、完整性锚点、结构混淆、符号表混淆）。6.4 起 SDK 以静态库交付，壳对最终 App 二进制执行加固。6.5 起 Pass 4 写入白盒 PRF 四 section（`__swift5_awbm/awbc/awbd/awbt`），Pass 1/3/4 密钥通过白盒 PRF 派生，运行时优先走白盒路径。
 
 ```bash
 cd cprisk-armor
@@ -79,10 +79,10 @@ export CPRISK_ARMOR_KEY=<hex>; .build/release/cprisk-armor --input ... --output 
 
 | Pass | 功能 | 运行时消费方 |
 |------|------|-------------|
-| Pass 1 | 全量敏感字符串加密 + 原位零化 | `cprisk_string_decrypt.c` |
+| Pass 1 | 全量敏感字符串加密 + 原位零化（6.5 起白盒 PRF 派生密钥） | `cprisk_string_decrypt.c` |
 | Pass 2 | Metadata 抹除（类型名/反射/方法名） | — (编译后不可逆) |
-| Pass 3 | 多 Section 数据段加密 | `cprisk_data_loader.c` |
-| Pass 4 | 完整性锚点注入 | `cprisk_integrity.c` |
+| Pass 3 | 多 Section 数据段加密（6.5 起白盒 PRF 派生 loader key） | `cprisk_data_loader.c` |
+| Pass 4 | 完整性锚点 + 白盒 PRF 四 section（6.5 起 anchor tag 白盒校验） | `cprisk_integrity.c` / `cprisk_whitebox.c` |
 | Pass 5 | 结构混淆（假 Section + 随机布局） | — (编译后不可逆) |
 | Pass 6 | 符号表混淆（SDK 本地符号名随机化） | — (编译后不可逆) |
 
@@ -215,9 +215,9 @@ let envelope = try await CPRiskKit.shared.buildSecureReportEnvelopeWithAttestati
 
 ---
 
-## 8.1 壳保护与 v2a 签名 (6.0 / 6.1 / 6.2)
+## 8.1 壳保护与 v2a 签名 (6.0 / 6.1 / 6.2 / 6.5)
 
-自研壳在运行时由 CRiskCore 自动完成 HMAC 验证、解密与完整性校验，无需调用方额外操作。SDK 在 `start()` / `evaluate()` 时自动初始化 armor runtime。6.1 新增 Anti-Dump 页面保护、密钥安全清零和运行时完整性重校验。6.2 升级 ABI v2：每个加密项附带 HMAC 认证标签 + 随机 nonce，解密前先验 HMAC 完整性；完整性锚点改为 HMAC 绑定 rootKey，无密钥不可恢复 fullHash。6.3 新增 Pass 6 符号表混淆与 Codable 短别名防御。6.4 壳对最终 App 二进制执行加固，配合全量 strip 实现 `sub_XXXX` 级别逆向对抗。
+自研壳在运行时由 CRiskCore 自动完成 HMAC 验证、解密与完整性校验，无需调用方额外操作。SDK 在 `start()` / `evaluate()` 时自动初始化 armor runtime。6.1 新增 Anti-Dump 页面保护、密钥安全清零和运行时完整性重校验。6.2 升级 ABI v2：每个加密项附带 HMAC 认证标签 + 随机 nonce，解密前先验 HMAC 完整性；完整性锚点改为 HMAC 绑定 rootKey，无密钥不可恢复 fullHash。6.3 新增 Pass 6 符号表混淆与 Codable 短别名防御。6.4 壳对最终 App 二进制执行加固，配合全量 strip 实现 `sub_XXXX` 级别逆向对抗。6.5 引入白盒 PRF 引擎：anchor 校验、字符串解密密钥、数据段加载密钥、签名材料（runtime material）全部通过白盒 PRF 派生，root key 融入 ~160KB S-box 表不可逆提取，内存 dump 无法还原原始密钥；白盒不可用时自动 fallback 到 legacy HMAC 路径。
 
 **ReportEnvelope v2a 签名**：壳完整性 material 会自动混入 `buildSecureReportEnvelope` 的 HMAC 签名密钥派生链：
 
@@ -235,7 +235,7 @@ let envelope = CPRiskKit.shared.buildSecureReportEnvelope(
 
 - 验签时需同时接受 `v2` (无壳) 和 `v2a` (壳绑定) 两种签名版本
 - `v2a` 签名的 HMAC 密钥 = `HMAC-SHA256(baseKey, armorMaterial)`
-- 若设备壳未篡改，armor material 为正确的 32 字节；若篡改，material 为固定 poison 值，签名必然不匹配
+- 若设备壳未篡改，armor material 为正确的 32 字节（6.5 白盒路径下由 PRF domain=5 派生）；若篡改，material 为固定 poison 值，签名必然不匹配
 
 **壳初始化失败处理**：
 
@@ -396,7 +396,7 @@ CPRiskKit.shared.setTextSegmentReferenceResolver(SignedReferenceResolver())
 2. **SchemeDetector**：需在宿主 App 的 `Info.plist` 添加 `LSApplicationQueriesSchemes`（如 `cydia`、`sileo`、`filza` 等），否则 `canOpenURL` 始终返回 `false`。
 3. **弱信号原则**：SDK 将不可用 / 无法获取的信号视为弱信号，不会因系统限制直接判定高风险。**强结论建议放在服务端做聚合判断**（IP 聚合、ASN、设备图谱、长连接流量模式等）。
 4. **日志开关**：`CPRiskKit.setLogEnabled(true)` 仅在 `DEBUG` 构建下生效。
-5. **壳工具链**：cprisk-armor（6 Pass / ABI v2）需在 `swift build` 之后对产物执行加固；**6.2 起必须通过 `--key` 提供加密密钥**；6.4 起壳对最终 App 二进制（而非 framework）执行加固；壳运行时由 CRiskCore 自动管理（含 HMAC 验证 + Anti-Dump + 密钥清零 + 完整性重校验），调用方无需手动介入。
+5. **壳工具链**：cprisk-armor（6 Pass / ABI v2）需在 `swift build` 之后对产物执行加固；**6.2 起必须通过 `--key` 提供加密密钥**；6.4 起壳对最终 App 二进制（而非 framework）执行加固；6.5 起白盒 PRF 四 section 需通过 `-Wl,-sectcreate` 预埋占位符（`whitebox_meta.bin` 等），壳更新而非追加；壳运行时由 CRiskCore 自动管理（含白盒/legacy 双路径 + HMAC 验证 + Anti-Dump + 密钥清零 + 完整性重校验），调用方无需手动介入。
 6. **v2a 签名兼容**：服务端需同时支持 `v2`（无壳）和 `v2a`（壳绑定）签名验证；未加壳的 SDK 仍输出 `v2`。
 7. **服务端信号注入**：6.2 起 Release 下旧 `setExternalServerSignals()` 为 no-op，需使用 `setExternalServerSignalsVerified()` + HMAC 签名。
 8. **动态特征列表**：可通过 RemoteConfig 下发 `additionalSuspiciousLibraries` / `additionalSuspiciousPaths` / `additionalSuspiciousPorts` 扩展检测规则，无需发版。

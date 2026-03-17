@@ -43,7 +43,7 @@ public final class StructureObfuscatorPass: ArmorPass {
         "__sw5_builtin2",
         "__sw5_capture2",
         "__sw5_typeref2",
-        "__objc_imageinfo",
+        "__cpr_objc_inf2",
         "__la_resolver2",
         "__stub_helper2",
         "__auth_got2",

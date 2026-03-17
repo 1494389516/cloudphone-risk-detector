@@ -1,7 +1,9 @@
 #ifndef CPRISK_ARMOR_ABI_H
 #define CPRISK_ARMOR_ABI_H
 
+#include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 #include "cprisk_sha256.h"
 #include "cprisk_secure_zero.h"
 
@@ -21,6 +23,28 @@
 #define CPRISK_ARMOR_SECTION_ANCHOR_C "__swift5_ac"
 #define CPRISK_ARMOR_SECTION_ANCHOR_D "__swift5_ad"
 #define CPRISK_ARMOR_SECTION_FULL_HASH "__swift5_acfun"
+#define CPRISK_ARMOR_SECTION_WHITEBOX_META "__swift5_awbm"
+#define CPRISK_ARMOR_SECTION_WHITEBOX_CODE "__swift5_awbc"
+#define CPRISK_ARMOR_SECTION_WHITEBOX_DATA "__swift5_awbd"
+#define CPRISK_ARMOR_SECTION_WHITEBOX_TAG "__swift5_awbt"
+
+#define CPRISK_ARMOR_WHITEBOX_ABI_VERSION 1u
+#define CPRISK_ARMOR_WHITEBOX_MAGIC 0x43505742u /* "CPWB" */
+#define CPRISK_ARMOR_WHITEBOX_FLAG_ENGINE_READY 0x00000001u
+#define CPRISK_ARMOR_WHITEBOX_FLAG_SIGNING_PIPELINE 0x00000002u
+
+#define CPRISK_ARMOR_CAP_RUNTIME_DERIVE_KEY     0x00000001u
+#define CPRISK_ARMOR_CAP_RUNTIME_SIGN_HELPER    0x00000002u
+#define CPRISK_ARMOR_CAP_RUNTIME_VERIFY_HELPER  0x00000004u
+#define CPRISK_ARMOR_CAP_WHITEBOX_FRAMEWORK     0x00000010u
+#define CPRISK_ARMOR_CAP_WHITEBOX_SECTION_LAYOUT 0x00000020u
+
+#define CPRISK_WHITEBOX_PROBE_FLAG_COMPILED         0x00000001u
+#define CPRISK_WHITEBOX_PROBE_FLAG_METADATA_PRESENT 0x00000002u
+#define CPRISK_WHITEBOX_PROBE_FLAG_METADATA_VALID   0x00000004u
+#define CPRISK_WHITEBOX_PROBE_FLAG_ENGINE_READY     0x00000008u
+
+#define CPRISK_ARMOR_HEX_ENCODED_HASH_SIZE (CPRISK_ARMOR_HASH_SIZE * 2u)
 
 #define CPRISK_ARMOR_BOOTSTRAP_STRING_ID 1u
 
@@ -67,6 +91,21 @@ struct cprisk_armor_loader_entry {
     uint8_t  hmac_tag[CPRISK_ARMOR_HASH_SIZE];
 };
 
+struct cprisk_armor_whitebox_header {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t flags;
+    uint32_t payload_size;
+    uint8_t  config_digest[CPRISK_ARMOR_HASH_SIZE];
+};
+
+struct cprisk_whitebox_probe_result {
+    uint32_t abi_version;
+    uint32_t capabilities;
+    uint32_t flags;
+    uint32_t metadata_version;
+};
+
 #pragma pack(pop)
 
 _Static_assert(sizeof(struct cprisk_armor_strtab_header) == 12,
@@ -77,6 +116,10 @@ _Static_assert(sizeof(struct cprisk_armor_loader_header) == 12,
                "cprisk loader header ABI drift");
 _Static_assert(sizeof(struct cprisk_armor_loader_entry) == 128,
                "cprisk loader entry ABI drift");
+_Static_assert(sizeof(struct cprisk_armor_whitebox_header) == 48,
+               "cprisk whitebox header ABI drift");
+_Static_assert(sizeof(struct cprisk_whitebox_probe_result) == 16,
+               "cprisk whitebox probe ABI drift");
 _Static_assert(CPRISK_ARMOR_ANCHOR_LANE_COUNT * CPRISK_ARMOR_ANCHOR_LANE_SIZE ==
                    CPRISK_ARMOR_HASH_SIZE,
                "split anchor sections must reconstruct a 32-byte hash");

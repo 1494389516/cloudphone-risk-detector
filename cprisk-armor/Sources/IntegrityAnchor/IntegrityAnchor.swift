@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 import MachOKit
 
@@ -17,10 +16,10 @@ public final class IntegrityAnchorPass: ArmorPass {
             throw MachOError.sectionNotFound("__TEXT", "__text")
         }
 
-        let textHash = sha256(try textSection.readContent(from: file.data))
-        let rootKey = normalizedRootKey(config.encryptionKey)
+        let textHash = ArmorWhiteBox.sha256(try textSection.readContent(from: file.data))
         let lanes = ArmorABI.Integrity.splitAnchorLanes(for: textHash)
-        let hmacSection = ArmorABI.Integrity.hmacFullHashSection(rootKey: rootKey, fullHash: textHash)
+        let whiteboxBundle = ArmorWhiteBox.build(rootKey: config.encryptionKey)
+        let anchorTag = whiteboxBundle.prf(domain: .anchorTag, input: textHash)
 
         for (name, lane) in zip(ArmorABI.Integrity.splitSectionNames, lanes) {
             _ = try file.addOrUpdateSection(
@@ -34,30 +33,53 @@ public final class IntegrityAnchorPass: ArmorPass {
         _ = try file.addOrUpdateSection(
             segment: ArmorABI.dataSegmentName,
             section: ArmorABI.Integrity.hmacFullHashSectionName,
-            content: hmacSection,
+            content: ArmorABI.Integrity.anchorTagSection(anchorTag),
+            align: 3
+        )
+
+        _ = try file.addOrUpdateSection(
+            segment: ArmorABI.dataSegmentName,
+            section: ArmorABI.WhiteBox.Sections.metadata,
+            content: whiteboxBundle.metadataSection,
+            align: 3
+        )
+
+        _ = try file.addOrUpdateSection(
+            segment: ArmorABI.dataSegmentName,
+            section: ArmorABI.WhiteBox.Sections.code,
+            content: whiteboxBundle.whiteboxCode,
+            align: 3
+        )
+
+        _ = try file.addOrUpdateSection(
+            segment: ArmorABI.dataSegmentName,
+            section: ArmorABI.WhiteBox.Sections.data,
+            content: whiteboxBundle.whiteboxData,
+            align: 3
+        )
+
+        _ = try file.addOrUpdateSection(
+            segment: ArmorABI.dataSegmentName,
+            section: ArmorABI.WhiteBox.Sections.tag,
+            content: whiteboxBundle.whiteboxTag,
             align: 3
         )
 
         return PassResult(
             passName: name,
-            itemsProcessed: ArmorABI.Integrity.splitSectionCount + 1,
-            bytesModified: lanes.reduce(hmacSection.count) { $0 + $1.count },
+            itemsProcessed: ArmorABI.Integrity.splitSectionCount + 5,
+            bytesModified: lanes.reduce(
+                anchorTag.count
+                    + whiteboxBundle.metadataSection.count
+                    + whiteboxBundle.whiteboxCode.count
+                    + whiteboxBundle.whiteboxData.count
+                    + whiteboxBundle.whiteboxTag.count
+            ) { $0 + $1.count },
             details: [
                 "Anchored SHA-256(__TEXT.__text) into \(ArmorABI.Integrity.splitSectionNames.joined(separator: ", "))",
-                "Wrote HMAC anchor to \(ArmorABI.dataSegmentName).\(ArmorABI.Integrity.hmacFullHashSectionName)"
+                "Wrote white-box anchor tag to \(ArmorABI.dataSegmentName).\(ArmorABI.Integrity.hmacFullHashSectionName)",
+                "Wrote white-box metadata/code/data/tag sections to \(ArmorABI.dataSegmentName)"
             ]
         )
     }
-}
-
-private func sha256(_ data: Data) -> Data {
-    Data(SHA256.hash(data: data))
-}
-
-private func normalizedRootKey(_ rootKey: Data?) -> Data {
-    var key = Data(repeating: 0, count: ArmorABI.keySize)
-    guard let rootKey else { return key }
-    let prefix = rootKey.prefix(ArmorABI.keySize)
-    key.replaceSubrange(0..<prefix.count, with: prefix)
-    return key
 }
