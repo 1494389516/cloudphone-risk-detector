@@ -268,8 +268,8 @@ extension ChallengeSession {
     /// Configure the HMAC key used to verify `ChallengeVerificationResult`.
     public func configureChallengeKey(_ key: Data) {
         Self.challengeKeyLock.lock()
+        defer { Self.challengeKeyLock.unlock() }
         Self._challengeKey = SymmetricKey(data: key)
-        Self.challengeKeyLock.unlock()
     }
 
     /// Verify the HMAC on a `ChallengeVerificationResult`.

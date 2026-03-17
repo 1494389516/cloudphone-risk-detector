@@ -447,6 +447,8 @@ def read_mach_o_section(path: str, segname: str, sectname: str) -> bytes:
         raise ValueError("Not a valid Mach-O (thin binary only)")
     is_64 = magic in (0xFEEDFACF, 0xCFFAEDFE)
     header_size = 32 if is_64 else 28
+    # ncmds 位于 mach_header(_64) 的第 5 个字段（偏移 16 字节）
+    ncmds = struct.unpack("<I", data[16:20])[0]
     offset = header_size
     for _ in range(ncmds):
         cmd, cmdsize = struct.unpack("<II", data[offset:offset+8])
@@ -454,9 +456,11 @@ def read_mach_o_section(path: str, segname: str, sectname: str) -> bytes:
             seg = data[offset:offset+cmdsize]
             segname_raw = seg[8:24].rstrip(b"\x00").decode("ascii", errors="ignore")
             if segname_raw == segname:
-                nsects = struct.unpack("<I", seg[72:76])[0]
+                # nsects 在 segment_command_64 偏移 64 处（不是 72）
+                # segment_command_64 结构体大小为 72 字节，sections 从偏移 72 起排列
+                nsects = struct.unpack("<I", seg[64:68])[0]
                 for i in range(nsects):
-                    sect_start = 80 + i * 80  # segment_command_64=80, section_64=80
+                    sect_start = 72 + i * 80  # segment_command_64=72, section_64=80
                     sectname_raw = seg[sect_start:sect_start+16].rstrip(b"\x00").decode("ascii", errors="ignore")
                     if sectname_raw == sectname:
                         fileoff = struct.unpack("<I", seg[sect_start+48:sect_start+52])[0]
