@@ -64,7 +64,7 @@ final class MotionSampler {
     func snapshotDetailAndReset() -> (metrics: MotionMetrics, series: [MotionSample]) {
         lock.withLock {
             let now = ProcessInfo.processInfo.systemUptime
-            if now - lastSnapshotTime < minSnapshotInterval, let cached = cachedSnapshot {
+            if now - lastSnapshotTime < minSnapshotInterval, let cached = cachedSnapshot, sampleCount == 0 {
                 return cached
             }
 

@@ -144,7 +144,7 @@ extension RWXMemoryScanner {
                 RiskSignal(
                     id: "rwx_anonymous",
                     category: "anti_tamper",
-                    score: 0,
+                    score: 40,
                     evidence: [
                         "count": "\(anonymousRegions.count)",
                         "addresses": anonymousRegions.prefix(5).map { String(format: "0x%llx", $0.address) }.joined(separator: ","),
@@ -179,7 +179,7 @@ extension RWXMemoryScanner {
                 RiskSignal(
                     id: "rwx_multiple",
                     category: "anti_tamper",
-                    score: 0,
+                    score: 20,
                     evidence: ["count": "\(regions.count)"],
                     state: .soft(confidence: 0.7),
                     layer: 2,

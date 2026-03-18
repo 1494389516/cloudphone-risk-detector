@@ -708,12 +708,13 @@ static void cprisk_erase_macho_header_once(void) {
         if (lc->cmdsize == 0 || lc->cmdsize > remaining)
             break;
 
+        size_t cmd_size = lc->cmdsize;
         if (lc->cmd == LC_ENCRYPTION_INFO_64) {
             /* Zero out encryption info to break dumpers trying to read cryptid */
-            cprisk_secure_zero(lc, lc->cmdsize);
+            cprisk_secure_zero(lc, cmd_size);
         }
 
-        cursor += lc->cmdsize;
+        cursor += cmd_size;
     }
 
     if (cprisk_hidden_mprotect((void *)page_start, page_size, PROT_READ) != 0) {

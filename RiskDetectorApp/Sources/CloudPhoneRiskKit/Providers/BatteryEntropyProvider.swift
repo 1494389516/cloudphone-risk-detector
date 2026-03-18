@@ -24,7 +24,7 @@ struct BatteryEntropyCollector {
         guard series.count > 1 else { return 0 }
         let mean = series.reduce(0, +) / Double(series.count)
         let squaredDiffs = series.map { pow($0 - mean, 2) }
-        return squaredDiffs.reduce(0, +) / Double(series.count)
+        return squaredDiffs.reduce(0, +) / Double(series.count - 1)
     }
 
     func readChargeCounter() -> Int? {

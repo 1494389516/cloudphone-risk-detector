@@ -171,8 +171,8 @@ public enum ArmorABI {
                 data.appendLittleEndian(scatterSlot)
                 data.appendLittleEndian(entryFlags)
 
-                var nameBytes = Array(targetName.utf8.prefix(AntiDebug.targetNameFieldSize))
-                nameBytes.append(contentsOf: repeatElement(0, count: max(0, AntiDebug.targetNameFieldSize - nameBytes.count)))
+                var nameBytes = Array(targetName.utf8.prefix(AntiDebug.targetNameFieldSize - 1))
+                nameBytes.append(contentsOf: repeatElement(0 as UInt8, count: max(0, AntiDebug.targetNameFieldSize - nameBytes.count)))
                 data.append(contentsOf: nameBytes)
                 return data
             }

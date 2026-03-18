@@ -278,9 +278,10 @@ public final class CPRiskKit: NSObject {
         BuildConfig.configureForRelease()
         stateLock.lock()
         currentSessionId = UUID().uuidString
+        let sid = currentSessionId
         stateLock.unlock()
         #if DEBUG
-        Logger.log("start() sessionId=\(currentSessionId ?? "")")
+        Logger.log("start() sessionId=\(sid ?? "")")
         #endif
         if !AppAttestSignalProvider.isHardwareTrustSupported {
             Logger.log("app_attest: hardware_trust_unsupported (evaluate will emit signal weight=95)")

@@ -49,19 +49,19 @@ public enum PayloadFieldObfuscator {
         return try JSONSerialization.data(withJSONObject: restored, options: [])
     }
 
-    private static func transform(_ value: Any, with mapping: [String: String]) -> Any {
+    private static func transform(_ value: Any, with mapping: [String: String], depth: Int = 0) -> Any {
         if let dictionary = value as? [String: Any] {
             var transformed: [String: Any] = [:]
             transformed.reserveCapacity(dictionary.count)
             for (key, nestedValue) in dictionary {
-                let targetKey = mapping[key] ?? key
-                transformed[targetKey] = transform(nestedValue, with: mapping)
+                let targetKey = depth == 0 ? (mapping[key] ?? key) : key
+                transformed[targetKey] = transform(nestedValue, with: mapping, depth: depth + 1)
             }
             return transformed
         }
 
         if let array = value as? [Any] {
-            return array.map { transform($0, with: mapping) }
+            return array.map { transform($0, with: mapping, depth: depth + 1) }
         }
 
         return value

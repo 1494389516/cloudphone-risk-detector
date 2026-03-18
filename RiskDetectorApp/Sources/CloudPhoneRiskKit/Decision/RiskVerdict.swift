@@ -195,7 +195,7 @@ extension RiskVerdict {
             internalLevel: level,
             internalAction: action,
             confidence: calculateConfidence(context: context),
-            primaryReasons: report.signals.map { "\($0.category)_\($0.id)" },
+            primaryReasons: Array(report.signals.sorted { $0.score > $1.score }.prefix(5).map { "\($0.category)_\($0.id)" }),
             signals: report.signals,
             scenario: scenario,
             compressedDigest: report.compressedDigest,

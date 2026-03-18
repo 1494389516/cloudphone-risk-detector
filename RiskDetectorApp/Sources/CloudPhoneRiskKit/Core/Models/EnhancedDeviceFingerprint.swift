@@ -544,13 +544,13 @@ private struct SystemLayerCollector {
         let timeZoneIdentifier = timeZone.identifier
         let timeZoneOffsetSeconds = timeZone.secondsFromGMT()
 
-        // 日期格式
+        // 日期格式 - 使用 dateFormat 模板检测，避免非英语 locale 误判
         let dateFormat = DateFormatter()
         dateFormat.dateStyle = .none
         dateFormat.timeStyle = .short
         dateFormat.locale = locale
-        let timeString = dateFormat.string(from: Date())
-        let is24HourFormat = !timeString.contains("AM") && !timeString.contains("PM")
+        let formatPattern = DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: locale) ?? ""
+        let is24HourFormat = !formatPattern.contains("a")
 
         // 日历类型
         let usesGregorianCalendar = Calendar.current.identifier == .gregorian

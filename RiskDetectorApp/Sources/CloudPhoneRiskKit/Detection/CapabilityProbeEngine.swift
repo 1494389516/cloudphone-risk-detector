@@ -99,6 +99,12 @@ public struct CapabilityScore: Codable, Sendable {
 /// - B 类探针：hook 伪造反而暴露自己
 public final class CapabilityProbeEngine: @unchecked Sendable {
 
+    private static let timebaseInfo: mach_timebase_info_data_t = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return info
+    }()
+
     // MARK: - 配置
 
     public struct Config: Sendable {
@@ -249,9 +255,9 @@ public final class CapabilityProbeEngine: @unchecked Sendable {
         let end = mach_absolute_time()
 
         // 转换为微秒
-        var timebaseInfo = mach_timebase_info_data_t()
-        mach_timebase_info(&timebaseInfo)
-        let elapsedNanos = (end - start) * UInt64(timebaseInfo.numer) / UInt64(timebaseInfo.denom)
+        let tb = Self.timebaseInfo
+        let diff = end - start
+        let elapsedNanos = diff / UInt64(tb.denom) * UInt64(tb.numer) + (diff % UInt64(tb.denom)) * UInt64(tb.numer) / UInt64(tb.denom)
         let elapsedMicros = elapsedNanos / 1000
 
         return ProbeResult(

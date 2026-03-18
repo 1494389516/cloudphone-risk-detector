@@ -61,6 +61,15 @@ private let honeypotSigbusHandler: @convention(c) (
 
     if matched {
         honeypotTriggeredPtr.pointee = 1
+        /* Advance PC past the faulting instruction (4 bytes on ARM64) to prevent
+           an infinite SIGBUS loop. The handler runs in the context of the faulting
+           thread, so modifying the saved PC in ucontext_t is async-signal-safe. */
+        #if arch(arm64)
+        if let ctx = ctx {
+            let uctx = ctx.assumingMemoryBound(to: ucontext_t.self)
+            uctx.pointee.uc_mcontext.pointee.__ss.__pc &+= 4
+        }
+        #endif
         return
     }
 

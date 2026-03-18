@@ -285,7 +285,7 @@ public final class DeviceHistory {
   public func getAllSnapshots() -> [DeviceDetectionSnapshot] {
     lock.lock()
     defer { lock.unlock() }
-    return cleanAndReturn()
+    return cleanAndReturnLocked()
   }
 
   /// 查询指定时间范围内的快照
@@ -503,7 +503,7 @@ public final class DeviceHistory {
     }
 
     if diskFreshness.sequence < anchor.sequence
-      && diskFreshness.latestTimestamp < anchor.latestTimestamp
+      || diskFreshness.latestTimestamp < anchor.latestTimestamp
     {
       Logger.log("DeviceHistory: freshness rollback detected")
       clearPersistedFilesLocked(resetAnchor: false)

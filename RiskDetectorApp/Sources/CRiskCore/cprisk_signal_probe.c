@@ -55,7 +55,7 @@ static uint64_t cprisk_mach_abs_to_ns_i(uint64_t delta_abs) {
         return 0u;
     }
 
-    return delta_abs * tb.numer / tb.denom;
+    return delta_abs / tb.denom * tb.numer + (delta_abs % tb.denom) * tb.numer / tb.denom;
 }
 
 static void cprisk_reset_exception_delivery_probe_state_i(void) {
@@ -306,7 +306,8 @@ int cprisk_csops_debug_check(void) {
 
 int cprisk_detect_single_stepping(void) {
     mach_timebase_info_data_t tb;
-    mach_timebase_info(&tb);
+    if (mach_timebase_info(&tb) != KERN_SUCCESS || tb.denom == 0)
+        return 0;
 
     uint64_t t0 = mach_absolute_time();
 
@@ -317,7 +318,8 @@ int cprisk_detect_single_stepping(void) {
     (void)acc;
 
     uint64_t t1 = mach_absolute_time();
-    uint64_t elapsed_ns = (t1 - t0) * tb.numer / tb.denom;
+    uint64_t diff = t1 - t0;
+    uint64_t elapsed_ns = diff / tb.denom * tb.numer + (diff % tb.denom) * tb.numer / tb.denom;
 
     return (elapsed_ns > CPRISK_SINGLE_STEP_THRESHOLD_NS) ? 1 : 0;
 }
