@@ -7,6 +7,7 @@ public struct OrchestratedFunctionPlan: Equatable, Sendable {
     public let dispatcherStyle: DispatcherStyle
     public let stateEncodingPlan: StateEncodingPlan
     public let runtimeDependencyPlan: RuntimeDependencyPlan
+    public let antiDeobfuscationPlan: AntiDeobfuscationFunctionPlan
     public let notes: [String]
 
     public var summaryLine: String {
@@ -16,8 +17,12 @@ public struct OrchestratedFunctionPlan: Equatable, Sendable {
             "dispatcher=\(dispatcherStyle.rawValue)",
             "codec=\(stateEncodingPlan.style.rawValue)",
             "runtimeSalt=\(stateEncodingPlan.usesRuntimeSalt)",
+            "runtimeSaltMode=\(antiDeobfuscationPlan.runtimeSaltMode.rawValue)",
             "fakeStates=\(stateEncodingPlan.releaseFakeStateCount)",
-            "pass8Aware=\(runtimeDependencyPlan.pass8Aware)"
+            "fakeStateReleaseOnly=\(antiDeobfuscationPlan.fakeStateReleaseOnlyEnabled)",
+            "multiDispatcher=\(antiDeobfuscationPlan.multiDispatcherEnabled)",
+            "pass8Aware=\(runtimeDependencyPlan.pass8Aware)",
+            "pass8CFFAware=\(antiDeobfuscationPlan.pass8CFFAwarenessEnabled)"
         ].joined(separator: " ")
     }
 }
@@ -51,6 +56,12 @@ public final class ControlFlowOrchestrator {
             for: tier,
             options: policy.antiDeobfuscation
         )
+        let antiDeobfuscationPlan = AntiDeobfuscationFunctionPlan.recommended(
+            for: tier,
+            options: policy.antiDeobfuscation,
+            stateEncodingPlan: stateEncodingPlan,
+            runtimeDependencyPlan: runtimeDependencyPlan
+        )
 
         var notes: [String] = []
         if tier == .heavy {
@@ -62,6 +73,9 @@ public final class ControlFlowOrchestrator {
         if runtimeDependencyPlan.enabled {
             notes.append("runtime salt inputs should remain advisory, not semantic")
         }
+        notes.append(
+            "antiDeobf(runtimeSalt=\(antiDeobfuscationPlan.runtimeSaltEnabled), mode=\(antiDeobfuscationPlan.runtimeSaltMode.rawValue), fakeStateReleaseOnly=\(antiDeobfuscationPlan.fakeStateReleaseOnlyEnabled), multiDispatcher=\(antiDeobfuscationPlan.multiDispatcherEnabled), pass8Aware=\(antiDeobfuscationPlan.pass8CFFAwarenessEnabled))"
+        )
 
         return OrchestratedFunctionPlan(
             symbol: symbol,
@@ -69,6 +83,7 @@ public final class ControlFlowOrchestrator {
             dispatcherStyle: dispatcher,
             stateEncodingPlan: stateEncodingPlan,
             runtimeDependencyPlan: runtimeDependencyPlan,
+            antiDeobfuscationPlan: antiDeobfuscationPlan,
             notes: notes
         )
     }
@@ -89,10 +104,15 @@ public final class ControlFlowOrchestrator {
         }
 
         let cwd = URL(fileURLWithPath: fileManager.currentDirectoryPath)
+        let parent = cwd.deletingLastPathComponent()
+        let grandParent = parent.deletingLastPathComponent()
         let candidates = [
             cwd.appendingPathComponent("cff_policy.yaml"),
-            cwd.deletingLastPathComponent().appendingPathComponent("cff_policy.yaml"),
-            cwd.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("cff_policy.yaml")
+            cwd.appendingPathComponent("RiskDetectorApp/cff_policy.yaml"),
+            parent.appendingPathComponent("cff_policy.yaml"),
+            parent.appendingPathComponent("RiskDetectorApp/cff_policy.yaml"),
+            grandParent.appendingPathComponent("cff_policy.yaml"),
+            grandParent.appendingPathComponent("RiskDetectorApp/cff_policy.yaml")
         ]
 
         if let matched = candidates.first(where: { fileManager.fileExists(atPath: $0.path) }) {

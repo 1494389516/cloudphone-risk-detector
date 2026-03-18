@@ -1,5 +1,6 @@
 version: 2
 functions:
+  # 高强度平坦化：关键决策/挑战/信任链/watchdog 核心路径
   heavy:
     - RiskDetectionEngine.collectAndAugmentSignals
     - RiskDetectionEngine.fastDigestShortCircuit
@@ -18,21 +19,29 @@ functions:
     - TrustChainManager.buildKeyResolver
     - TrustChainManager.shouldRefreshAttestation
     - anti_debug_watchdog.cprisk_watchdog_run_iteration
+
+  # 轻量平坦化：高频检测流程，强调低开销与异构分发
   light:
     - RandomizedDetection.detect
     - AntiTamperingDetector.detect
-    - DetectorRegistry.dispatchSensitiveDetectors
-    - ChallengeTrigger.dispatch
-    - AntiTamperingSignalProvider.collect
-    - MutationStrategy.shuffleChecks
+    - DetectorRegistry.detectAll
+    - ChallengeTrigger.shouldTriggerBlindChallenge
+    - AntiTamperingSignalProvider.signals
+    - MutationPlanner.maybeShuffle
+
+  # 绝不平坦化：底层 syscall 包装、App 入口、测试等
   never:
     - direct_syscall.cprisk_direct_syscall0
     - direct_syscall.cprisk_direct_syscall6
     - RiskDetectorApp.App
     - CloudPhoneRiskKitTests
+
+  # 仅做 region flattening，不做整函数 flattening
   regionOnly:
     - RiskDetectionEngine.evaluate
+
 anti_deobfuscation:
+  # 全局开关；Pass9 将按 tier 计算逐函数有效策略
   enable_runtime_salt: true
   enable_fake_state_release_only: true
   enable_multi_dispatcher: true

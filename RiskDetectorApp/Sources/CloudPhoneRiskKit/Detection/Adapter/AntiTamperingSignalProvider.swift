@@ -1,6 +1,39 @@
 import CRiskCore
 import Foundation
 
+private enum AntiTamperingSignalProviderCFF {
+    static let signalsConfig = CFFConfig.adaptive(
+        functionSeed: 0x63AF_19D2_8C54_B7E1,
+        protectionTier: .light,
+        dispatcherStyle: .dualRail,
+        codecStyle: .xorRotate
+    )
+
+    static func salt(snapshot: RiskSnapshot, threshold: Double) -> UInt32 {
+        CFFRuntimeSalt.derive(
+            functionSeed: signalsConfig.functionSeed,
+            inputs: CFFRuntimeSaltInputs(
+                extraWords: [
+                    snapshot.jailbreak.confidence.bitPattern,
+                    UInt64(snapshot.jailbreak.detectedMethods.count),
+                    threshold.bitPattern,
+                    UInt64(snapshot.mutationStrategy?.thresholdJitterBps ?? 0),
+                    UInt64(snapshot.mutationStrategy?.scoreJitterBps ?? 0),
+                ],
+                strings: [
+                    "AntiTamperingSignalProvider.signals(snapshot:)",
+                    snapshot.deviceID,
+                    snapshot.mutationStrategy?.seed ?? "",
+                ],
+                flags: [
+                    snapshot.mutationStrategy?.shuffleChecks ?? false,
+                    snapshot.jailbreak.isJailbroken,
+                ]
+            )
+        )
+    }
+}
+
 /// 反篡改检测信号提供者
 ///
 /// 将 AntiTamperingDetector、DebuggerDetector、FridaDetector、CodeSignatureValidator、MemoryIntegrityChecker
@@ -85,25 +118,136 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
     public func signals(snapshot: RiskSnapshot) -> [RiskSignal] {
         var signals: [RiskSignal] = []
         let baseJailbreakScore = snapshot.jailbreak.confidence
+        let ordered = orderedChecks(snapshot: snapshot, baseScore: baseJailbreakScore)
+        let cffConfig = AntiTamperingSignalProviderCFF.signalsConfig
+        let salt = AntiTamperingSignalProviderCFF.salt(snapshot: snapshot, threshold: configuration.minScoreThreshold)
+        let entryState: UInt32 = 0x61
+        let iterateState: UInt32 = 0x62
+        let executeState: UInt32 = 0x63
+        let connectorState: UInt32 = 0x64
+        let settleState: UInt32 = 0x65
+        let mprotectState: UInt32 = 0x66
+        let finishState: UInt32 = 0x67
 
-        for check in orderedChecks(snapshot: snapshot, baseScore: baseJailbreakScore) {
-            isolatedAppend(check.id, &signals, check.execute)
+        let cffKey = CFFStateCodec.deriveSeed(function: "AntiTamperingSignalProvider.signals(snapshot:)", config: cffConfig)
+        let effectiveSalt = cffConfig.enableRuntimeSalt ? salt : salt ^ 0x13579BDF
+
+        func encodeState(_ rawState: UInt32) -> UInt32 {
+            CFFStateCodec.encode(state: rawState, key: cffKey, salt: effectiveSalt, style: cffConfig.codecStyle)
         }
 
-        if cprisk_is_mprotect_tampered() != 0 {
-            signals.append(RiskSignal(
-                id: "memory_protection_tampered",
-                category: "anti_tamper",
-                score: 85,
-                evidence: ["detail": "mprotect_syscall_blocked"],
-                state: .tampered,
-                layer: 1,
-                weightHint: 90
-            ))
+        func decodeState(_ encoded: UInt32) -> UInt32 {
+            CFFStateCodec.decode(state: encoded, key: cffKey, salt: effectiveSalt, style: cffConfig.codecStyle)
         }
 
-        return coalesceProtectedDuplicateSignals(signals)
-            .filter { $0.score >= configuration.minScoreThreshold }
+        var checkIndex = 0
+        var currentCheck: DetectorCheck?
+        var loopBudget = max(40, ordered.count * 5 + 16)
+        var sink = CFFReturnSink<[RiskSignal]>()
+        var encodedState = encodeState(entryState)
+
+        func finalizeSignals() -> [RiskSignal] {
+            coalesceProtectedDuplicateSignals(signals)
+                .filter { $0.score >= configuration.minScoreThreshold }
+        }
+
+        while !sink.isResolved {
+            guard loopBudget > 0 else {
+                sink.store(finalizeSignals())
+                break
+            }
+            loopBudget -= 1
+
+            let decodedState = decodeState(encodedState)
+            let dispatchPlan = CFFDispatcher.plan(encodedState: encodedState, salt: salt, config: cffConfig)
+            let useIfElseRail = dispatchPlan.style == .ifElseChain
+                || (dispatchPlan.usesSecondaryDispatcher && CFFOpaquePredicates.connectorGate(encodedState: encodedState, salt: salt))
+
+            if useIfElseRail {
+                if decodedState == entryState {
+                    encodedState = encodeState(iterateState)
+                } else if decodedState == iterateState {
+                    guard checkIndex < ordered.count else {
+                        encodedState = encodeState(mprotectState)
+                        continue
+                    }
+                    currentCheck = ordered[checkIndex]
+                    encodedState = encodeState(executeState)
+                } else if decodedState == executeState {
+                    if let currentCheck {
+                        isolatedAppend(currentCheck.id, &signals, currentCheck.execute)
+                    }
+                    currentCheck = nil
+                    checkIndex += 1
+                    encodedState = encodeState(connectorState)
+                } else if decodedState == connectorState {
+                    let nextState = CFFOpaquePredicates.parityFence(UInt32(checkIndex) &+ decodedState, salt: salt) ? iterateState : settleState
+                    encodedState = encodeState(nextState)
+                } else if decodedState == settleState {
+                    encodedState = encodeState(iterateState)
+                } else if decodedState == mprotectState {
+                    if cprisk_is_mprotect_tampered() != 0 {
+                        signals.append(RiskSignal(
+                            id: "memory_protection_tampered",
+                            category: "anti_tamper",
+                            score: 85,
+                            evidence: ["detail": "mprotect_syscall_blocked"],
+                            state: .tampered,
+                            layer: 1,
+                            weightHint: 90
+                        ))
+                    }
+                    encodedState = encodeState(finishState)
+                } else if decodedState == finishState {
+                    sink.store(finalizeSignals())
+                } else {
+                    sink.store(finalizeSignals())
+                }
+            } else {
+                switch decodedState {
+                case entryState:
+                    encodedState = encodeState(iterateState)
+                case iterateState:
+                    guard checkIndex < ordered.count else {
+                        encodedState = encodeState(mprotectState)
+                        continue
+                    }
+                    currentCheck = ordered[checkIndex]
+                    encodedState = encodeState(executeState)
+                case executeState:
+                    if let currentCheck {
+                        isolatedAppend(currentCheck.id, &signals, currentCheck.execute)
+                    }
+                    currentCheck = nil
+                    checkIndex += 1
+                    encodedState = encodeState(connectorState)
+                case connectorState:
+                    let nextState = CFFDispatcher.branchKey(encodedState, salt: salt) & 1 == 0 ? iterateState : settleState
+                    encodedState = encodeState(nextState)
+                case settleState:
+                    encodedState = encodeState(iterateState)
+                case mprotectState:
+                    if cprisk_is_mprotect_tampered() != 0 {
+                        signals.append(RiskSignal(
+                            id: "memory_protection_tampered",
+                            category: "anti_tamper",
+                            score: 85,
+                            evidence: ["detail": "mprotect_syscall_blocked"],
+                            state: .tampered,
+                            layer: 1,
+                            weightHint: 90
+                        ))
+                    }
+                    encodedState = encodeState(finishState)
+                case finishState:
+                    sink.store(finalizeSignals())
+                default:
+                    sink.store(finalizeSignals())
+                }
+            }
+        }
+
+        return sink.resolve(or: finalizeSignals())
     }
 
     private func isolatedAppend(

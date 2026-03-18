@@ -35,6 +35,9 @@ public struct GrpcReportPayload: Sendable {
     public let payloadJson: Data
     public let signature: String
     public let payloadSha256: Data
+    /// 输出链路完整性信号：用于观测 JSONSerialization/SHA256 关键 API 路径的一致性。
+    /// 仅作为上报证据，不参与信封签名语义。
+    public let outputPathIntegrity: [String: String]?
 
     public init(
         appId: String,
@@ -50,7 +53,8 @@ public struct GrpcReportPayload: Sendable {
         scene: String,
         payloadJson: Data,
         signature: String,
-        payloadSha256: Data
+        payloadSha256: Data,
+        outputPathIntegrity: [String: String]? = nil
     ) {
         self.appId = appId
         self.sdkVersion = sdkVersion
@@ -66,6 +70,7 @@ public struct GrpcReportPayload: Sendable {
         self.payloadJson = payloadJson
         self.signature = signature
         self.payloadSha256 = payloadSha256
+        self.outputPathIntegrity = outputPathIntegrity
     }
 
     /// 转为与 proto 字段对应的 JSON 字典（snake_case），用于 HTTP/2 或 gRPC 客户端发送。
@@ -89,7 +94,36 @@ public struct GrpcReportPayload: Sendable {
         if let fmv = fieldMappingVersion, !fmv.isEmpty {
             dict["field_mapping_version"] = fmv
         }
+        if let outputPathIntegrity, !outputPathIntegrity.isEmpty {
+            dict["output_path_integrity"] = outputPathIntegrity
+        }
         return dict
+    }
+
+    internal func validatedJSONDictionary() throws -> [String: Any] {
+        let recomputed = Self.computePayloadSha256(
+            nonce: nonce,
+            ts: ts,
+            reportId: reportId,
+            payload: payloadJson
+        )
+        guard recomputed == payloadSha256 else {
+            // fail-closed：关键绑定摘要出现不一致时拒绝继续序列化/上报
+            throw ReportEnvelope.ReportEnvelopeError.encodingFailed
+        }
+        return toJSONDictionary()
+    }
+
+    internal static func computePayloadSha256(
+        nonce: String,
+        ts: Int64,
+        reportId: String,
+        payload: Data
+    ) -> Data {
+        var hasher = SHA256()
+        hasher.update(data: Data("\(nonce)|\(ts)|\(reportId)|".utf8))
+        hasher.update(data: payload)
+        return Data(hasher.finalize())
     }
 }
 
@@ -114,10 +148,13 @@ extension ReportEnvelope {
     /// - Returns: 与 proto 字段一一对应的 `GrpcReportPayload`
     public func toGrpcCompatiblePayload(context: GrpcReportContext? = nil) -> GrpcReportPayload {
         let ctx = context ?? GrpcReportContext()
-        var hasher = SHA256()
-        hasher.update(data: Data("\(nonce)|\(ts)|\(reportId)|".utf8))
-        hasher.update(data: payload)
-        let payloadSha256 = Data(hasher.finalize())
+        let payloadSha256 = GrpcReportPayload.computePayloadSha256(
+            nonce: nonce,
+            ts: ts,
+            reportId: reportId,
+            payload: payload
+        )
+        let outputPathIntegrity = buildOutputPathIntegritySignal(payloadSha256: payloadSha256)
 
         return GrpcReportPayload(
             appId: ctx.appId,
@@ -133,7 +170,8 @@ extension ReportEnvelope {
             scene: ctx.scene,
             payloadJson: payload,
             signature: signature,
-            payloadSha256: payloadSha256
+            payloadSha256: payloadSha256,
+            outputPathIntegrity: outputPathIntegrity
         )
     }
 
@@ -147,7 +185,7 @@ extension ReportEnvelope {
         prettyPrinted: Bool = false
     ) throws -> String {
         let payload = toGrpcCompatiblePayload(context: context)
-        let dict = payload.toJSONDictionary()
+        let dict = try payload.validatedJSONDictionary()
 
         let options: JSONSerialization.WritingOptions = prettyPrinted ? [.prettyPrinted, .sortedKeys] : [.sortedKeys]
         let data = try JSONSerialization.data(withJSONObject: dict, options: options)
@@ -162,7 +200,63 @@ extension ReportEnvelope {
     /// - Returns: JSON 编码后的 Data
     public func toGrpcRequestBytes(context: GrpcReportContext? = nil) throws -> Data {
         let payload = toGrpcCompatiblePayload(context: context)
-        let dict = payload.toJSONDictionary()
+        let dict = try payload.validatedJSONDictionary()
         return try JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys])
+    }
+
+    private func buildOutputPathIntegritySignal(payloadSha256: Data) -> [String: String] {
+        let recomputed = GrpcReportPayload.computePayloadSha256(
+            nonce: nonce,
+            ts: ts,
+            reportId: reportId,
+            payload: payload
+        )
+        let payloadShaMatches = (recomputed == payloadSha256)
+        let rawPayloadDigestHex = Self.sha256Hex(payload)
+
+        var canonicalDigestHex = "unavailable"
+        var canonicalPayload = ""
+        var canonicalizationOK = false
+        if let object = try? JSONSerialization.jsonObject(with: payload, options: [.fragmentsAllowed]),
+           JSONSerialization.isValidJSONObject(object),
+           let canonicalData = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+           let canonicalString = String(data: canonicalData, encoding: .utf8) {
+            canonicalizationOK = true
+            canonicalPayload = canonicalString
+            canonicalDigestHex = Self.sha256Hex(canonicalData)
+        }
+
+        let fmv = fieldMappingVersion ?? ""
+        let attestationKey = attestationKeyId ?? ""
+        let signatureInput = "\(sigVer)|\(nonce)|\(ts)|\(sessionToken)|\(reportId)|\(keyId)|\(fmv)|\(attestationKey)|\(canonicalPayload)"
+        let signatureInputDigestHex = Self.sha256Hex(Data(signatureInput.utf8))
+
+        let status: String
+        let reason: String
+        if !payloadShaMatches {
+            status = "blocked"
+            reason = "payload_sha256_mismatch"
+        } else if !canonicalizationOK {
+            status = "high_risk"
+            reason = "payload_canonicalization_failed"
+        } else {
+            status = "ok"
+            reason = "consistent"
+        }
+
+        return [
+            "status": status,
+            "reason": reason,
+            "api_chain": "json_serialization+cryptokit_sha256",
+            "route": "report_envelope->grpc_payload",
+            "payload_sha256_match": payloadShaMatches ? "1" : "0",
+            "payload_raw_sha256": rawPayloadDigestHex,
+            "payload_canonical_sha256": canonicalDigestHex,
+            "signature_input_sha256": signatureInputDigestHex,
+        ]
+    }
+
+    private static func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }

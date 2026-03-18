@@ -112,6 +112,79 @@ final class DetectorManifestTests: XCTestCase {
             XCTAssertEqual(deduped.count, 2, "无 overlap group 的检测器不应被去重")
         }
     }
+
+    // MARK: - detect(type:) / detect(group:)
+
+    func testDetectTypeReturnsFallbackWhenDetectorThrows() throws {
+        let registry = DetectorRegistry.shared
+        guard !registry.isSealed else {
+            throw XCTSkip("DetectorRegistry is sealed in current test context")
+        }
+
+        registry.register(type: .env) { ThrowingDetector() }
+        defer {
+            registry.register(type: .env) { EnvDetector() }
+        }
+
+        let result = registry.detect(type: .env)
+        XCTAssertEqual(result.score, 80)
+        XCTAssertEqual(result.methods, ["detector_anomaly_env"])
+    }
+
+    func testDetectGroupResultMethodsAreSortedAndUnique() throws {
+        let registry = DetectorRegistry.shared
+        guard !registry.isSealed else {
+            throw XCTSkip("DetectorRegistry is sealed in current test context")
+        }
+
+        registry.register(type: .file) {
+            StaticDetector(result: DetectorResult(score: 5, methods: ["dup", "z_method"]))
+        }
+        registry.register(type: .dyld) {
+            StaticDetector(result: DetectorResult(score: 7, methods: ["dup", "a_method"]))
+        }
+        registry.register(type: .env) {
+            StaticDetector(result: DetectorResult(score: 0, methods: []))
+        }
+        registry.register(type: .sysctl) {
+            StaticDetector(result: DetectorResult(score: 0, methods: []))
+        }
+        registry.register(type: .scheme) {
+            StaticDetector(result: DetectorResult(score: 0, methods: []))
+        }
+        registry.register(type: .hook) {
+            StaticDetector(result: DetectorResult(score: 0, methods: []))
+        }
+        defer {
+            registry.register(type: .file) { FileDetector() }
+            registry.register(type: .dyld) { DyldDetector() }
+            registry.register(type: .env) { EnvDetector() }
+            registry.register(type: .sysctl) { SysctlDetector() }
+            registry.register(type: .scheme) { SchemeDetector() }
+            registry.register(type: .hook) { HookDetector() }
+        }
+
+        let result = registry.detect(group: .jailbreak)
+        XCTAssertEqual(result.details, "jailbreak_group")
+        XCTAssertEqual(result.methods, Array(Set(result.methods)).sorted())
+        XCTAssertEqual(result.methods, ["a_method", "dup", "z_method"])
+    }
+
+    private struct ThrowingDetector: Detector {
+        enum StubError: Error { case injected }
+
+        func detect() throws -> DetectorResult {
+            throw StubError.injected
+        }
+    }
+
+    private struct StaticDetector: Detector {
+        let result: DetectorResult
+
+        func detect() throws -> DetectorResult {
+            result
+        }
+    }
 }
 
 // MARK: - BehaviorSignals 样本充足性测试

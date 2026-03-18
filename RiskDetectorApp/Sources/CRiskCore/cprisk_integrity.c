@@ -475,6 +475,7 @@ static int cprisk_init_protection_whitebox_i(
     memset(data_acc_le, 0, sizeof(data_acc_le));
 
     if (cprisk_verify_anchor_whitebox_i(full_anchor_hash) != 0) {
+        cprisk_force_integrity_poison();
         rc = -4;
         goto cleanup;
     }
@@ -483,6 +484,7 @@ static int cprisk_init_protection_whitebox_i(
             CPRISK_WHITEBOX_DOMAIN_PASS1_STRING_KEY_I,
             NULL,
             pass1_key) != 0) {
+        cprisk_force_integrity_poison();
         rc = -5;
         goto cleanup;
     }
@@ -503,6 +505,7 @@ static int cprisk_init_protection_whitebox_i(
             CPRISK_WHITEBOX_DOMAIN_ANCHOR_ACCUMULATOR_SEED_I,
             acc_digest,
             acc_seed) != 0) {
+        cprisk_force_integrity_poison();
         rc = -6;
         goto cleanup;
     }
@@ -520,6 +523,7 @@ static int cprisk_init_protection_whitebox_i(
             CPRISK_WHITEBOX_DOMAIN_LOADER_KEY_I,
             loader_digest,
             loader_key) != 0) {
+        cprisk_force_integrity_poison();
         rc = -6;
         goto cleanup;
     }
@@ -550,6 +554,7 @@ static int cprisk_init_protection_whitebox_i(
             CPRISK_WHITEBOX_DOMAIN_RUNTIME_MATERIAL_I,
             runtime_digest,
             s_runtime_material) != 0) {
+        cprisk_force_integrity_poison();
         cprisk_unload_protected_data();
         rc = -7;
         goto cleanup;

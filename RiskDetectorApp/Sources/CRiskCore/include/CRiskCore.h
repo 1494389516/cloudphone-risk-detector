@@ -419,6 +419,10 @@ int cprisk_test_set_whitebox_bundle(
 /// behavior that reads white-box sections from the current image.
 void cprisk_test_clear_whitebox_bundle(void);
 
+/// Test-only switch to force white-box recompute mismatch in
+/// cprisk_whitebox_evaluate_domain(), used to verify poison/fail-closed behavior.
+void cprisk_test_set_whitebox_recompute_mismatch(int enabled);
+
 /* ── Image address check (dladdr-free) ───────────────────────────────── */
 
 /// Returns 1 if addr is within any loaded image's segment, 0 otherwise.

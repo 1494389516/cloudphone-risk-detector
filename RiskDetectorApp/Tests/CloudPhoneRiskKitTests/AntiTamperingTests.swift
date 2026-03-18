@@ -578,6 +578,77 @@ final class AntiTamperingTests: XCTestCase {
         )
     }
 
+    func testRWXMemoryScannerJitAssessmentFlagsStalkerCoexistence() {
+        let scanner = RWXMemoryScanner()
+        let regions: [RWXMemoryScanner.SuspiciousRegion] = [
+            .init(
+                address: 0x1000,
+                size: 0x4000,
+                protection: vm_prot_t(VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE),
+                isAnonymous: true,
+                isAnonymousRX: false,
+                userTag: 240,
+                shareMode: 3,
+                inImage: false,
+                isJITLike: false
+            ),
+            .init(
+                address: 0x9000,
+                size: 0x2000,
+                protection: vm_prot_t(VM_PROT_READ | VM_PROT_EXECUTE),
+                isAnonymous: true,
+                isAnonymousRX: true,
+                userTag: 240,
+                shareMode: 3,
+                inImage: false,
+                isJITLike: true
+            ),
+        ]
+
+        let assessment = scanner.assess(regions: regions)
+        XCTAssertGreaterThan(assessment.score, 0)
+        XCTAssertTrue(assessment.methods.contains("rwx:jit_rwx_stalker_like"))
+        XCTAssertTrue(assessment.methods.contains("rwx:jit_rwx_coexistence"))
+        XCTAssertEqual(assessment.anonymousRWXCount, 1)
+        XCTAssertEqual(assessment.jitLikeCount, 1)
+    }
+
+    func testRWXMemoryScannerJitSignalConversionIncludesStalkerSignals() {
+        let scanner = RWXMemoryScanner()
+        let regions: [RWXMemoryScanner.SuspiciousRegion] = [
+            .init(
+                address: 0x2000,
+                size: 0x3000,
+                protection: vm_prot_t(VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE),
+                isAnonymous: true,
+                isAnonymousRX: false,
+                userTag: 241,
+                shareMode: 3,
+                inImage: false,
+                isJITLike: false
+            ),
+            .init(
+                address: 0xB000,
+                size: 0x4000,
+                protection: vm_prot_t(VM_PROT_READ | VM_PROT_EXECUTE),
+                isAnonymous: true,
+                isAnonymousRX: true,
+                userTag: 241,
+                shareMode: 0,
+                inImage: false,
+                isJITLike: true
+            ),
+        ]
+
+        let signals = scanner.asSignals(regions: regions)
+        let ids = Set(signals.map(\.id))
+
+        XCTAssertTrue(ids.contains(SignalID.stalkerJitRWX))
+        XCTAssertTrue(ids.contains(SignalID.rwxJitCoexistence))
+        XCTAssertTrue(ids.contains("rwx_anonymous"))
+        XCTAssertTrue(ids.contains("anonymous_executable_memory"))
+    }
+
     // MARK: - FridaHeapDetector Tests
 
     func testFridaHeapDetectorScoreCapped() throws {
@@ -820,5 +891,39 @@ final class AntiTamperingTests: XCTestCase {
         let detector = FileDetector()
         let result = try detector.detect()
         XCTAssertGreaterThanOrEqual(result.score, 0)
+    }
+
+    // MARK: - RandomizedDetection Tests
+
+    func testRandomizedDetectionDeterministicWithFixedSeedAndNoDelay() throws {
+        let config = RandomizedDetection.Config(
+            enableShuffle: false,
+            enableRandomDelay: false,
+            minDelayUs: 1,
+            maxDelayUs: 1,
+            seed: 0x1234_5678,
+            subsetRatio: 1.0
+        )
+        let detector = RandomizedDetection(config: config)
+
+        let first = try detector.detect()
+        let second = try detector.detect()
+
+        XCTAssertEqual(first.score, second.score)
+        XCTAssertEqual(first.methods, second.methods)
+    }
+
+    func testRandomizedDetectionScoreUpperBoundRemainsStable() throws {
+        let config = RandomizedDetection.Config(
+            enableShuffle: true,
+            enableRandomDelay: false,
+            minDelayUs: 1,
+            maxDelayUs: 1,
+            seed: 0xABCD_EF12,
+            subsetRatio: 1.0
+        )
+        let result = try RandomizedDetection(config: config).detect()
+        XCTAssertGreaterThanOrEqual(result.score, 0)
+        XCTAssertLessThanOrEqual(result.score, 70)
     }
 }

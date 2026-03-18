@@ -1,6 +1,45 @@
 import CryptoKit
 import Foundation
 
+private enum ChallengeTriggerCFF {
+    static let shouldTriggerConfig = CFFConfig.adaptive(
+        functionSeed: 0xB5E2_71CA_4D3F_8096,
+        protectionTier: .light,
+        dispatcherStyle: .dualRail,
+        codecStyle: .xorRotate
+    )
+
+    static func salt(
+        capabilityAnomalyCount: Int,
+        tamperedCount: Int,
+        rules: [ServerRiskPolicy.BlindRule]
+    ) -> UInt32 {
+        let preview = rules.prefix(2).map(\.id).joined(separator: "|")
+        return CFFRuntimeSalt.derive(
+            functionSeed: shouldTriggerConfig.functionSeed,
+            inputs: CFFRuntimeSaltInputs(
+                extraWords: [
+                    UInt64(capabilityAnomalyCount),
+                    UInt64(tamperedCount),
+                    UInt64(rules.count),
+                    stableHash64(preview),
+                ],
+                strings: ["ChallengeTrigger.shouldTriggerBlindChallenge", preview],
+                flags: [rules.isEmpty, capabilityAnomalyCount > 0, tamperedCount > 0]
+            )
+        )
+    }
+
+    private static func stableHash64(_ value: String) -> UInt64 {
+        var hash: UInt64 = 0xCBF29CE484222325
+        for byte in value.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 0x100000001B3
+        }
+        return hash
+    }
+}
+
 // MARK: - Challenge Trigger
 
 /// Challenge 触发器
@@ -74,56 +113,203 @@ public struct ChallengeTrigger: Sendable {
         tamperedCount: Int,
         existingRules: [ServerRiskPolicy.BlindRule]
     ) -> TriggerResult {
-        guard !existingRules.isEmpty else {
-            #if DEBUG
-            if capabilityAnomalyCount >= defaultCapabilityAnomalyThreshold && tamperedCount > 0 {
-                let defaultRule = ServerRiskPolicy.BlindRule(
-                    id: "debug_local_auto_trigger",
-                    minTamperedCount: 1,
-                    minCapabilityAnomalyCount: defaultCapabilityAnomalyThreshold,
-                    weight: 75
-                )
-                return TriggerResult(
-                    triggered: true,
-                    matchedRule: defaultRule,
-                    reason: "DEBUG local-only trigger: capabilityAnomalyCount(\(capabilityAnomalyCount)) >= \(defaultCapabilityAnomalyThreshold) && tamperedCount(\(tamperedCount)) > 0"
-                )
-            }
-            #endif
-            return .noTrigger
+        let cffConfig = ChallengeTriggerCFF.shouldTriggerConfig
+        let salt = ChallengeTriggerCFF.salt(
+            capabilityAnomalyCount: capabilityAnomalyCount,
+            tamperedCount: tamperedCount,
+            rules: existingRules
+        )
+        let entryState: UInt32 = 0x51
+        let emptyRulesState: UInt32 = 0x52
+        let iterateState: UInt32 = 0x53
+        let evaluateState: UInt32 = 0x54
+        let triggerState: UInt32 = 0x55
+        let connectorState: UInt32 = 0x56
+        let settleState: UInt32 = 0x57
+        let noTriggerState: UInt32 = 0x58
+
+        let cffKey = CFFStateCodec.deriveSeed(function: "ChallengeTrigger.shouldTriggerBlindChallenge", config: cffConfig)
+        let effectiveSalt = cffConfig.enableRuntimeSalt ? salt : salt ^ 0x13579BDF
+
+        func encodeState(_ rawState: UInt32) -> UInt32 {
+            CFFStateCodec.encode(state: rawState, key: cffKey, salt: effectiveSalt, style: cffConfig.codecStyle)
         }
 
-        // 遍历所有规则，检查是否有匹配的
-        for rule in existingRules {
-            // 检查能力探针异常数是否满足规则要求
-            let capabilityMatches = capabilityAnomalyCount >= rule.minCapabilityAnomalyCount
+        func decodeState(_ encoded: UInt32) -> UInt32 {
+            CFFStateCodec.decode(state: encoded, key: cffKey, salt: effectiveSalt, style: cffConfig.codecStyle)
+        }
 
-            // 检查篡改计数是否满足规则要求
-            let tamperedMatches = tamperedCount >= rule.minTamperedCount
+        var sink = CFFReturnSink<TriggerResult>()
+        var encodedState = encodeState(entryState)
+        var loopBudget = max(24, existingRules.count * 5 + 10)
+        var ruleIndex = 0
+        var currentRule: ServerRiskPolicy.BlindRule?
 
-            // NOTE: rule.allOfSignalIDs, anyOfSignalIDs, requireCrossLayerInconsistency, and
-            // minDistinctRiskLayers are NOT evaluated here because this overload only receives
-            // aggregated counts, not the full signal list. Rules that rely solely on count-based
-            // conditions (the common case) are fully evaluated. Rules that also include signal-ID
-            // or cross-layer conditions will over-trigger (match on counts alone). Use the signals-
-            // based overload when those conditions need to be enforced.
+        while !sink.isResolved {
+            guard loopBudget > 0 else {
+                sink.store(.noTrigger)
+                break
+            }
+            loopBudget -= 1
 
-            // 如果满足规则要求，触发 blindChallenge
-            if capabilityMatches && tamperedMatches {
-                let reason = buildReason(
-                    capabilityAnomalyCount: capabilityAnomalyCount,
-                    tamperedCount: tamperedCount,
-                    rule: rule
-                )
-                return TriggerResult(
-                    triggered: true,
-                    matchedRule: rule,
-                    reason: reason
-                )
+            let decodedState = decodeState(encodedState)
+            let dispatchPlan = CFFDispatcher.plan(encodedState: encodedState, salt: salt, config: cffConfig)
+            let useIfElseRail = dispatchPlan.style == .ifElseChain
+                || (dispatchPlan.usesSecondaryDispatcher && CFFOpaquePredicates.connectorGate(encodedState: encodedState, salt: salt))
+
+            if useIfElseRail {
+                if decodedState == entryState {
+                    let nextState = existingRules.isEmpty ? emptyRulesState : iterateState
+                    encodedState = encodeState(nextState)
+                } else if decodedState == emptyRulesState {
+                    #if DEBUG
+                    if capabilityAnomalyCount >= defaultCapabilityAnomalyThreshold && tamperedCount > 0 {
+                        let defaultRule = ServerRiskPolicy.BlindRule(
+                            id: "debug_local_auto_trigger",
+                            minTamperedCount: 1,
+                            minCapabilityAnomalyCount: defaultCapabilityAnomalyThreshold,
+                            weight: 75
+                        )
+                        sink.store(TriggerResult(
+                            triggered: true,
+                            matchedRule: defaultRule,
+                            reason: "DEBUG local-only trigger: capabilityAnomalyCount(\(capabilityAnomalyCount)) >= \(defaultCapabilityAnomalyThreshold) && tamperedCount(\(tamperedCount)) > 0"
+                        ))
+                    } else {
+                        sink.store(.noTrigger)
+                    }
+                    #else
+                    sink.store(.noTrigger)
+                    #endif
+                } else if decodedState == iterateState {
+                    guard ruleIndex < existingRules.count else {
+                        encodedState = encodeState(noTriggerState)
+                        continue
+                    }
+                    currentRule = existingRules[ruleIndex]
+                    encodedState = encodeState(evaluateState)
+                } else if decodedState == evaluateState {
+                    guard let rule = currentRule else {
+                        sink.store(.noTrigger)
+                        continue
+                    }
+
+                    // NOTE: rule.allOfSignalIDs, anyOfSignalIDs, requireCrossLayerInconsistency, and
+                    // minDistinctRiskLayers are NOT evaluated here because this overload only receives
+                    // aggregated counts, not the full signal list. Rules that rely solely on count-based
+                    // conditions (the common case) are fully evaluated. Rules that also include signal-ID
+                    // or cross-layer conditions will over-trigger (match on counts alone). Use the signals-
+                    // based overload when those conditions need to be enforced.
+                    let capabilityMatches = capabilityAnomalyCount >= rule.minCapabilityAnomalyCount
+                    let tamperedMatches = tamperedCount >= rule.minTamperedCount
+                    if capabilityMatches && tamperedMatches {
+                        encodedState = encodeState(triggerState)
+                    } else {
+                        encodedState = encodeState(connectorState)
+                    }
+                } else if decodedState == triggerState {
+                    guard let rule = currentRule else {
+                        sink.store(.noTrigger)
+                        continue
+                    }
+                    sink.store(
+                        TriggerResult(
+                            triggered: true,
+                            matchedRule: rule,
+                            reason: buildReason(
+                                capabilityAnomalyCount: capabilityAnomalyCount,
+                                tamperedCount: tamperedCount,
+                                rule: rule
+                            )
+                        )
+                    )
+                } else if decodedState == connectorState {
+                    ruleIndex += 1
+                    currentRule = nil
+                    let nextState = CFFOpaquePredicates.parityFence(UInt32(ruleIndex) &+ decodedState, salt: salt) ? iterateState : settleState
+                    encodedState = encodeState(nextState)
+                } else if decodedState == settleState {
+                    encodedState = encodeState(iterateState)
+                } else if decodedState == noTriggerState {
+                    sink.store(.noTrigger)
+                } else {
+                    sink.store(.noTrigger)
+                }
+            } else {
+                switch decodedState {
+                case entryState:
+                    encodedState = encodeState(existingRules.isEmpty ? emptyRulesState : iterateState)
+                case emptyRulesState:
+                    #if DEBUG
+                    if capabilityAnomalyCount >= defaultCapabilityAnomalyThreshold && tamperedCount > 0 {
+                        let defaultRule = ServerRiskPolicy.BlindRule(
+                            id: "debug_local_auto_trigger",
+                            minTamperedCount: 1,
+                            minCapabilityAnomalyCount: defaultCapabilityAnomalyThreshold,
+                            weight: 75
+                        )
+                        sink.store(TriggerResult(
+                            triggered: true,
+                            matchedRule: defaultRule,
+                            reason: "DEBUG local-only trigger: capabilityAnomalyCount(\(capabilityAnomalyCount)) >= \(defaultCapabilityAnomalyThreshold) && tamperedCount(\(tamperedCount)) > 0"
+                        ))
+                    } else {
+                        sink.store(.noTrigger)
+                    }
+                    #else
+                    sink.store(.noTrigger)
+                    #endif
+                case iterateState:
+                    guard ruleIndex < existingRules.count else {
+                        encodedState = encodeState(noTriggerState)
+                        continue
+                    }
+                    currentRule = existingRules[ruleIndex]
+                    encodedState = encodeState(evaluateState)
+                case connectorState:
+                    ruleIndex += 1
+                    currentRule = nil
+                    let nextState = CFFDispatcher.branchKey(encodedState, salt: salt) & 1 == 0 ? iterateState : settleState
+                    encodedState = encodeState(nextState)
+                case settleState:
+                    encodedState = encodeState(iterateState)
+                case evaluateState:
+                    guard let rule = currentRule else {
+                        sink.store(.noTrigger)
+                        continue
+                    }
+                    let capabilityMatches = capabilityAnomalyCount >= rule.minCapabilityAnomalyCount
+                    let tamperedMatches = tamperedCount >= rule.minTamperedCount
+                    if capabilityMatches && tamperedMatches {
+                        encodedState = encodeState(triggerState)
+                    } else {
+                        encodedState = encodeState(connectorState)
+                    }
+                case triggerState:
+                    guard let rule = currentRule else {
+                        sink.store(.noTrigger)
+                        continue
+                    }
+                    sink.store(
+                        TriggerResult(
+                            triggered: true,
+                            matchedRule: rule,
+                            reason: buildReason(
+                                capabilityAnomalyCount: capabilityAnomalyCount,
+                                tamperedCount: tamperedCount,
+                                rule: rule
+                            )
+                        )
+                    )
+                case noTriggerState:
+                    sink.store(.noTrigger)
+                default:
+                    sink.store(.noTrigger)
+                }
             }
         }
 
-        return .noTrigger
+        return sink.resolve(or: .noTrigger)
     }
 
     /// 检查是否触发 blindChallenge（基于 CapabilityScore）

@@ -68,6 +68,7 @@ struct cprisk_whitebox_test_bundle_i {
 };
 
 static struct cprisk_whitebox_test_bundle_i s_test_bundle_i = {0};
+static int s_test_force_recompute_mismatch_i = 0;
 
 static void cprisk_test_clear_whitebox_bundle_i(void) {
     if (s_test_bundle_i.meta) {
@@ -141,6 +142,10 @@ void cprisk_test_clear_whitebox_bundle(void) {
     cprisk_test_clear_whitebox_bundle_i();
 }
 
+void cprisk_test_set_whitebox_recompute_mismatch(int enabled) {
+    s_test_force_recompute_mismatch_i = enabled ? 1 : 0;
+}
+
 static const struct mach_header_64 *cprisk_whitebox_hdr_i(void) {
     return cprisk_find_own_header((const void *)cprisk_whitebox_hdr_i);
 }
@@ -179,6 +184,15 @@ static uint8_t cprisk_rotl8_i(uint8_t value, unsigned int shift) {
     if (shift == 0U)
         return value;
     return (uint8_t)((value << shift) | (value >> (8U - shift)));
+}
+
+static int cprisk_ct_mem_diff_i(const uint8_t *lhs, const uint8_t *rhs, size_t len) {
+    if (!lhs || !rhs)
+        return -1;
+    uint8_t diff = 0;
+    for (size_t i = 0; i < len; i++)
+        diff |= (uint8_t)(lhs[i] ^ rhs[i]);
+    return diff == 0 ? 0 : -1;
 }
 
 static int cprisk_read_whitebox_header_i(
@@ -548,6 +562,20 @@ static int cprisk_whitebox_eval_record_i(
     return 0;
 }
 
+static int cprisk_whitebox_eval_record_recompute_i(
+    const struct cprisk_whitebox_bundle_i *bundle,
+    const struct cprisk_whitebox_domain_record_i *record,
+    const uint8_t input[32],
+    uint8_t out[32]
+) {
+    if (!bundle || !record || !input || !out)
+        return -1;
+
+    /* Recompute via an independent invocation path so injected transient
+       faults must survive two full PRF evaluations to stay undetected. */
+    return cprisk_whitebox_eval_record_i(bundle, record, input, out);
+}
+
 static uint32_t cprisk_base_capabilities_i(void) {
     return CPRISK_ARMOR_CAP_RUNTIME_DERIVE_KEY |
            CPRISK_ARMOR_CAP_RUNTIME_SIGN_HELPER |
@@ -637,6 +665,31 @@ int cprisk_whitebox_evaluate_domain(
         record,
         input ? input : s_zero_state_i,
         out);
+    if (rc == 0) {
+        uint8_t recomputed[CPRISK_WHITEBOX_STATE_SIZE];
+        const int rc_recompute = cprisk_whitebox_eval_record_recompute_i(
+            &bundle,
+            record,
+            input ? input : s_zero_state_i,
+            recomputed);
+        if (rc_recompute != 0) {
+            cprisk_secure_zero(recomputed, sizeof(recomputed));
+            cprisk_secure_zero(out, CPRISK_WHITEBOX_STATE_SIZE);
+            cprisk_secure_zero(&bundle.header, sizeof(bundle.header));
+            cprisk_force_integrity_poison();
+            return -1;
+        }
+        if (s_test_force_recompute_mismatch_i)
+            recomputed[0] ^= 0x5Au;
+        if (cprisk_ct_mem_diff_i(out, recomputed, CPRISK_WHITEBOX_STATE_SIZE) != 0) {
+            cprisk_secure_zero(recomputed, sizeof(recomputed));
+            cprisk_secure_zero(out, CPRISK_WHITEBOX_STATE_SIZE);
+            cprisk_secure_zero(&bundle.header, sizeof(bundle.header));
+            cprisk_force_integrity_poison();
+            return -1;
+        }
+        cprisk_secure_zero(recomputed, sizeof(recomputed));
+    }
     cprisk_secure_zero(&bundle.header, sizeof(bundle.header));
 
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)

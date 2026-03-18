@@ -145,6 +145,57 @@ final class CryptoTests: XCTestCase {
         XCTAssertFalse(envelope.isExpired(config))
     }
 
+    func testGrpcPayloadContainsOutputPathIntegritySignal() throws {
+        let payloadData = try JSONSerialization.data(withJSONObject: ["score": 60, "isHighRisk": false])
+        let signingKey = "test-signing-key-32-bytes-long!!"
+        let envelope = try ReportEnvelope.create(
+            payloadData: payloadData,
+            reportId: "report-grpc-integrity",
+            sessionToken: "session-grpc-integrity",
+            signingKey: signingKey,
+            keyId: "key-1",
+            fieldMapping: nil,
+            config: .init()
+        )
+
+        let grpcPayload = envelope.toGrpcCompatiblePayload()
+        let jsonDict = grpcPayload.toJSONDictionary()
+        let integrity = jsonDict["output_path_integrity"] as? [String: String]
+
+        XCTAssertNotNil(integrity, "gRPC payload 应包含 output_path_integrity 信号")
+        XCTAssertEqual(integrity?["status"], "ok")
+        XCTAssertEqual(integrity?["payload_sha256_match"], "1")
+        XCTAssertEqual(integrity?["route"], "report_envelope->grpc_payload")
+        XCTAssertFalse((integrity?["signature_input_sha256"] ?? "").isEmpty)
+    }
+
+    func testGrpcPayloadFailClosedOnPayloadSha256Mismatch() throws {
+        let badPayload = GrpcReportPayload(
+            appId: "app",
+            sdkVersion: "6.5",
+            reportId: "rid-1",
+            ts: 123456,
+            nonce: "nonce-1",
+            sessionToken: "st",
+            sigVer: "v2",
+            keyId: "k1",
+            fieldMappingVersion: nil,
+            deviceId: "dev-1",
+            scene: "login",
+            payloadJson: Data("{\"score\":80}".utf8),
+            signature: "deadbeef",
+            payloadSha256: Data(repeating: 0x00, count: 32)
+        )
+
+        XCTAssertThrowsError(try badPayload.validatedJSONDictionary(), "payload_sha256 不一致时必须 fail-closed") { error in
+            guard let envelopeError = error as? ReportEnvelope.ReportEnvelopeError else {
+                XCTFail("unexpected error type: \(error)")
+                return
+            }
+            XCTAssertEqual(envelopeError, .encodingFailed)
+        }
+    }
+
     // MARK: - InMemoryNonceReplayStore Tests
 
     func testNonceReplayStoreRejectsReplay() {

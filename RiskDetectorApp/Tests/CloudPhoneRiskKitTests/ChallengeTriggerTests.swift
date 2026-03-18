@@ -11,10 +11,22 @@ final class ChallengeTriggerTests: XCTestCase {
             tamperedCount: 3,
             existingRules: []
         )
+        #if DEBUG
+        XCTAssertTrue(result.triggered)
+        XCTAssertEqual(result.matchedRule?.id, "debug_local_auto_trigger")
+        #else
         // In release mode, empty rules = no trigger
-        #if !DEBUG
         XCTAssertFalse(result.triggered)
         #endif
+    }
+
+    func testNoRulesBelowDebugThresholdNoTrigger() {
+        let result = ChallengeTrigger.shouldTriggerBlindChallenge(
+            capabilityAnomalyCount: 1,
+            tamperedCount: 0,
+            existingRules: []
+        )
+        XCTAssertFalse(result.triggered)
     }
 
     func testMatchingRuleTriggers() {

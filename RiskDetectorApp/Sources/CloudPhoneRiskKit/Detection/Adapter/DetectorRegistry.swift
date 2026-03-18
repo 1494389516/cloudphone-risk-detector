@@ -45,6 +45,53 @@ public final class DetectorRegistry {
         case integrity = "integrity"
     }
 
+    private enum CFF {
+        static let detectTypeConfig = CFFConfig.adaptive(
+            functionSeed: 0xA37C_19E4_5B62_D08F,
+            protectionTier: .light,
+            dispatcherStyle: .dualRail,
+            codecStyle: .xorRotate
+        )
+
+        static let detectGroupConfig = CFFConfig.adaptive(
+            functionSeed: 0x5CE1_8A20_7F39_B4D1,
+            protectionTier: .light,
+            dispatcherStyle: .dualRail,
+            codecStyle: .xorRotate
+        )
+
+        static func salt(for type: DetectorType) -> UInt32 {
+            CFFRuntimeSalt.derive(
+                functionSeed: detectTypeConfig.functionSeed,
+                inputs: CFFRuntimeSaltInputs(
+                    extraWords: [stableHash64(type.rawValue)],
+                    strings: ["DetectorRegistry.detect(type:)", type.rawValue],
+                    flags: [true]
+                )
+            )
+        }
+
+        static func salt(for group: DetectorGroup, detectorCount: Int) -> UInt32 {
+            CFFRuntimeSalt.derive(
+                functionSeed: detectGroupConfig.functionSeed,
+                inputs: CFFRuntimeSaltInputs(
+                    extraWords: [stableHash64(group.rawValue), UInt64(detectorCount)],
+                    strings: ["DetectorRegistry.detect(group:)", group.rawValue],
+                    flags: [detectorCount > 0]
+                )
+            )
+        }
+
+        private static func stableHash64(_ value: String) -> UInt64 {
+            var hash: UInt64 = 0xCBF29CE484222325
+            for byte in value.utf8 {
+                hash ^= UInt64(byte)
+                hash &*= 0x100000001B3
+            }
+            return hash
+        }
+    }
+
     // MARK: - 检测器元数据清单
 
     /// 检测器生命周期元数据，用于管理 iOS 版本兼容性、依赖关系和信号去重
@@ -205,15 +252,106 @@ public final class DetectorRegistry {
     /// - Parameter type: 检测器类型
     /// - Returns: 检测结果
     public func detect(type: DetectorType) -> DetectorResult {
-        guard let detector = createDetector(type: type) else {
-            return .empty
+        let cffConfig = CFF.detectTypeConfig
+        let salt = CFF.salt(for: type)
+        let entryState: UInt32 = 0x31
+        let createState: UInt32 = 0x32
+        let executeState: UInt32 = 0x33
+        let connectorState: UInt32 = 0x34
+        let settleState: UInt32 = 0x35
+        let finishState: UInt32 = 0x36
+
+        let anomalyResult = DetectorResult(score: 80, methods: ["detector_anomaly_\(type.rawValue)"])
+        let cffKey = CFFStateCodec.deriveSeed(function: "DetectorRegistry.detect(type:)", config: cffConfig)
+        let effectiveSalt = cffConfig.enableRuntimeSalt ? salt : salt ^ 0x13579BDF
+
+        func encodeState(_ rawState: UInt32) -> UInt32 {
+            CFFStateCodec.encode(state: rawState, key: cffKey, salt: effectiveSalt, style: cffConfig.codecStyle)
         }
-        do {
-            return try detector.detect()
-        } catch {
-            Logger.log("DetectorRegistry.detect(\(type.rawValue)) threw: \(error)")
-            return DetectorResult(score: 80, methods: ["detector_anomaly_\(type.rawValue)"])
+
+        func decodeState(_ encoded: UInt32) -> UInt32 {
+            CFFStateCodec.decode(state: encoded, key: cffKey, salt: effectiveSalt, style: cffConfig.codecStyle)
         }
+
+        var sink = CFFReturnSink<DetectorResult>()
+        var detector: Detector?
+        var result: DetectorResult = .empty
+        var loopBudget = 20
+        var encodedState = encodeState(entryState)
+
+        while !sink.isResolved {
+            guard loopBudget > 0 else {
+                sink.store(result)
+                break
+            }
+            loopBudget -= 1
+
+            let decodedState = decodeState(encodedState)
+            let dispatchPlan = CFFDispatcher.plan(encodedState: encodedState, salt: salt, config: cffConfig)
+            let useIfElseRail = dispatchPlan.style == .ifElseChain
+                || (dispatchPlan.usesSecondaryDispatcher && CFFOpaquePredicates.connectorGate(encodedState: encodedState, salt: salt))
+
+            if useIfElseRail {
+                if decodedState == entryState {
+                    encodedState = encodeState(createState)
+                } else if decodedState == createState {
+                    detector = createDetector(type: type)
+                    if detector == nil {
+                        sink.store(.empty)
+                    } else {
+                        let nextState = CFFOpaquePredicates.parityFence(decodedState &+ 1, salt: salt) ? connectorState : executeState
+                        encodedState = encodeState(nextState)
+                    }
+                } else if decodedState == connectorState {
+                    encodedState = encodeState(executeState)
+                } else if decodedState == executeState {
+                    do {
+                        result = try detector?.detect() ?? .empty
+                    } catch {
+                        Logger.log("DetectorRegistry.detect(\(type.rawValue)) threw: \(error)")
+                        result = anomalyResult
+                    }
+                    encodedState = encodeState(finishState)
+                } else if decodedState == finishState {
+                    sink.store(result)
+                } else if decodedState == settleState {
+                    encodedState = encodeState(executeState)
+                } else {
+                    sink.store(result)
+                }
+            } else {
+                switch decodedState {
+                case entryState:
+                    encodedState = encodeState(createState)
+                case createState:
+                    detector = createDetector(type: type)
+                    guard detector != nil else {
+                        sink.store(.empty)
+                        continue
+                    }
+                    encodedState = encodeState(connectorState)
+                case connectorState:
+                    let nextState = CFFDispatcher.branchKey(encodedState, salt: salt) & 1 == 0 ? executeState : settleState
+                    encodedState = encodeState(nextState)
+                case settleState:
+                    encodedState = encodeState(executeState)
+                case executeState:
+                    do {
+                        result = try detector?.detect() ?? .empty
+                    } catch {
+                        Logger.log("DetectorRegistry.detect(\(type.rawValue)) threw: \(error)")
+                        result = anomalyResult
+                    }
+                    encodedState = encodeState(finishState)
+                case finishState:
+                    sink.store(result)
+                default:
+                    sink.store(result)
+                }
+            }
+        }
+
+        return sink.resolve(or: result)
     }
     
     /// 执行指定分组的所有检测
@@ -223,21 +361,117 @@ public final class DetectorRegistry {
         guard let types = groupMapping[group] else {
             return GroupDetectionResult(score: 0, methods: [], details: "group_not_found")
         }
-        
+        let orderedTypes = Array(types)
+        let cffConfig = CFF.detectGroupConfig
+        let salt = CFF.salt(for: group, detectorCount: orderedTypes.count)
+        let entryState: UInt32 = 0x41
+        let iterateState: UInt32 = 0x42
+        let executeState: UInt32 = 0x43
+        let connectorState: UInt32 = 0x44
+        let settleState: UInt32 = 0x45
+        let finishState: UInt32 = 0x46
+
         var totalScore: Double = 0
         var allMethods: [String] = []
-        
-        for type in types {
-            let result = detect(type: type)
-            totalScore += result.score
-            allMethods.append(contentsOf: result.methods)
+        var typeIndex = 0
+        var currentType: DetectorType?
+        var loopBudget = max(24, orderedTypes.count * 5 + 10)
+        let cffKey = CFFStateCodec.deriveSeed(function: "DetectorRegistry.detect(group:)", config: cffConfig)
+        let effectiveSalt = cffConfig.enableRuntimeSalt ? salt : salt ^ 0x13579BDF
+
+        func encodeState(_ rawState: UInt32) -> UInt32 {
+            CFFStateCodec.encode(state: rawState, key: cffKey, salt: effectiveSalt, style: cffConfig.codecStyle)
         }
-        
-        return GroupDetectionResult(
-            score: totalScore,
-            methods: Array(Set(allMethods)).sorted(),
-            details: "\(group.rawValue)_group"
-        )
+
+        func decodeState(_ encoded: UInt32) -> UInt32 {
+            CFFStateCodec.decode(state: encoded, key: cffKey, salt: effectiveSalt, style: cffConfig.codecStyle)
+        }
+
+        var sink = CFFReturnSink<GroupDetectionResult>()
+        var encodedState = encodeState(entryState)
+
+        func finalizeResult() -> GroupDetectionResult {
+            GroupDetectionResult(
+                score: totalScore,
+                methods: Array(Set(allMethods)).sorted(),
+                details: "\(group.rawValue)_group"
+            )
+        }
+
+        while !sink.isResolved {
+            guard loopBudget > 0 else {
+                sink.store(finalizeResult())
+                break
+            }
+            loopBudget -= 1
+
+            let decodedState = decodeState(encodedState)
+            let dispatchPlan = CFFDispatcher.plan(encodedState: encodedState, salt: salt, config: cffConfig)
+            let useIfElseRail = dispatchPlan.style == .ifElseChain || (dispatchPlan.branchSelector == 3)
+
+            if useIfElseRail {
+                if decodedState == entryState {
+                    encodedState = encodeState(iterateState)
+                } else if decodedState == iterateState {
+                    guard typeIndex < orderedTypes.count else {
+                        encodedState = encodeState(finishState)
+                        continue
+                    }
+                    currentType = orderedTypes[typeIndex]
+                    encodedState = encodeState(executeState)
+                } else if decodedState == executeState {
+                    if let currentType {
+                        let result = detect(type: currentType)
+                        totalScore += result.score
+                        allMethods.append(contentsOf: result.methods)
+                    }
+                    currentType = nil
+                    typeIndex += 1
+                    encodedState = encodeState(connectorState)
+                } else if decodedState == connectorState {
+                    let nextState = CFFOpaquePredicates.connectorGate(encodedState: encodedState, salt: salt) ? iterateState : settleState
+                    encodedState = encodeState(nextState)
+                } else if decodedState == settleState {
+                    encodedState = encodeState(iterateState)
+                } else if decodedState == finishState {
+                    sink.store(finalizeResult())
+                } else {
+                    sink.store(finalizeResult())
+                }
+            } else {
+                switch decodedState {
+                case entryState:
+                    encodedState = encodeState(iterateState)
+                case iterateState:
+                    guard typeIndex < orderedTypes.count else {
+                        encodedState = encodeState(finishState)
+                        continue
+                    }
+                    currentType = orderedTypes[typeIndex]
+                    encodedState = encodeState(executeState)
+                case executeState:
+                    if let currentType {
+                        let result = detect(type: currentType)
+                        totalScore += result.score
+                        allMethods.append(contentsOf: result.methods)
+                    }
+                    currentType = nil
+                    typeIndex += 1
+                    encodedState = encodeState(connectorState)
+                case connectorState:
+                    let nextState = CFFDispatcher.branchKey(encodedState, salt: salt) & 1 == 0 ? iterateState : settleState
+                    encodedState = encodeState(nextState)
+                case settleState:
+                    encodedState = encodeState(iterateState)
+                case finishState:
+                    sink.store(finalizeResult())
+                default:
+                    sink.store(finalizeResult())
+                }
+            }
+        }
+
+        return sink.resolve(or: finalizeResult())
     }
     
     /// 执行所有启用的检测

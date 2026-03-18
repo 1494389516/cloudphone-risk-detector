@@ -79,6 +79,10 @@ public enum SignalID {
     static let fridaModuleImage = "frida_module_image"
     static let fridaModuleSection = "frida_module_section"
     static let fridaModuleString = "frida_module_string"
+
+    // RWX / JIT (Stalker-like)
+    static let stalkerJitRWX = "stalker_jit_rwx"
+    static let rwxJitCoexistence = "rwx_jit_coexistence"
 }
 
 // MARK: - Signal Categories

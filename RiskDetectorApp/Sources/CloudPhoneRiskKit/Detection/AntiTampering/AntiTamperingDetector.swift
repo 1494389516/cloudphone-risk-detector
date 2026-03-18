@@ -2,6 +2,37 @@ import Darwin
 import CRiskCore
 import Foundation
 
+private enum AntiTamperingDetectorCFF {
+    static let detectConfig = CFFConfig.adaptive(
+        functionSeed: 0x7EA1_42D0_9B53_6C2F,
+        protectionTier: .light,
+        dispatcherStyle: .dualRail,
+        codecStyle: .xorRotate
+    )
+
+    static func salt(
+        suspiciousNeedles: [String],
+        debugEnvironmentKeys: [String]
+    ) -> UInt32 {
+        CFFRuntimeSalt.derive(
+            functionSeed: detectConfig.functionSeed,
+            inputs: CFFRuntimeSaltInputs(
+                extraWords: [
+                    UInt64(suspiciousNeedles.count),
+                    UInt64(debugEnvironmentKeys.count),
+                    Date().timeIntervalSince1970.bitPattern,
+                ],
+                strings: [
+                    "AntiTamperingDetector.detect",
+                    suspiciousNeedles.prefix(3).joined(separator: "|"),
+                    debugEnvironmentKeys.prefix(3).joined(separator: "|"),
+                ],
+                flags: [suspiciousNeedles.isEmpty, debugEnvironmentKeys.isEmpty]
+            )
+        )
+    }
+}
+
 struct AntiTamperingDetector: Detector {
 
     let suspiciousParentNeedles: [String] = [
@@ -28,32 +59,141 @@ struct AntiTamperingDetector: Detector {
 #else
         var score: Double = 0
         var methods: [String] = []
+        let cffConfig = AntiTamperingDetectorCFF.detectConfig
+        let salt = AntiTamperingDetectorCFF.salt(
+            suspiciousNeedles: suspiciousParentNeedles,
+            debugEnvironmentKeys: debugEnvironmentKeys
+        )
 
-        if isTraced() {
-            score += 30
-            methods.append("anti_tampering:p_traced")
+        let entryState: UInt32 = 0x21
+        let tracedState: UInt32 = 0x22
+        let parentState: UInt32 = 0x23
+        let envState: UInt32 = 0x24
+        let timingState: UInt32 = 0x25
+        let ptraceState: UInt32 = 0x26
+        let connectorState: UInt32 = 0x27
+        let settleState: UInt32 = 0x28
+        let finishState: UInt32 = 0x29
+
+        let cffKey = CFFStateCodec.deriveSeed(function: "AntiTamperingDetector.detect", config: cffConfig)
+        let effectiveSalt = cffConfig.enableRuntimeSalt ? salt : salt ^ 0x13579BDF
+
+        func encodeState(_ rawState: UInt32) -> UInt32 {
+            CFFStateCodec.encode(state: rawState, key: cffKey, salt: effectiveSalt, style: cffConfig.codecStyle)
         }
 
-        if hasSuspiciousParent() {
-            score += 20
-            methods.append("anti_tampering:suspicious_parent")
+        func decodeState(_ encoded: UInt32) -> UInt32 {
+            CFFStateCodec.decode(state: encoded, key: cffKey, salt: effectiveSalt, style: cffConfig.codecStyle)
         }
 
-        if hasDebugEnvironment() {
-            score += 15
-            methods.append("anti_tampering:debug_env")
+        var sink = CFFReturnSink<DetectorResult>()
+        var encodedState = encodeState(entryState)
+        var loopBudget = 64
+
+        func finalizeResult() -> DetectorResult {
+            DetectorResult(score: min(score, 90), methods: methods)
         }
 
-        if hasTimingAnomaly() {
-            score += 12
-            methods.append("anti_tampering:timing")
+        while !sink.isResolved {
+            guard loopBudget > 0 else {
+                sink.store(finalizeResult())
+                break
+            }
+            loopBudget -= 1
+
+            let decodedState = decodeState(encodedState)
+            let dispatchPlan = CFFDispatcher.plan(encodedState: encodedState, salt: salt, config: cffConfig)
+            let useIfElseRail = dispatchPlan.style == .ifElseChain || (dispatchPlan.branchSelector & 1) == 1
+
+            if useIfElseRail {
+                if decodedState == entryState {
+                    encodedState = encodeState(tracedState)
+                } else if decodedState == tracedState {
+                    if isTraced() {
+                        score += 30
+                        methods.append("anti_tampering:p_traced")
+                    }
+                    encodedState = encodeState(parentState)
+                } else if decodedState == parentState {
+                    if hasSuspiciousParent() {
+                        score += 20
+                        methods.append("anti_tampering:suspicious_parent")
+                    }
+                    encodedState = encodeState(envState)
+                } else if decodedState == envState {
+                    if hasDebugEnvironment() {
+                        score += 15
+                        methods.append("anti_tampering:debug_env")
+                    }
+                    encodedState = encodeState(timingState)
+                } else if decodedState == timingState {
+                    if hasTimingAnomaly() {
+                        score += 12
+                        methods.append("anti_tampering:timing")
+                    }
+                    encodedState = encodeState(ptraceState)
+                } else if decodedState == ptraceState {
+                    let ptraceResult = denyDebuggerAttach()
+                    score += ptraceResult.score
+                    methods.append(contentsOf: ptraceResult.methods)
+                    encodedState = encodeState(connectorState)
+                } else if decodedState == connectorState {
+                    let nextState = CFFOpaquePredicates.connectorGate(encodedState: encodedState, salt: salt) ? finishState : settleState
+                    encodedState = encodeState(nextState)
+                } else if decodedState == settleState {
+                    encodedState = encodeState(finishState)
+                } else if decodedState == finishState {
+                    sink.store(finalizeResult())
+                } else {
+                    sink.store(finalizeResult())
+                }
+            } else {
+                switch decodedState {
+                case entryState:
+                    encodedState = encodeState(tracedState)
+                case tracedState:
+                    if isTraced() {
+                        score += 30
+                        methods.append("anti_tampering:p_traced")
+                    }
+                    encodedState = encodeState(parentState)
+                case parentState:
+                    if hasSuspiciousParent() {
+                        score += 20
+                        methods.append("anti_tampering:suspicious_parent")
+                    }
+                    encodedState = encodeState(envState)
+                case envState:
+                    if hasDebugEnvironment() {
+                        score += 15
+                        methods.append("anti_tampering:debug_env")
+                    }
+                    encodedState = encodeState(timingState)
+                case timingState:
+                    if hasTimingAnomaly() {
+                        score += 12
+                        methods.append("anti_tampering:timing")
+                    }
+                    encodedState = encodeState(ptraceState)
+                case ptraceState:
+                    let ptraceResult = denyDebuggerAttach()
+                    score += ptraceResult.score
+                    methods.append(contentsOf: ptraceResult.methods)
+                    encodedState = encodeState(connectorState)
+                case connectorState:
+                    let nextState = CFFDispatcher.branchKey(encodedState, salt: salt) & 1 == 0 ? finishState : settleState
+                    encodedState = encodeState(nextState)
+                case settleState:
+                    encodedState = encodeState(finishState)
+                case finishState:
+                    sink.store(finalizeResult())
+                default:
+                    sink.store(finalizeResult())
+                }
+            }
         }
 
-        let ptraceResult = denyDebuggerAttach()
-        score += ptraceResult.score
-        methods.append(contentsOf: ptraceResult.methods)
-
-        return DetectorResult(score: min(score, 90), methods: methods)
+        return sink.resolve(or: finalizeResult())
 #endif
     }
 

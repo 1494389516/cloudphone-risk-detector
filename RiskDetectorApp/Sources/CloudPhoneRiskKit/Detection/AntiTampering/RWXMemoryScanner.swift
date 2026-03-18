@@ -1,3 +1,4 @@
+import CRiskCore
 import Darwin
 import Foundation
 import MachO
@@ -13,29 +14,73 @@ struct RWXMemoryScanner: Detector {
         var protection: vm_prot_t
         var isAnonymous: Bool
         var isAnonymousRX: Bool
+        var userTag: UInt32
+        var shareMode: UInt32
+        var inImage: Bool
+        var isJITLike: Bool
+    }
+
+    struct ScanAssessment {
+        var score: Double
+        var methods: [String]
+        var anonymousRWXCount: Int
+        var anonymousRXCount: Int
+        var jitLikeCount: Int
+        var totalCount: Int
     }
 
     func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["rwx:unavailable_simulator"])
 #else
-        let regions = scanForRWXRegions()
-        if regions.isEmpty {
+        let assessment = assess(regions: scanForRWXRegions())
+        if assessment.totalCount == 0 {
             return DetectorResult(score: 0, methods: ["rwx:clean"])
+        }
+        return DetectorResult(score: assessment.score, methods: assessment.methods)
+#endif
+    }
+
+    func assess(regions: [SuspiciousRegion]) -> ScanAssessment {
+        if regions.isEmpty {
+            return ScanAssessment(
+                score: 0,
+                methods: [],
+                anonymousRWXCount: 0,
+                anonymousRXCount: 0,
+                jitLikeCount: 0,
+                totalCount: 0
+            )
         }
 
         var score: Double = 0
         var methods: [String] = []
-        let anonymousCount = regions.filter(\.isAnonymous).count
-        if anonymousCount > 0 {
+
+        let anonymousRWXCount = regions.filter { region in
+            region.isAnonymous && (region.protection & rwxProtection) == rwxProtection
+        }.count
+        if anonymousRWXCount > 0 {
             score += 40
             methods.append("rwx:anonymous_rwx")
         }
+
         let anonymousRXCount = regions.filter(\.isAnonymousRX).count
         if anonymousRXCount > 0 {
             score += 40
             methods.append("rwx:anonymous_executable_memory")
         }
+
+        let jitLikeCount = regions.filter(\.isJITLike).count
+        if jitLikeCount > 0 {
+            score += min(20 + Double(max(0, jitLikeCount - 1)) * 5, 30)
+            methods.append("rwx:jit_rwx_stalker_like")
+        }
+
+        if anonymousRWXCount > 0 && jitLikeCount > 0 {
+            score += 15
+            methods.append("rwx:jit_rwx_coexistence")
+        }
+
         let extraCount = regions.count - 1
         if extraCount > 0 {
             score += min(Double(extraCount) * 10, 40)
@@ -43,8 +88,15 @@ struct RWXMemoryScanner: Detector {
                 methods.append("rwx:rwx_regions")
             }
         }
-        return DetectorResult(score: min(score, 80), methods: methods)
-#endif
+
+        return ScanAssessment(
+            score: min(score, 95),
+            methods: methods,
+            anonymousRWXCount: anonymousRWXCount,
+            anonymousRXCount: anonymousRXCount,
+            jitLikeCount: jitLikeCount,
+            totalCount: regions.count
+        )
     }
 
     func scanForRWXRegions() -> [SuspiciousRegion] {
@@ -79,6 +131,9 @@ struct RWXMemoryScanner: Detector {
             if isRWX || isRX {
                 var isAnonymous = false
                 var isAnonymousRX = false
+                var userTag: UInt32 = 0
+                var shareMode: UInt32 = 0
+                var inImage = false
                 
                 var extInfo = vm_region_extended_info_data_t()
                 var extCount = mach_msg_type_number_t(
@@ -94,28 +149,37 @@ struct RWXMemoryScanner: Detector {
                 }
                 
                 if extResult == KERN_SUCCESS {
+                    userTag = UInt32(extInfo.user_tag)
+                    shareMode = UInt32(extInfo.share_mode)
+                    isAnonymous = anonymousUserTags.contains(userTag)
                     if isRWX {
-                        isAnonymous = anonymousUserTags.contains(UInt32(extInfo.user_tag))
+                        isAnonymous = anonymousUserTags.contains(userTag)
                     }
                     if isRX {
-                        // 检查 share_mode (SM_PRIVATE 为 3，SM_EMPTY 为 0)
-                        if extInfo.share_mode == 3 || extInfo.share_mode == 0 {
-                            var info = Dl_info()
-                            let found = dladdr(UnsafeRawPointer(bitPattern: UInt(extAddress)), &info)
-                            if found == 0 || info.dli_fname == nil {
-                                isAnonymousRX = true
-                            }
+                        inImage = UnsafeRawPointer(bitPattern: UInt(extAddress)).map { cprisk_addr_in_any_image($0) != 0 } ?? false
+                        let isPrivateOrEmpty = extInfo.share_mode == 3 || extInfo.share_mode == 0
+                        if isPrivateOrEmpty && isAnonymous && !inImage {
+                            isAnonymousRX = true
                         }
                     }
                 }
 
                 if isRWX || (isRX && isAnonymousRX) {
+                    let isJITLike = isRX &&
+                        isAnonymous &&
+                        !inImage &&
+                        (shareMode == 0 || shareMode == 3) &&
+                        UInt64(size) <= 512 * 1024
                     result.append(SuspiciousRegion(
                         address: UInt64(address),
                         size: UInt64(size),
                         protection: prot,
                         isAnonymous: isAnonymous,
-                        isAnonymousRX: isAnonymousRX
+                        isAnonymousRX: isAnonymousRX,
+                        userTag: userTag,
+                        shareMode: shareMode,
+                        inImage: inImage,
+                        isJITLike: isJITLike
                     ))
                 }
             }
@@ -132,11 +196,15 @@ struct RWXMemoryScanner: Detector {
 
 extension RWXMemoryScanner {
     func asSignals() -> [RiskSignal] {
-        let regions = scanForRWXRegions()
+        asSignals(regions: scanForRWXRegions())
+    }
+
+    func asSignals(regions: [SuspiciousRegion]) -> [RiskSignal] {
         if regions.isEmpty {
             return []
         }
 
+        let assessment = assess(regions: regions)
         var signals: [RiskSignal] = []
         let anonymousRegions = regions.filter(\.isAnonymous)
         if !anonymousRegions.isEmpty {
@@ -170,6 +238,43 @@ extension RWXMemoryScanner {
                     state: .tampered,
                     layer: 2,
                     weightHint: 95
+                )
+            )
+        }
+
+        let jitLikeRegions = regions.filter(\.isJITLike)
+        if !jitLikeRegions.isEmpty {
+            signals.append(
+                RiskSignal(
+                    id: SignalID.stalkerJitRWX,
+                    category: "anti_tamper",
+                    score: min(Double(assessment.jitLikeCount) * 12 + 12, 42),
+                    evidence: [
+                        "count": "\(jitLikeRegions.count)",
+                        "addresses": jitLikeRegions.prefix(5).map { String(format: "0x%llx", $0.address) }.joined(separator: ","),
+                        "share_modes": Set(jitLikeRegions.map { "\($0.shareMode)" }).sorted().joined(separator: ","),
+                        "tags": Set(jitLikeRegions.map { "\($0.userTag)" }).sorted().joined(separator: ","),
+                    ],
+                    state: .tampered,
+                    layer: 1,
+                    weightHint: 96
+                )
+            )
+        }
+
+        if assessment.anonymousRWXCount > 0 && assessment.jitLikeCount > 0 {
+            signals.append(
+                RiskSignal(
+                    id: SignalID.rwxJitCoexistence,
+                    category: "anti_tamper",
+                    score: 18,
+                    evidence: [
+                        "anonymous_rwx_count": "\(assessment.anonymousRWXCount)",
+                        "jit_like_rx_count": "\(assessment.jitLikeCount)",
+                    ],
+                    state: .tampered,
+                    layer: 1,
+                    weightHint: 90
                 )
             )
         }

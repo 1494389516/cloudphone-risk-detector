@@ -1,7 +1,9 @@
 import CryptoKit
 import CRiskCore
 import Foundation
+#if canImport(MachOKit)
 import MachOKit
+#endif
 import XCTest
 @testable import CloudPhoneRiskKit
 
@@ -15,9 +17,11 @@ final class ArmorIntegrationTests: XCTestCase {
         super.setUp()
         CPRiskKit.shared.stop()
         cprisk_test_clear_whitebox_bundle()
+        cprisk_test_set_whitebox_recompute_mismatch(0)
     }
 
     override func tearDown() {
+        cprisk_test_set_whitebox_recompute_mismatch(0)
         cprisk_test_clear_whitebox_bundle()
         CPRiskKit.shared.stop()
         super.tearDown()
@@ -131,6 +135,7 @@ final class ArmorIntegrationTests: XCTestCase {
         }
     }
 
+#if canImport(MachOKit)
     func testInjectedWhiteboxBundleDrivesProbeAndAvailabilityActivePath() {
         let fixture = WhiteBoxFixtureBuilder.build(rootKey: Data(repeating: 0x42, count: ArmorABI.keySize))
         injectWhiteboxFixture(fixture)
@@ -208,6 +213,32 @@ final class ArmorIntegrationTests: XCTestCase {
             XCTAssertEqual(Data(actual), expected, "runtime output must match Swift producer for domain \(domain.rawValue)")
         }
     }
+
+    func testWhiteboxRecomputeMismatchForcesFailClosedAndPoison() {
+        let fixture = WhiteBoxFixtureBuilder.build(rootKey: Data(repeating: 0x51, count: ArmorABI.keySize))
+        injectWhiteboxFixture(fixture)
+        cprisk_test_set_whitebox_recompute_mismatch(1)
+        defer { cprisk_test_set_whitebox_recompute_mismatch(0) }
+
+        _ = Data(repeating: 0x42, count: 32).withUnsafeBytes { inputRaw in
+            var out = [UInt8](repeating: 0, count: 32)
+            let rc = cprisk_whitebox_evaluate_domain(
+                1,
+                inputRaw.bindMemory(to: UInt8.self).baseAddress,
+                &out
+            )
+            XCTAssertEqual(rc, -1, "recompute mismatch must fail-closed")
+            XCTAssertEqual(Data(out), Data(repeating: 0, count: 32), "fail-closed output must be wiped")
+            return rc
+        }
+
+        XCTAssertEqual(
+            cprisk_is_integrity_poisoned(),
+            1,
+            "whitebox recompute mismatch must poison integrity state"
+        )
+    }
+#endif
 
     // MARK: - Test 2: v2a Signature Version Emitted
 
@@ -446,6 +477,7 @@ final class ArmorIntegrationTests: XCTestCase {
         XCTAssertNotEqual(snapshot2.status, "inactive")
     }
 
+#if canImport(MachOKit)
     private func injectWhiteboxFixture(_ fixture: WhiteBoxFixtureBundle) {
         let rc = fixture.metadataSection.withUnsafeBytes { metaRaw in
             fixture.whiteboxCode.withUnsafeBytes { codeRaw in
@@ -467,4 +499,5 @@ final class ArmorIntegrationTests: XCTestCase {
         }
         XCTAssertEqual(rc, 0, "test white-box bundle injection must succeed")
     }
+#endif
 }
