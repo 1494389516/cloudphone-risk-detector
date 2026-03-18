@@ -323,7 +323,7 @@ SDK 当前会在本地执行更强的运行时完整性探测，包括：
 - 用于**安全信号采集与风险决策**
 - 用于**识别动态注入、Frida 模块加载与调试篡改**
 
-另外，`cprisk-armor` 新增的 Pass 7 `AntiDebugInjector` 属于**构建期写入 anti-debug metadata ABI** 的能力。它不会新增终端用户数据采集，只是为运行时 anti-debug gate 预留注入计划，因此不改变 SDK 的隐私数据边界。
+另外，`cprisk-armor` 新增的 Pass 7 `AntiDebugInjector` 与 Pass 8 `InstructionSubstitution` 都属于**构建期二进制保护能力**。Pass 7 负责写入 anti-debug metadata ABI，Pass 8 负责对 `__TEXT.__text` 中的安全 ARM64 指令子集做 1:1 等长语义等价替换。二者都不会新增终端用户数据采集，只影响构建产物的代码与元数据形态，因此不改变 SDK 的隐私数据边界。
 
 ---
 

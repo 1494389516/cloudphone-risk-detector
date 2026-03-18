@@ -7,6 +7,7 @@ import DataSegmentEncryptor
 import IntegrityAnchor
 import StructureObfuscator
 import AntiDebugInjector
+import InstructionSubstitution
 import SymbolStripper
 import XCTest
 
@@ -31,6 +32,19 @@ final class E2EArmorTests: XCTestCase {
         let preStrings = try file.findCStrings().map(\.value)
         XCTAssertTrue(preStrings.contains("frida-check"), "fixture should contain sensitive string")
         XCTAssertTrue(preStrings.contains("/usr/lib/test"), "fixture should contain path string")
+
+        let textSection = try XCTUnwrap(try file.section(segment: "__TEXT", section: "__text"))
+        let textBeforePass8 = try textSection.readContent(from: file.data)
+
+        // Pass 8: InstructionSubstitution — must precede Pass 4 so the anchor hashes substituted code
+        let r8 = try InstructionSubstitutionPass().execute(on: file, config: config)
+        XCTAssertGreaterThan(r8.itemsProcessed, 0)
+        XCTAssertGreaterThan(r8.bytesModified, 0)
+
+        let textAfterPass8 = try textSection.readContent(from: file.data)
+        XCTAssertNotEqual(textBeforePass8, textAfterPass8, "Pass 8 must modify __TEXT.__text")
+        XCTAssertEqual(textBeforePass8.count, textAfterPass8.count, "Pass 8 must preserve __text size")
+        XCTAssertNoThrow(try file.validateStructure(), "Pass 8 must preserve Mach-O structure")
 
         // Pass 4: IntegrityAnchor — must precede Pass 3
         let r4 = try IntegrityAnchorPass().execute(on: file, config: config)
@@ -325,6 +339,7 @@ final class E2EArmorTests: XCTestCase {
     // MARK: - Helpers
 
     private func runFullPipeline(on file: MachOFile, config: PassConfig) throws {
+        _ = try InstructionSubstitutionPass().execute(on: file, config: config)
         _ = try IntegrityAnchorPass().execute(on: file, config: config)
         _ = try StringEncryptorPass().execute(on: file, config: config)
         _ = try DataSegmentEncryptorPass().execute(on: file, config: config)
@@ -354,7 +369,7 @@ final class E2EArmorTests: XCTestCase {
     /// [0,     32)     mach_header_64
     /// [32,    416)    load commands (384 B, 2 cmds)
     /// [416,   2048)   padding (1632 B for future section headers)
-    /// [2048,  2112)   __text  (64 B ARM64 NOPs)
+    /// [2048,  2112)   __text  (64 B ARM64 substitution candidates)
     /// [2112,  2160)   __cstring (48 B)
     /// [2160,  8192)   __TEXT zero-fill
     /// [8192,  8256)   __const (64 B)
@@ -446,8 +461,10 @@ final class E2EArmorTests: XCTestCase {
         // padding to first content offset
         d.append(Data(count: 2048 - d.count))
 
-        // __text: 16 × ARM64 NOP
-        for _ in 0..<16 { d.appendLE(UInt32(0xD503201F)) }
+        // __text: mixed ARM64 instructions that Pass 8 can legally substitute
+        let textInstructions = makeTextInstructions()
+        precondition(textInstructions.count == 16, "__text fixture must stay 64 bytes")
+        for raw in textInstructions { d.appendLE(raw) }
 
         // __cstring: sensitive strings for StringEncryptor to detect
         for s in ["Hello", "frida-check", "World", "/usr/lib/test"] {
@@ -466,6 +483,27 @@ final class E2EArmorTests: XCTestCase {
         if d.count < 12288 { d.append(Data(count: 12288 - d.count)) }
 
         return d
+    }
+
+    private static func makeTextInstructions() -> [UInt32] {
+        [
+            0xD503201F, // NOP
+            0xAA0A03E9, // MOV X9, X10  (ORR alias)
+            0x9100018B, // ADD X11, X12, #0
+            0xD10001CD, // SUB X13, X14, #0
+            0x8A10020F, // AND X15, X16, X16
+            0xAA120251, // ORR X17, X18, X18
+            0xD2801FF3, // MOVZ X19, #0x00FF
+            0xD503201F, // NOP
+            0xAA1403F4, // MOV X20, X20 (ORR alias self-copy)
+            0x910002B5, // ADD X21, X21, #0
+            0xD10002D6, // SUB X22, X22, #0
+            0x8A1702F7, // AND X23, X23, X23
+            0xAA180318, // ORR X24, X24, X24
+            0xD28007F9, // MOVZ X25, #0x003F
+            0xAA1A03FA, // MOV X26, X26 (ORR alias self-copy)
+            0xD503201F, // NOP
+        ]
     }
 }
 

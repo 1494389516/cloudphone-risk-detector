@@ -175,14 +175,15 @@
 
 #### 口径 A：完整版（推荐，全量开启 armor 保护时使用）
 
-适用场景：SDK 全量启用 cprisk-armor 运行时保护（字符串加密、数据段加密、完整性校验、Mach-O header 擦除、JIT 按页解密、Pass 7 anti-debug injection metadata 等），不做任何裁剪。
+适用场景：SDK 全量启用 cprisk-armor 构建期 + 运行时保护（字符串加密、数据段加密、完整性校验、Mach-O header 擦除、JIT 按页解密、Pass 7 anti-debug injection metadata、Pass 8 instruction substitution 等），不做任何裁剪。
 
 ```text
 This app integrates CloudPhoneRiskKit, a fraud-prevention and device-integrity SDK.
 
 The SDK uses runtime integrity verification techniques — including code-section hash
 validation, encrypted string tables, protected data segments, anti-debug watchdog probes,
-and compile-time anti-debug injection metadata — to detect jailbreak, hooking, dynamic
+compile-time anti-debug injection metadata, and conservative equal-length instruction
+substitution applied at build time — to detect jailbreak, hooking, dynamic
 instrumentation, and cloud-phone/emulator environments. These techniques
 are consistent with banking and financial app security standards (e.g. Promon SHIELD,
 Guardsquare iXGuard) and are used exclusively for fraud prevention and runtime tamper
@@ -407,8 +408,9 @@ cprisk-armor --input <app_binary> --output <output> --all --key <hex>
 | Pass 5 | 结构混淆 | 是 |
 | Pass 6 | 符号剥离 | 是 |
 | Pass 7 | AntiDebug 注入计划 metadata | 是 |
+| Pass 8 | InstructionSubstitution（1:1 等长指令替换） | 是 |
 
-运行时能力全量开启：Mach-O Header 擦除、JIT 按页解密、异常端口保护、watchdog 多维反调试探针、Pass 7 anti-debug 注入计划消费。
+运行时能力全量开启：Mach-O Header 擦除、JIT 按页解密、异常端口保护、watchdog 多维反调试探针、Pass 7 anti-debug 注入计划消费；构建产物侧同时包含 Pass 8 对 `__TEXT.__text` 的保守等长指令替换。
 
 **适用场景**：
 
@@ -435,6 +437,7 @@ cprisk-armor --input <app_binary> --output <output> --pass3 --pass4 --pass5 --pa
 | Pass 5 | 结构混淆 | 是 | Mach-O 结构层面混淆 |
 | Pass 6 | 符号剥离 | 是 | 等价于 `strip -x`，完全标准操作 |
 | Pass 7 | AntiDebug 注入计划 metadata | 是 | 仅写入 `__DATA,__cpr_adbg7` ABI，不直接改写 `__TEXT` 指令流，审核风险低 |
+| Pass 8 | InstructionSubstitution（1:1 等长指令替换） | **否** | 会直接改写 `__TEXT.__text` 指令流；虽然不做 CFG flattening、只改安全子集，但首发提审阶段建议关闭 |
 
 **适用场景**：
 
@@ -467,8 +470,9 @@ cprisk-armor --input <app_binary> --output <output> --pass3 --pass4 --pass5 --pa
 | Pass 5 结构混淆 | segment/section 布局异常 | 不影响 dyld 加载 | 不太可能 |
 | Pass 6 符号剥离 | nlist 表被混淆 | 不影响执行 | 不太可能 |
 | Pass 7 AntiDebug metadata | 多一个自定义 `__DATA` section，内容是 anti-debug 注入计划 ABI | 仅为运行时 patch/gate 预留计划，不直接改写机器码 | 低 |
+| Pass 8 InstructionSubstitution | 直接改写 `__TEXT.__text` 中的部分 ARM64 指令 | 1:1 等长、语义等价、仅限安全子集，但本质上属于机器码重写 | 中 |
 
-**结论**：Pass 1（字符串加密）和 Pass 2（元数据擦除）是唯二可能影响苹果静态扫描器正常工作的 Pass。AppStore Safe Profile 关闭这两个，保留其余五个，既能提供有效保护（完整性校验 + 数据加密 + 结构混淆 + 符号剥离 + anti-debug 注入计划 ABI），又不干扰苹果的审核流程。
+**结论**：Pass 1（字符串加密）和 Pass 2（元数据擦除）是最容易影响苹果静态扫描器正常工作的 Pass；Pass 8 虽然是保守的 1:1 等长改写，但由于直接作用于 `__TEXT.__text`，首发提审阶段同样建议关闭。AppStore Safe Profile 关闭这三个，保留其余五个，既能提供有效保护（完整性校验 + 数据加密 + 结构混淆 + 符号剥离 + anti-debug 注入计划 ABI），又尽量不干扰苹果的审核流程。
 
 ### 11.4 渐进开启策略
 
@@ -483,7 +487,7 @@ cprisk-armor --input <app_binary> --output <output> --pass3 --pass4 --pass5 --pa
 
 ### 11.5 运行时能力的合规说明
 
-除了构建时的 7 个 Pass，SDK 的 CRiskCore 运行时还包含以下能力：
+除了构建时的 8 个 Pass，SDK 的 CRiskCore 运行时还包含以下能力：
 
 | 运行时能力 | 实现 | 合规风险 | 建议 |
 |-----------|------|---------|------|
@@ -504,7 +508,7 @@ cprisk-armor --input <app_binary> --output <output> --pass3 --pass4 --pass5 --pa
 | **Promon SHIELD** | 控制流混淆 | 有 | 有 | 有 | 有 | 有 | 有 | 有 | 有 |
 | **Guardsquare iXGuard** | 控制流 + 算术混淆 | 有 | 资源全量加密 | 有 | 有 | 系统库内存完整性 | 有 | 有 | — |
 | **Appdome ONEShield** | 有 | 有 | 有 | 有 | 有 | 有 | 有 | 有 | 有 |
-| **cprisk-armor (Full)** | — | 有 | 数据段加密 | 三路径哈希 + HMAC + 白盒 PRF（6.5） | 有 | Prologue Guard | AppSigningIdentity（6.5） | — | — |
+| **cprisk-armor (Full)** | 有限（Pass 8：1:1 等长指令替换） | 有 | 数据段加密 | 三路径哈希 + HMAC + 白盒 PRF（6.5） | 有 | Prologue Guard | AppSigningIdentity（6.5） | — | — |
 
 cprisk-armor 在控制流混淆、反重打包、截屏防护、安全键盘等方面比上述商用方案覆盖面更窄。苹果允许上述商用方案的全量保护通过审核，cprisk-armor 不会比它们更激进。
 
