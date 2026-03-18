@@ -485,15 +485,15 @@ public enum ARM64Codec {
 
         guard setFlags == 0, imm12 == 0 else { return nil }
 
-        let width = registerWidth(from: rawValue)
-        if rd == ARM64RegisterWidth.zeroRegisterIndex {
-            let form: ARM64NoEffectForm = isSub ? .discardViaSubZero : .discardViaAddZero
-            return ARM64DecodedInstruction(
-                rawValue: rawValue,
-                kind: .noEffect(ARM64NoEffect(form: form, sourceRegister: rn, width: width))
-            )
+        // In ADD/SUB immediate, register 31 encodes SP (not XZR).
+        // We must exclude any instruction that reads or writes SP, because
+        // logical-register replacements treat register 31 as XZR.
+        guard rn != ARM64RegisterWidth.zeroRegisterIndex,
+              rd != ARM64RegisterWidth.zeroRegisterIndex else {
+            return nil
         }
 
+        let width = registerWidth(from: rawValue)
         let form: ARM64RegisterCopyForm = isSub ? .subZero : .addZero
         return ARM64DecodedInstruction(
             rawValue: rawValue,
@@ -509,7 +509,9 @@ public enum ARM64Codec {
     private static func decodeMoveWideImmediate(_ rawValue: UInt32) -> ARM64DecodedInstruction? {
         let moveWideMask: UInt32 = 0x7F80_0000
         let opcode = rawValue & moveWideMask
-        guard opcode == 0x5280_0000 || opcode == 0xD280_0000 else { return nil }
+        // The mask clears bit 31 (sf), so both W-form (0x5280_0000) and
+        // X-form produce the same masked value.  A single check suffices.
+        guard opcode == 0x5280_0000 else { return nil }
 
         let width = registerWidth(from: rawValue)
         let halfwordShift = (rawValue >> 21) & 0x3

@@ -58,9 +58,10 @@ final class InstructionSubstitutionTests: XCTestCase {
                 "NOP",
                 Self.nop,
                 [
+                    // ADD/SUB with dest=31 would write SP, not XZR — excluded.
+                    // MOV-alias and ORR-self both encode identically for XZR,
+                    // so only two distinct replacements remain.
                     Self.orrZero,
-                    Self.addZeroToXzr,
-                    Self.subZeroToXzr,
                     Self.andZero,
                 ]
             ),
@@ -77,6 +78,56 @@ final class InstructionSubstitutionTests: XCTestCase {
                 "\(testCase.name) produced unexpected replacement \(String(format: "0x%08X", replacement))"
             )
             XCTAssertNotEqual(replacement, testCase.raw)
+        }
+    }
+
+    func testSPInstructionsAreNeverSubstituted() {
+        // In ADD/SUB immediate, register 31 means SP (not XZR).
+        // These must never be decoded as substitution candidates.
+        let engine = SubstitutionEngine()
+        let spInstructions: [(String, UInt32)] = [
+            ("ADD SP, X29, #0 (MOV SP, X29 epilogue)", 0x910003BF), // ADD SP, X29, #0
+            ("ADD X0, SP, #0 (stack address calc)",     0x910003E0), // ADD X0, SP, #0
+            ("SUB SP, X29, #0",                         0xD10003BF), // SUB SP, X29, #0
+            ("SUB X0, SP, #0",                          0xD10003E0), // SUB X0, SP, #0
+        ]
+
+        for (name, raw) in spInstructions {
+            XCTAssertNil(
+                ARM64Codec.decode(raw),
+                "\(name) (0x\(String(raw, radix: 16))) must not be decoded as a substitution candidate"
+            )
+            var rng = SplitMix64(seed: 42)
+            XCTAssertNil(
+                engine.substitute(for: raw, ratio: 1.0, using: &rng),
+                "\(name) must not be substituted"
+            )
+        }
+    }
+
+    func testNoEffectReplacementsNeverProduceAddSubSP() {
+        // No-effect forms write to register 31 (XZR in logical context).
+        // Replacement options must NOT include ADD/SUB forms where
+        // register 31 would mean SP instead of XZR.
+        let engine = SubstitutionEngine()
+        let nopRaw: UInt32 = 0xD503201F
+
+        // Collect all possible replacement values across many seeds
+        var allReplacements = Set<UInt32>()
+        for seed in UInt64(1)...100 {
+            var rng = SplitMix64(seed: seed)
+            if let replacement = engine.substitute(for: nopRaw, ratio: 1.0, using: &rng) {
+                allReplacements.insert(replacement)
+            }
+        }
+
+        // Verify no replacement is an ADD/SUB immediate (bits 28-24 = 10001)
+        for replacement in allReplacements {
+            let isAddSubImm = (replacement & 0x1F00_0000) == 0x1100_0000
+            XCTAssertFalse(
+                isAddSubImm,
+                String(format: "NOP replacement 0x%08X is ADD/SUB immediate — would write to SP!", replacement)
+            )
         }
     }
 
