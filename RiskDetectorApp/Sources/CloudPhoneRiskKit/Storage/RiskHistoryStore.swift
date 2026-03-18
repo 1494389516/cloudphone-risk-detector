@@ -28,9 +28,8 @@ public struct TimePattern: Codable, Sendable {
     }
 }
 
-// SECURITY-TODO: Migrate to Keychain or FileProtection.complete sandboxed file.
-// UserDefaults is not appropriate for encrypted risk history data — it lacks file-level
-// encryption at rest and is accessible to any code in the app's process space.
+// Storage: sandboxed file with NSFileProtectionComplete via SecureFileStore.
+// Migrated from UserDefaults to ensure data-at-rest encryption when device is locked.
 public final class RiskHistoryStore {
     public static let shared = RiskHistoryStore()
 
@@ -54,7 +53,7 @@ public final class RiskHistoryStore {
     }
 
     private let lock = NSLock()
-    private let defaults: UserDefaults
+    private let fileStore: SecureFileStore
     private let key = "cloudphone_risk_history_v1"
     private let hmacKey = "cloudphone_risk_history_v1_hmac"
     private let hmacPurpose = "risk_history"
@@ -71,8 +70,8 @@ public final class RiskHistoryStore {
     /// 时钟回拨容忍阈值（秒）
     private static let clockRollbackToleranceSeconds: TimeInterval = 60
 
-    public init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
+    public init(fileStore: SecureFileStore = .shared) {
+        self.fileStore = fileStore
     }
 
     public func append(_ event: RiskHistoryEvent) {
@@ -126,10 +125,10 @@ public final class RiskHistoryStore {
 
     private func loadStateLocked() -> LoadedState {
         let anchor = freshnessAnchor.read() ?? .zero
-        guard let stored = defaults.data(forKey: key) else {
+        guard let stored = fileStore.read(key: key) else {
             return LoadedState(events: [], freshness: anchor)
         }
-        guard let signature = defaults.data(forKey: hmacKey),
+        guard let signature = fileStore.read(key: hmacKey),
               StorageIntegrityGuard.verify(stored, signature: signature, purpose: hmacPurpose) else {
             clearPersistedDataLocked(resetAnchor: false)
             return LoadedState(events: [], freshness: anchor)
@@ -228,8 +227,8 @@ public final class RiskHistoryStore {
             return
         }
         #endif
-        defaults.set(stored, forKey: key)
-        defaults.set(StorageIntegrityGuard.sign(stored, purpose: hmacPurpose), forKey: hmacKey)
+        fileStore.write(key: key, data: stored)
+        fileStore.write(key: hmacKey, data: StorageIntegrityGuard.sign(stored, purpose: hmacPurpose))
 
         guard freshnessAnchor.write(freshness) else {
             Logger.log("RiskHistoryStore: failed to update freshness anchor")
@@ -251,8 +250,8 @@ public final class RiskHistoryStore {
     }
 
     private func clearPersistedDataLocked(resetAnchor: Bool) {
-        defaults.removeObject(forKey: key)
-        defaults.removeObject(forKey: hmacKey)
+        fileStore.remove(key: key)
+        fileStore.remove(key: hmacKey)
         if resetAnchor {
             freshnessAnchor.remove()
         }

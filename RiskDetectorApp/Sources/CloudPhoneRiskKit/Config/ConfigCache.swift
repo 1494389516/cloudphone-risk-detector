@@ -16,9 +16,8 @@ extension ConfigCaching {
     }
 }
 
-// SECURITY-TODO: Migrate to Keychain or FileProtection.complete sandboxed file.
-// UserDefaults stores encrypted config cache but lacks NSFileProtectionComplete at rest.
-// Target: sandboxed file with NSFileProtectionComplete attribute for data-at-rest protection.
+// Storage: sandboxed file with NSFileProtectionComplete via SecureFileStore.
+// Migrated from UserDefaults to ensure data-at-rest encryption when device is locked.
 public final class ConfigCache: @unchecked Sendable, ConfigCaching {
     public static let shared = ConfigCache()
 
@@ -66,6 +65,7 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
     private let rollbackVersionKey: String
     private let maxDiskEntries: Int
     private let persistToDisk: Bool
+    private let fileStore: SecureFileStore
 
     private init(
         namespace: String? = nil,
@@ -85,6 +85,7 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         }
         self.persistToDisk = persistToDisk
         self.maxDiskEntries = maxDiskEntries
+        self.fileStore = SecureFileStore.shared
         self.memoryCache = nil
         ConfigCache.globalLock.lock()
         self.memoryCache = loadLatestFromDisk()
@@ -154,8 +155,10 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         }
 
         saveDiskEntries(entries)
-        UserDefaults.standard.set(config.version, forKey: versionKey)
-        UserDefaults.standard.removeObject(forKey: rollbackVersionKey)
+        if let vData = "\(config.version)".data(using: .utf8) {
+            fileStore.write(key: versionKey, data: vData)
+        }
+        fileStore.remove(key: rollbackVersionKey)
     }
 
     public func clear() {
@@ -164,10 +167,10 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
 
         memoryCache = nil
         guard persistToDisk else { return }
-        UserDefaults.standard.removeObject(forKey: diskKey)
-        UserDefaults.standard.removeObject(forKey: hmacDiskKey)
-        UserDefaults.standard.removeObject(forKey: versionKey)
-        UserDefaults.standard.removeObject(forKey: rollbackVersionKey)
+        fileStore.remove(key: diskKey)
+        fileStore.remove(key: hmacDiskKey)
+        fileStore.remove(key: versionKey)
+        fileStore.remove(key: rollbackVersionKey)
     }
 
     public func cacheSize() -> Int {
@@ -175,7 +178,7 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         defer { ConfigCache.globalLock.unlock() }
 
         guard persistToDisk,
-              let data = UserDefaults.standard.data(forKey: diskKey) else {
+              let data = fileStore.read(key: diskKey) else {
             return 0
         }
         return data.count
@@ -202,8 +205,8 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         }
 
         memoryCache = target
-        if persistToDisk {
-            UserDefaults.standard.set(version, forKey: rollbackVersionKey)
+        if persistToDisk, let data = "\(version)".data(using: .utf8) {
+            fileStore.write(key: rollbackVersionKey, data: data)
         }
         return target.config
 #else
@@ -278,7 +281,9 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         #else
         let all = allEntries.filter { isUsableTrustedEntry($0, source: "disk_cache") }
         #endif
-        if let rollbackVer = UserDefaults.standard.object(forKey: rollbackVersionKey) as? Int,
+        if let rollbackData = fileStore.read(key: rollbackVersionKey),
+           let rollbackStr = String(data: rollbackData, encoding: .utf8),
+           let rollbackVer = Int(rollbackStr),
            let pinned = all.first(where: { $0.config.version == rollbackVer }) {
             return pinned
         }
@@ -301,13 +306,13 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
 
     private func loadAllDiskEntries() -> [CacheEntry] {
         guard persistToDisk,
-              let stored = UserDefaults.standard.data(forKey: diskKey) else {
+              let stored = fileStore.read(key: diskKey) else {
             return []
         }
-        guard let signature = UserDefaults.standard.data(forKey: hmacDiskKey),
+        guard let signature = fileStore.read(key: hmacDiskKey),
               StorageIntegrityGuard.verify(stored, signature: signature, purpose: "config_cache") else {
-            UserDefaults.standard.removeObject(forKey: diskKey)
-            UserDefaults.standard.removeObject(forKey: hmacDiskKey)
+            fileStore.remove(key: diskKey)
+            fileStore.remove(key: hmacDiskKey)
             return []
         }
         #if DEBUG
@@ -320,8 +325,8 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         #else
         guard let data = try? PayloadCrypto.decrypt(stored) else {
             Logger.log("ConfigCache: decrypt failed, clearing cache in release build")
-            UserDefaults.standard.removeObject(forKey: diskKey)
-            UserDefaults.standard.removeObject(forKey: hmacDiskKey)
+            fileStore.remove(key: diskKey)
+            fileStore.remove(key: hmacDiskKey)
             return []
         }
         #endif
@@ -341,8 +346,8 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
             return
         }
         #endif
-        UserDefaults.standard.set(stored, forKey: diskKey)
-        UserDefaults.standard.set(StorageIntegrityGuard.sign(stored, purpose: "config_cache"), forKey: hmacDiskKey)
+        fileStore.write(key: diskKey, data: stored)
+        fileStore.write(key: hmacDiskKey, data: StorageIntegrityGuard.sign(stored, purpose: "config_cache"))
     }
 
     private func isUsableTrustedEntry(_ entry: CacheEntry, source: String) -> Bool {
@@ -374,7 +379,7 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
 
     private func cacheSizeUnlocked() -> Int {
         guard persistToDisk,
-              let data = UserDefaults.standard.data(forKey: diskKey) else {
+              let data = fileStore.read(key: diskKey) else {
             return 0
         }
         return data.count
