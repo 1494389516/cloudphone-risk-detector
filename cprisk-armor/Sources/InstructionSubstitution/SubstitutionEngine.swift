@@ -226,7 +226,13 @@ public final class SubstitutionEngine {
 
         switch decoded.kind {
         case .registerCopy(let copy):
-            options = orderedUniqueOptions(excluding: decoded.rawValue, options: [
+            // In ADD/SUB immediate, register 31 encodes SP (not XZR).
+            // Only offer ADD/SUB alternatives when neither operand is register 31,
+            // to avoid accidentally reading SP or writing SP.
+            let canUseAddSub = copy.sourceRegister != ARM64RegisterWidth.zeroRegisterIndex
+                && copy.destinationRegister != ARM64RegisterWidth.zeroRegisterIndex
+
+            var copyOptions = [
                 ReplacementOption(
                     rawValue: ARM64Codec.encodeMoveAlias(
                         destinationRegister: copy.destinationRegister,
@@ -234,22 +240,6 @@ public final class SubstitutionEngine {
                         width: copy.width
                     ),
                     description: ARM64RegisterCopyForm.movAlias.description
-                ),
-                ReplacementOption(
-                    rawValue: ARM64Codec.encodeAddImmediateZero(
-                        destinationRegister: copy.destinationRegister,
-                        sourceRegister: copy.sourceRegister,
-                        width: copy.width
-                    ),
-                    description: ARM64RegisterCopyForm.addZero.description
-                ),
-                ReplacementOption(
-                    rawValue: ARM64Codec.encodeSubImmediateZero(
-                        destinationRegister: copy.destinationRegister,
-                        sourceRegister: copy.sourceRegister,
-                        width: copy.width
-                    ),
-                    description: ARM64RegisterCopyForm.subZero.description
                 ),
                 ReplacementOption(
                     rawValue: ARM64Codec.encodeAndSelf(
@@ -267,13 +257,36 @@ public final class SubstitutionEngine {
                     ),
                     description: ARM64RegisterCopyForm.orrSelf.description
                 ),
-            ])
+            ]
+
+            if canUseAddSub {
+                copyOptions.append(contentsOf: [
+                    ReplacementOption(
+                        rawValue: ARM64Codec.encodeAddImmediateZero(
+                            destinationRegister: copy.destinationRegister,
+                            sourceRegister: copy.sourceRegister,
+                            width: copy.width
+                        ),
+                        description: ARM64RegisterCopyForm.addZero.description
+                    ),
+                    ReplacementOption(
+                        rawValue: ARM64Codec.encodeSubImmediateZero(
+                            destinationRegister: copy.destinationRegister,
+                            sourceRegister: copy.sourceRegister,
+                            width: copy.width
+                        ),
+                        description: ARM64RegisterCopyForm.subZero.description
+                    ),
+                ])
+            }
+
+            options = orderedUniqueOptions(excluding: decoded.rawValue, options: copyOptions)
 
         case .noEffect(let noEffect):
             let width = noEffect.width
             let source = noEffect.sourceRegister ?? ARM64RegisterWidth.zeroRegisterIndex
             var candidates = [ReplacementOption]()
-            candidates.reserveCapacity(6)
+            candidates.reserveCapacity(4)
 
             if source == ARM64RegisterWidth.zeroRegisterIndex {
                 candidates.append(ReplacementOption(
@@ -282,6 +295,10 @@ public final class SubstitutionEngine {
                 ))
             }
 
+            // No-effect destination is always register 31 (XZR in logical
+            // context). ADD/SUB immediate treats register 31 as SP, so
+            // generating ADD/SUB XZR replacements would corrupt the stack
+            // pointer.  Only use logical-register forms here.
             candidates.append(contentsOf: [
                 ReplacementOption(
                     rawValue: ARM64Codec.encodeMoveAlias(
@@ -290,22 +307,6 @@ public final class SubstitutionEngine {
                         width: width
                     ),
                     description: ARM64NoEffectForm.discardViaMove.description
-                ),
-                ReplacementOption(
-                    rawValue: ARM64Codec.encodeAddImmediateZero(
-                        destinationRegister: ARM64RegisterWidth.zeroRegisterIndex,
-                        sourceRegister: source,
-                        width: width
-                    ),
-                    description: ARM64NoEffectForm.discardViaAddZero.description
-                ),
-                ReplacementOption(
-                    rawValue: ARM64Codec.encodeSubImmediateZero(
-                        destinationRegister: ARM64RegisterWidth.zeroRegisterIndex,
-                        sourceRegister: source,
-                        width: width
-                    ),
-                    description: ARM64NoEffectForm.discardViaSubZero.description
                 ),
                 ReplacementOption(
                     rawValue: ARM64Codec.encodeAndSelf(
