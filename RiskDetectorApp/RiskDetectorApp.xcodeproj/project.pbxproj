@@ -1353,7 +1353,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "\"${SRCROOT}/BuildSupport/Scripts/cprisk-release-postbuild.sh\"\n";
+			shellScript = "";
 		};
 		DFD1FC08E1357D6D523B7ECC /* Copy Swift Objective-C Interface Header */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -1690,7 +1690,6 @@
 				STRIP_INSTALLED_PRODUCT = YES;
 				STRIP_STYLE = all;
 				STRIP_SWIFT_SYMBOLS = YES;
-				SWIFT_EXEC = "$(SRCROOT)/BuildSupport/Scripts/swiftc";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
@@ -1852,7 +1851,6 @@
 				PRODUCT_NAME = CloudPhoneRiskAppCore;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = NO;
-				SWIFT_EXEC = "$(SRCROOT)/BuildSupport/Scripts/swiftc";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
@@ -1958,7 +1956,6 @@
 				PRODUCT_NAME = CloudPhoneRiskKit;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = NO;
-				SWIFT_EXEC = "$(SRCROOT)/BuildSupport/Scripts/swiftc";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
@@ -1966,7 +1963,6 @@
 		D4CAF21C69A15961CC4D6481 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CC = "$(SRCROOT)/BuildSupport/Scripts/clang";
 				CLANG_ENABLE_MODULES = YES;
 				DEFINES_MODULE = YES;
 				HEADER_SEARCH_PATHS = "$(inherited) $(SRCROOT)/Sources/CRiskCore/include";

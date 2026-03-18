@@ -37,9 +37,6 @@ targets:
         MODULEMAP_FILE: "$(SRCROOT)/BuildSupport/CRiskCore/module.modulemap"
         PUBLIC_HEADERS_FOLDER_PATH: include
         HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/Sources/CRiskCore/include"
-      configs:
-        Release:
-          CC: "$(SRCROOT)/BuildSupport/Scripts/clang"
 
   CloudPhoneRiskKit:
     type: library.static
@@ -71,9 +68,6 @@ targets:
         SKIP_INSTALL: NO
         DEFINES_MODULE: YES
         HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/Sources/CRiskCore/include"
-      configs:
-        Release:
-          SWIFT_EXEC: "$(SRCROOT)/BuildSupport/Scripts/swiftc"
 
   CloudPhoneRiskAppCore:
     type: library.static
@@ -90,9 +84,6 @@ targets:
         PRODUCT_NAME: CloudPhoneRiskAppCore
         SKIP_INSTALL: NO
         DEFINES_MODULE: YES
-      configs:
-        Release:
-          SWIFT_EXEC: "$(SRCROOT)/BuildSupport/Scripts/swiftc"
 
   RiskDetectorApp:
     type: application
@@ -141,19 +132,11 @@ targets:
         STRIP_STYLE: all
         STRIP_SWIFT_SYMBOLS: YES
         DEAD_CODE_STRIPPING: YES
-      configs:
-        Release:
-          SWIFT_EXEC: "$(SRCROOT)/BuildSupport/Scripts/swiftc"
     dependencies:
       - target: CloudPhoneRiskKit
       - target: CloudPhoneRiskAppCore
       - sdk: AppIntents.framework
         weak: true
-    postBuildScripts:
-      - name: "cprisk-armor (Release)"
-        script: |
-          "${SRCROOT}/BuildSupport/Scripts/cprisk-release-postbuild.sh"
-        basedOnDependencyAnalysis: false
 
   CloudPhoneRiskKitTests:
     type: bundle.unit-test
