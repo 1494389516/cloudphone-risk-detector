@@ -325,10 +325,7 @@ public final class PolicyManager: @unchecked Sendable {
 
     @available(iOS 13.0, macOS 10.15, *)
     public func fetchLatestPolicy(from url: URL) async throws -> ServerRiskPolicy {
-        let session: URLSession
-        lock.lock()
-        session = urlSession
-        lock.unlock()
+        let session = currentURLSession()
         let (data, response) = try await session.data(from: url)
 
         let signatureHex = (response as? HTTPURLResponse)?
@@ -341,6 +338,12 @@ public final class PolicyManager: @unchecked Sendable {
         let policy = try JSONDecoder().decode(ServerRiskPolicy.self, from: data)
         update(policy: policy, verifiedByServer: ConfigSignatureVerifier.isConfigured && verification.isValid)
         return policy
+    }
+
+    private func currentURLSession() -> URLSession {
+        lock.lock()
+        defer { lock.unlock() }
+        return urlSession
     }
 
     private func update(policy: ServerRiskPolicy, verifiedByServer: Bool) {

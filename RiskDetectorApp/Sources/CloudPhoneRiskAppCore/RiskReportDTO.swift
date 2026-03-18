@@ -130,18 +130,27 @@ public struct SignalItemDTO: Codable, Sendable {
 
 public enum RiskReportMapper {
     public static func dto(from report: CPRiskReport) -> RiskReportDTO {
-        let data = report.jsonData(prettyPrinted: false)
+        let data = report.unencryptedPayloadData(prettyPrinted: false)
         return dto(from: data) ?? fallbackDTO(from: report)
     }
 
     public static func dto(from jsonData: Data) -> RiskReportDTO? {
-        guard let payload = try? JSONDecoder().decode(PayloadMirror.self, from: jsonData) else { return nil }
+        let decoder = JSONDecoder()
+        if let payload = try? decoder.decode(PayloadMirror.self, from: jsonData) {
+            return buildDTO(from: payload)
+        }
+        if let payload = try? decoder.decode(CompactPayloadMirror.self, from: jsonData) {
+            return buildDTO(from: payload)
+        }
+        return fallbackDTO(fromLegacyJSON: jsonData)
+    }
 
+    private static func buildDTO(from payload: any PayloadMirrorProtocol) -> RiskReportDTO {
         let jailbreak = JailbreakDTO(
-            isJailbroken: payload.jailbreak.isJailbroken,
-            confidence: payload.jailbreak.confidence,
-            detectedMethods: payload.jailbreak.detectedMethods,
-            details: payload.jailbreak.details
+            isJailbroken: payload.jailbreakIsJailbroken,
+            confidence: payload.jailbreakConfidence,
+            detectedMethods: payload.jailbreakDetectedMethods,
+            details: payload.jailbreakDetails
         )
 
         var hard = [
@@ -401,25 +410,233 @@ public enum RiskReportMapper {
         )
     }
 
+    private static func fallbackDTO(fromLegacyJSON jsonData: Data) -> RiskReportDTO? {
+        guard
+            let object = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+            let generatedAt = object["generatedAt"] as? String,
+            let deviceID = object["deviceID"] as? String,
+            let score = object["score"] as? Double,
+            let isHighRisk = object["isHighRisk"] as? Bool,
+            let summary = object["summary"] as? String
+        else {
+            return nil
+        }
+
+        let jailbreakObject = object["jailbreak"] as? [String: Any]
+        let jailbreak = JailbreakDTO(
+            isJailbroken: jailbreakObject?["isJailbroken"] as? Bool ?? false,
+            confidence: jailbreakObject?["confidence"] as? Double ?? 0,
+            detectedMethods: jailbreakObject?["detectedMethods"] as? [String] ?? [],
+            details: jailbreakObject?["details"] as? String ?? ""
+        )
+        let server = legacyServerSignals(from: object["server"] as? [String: Any])
+        let graphPayload = legacyGraphPayload(from: object["graphPayload"] as? [String: Any])
+
+        var softSignals: [SignalItemDTO] = []
+        if let server {
+            softSignals.append(
+                SignalItemDTO(
+                    id: "cloud_datacenter",
+                    title: "机房/云 IP",
+                    kind: .soft,
+                    detected: server.isDatacenter == true,
+                    confidence: .strong,
+                    method: "server_signals",
+                    evidenceSummary: server.publicIP ?? server.asn ?? server.asOrg
+                )
+            )
+
+            if let n = server.ipDeviceAgg {
+                softSignals.append(
+                    SignalItemDTO(
+                        id: "cloud_ip_device_agg",
+                        title: "IP 设备聚合度",
+                        kind: .soft,
+                        detected: n >= 20,
+                        confidence: .medium,
+                        method: "server_signals",
+                        evidenceSummary: "\(n)"
+                    )
+                )
+            }
+
+            if let n = server.ipAccountAgg {
+                softSignals.append(
+                    SignalItemDTO(
+                        id: "cloud_ip_account_agg",
+                        title: "IP 账号聚合度",
+                        kind: .soft,
+                        detected: n >= 30,
+                        confidence: .medium,
+                        method: "server_signals",
+                        evidenceSummary: "\(n)"
+                    )
+                )
+            }
+
+            if let tags = server.riskTags, !tags.isEmpty {
+                softSignals.append(
+                    SignalItemDTO(
+                        id: "cloud_risk_tags",
+                        title: "风险标签",
+                        kind: .soft,
+                        detected: true,
+                        confidence: .medium,
+                        method: "server_signals",
+                        evidenceSummary: tags.prefix(5).joined(separator: ",")
+                    )
+                )
+            }
+        } else {
+            softSignals.append(
+                SignalItemDTO(
+                    id: "legacy_plaintext_report",
+                    title: "Legacy Plaintext Report",
+                    kind: .soft,
+                    detected: false,
+                    confidence: .weak,
+                    method: "legacy_json_fallback",
+                    evidenceSummary: "best_effort_dto"
+                )
+            )
+        }
+
+        return RiskReportDTO(
+            sdkVersion: object["sdkVersion"] as? String,
+            reportId: object["reportId"] as? String,
+            timestamp: object["timestamp"] as? Double,
+            generatedAt: generatedAt,
+            deviceID: deviceID,
+            score: score,
+            isHighRisk: isHighRisk,
+            summary: summary,
+            tamperedCount: object["tamperedCount"] as? Int,
+            jailbreak: jailbreak,
+            network: NetworkSignals.current(),
+            behavior: emptyBehaviorSignals(),
+            server: server,
+            local: nil,
+            gpuName: object["gpuName"] as? String,
+            kernelBuild: object["kernelBuild"] as? String,
+            deviceModel: object["deviceModel"] as? String,
+            imuMagnitude: object["imuMagnitude"] as? Double,
+            imuVariance: object["imuVariance"] as? Double,
+            touchForceVar: object["touchForceVar"] as? Double,
+            signals: [],
+            hardSignals: [
+                SignalItemDTO(id: "jailbreak", title: "越狱", kind: .hard, detected: jailbreak.isJailbroken),
+            ],
+            softSignals: softSignals,
+            graphPayload: graphPayload,
+            challengeBinding: nil
+        )
+    }
+
+    private static func legacyServerSignals(from object: [String: Any]?) -> ServerSignals? {
+        guard let object else { return nil }
+        return ServerSignals(
+            publicIP: object["publicIP"] as? String,
+            asn: object["asn"] as? String,
+            asOrg: object["asOrg"] as? String,
+            isDatacenter: object["isDatacenter"] as? Bool,
+            ipDeviceAgg: object["ipDeviceAgg"] as? Int,
+            ipAccountAgg: object["ipAccountAgg"] as? Int,
+            geoCountry: object["geoCountry"] as? String,
+            geoRegion: object["geoRegion"] as? String,
+            riskTags: object["riskTags"] as? [String],
+            communityId: object["communityId"] as? String,
+            communityRiskDensity: object["communityRiskDensity"] as? Double,
+            hwProfileDegree: object["hwProfileDegree"] as? Int,
+            devicePageRank: object["devicePageRank"] as? Double,
+            isInDenseSubgraph: object["isInDenseSubgraph"] as? Bool
+        )
+    }
+
+    private static func legacyGraphPayload(from object: [String: Any]?) -> GraphPayload? {
+        guard
+            let object,
+            let fingerprint = object["fingerprintVector"] as? [String: Any],
+            let edge = object["edgeSignals"] as? [String: Any],
+            let temporal = object["temporalRhythm"] as? [String: Any],
+            let capability = object["capabilityScore"] as? [String: Any],
+            let hwEntropy = fingerprint["hwEntropy"] as? Double,
+            let screenRatioDrift = fingerprint["screenRatioDrift"] as? Double,
+            let cpuCoreConsistency = fingerprint["cpuCoreConsistency"] as? Double,
+            let bootTimeDelta = capabilityInt(fingerprint["bootTimeDelta"]),
+            let gpuTier = capabilityInt(fingerprint["gpuTier"]),
+            let timezoneOffset = capabilityInt(edge["timezoneOffset"]),
+            let locale = edge["locale"] as? String,
+            let sessionSeq = capabilityInt(temporal["sessionSeq"]),
+            let installAgeDays = capabilityInt(temporal["installAgeDays"]),
+            let basicAnomalyCount = capabilityInt(capability["basicAnomalyCount"]),
+            let qualitySuspicion = capabilityInt(capability["qualitySuspicion"]),
+            let totalProbes = capabilityInt(capability["totalProbes"])
+        else {
+            return nil
+        }
+
+        return GraphPayload(
+            fingerprintVector: FingerprintVector(
+                hwEntropy: hwEntropy,
+                screenRatioDrift: screenRatioDrift,
+                cpuCoreConsistency: cpuCoreConsistency,
+                bootTimeDelta: bootTimeDelta,
+                gpuTier: gpuTier
+            ),
+            edgeSignals: EdgeSignals(
+                ipSubnet: edge["ipSubnet"] as? String,
+                carrierASN: capabilityInt(edge["carrierASN"]),
+                timezoneOffset: timezoneOffset,
+                locale: locale
+            ),
+            temporalRhythm: TemporalRhythm(
+                sessionSeq: sessionSeq,
+                installAgeDays: installAgeDays,
+                tapIntervalP50: capabilityDouble(temporal["tapIntervalP50"]),
+                sessionDurationP50: capabilityDouble(temporal["sessionDurationP50"])
+            ),
+            capabilityScore: CapabilityScorePayload(
+                basicAnomalyCount: basicAnomalyCount,
+                qualitySuspicion: qualitySuspicion,
+                totalProbes: totalProbes
+            )
+        )
+    }
+
+    private static func capabilityInt(_ value: Any?) -> Int? {
+        if let value = value as? Int { return value }
+        if let value = value as? NSNumber { return value.intValue }
+        return nil
+    }
+
+    private static func capabilityDouble(_ value: Any?) -> Double? {
+        if let value = value as? Double { return value }
+        if let value = value as? NSNumber { return value.doubleValue }
+        return nil
+    }
+
     private static func emptyBehaviorSignals() -> BehaviorSignals {
         // CloudPhoneRiskKit's memberwise inits are internal; decode a known-empty JSON instead.
         let json = """
         {
-          "touch": {
-            "sampleCount": 0,
-            "tapCount": 0,
-            "swipeCount": 0,
-            "coordinateSpread": null,
-            "intervalCV": null,
-            "averageLinearity": null
+          "t": {
+            "sc": 0,
+            "tp": 0,
+            "sw": 0,
+            "cs": null,
+            "cv": null,
+            "al": null,
+            "fv": null,
+            "mr": null,
+            "ss": null
           },
-          "motion": {
-            "sampleCount": 0,
-            "stillnessRatio": null,
-            "motionEnergy": null
+          "m": {
+            "sc": 0,
+            "sr": null,
+            "me": null
           },
-          "touchMotionCorrelation": null,
-          "actionCount": 0
+          "tc": null,
+          "ac": 0
         }
         """
         let data = Data(json.utf8)
@@ -541,6 +758,35 @@ public enum RiskReportMapper {
     }
 }
 
+private protocol PayloadMirrorProtocol {
+    var sdkVersion: String? { get }
+    var reportId: String? { get }
+    var timestamp: Double? { get }
+    var generatedAt: String { get }
+    var deviceID: String { get }
+    var network: NetworkSignals { get }
+    var behavior: BehaviorSignals { get }
+    var score: Double { get }
+    var isHighRisk: Bool { get }
+    var summary: String { get }
+    var tamperedCount: Int? { get }
+    var gpuName: String? { get }
+    var kernelBuild: String? { get }
+    var deviceModel: String? { get }
+    var imuMagnitude: Double? { get }
+    var imuVariance: Double? { get }
+    var touchForceVar: Double? { get }
+    var signals: [RiskSignal] { get }
+    var server: ServerSignals? { get }
+    var local: LocalSignals? { get }
+    var graphPayload: GraphPayload? { get }
+    var challengeBinding: ChallengeBindingPayload? { get }
+    var jailbreakIsJailbroken: Bool { get }
+    var jailbreakConfidence: Double { get }
+    var jailbreakDetectedMethods: [String] { get }
+    var jailbreakDetails: String { get }
+}
+
 private struct PayloadMirror: Decodable {
     var sdkVersion: String?
     var reportId: String?
@@ -565,6 +811,86 @@ private struct PayloadMirror: Decodable {
     var local: LocalSignals?
     var graphPayload: GraphPayload?
     var challengeBinding: ChallengeBindingPayload?
+}
+
+extension PayloadMirror: PayloadMirrorProtocol {
+    var jailbreakIsJailbroken: Bool { jailbreak.isJailbroken }
+    var jailbreakConfidence: Double { jailbreak.confidence }
+    var jailbreakDetectedMethods: [String] { jailbreak.detectedMethods }
+    var jailbreakDetails: String { jailbreak.details }
+}
+
+private struct CompactPayloadMirror: Decodable {
+    var sdkVersion: String?
+    var reportId: String?
+    var timestamp: Double?
+    var generatedAt: String
+    var deviceID: String
+    var network: NetworkSignals
+    var behavior: BehaviorSignals
+    var jailbreak: CompactJailbreakMirror
+    var score: Double
+    var isHighRisk: Bool
+    var summary: String
+    var tamperedCount: Int?
+    var gpuName: String?
+    var kernelBuild: String?
+    var deviceModel: String?
+    var imuMagnitude: Double?
+    var imuVariance: Double?
+    var touchForceVar: Double?
+    var signals: [RiskSignal]
+    var server: ServerSignals?
+    var local: LocalSignals?
+    var graphPayload: GraphPayload?
+    var challengeBinding: ChallengeBindingPayload?
+
+    private enum CodingKeys: String, CodingKey {
+        case sdkVersion = "sv"
+        case reportId = "ri"
+        case timestamp = "ts"
+        case generatedAt = "ga"
+        case deviceID = "di"
+        case network = "nw"
+        case behavior = "bh"
+        case jailbreak = "jb"
+        case score = "sc"
+        case isHighRisk = "hr"
+        case summary = "sm"
+        case tamperedCount = "tc"
+        case gpuName = "gn"
+        case kernelBuild = "kb"
+        case deviceModel = "dm"
+        case imuMagnitude = "im"
+        case imuVariance = "iv"
+        case touchForceVar = "tf"
+        case signals = "sg"
+        case server = "sr"
+        case local = "lc"
+        case graphPayload = "gd"
+        case challengeBinding = "cb"
+    }
+}
+
+extension CompactPayloadMirror: PayloadMirrorProtocol {
+    var jailbreakIsJailbroken: Bool { jailbreak.isJailbroken }
+    var jailbreakConfidence: Double { jailbreak.confidence }
+    var jailbreakDetectedMethods: [String] { jailbreak.detectedMethods }
+    var jailbreakDetails: String { jailbreak.details }
+}
+
+private struct CompactJailbreakMirror: Decodable {
+    var isJailbroken: Bool
+    var confidence: Double
+    var detectedMethods: [String]
+    var details: String
+
+    private enum CodingKeys: String, CodingKey {
+        case isJailbroken = "ij"
+        case confidence = "c"
+        case detectedMethods = "dm"
+        case details = "dt"
+    }
 }
 
 private struct JailbreakMirror: Decodable {

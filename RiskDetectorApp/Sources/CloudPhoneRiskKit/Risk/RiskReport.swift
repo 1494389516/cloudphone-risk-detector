@@ -64,6 +64,13 @@ public enum SignalID {
     static let imuNoiseSynthetic = "imu_noise_synthetic"
     static let imuNoiseUnavailable = "imu_noise_unavailable"
     static let imuNoiseInsufficient = "imu_noise_insufficient"
+
+    // Anti-debug watchdog
+    static let antiDebugWatchdogAnomaly = "anti_debug_watchdog_anomaly"
+    static let antiDebugWatchdogTraced = "anti_debug_watchdog_traced"
+    static let antiDebugWatchdogDenyAttachFailed = "anti_debug_watchdog_deny_attach_failed"
+    static let antiDebugWatchdogExceptionPort = "anti_debug_watchdog_exception_port"
+    static let antiDebugWatchdogExceptionQuery = "anti_debug_watchdog_exception_query"
 }
 
 // MARK: - Signal Categories
@@ -263,13 +270,7 @@ public final class CPRiskReport: NSObject {
     }
 
     /// 用于上报的 JSON（未加密）。
-    @available(*, deprecated, message: "Use securePayload() for production. jsonData() returns unencrypted data suitable only for debugging.")
-    @objc public func jsonData(prettyPrinted: Bool = false) -> Data {
-        #if DEBUG
-        Logger.log("⚠️ CPRiskReport.jsonData(): returning unencrypted payload — use securePayload() in production")
-        #else
-        assertionFailure("CPRiskReport.jsonData() called in Release — prefer securePayload() for encrypted transport")
-        #endif
+    @objc public func unencryptedPayloadData(prettyPrinted: Bool = false) -> Data {
         do {
             return try JSON.encode(payload, prettyPrinted: prettyPrinted)
         } catch {
@@ -278,8 +279,22 @@ public final class CPRiskReport: NSObject {
         }
     }
 
+    @objc public func unencryptedPayloadString(prettyPrinted: Bool = false) -> String {
+        String(data: unencryptedPayloadData(prettyPrinted: prettyPrinted), encoding: .utf8) ?? "{}"
+    }
+
+    @available(*, deprecated, message: "Use securePayload() for production. jsonData() returns unencrypted data suitable only for debugging.")
+    @objc public func jsonData(prettyPrinted: Bool = false) -> Data {
+        #if DEBUG
+        Logger.log("⚠️ CPRiskReport.jsonData(): returning unencrypted payload — use securePayload() in production")
+        #else
+        assertionFailure("CPRiskReport.jsonData() called in Release — prefer securePayload() for encrypted transport")
+        #endif
+        return unencryptedPayloadData(prettyPrinted: prettyPrinted)
+    }
+
     @objc public func jsonString(prettyPrinted: Bool = false) -> String {
-        String(data: jsonData(prettyPrinted: prettyPrinted), encoding: .utf8) ?? "{}"
+        unencryptedPayloadString(prettyPrinted: prettyPrinted)
     }
 
     /// AES-GCM 加密后的 payload（生产环境推荐）。

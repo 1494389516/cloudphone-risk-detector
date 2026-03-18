@@ -148,8 +148,11 @@ public final class AnomalyDetector {
         let stdDev = sqrt(variance)
 
         guard stdDev > 0 else {
-            // 所有样本值相同，无法判断
-            return ZScoreResult(zScore: 0, isAnomalous: false, threshold: threshold)
+            // 历史样本完全稳定时，只要当前值偏离历史均值，就应视为强异常。
+            if value == mean {
+                return ZScoreResult(zScore: 0, isAnomalous: false, threshold: threshold)
+            }
+            return ZScoreResult(zScore: .infinity, isAnomalous: true, threshold: threshold)
         }
 
         let zScore = abs((value - mean) / stdDev)
@@ -441,7 +444,7 @@ private func sqrt(_ x: Double) -> Double {
 private func interpolatedPercentile(sorted: [Double], p: Double) -> Double {
     guard !sorted.isEmpty else { return 0 }
     let n = Double(sorted.count)
-    let index = p * (n - 1)
+    let index = max(0, min((p * n) - 0.5, n - 1))
     let lower = Int(Darwin.floor(index))
     let upper = Int(Darwin.ceil(index))
     guard lower >= 0, upper < sorted.count else { return sorted[max(0, min(lower, sorted.count - 1))] }

@@ -28,6 +28,7 @@ public final class ChallengeSession: @unchecked Sendable {
     private var _submittedChallengeIds: Set<String> = []
     private var _nextChallenge: ChallengeTrigger.BlindChallenge?
     private var _executionStatus: ChallengeExecutionStatus = .completed
+    private var _challengeKey: SymmetricKey?
 
     /// 当前状态
     public var state: ChallengeSessionState {
@@ -261,23 +262,19 @@ public struct ChallengeVerificationResult: Codable, Sendable {
 // MARK: - Challenge HMAC Verification
 
 extension ChallengeSession {
-
-    private static let challengeKeyLock = NSLock()
-    private static var _challengeKey: SymmetricKey?
-
     /// Configure the HMAC key used to verify `ChallengeVerificationResult`.
     public func configureChallengeKey(_ key: Data) {
-        Self.challengeKeyLock.lock()
-        defer { Self.challengeKeyLock.unlock() }
-        Self._challengeKey = SymmetricKey(data: key)
+        lock.lock()
+        defer { lock.unlock() }
+        _challengeKey = SymmetricKey(data: key)
     }
 
     /// Verify the HMAC on a `ChallengeVerificationResult`.
     /// Returns a `challenge_hmac_mismatch` signal if verification fails, or nil on success / no key configured.
     public func verifyResult(_ result: ChallengeVerificationResult) -> RiskSignal? {
-        Self.challengeKeyLock.lock()
-        let key = Self._challengeKey
-        Self.challengeKeyLock.unlock()
+        lock.lock()
+        let key = _challengeKey
+        lock.unlock()
 
         guard let key else { return nil }
 
