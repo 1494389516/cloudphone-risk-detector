@@ -92,7 +92,8 @@ func resolveEncryptionKey(from options: CLIOptions) -> Data? {
         return dataFromHex(hex)
     }
     if let path = options.keyFile {
-        return try? Data(contentsOf: URL(fileURLWithPath: path)).prefix(ArmorABI.keySize)
+        guard let raw = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return nil }
+        return Data(raw.prefix(ArmorABI.keySize))
     }
     if let envHex = ProcessInfo.processInfo.environment["CPRISK_ARMOR_KEY"] {
         return dataFromHex(envHex)

@@ -267,7 +267,13 @@ static void register_locked(int reclaiming) {
     }
 
     pthread_t th;
-    pthread_create(&th, NULL, exception_handler_thread, NULL);
+    int rc = pthread_create(&th, NULL, exception_handler_thread, NULL);
+    if (rc != 0) {
+        mach_port_deallocate(mach_task_self(), s_exception_port);
+        s_exception_port = MACH_PORT_NULL;
+        atomic_store(&s_registered, 0);
+        return;
+    }
     pthread_detach(th);
 
     atomic_store(&s_registered, 1);

@@ -154,7 +154,6 @@ public enum SignalCompressor {
         let hasHardwareCapabilityMismatch = ids.contains("haptic_capability_mismatch") || ids.contains("refresh_rate_mismatch") || ids.contains("proximity_sensor_absent")
         if hasHardwareCapabilityMismatch { bits |= 0x0200 }
         if ids.contains("network_interface_anomaly") { bits |= 0x0400 }
-        if ids.contains("physical_sensor_anomaly") { bits |= 0x0800 }
 
         // bit 12-15：SDK 5.2 新信号（原 bits 12-14 行为熵已迁移至 extendedByte）
         if ids.contains("screen_captured") { bits |= 0x1000 }

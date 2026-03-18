@@ -186,8 +186,8 @@ final class E2EArmorTests: XCTestCase {
         let rawAfter = try cstringSection.readContent(from: file.data)
         for s in sensitiveStrings {
             let pattern = Data(s.utf8)
-            XCTAssertFalse(
-                rawAfter.range(of: pattern) != nil,
+            XCTAssertNil(
+                rawAfter.range(of: pattern),
                 "Sensitive string '\(s)' should be zeroed in __cstring after Pass 1"
             )
         }

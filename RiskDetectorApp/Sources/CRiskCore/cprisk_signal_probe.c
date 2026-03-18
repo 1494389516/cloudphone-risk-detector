@@ -317,7 +317,8 @@ int cprisk_detect_single_stepping(void) {
     (void)acc;
 
     uint64_t t1 = mach_absolute_time();
-    uint64_t elapsed_ns = (t1 - t0) * tb.numer / tb.denom;
+    uint64_t diff = t1 - t0;
+    uint64_t elapsed_ns = diff / tb.denom * tb.numer + (diff % tb.denom) * tb.numer / tb.denom;
 
     return (elapsed_ns > CPRISK_SINGLE_STEP_THRESHOLD_NS) ? 1 : 0;
 }
