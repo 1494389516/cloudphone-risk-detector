@@ -47,7 +47,7 @@ final class BehaviorFingerprintTests: XCTestCase {
 
     func testForceTooUniform_TriggersWhenVarianceBelowThreshold() {
         let touch = TestFixtures.makeTouchMetrics(
-            sampleCount: 20, tapCount: 4, swipeCount: 3,
+            sampleCount: 20, tapCount: 5, swipeCount: 3,
             forceVariance: 1e-8 // well below default 1e-6
         )
         let context = TestFixtures.makeRiskContext(touch: touch)
@@ -102,7 +102,7 @@ final class BehaviorFingerprintTests: XCTestCase {
 
     func testRadiusTooUniform_TriggersWhenVarianceBelowThreshold() {
         let touch = TestFixtures.makeTouchMetrics(
-            sampleCount: 20, tapCount: 4, swipeCount: 3,
+            sampleCount: 20, tapCount: 5, swipeCount: 3,
             majorRadiusVariance: 0.001 // below default 0.005
         )
         let context = TestFixtures.makeRiskContext(touch: touch)
@@ -177,9 +177,9 @@ final class BehaviorFingerprintTests: XCTestCase {
 
     func testCustomThresholds_OverrideDefaults() {
         let customThresholds = BehaviorThresholds(
-            forceVariance: 0.5,    // very permissive
-            radiusVariance: 0.5,   // very permissive
-            swipeSpeedCV: 0.01     // very strict
+            forceVariance: 0.0001, // lower threshold: less likely to trigger
+            radiusVariance: 0.001, // lower threshold: less likely to trigger
+            swipeSpeedCV: 0.01     // stricter threshold for speed regularity
         )
         let touch = TestFixtures.makeTouchMetrics(
             sampleCount: 20, tapCount: 4, swipeCount: 5,

@@ -24,3 +24,7 @@ RiskDetectorApp/Legacy/
 # Red team analysis notes & SDK spec (local only)
 RED_TEAM_ANALYSIS_ROUND*.md
 sdk *.txt
+
+# CFF / anti-deobfuscation implementation reports (local tracking)
+CFF_IMPLEMENTATION_REPORT.md
+ANTI_DEOBFUSCATION_REPORT.md

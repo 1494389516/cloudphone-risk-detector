@@ -76,205 +76,578 @@ public struct RiskDetectionEngine: Sendable {
             )
         }
 
-        // 0. SDK 4.4 执行流栈回溯：关键节点校验调用栈
-        //
-        // 分两条路径处理：
-        // - dladdr_hook_detected：验证机制本身已被 hook，整个栈验证失效，立即 block。
-        // - rop_chain_detected：仅将信号注入 extraSignals 进入正常评分管道，不硬性早退。
-        //   原因：合法的代码混淆/第三方 SDK 可能产生不在已知 __TEXT 范围内的合法返回地址，
-        //   单次触发即 block 会造成误杀，且无任何降级路径。注入信号可让后续组合规则/阈值
-        //   参与决策，并在结果中保留可审计的信号记录。
-        var callStackExtraSignals: [RiskSignal] = []
-        let (isCallStackMalicious, callStackSignalId) = CallStackUnwinder.validateCallStack()
-        if isCallStackMalicious, let signalId = callStackSignalId {
-            if signalId == CallStackUnwinder.dladdrHookSignalId {
-                // dladdr 本身被 hook → 验证机制失效，立即 block
-                let hookSignal = RiskSignal(
-                    id: signalId,
-                    category: "anti_tamper",
-                    score: 0,
-                    evidence: [
-                        "detail": "call_stack_return_address_outside_trusted_regions",
-                        "mechanism": "dladdr_dual_path_vm_region_validation",
-                    ],
-                    state: .tampered,
-                    layer: 2,
-                    weightHint: 90
-                )
-                return RiskVerdict(
-                    score: 100,
-                    internalLevel: .critical,
-                    internalAction: .block,
-                    confidence: 1.0,
-                    primaryReasons: [hookSignal.id],
-                    signals: [hookSignal],
-                    scenario: scenario
-                )
-            } else {
-                // rop_chain_detected 等：注入信号，进入正常评分管道
-                callStackExtraSignals.append(RiskSignal(
-                    id: signalId,
-                    category: "anti_tamper",
-                    score: 0,
-                    evidence: [
-                        "detail": "call_stack_return_address_outside_trusted_regions",
-                        "mechanism": "dladdr_dual_path_vm_region_validation",
-                    ],
-                    state: .tampered,
-                    layer: 2,
-                    weightHint: 90
-                ))
-                log("CallStackUnwinder: \(signalId) injected as signal (not hard-exit)")
-            }
-        }
-
-        // 1. 获取场景策略（带版本变形）
-        let planner = MutationPlanner(
-            strategy: policy.mutationStrategy,
-            scope: scenario.identifier,
-            deviceID: context.deviceID
-        )
-        let scenarioPolicy = mutatedScenarioPolicy(
-            base: policy.scenarioPolicy(for: scenario),
-            planner: planner
-        )
-        log("Scenario policy - medium: \(scenarioPolicy.mediumThreshold), high: \(scenarioPolicy.highThreshold), critical: \(scenarioPolicy.criticalThreshold)")
-
-        // 2. 收集所有风险信号（含调用栈注入信号）
-        var allSignals = collectSignals(
+        let collected = collectAndAugmentSignals(
             context: context,
-            scenarioPolicy: scenarioPolicy,
-            extraSignals: extraSignals + callStackExtraSignals,
-            planner: planner
+            scenario: scenario,
+            extraSignals: extraSignals
         )
-
-        // 2.1 跨层一致性约束（Layer1/2/3）
-        let crossLayerSignals = deriveCrossLayerSignals(from: allSignals)
-        if !crossLayerSignals.isEmpty {
-            allSignals.append(contentsOf: crossLayerSignals)
-            log("Cross-layer inconsistency hit: +\(crossLayerSignals.count) signals")
+        if let preflightVerdict = collected.preflightVerdict {
+            log("=== Evaluation complete ===")
+            log("Verdict - level: \(preflightVerdict.level.rawValue), action: \(preflightVerdict.action.rawValue), confidence: \(preflightVerdict.confidence)")
+            return preflightVerdict
         }
 
-        // 2.2 服务端黑名单命中（Layer4）
-        let blocklistSignals = deriveBlocklistSignals(from: allSignals)
-        if !blocklistSignals.isEmpty {
-            allSignals.append(contentsOf: blocklistSignals)
-            log("Server blocklist hit: +\(blocklistSignals.count) signals")
-        }
-
-        // 2.3 每版本变形：打乱信号顺序，提升脚本复用成本
-        allSignals = planner.maybeShuffle(allSignals, salt: "signal_order")
-        log("Collected \(allSignals.count) signals")
-
-        // 2.4 内存语义压缩：将信号压缩为 9 字节摘要（1.1，在应用组合规则之前）
-        let compressResult = SignalCompressor.compress(signals: allSignals)
-
-        // 2.5 压缩摘要快速判决通道：纯位向量规则，命中可短路
-        if let fastVerdict = evaluateCompressedVerdictRules(
-            digest: compressResult.digest,
-            scenarioPolicy: scenarioPolicy,
-            signals: allSignals,
+        if let fastDecision = fastDigestShortCircuit(
+            context: context,
+            collected: collected,
             scenario: scenario
         ) {
-            log("Compressed verdict rule hit, short-circuit: \(fastVerdict.internalAction.rawValue)")
-            return fastVerdict
+            let verdict = fastDecision.verdict
+            log("=== Evaluation complete ===")
+            log("Verdict - level: \(verdict.level.rawValue), action: \(verdict.action.rawValue), confidence: \(verdict.confidence)")
+            return verdict
         }
 
-        // 3. 应用组合规则
-        let comboRules = planner.maybeShuffle(scenarioPolicy.comboRules, salt: "combo_rules")
-        let comboBonus = applyComboRules(
-            signals: allSignals,
-            comboRules: comboRules
-        )
-        if comboBonus > 0 {
-            log("Combo rules bonus: +\(comboBonus)")
-        }
-
-        // 4. 计算基础分数
-        let scoreComponents = calculateBaseScore(
-            signals: allSignals,
-            weights: scenarioPolicy.signalWeights,
-            weightOverrides: policy.signalWeightOverrides,
-            planner: planner
-        )
-        let baseScore = scoreComponents.total
-        log(
-            "Base score: \(baseScore) " +
-            "(legacy=\(scoreComponents.legacyComponent), hard=\(scoreComponents.hardComponent), " +
-            "soft=\(scoreComponents.softComponent), tampered=\(scoreComponents.tamperedCount))"
-        )
-
-        // 5. 服务端盲挑战（不暴露规则细节）
-        let blindBonus = evaluateBlindChallengeBonus(
-            signals: allSignals,
-            scenario: scenario,
-            deviceID: context.deviceID
-        )
-        if blindBonus > 0 {
-            log("Blind challenge bonus applied")
-        }
-
-        // 5.1 挑战验证结果回注：服务端 adjustedScore 作为基础偏移（一次性消费）
-        let challengeOffset = ChallengeResultStore.shared.consumeScoreOffset() ?? 0
-        if challengeOffset != 0 {
-            log("Challenge result offset applied: +\(challengeOffset)")
-        }
-
-        // 6. 应用组合规则加成
-        // Clamp [0, 100]: challengeOffset can be negative (range -100..100 from ChallengeResultStore).
-        // Without the lower bound, a large negative offset produces a negative finalScore, which then
-        // hits the `default` branch of InternalRiskLevel.from(score:) and is misclassified as .critical.
-        let finalScore = min(max(baseScore + comboBonus + blindBonus + challengeOffset, 0), 100)
-        log("Final score: \(finalScore)")
-
-        // 7. 应用强制规则
-        let (adjustedScore, forcedAction) = applyForceRules(
-            score: finalScore,
+        let intermediate = scoreAndForceDecision(
             context: context,
-            signals: allSignals,
-            scenarioPolicy: scenarioPolicy
-        )
-        if let action = forcedAction {
-            log("Force rule applied, action: \(action.rawValue)")
-        }
-
-        // 8. 使用决策树确定最终动作
-        let evaluationContext = EvaluationContext(
-            score: adjustedScore,
-            signals: allSignals,
             scenario: scenario,
-            riskContext: context,
-            policy: scenarioPolicy
+            collected: collected
         )
-
-        let decisionTree = DecisionTree.tree(for: scenario)
-        let treeAction = decisionTree.decide(context: evaluationContext)
-        log("Decision tree action: \(treeAction.rawValue)")
-
-        // 9. 强制动作优先级高于决策树
-        let finalAction = forcedAction ?? treeAction
-
-        // 10. 创建判决结果
-        let verdict = RiskVerdict(
-            score: adjustedScore,
-            internalLevel: scenarioPolicy.level(for: adjustedScore),
-            internalAction: finalAction,
-            confidence: calculateConfidence(
-                context: context,
-                signals: allSignals,
-                score: adjustedScore
-            ),
-            primaryReasons: extractPrimaryReasons(signals: allSignals),
-            signals: allSignals,
+        let verdict = treeCommitVerdict(
+            context: context,
             scenario: scenario,
-            compressedDigest: compressResult.digest,
-            mappingVersion: compressResult.mappingVersion
+            collected: collected,
+            intermediate: intermediate
         )
 
         log("=== Evaluation complete ===")
         log("Verdict - level: \(verdict.level.rawValue), action: \(verdict.action.rawValue), confidence: \(verdict.confidence)")
 
         return verdict
+    }
+
+    private func collectAndAugmentSignals(
+        context: RiskContext,
+        scenario: RiskScenario,
+        extraSignals: [RiskSignal]
+    ) -> CollectedSignalContext {
+        let planner = MutationPlanner(
+            strategy: policy.mutationStrategy,
+            scope: scenario.identifier,
+            deviceID: context.deviceID
+        )
+        let challengeOffsetHint = ChallengeResultStore.shared.currentScoreOffset() ?? 0
+        let regionKey = regionStateKey(label: "collectAndAugmentSignals", scenario: scenario)
+        let regionSalt = runtimeSalt(
+            phase: "collect",
+            scenario: scenario,
+            context: context,
+            signals: extraSignals,
+            challengeOffsetHint: challengeOffsetHint,
+            antiTamperingDigest: 0
+        )
+
+        var scenarioPolicy = policy.scenarioPolicy(for: scenario)
+        var allSignals: [RiskSignal] = []
+        var callStackExtraSignals: [RiskSignal] = []
+        var compressResult = SignalCompressor.compress(signals: [])
+        var preflightVerdict: RiskVerdict?
+        var sink: CollectedSignalContext?
+        var state = encodeRegionState(0x11, key: regionKey, salt: regionSalt)
+        var budget = 0
+        var poison = regionSalt ^ challengeOffsetHint.bitPattern
+
+        while sink == nil && budget < 12 {
+            switch decodeRegionState(state, key: regionKey, salt: regionSalt) {
+            case 0x11:
+                let (isCallStackMalicious, callStackSignalId) = CallStackUnwinder.validateCallStack()
+                if isCallStackMalicious, let signalId = callStackSignalId {
+                    if signalId == CallStackUnwinder.dladdrHookSignalId {
+                        let hookSignal = makeCallStackSignal(id: signalId)
+                        preflightVerdict = RiskVerdict(
+                            score: 100,
+                            internalLevel: .critical,
+                            internalAction: .block,
+                            confidence: 1.0,
+                            primaryReasons: [hookSignal.id],
+                            signals: [hookSignal],
+                            scenario: scenario
+                        )
+                        state = encodeRegionState(0x17, key: regionKey, salt: regionSalt)
+                    } else {
+                        callStackExtraSignals.append(makeCallStackSignal(id: signalId))
+                        log("CallStackUnwinder: \(signalId) injected as signal (not hard-exit)")
+                        state = encodeRegionState(0x12, key: regionKey, salt: regionSalt)
+                    }
+                } else {
+                    state = encodeRegionState(0x12, key: regionKey, salt: regionSalt)
+                }
+            case 0x12:
+                scenarioPolicy = mutatedScenarioPolicy(
+                    base: policy.scenarioPolicy(for: scenario),
+                    planner: planner
+                )
+                log("Scenario policy - medium: \(scenarioPolicy.mediumThreshold), high: \(scenarioPolicy.highThreshold), critical: \(scenarioPolicy.criticalThreshold)")
+                state = encodeRegionState(0x13, key: regionKey, salt: regionSalt)
+            case 0x13:
+                allSignals = collectSignals(
+                    context: context,
+                    scenarioPolicy: scenarioPolicy,
+                    extraSignals: extraSignals + callStackExtraSignals,
+                    planner: planner
+                )
+                state = encodeRegionState(0x14, key: regionKey, salt: regionSalt)
+            case 0x14:
+                let crossLayerSignals = deriveCrossLayerSignals(from: allSignals)
+                if !crossLayerSignals.isEmpty {
+                    allSignals.append(contentsOf: crossLayerSignals)
+                    log("Cross-layer inconsistency hit: +\(crossLayerSignals.count) signals")
+                }
+                state = encodeRegionState(0x15, key: regionKey, salt: regionSalt)
+            case 0x15:
+                let blocklistSignals = deriveBlocklistSignals(from: allSignals)
+                if !blocklistSignals.isEmpty {
+                    allSignals.append(contentsOf: blocklistSignals)
+                    log("Server blocklist hit: +\(blocklistSignals.count) signals")
+                }
+                state = encodeRegionState(0x16, key: regionKey, salt: regionSalt)
+            case 0x16:
+                allSignals = planner.maybeShuffle(allSignals, salt: "signal_order")
+                log("Collected \(allSignals.count) signals")
+                compressResult = SignalCompressor.compress(signals: allSignals)
+                state = encodeRegionState(0x17, key: regionKey, salt: regionSalt)
+            case 0x17:
+                sink = CollectedSignalContext(
+                    planner: planner,
+                    scenarioPolicy: scenarioPolicy,
+                    allSignals: allSignals,
+                    compressResult: compressResult,
+                    preflightVerdict: preflightVerdict,
+                    challengeOffsetHint: challengeOffsetHint,
+                    antiTamperingDigest: antiTamperingDigest(from: allSignals)
+                )
+            default:
+                poison = poison &* 0x100000001b3 &+ 0x9e3779b97f4a7c15
+                preflightVerdict = preflightVerdict ?? failClosedVerdict(
+                    scenario: scenario,
+                    phase: "collectAndAugmentSignals",
+                    poison: poison
+                )
+                compressResult = SignalCompressor.compress(signals: allSignals)
+                state = encodeRegionState(0x17, key: regionKey, salt: regionSalt)
+            }
+            budget += 1
+        }
+
+        return sink ?? CollectedSignalContext(
+            planner: planner,
+            scenarioPolicy: scenarioPolicy,
+            allSignals: allSignals,
+            compressResult: compressResult,
+            preflightVerdict: preflightVerdict ?? failClosedVerdict(
+                scenario: scenario,
+                phase: "collectAndAugmentSignals_budget",
+                poison: poison
+            ),
+            challengeOffsetHint: challengeOffsetHint,
+            antiTamperingDigest: antiTamperingDigest(from: allSignals)
+        )
+    }
+
+    private func fastDigestShortCircuit(
+        context: RiskContext,
+        collected: CollectedSignalContext,
+        scenario: RiskScenario
+    ) -> FastDigestDecision? {
+        let regionKey = regionStateKey(label: "fastDigestShortCircuit", scenario: scenario)
+        let regionSalt = runtimeSalt(
+            phase: "fast_digest",
+            scenario: scenario,
+            context: context,
+            signals: collected.allSignals,
+            challengeOffsetHint: collected.challengeOffsetHint,
+            antiTamperingDigest: collected.antiTamperingDigest
+        )
+        var sink: FastDigestDecision?
+        var done = false
+        var state = encodeRegionState(0x21, key: regionKey, salt: regionSalt)
+        var candidateVerdict: RiskVerdict?
+        var budget = 0
+        var poison = collected.antiTamperingDigest ^ regionSalt
+
+        while !done && budget < 8 {
+            let decoded = decodeRegionState(state, key: regionKey, salt: regionSalt)
+            if decoded == 0x21 {
+                candidateVerdict = evaluateCompressedVerdictRules(
+                    digest: collected.compressResult.digest,
+                    scenarioPolicy: collected.scenarioPolicy,
+                    signals: collected.allSignals,
+                    scenario: scenario
+                )
+                state = encodeRegionState(candidateVerdict == nil ? 0x22 : 0x23, key: regionKey, salt: regionSalt)
+            } else if decoded == 0x22 {
+                done = true
+            } else if decoded == 0x23 {
+                if let verdict = candidateVerdict {
+                    log("Compressed verdict rule hit, short-circuit: \(verdict.internalAction.rawValue)")
+                    sink = FastDigestDecision(verdict: verdict)
+                    done = true
+                } else {
+                    state = encodeRegionState(0x24, key: regionKey, salt: regionSalt)
+                }
+            } else {
+                poison = poison &* 0x9e3779b97f4a7c15 &+ 0x517cc1b727220a95
+                sink = FastDigestDecision(
+                    verdict: failClosedVerdict(
+                        scenario: scenario,
+                        phase: "fastDigestShortCircuit",
+                        poison: poison
+                    )
+                )
+                done = true
+            }
+            budget += 1
+        }
+
+        if !done && sink == nil {
+            return FastDigestDecision(
+                verdict: failClosedVerdict(
+                    scenario: scenario,
+                    phase: "fastDigestShortCircuit_budget",
+                    poison: poison
+                )
+            )
+        }
+        return sink
+    }
+
+    private func scoreAndForceDecision(
+        context: RiskContext,
+        scenario: RiskScenario,
+        collected: CollectedSignalContext
+    ) -> IntermediateDecision {
+        let regionKey = regionStateKey(label: "scoreAndForceDecision", scenario: scenario)
+        let regionSalt = runtimeSalt(
+            phase: "score_force",
+            scenario: scenario,
+            context: context,
+            signals: collected.allSignals,
+            challengeOffsetHint: collected.challengeOffsetHint,
+            antiTamperingDigest: collected.antiTamperingDigest
+        )
+
+        var comboBonus = 0.0
+        var blindBonus = 0.0
+        var challengeOffset = 0.0
+        var finalScore = 0.0
+        var adjustedScore = collected.scenarioPolicy.criticalThreshold
+        var forcedAction: RiskAction? = .block
+        var scoreComponents = ScoreComponents(
+            total: 0,
+            legacyComponent: 0,
+            hardComponent: 0,
+            softComponent: 0,
+            tamperedCount: 0
+        )
+        var sink: IntermediateDecision?
+        var state = encodeRegionState(0x31, key: regionKey, salt: regionSalt)
+        var budget = 0
+        var poison = regionSalt ^ collected.antiTamperingDigest
+
+        while sink == nil && budget < 14 {
+            let decoded = decodeRegionState(state, key: regionKey, salt: regionSalt)
+            if decoded == 0x31 {
+                let comboRules = collected.planner.maybeShuffle(collected.scenarioPolicy.comboRules, salt: "combo_rules")
+                comboBonus = applyComboRules(
+                    signals: collected.allSignals,
+                    comboRules: comboRules
+                )
+                if comboBonus > 0 {
+                    log("Combo rules bonus: +\(comboBonus)")
+                }
+                state = encodeRegionState(0x32, key: regionKey, salt: regionSalt)
+            } else if decoded == 0x32 {
+                scoreComponents = calculateBaseScore(
+                    signals: collected.allSignals,
+                    weights: collected.scenarioPolicy.signalWeights,
+                    weightOverrides: policy.signalWeightOverrides,
+                    planner: collected.planner
+                )
+                let baseScore = scoreComponents.total
+                log(
+                    "Base score: \(baseScore) " +
+                    "(legacy=\(scoreComponents.legacyComponent), hard=\(scoreComponents.hardComponent), " +
+                    "soft=\(scoreComponents.softComponent), tampered=\(scoreComponents.tamperedCount))"
+                )
+                let connectorState: UInt32 = ((poison ^ UInt64(scoreComponents.tamperedCount)) & 1) == 0 ? 0x33 : 0x34
+                poison ^= UInt64(scoreComponents.tamperedCount) &+ 0xA511E9B3
+                finalScore = baseScore
+                state = encodeRegionState(connectorState, key: regionKey, salt: regionSalt)
+            } else if decoded == 0x33 || decoded == 0x34 {
+                blindBonus = evaluateBlindChallengeBonus(
+                    signals: collected.allSignals,
+                    scenario: scenario,
+                    deviceID: context.deviceID
+                )
+                if blindBonus > 0 {
+                    log("Blind challenge bonus applied")
+                }
+                state = encodeRegionState(0x35, key: regionKey, salt: regionSalt)
+            } else if decoded == 0x35 {
+                challengeOffset = ChallengeResultStore.shared.consumeScoreOffset() ?? 0
+                if challengeOffset != 0 {
+                    log("Challenge result offset applied: +\(challengeOffset)")
+                }
+                finalScore = min(max(finalScore + comboBonus + blindBonus + challengeOffset, 0), 100)
+                log("Final score: \(finalScore)")
+                state = encodeRegionState(0x36, key: regionKey, salt: regionSalt)
+            } else if decoded == 0x36 {
+                (adjustedScore, forcedAction) = applyForceRules(
+                    score: finalScore,
+                    context: context,
+                    signals: collected.allSignals,
+                    scenarioPolicy: collected.scenarioPolicy
+                )
+                if let action = forcedAction {
+                    log("Force rule applied, action: \(action.rawValue)")
+                }
+                sink = IntermediateDecision(
+                    adjustedScore: adjustedScore,
+                    forcedAction: forcedAction
+                )
+            } else {
+                poison = poison &* 0x100000001b3 &+ 0xC6A4A7935BD1E995
+                sink = IntermediateDecision(
+                    adjustedScore: collected.scenarioPolicy.criticalThreshold,
+                    forcedAction: .block
+                )
+            }
+            budget += 1
+        }
+
+        return sink ?? IntermediateDecision(
+            adjustedScore: collected.scenarioPolicy.criticalThreshold,
+            forcedAction: .block
+        )
+    }
+
+    private func treeCommitVerdict(
+        context: RiskContext,
+        scenario: RiskScenario,
+        collected: CollectedSignalContext,
+        intermediate: IntermediateDecision
+    ) -> RiskConclusion {
+        let regionKey = regionStateKey(label: "treeCommitVerdict", scenario: scenario)
+        let regionSalt = runtimeSalt(
+            phase: "tree_commit",
+            scenario: scenario,
+            context: context,
+            signals: collected.allSignals,
+            challengeOffsetHint: collected.challengeOffsetHint,
+            antiTamperingDigest: collected.antiTamperingDigest,
+            scoreHint: intermediate.adjustedScore
+        )
+
+        var evaluationContext = EvaluationContext(
+            score: intermediate.adjustedScore,
+            signals: collected.allSignals,
+            scenario: scenario,
+            riskContext: context,
+            policy: collected.scenarioPolicy
+        )
+        var treeAction: RiskAction = collected.scenarioPolicy.action(for: collected.scenarioPolicy.level(for: intermediate.adjustedScore))
+        var finalAction: RiskAction = intermediate.forcedAction ?? treeAction
+        var sink: RiskConclusion?
+        var state = encodeRegionState(0x41, key: regionKey, salt: regionSalt)
+        var budget = 0
+        var poison = regionSalt ^ intermediate.adjustedScore.bitPattern
+
+        while sink == nil && budget < 10 {
+            switch decodeRegionState(state, key: regionKey, salt: regionSalt) {
+            case 0x41:
+                evaluationContext = EvaluationContext(
+                    score: intermediate.adjustedScore,
+                    signals: collected.allSignals,
+                    scenario: scenario,
+                    riskContext: context,
+                    policy: collected.scenarioPolicy,
+                    metadata: [
+                        "digestVersion": collected.compressResult.mappingVersion,
+                        "antiTamper": String(collected.antiTamperingDigest, radix: 16)
+                    ]
+                )
+                state = encodeRegionState(0x42, key: regionKey, salt: regionSalt)
+            case 0x42:
+                let decisionTree = DecisionTree.tree(for: scenario)
+                treeAction = decisionTree.decide(context: evaluationContext)
+                log("Decision tree action: \(treeAction.rawValue)")
+                state = encodeRegionState(intermediate.forcedAction == nil ? 0x44 : 0x43, key: regionKey, salt: regionSalt)
+            case 0x43:
+                finalAction = intermediate.forcedAction ?? treeAction
+                state = encodeRegionState(0x45, key: regionKey, salt: regionSalt)
+            case 0x44:
+                finalAction = treeAction
+                state = encodeRegionState(0x45, key: regionKey, salt: regionSalt)
+            case 0x45:
+                sink = RiskVerdict(
+                    score: intermediate.adjustedScore,
+                    internalLevel: collected.scenarioPolicy.level(for: intermediate.adjustedScore),
+                    internalAction: finalAction,
+                    confidence: calculateConfidence(
+                        context: context,
+                        signals: collected.allSignals,
+                        score: intermediate.adjustedScore
+                    ),
+                    primaryReasons: extractPrimaryReasons(signals: collected.allSignals),
+                    signals: collected.allSignals,
+                    scenario: scenario,
+                    compressedDigest: collected.compressResult.digest,
+                    mappingVersion: collected.compressResult.mappingVersion
+                )
+            default:
+                poison = poison &* 0x9e3779b97f4a7c15 &+ 0xD6E8FEB86659FD93
+                sink = failClosedVerdict(
+                    scenario: scenario,
+                    phase: "treeCommitVerdict",
+                    poison: poison
+                )
+            }
+            budget += 1
+        }
+
+        return sink ?? failClosedVerdict(
+            scenario: scenario,
+            phase: "treeCommitVerdict_budget",
+            poison: poison
+        )
+    }
+
+    private func makeCallStackSignal(id: String) -> RiskSignal {
+        RiskSignal(
+            id: id,
+            category: "anti_tamper",
+            score: 0,
+            evidence: [
+                "detail": "call_stack_return_address_outside_trusted_regions",
+                "mechanism": "dladdr_dual_path_vm_region_validation",
+            ],
+            state: .tampered,
+            layer: 2,
+            weightHint: 90
+        )
+    }
+
+    private func regionStateKey(label: String, scenario: RiskScenario) -> UInt64 {
+        fnv1a64("cff|\(label)|\(scenario.identifier)|\(policy.name)|\(policy.version)") | 1
+    }
+
+    private func runtimeSalt(
+        phase: String,
+        scenario: RiskScenario,
+        context: RiskContext,
+        signals: [RiskSignal],
+        challengeOffsetHint: Double,
+        antiTamperingDigest: UInt64,
+        scoreHint: Double? = nil
+    ) -> UInt64 {
+        let antiTamperIDs = signals
+            .filter { $0.category == "anti_tamper" || $0.state == .tampered }
+            .map(\.id)
+            .sorted()
+            .prefix(4)
+            .joined(separator: ",")
+        let material = [
+            phase,
+            scenario.identifier,
+            policy.name,
+            policy.version,
+            policy.mutationStrategy?.seed ?? "no_mutation_seed",
+            context.deviceID,
+            context.device.model,
+            context.jailbreak.isJailbroken ? "jb1" : "jb0",
+            context.network.isVPNActive ? "vpn1" : "vpn0",
+            context.network.proxyEnabled ? "px1" : "px0",
+            String(format: "%.2f", challengeOffsetHint),
+            String(antiTamperingDigest, radix: 16),
+            scoreHint.map { String(format: "%.2f", $0) } ?? "no_score",
+            antiTamperIDs
+        ].joined(separator: "|")
+        return fnv1a64(material)
+    }
+
+    private func antiTamperingDigest(from signals: [RiskSignal]) -> UInt64 {
+        let summary = signals
+            .filter { $0.category == "anti_tamper" || $0.state == .tampered }
+            .sorted { lhs, rhs in
+                if lhs.id == rhs.id {
+                    return (lhs.layer ?? -1) < (rhs.layer ?? -1)
+                }
+                return lhs.id < rhs.id
+            }
+            .map { signal in
+                "\(signal.id)#\(signal.layer ?? -1)#\(signal.weightHint)#\(stableSignalStateTag(signal.state))"
+            }
+            .joined(separator: "|")
+        guard !summary.isEmpty else { return 0 }
+        return fnv1a64(summary)
+    }
+
+    private func stableSignalStateTag(_ state: RiskSignalState?) -> String {
+        guard let state else { return "none" }
+        switch state {
+        case .hard(let detected):
+            return detected ? "hard1" : "hard0"
+        case .soft(let confidence):
+            return "soft:\(String(format: "%.3f", confidence))"
+        case .serverRequired:
+            return "serverRequired"
+        case .unavailable:
+            return "unavailable"
+        case .tampered:
+            return "tampered"
+        }
+    }
+
+    private func encodeRegionState(_ raw: UInt32, key: UInt64, salt: UInt64) -> UInt64 {
+        let shift = Int(((key ^ salt) & 0x7) + 5)
+        let mixed = UInt64(raw) ^ key ^ salt ^ 0xD6E8FEB86659FD93
+        return rotateLeft(mixed, by: shift) ^ 0xA5A5A5A5A5A5A5A5
+    }
+
+    private func decodeRegionState(_ encoded: UInt64, key: UInt64, salt: UInt64) -> UInt32 {
+        let shift = Int(((key ^ salt) & 0x7) + 5)
+        let mixed = rotateRight(encoded ^ 0xA5A5A5A5A5A5A5A5, by: shift)
+        return UInt32(truncatingIfNeeded: mixed ^ key ^ salt ^ 0xD6E8FEB86659FD93)
+    }
+
+    private func rotateLeft(_ value: UInt64, by shift: Int) -> UInt64 {
+        let normalized = shift & 63
+        guard normalized != 0 else { return value }
+        return (value << normalized) | (value >> (64 - normalized))
+    }
+
+    private func rotateRight(_ value: UInt64, by shift: Int) -> UInt64 {
+        let normalized = shift & 63
+        guard normalized != 0 else { return value }
+        return (value >> normalized) | (value << (64 - normalized))
+    }
+
+    private func failClosedVerdict(
+        scenario: RiskScenario,
+        phase: String,
+        poison: UInt64
+    ) -> RiskVerdict {
+        let poisonSignal = RiskSignal(
+            id: "engine_region_poison",
+            category: "anti_tamper",
+            score: 0,
+            evidence: [
+                "phase": phase,
+                "poison": String(poison, radix: 16)
+            ],
+            state: .tampered,
+            layer: 2,
+            weightHint: 100
+        )
+        return RiskVerdict(
+            score: 100,
+            internalLevel: .critical,
+            internalAction: .block,
+            confidence: 1.0,
+            primaryReasons: [poisonSignal.id],
+            signals: [poisonSignal],
+            scenario: scenario
+        )
     }
 
     // MARK: - 信号收集
@@ -1040,6 +1413,27 @@ private struct ScoreComponents: Sendable {
     let hardComponent: Double
     let softComponent: Double
     let tamperedCount: Int
+}
+
+private typealias RiskConclusion = RiskVerdict
+
+private struct CollectedSignalContext: Sendable {
+    let planner: MutationPlanner
+    let scenarioPolicy: ScenarioPolicy
+    let allSignals: [RiskSignal]
+    let compressResult: SignalCompressor.CompressResult
+    let preflightVerdict: RiskVerdict?
+    let challengeOffsetHint: Double
+    let antiTamperingDigest: UInt64
+}
+
+private struct FastDigestDecision: Sendable {
+    let verdict: RiskVerdict
+}
+
+private struct IntermediateDecision: Sendable {
+    let adjustedScore: Double
+    let forcedAction: RiskAction?
 }
 
 private extension RiskDetectionEngine {

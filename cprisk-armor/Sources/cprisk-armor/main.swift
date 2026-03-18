@@ -7,6 +7,7 @@ import IntegrityAnchor
 import StructureObfuscator
 import AntiDebugInjector
 import InstructionSubstitution
+import ControlFlowOrchestrator
 import SymbolStripper
 
 // MARK: - CLI Options
@@ -19,6 +20,7 @@ struct CLIOptions {
     var verbose: Bool = false
     var keyHex: String?
     var keyFile: String?
+    var cffPolicyPath: String?
 }
 
 func parseArguments() -> CLIOptions {
@@ -39,6 +41,9 @@ func parseArguments() -> CLIOptions {
         case "--key-file":
             i += 1
             if i < args.count { options.keyFile = args[i] }
+        case "--cff-policy":
+            i += 1
+            if i < args.count { options.cffPolicyPath = args[i] }
         case "--pass1": options.passes.insert(1)
         case "--pass2": options.passes.insert(2)
         case "--pass3": options.passes.insert(3)
@@ -47,6 +52,7 @@ func parseArguments() -> CLIOptions {
         case "--pass6": options.passes.insert(6)
         case "--pass7": options.passes.insert(7)
         case "--pass8": options.passes.insert(8)
+        case "--pass9": options.passes.insert(9)
         case "--all":   options.allPasses = true
         case "--verbose": options.verbose = true
         case "--help":
@@ -77,7 +83,9 @@ func printUsage() {
       --pass6           Pass 6: Symbol Stripping (nlist obfuscation)
       --pass7           Pass 7: Anti-Debug Metadata Injection
       --pass8           Pass 8: Instruction Substitution
+      --pass9           Pass 9: Control Flow Orchestrator (policy planning)
       --all             Enable all passes
+      --cff-policy      Override cff_policy.yaml path for Pass 9
       --verbose         Verbose output
       --help            Show this help
 
@@ -131,7 +139,7 @@ guard let inputPath = options.inputPath else {
 
 let outputPath = options.outputPath ?? (inputPath + "_armored")
 let verbose = options.verbose
-let enabledPasses: Set<Int> = options.allPasses ? [1, 2, 3, 4, 5, 6, 7, 8] : options.passes
+let enabledPasses: Set<Int> = options.allPasses ? [1, 2, 3, 4, 5, 6, 7, 8, 9] : options.passes
 
 if enabledPasses.isEmpty {
     fputs("Warning: No passes enabled. Use --all or --passN flags.\n", stderr)
@@ -183,6 +191,7 @@ do {
         (3, DataSegmentEncryptorPass()),
         (5, StructureObfuscatorPass()),
         (7, AntiDebugInjectorPass()),
+        (9, ControlFlowOrchestratorPass(policyFilePath: options.cffPolicyPath)),
         (6, SymbolStripperPass()),
     ]
 

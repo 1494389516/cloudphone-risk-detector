@@ -70,7 +70,11 @@ public final class RiskHistoryStore {
     /// 时钟回拨容忍阈值（秒）
     private static let clockRollbackToleranceSeconds: TimeInterval = 60
 
-    public init(fileStore: SecureFileStore = .shared) {
+    public init() {
+        self.fileStore = .shared
+    }
+
+    init(fileStore: SecureFileStore) {
         self.fileStore = fileStore
     }
 

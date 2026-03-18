@@ -85,7 +85,7 @@ public enum InternalRiskLevel: String, Codable, Sendable {
 
     /// 从分数计算风险等级
     public static func from(score: Double) -> InternalRiskLevel {
-        guard score.isFinite else { return score > 0 ? .critical : .low }
+        guard score.isFinite else { return .low }
         guard score >= 0 else { return .low }
         switch score {
         case 0..<30: return .low

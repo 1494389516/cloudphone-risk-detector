@@ -1,6 +1,6 @@
-# CloudPhoneRiskKit 6.6 使用与构建说明
+# CloudPhoneRiskKit 6.7 使用与构建说明
 
-iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。6.0 引入自研壳（cprisk-armor）二进制保护与端云签名绑定；6.1 将壳升级为 5 Pass 工业化保护；6.2 对壳执行密码学重建（ABI v2：强制密钥注入 / HMAC 认证 / 随机 nonce / IntegrityAnchor HMAC），共 46 项漏洞修复；6.3 新增 Pass 6 符号表混淆、Codable 短别名 CodingKeys、ObjC selector 安全修复，壳升级为 6 Pass 全链路保护；6.4 将 SDK 架构改为 library.static + 全量 strip，IDA 中 SDK 函数全部显示为 sub_XXXX；6.5 引入白盒 PRF 引擎（5 域 S-box ~160KB，root key 不可逆提取）、AppSigningIdentityDetector 反重打包（TeamID/bundleID/entitlement 一致性 + 基线漂移检测）；后续新增 GPU 渲染指纹（Metal Compute Shader 像素哈希，检测虚拟 GPU）、IMU 噪声谱指纹（FFT 频域噪声特征 + 合成数据检测）、行为信号扩充（forceVariance / radiusVariance / swipeSpeedCV 共 11 项启发式，行为分上限提升至 45）、BehaviorThresholds 全量远程可配（13 项阈值 + 按设备型号分组覆盖）、采样窗口最小间隔保护（5s / 缓冲区翻倍）、反调试 watchdog 线程（CRiskCore 内每 3s 重调 `ptrace` / exception port / SIGTRAP / csops / 硬件断点 / 软件断点 / 可疑线程 / exception delivery timeout 检测，异常自动转 RiskSignal 进入评分）、`FridaModuleDetector`（模块名 / section / 字符串片段三路检测 Frida/Gum/Gadget）、以及基于 `MutationStrategy` 的反篡改检测顺序稳定随机化。最新版本的 cprisk-armor 已扩展为 **8 Pass**：Pass 7 `AntiDebugInjector` 在 `__DATA,__cpr_adbg7` 中写入可运行时消费的 anti-debug injection plan ABI，Pass 8 `InstructionSubstitution` 则对 `__TEXT.__text` 中的安全 ARM64 指令子集做 1:1 等长语义等价替换。
+iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。6.0 引入自研壳（cprisk-armor）二进制保护与端云签名绑定；6.1 将壳升级为 5 Pass 工业化保护；6.2 对壳执行密码学重建（ABI v2：强制密钥注入 / HMAC 认证 / 随机 nonce / IntegrityAnchor HMAC），共 46 项漏洞修复；6.3 新增 Pass 6 符号表混淆、Codable 短别名 CodingKeys、ObjC selector 安全修复，壳升级为 6 Pass 全链路保护；6.4 将 SDK 架构改为 library.static + 全量 strip，IDA 中 SDK 函数全部显示为 sub_XXXX；6.5 引入白盒 PRF 引擎（5 域 S-box ~160KB，root key 不可逆提取）、AppSigningIdentityDetector 反重打包（TeamID/bundleID/entitlement 一致性 + 基线漂移检测）；6.6 新增 Pass 7 AntiDebugInjector、Pass 8 InstructionSubstitution、FridaModuleDetector、反篡改检测顺序稳定随机化；6.7 引入**控制流平坦化（CFF）**与**反去混淆**：源码级 CFF 基础设施（CFFStateCodec / CFFDispatcher / CFFReturnSink / CFFRuntimeSalt）、DecisionTree / RiskDetectionEngine / ChallengeSession / TrustChainManager / anti_debug_watchdog 接入编码状态机、Pass 9 ControlFlowOrchestrator 策略编排（`cff_policy.yaml`）、异构 dispatcher（switch / if-else / dual-rail / region）、runtime salt 绑定、fail-closed 默认路径。cprisk-armor 现支持 **9 Pass**（含 Pass 9 CFF 策略编排骨架）。
 
 ---
 
@@ -39,7 +39,7 @@ open RiskDetectorApp.xcodeproj
 
 ### 2.4 壳工具链构建 (cprisk-armor)
 
-cprisk-armor 是编译后壳保护工具链，对 Mach-O 二进制执行 8 Pass 加固（字符串加密、Metadata 抹除、数据段加密、完整性锚点、结构混淆、符号表混淆、Pass 7 anti-debug 注入计划、Pass 8 ARM64 指令替换）。6.4 起 SDK 以静态库交付，壳对最终 App 二进制执行加固。6.5 起 Pass 4 写入白盒 PRF 四 section（`__swift5_awbm/awbc/awbd/awbt`），Pass 1/3/4 密钥通过白盒 PRF 派生，运行时优先走白盒路径。最新 Pass 7 会把随机散布后的反调试注入计划写入 `__DATA,__cpr_adbg7`，运行时可按 `target identifier / patchSite offset / policy bits / probeImmediate` 读取并执行更强的 anti-debug gate；Pass 8 则对 `__TEXT.__text` 中可安全改写的 ARM64 指令执行 1:1 等长语义等价替换，保持 section 大小不变并支持基于 seed 的稳定随机化。
+cprisk-armor 是编译后壳保护工具链，对 Mach-O 二进制执行 9 Pass 加固（字符串加密、Metadata 抹除、数据段加密、完整性锚点、结构混淆、符号表混淆、Pass 7 anti-debug 注入计划、Pass 8 ARM64 指令替换、Pass 9 ControlFlowOrchestrator CFF 策略编排）。6.4 起 SDK 以静态库交付，壳对最终 App 二进制执行加固。6.5 起 Pass 4 写入白盒 PRF 四 section（`__swift5_awbm/awbc/awbd/awbt`），Pass 1/3/4 密钥通过白盒 PRF 派生，运行时优先走白盒路径。Pass 7 把随机散布后的反调试注入计划写入 `__DATA,__cpr_adbg7`；Pass 8 对 `__TEXT.__text` 中可安全改写的 ARM64 指令执行 1:1 等长语义等价替换；6.7 新增 Pass 9 读取 `cff_policy.yaml` 为函数分配 CFF 计划（heavy/light/never/regionOnly），当前为编排骨架，源码级 CFF 已在 SDK 内落地。
 
 ```bash
 cd cprisk-armor

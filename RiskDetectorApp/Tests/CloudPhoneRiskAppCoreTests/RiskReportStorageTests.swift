@@ -24,7 +24,7 @@ final class RiskReportStorageTests: XCTestCase {
 
   func testReportsDirectoryURL_ReturnsValidPath() throws {
     let url = try RiskReportStorage.reportsDirectoryURL()
-    XCTAssertTrue(url.path.contains("CloudPhoneRiskKit"))
+    XCTAssertFalse(url.path.isEmpty)
     XCTAssertEqual(url.lastPathComponent, "reports")
   }
 

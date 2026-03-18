@@ -4,6 +4,39 @@ import Foundation
 import DeviceCheck
 #endif
 
+private enum TrustChainCFF {
+    static func salt(
+        deviceID: String = "",
+        hardwareMachine: String = "",
+        kernelVersion: String = "",
+        sessionId: String = "",
+        policyVersion: String = "",
+        timestamp: Int64 = 0,
+        lastCheck: TimeInterval = 0
+    ) -> UInt32 {
+        CFFRuntimeSalt.combine(
+            words: [
+                UInt64(bitPattern: timestamp),
+                lastCheck.bitPattern,
+                UInt64(sessionId.utf8.count),
+            ],
+            strings: [
+                deviceID,
+                hardwareMachine,
+                kernelVersion,
+                sessionId,
+                policyVersion,
+                ChallengeSession.shared.state.rawValue,
+            ],
+            flags: [
+                !deviceID.isEmpty,
+                !sessionId.isEmpty,
+                ChallengeSession.shared.currentChallengeId != nil,
+            ]
+        )
+    }
+}
+
 // MARK: - TrustLevel（SDK 5.0）
 
 /// 端侧信任等级，服务端可据此调整决策权重
@@ -82,30 +115,56 @@ public enum TrustChainManager {
         hardwareMachine: String,
         kernelVersion: String
     ) -> TrustLevel {
+        let salt = TrustChainCFF.salt(
+            deviceID: deviceID,
+            hardwareMachine: hardwareMachine,
+            kernelVersion: kernelVersion,
+            policyVersion: currentDeviceKeyVersion()
+        )
+        let seed: UInt32 = 0x2E7C41B9
+        let entryState: UInt32 = 0x11
+        let capabilityState: UInt32 = 0x12
+        let hardwareState: UInt32 = 0x13
+        let derivedState: UInt32 = 0x14
+
+        var sink = CFFReturnSink<TrustLevel>()
+        var encodedState = CFFStateCodec.encode(entryState, seed: seed, salt: salt)
+        var hardwareSupported = false
+
         #if canImport(DeviceCheck)
         if #available(iOS 14.0, macOS 11.0, *) {
-            if AppAttestSigner.isSupported {
+            hardwareSupported = AppAttestSigner.isSupported
+        }
+        #endif
+
+        while !sink.isResolved {
+            switch CFFStateCodec.decode(encodedState, seed: seed, salt: salt) {
+            case entryState:
+                encodedState = CFFStateCodec.encode(capabilityState, seed: seed, salt: salt)
+            case capabilityState:
+                encodedState = CFFStateCodec.encode(hardwareSupported ? hardwareState : derivedState, seed: seed, salt: salt)
+            case hardwareState:
                 let (_, saltWasPersisted) = DeviceKeyDeriver.deriveKeyWithTrustInfo(
                     deviceID: deviceID,
                     hardwareMachine: hardwareMachine,
                     kernelVersion: kernelVersion,
                     infoVersion: currentDeviceKeyVersion()
                 )
-                if !saltWasPersisted {
-                    return .degraded
-                }
-                return .hardware
+                sink.store(saltWasPersisted ? .hardware : .degraded)
+            case derivedState:
+                let (_, saltWasPersisted) = DeviceKeyDeriver.deriveKeyWithTrustInfo(
+                    deviceID: deviceID,
+                    hardwareMachine: hardwareMachine,
+                    kernelVersion: kernelVersion,
+                    infoVersion: currentDeviceKeyVersion()
+                )
+                sink.store(saltWasPersisted ? .derived : .degraded)
+            default:
+                sink.store(.degraded)
             }
         }
-        #endif
 
-        let (_, saltWasPersisted) = DeviceKeyDeriver.deriveKeyWithTrustInfo(
-            deviceID: deviceID,
-            hardwareMachine: hardwareMachine,
-            kernelVersion: kernelVersion,
-            infoVersion: currentDeviceKeyVersion()
-        )
-        return saltWasPersisted ? .derived : .degraded
+        return sink.resolve(or: .degraded)
     }
 
     /// 评估信任等级（简化版，无 DeviceKey 派生，用于快速路径）
@@ -142,12 +201,64 @@ public enum TrustChainManager {
         sessionId: String,
         timestamp: Int64
     ) -> SymmetricKey {
-        let salt = "\(sessionId)|\(timestamp)".data(using: .utf8) ?? Data()
-        return HKDF<SHA256>.deriveKey(
-            inputKeyMaterial: deviceKey,
-            salt: salt,
-            info: sessionKeyInfo,
-            outputByteCount: 32
+        let cffSalt = TrustChainCFF.salt(
+            sessionId: sessionId,
+            policyVersion: currentDeviceKeyVersion(),
+            timestamp: timestamp
+        )
+        let seed: UInt32 = 0x73A15C4D
+        let entryState: UInt32 = 0x21
+        let materialState: UInt32 = 0x22
+        let deriveState: UInt32 = 0x23
+        let connectorState: UInt32 = 0x24
+        let settleState: UInt32 = 0x25
+        let fallbackSalt = "\(sessionId)|\(timestamp)".data(using: .utf8) ?? Data()
+
+        var sink = CFFReturnSink<SymmetricKey>()
+        var encodedState = CFFStateCodec.encode(entryState, seed: seed, salt: cffSalt)
+        var hkdfSalt = Data()
+
+        while !sink.isResolved {
+            let decodedState = CFFStateCodec.decode(encodedState, seed: seed, salt: cffSalt)
+
+            if decodedState == entryState {
+                encodedState = CFFStateCodec.encode(materialState, seed: seed, salt: cffSalt)
+            } else if decodedState == materialState {
+                hkdfSalt = fallbackSalt
+                encodedState = CFFStateCodec.encode(connectorState, seed: seed, salt: cffSalt)
+            } else if decodedState == connectorState {
+                let nextState = CFFDispatcher.prefersPrimaryBranch(encodedState: encodedState, salt: cffSalt) ? deriveState : settleState
+                encodedState = CFFStateCodec.encode(nextState, seed: seed, salt: cffSalt)
+            } else if decodedState == settleState {
+                encodedState = CFFStateCodec.encode(deriveState, seed: seed, salt: cffSalt)
+            } else if decodedState == deriveState {
+                sink.store(
+                    HKDF<SHA256>.deriveKey(
+                        inputKeyMaterial: deviceKey,
+                        salt: hkdfSalt,
+                        info: sessionKeyInfo,
+                        outputByteCount: 32
+                    )
+                )
+            } else {
+                sink.store(
+                    HKDF<SHA256>.deriveKey(
+                        inputKeyMaterial: deviceKey,
+                        salt: fallbackSalt,
+                        info: sessionKeyInfo,
+                        outputByteCount: 32
+                    )
+                )
+            }
+        }
+
+        return sink.resolve(
+            or: HKDF<SHA256>.deriveKey(
+                inputKeyMaterial: deviceKey,
+                salt: fallbackSalt,
+                info: sessionKeyInfo,
+                outputByteCount: 32
+            )
         )
     }
 
@@ -168,22 +279,77 @@ public enum TrustChainManager {
     ) -> (String) -> String? {
         let policy = currentKeyRotationPolicy()
         let currentVersion = policy?.deviceKeyVersion ?? DeviceKeyDeriver.defaultInfoVersion
+        let cffSalt = TrustChainCFF.salt(
+            deviceID: deviceID,
+            hardwareMachine: hardwareMachine,
+            kernelVersion: kernelVersion,
+            policyVersion: currentVersion
+        )
+        let seed: UInt32 = 0x5CA217E3
+        let entryState: UInt32 = 0x31
+        let buildState: UInt32 = 0x32
 
-        return { keyId in
-            let versionFromKeyId = keyId.hasPrefix("\(baseKeyId)_")
-                ? String(keyId.dropFirst("\(baseKeyId)_".count))
-                : (keyId == baseKeyId ? currentVersion : nil)
+        var sink = CFFReturnSink<(String) -> String?>()
+        var encodedState = CFFStateCodec.encode(entryState, seed: seed, salt: cffSalt)
 
-            guard let version = versionFromKeyId else { return nil }
+        while !sink.isResolved {
+            switch CFFStateCodec.decode(encodedState, seed: seed, salt: cffSalt) {
+            case entryState:
+                encodedState = CFFStateCodec.encode(buildState, seed: seed, salt: cffSalt)
+            case buildState:
+                sink.store { keyId in
+                    let innerSalt = TrustChainCFF.salt(
+                        deviceID: deviceID,
+                        hardwareMachine: hardwareMachine,
+                        kernelVersion: kernelVersion,
+                        sessionId: keyId,
+                        policyVersion: currentVersion,
+                        timestamp: Int64(keyId.utf8.count)
+                    )
+                    let innerSeed: UInt32 = 0x4F31A28C
+                    let classifyState: UInt32 = 0x41
+                    let deriveState: UInt32 = 0x42
+                    let rejectState: UInt32 = 0x43
 
-            let key = DeviceKeyDeriver.deriveKey(
-                deviceID: deviceID,
-                hardwareMachine: hardwareMachine,
-                kernelVersion: kernelVersion,
-                infoVersion: version
-            )
-            return sessionKeyToHex(key)
+                    var localSink = CFFReturnSink<String?>()
+                    var localState = CFFStateCodec.encode(classifyState, seed: innerSeed, salt: innerSalt)
+                    var version: String?
+
+                    while !localSink.isResolved {
+                        let decodedState = CFFStateCodec.decode(localState, seed: innerSeed, salt: innerSalt)
+
+                        if decodedState == classifyState {
+                            version = keyId.hasPrefix("\(baseKeyId)_")
+                                ? String(keyId.dropFirst("\(baseKeyId)_".count))
+                                : (keyId == baseKeyId ? currentVersion : nil)
+                            localState = CFFStateCodec.encode(version == nil ? rejectState : deriveState, seed: innerSeed, salt: innerSalt)
+                        } else if decodedState == deriveState {
+                            if let version {
+                                let key = DeviceKeyDeriver.deriveKey(
+                                    deviceID: deviceID,
+                                    hardwareMachine: hardwareMachine,
+                                    kernelVersion: kernelVersion,
+                                    infoVersion: version
+                                )
+                                localSink.store(sessionKeyToHex(key))
+                            } else {
+                                localSink.store(nil)
+                            }
+                        } else if decodedState == rejectState {
+                            localSink.store(nil)
+                        } else {
+                            localSink.store(nil)
+                        }
+                    }
+
+                    return localSink.resolve(or: nil)
+                }
+            default:
+                sink.store({ _ in nil })
+            }
         }
+
+        return sink.resolve(or: { _ in nil })
     }
 
     // MARK: - Attestation 刷新
@@ -194,7 +360,34 @@ public enum TrustChainManager {
         lock.lock()
         let last = lastAttestationCheck
         lock.unlock()
-        return Date().timeIntervalSince1970 - last > attestationCheckInterval
+
+        let cffSalt = TrustChainCFF.salt(
+            policyVersion: currentDeviceKeyVersion(),
+            timestamp: Int64(last.rounded()),
+            lastCheck: last
+        )
+        let seed: UInt32 = 0x18D2BF65
+        let entryState: UInt32 = 0x51
+        let compareState: UInt32 = 0x52
+
+        var sink = CFFReturnSink<Bool>()
+        var encodedState = CFFStateCodec.encode(entryState, seed: seed, salt: cffSalt)
+        var now: TimeInterval = 0
+
+        while !sink.isResolved {
+            let decodedState = CFFStateCodec.decode(encodedState, seed: seed, salt: cffSalt)
+
+            if decodedState == entryState {
+                now = Date().timeIntervalSince1970
+                encodedState = CFFStateCodec.encode(compareState, seed: seed, salt: cffSalt)
+            } else if decodedState == compareState {
+                sink.store(now - last > attestationCheckInterval)
+            } else {
+                sink.store(true)
+            }
+        }
+
+        return sink.resolve(or: true)
     }
 
     /// 标记 attestation 检查完成

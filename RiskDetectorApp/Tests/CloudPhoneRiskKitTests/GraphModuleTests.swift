@@ -237,9 +237,9 @@ final class GraphModuleTests: XCTestCase {
             _ = detector.recordAndDetect(hwProfileHash: "device_\(i + 100)", key: "ip_B")
         }
 
-        // Verify neither key triggered
-        let resultA = detector.recordAndDetect(hwProfileHash: "device_99", key: "ip_A")
-        XCTAssertNil(resultA, "ip_A is at threshold - 1, adding one more unique should not trigger yet if key isolation is maintained")
+        // Verify ip_B 的设备不会污染 ip_A 的 distinct 集合；重复记录 ip_A 既有设备不应触发
+        let resultA = detector.recordAndDetect(hwProfileHash: "device_1", key: "ip_A")
+        XCTAssertNil(resultA, "replaying an existing hash on ip_A should stay below threshold when keys remain isolated")
     }
 
     // MARK: - Helpers

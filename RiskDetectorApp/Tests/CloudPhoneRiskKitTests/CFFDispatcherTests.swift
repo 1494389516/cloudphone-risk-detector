@@ -1,0 +1,41 @@
+import XCTest
+@testable import CloudPhoneRiskKit
+
+final class CFFDispatcherTests: XCTestCase {
+
+    func testPrefersPrimaryBranchIsDeterministic() {
+        let encodedState: UInt32 = 0x1234_5678
+        let salt: UInt32 = 0x9ABC_DEF0
+
+        let first = CFFDispatcher.prefersPrimaryBranch(encodedState: encodedState, salt: salt)
+        let second = CFFDispatcher.prefersPrimaryBranch(encodedState: encodedState, salt: salt)
+
+        XCTAssertEqual(first, second)
+    }
+
+    func testPrefersPrimaryBranchCanSelectBothRails() {
+        let salt: UInt32 = 0x7F4A_7C15
+
+        let first = CFFDispatcher.prefersPrimaryBranch(encodedState: 0, salt: salt)
+        let second = CFFDispatcher.prefersPrimaryBranch(encodedState: 1, salt: salt)
+
+        XCTAssertNotEqual(first, second, "adjacent states should not collapse to one fixed rail")
+    }
+
+    func testBranchKeyIsBoundedToTwoBits() {
+        let salt: UInt32 = 0xCAFEBABE
+        let samples: [UInt32] = [0, 1, 2, 3, 0x11, 0x1234_5678, 0xFFFF_FFFF]
+
+        for sample in samples {
+            let key = CFFDispatcher.branchKey(sample, salt: salt)
+            XCTAssertLessThanOrEqual(key, 3, "branch key should stay within two bits")
+        }
+    }
+
+    func testBranchKeyCoversFourBucketsForSequentialStates() {
+        let salt: UInt32 = 0xA24B_AED5
+        let values = Set((0..<4).map { CFFDispatcher.branchKey(UInt32($0), salt: salt) })
+
+        XCTAssertEqual(values, Set<UInt32>([0, 1, 2, 3]))
+    }
+}

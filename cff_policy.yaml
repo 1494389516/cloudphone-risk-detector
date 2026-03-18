@@ -1,0 +1,40 @@
+version: 2
+functions:
+  heavy:
+    - RiskDetectionEngine.collectAndAugmentSignals
+    - RiskDetectionEngine.fastDigestShortCircuit
+    - RiskDetectionEngine.scoreAndForceDecision
+    - RiskDetectionEngine.treeCommitVerdict
+    - DecisionTree.decide
+    - ConditionNode.evaluate
+    - ConditionExpression.evaluate
+    - ScoreActionNode.evaluate
+    - ChallengeSession.transition
+    - ChallengeSession.advance
+    - ChallengeSession.bindChallenge
+    - ChallengeSession.markSubmitted
+    - TrustChainManager.evaluateTrustLevel
+    - TrustChainManager.deriveSessionKey
+    - TrustChainManager.buildKeyResolver
+    - TrustChainManager.shouldRefreshAttestation
+    - anti_debug_watchdog.cprisk_watchdog_run_iteration
+  light:
+    - RandomizedDetection.detect
+    - AntiTamperingDetector.detect
+    - DetectorRegistry.dispatchSensitiveDetectors
+    - ChallengeTrigger.dispatch
+    - AntiTamperingSignalProvider.collect
+    - MutationStrategy.shuffleChecks
+  never:
+    - direct_syscall.cprisk_direct_syscall0
+    - direct_syscall.cprisk_direct_syscall6
+    - RiskDetectorApp.App
+    - CloudPhoneRiskKitTests
+  regionOnly:
+    - RiskDetectionEngine.evaluate
+anti_deobfuscation:
+  enable_runtime_salt: true
+  enable_fake_state_release_only: true
+  enable_multi_dispatcher: true
+  enable_default_poison_for_heavy: true
+  enable_pass8_cff_awareness: true
