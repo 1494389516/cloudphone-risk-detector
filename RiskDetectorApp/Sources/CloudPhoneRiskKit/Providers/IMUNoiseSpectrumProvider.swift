@@ -12,7 +12,7 @@ final class IMUNoiseSpectrumProvider: RiskSignalProvider {
     private let sampleCount = 256
     private let samplingTimeout: TimeInterval = 4.0
 
-    private let lock = NSLock()
+    private let lock = UnfairLock()
     private var cachedResult: CachedResult?
     private let cacheTTL: TimeInterval = 120
 
@@ -23,20 +23,17 @@ final class IMUNoiseSpectrumProvider: RiskSignalProvider {
 
     func signals(snapshot: RiskSnapshot) -> [RiskSignal] {
         let now = ProcessInfo.processInfo.systemUptime
-        lock.lock()
-        if let cached = cachedResult, now - cached.time < cacheTTL {
-            let result = cached.signals
-            lock.unlock()
-            return result
+        let cached: [RiskSignal]? = lock.withLock {
+            if let c = cachedResult, now - c.time < cacheTTL { return c.signals }
+            return nil
         }
-        lock.unlock()
+        if let cached { return cached }
 
         let result = collect()
 
-        lock.lock()
-        cachedResult = CachedResult(signals: result, time: ProcessInfo.processInfo.systemUptime)
-        lock.unlock()
-
+        lock.withLock {
+            cachedResult = CachedResult(signals: result, time: ProcessInfo.processInfo.systemUptime)
+        }
         return result
     }
 
@@ -81,11 +78,8 @@ final class IMUNoiseSpectrumProvider: RiskSignalProvider {
         }
 
         let timeout = DispatchTime.now() + samplingTimeout
-        if semaphore.wait(timeout: timeout) == .timedOut {
-            manager.stopAccelerometerUpdates()
-        } else {
-            manager.stopAccelerometerUpdates()
-        }
+        _ = semaphore.wait(timeout: timeout)
+        manager.stopAccelerometerUpdates()
 
         sampleLock.lock()
         let collectedSamples = Array(samples.prefix(requiredCount))

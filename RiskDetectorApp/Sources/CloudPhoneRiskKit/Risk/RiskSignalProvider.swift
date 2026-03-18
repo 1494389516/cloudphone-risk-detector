@@ -260,13 +260,16 @@ final class RiskSignalProviderRegistry {
         }
 
         let semaphore = DispatchSemaphore(value: 0)
+        // Use a lock-protected box to avoid data race between background write
+        // and calling thread read at the exact timeout boundary.
+        let resultLock = UnfairLock()
         var result: [RiskSignal] = []
 
         DispatchQueue.global(qos: .userInitiated).async {
             let collected: [RiskSignal] = autoreleasepool {
                 provider.signals(snapshot: snapshot)
             }
-            result = collected
+            resultLock.withLock { result = collected }
             semaphore.signal()
         }
 
@@ -279,7 +282,7 @@ final class RiskSignalProviderRegistry {
             return []
         }
 
-        return result
+        return resultLock.withLock { result }
     }
 
     private func merge(_ a: ServerSignals, _ b: ServerSignals) -> ServerSignals {

@@ -179,8 +179,8 @@ public struct ServerRiskPolicy: Codable, Sendable {
     }
 }
 
-// SECURITY-TODO: Migrate to Keychain or FileProtection.complete sandboxed file.
-// UserDefaults stores encrypted policy cache but lacks file-level encryption at rest.
+// Storage: sandboxed file with NSFileProtectionComplete via SecureFileStore.
+// Migrated from UserDefaults to ensure data-at-rest encryption when device is locked.
 public final class PolicyManager: @unchecked Sendable {
     public static let shared = PolicyManager()
 
@@ -233,6 +233,7 @@ public final class PolicyManager: @unchecked Sendable {
     private let verifiedKey = "com.cloudphone.riskkit.policy.v3_verified_flag"
     private let hmacPurpose = "policy_cache"
     private let cacheValidityDuration: TimeInterval = 86_400
+    private let fileStore = SecureFileStore.shared
     private var urlSession: URLSession
 
     private init() {
@@ -292,9 +293,9 @@ public final class PolicyManager: @unchecked Sendable {
     public func clear() {
         lock.lock()
         cachedPolicy = nil
-        UserDefaults.standard.removeObject(forKey: cacheKey)
-        UserDefaults.standard.removeObject(forKey: hmacCacheKey)
-        UserDefaults.standard.removeObject(forKey: verifiedKey)
+        fileStore.remove(key: cacheKey)
+        fileStore.remove(key: hmacCacheKey)
+        fileStore.remove(key: verifiedKey)
         lock.unlock()
     }
 
@@ -367,24 +368,24 @@ public final class PolicyManager: @unchecked Sendable {
             return
         }
         #endif
-        UserDefaults.standard.set(stored, forKey: cacheKey)
-        UserDefaults.standard.set(StorageIntegrityGuard.sign(stored, purpose: hmacPurpose), forKey: hmacCacheKey)
-        UserDefaults.standard.set(verifiedByServer, forKey: verifiedKey)
+        fileStore.write(key: cacheKey, data: stored)
+        fileStore.write(key: hmacCacheKey, data: StorageIntegrityGuard.sign(stored, purpose: hmacPurpose))
+        fileStore.write(key: verifiedKey, data: Data(verifiedByServer ? [1] : [0]))
     }
 
     private func loadFromCache() -> ServerRiskPolicy? {
         #if !DEBUG
-        let wasVerified = UserDefaults.standard.bool(forKey: verifiedKey)
+        let wasVerified = (fileStore.read(key: verifiedKey)?.first ?? 0) != 0
         if !wasVerified {
             Logger.log("PolicyManager.loadFromCache: skipping unverified cache in release build")
             return nil
         }
         #endif
-        guard let stored = UserDefaults.standard.data(forKey: cacheKey) else { return nil }
-        guard let signature = UserDefaults.standard.data(forKey: hmacCacheKey),
+        guard let stored = fileStore.read(key: cacheKey) else { return nil }
+        guard let signature = fileStore.read(key: hmacCacheKey),
               StorageIntegrityGuard.verify(stored, signature: signature, purpose: hmacPurpose) else {
-            UserDefaults.standard.removeObject(forKey: cacheKey)
-            UserDefaults.standard.removeObject(forKey: hmacCacheKey)
+            fileStore.remove(key: cacheKey)
+            fileStore.remove(key: hmacCacheKey)
             return nil
         }
         #if DEBUG
@@ -397,8 +398,8 @@ public final class PolicyManager: @unchecked Sendable {
         #else
         guard let data = try? PayloadCrypto.decrypt(stored) else {
             Logger.log("PolicyManager: decrypt failed, clearing cache in release build")
-            UserDefaults.standard.removeObject(forKey: cacheKey)
-            UserDefaults.standard.removeObject(forKey: hmacCacheKey)
+            fileStore.remove(key: cacheKey)
+            fileStore.remove(key: hmacCacheKey)
             return nil
         }
         #endif

@@ -106,8 +106,7 @@ final class StorageTests: XCTestCase {
     // MARK: - RiskHistoryStore Tests
 
     func testHistoryStoreAppendAndPattern() {
-        let defaults = UserDefaults(suiteName: "test_history_\(UUID().uuidString)")!
-        let store = RiskHistoryStore(defaults: defaults)
+        let store = RiskHistoryStore(fileStore: SecureFileStore(subdirectory: "test_history_\(UUID().uuidString)"))
         let now = Date().timeIntervalSince1970
 
         store.append(RiskHistoryEvent(t: now - 3600, score: 30, isHighRisk: false, summary: "low"))
@@ -120,8 +119,7 @@ final class StorageTests: XCTestCase {
     }
 
     func testHistoryStoreEmptyPattern() {
-        let defaults = UserDefaults(suiteName: "test_empty_\(UUID().uuidString)")!
-        let store = RiskHistoryStore(defaults: defaults)
+        let store = RiskHistoryStore(fileStore: SecureFileStore(subdirectory: "test_empty_\(UUID().uuidString)"))
         let now = Date().timeIntervalSince1970
 
         let pattern = store.pattern(now: now)

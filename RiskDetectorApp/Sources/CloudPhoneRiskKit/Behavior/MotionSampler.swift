@@ -8,7 +8,7 @@ final class MotionSampler {
 
     private let manager = CMMotionManager()
     private let queue = OperationQueue()
-    private let lock = NSLock()
+    private let lock = UnfairLock()
 
     private var started = false
     private var sampleCount = 0
@@ -22,12 +22,12 @@ final class MotionSampler {
     private var cachedSnapshot: (metrics: MotionMetrics, series: [MotionSample])?
 
     func start() {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !started else { return }
-        started = true
-
-        guard manager.isDeviceMotionAvailable else { return }
+        let shouldStart: Bool = lock.withLock {
+            guard !started else { return false }
+            started = true
+            return true
+        }
+        guard shouldStart, manager.isDeviceMotionAvailable else { return }
         manager.deviceMotionUpdateInterval = 1.0 / 20.0
         queue.qualityOfService = .utility
 
@@ -38,23 +38,23 @@ final class MotionSampler {
     }
 
     func stop() {
-        lock.lock()
-        started = false
-        zeroSensitiveBuffersLocked()
-        lock.unlock()
+        lock.withLock {
+            started = false
+            zeroSensitiveBuffersLocked()
+        }
         manager.stopDeviceMotionUpdates()
     }
 
     func snapshot() -> MotionMetrics {
-        lock.lock()
-        defer { lock.unlock() }
-        guard sampleCount > 0 else { return .empty }
+        lock.withLock {
+            guard sampleCount > 0 else { return .empty }
 
-        let stillness = Double(stillCount) / Double(sampleCount)
-        let energy = energySum / Double(sampleCount)
-        let metrics = MotionMetrics(sampleCount: sampleCount, stillnessRatio: stillness, motionEnergy: energy)
-        Logger.log("behavior.motion: samples=\(metrics.sampleCount) stillness=\(metrics.stillnessRatio?.description ?? "nil") energy=\(metrics.motionEnergy?.description ?? "nil")")
-        return metrics
+            let stillness = Double(stillCount) / Double(sampleCount)
+            let energy = energySum / Double(sampleCount)
+            let metrics = MotionMetrics(sampleCount: sampleCount, stillnessRatio: stillness, motionEnergy: energy)
+            Logger.log("behavior.motion: samples=\(metrics.sampleCount) stillness=\(metrics.stillnessRatio?.description ?? "nil") energy=\(metrics.motionEnergy?.description ?? "nil")")
+            return metrics
+        }
     }
 
     func snapshotAndReset() -> MotionMetrics {
@@ -62,37 +62,34 @@ final class MotionSampler {
     }
 
     func snapshotDetailAndReset() -> (metrics: MotionMetrics, series: [MotionSample]) {
-        lock.lock()
-        defer { lock.unlock() }
+        lock.withLock {
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - lastSnapshotTime < minSnapshotInterval, let cached = cachedSnapshot {
+                return cached
+            }
 
-        let now = ProcessInfo.processInfo.systemUptime
-        if now - lastSnapshotTime < minSnapshotInterval, let cached = cachedSnapshot {
-            return cached
+            guard sampleCount > 0 else { return (.empty, []) }
+
+            let stillness = Double(stillCount) / Double(sampleCount)
+            let energy = energySum / Double(sampleCount)
+            let metrics = MotionMetrics(sampleCount: sampleCount, stillnessRatio: stillness, motionEnergy: energy)
+            Logger.log("behavior.motion(reset): samples=\(metrics.sampleCount) stillness=\(metrics.stillnessRatio?.description ?? "nil") energy=\(metrics.motionEnergy?.description ?? "nil")")
+
+            let outSeries = series
+            sampleCount = 0
+            stillCount = 0
+            energySum = 0
+            series.removeAll(keepingCapacity: true)
+
+            lastSnapshotTime = now
+            let result = (metrics, outSeries)
+            cachedSnapshot = result
+            return result
         }
-
-        guard sampleCount > 0 else { return (.empty, []) }
-
-        let stillness = Double(stillCount) / Double(sampleCount)
-        let energy = energySum / Double(sampleCount)
-        let metrics = MotionMetrics(sampleCount: sampleCount, stillnessRatio: stillness, motionEnergy: energy)
-        Logger.log("behavior.motion(reset): samples=\(metrics.sampleCount) stillness=\(metrics.stillnessRatio?.description ?? "nil") energy=\(metrics.motionEnergy?.description ?? "nil")")
-
-        let outSeries = series
-        sampleCount = 0
-        stillCount = 0
-        energySum = 0
-        series.removeAll(keepingCapacity: true)
-
-        lastSnapshotTime = now
-        let result = (metrics, outSeries)
-        cachedSnapshot = result
-        return result
     }
 
     func clearSensitiveData() {
-        lock.lock()
-        defer { lock.unlock() }
-        zeroSensitiveBuffersLocked()
+        lock.withLock { zeroSensitiveBuffersLocked() }
     }
 
     private func zeroSensitiveBuffersLocked() {
@@ -112,15 +109,15 @@ final class MotionSampler {
         let user = motion.userAcceleration
         let magnitude = sqrt(user.x * user.x + user.y * user.y + user.z * user.z)
 
-        lock.lock()
-        defer { lock.unlock() }
-        guard started else { return }
-        sampleCount += 1
-        energySum += magnitude
-        if magnitude < 0.02 { stillCount += 1 }
-        series.append(MotionSample(timestamp: motion.timestamp, energy: magnitude))
-        if series.count > seriesMax {
-            series.removeFirst(series.count - seriesMax)
+        lock.withLock {
+            guard started else { return }
+            sampleCount += 1
+            energySum += magnitude
+            if magnitude < 0.02 { stillCount += 1 }
+            series.append(MotionSample(timestamp: motion.timestamp, energy: magnitude))
+            if series.count > seriesMax {
+                series.removeFirst(series.count - seriesMax)
+            }
         }
     }
 }
