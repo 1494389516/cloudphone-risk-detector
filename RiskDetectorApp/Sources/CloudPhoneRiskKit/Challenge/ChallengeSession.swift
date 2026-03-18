@@ -362,7 +362,7 @@ public final class ChallengeSession: @unchecked Sendable {
         // 保留 _submittedChallengeIds 以持续防重放
     }
 
-    /// 完全清空（包括已提交记录，慎用）
+    /// 完全清空（包括已提交记录和 challenge key，慎用）
     public func clearAll() {
         lock.lock()
         defer { lock.unlock() }
@@ -371,6 +371,7 @@ public final class ChallengeSession: @unchecked Sendable {
         _submittedChallengeIds.removeAll()
         _nextChallenge = nil
         _executionStatus = .completed
+        _challengeKey = nil
     }
 }
 
@@ -432,7 +433,7 @@ extension ChallengeSession {
             return makeMismatchSignal(challengeId: result.challengeId, reason: "hmac_missing")
         }
 
-        let scoreStr = result.adjustedScore.map { "\($0)" } ?? "nil"
+        let scoreStr = result.adjustedScore.map { String(format: "%.6f", $0) } ?? "nil"
         let input = "\(result.challengeId)|\(scoreStr)|\(result.passed)"
         let inputData = Data(input.utf8)
         let expected = HMAC<SHA256>.authenticationCode(for: inputData, using: key)

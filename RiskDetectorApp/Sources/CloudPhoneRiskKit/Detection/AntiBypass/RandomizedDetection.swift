@@ -43,7 +43,12 @@ struct RandomizedDetection: Detector {
     private let config: Config
 
     init(config: Config = Config()) {
-        self.config = config
+        // Guard against invalid delay range from server config (ClosedRange requires lower <= upper)
+        var sanitized = config
+        if sanitized.maxDelayUs < sanitized.minDelayUs {
+            sanitized.maxDelayUs = sanitized.minDelayUs
+        }
+        self.config = sanitized
     }
 
     func detect() throws -> DetectorResult {
