@@ -228,7 +228,9 @@ public enum ConditionExpression: Codable, Sendable {
                         sink.store(ConditionExpression.customEvaluatorRegistry.evaluate(id: id, context: context))
                     }
                 default:
-                    encodedState = CFFStateCodec.encode(entryState, seed: seed, salt: salt)
+                    // Terminate on unexpected state to avoid infinite loop
+                    // (resetting to entryState would re-enter the same handler)
+                    sink.store(false)
                 }
             }
         }
