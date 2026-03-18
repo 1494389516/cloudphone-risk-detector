@@ -251,9 +251,9 @@ struct PLTIntegrityGuard {
         }
         let records = rawRecords.compactMap { dict -> FunctionRecord? in
             guard let name = dict["name"] as? String,
-                  let addr = dict["address"] as? UInt64,
-                  let base = dict["moduleBase"] as? UInt64,
-                  let size = dict["moduleSize"] as? UInt64 else { return nil }
+                  let addr = (dict["address"] as? NSNumber)?.uint64Value,
+                  let base = (dict["moduleBase"] as? NSNumber)?.uint64Value,
+                  let size = (dict["moduleSize"] as? NSNumber)?.uint64Value else { return nil }
             let path = dict["modulePath"] as? String ?? ""
             return FunctionRecord(name: name, address: addr, moduleBase: base, moduleSize: size, modulePath: path)
         }

@@ -759,7 +759,9 @@ static uint64_t cprisk_monotonic_ns(void) {
         mach_timebase_info(&tb);
     if (tb.denom == 0)
         return 0;
-    return mach_absolute_time() * tb.numer / tb.denom;
+    uint64_t abs_time = mach_absolute_time();
+    /* Avoid overflow: split multiply to prevent abs_time * numer from wrapping. */
+    return abs_time / tb.denom * tb.numer + (abs_time % tb.denom) * tb.numer / tb.denom;
 }
 
 int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {

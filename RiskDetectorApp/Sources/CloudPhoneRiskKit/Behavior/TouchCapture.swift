@@ -60,7 +60,7 @@ final class TouchCapture {
 
     private func _snapshotDetailAndResetLocked() -> (metrics: TouchMetrics, actionTimestamps: [TimeInterval]) {
         let now = ProcessInfo.processInfo.systemUptime
-        if now - lastSnapshotTime < minSnapshotInterval, let cached = cachedSnapshot {
+        if now - lastSnapshotTime < minSnapshotInterval, let cached = cachedSnapshot, touchPoints.isEmpty {
             return cached
         }
 

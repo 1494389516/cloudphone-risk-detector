@@ -94,6 +94,22 @@ static int cprisk_breakpoint_immediate_from_state_i(
         return 0;
     }
 
+    /* Verify the PC address is readable before dereferencing to avoid
+       a nested fault inside the exception handler thread. */
+    vm_size_t region_size = 0;
+    vm_address_t region_addr = (vm_address_t)pc;
+    vm_region_basic_info_data_64_t info;
+    mach_msg_type_number_t info_count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object_name = MACH_PORT_NULL;
+    kern_return_t kr = vm_region_64(mach_task_self(), &region_addr, &region_size,
+                                     VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info,
+                                     &info_count, &object_name);
+    if (kr != KERN_SUCCESS || region_addr > (vm_address_t)pc ||
+        (vm_address_t)pc + sizeof(uint32_t) > region_addr + region_size ||
+        !(info.protection & VM_PROT_READ)) {
+        return 0;
+    }
+
     uint32_t instr = 0u;
     memcpy(&instr, (const void *)pc, sizeof(instr));
     if ((instr & 0xFFE0001Fu) != 0xD4200000u) {
@@ -144,7 +160,7 @@ static void *exception_handler_thread(void *arg) {
         }
 
         memset(reply_buf, 0, sizeof(reply_buf));
-        reply->msgh_bits = req->msgh_bits & MACH_MSGH_BITS_REMOTE_MASK;
+        reply->msgh_bits = MACH_MSGH_BITS(MACH_MSGH_BITS_REMOTE(req->msgh_bits), 0);
         reply->msgh_remote_port = req->msgh_remote_port;
         reply->msgh_local_port = MACH_PORT_NULL;
         reply->msgh_id = req->msgh_id + 100;

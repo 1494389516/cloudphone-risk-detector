@@ -422,7 +422,7 @@ enum TextSegmentIntegrityChecker {
         for _ in 0..<ptr.pointee.ncmds {
             let load = cmd.assumingMemoryBound(to: load_command.self).pointee
             if load.cmd == LC_ENCRYPTION_INFO || load.cmd == LC_ENCRYPTION_INFO_64 {
-                let enc = cmd.advanced(by: 8).assumingMemoryBound(to: UInt32.self)
+                let enc = cmd.advanced(by: 16).assumingMemoryBound(to: UInt32.self)
                 let cryptid = enc.pointee
                 return cryptid != 0
             }

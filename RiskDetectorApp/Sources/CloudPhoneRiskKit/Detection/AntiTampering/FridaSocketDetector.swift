@@ -210,7 +210,7 @@ extension FridaSocketDetector {
                 category: "anti_tamper",
                 score: min(Double(timingMethods.count) * 10, 20),
                 evidence: ["detail": timingMethods.joined(separator: ",")],
-                state: .soft(confidence: 70),
+                state: .soft(confidence: 0.70),
                 layer: 2,
                 weightHint: 65
             ))

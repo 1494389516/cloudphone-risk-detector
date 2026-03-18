@@ -153,19 +153,37 @@ int cprisk_sysctl_direct(
 }
 
 int cprisk_stat_direct(const char *path, struct stat *sb, int *error_out) {
-    int result = cprisk_access_direct(path, F_OK, error_out);
-    if (result == 0 && sb != NULL) {
+    if (sb != NULL) {
         memset(sb, 0, sizeof(*sb));
     }
-    return result;
+#if CPRISK_DIRECT_SYSCALLS_AVAILABLE
+    return (int)cprisk_direct_syscall6(
+        SYS_stat64,
+        (long)(uintptr_t)path,
+        (long)(uintptr_t)sb,
+        0, 0, 0, 0,
+        error_out
+    );
+#else
+    return cprisk_finish_errno(sb ? stat(path, sb) : access(path, F_OK), error_out);
+#endif
 }
 
 int cprisk_lstat_direct(const char *path, struct stat *sb, int *error_out) {
-    int result = cprisk_access_direct(path, F_OK, error_out);
-    if (result == 0 && sb != NULL) {
+    if (sb != NULL) {
         memset(sb, 0, sizeof(*sb));
     }
-    return result;
+#if CPRISK_DIRECT_SYSCALLS_AVAILABLE
+    return (int)cprisk_direct_syscall6(
+        SYS_lstat64,
+        (long)(uintptr_t)path,
+        (long)(uintptr_t)sb,
+        0, 0, 0, 0,
+        error_out
+    );
+#else
+    return cprisk_finish_errno(sb ? lstat(path, sb) : access(path, F_OK), error_out);
+#endif
 }
 
 int cprisk_access_direct(const char *path, int amode, int *error_out) {

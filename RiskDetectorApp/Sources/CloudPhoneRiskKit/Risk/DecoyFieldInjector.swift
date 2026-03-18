@@ -11,7 +11,7 @@ public enum DecoyFieldInjector {
     private static let shortCodeChars = "abcdefghijklmnopqrstuvwxyz0123456789"
 
     public static func inject(into payload: inout [String: Any], seed: UInt64) {
-        let decoys = generateDecoyFields(count: decoyCountForPayload(payload), seed: seed)
+        let decoys = generateDecoyFields(count: decoyCountForPayload(payload), seed: seed, existingKeys: Set(payload.keys))
         for (k, v) in decoys {
             payload[k] = v
         }
@@ -23,11 +23,15 @@ public enum DecoyFieldInjector {
         return min(max(target, decoyCountRange.lowerBound), decoyCountRange.upperBound)
     }
 
-    private static func generateDecoyFields(count: Int, seed: UInt64) -> [String: Any] {
+    private static func generateDecoyFields(count: Int, seed: UInt64, existingKeys: Set<String>) -> [String: Any] {
         var rng = SeededRNG(seed: seed)
         var result: [String: Any] = [:]
-        for _ in 0..<count {
+        var attempts = 0
+        let maxAttempts = count * 3
+        while result.count < count, attempts < maxAttempts {
+            attempts += 1
             let name = randomShortCode(length: 4, rng: &rng)
+            guard !existingKeys.contains(name), result[name] == nil else { continue }
             let value: Any
             switch rng.next() % 4 {
             case 0: value = rng.next() % 101
@@ -61,8 +65,15 @@ public struct RuntimeFieldMapping {
     public static func generate(seed: UInt64, version: String) -> PayloadFieldMapping {
         var rng = SeededRNG(seed: seed &+ UInt64(bitPattern: Int64(version.hashValue)))
         var mappings: [String: String] = [:]
+        var usedCodes: Set<String> = []
         for field in semanticFields {
-            let obfuscated = randomShortCode(length: 4, rng: &rng)
+            var obfuscated: String
+            var attempts = 0
+            repeat {
+                obfuscated = randomShortCode(length: 4, rng: &rng)
+                attempts += 1
+            } while usedCodes.contains(obfuscated) && attempts < 50
+            usedCodes.insert(obfuscated)
             mappings[field] = obfuscated
         }
         return PayloadFieldMapping(version: version, mappings: mappings, expiresAtMillis: nil)
