@@ -901,17 +901,17 @@ public final class CPRiskKit: NSObject {
                 Logger.log("buildSecureReportEnvelope: armor material marked poisoned by runtime state")
                 throw SecureUploadError.armorRuntimeUnavailable(reason: "material_poisoned")
             } else {
-                Logger.log("buildSecureReportEnvelope: armor material marked poisoned, degrading to v2 signature")
+                Logger.log("buildSecureReportEnvelope: armor material marked poisoned, degrading to v2d signature")
                 signatureProvider = nil
-                signatureVersion = "v2"
+                signatureVersion = "v2d"
             }
         } else if requireArmor {
             Logger.log("buildSecureReportEnvelope: armor unavailable status=\(armorSnapshot.status.rawValue) reason=\(armorSnapshot.reason)")
             throw SecureUploadError.armorRuntimeUnavailable(reason: armorSnapshot.reason)
         } else {
-            Logger.log("buildSecureReportEnvelope: armor unavailable, degrading to v2 signature (status=\(armorSnapshot.status.rawValue))")
+            Logger.log("buildSecureReportEnvelope: armor unavailable, degrading to v2d signature (status=\(armorSnapshot.status.rawValue))")
             signatureProvider = nil
-            signatureVersion = "v2"
+            signatureVersion = "v2d"
         }
 
         let envelopeConfig = ReportEnvelope.Config(signatureVersion: signatureVersion)
