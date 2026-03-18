@@ -7,7 +7,7 @@ final class TouchCapture {
     static let shared = TouchCapture()
     private init() {}
 
-    private let lock = NSLock()
+    private let lock = UnfairLock()
     private var started = false
     private var touchPoints: [CGPoint] = []
     private var tapTimestamps: [TimeInterval] = []
@@ -26,27 +26,27 @@ final class TouchCapture {
     private var currentSwipeStartTime: TimeInterval = 0
 
     func start() {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !started else { return }
-        started = true
-        UIApplicationSendEventSwizzler.swizzleOnce()
+        lock.withLock {
+            guard !started else { return }
+            started = true
+            UIApplicationSendEventSwizzler.swizzleOnce()
+        }
     }
 
     func stop() {
-        lock.lock()
-        started = false
-        zeroSensitiveBuffersLocked()
-        lock.unlock()
+        lock.withLock {
+            started = false
+            zeroSensitiveBuffersLocked()
+        }
     }
 
     func process(event: UIEvent) {
         guard let touches = event.allTouches, !touches.isEmpty else { return }
-        lock.lock()
-        defer { lock.unlock() }
-        guard started else { return }
-        for touch in touches {
-            record(touch: touch)
+        lock.withLock {
+            guard started else { return }
+            for touch in touches {
+                record(touch: touch)
+            }
         }
     }
 
@@ -55,9 +55,10 @@ final class TouchCapture {
     }
 
     func snapshotDetailAndReset() -> (metrics: TouchMetrics, actionTimestamps: [TimeInterval]) {
-        lock.lock()
-        defer { lock.unlock() }
+        lock.withLock { _snapshotDetailAndResetLocked() }
+    }
 
+    private func _snapshotDetailAndResetLocked() -> (metrics: TouchMetrics, actionTimestamps: [TimeInterval]) {
         let now = ProcessInfo.processInfo.systemUptime
         if now - lastSnapshotTime < minSnapshotInterval, let cached = cachedSnapshot {
             return cached
@@ -105,9 +106,7 @@ final class TouchCapture {
     }
 
     func clearSensitiveData() {
-        lock.lock()
-        defer { lock.unlock() }
-        zeroSensitiveBuffersLocked()
+        lock.withLock { zeroSensitiveBuffersLocked() }
     }
 
     private func zeroSensitiveBuffersLocked() {
