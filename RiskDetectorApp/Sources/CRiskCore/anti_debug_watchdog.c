@@ -347,10 +347,15 @@ static void cprisk_watchdog_run_iteration(void) {
         }
 
         CPR_CFF_CASE(0x18u): {
+            /* Fake state: mix entropy then always resume at 0x12
+             * (exception handler verification).  Must NOT jump to
+             * 0x15 because that skips the detection probes at 0x13
+             * and anomaly aggregation at 0x14, producing a false-
+             * negative snapshot with all-zero detection results. */
             poison_mix ^= ((uint64_t)anomaly_flags << 17u) ^
                           ((uint64_t)(signal_probe != 0) << 9u) ^
                           0x9E3779B97F4A7C15ULL;
-            CPR_CFF_GOTO((poison_mix & 1u) == 0u ? 0x12u : 0x15u);
+            CPR_CFF_GOTO(0x12u);
         }
     CPR_CFF_END();
 }

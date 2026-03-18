@@ -78,7 +78,8 @@ void cprisk_cff_finalize(cprisk_cff_context_t *context);
         cprisk_cff_context_t cpr_cff_storage_; \
         cprisk_cff_context_t *const cpr_cff_ctx = &cpr_cff_storage_; \
         cprisk_cff_init_default(cpr_cff_ctx, (uint32_t)(seed), (uint32_t)(entry)); \
-        while ((cpr_cff_ctx->iteration_budget--) > 0u) { \
+        while (cpr_cff_ctx->iteration_budget > 0u) { \
+            cpr_cff_ctx->iteration_budget--; \
             const uint32_t cpr_cff_state_ = cprisk_cff_current_state(cpr_cff_ctx); \
             switch (cpr_cff_state_) {
 
@@ -88,7 +89,8 @@ void cprisk_cff_finalize(cprisk_cff_context_t *context);
         cprisk_cff_context_t *const cpr_cff_ctx = &cpr_cff_storage_; \
         cprisk_cff_config_t cpr_cff_config_ = (config_value); \
         cprisk_cff_init(cpr_cff_ctx, &cpr_cff_config_); \
-        while ((cpr_cff_ctx->iteration_budget--) > 0u) { \
+        while (cpr_cff_ctx->iteration_budget > 0u) { \
+            cpr_cff_ctx->iteration_budget--; \
             const uint32_t cpr_cff_state_ = cprisk_cff_current_state(cpr_cff_ctx); \
             switch (cpr_cff_state_) {
 
