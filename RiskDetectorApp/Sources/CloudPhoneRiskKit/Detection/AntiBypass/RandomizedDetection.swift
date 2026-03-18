@@ -256,9 +256,11 @@ private struct SeededRandomGenerator {
     mutating func randomInRange<T>(_ range: ClosedRange<T>) -> T where T: FixedWidthInteger {
         let lower = UInt64(range.lowerBound)
         let upper = UInt64(range.upperBound)
-        let size = upper - lower + 1
+        // When upper - lower + 1 overflows (full range), size wraps to 0 → next() % 0 crashes.
+        let size = upper &- lower &+ 1
+        guard size != 0 else { return T(next()) }
         let value = next() % size
-        return T(value + lower)
+        return T(value &+ lower)
     }
 
     mutating func shuffled<T>(_ array: [T]) -> [T] {

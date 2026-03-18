@@ -202,8 +202,9 @@ final class ChallengeTriggerTests: XCTestCase {
     func testComputeExpectedHashDeterministic() {
         let h1 = ChallengeTrigger.computeExpectedHash(seed: "abc", deviceFingerprint: "dev1")
         let h2 = ChallengeTrigger.computeExpectedHash(seed: "abc", deviceFingerprint: "dev1")
+        XCTAssertNotNil(h1)
         XCTAssertEqual(h1, h2)
-        XCTAssertEqual(h1.count, 64) // SHA256 hex
+        XCTAssertEqual(h1?.count, 64) // SHA256 hex
     }
 
     func testComputeExpectedHashDifferentInputs() {

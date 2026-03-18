@@ -227,8 +227,9 @@ extension ReportEnvelope {
         }
 
         let fmv = fieldMappingVersion ?? ""
-        let attestationKey = attestationKeyId ?? ""
-        let signatureInput = "\(sigVer)|\(nonce)|\(ts)|\(sessionToken)|\(reportId)|\(keyId)|\(fmv)|\(attestationKey)|\(canonicalPayload)"
+        // Signature format per spec (line 22): sigVer|nonce|ts|sessionToken|reportId|keyId|fieldMappingVersion|canonicalPayloadJSON
+        // attestationKeyId is NOT part of the documented signature — including it would cause verification failures.
+        let signatureInput = "\(sigVer)|\(nonce)|\(ts)|\(sessionToken)|\(reportId)|\(keyId)|\(fmv)|\(canonicalPayload)"
         let signatureInputDigestHex = Self.sha256Hex(Data(signatureInput.utf8))
 
         let status: String

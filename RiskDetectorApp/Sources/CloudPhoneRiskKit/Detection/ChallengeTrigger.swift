@@ -387,7 +387,7 @@ extension ChallengeTrigger {
         capabilityScore: CapabilityScore,
         tamperedCount: Int,
         salt: String,
-        timestamp: Int64 = Int64(Date().timeIntervalSince1970)
+        timestamp: Int64 = nowMillis()
     ) -> [String: Any] {
         return [
             "capabilityAnomalyCount": capabilityScore.basicAnomalyCount,
@@ -458,9 +458,9 @@ extension ChallengeTrigger {
 
     /// 计算 seed 与设备指纹绑定的 expectedHash 占位
     /// expectedHash = SHA256(seed + deviceFingerprint)，用于服务端防重放验证
-    public static func computeExpectedHash(seed: String, deviceFingerprint: String) -> String {
+    public static func computeExpectedHash(seed: String, deviceFingerprint: String) -> String? {
         let input = seed + deviceFingerprint
-        guard let data = input.data(using: .utf8) else { return "" }
+        guard let data = input.data(using: .utf8) else { return nil }
         let hash = SHA256.hash(data: data)
         return hash.compactMap { String(format: "%02x", $0) }.joined()
     }
