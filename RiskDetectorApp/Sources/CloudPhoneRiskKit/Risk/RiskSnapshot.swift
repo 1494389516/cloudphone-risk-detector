@@ -8,19 +8,22 @@ public struct RiskSnapshot: Sendable {
     public var network: NetworkSignals
     public var behavior: BehaviorSignals
     public var jailbreak: DetectionResult
+    public var mutationStrategy: MutationStrategy?
 
     public init(
         deviceID: String,
         device: DeviceFingerprint,
         network: NetworkSignals,
         behavior: BehaviorSignals,
-        jailbreak: DetectionResult
+        jailbreak: DetectionResult,
+        mutationStrategy: MutationStrategy? = nil
     ) {
         self.deviceID = deviceID
         self.device = device
         self.network = network
         self.behavior = behavior
         self.jailbreak = jailbreak
+        self.mutationStrategy = mutationStrategy
     }
 }
 

@@ -3,6 +3,98 @@ import XCTest
 
 final class AntiTamperingTests: XCTestCase {
 
+    private func makeSnapshot(
+        deviceID: String = "device-a",
+        mutationStrategy: MutationStrategy? = nil
+    ) -> RiskSnapshot {
+        RiskSnapshot(
+            deviceID: deviceID,
+            device: TestFixtures.makeDeviceFingerprint(),
+            network: TestFixtures.makeNetworkSignals(),
+            behavior: TestFixtures.makeBehaviorSignals(),
+            jailbreak: TestFixtures.makeDetectionResult(),
+            mutationStrategy: mutationStrategy
+        )
+    }
+
+    private func makeWatchdogSnapshot(
+        supported: Bool = true,
+        running: Bool = true,
+        threadActive: Bool = true,
+        intervalSeconds: UInt32 = 3,
+        anomalyFlags: UInt32 = 0,
+        iterationCount: UInt64 = 0,
+        tracedEventCount: UInt64 = 0,
+        denyAttachErrorCount: UInt64 = 0,
+        exceptionAnomalyCount: UInt64 = 0,
+        lastDenyAttachResult: Int32 = 0,
+        lastDenyAttachErrno: Int32 = 0,
+        lastTraced: Bool = false,
+        lastExceptionPortHealthy: Bool = true,
+        lastExceptionQuerySucceeded: Bool = true,
+        lastExceptionReclaimAttempted: Bool = false,
+        lastExceptionHijackDetected: Bool = false,
+        lastExceptionQueryKernReturn: Int32 = 0,
+        lastExceptionRegisterKernReturn: Int32 = 0,
+        lastCheckMonotonicNs: UInt64 = 0,
+        signalProbeResult: Bool = false,
+        hardwareBpDetected: Bool = false,
+        softwareBreakpointDetected: Bool = false,
+        csopsDebugged: Bool = false,
+        suspiciousThreadCount: UInt32 = 0,
+        singleStepDetected: Bool = false,
+        ttyDetected: Bool = false,
+        developerDiskDetected: Bool = false,
+        exceptionDeliveryTimeoutDetected: Bool = false,
+        exceptionDeliveryProbeHandled: Bool = false,
+        lastExceptionDeliveryProbeNs: UInt64 = 0,
+        signalProbeAnomalyCount: UInt64 = 0,
+        hardwareBpAnomalyCount: UInt64 = 0,
+        softwareBreakpointAnomalyCount: UInt64 = 0,
+        csopsAnomalyCount: UInt64 = 0,
+        suspiciousThreadAnomalyCount: UInt64 = 0,
+        exceptionDeliveryTimeoutAnomalyCount: UInt64 = 0
+    ) -> CPRiskKit.AntiDebugWatchdogSnapshot {
+        CPRiskKit.AntiDebugWatchdogSnapshot(
+            supported: supported,
+            running: running,
+            threadActive: threadActive,
+            intervalSeconds: intervalSeconds,
+            anomalyFlags: anomalyFlags,
+            iterationCount: iterationCount,
+            tracedEventCount: tracedEventCount,
+            denyAttachErrorCount: denyAttachErrorCount,
+            exceptionAnomalyCount: exceptionAnomalyCount,
+            lastDenyAttachResult: lastDenyAttachResult,
+            lastDenyAttachErrno: lastDenyAttachErrno,
+            lastTraced: lastTraced,
+            lastExceptionPortHealthy: lastExceptionPortHealthy,
+            lastExceptionQuerySucceeded: lastExceptionQuerySucceeded,
+            lastExceptionReclaimAttempted: lastExceptionReclaimAttempted,
+            lastExceptionHijackDetected: lastExceptionHijackDetected,
+            lastExceptionQueryKernReturn: lastExceptionQueryKernReturn,
+            lastExceptionRegisterKernReturn: lastExceptionRegisterKernReturn,
+            lastCheckMonotonicNs: lastCheckMonotonicNs,
+            signalProbeResult: signalProbeResult,
+            hardwareBpDetected: hardwareBpDetected,
+            softwareBreakpointDetected: softwareBreakpointDetected,
+            csopsDebugged: csopsDebugged,
+            suspiciousThreadCount: suspiciousThreadCount,
+            singleStepDetected: singleStepDetected,
+            ttyDetected: ttyDetected,
+            developerDiskDetected: developerDiskDetected,
+            exceptionDeliveryTimeoutDetected: exceptionDeliveryTimeoutDetected,
+            exceptionDeliveryProbeHandled: exceptionDeliveryProbeHandled,
+            lastExceptionDeliveryProbeNs: lastExceptionDeliveryProbeNs,
+            signalProbeAnomalyCount: signalProbeAnomalyCount,
+            hardwareBpAnomalyCount: hardwareBpAnomalyCount,
+            softwareBreakpointAnomalyCount: softwareBreakpointAnomalyCount,
+            csopsAnomalyCount: csopsAnomalyCount,
+            suspiciousThreadAnomalyCount: suspiciousThreadAnomalyCount,
+            exceptionDeliveryTimeoutAnomalyCount: exceptionDeliveryTimeoutAnomalyCount
+        )
+    }
+
     // MARK: - AntiTamperingDetector Logic Tests
 
     func testAntiTamperingSuspiciousParentMatching() {
@@ -216,27 +308,7 @@ final class AntiTamperingTests: XCTestCase {
 
     func testAntiDebugWatchdogSnapshotWithoutAnomalyProducesNoSignals() {
         let provider = AntiTamperingSignalProvider()
-        let snapshot = CPRiskKit.AntiDebugWatchdogSnapshot(
-            supported: true,
-            running: true,
-            threadActive: true,
-            intervalSeconds: 3,
-            anomalyFlags: 0,
-            iterationCount: 4,
-            tracedEventCount: 0,
-            denyAttachErrorCount: 0,
-            exceptionAnomalyCount: 0,
-            lastDenyAttachResult: 0,
-            lastDenyAttachErrno: 0,
-            lastTraced: false,
-            lastExceptionPortHealthy: true,
-            lastExceptionQuerySucceeded: true,
-            lastExceptionReclaimAttempted: false,
-            lastExceptionHijackDetected: false,
-            lastExceptionQueryKernReturn: 0,
-            lastExceptionRegisterKernReturn: 0,
-            lastCheckMonotonicNs: 42
-        )
+        let snapshot = makeWatchdogSnapshot(iterationCount: 4, lastCheckMonotonicNs: 42)
 
         XCTAssertTrue(provider.antiDebugWatchdogSignals(from: snapshot).isEmpty)
     }
@@ -247,11 +319,7 @@ final class AntiTamperingTests: XCTestCase {
             | UInt32(1 << 1)
             | UInt32(1 << 2)
             | UInt32(1 << 3)
-        let snapshot = CPRiskKit.AntiDebugWatchdogSnapshot(
-            supported: true,
-            running: true,
-            threadActive: true,
-            intervalSeconds: 3,
+        let snapshot = makeWatchdogSnapshot(
             anomalyFlags: flags,
             iterationCount: 7,
             tracedEventCount: 2,
@@ -287,6 +355,137 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertEqual(summary.evidence["anomaly_kinds"], "traced,deny_attach,exception_port,exception_query")
     }
 
+    func testProtectedDuplicateSignalsAreCollapsedToStrongestSignal() {
+        let provider = AntiTamperingSignalProvider()
+        let input = [
+            RiskSignal(
+                id: SignalID.softwareBreakpointDetected,
+                category: "anti_tamper",
+                score: 52,
+                evidence: ["source": "debugger"],
+                state: .tampered,
+                layer: 1,
+                weightHint: 60
+            ),
+            RiskSignal(
+                id: SignalID.softwareBreakpointDetected,
+                category: "anti_tamper",
+                score: 64,
+                evidence: ["source": "watchdog_probe"],
+                state: .tampered,
+                layer: 1,
+                weightHint: 74
+            ),
+            RiskSignal(
+                id: SignalID.exceptionDeliveryTimeout,
+                category: "anti_tamper",
+                score: 48,
+                evidence: ["source": "watchdog_probe"],
+                state: .tampered,
+                layer: 1,
+                weightHint: 54
+            ),
+            RiskSignal(
+                id: "other_signal",
+                category: "anti_tamper",
+                score: 10,
+                evidence: [:],
+                state: .soft(confidence: 0.3),
+                layer: 2,
+                weightHint: 10
+            ),
+        ]
+
+        let merged = provider.coalesceProtectedDuplicateSignals(input)
+        let ids = merged.map(\.id)
+
+        XCTAssertEqual(ids.filter { $0 == SignalID.softwareBreakpointDetected }.count, 1)
+        XCTAssertEqual(ids.filter { $0 == SignalID.exceptionDeliveryTimeout }.count, 1)
+        XCTAssertTrue(ids.contains("other_signal"))
+        XCTAssertEqual(
+            merged.first(where: { $0.id == SignalID.softwareBreakpointDetected })?.score,
+            64
+        )
+        XCTAssertEqual(
+            merged.first(where: { $0.id == SignalID.softwareBreakpointDetected })?.evidence["merged_count"],
+            "2"
+        )
+    }
+
+    func testRandomizedDetectorOrderIsStableForSameDeviceAndSeed() {
+        let provider = AntiTamperingSignalProvider()
+        let strategy = MutationStrategy(seed: "seed-1", shuffleChecks: true)
+        let snapshot = makeSnapshot(deviceID: "stable-device", mutationStrategy: strategy)
+
+        let first = provider.orderedRandomizedDetectorIDs(snapshot: snapshot)
+        let second = provider.orderedRandomizedDetectorIDs(snapshot: snapshot)
+
+        XCTAssertEqual(first, second)
+    }
+
+    func testRandomizedDetectorOrderVariesAcrossDeviceIDs() {
+        let provider = AntiTamperingSignalProvider()
+        let strategy = MutationStrategy(seed: "seed-1", shuffleChecks: true)
+        let baseline = provider.orderedRandomizedDetectorIDs(
+            snapshot: makeSnapshot(deviceID: "device-a", mutationStrategy: strategy)
+        )
+
+        let candidateIDs = ["device-b", "device-c", "device-d", "device-e", "device-f"]
+        let hasVariation = candidateIDs.contains { candidate in
+            provider.orderedRandomizedDetectorIDs(
+                snapshot: makeSnapshot(deviceID: candidate, mutationStrategy: strategy)
+            ) != baseline
+        }
+
+        XCTAssertTrue(hasVariation)
+    }
+
+    func testRandomizedDetectorOrderKeepsAllSelectedChecks() {
+        let provider = AntiTamperingSignalProvider()
+        let strategy = MutationStrategy(seed: "seed-1", shuffleChecks: true)
+        let order = provider.orderedRandomizedDetectorIDs(
+            snapshot: makeSnapshot(deviceID: "device-a", mutationStrategy: strategy)
+        )
+
+        XCTAssertEqual(Set(order), Set([
+            "anti_tampering",
+            "debugger",
+            "frida",
+            "frida_module",
+            "frida_thread",
+            "frida_heap",
+            "objc_swizzle",
+            "frida_socket",
+            "dyld_interpose",
+            "dyld_image_monitor",
+            "dylib_injection",
+            "anti_debug_watchdog",
+        ]))
+    }
+
+    func testRandomizedDetectorOrderFallsBackWhenShuffleDisabled() {
+        let provider = AntiTamperingSignalProvider()
+        let strategy = MutationStrategy(seed: "seed-1", shuffleChecks: false)
+        let order = provider.orderedRandomizedDetectorIDs(
+            snapshot: makeSnapshot(deviceID: "device-a", mutationStrategy: strategy)
+        )
+
+        XCTAssertEqual(order, [
+            "anti_tampering",
+            "debugger",
+            "frida",
+            "frida_module",
+            "frida_thread",
+            "frida_heap",
+            "objc_swizzle",
+            "frida_socket",
+            "dyld_interpose",
+            "dyld_image_monitor",
+            "dylib_injection",
+            "anti_debug_watchdog",
+        ])
+    }
+
     // MARK: - FridaDetector Logic Tests
 
     func testFridaDetectorKnownPorts() {
@@ -296,14 +495,23 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertTrue(detector.knownPorts.contains(23946))
     }
 
-    func testFridaDetectorMarkers() {
+    func testFridaDetectorScoreCapped() throws {
         let detector = FridaDetector()
-        XCTAssertTrue(detector.markers.contains("frida"))
-        XCTAssertTrue(detector.markers.contains("frida-agent"))
-        XCTAssertTrue(detector.markers.contains("frida-server"))
-        XCTAssertTrue(detector.markers.contains("gadget"))
-        XCTAssertTrue(detector.markers.contains("gum"))
-        XCTAssertTrue(detector.markers.contains("gum-js-loop"))
+        let result = try detector.detect()
+        XCTAssertLessThanOrEqual(result.score, 45)
+    }
+
+    func testFridaModuleDetectorMarkers() {
+        let detector = FridaModuleDetector()
+        XCTAssertTrue(detector.moduleMarkers.contains("frida"))
+        XCTAssertTrue(detector.moduleMarkers.contains("frida-agent"))
+        XCTAssertTrue(detector.moduleMarkers.contains("frida-gadget"))
+        XCTAssertTrue(detector.moduleMarkers.contains("gadget"))
+        XCTAssertTrue(detector.moduleMarkers.contains("libgum"))
+        XCTAssertTrue(detector.suspiciousSectionMarkers.contains("__frida"))
+        XCTAssertTrue(detector.suspiciousSectionMarkers.contains("__gum"))
+        XCTAssertTrue(detector.suspiciousStringMarkers.contains("frida:rpc"))
+        XCTAssertTrue(detector.suspiciousStringMarkers.contains("gum-js-loop"))
     }
 
     func testFridaDetectorServerPaths() {
@@ -318,6 +526,56 @@ final class AntiTamperingTests: XCTestCase {
         let detector = FridaDetector()
         // On a clean test system, no Frida server files should exist
         XCTAssertFalse(detector.detectFridaFileArtifact())
+    }
+
+    func testFridaModuleDetectorBasicMatchingLogic() {
+        let detector = FridaModuleDetector()
+
+        let imageHits = detector.detectImageMarkers(in: [
+            "/usr/lib/frida-agent.dylib",
+            "/private/var/mobile/Containers/frida-gadget.dylib",
+            "/System/Library/Frameworks/Foundation.framework/Foundation",
+        ])
+        let sectionHits = detector.detectSectionMarkers(in: [
+            "__text",
+            "__frida",
+            "__gum",
+        ])
+        let stringHits = detector.detectStringMarkers(in: [
+            "hello world",
+            "transport=frida:rpc session ready",
+            "gum-js-loop active",
+        ])
+
+        XCTAssertTrue(imageHits.contains("frida_module:image:frida"))
+        XCTAssertTrue(imageHits.contains("frida_module:image:frida-agent"))
+        XCTAssertTrue(sectionHits.contains("frida_module:section:__frida"))
+        XCTAssertTrue(sectionHits.contains("frida_module:section:__gum"))
+        XCTAssertTrue(stringHits.contains("frida_module:string:frida:rpc"))
+        XCTAssertTrue(stringHits.contains("frida_module:string:gum-js-loop"))
+    }
+
+    func testFridaModuleDetectorSignalConversion() {
+        let result = FridaModuleDetector.buildResult(
+            imageHits: ["frida_module:image:frida-agent"],
+            sectionHits: ["frida_module:section:__frida"],
+            stringHits: ["frida_module:string:frida:rpc"]
+        )
+        let signals = FridaModuleDetector.asSignals(result: result)
+        let ids = Set(signals.map(\.id))
+
+        XCTAssertGreaterThan(result.score, 0)
+        XCTAssertLessThanOrEqual(result.score, 40)
+        XCTAssertTrue(ids.contains(SignalID.fridaModuleDetected))
+        XCTAssertTrue(ids.contains(SignalID.fridaModuleImage))
+        XCTAssertTrue(ids.contains(SignalID.fridaModuleSection))
+        XCTAssertTrue(ids.contains(SignalID.fridaModuleString))
+        XCTAssertEqual(signals.first(where: { $0.id == SignalID.fridaModuleDetected })?.category, "anti_tamper")
+        XCTAssertEqual(signals.first(where: { $0.id == SignalID.fridaModuleDetected })?.layer, 2)
+        XCTAssertLessThanOrEqual(
+            signals.first(where: { $0.id == SignalID.fridaModuleDetected })?.score ?? 0,
+            28
+        )
     }
 
     // MARK: - FridaHeapDetector Tests
@@ -441,6 +699,7 @@ final class AntiTamperingTests: XCTestCase {
             AntiTamperingDetector(),
             DebuggerDetector(),
             FridaDetector(),
+            FridaModuleDetector(),
             FridaHeapDetector(),
             FridaThreadDetector(),
             FridaSocketDetector(),

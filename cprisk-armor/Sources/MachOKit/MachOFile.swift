@@ -67,7 +67,7 @@ extension Data {
     func readUInt32(at offset: Int) throws -> UInt32 {
         let range = try checkedRange(at: offset, size: MemoryLayout<UInt32>.size, forWrite: false)
         var value: UInt32 = 0
-        Swift.withUnsafeMutableBytes(of: &value) { destination in
+        _ = Swift.withUnsafeMutableBytes(of: &value) { destination in
             copyBytes(to: destination, from: range)
         }
         return UInt32(littleEndian: value)
@@ -76,7 +76,7 @@ extension Data {
     func readUInt64(at offset: Int) throws -> UInt64 {
         let range = try checkedRange(at: offset, size: MemoryLayout<UInt64>.size, forWrite: false)
         var value: UInt64 = 0
-        Swift.withUnsafeMutableBytes(of: &value) { destination in
+        _ = Swift.withUnsafeMutableBytes(of: &value) { destination in
             copyBytes(to: destination, from: range)
         }
         return UInt64(littleEndian: value)
@@ -289,6 +289,34 @@ public final class MachOFile {
 
     public func section(segment segName: String, section secName: String) throws -> Section? {
         try self.segment(named: segName)?.sections.first { $0.sectionName == secName }
+    }
+
+    public func section(containingVMAddress address: UInt64) throws -> Section? {
+        for segment in try segments() {
+            for section in segment.sections where section.size > 0 {
+                let endAddress = try Self.checkedAdd(
+                    section.address,
+                    section.size,
+                    context: "section \(section.segmentName),\(section.sectionName) vm extent"
+                )
+                if address >= section.address && address < endAddress {
+                    return section
+                }
+            }
+        }
+        return nil
+    }
+
+    public func fileOffset(forVMAddress address: UInt64) throws -> UInt64? {
+        guard let section = try section(containingVMAddress: address) else {
+            return nil
+        }
+        let delta = address - section.address
+        return try Self.checkedAdd(
+            UInt64(section.offset),
+            delta,
+            context: "file offset for vm address \(address)"
+        )
     }
 
     // MARK: - Symbol Table (LC_SYMTAB) Access

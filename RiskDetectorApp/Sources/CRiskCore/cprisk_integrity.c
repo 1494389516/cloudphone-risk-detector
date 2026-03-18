@@ -14,6 +14,9 @@
 #include <string.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 #include "include/cprisk_macho.h"
 #include "include/cprisk_sha256.h"
 #include "include/cprisk_secure_zero.h"
@@ -795,6 +798,21 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
         goto cleanup;
     }
 
+#if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+    /* Inline single-step timing probe: ~100 arithmetic ops complete in
+       microseconds normally; >50ms indicates instruction-level tracing. */
+    {
+        uint64_t t_probe_0 = cprisk_monotonic_ns();
+        volatile uint32_t step_acc = 0x5A5A5A5Au;
+        for (int step_j = 0; step_j < 100; step_j++)
+            step_acc = step_acc * 0x01010101u + (uint32_t)step_j;
+        (void)step_acc;
+        uint64_t t_probe_1 = cprisk_monotonic_ns();
+        if (t_probe_1 - t_probe_0 > 50000000ULL)
+            s_integrity_deception_active = 1;
+    }
+#endif
+
     memcpy(s_saved_integrity_hash, integrity, CPRISK_ARMOR_HASH_SIZE);
     s_integrity_hash_saved = 1;
 
@@ -862,6 +880,15 @@ int cprisk_runtime_material_ready(void) {
 }
 
 int cprisk_recheck_integrity(void) {
+#if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+    /* Under debugger: report "all clear" but silently activate deception */
+    if (cprisk_is_being_traced()) {
+        cprisk_prepare_deception_material_i(NULL, NULL, NULL);
+        s_integrity_deception_active = 1;
+        return 0;
+    }
+#endif
+
     if (!s_integrity_hash_saved)
         return -1;
 

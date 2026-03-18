@@ -65,6 +65,53 @@ final class ArmorABITests: XCTestCase {
         XCTAssertEqual(section, anchorTag)
     }
 
+    func testAntiDebugHeaderAndEntrySerializationMatchesABI() {
+        let header = ArmorABI.AntiDebug.Header(
+            flags: ArmorABI.AntiDebug.flagHasSymbolTargets | ArmorABI.AntiDebug.flagSeedFromConfig,
+            seed: 0x1122334455667788,
+            textBaseAddress: 0x1000,
+            probeImmediate: 0xA7D00001,
+            entryCount: 2
+        ).serialized()
+
+        XCTAssertEqual(header.count, ArmorABI.AntiDebug.headerSize)
+        XCTAssertEqual(readLE32(header, at: 0), ArmorABI.AntiDebug.magic)
+        XCTAssertEqual(readLE32(header, at: 4), ArmorABI.AntiDebug.abiVersion)
+        XCTAssertEqual(
+            readLE32(header, at: 8),
+            ArmorABI.AntiDebug.flagHasSymbolTargets | ArmorABI.AntiDebug.flagSeedFromConfig
+        )
+        XCTAssertEqual(readLE32(header, at: 12), UInt32(ArmorABI.AntiDebug.headerSize))
+        XCTAssertEqual(readLE64(header, at: 16), 0x1122334455667788)
+        XCTAssertEqual(readLE64(header, at: 24), 0x1000)
+        XCTAssertEqual(readLE32(header, at: 32), 0xA7D00001)
+        XCTAssertEqual(readLE32(header, at: 36), 2)
+        XCTAssertEqual(readLE32(header, at: 40), UInt32(ArmorABI.AntiDebug.entrySize))
+        XCTAssertEqual(readLE32(header, at: 44), 0)
+
+        let entry = ArmorABI.AntiDebug.Entry(
+            identifierHash: 0x0102030405060708,
+            patchSiteVMOffset: 0x88,
+            patchSiteFileOffset: 0x1234,
+            policyBits: ArmorABI.AntiDebug.policyRuntimeGate | ArmorABI.AntiDebug.policyTrapOnTamper,
+            scatterSlot: 3,
+            entryFlags: ArmorABI.AntiDebug.entryFlagSyntheticTarget,
+            targetName: "_debugProbe"
+        ).serialized()
+
+        XCTAssertEqual(entry.count, ArmorABI.AntiDebug.entrySize)
+        XCTAssertEqual(readLE64(entry, at: 0), 0x0102030405060708)
+        XCTAssertEqual(readLE64(entry, at: 8), 0x88)
+        XCTAssertEqual(readLE32(entry, at: 16), 0x1234)
+        XCTAssertEqual(
+            readLE32(entry, at: 20),
+            ArmorABI.AntiDebug.policyRuntimeGate | ArmorABI.AntiDebug.policyTrapOnTamper
+        )
+        XCTAssertEqual(readLE32(entry, at: 24), 3)
+        XCTAssertEqual(readLE32(entry, at: 28), ArmorABI.AntiDebug.entryFlagSyntheticTarget)
+        XCTAssertEqual(String(decoding: entry[32..<43], as: UTF8.self), "_debugProbe")
+    }
+
     func testWhiteBoxDescriptorSerializationMatchesABI() {
         let permutation = Data((0..<ArmorABI.WhiteBox.permutationSize).map { UInt8($0) })
         let finalMask = Data(repeating: 0xA1, count: ArmorABI.hashSize)

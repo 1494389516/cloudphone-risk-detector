@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
-  <img src="https://img.shields.io/badge/SDK-6.5.0-FF3B30?style=for-the-badge" alt="SDK">
+  <img src="https://img.shields.io/badge/SDK-6.6.0-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
   <img src="https://img.shields.io/badge/License-Proprietary-8E8E93?style=for-the-badge" alt="License">
 </p>
@@ -62,6 +62,7 @@
 | **6.3** | **逆向对抗纵深 + 符号表混淆** | Pass 6 SymbolStripper（nlist 本地符号表 SDK 标记混淆）、ObjC selector 安全修复（仅混淆 SDK 方法名，系统 selector 保留）、MetadataScrubber 全类型混淆（移除 SDK 公开类型白名单）、Codable 短别名 CodingKeys（80+ struct / 25+ 文件，消除 Small String 指令流泄漏）、92 项壳测试全绿 |
 | **6.4** | **静态库架构 + 全量符号剥离** | SDK 由动态 framework 改为 library.static（消除 dyld 导出符号暴露面）、armor 壳对最终 app 二进制执行、全量 strip（STRIP_STYLE=all）清除所有本地符号、IDA 中 SDK 函数全部显示为 sub_XXXX（与 Android .so 同等效果）、app bundle 不再包含 Frameworks/ 目录 |
 | **6.5** | **白盒加密 + 反重打包** | 白盒 PRF 引擎（5 域 table-driven SPN，~160KB S-box 嵌入二进制，root key 不可逆提取）、anchor/字符串/数据段/签名材料全链路白盒派生（替代 legacy HMAC 路径）、AppSigningIdentityDetector 反重打包（TeamID/bundleID/entitlement 一致性 + 基线漂移检测 + integrity poison 联动）、白盒 4 section 占位符预埋（`__swift5_awbm/awbc/awbd/awbt`）、cprisk-armor IntegrityAnchorPass 白盒集成、CRiskCore 白盒运行时（validate bundle → PRF evaluate → signing helper）、v2a 签名链白盒化 |
+| **6.6** | **反调试纵深 + Pass 7 + Frida 模块检测** | cprisk-armor Pass 7 AntiDebugInjector（`__DATA,__cpr_adbg7` 编译期注入计划 ABI）、关键密码学路径被调试时静默毒化、watchdog 多维探针（SIGTRAP/csops/硬件断点/软件断点/异常分发超时/可疑线程/TTY/Developer Disk）、FridaModuleDetector（image/section/字符串三路 Frida/Gum/Gadget 检测）、反篡改检测顺序稳定随机化（MutationStrategy.shuffleChecks）、`software_breakpoint_detected` / `exception_delivery_timeout` 等新 RiskSignal |
 ## 架构概览
 
 ```
@@ -69,8 +70,8 @@
 │          Layer 0: 自研壳 (cprisk-armor) ABI v2           │
 │   全量字符串加密+HMAC / 多 Section 数据段加密+HMAC       │
 │   完整性锚点 HMAC / Metadata 抹除 / 结构混淆 / Anti-Dump │
-│   Pass 6 符号表混淆 / 短别名 CodingKeys / 全量 strip     │
-│   强制密钥注入 / salt 动态派生 / armor material→毒化(v2a)│
+│   Pass 6 符号表混淆 / Pass 7 AntiDebug 注入计划 ABI      │
+│   短别名 CodingKeys / 全量 strip / 强制密钥注入          │
 │   白盒 PRF (5域 S-box ~160KB) / 反重打包 TeamID 校验    │
 ├────────────────────────────────────────────────────────┤
 │                   业务应用层                             │
@@ -109,6 +110,23 @@
 | **硬信号** | 本地独立判定，单点即可触发 | 越狱、DRM 降级、ChargeCounter 异常、PLT 篡改、ObjC Swizzle、异常端口劫持、SDK 二进制替换、DYLD Interpose | 80-100 |
 | **软信号** | 需结合场景综合评分 | VPN、行为异常、电压方差低、挂载点异常、时序侧信道、线程枚举异常、指纹突变、随机化检测、行为数据不足 | 30-75 |
 | **服务端信号** | 依赖外部聚合 | 机房 IP、ASN 黑名单、IP 设备聚合度、图社区风险、硬件画像聚集 | 55-100 |
+
+---
+
+## 6.6 新增能力 — 反调试纵深 + Pass 7 + Frida 模块检测
+
+6.6 强化反调试与 Frida 对抗：cprisk-armor 新增 Pass 7 编译期 anti-debug 注入计划、关键密码学路径被调试时静默毒化、watchdog 多维探针、FridaModuleDetector 模块级检测、反篡改检测顺序稳定随机化。
+
+### 6.6 核心改动
+
+| 改动 | 说明 |
+|------|------|
+| **Pass 7: AntiDebugInjector** | 在 `__DATA,__cpr_adbg7` 写入可运行时消费的 anti-debug 注入计划 ABI（seed、probeImmediate、target identifier/hash、patchSiteVMOffset/fileOffset、policyBits、entryFlags、scatterSlot），为后续 inline patch / runtime gate 预留 |
+| **关键路径静默毒化** | 白盒 PRF、字符串解密、数据段加载、签名材料在被调试时输出错误/毒化值，而非 crash，增加定位难度 |
+| **watchdog 多维探针** | 每 3s 执行 ptrace、exception port、SIGTRAP/BRK、csops(CS_DEBUGGED)、硬件断点、软件断点、可疑线程、TTY、Developer Disk Image、single-step timing trap、exception delivery timeout 等探针 |
+| **FridaModuleDetector** | 扫描 dyld image 名、可疑 Mach-O section 名、`__cstring/__const` 中 Frida/Gum/Gadget 字符串片段，与 FridaDetector 端口/文件/环境维度分工 |
+| **检测顺序随机化** | `MutationStrategy.shuffleChecks == true` 时，anti-tamper/debugger/frida 相关 detector 按 deviceID+scope+seed 稳定洗牌，同一设备顺序稳定、不同设备可变 |
+| **新 RiskSignal** | `software_breakpoint_detected`、`exception_delivery_timeout`、`frida_module_detected` 等参与评分 |
 
 ---
 
@@ -259,14 +277,15 @@
                           ↓
                     App 二进制 (SDK 代码静态链入)
                           ↓
-                    cprisk-armor CLI (6 Pass, ABI v2)
+                    cprisk-armor CLI (7 Pass, ABI v2)
                     --key <hex> / --key-file / CPRISK_ARMOR_KEY
                     ┌─ Pass 4: IntegrityAnchor    (HMAC 锚点 + 白盒 PRF 5域)
                     ├─ Pass 1: StringEncryptor     (白盒 PRF 密钥 + HMAC + nonce)
                     ├─ Pass 3: DataSegmentEncryptor(白盒 PRF 密钥 + HMAC + nonce)
                     ├─ Pass 2: MetadataScrubber    (元数据抹除)
                     ├─ Pass 5: StructureObfuscator (结构混淆, 安全随机)
-                    └─ Pass 6: SymbolStripper      (SDK 符号表混淆)
+                    ├─ Pass 6: SymbolStripper      (SDK 符号表混淆)
+                    └─ Pass 7: AntiDebugInjector   (anti-debug 注入计划 __cpr_adbg7)
                           ↓
                     xcrun strip -x && xcrun strip  (全量符号剥离)
                           ↓
@@ -371,15 +390,16 @@
 .
 ├── cprisk-armor/                         # 编译后壳工具链 (SPM CLI)
 │   ├── Sources/
-│   │   ├── ArmorCLI/                     # CLI 入口 (6 Pass 编排)
+│   │   ├── cprisk-armor/                  # CLI 入口 (7 Pass 编排)
 │   │   ├── MachOKit/                     # Mach-O 读写库
 │   │   ├── StringEncryptor/              # Pass 1: 全量字符串加密
 │   │   ├── MetadataScrubber/             # Pass 2: Metadata 抹除
 │   │   ├── DataSegmentEncryptor/         # Pass 3: 多 Section 数据段加密
 │   │   ├── IntegrityAnchor/              # Pass 4: 完整性锚点
 │   │   ├── StructureObfuscator/          # Pass 5: 结构混淆
-│   │   └── SymbolStripper/              # Pass 6: 符号表混淆
-│   └── Tests/                            # 92+ 项单元 + E2E + KDF 链 + WhiteBox 测试
+│   │   ├── SymbolStripper/               # Pass 6: 符号表混淆
+│   │   └── AntiDebugInjector/            # Pass 7: anti-debug 注入计划
+│   └── Tests/                            # 93+ 项单元 + E2E + KDF 链 + WhiteBox + AntiDebugInjector 测试
 │
 ├── RiskDetectorApp/
 │   ├── App/                              # SwiftUI 示例应用
@@ -430,7 +450,7 @@
 
 ## 安全设计概要
 
-SDK 采用纵深防御架构：**cprisk-armor 自研壳（6 Pass / ABI v2）** 在编译后对二进制执行全量字符串加密（HMAC 认证 + 随机 nonce）、Metadata 抹除、多 Section 数据段加密（HMAC 认证）、完整性锚点（HMAC 绑定 rootKey + **白盒 PRF 5 域 S-box**）、结构混淆与**符号表混淆**（Pass 6 SymbolStripper），强制密钥注入消除零密钥降级；**白盒 PRF 引擎**将 root key 融入 ~160KB S-box 查找表不可逆提取，anchor 校验、字符串解密密钥、数据段加载密钥、签名材料全部通过白盒 PRF 派生，内存 dump 无法还原原始密钥；**AppSigningIdentityDetector** 检测重打包/重签名（TeamID/bundleID/entitlement 一致性 + 基线漂移 + integrity poison 联动）；**SDK 以 library.static 交付**，全部代码静态链入 App 二进制后执行 `strip -x` + `strip` 全量剥离，IDA 中 SDK 函数显示为 `sub_XXXX`，消除静态分析与逆向还原特征；**Codable 短别名 CodingKeys** 消除 Small String Optimization 导致的指令流字符串泄漏；**Anti-Dump 页面保护**（`vm_region_64`）检测攻击者重映射，**密钥安全清零**覆盖全部中间态敏感材料；**内联 SHA-256 + 自包含 Mach-O 解析**消除 CommonCrypto 与 dyld API 的 Hook 攻击面，阻断 Clean Copy 攻击；**渗透式毒化**将壳完整性 material 绑定到 ReportEnvelope 签名派生链（v2a），篡改即签名失效而非 crash，攻击者无法定位防护点；**字符串全量混淆**（`ObfuscatedJailbreakStrings`）防止静态特征提取；**DualPathValidator 双路/三路验证**确保检测结果不被单点绕过；**HMAC-SHA256 签名**覆盖报告全字段防篡改，**SignedRiskConclusion v2** 将 signals 摘要纳入签名域；**Keychain + AES-GCM 加密存储**保护本地数据与历史记录，**Keychain 策略统一** `AfterFirstUnlockThisDeviceOnly`；**配置签名信任链**（远端 → 缓存 → 运行时）杜绝配置注入，**DEBUG/Release 行为对齐**消除调试放行路径；**__TEXT 段哈希 + SDK 二进制完整性校验 + 基线交叉验证**检测代码篡改与基线投毒；**Provider 注册表封印 + ConditionExpression 封印 + 实例锁定**防止运行时替换；**ServerSignals HMAC 来源校验 + Challenge HMAC 校验**防止注入伪造信号与中间人篡改挑战结果；**动态可疑特征列表**支持服务端热更新检测规则；**Frida 五维对抗**（线程 / 端口 / V8 堆 / Socket / 时序）全覆盖；**LibcPrologueGuard + KernelHookSideChannel** 实现 Inline Hook 穿透与内核级 Hook 侧信道检测；**IntegrityBaselineEnvCheck** 首启环境把关防止基线投毒；**App Attest 强制模式** 消除所有静默降级路径；**行为数据用后清零**防止内存 Dump 提取。
+SDK 采用纵深防御架构：**cprisk-armor 自研壳（7 Pass / ABI v2）** 在编译后对二进制执行全量字符串加密（HMAC 认证 + 随机 nonce）、Metadata 抹除、多 Section 数据段加密（HMAC 认证）、完整性锚点（HMAC 绑定 rootKey + **白盒 PRF 5 域 S-box**）、结构混淆与**符号表混淆**（Pass 6 SymbolStripper），强制密钥注入消除零密钥降级；**白盒 PRF 引擎**将 root key 融入 ~160KB S-box 查找表不可逆提取，anchor 校验、字符串解密密钥、数据段加载密钥、签名材料全部通过白盒 PRF 派生，内存 dump 无法还原原始密钥；**AppSigningIdentityDetector** 检测重打包/重签名（TeamID/bundleID/entitlement 一致性 + 基线漂移 + integrity poison 联动）；**SDK 以 library.static 交付**，全部代码静态链入 App 二进制后执行 `strip -x` + `strip` 全量剥离，IDA 中 SDK 函数显示为 `sub_XXXX`，消除静态分析与逆向还原特征；**Codable 短别名 CodingKeys** 消除 Small String Optimization 导致的指令流字符串泄漏；**Anti-Dump 页面保护**（`vm_region_64`）检测攻击者重映射，**密钥安全清零**覆盖全部中间态敏感材料；**内联 SHA-256 + 自包含 Mach-O 解析**消除 CommonCrypto 与 dyld API 的 Hook 攻击面，阻断 Clean Copy 攻击；**渗透式毒化**将壳完整性 material 绑定到 ReportEnvelope 签名派生链（v2a），篡改即签名失效而非 crash，攻击者无法定位防护点；**字符串全量混淆**（`ObfuscatedJailbreakStrings`）防止静态特征提取；**DualPathValidator 双路/三路验证**确保检测结果不被单点绕过；**HMAC-SHA256 签名**覆盖报告全字段防篡改，**SignedRiskConclusion v2** 将 signals 摘要纳入签名域；**Keychain + AES-GCM 加密存储**保护本地数据与历史记录，**Keychain 策略统一** `AfterFirstUnlockThisDeviceOnly`；**配置签名信任链**（远端 → 缓存 → 运行时）杜绝配置注入，**DEBUG/Release 行为对齐**消除调试放行路径；**__TEXT 段哈希 + SDK 二进制完整性校验 + 基线交叉验证**检测代码篡改与基线投毒；**Provider 注册表封印 + ConditionExpression 封印 + 实例锁定**防止运行时替换；**ServerSignals HMAC 来源校验 + Challenge HMAC 校验**防止注入伪造信号与中间人篡改挑战结果；**动态可疑特征列表**支持服务端热更新检测规则；**Frida 五维对抗**（线程 / 端口 / V8 堆 / Socket / 时序）全覆盖；**LibcPrologueGuard + KernelHookSideChannel** 实现 Inline Hook 穿透与内核级 Hook 侧信道检测；**IntegrityBaselineEnvCheck** 首启环境把关防止基线投毒；**App Attest 强制模式** 消除所有静默降级路径；**行为数据用后清零**防止内存 Dump 提取。
 
 ### 盲区三：PhysicalSensorProbe 预热与支付场景 UX
 
@@ -571,4 +591,4 @@ cd RiskDetectorApp && swift test --scratch-path "${TMPDIR:-/tmp}/cloudphone-risk
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 6.5.0 — 白盒加密 + 反重打包 + 静态库架构 (6 Pass)</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 6.6.0 — 反调试纵深 + Pass 7 + Frida 模块检测 (7 Pass)</sub></p>

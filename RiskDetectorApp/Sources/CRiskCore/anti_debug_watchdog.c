@@ -13,6 +13,7 @@
 
 #define CPRISK_WATCHDOG_INTERVAL_SECONDS 3u
 #define CPRISK_WATCHDOG_SLEEP_SLICE_NS 200000000L
+#define CPRISK_WATCHDOG_SOFTWARE_BP_SCAN_BYTES 256u
 
 enum {
     CPRISK_WATCHDOG_STATE_STOPPED = 0,
@@ -24,6 +25,34 @@ static pthread_mutex_t s_watchdog_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t s_watchdog_thread;
 static int s_watchdog_state = CPRISK_WATCHDOG_STATE_STOPPED;
 static atomic_int s_watchdog_stop_requested = 0;
+extern uint64_t cprisk_get_last_exception_delivery_probe_ns(void);
+extern int cprisk_get_last_exception_delivery_probe_handled(void);
+
+static int cprisk_watchdog_scan_software_breakpoints_i(void) {
+    int detected = 0;
+
+    detected += cprisk_scan_software_breakpoints(
+        (const void *)cprisk_deny_attach,
+        CPRISK_WATCHDOG_SOFTWARE_BP_SCAN_BYTES);
+    detected += cprisk_scan_software_breakpoints(
+        (const void *)cprisk_deny_attach_status,
+        CPRISK_WATCHDOG_SOFTWARE_BP_SCAN_BYTES);
+    detected += cprisk_scan_software_breakpoints(
+        (const void *)cprisk_probe_debugger_via_signal,
+        CPRISK_WATCHDOG_SOFTWARE_BP_SCAN_BYTES);
+    detected += cprisk_scan_software_breakpoints(
+        (const void *)cprisk_probe_exception_delivery_timeout,
+        CPRISK_WATCHDOG_SOFTWARE_BP_SCAN_BYTES);
+    detected += cprisk_scan_software_breakpoints(
+        (const void *)cprisk_register_exception_handler,
+        CPRISK_WATCHDOG_SOFTWARE_BP_SCAN_BYTES);
+    detected += cprisk_scan_software_breakpoints(
+        (const void *)cprisk_verify_exception_handler,
+        CPRISK_WATCHDOG_SOFTWARE_BP_SCAN_BYTES);
+
+    return detected;
+}
+
 static cprisk_anti_debug_watchdog_snapshot_t s_watchdog_snapshot = {
     .supported = 1u,
     .running = 0u,
@@ -45,6 +74,23 @@ static cprisk_anti_debug_watchdog_snapshot_t s_watchdog_snapshot = {
     .deny_attach_error_count = 0u,
     .exception_anomaly_count = 0u,
     .last_check_monotonic_ns = 0u,
+    .last_signal_probe_result = 0u,
+    .last_hardware_bp_detected = 0u,
+    .last_software_bp_detected = 0u,
+    .last_csops_debugged = 0u,
+    .last_suspicious_thread_count = 0u,
+    .last_single_step_detected = 0u,
+    .last_tty_detected = 0u,
+    .last_developer_disk_detected = 0u,
+    .last_exception_delivery_timeout_detected = 0u,
+    .last_exception_delivery_probe_handled = 0u,
+    .last_exception_delivery_probe_ns = 0u,
+    .signal_probe_anomaly_count = 0u,
+    .hardware_bp_anomaly_count = 0u,
+    .software_bp_anomaly_count = 0u,
+    .csops_anomaly_count = 0u,
+    .suspicious_thread_anomaly_count = 0u,
+    .exception_delivery_timeout_anomaly_count = 0u,
 };
 
 static uint64_t cprisk_monotonic_time_ns(void) {
@@ -76,6 +122,23 @@ static void cprisk_watchdog_reset_locked(void) {
     s_watchdog_snapshot.deny_attach_error_count = 0u;
     s_watchdog_snapshot.exception_anomaly_count = 0u;
     s_watchdog_snapshot.last_check_monotonic_ns = 0u;
+    s_watchdog_snapshot.last_signal_probe_result = 0u;
+    s_watchdog_snapshot.last_hardware_bp_detected = 0u;
+    s_watchdog_snapshot.last_software_bp_detected = 0u;
+    s_watchdog_snapshot.last_csops_debugged = 0u;
+    s_watchdog_snapshot.last_suspicious_thread_count = 0u;
+    s_watchdog_snapshot.last_single_step_detected = 0u;
+    s_watchdog_snapshot.last_tty_detected = 0u;
+    s_watchdog_snapshot.last_developer_disk_detected = 0u;
+    s_watchdog_snapshot.last_exception_delivery_timeout_detected = 0u;
+    s_watchdog_snapshot.last_exception_delivery_probe_handled = 0u;
+    s_watchdog_snapshot.last_exception_delivery_probe_ns = 0u;
+    s_watchdog_snapshot.signal_probe_anomaly_count = 0u;
+    s_watchdog_snapshot.hardware_bp_anomaly_count = 0u;
+    s_watchdog_snapshot.software_bp_anomaly_count = 0u;
+    s_watchdog_snapshot.csops_anomaly_count = 0u;
+    s_watchdog_snapshot.suspicious_thread_anomaly_count = 0u;
+    s_watchdog_snapshot.exception_delivery_timeout_anomaly_count = 0u;
 }
 
 static int cprisk_watchdog_should_stop(void) {
@@ -126,6 +189,47 @@ static void cprisk_watchdog_run_iteration(void) {
         }
     }
 
+    const int signal_probe = cprisk_probe_debugger_via_signal();
+    const int software_bp = cprisk_watchdog_scan_software_breakpoints_i();
+    const int hw_bp = cprisk_detect_hardware_breakpoints();
+    const int csops_dbg = cprisk_csops_debug_check();
+    const int suspicious_threads = cprisk_detect_suspicious_threads();
+    const int single_step = cprisk_detect_single_stepping();
+    const int tty = cprisk_detect_tty_debug();
+    const int dev_disk = cprisk_detect_developer_disk();
+    const int exception_delivery_timeout = cprisk_probe_exception_delivery_timeout();
+    const int exception_delivery_probe_handled =
+        cprisk_get_last_exception_delivery_probe_handled();
+    const uint64_t exception_delivery_probe_ns =
+        cprisk_get_last_exception_delivery_probe_ns();
+
+    if (signal_probe != 0)
+        anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SIGNAL_PROBE;
+    if (software_bp != 0)
+        anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SOFTWARE_BP;
+    if (hw_bp != 0)
+        anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_HARDWARE_BP;
+    if (csops_dbg != 0)
+        anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_CSOPS_DEBUGGED;
+    if (suspicious_threads > 0)
+        anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SUSPICIOUS_THREAD;
+    if (single_step != 0)
+        anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SINGLE_STEP;
+    if (tty != 0)
+        anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TTY;
+    if (dev_disk != 0)
+        anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DEVELOPER_DISK;
+    if (exception_delivery_timeout != 0)
+        anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_DELIVERY_TIMEOUT;
+
+    if (anomaly_flags & (CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SIGNAL_PROBE |
+                          CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SOFTWARE_BP |
+                          CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_HARDWARE_BP |
+                          CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_CSOPS_DEBUGGED |
+                          CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_DELIVERY_TIMEOUT)) {
+        cprisk_force_integrity_poison();
+    }
+
     pthread_mutex_lock(&s_watchdog_mutex);
     s_watchdog_snapshot.iteration_count += 1u;
     s_watchdog_snapshot.last_check_monotonic_ns = cprisk_monotonic_time_ns();
@@ -146,9 +250,36 @@ static void cprisk_watchdog_run_iteration(void) {
         s_watchdog_snapshot.traced_event_count += 1u;
     }
     if ((anomaly_flags & (CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_PORT |
-                          CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_QUERY)) != 0u) {
+                          CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_QUERY |
+                          CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_DELIVERY_TIMEOUT)) != 0u) {
         s_watchdog_snapshot.exception_anomaly_count += 1u;
     }
+    s_watchdog_snapshot.last_signal_probe_result = signal_probe != 0 ? 1u : 0u;
+    s_watchdog_snapshot.last_hardware_bp_detected = hw_bp != 0 ? 1u : 0u;
+    s_watchdog_snapshot.last_software_bp_detected = software_bp != 0 ? 1u : 0u;
+    s_watchdog_snapshot.last_csops_debugged = csops_dbg != 0 ? 1u : 0u;
+    s_watchdog_snapshot.last_suspicious_thread_count = (uint32_t)(suspicious_threads > 0 ? suspicious_threads : 0);
+    s_watchdog_snapshot.last_single_step_detected = single_step != 0 ? 1u : 0u;
+    s_watchdog_snapshot.last_tty_detected = tty != 0 ? 1u : 0u;
+    s_watchdog_snapshot.last_developer_disk_detected = dev_disk != 0 ? 1u : 0u;
+    s_watchdog_snapshot.last_exception_delivery_timeout_detected =
+        exception_delivery_timeout != 0 ? 1u : 0u;
+    s_watchdog_snapshot.last_exception_delivery_probe_handled =
+        exception_delivery_probe_handled != 0 ? 1u : 0u;
+    s_watchdog_snapshot.last_exception_delivery_probe_ns =
+        exception_delivery_probe_ns;
+    if (signal_probe != 0)
+        s_watchdog_snapshot.signal_probe_anomaly_count += 1u;
+    if (hw_bp != 0)
+        s_watchdog_snapshot.hardware_bp_anomaly_count += 1u;
+    if (software_bp != 0)
+        s_watchdog_snapshot.software_bp_anomaly_count += 1u;
+    if (csops_dbg != 0)
+        s_watchdog_snapshot.csops_anomaly_count += 1u;
+    if (suspicious_threads > 0)
+        s_watchdog_snapshot.suspicious_thread_anomaly_count += 1u;
+    if (exception_delivery_timeout != 0)
+        s_watchdog_snapshot.exception_delivery_timeout_anomaly_count += 1u;
     pthread_mutex_unlock(&s_watchdog_mutex);
 }
 

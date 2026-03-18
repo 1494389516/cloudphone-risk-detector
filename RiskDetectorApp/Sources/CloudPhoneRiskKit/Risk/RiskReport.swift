@@ -71,6 +71,14 @@ public enum SignalID {
     static let antiDebugWatchdogDenyAttachFailed = "anti_debug_watchdog_deny_attach_failed"
     static let antiDebugWatchdogExceptionPort = "anti_debug_watchdog_exception_port"
     static let antiDebugWatchdogExceptionQuery = "anti_debug_watchdog_exception_query"
+    static let softwareBreakpointDetected = "software_breakpoint_detected"
+    static let exceptionDeliveryTimeout = "exception_delivery_timeout"
+
+    // Frida module
+    static let fridaModuleDetected = "frida_module_detected"
+    static let fridaModuleImage = "frida_module_image"
+    static let fridaModuleSection = "frida_module_section"
+    static let fridaModuleString = "frida_module_string"
 }
 
 // MARK: - Signal Categories
@@ -764,7 +772,7 @@ private struct DetectionResultPayload: Codable {
 }
 
 enum Version {
-    static let current = "6.5.0"
+    static let current = "6.6.0"
 }
 
 // MARK: - Signal Digest

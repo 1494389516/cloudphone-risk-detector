@@ -14,6 +14,9 @@
 #include <pthread.h>
 #include <sys/mman.h>
 #include <mach/vm_prot.h>
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 #include "include/cprisk_dlsym.h"
 #include "include/cprisk_macho.h"
 
@@ -445,6 +448,16 @@ int cprisk_load_protected_data(void) {
 
     cprisk_secure_zero(&s_guard_state, sizeof(s_guard_state));
     s_ldr_loaded = 1;
+
+#if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+    /* Poison data accumulator under debugger — downstream key derivation
+       silently produces wrong material. */
+    if (cprisk_is_being_traced()) {
+        s_data_acc ^= 0xDEADBEEFCAFEBABEULL;
+        cprisk_force_integrity_poison();
+    }
+#endif
+
     return (int)s_applied_count;
 }
 
@@ -555,6 +568,16 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
                     pthread_mutex_unlock(&s_loader_mutex);
                     return 0;
                 }
+
+#if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+                /* Perturb decrypted plaintext under debugger — data looks
+                   decrypted but content is silently wrong. */
+                if (cprisk_is_being_traced()) {
+                    for (size_t pi = 0; pi < 4 && pi < (size_t)ent->size; pi++)
+                        ptr[pi] ^= 0x01;
+                    cprisk_force_integrity_poison();
+                }
+#endif
 
                 s_decrypted_flags[i] = 1;
                 if (cprisk_hidden_mprotect(page, span, PROT_READ) != 0) {

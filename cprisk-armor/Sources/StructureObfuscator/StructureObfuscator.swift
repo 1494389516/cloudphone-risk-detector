@@ -35,6 +35,7 @@ public final class StructureObfuscatorPass: ArmorPass {
         ArmorABI.Sections.anchorC,
         ArmorABI.Sections.anchorD,
         ArmorABI.Sections.fullAnchorHash,
+        ArmorABI.Sections.antiDebugPlan,
     ]
 
     /// Decoy names that mimic Apple system / Swift runtime sections.

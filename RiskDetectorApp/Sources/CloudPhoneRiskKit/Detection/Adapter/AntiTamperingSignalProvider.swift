@@ -24,6 +24,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         var enableAntiTampering: Bool = true
         var enableDebugger: Bool = true
         var enableFrida: Bool = true
+        var enableFridaModule: Bool = true
         var enableCodeSignature: Bool = true
         var enableAppSigningIdentity: Bool = true
         var enableMemoryIntegrity: Bool = true
@@ -57,6 +58,16 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
     }
     
     private let configuration: Configuration
+    private static let randomizedDetectorScope = "anti_tampering_provider.core_checks"
+    private static let protectedDuplicateSignalIDs: Set<String> = [
+        SignalID.softwareBreakpointDetected,
+        SignalID.exceptionDeliveryTimeout,
+    ]
+
+    private struct DetectorCheck {
+        let id: String
+        let execute: () throws -> [RiskSignal]
+    }
     
     // MARK: - 初始化
     
@@ -73,93 +84,186 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
     
     public func signals(snapshot: RiskSnapshot) -> [RiskSignal] {
         var signals: [RiskSignal] = []
-        
         let baseJailbreakScore = snapshot.jailbreak.confidence
-        
+
+        for check in orderedChecks(snapshot: snapshot, baseScore: baseJailbreakScore) {
+            isolatedAppend(check.id, &signals, check.execute)
+        }
+
+        if cprisk_is_mprotect_tampered() != 0 {
+            signals.append(RiskSignal(
+                id: "memory_protection_tampered",
+                category: "anti_tamper",
+                score: 85,
+                evidence: ["detail": "mprotect_syscall_blocked"],
+                state: .tampered,
+                layer: 1,
+                weightHint: 90
+            ))
+        }
+
+        return coalesceProtectedDuplicateSignals(signals)
+            .filter { $0.score >= configuration.minScoreThreshold }
+    }
+
+    private func isolatedAppend(
+        _ label: String,
+        _ signals: inout [RiskSignal],
+        _ block: () throws -> [RiskSignal]
+    ) {
+        do {
+            let result = try block()
+            signals.append(contentsOf: result)
+        } catch {
+            Logger.log("[AntiTamperingSignalProvider] \(label) threw error(\(error)), treating as suspicious")
+            signals.append(RiskSignal(
+                id: "detector_anomaly_\(label)",
+                category: "anti_tamper",
+                score: 80,
+                evidence: ["error": "\(error)", "detector": label],
+                state: .tampered,
+                layer: 2,
+                weightHint: 80
+            ))
+        }
+    }
+
+    func orderedRandomizedDetectorIDs(snapshot: RiskSnapshot) -> [String] {
+        orderedChecks(snapshot: snapshot, baseScore: snapshot.jailbreak.confidence)
+            .map(\.id)
+            .filter { Self.randomizableDetectorIDs.contains($0) }
+    }
+
+    private static let randomizableDetectorIDs: Set<String> = [
+        "anti_tampering",
+        "debugger",
+        "frida",
+        "frida_module",
+        "frida_thread",
+        "frida_heap",
+        "objc_swizzle",
+        "frida_socket",
+        "dyld_interpose",
+        "dyld_image_monitor",
+        "dylib_injection",
+        "anti_debug_watchdog",
+    ]
+
+    private func orderedChecks(snapshot: RiskSnapshot, baseScore: Double) -> [DetectorCheck] {
+        let checks = buildChecks(snapshot: snapshot, baseScore: baseScore)
+        let planner = MutationPlanner(
+            strategy: snapshot.mutationStrategy,
+            scope: Self.randomizedDetectorScope,
+            deviceID: snapshot.deviceID
+        )
+
+        let selectedIndices = checks.indices.filter { Self.randomizableDetectorIDs.contains(checks[$0].id) }
+        guard selectedIndices.count > 1 else { return checks }
+
+        let selectedChecks = selectedIndices.map { checks[$0] }
+        let shuffled = planner.maybeShuffle(selectedChecks, salt: "anti_tamper_debugger_frida")
+
+        var ordered = checks
+        for (offset, index) in selectedIndices.enumerated() {
+            ordered[index] = shuffled[offset]
+        }
+        return ordered
+    }
+
+    private func buildChecks(snapshot: RiskSnapshot, baseScore: Double) -> [DetectorCheck] {
+        var checks: [DetectorCheck] = []
+
         if configuration.enableAntiTampering {
-            isolatedAppend("anti_tampering", &signals) {
-                try detectAntiTampering(baseScore: baseJailbreakScore)
-            }
+            checks.append(DetectorCheck(id: "anti_tampering") {
+                try self.detectAntiTampering(baseScore: baseScore)
+            })
         }
-        
+
         if configuration.enableDebugger {
-            isolatedAppend("debugger", &signals) {
-                try detectDebugger(baseScore: baseJailbreakScore)
-            }
+            checks.append(DetectorCheck(id: "debugger") {
+                try self.detectDebugger(baseScore: baseScore)
+            })
         }
-        
+
         if configuration.enableFrida {
-            isolatedAppend("frida", &signals) {
-                try detectFrida(baseScore: baseJailbreakScore)
-            }
+            checks.append(DetectorCheck(id: "frida") {
+                try self.detectFrida(baseScore: baseScore)
+            })
         }
-        
+
+        if configuration.enableFridaModule {
+            checks.append(DetectorCheck(id: "frida_module") {
+                try self.detectFridaModule(baseScore: baseScore)
+            })
+        }
+
         if configuration.enableCodeSignature {
-            isolatedAppend("code_signature", &signals) {
-                try detectCodeSignatureIssues(baseScore: baseJailbreakScore)
-            }
+            checks.append(DetectorCheck(id: "code_signature") {
+                try self.detectCodeSignatureIssues(baseScore: baseScore)
+            })
         }
 
         if configuration.enableAppSigningIdentity {
-            isolatedAppend("app_signing_identity", &signals) {
-                try detectAppSigningIdentityIssues(baseScore: baseJailbreakScore)
-            }
+            checks.append(DetectorCheck(id: "app_signing_identity") {
+                try self.detectAppSigningIdentityIssues(baseScore: baseScore)
+            })
         }
-        
+
         if configuration.enableMemoryIntegrity {
-            isolatedAppend("memory_integrity", &signals) {
-                try detectMemoryIntegrityIssues(baseScore: baseJailbreakScore)
-            }
+            checks.append(DetectorCheck(id: "memory_integrity") {
+                try self.detectMemoryIntegrityIssues(baseScore: baseScore)
+            })
         }
 
         if configuration.enableRWXMemoryScan {
-            isolatedAppend("rwx_memory", &signals) {
+            checks.append(DetectorCheck(id: "rwx_memory") {
                 RWXMemoryScanner().asSignals()
-            }
+            })
         }
 
         if configuration.enablePLTIntegrity {
-            isolatedAppend("plt_integrity", &signals) {
+            checks.append(DetectorCheck(id: "plt_integrity") {
                 let pltResult = PLTIntegrityGuard.verifyWithPersistedBaseline()
                 return PLTIntegrityGuard.asSignals(result: pltResult)
-            }
+            })
         }
 
         if configuration.enableTextSegmentHash {
-            isolatedAppend("text_segment", &signals) {
+            checks.append(DetectorCheck(id: "text_segment") {
                 let hashResult = TextSegmentIntegrityChecker.verify()
                 return TextSegmentIntegrityChecker.asSignals(result: hashResult)
-            }
+            })
         }
 
         if configuration.enableFridaThreadDetect {
-            isolatedAppend("frida_thread", &signals) {
+            checks.append(DetectorCheck(id: "frida_thread") {
                 try FridaThreadDetector().asSignals()
-            }
+            })
         }
 
         if configuration.enableFridaHeapDetect {
-            isolatedAppend("frida_heap", &signals) {
+            checks.append(DetectorCheck(id: "frida_heap") {
                 try FridaHeapDetector().asSignals()
-            }
+            })
         }
 
         if configuration.enableObjCSwizzleDetect {
-            isolatedAppend("objc_swizzle", &signals) {
+            checks.append(DetectorCheck(id: "objc_swizzle") {
                 try ObjCSwizzleDetector().asSignals()
-            }
+            })
         }
 
         if configuration.enableFridaSocketDetect {
-            isolatedAppend("frida_socket", &signals) {
+            checks.append(DetectorCheck(id: "frida_socket") {
                 try FridaSocketDetector().asSignals()
-            }
+            })
         }
 
         if configuration.enableMultiPathFileDetect {
-            isolatedAppend("multipath_file", &signals) {
+            checks.append(DetectorCheck(id: "multipath_file") {
                 let mpResult = try MultiPathFileDetector().detect()
                 guard mpResult.score > 0 else { return [] }
+
                 var mpSignals: [RiskSignal] = []
                 let hookMethods = mpResult.methods.filter { $0.hasPrefix("multipart_hook:") }
                 if !hookMethods.isEmpty {
@@ -173,6 +277,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                         weightHint: 82
                     ))
                 }
+
                 let pathMethods = mpResult.methods.filter { $0.hasPrefix("multipart:") && !$0.contains("hook") }
                 if !pathMethods.isEmpty {
                     mpSignals.append(RiskSignal(
@@ -186,11 +291,11 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                     ))
                 }
                 return mpSignals
-            }
+            })
         }
 
         if configuration.enableRandomizedDetection {
-            isolatedAppend("randomized", &signals) {
+            checks.append(DetectorCheck(id: "randomized") {
                 let randResult = try RandomizedDetection().detect()
                 guard randResult.score > 0 else { return [] }
                 return [RiskSignal(
@@ -202,13 +307,14 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                     layer: 2,
                     weightHint: 60
                 )]
-            }
+            })
         }
 
         if configuration.enableFingerprintDeobfuscation {
-            isolatedAppend("fingerprint", &signals) {
+            checks.append(DetectorCheck(id: "fingerprint") {
                 let fpResult = try FingerprintDeobfuscation().detect()
                 guard fpResult.score > 0 else { return [] }
+
                 var fpSignals: [RiskSignal] = []
                 if fpResult.methods.contains(where: { $0.contains("simulator") }) {
                     fpSignals.append(RiskSignal(
@@ -255,75 +361,75 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                     ))
                 }
                 return fpSignals
-            }
+            })
         }
 
         if configuration.enableDyldInterposeDetect {
-            isolatedAppend("dyld_interpose", &signals) {
+            checks.append(DetectorCheck(id: "dyld_interpose") {
                 try DyldInterposeDetector().asSignals()
-            }
+            })
         }
 
         if configuration.enableSDKBinaryIntegrity {
-            isolatedAppend("sdk_binary", &signals) {
+            checks.append(DetectorCheck(id: "sdk_binary") {
                 let binResult = SDKBinaryIntegrityChecker.verify()
                 return SDKBinaryIntegrityChecker.asSignals(result: binResult)
-            }
+            })
         }
 
         if configuration.enableSensorReplayDetect {
-            isolatedAppend("sensor_replay", &signals) {
+            checks.append(DetectorCheck(id: "sensor_replay") {
                 try SensorReplayDetector().asSignals()
-            }
+            })
         }
 
         if configuration.enablePhysicalSensorProbe {
-            isolatedAppend("physical_sensor", &signals) {
+            checks.append(DetectorCheck(id: "physical_sensor") {
                 try PhysicalSensorProbe().asSignals()
-            }
+            })
         }
 
         if configuration.enableGPURenderProbe {
-            isolatedAppend("gpu_render", &signals) {
+            checks.append(DetectorCheck(id: "gpu_render") {
                 try GPURenderProbe().asSignals()
-            }
+            })
         }
 
         if configuration.enableIsaSwizzleDetect {
-            isolatedAppend("isa_swizzle", &signals) {
+            checks.append(DetectorCheck(id: "isa_swizzle") {
                 try IsaSwizzleDetector().asSignals()
-            }
+            })
         }
 
         if configuration.enableCallStackValidate {
-            isolatedAppend("call_stack", &signals) {
-                if let s = CallStackUnwinder.validateCallStackAsSignal() {
-                    return [s]
+            checks.append(DetectorCheck(id: "call_stack") {
+                if let signal = CallStackUnwinder.validateCallStackAsSignal() {
+                    return [signal]
                 }
                 return []
-            }
+            })
         }
 
         if configuration.enableHoneypotMemory {
-            isolatedAppend("honeypot_memory", &signals) {
+            checks.append(DetectorCheck(id: "honeypot_memory") {
                 try HoneypotMemoryDetector().asSignals()
-            }
+            })
         }
 
         if configuration.enableKernelHookSideChannel {
-            isolatedAppend("kernel_hook_sc", &signals) {
+            checks.append(DetectorCheck(id: "kernel_hook_sc") {
                 try KernelHookSideChannel().asSignals()
-            }
+            })
         }
 
         if configuration.enableSystemLibrarySegmentLayoutDetect {
-            isolatedAppend("system_library_segment_layout", &signals) {
+            checks.append(DetectorCheck(id: "system_library_segment_layout") {
                 try SystemLibrarySegmentLayoutDetector().asSignals()
-            }
+            })
         }
 
         if configuration.enableLibcPrologueGuard {
-            isolatedAppend("libc_prologue", &signals) {
+            checks.append(DetectorCheck(id: "libc_prologue") {
                 guard LibcPrologueGuard.checkAllCritical() else { return [] }
                 return [RiskSignal(
                     id: "libc_inline_hook_detected",
@@ -337,62 +443,87 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                     layer: 2,
                     weightHint: 98
                 )]
-            }
+            })
         }
 
         if configuration.enableDyldImageMonitor {
-            isolatedAppend("dyld_image_monitor", &signals) {
+            checks.append(DetectorCheck(id: "dyld_image_monitor") {
                 try DyldImageMonitor.shared.asSignals()
-            }
+            })
         }
 
         if configuration.enableDylibInjectionDetect {
-            isolatedAppend("dylib_injection", &signals) {
+            checks.append(DetectorCheck(id: "dylib_injection") {
                 try DylibInjectionDetector().asSignals()
-            }
+            })
         }
 
         if configuration.enableAntiDebugWatchdog {
-            isolatedAppend("anti_debug_watchdog", &signals) {
-                antiDebugWatchdogSignals(from: CPRiskKit.shared.antiDebugWatchdogSnapshot())
+            checks.append(DetectorCheck(id: "anti_debug_watchdog") {
+                self.detectAntiDebugWatchdogSignals()
+            })
+        }
+
+        return checks
+    }
+
+    func coalesceProtectedDuplicateSignals(_ signals: [RiskSignal]) -> [RiskSignal] {
+        var grouped: [String: [RiskSignal]] = [:]
+        var orderedIDs: [String] = []
+        var passthrough: [RiskSignal] = []
+
+        for signal in signals {
+            guard Self.protectedDuplicateSignalIDs.contains(signal.id) else {
+                passthrough.append(signal)
+                continue
+            }
+
+            if grouped[signal.id] == nil {
+                orderedIDs.append(signal.id)
+            }
+            grouped[signal.id, default: []].append(signal)
+        }
+
+        let merged = orderedIDs.compactMap { mergeSignals(grouped[$0] ?? []) }
+        return passthrough + merged
+    }
+
+    private func mergeSignals(_ signals: [RiskSignal]) -> RiskSignal? {
+        guard let strongest = signals.max(by: { lhs, rhs in
+            if lhs.score == rhs.score {
+                return lhs.weightHint < rhs.weightHint
+            }
+            return lhs.score < rhs.score
+        }) else {
+            return nil
+        }
+
+        var mergedEvidence = strongest.evidence
+        if signals.count > 1 {
+            mergedEvidence["merged_count"] = "\(signals.count)"
+            let mergedSources = Set(signals.compactMap { $0.evidence["source"] ?? $0.evidence["mechanism"] })
+            if !mergedSources.isEmpty {
+                mergedEvidence["merged_sources"] = mergedSources.sorted().joined(separator: ",")
             }
         }
 
-        if cprisk_is_mprotect_tampered() != 0 {
-            signals.append(RiskSignal(
-                id: "memory_protection_tampered",
-                category: "anti_tamper",
-                score: 85,
-                evidence: ["detail": "mprotect_syscall_blocked"],
-                state: .tampered,
-                layer: 1,
-                weightHint: 90
-            ))
+        for signal in signals {
+            for (key, value) in signal.evidence where mergedEvidence[key] == nil {
+                mergedEvidence[key] = value
+            }
         }
 
-        return signals.filter { $0.score >= configuration.minScoreThreshold }
-    }
+        let mergedState: RiskSignalState? = signals.contains(where: { $0.state == .tampered }) ? .tampered : strongest.state
 
-    private func isolatedAppend(
-        _ label: String,
-        _ signals: inout [RiskSignal],
-        _ block: () throws -> [RiskSignal]
-    ) {
-        do {
-            let result = try block()
-            signals.append(contentsOf: result)
-        } catch {
-            Logger.log("[AntiTamperingSignalProvider] \(label) threw error(\(error)), treating as suspicious")
-            signals.append(RiskSignal(
-                id: "detector_anomaly_\(label)",
-                category: "anti_tamper",
-                score: 80,
-                evidence: ["error": "\(error)", "detector": label],
-                state: .tampered,
-                layer: 2,
-                weightHint: 80
-            ))
-        }
+        return RiskSignal(
+            id: strongest.id,
+            category: strongest.category,
+            score: signals.map(\.score).max() ?? strongest.score,
+            evidence: mergedEvidence,
+            state: mergedState,
+            layer: signals.compactMap(\.layer).min() ?? strongest.layer,
+            weightHint: signals.map(\.weightHint).max() ?? strongest.weightHint
+        )
     }
     
     // MARK: - 检测方法
@@ -442,6 +573,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
     /// 调试器检测
     private func detectDebugger(baseScore: Double) throws -> [RiskSignal] {
         var signals: [RiskSignal] = []
+        let watchdogSnapshot = CPRiskKit.shared.antiDebugWatchdogSnapshot()
         
         let result = try DebuggerDetector().detect()
         
@@ -486,10 +618,71 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                         )
                     )
                 }
+
+                if method.hasPrefix("debugger:software_breakpoint:") {
+                    let detail = method.replacingOccurrences(of: "debugger:software_breakpoint:", with: "")
+                    signals.append(softwareBreakpointSignal(detail: detail, snapshot: watchdogSnapshot))
+                }
+
+                if method == "debugger:exception_delivery_timeout" {
+                    signals.append(exceptionDeliveryTimeoutSignal(snapshot: watchdogSnapshot))
+                }
             }
         }
         
         return signals
+    }
+
+    private func softwareBreakpointSignal(
+        detail: String,
+        snapshot: CPRiskKit.AntiDebugWatchdogSnapshot
+    ) -> RiskSignal {
+        let directCount = Int(detail)
+        let isDirectScan = directCount != nil
+        var evidence: [String: String] = [
+            "mechanism": "arm64_brk_scan",
+            "source": isDirectScan ? "direct_scan" : "watchdog",
+            "watchdog_detected": snapshot.softwareBreakpointDetected ? "1" : "0",
+            "watchdog_anomaly_count": "\(snapshot.softwareBreakpointAnomalyCount)"
+        ]
+        if let directCount {
+            evidence["breakpoint_count"] = "\(directCount)"
+        }
+
+        return RiskSignal(
+            id: SignalID.softwareBreakpointDetected,
+            category: "anti_tamper",
+            score: isDirectScan ? 58 : 34,
+            evidence: evidence,
+            state: .tampered,
+            layer: 1,
+            weightHint: isDirectScan ? 72 : 44
+        )
+    }
+
+    private func exceptionDeliveryTimeoutSignal(
+        snapshot: CPRiskKit.AntiDebugWatchdogSnapshot
+    ) -> RiskSignal {
+        let timeoutFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_DELIVERY_TIMEOUT)) != 0
+        let anomalyCount = snapshot.exceptionDeliveryTimeoutAnomalyCount
+
+        return RiskSignal(
+            id: SignalID.exceptionDeliveryTimeout,
+            category: "anti_tamper",
+            score: timeoutFlag || anomalyCount > 1 ? 38 : 30,
+            evidence: [
+                "mechanism": "mach_exception_delivery_timeout",
+                "watchdog_detected": snapshot.exceptionDeliveryTimeoutDetected ? "1" : "0",
+                "watchdog_anomaly_count": "\(anomalyCount)",
+                "anomaly_flag_set": timeoutFlag ? "1" : "0",
+                "exception_anomaly_count": "\(snapshot.exceptionAnomalyCount)",
+                "probe_handled": snapshot.exceptionDeliveryProbeHandled ? "1" : "0",
+                "probe_ns": "\(snapshot.lastExceptionDeliveryProbeNs)"
+            ],
+            state: .soft(confidence: anomalyCount > 1 ? 0.9 : 0.82),
+            layer: 2,
+            weightHint: timeoutFlag || anomalyCount > 1 ? 50 : 40
+        )
     }
     
     /// Frida 检测
@@ -499,18 +692,15 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         let result = try FridaDetector().detect()
         
         if result.score > 0 {
-            // Frida 是高风险信号，给予额外权重
-            let fridaScore = result.score * 1.2  // 20% 加权
-            
             signals.append(
                 RiskSignal(
                     id: "frida_detected",
                     category: "anti_tamper",
-                    score: min(fridaScore, 100),  // 最高 100 分
+                    score: min(result.score, 55),
                     evidence: [
                         "methods": result.methods.joined(separator: ","),
                         "detector": "FridaDetector",
-                        "severity": "high"
+                        "scope": "runtime_surface"
                     ],
                     state: .tampered,
                     layer: 2,
@@ -520,7 +710,6 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
             
             // 分解具体检测维度
             let fridaCategories = [
-                ("frida:dylib:", "frida_library", 35),
                 ("frida:port:", "frida_port", 30),
                 ("frida:file:", "frida_file", 20),
                 ("frida:symbol:", "frida_symbol", 20),
@@ -547,6 +736,10 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         }
         
         return signals
+    }
+
+    private func detectFridaModule(baseScore: Double) throws -> [RiskSignal] {
+        try FridaModuleDetector().asSignals()
     }
     
     /// 代码签名验证
@@ -680,6 +873,96 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         
         return signals
     }
+
+    private func detectAntiDebugWatchdogSignals() -> [RiskSignal] {
+        let watchdogSnapshot = CPRiskKit.shared.antiDebugWatchdogSnapshot()
+        var signals = antiDebugWatchdogSignals(from: watchdogSnapshot)
+
+        if watchdogSnapshot.csopsDebugged {
+            signals.append(RiskSignal(
+                id: "csops_debugged",
+                category: "anti_tamper",
+                score: 90,
+                evidence: ["mechanism": "csops_cs_debugged_flag"],
+                state: .tampered,
+                layer: 1,
+                weightHint: 95
+            ))
+        }
+        if watchdogSnapshot.hardwareBpDetected {
+            signals.append(RiskSignal(
+                id: "hardware_breakpoint_detected",
+                category: "anti_tamper",
+                score: 80,
+                evidence: ["mechanism": "arm64_debug_registers"],
+                state: .tampered,
+                layer: 1,
+                weightHint: 85
+            ))
+        }
+        if watchdogSnapshot.softwareBreakpointDetected {
+            signals.append(RiskSignal(
+                id: SignalID.softwareBreakpointDetected,
+                category: "anti_tamper",
+                score: 64,
+                evidence: ["mechanism": "arm64_brk_opcode_scan", "source": "watchdog_probe"],
+                state: .tampered,
+                layer: 1,
+                weightHint: 74
+            ))
+        }
+        if watchdogSnapshot.signalProbeResult {
+            signals.append(RiskSignal(
+                id: "signal_probe_debugger",
+                category: "anti_tamper",
+                score: 75,
+                evidence: ["mechanism": "sigtrap_brk_probe"],
+                state: .tampered,
+                layer: 1,
+                weightHint: 80
+            ))
+        }
+        if watchdogSnapshot.exceptionDeliveryTimeoutDetected {
+            signals.append(RiskSignal(
+                id: SignalID.exceptionDeliveryTimeout,
+                category: "anti_tamper",
+                score: watchdogSnapshot.exceptionDeliveryProbeHandled ? 48 : 58,
+                evidence: [
+                    "mechanism": "mach_exception_delivery_probe",
+                    "source": "watchdog_probe",
+                    "handled": watchdogSnapshot.exceptionDeliveryProbeHandled ? "1" : "0",
+                    "elapsed_ns": "\(watchdogSnapshot.lastExceptionDeliveryProbeNs)",
+                ],
+                state: .tampered,
+                layer: 1,
+                weightHint: watchdogSnapshot.exceptionDeliveryProbeHandled ? 54 : 66
+            ))
+        }
+        if watchdogSnapshot.suspiciousThreadCount > 0 {
+            signals.append(RiskSignal(
+                id: "suspicious_threads_detected",
+                category: "anti_tamper",
+                score: min(Double(watchdogSnapshot.suspiciousThreadCount) * 25, 85),
+                evidence: ["count": "\(watchdogSnapshot.suspiciousThreadCount)", "mechanism": "mach_thread_enumeration"],
+                state: .soft(confidence: 0.8),
+                layer: 2,
+                weightHint: 78
+            ))
+        }
+        if watchdogSnapshot.developerDiskDetected {
+            signals.append(RiskSignal(
+                id: "developer_disk_mounted",
+                category: "environment",
+                score: 15,
+                evidence: ["mechanism": "developer_tools_path_check"],
+                state: .soft(confidence: 0.5),
+                layer: 3,
+                weightHint: 20
+            ))
+        }
+
+        return signals
+    }
     
     // MARK: - 辅助方法
     
@@ -716,6 +999,8 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         let denyAttachFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DENY_ATTACH)) != 0
         let exceptionPortFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_PORT)) != 0
         let exceptionQueryFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_QUERY)) != 0
+        let softwareBreakpointFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SOFTWARE_BP)) != 0
+        let exceptionDeliveryTimeoutFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_DELIVERY_TIMEOUT)) != 0
 
         var maxScore = 0.0
         var anomalyKinds: [String] = []
@@ -806,6 +1091,48 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
             )
         }
 
+        if softwareBreakpointFlag || snapshot.softwareBreakpointDetected {
+            let score = snapshot.softwareBreakpointDetected ? 58.0 : 34.0
+            maxScore = max(maxScore, score)
+            anomalyKinds.append("software_breakpoint")
+            signals.append(
+                RiskSignal(
+                    id: "anti_debug_watchdog_software_breakpoint",
+                    category: "anti_tamper",
+                    score: score,
+                    evidence: [
+                        "detected": snapshot.softwareBreakpointDetected ? "1" : "0",
+                        "anomaly_count": "\(snapshot.softwareBreakpointAnomalyCount)",
+                    ],
+                    state: .tampered,
+                    layer: 2,
+                    weightHint: 72
+                )
+            )
+        }
+
+        if exceptionDeliveryTimeoutFlag || snapshot.exceptionDeliveryTimeoutDetected {
+            let score = snapshot.exceptionDeliveryProbeHandled ? 38.0 : 52.0
+            maxScore = max(maxScore, score)
+            anomalyKinds.append("exception_delivery_timeout")
+            signals.append(
+                RiskSignal(
+                    id: "anti_debug_watchdog_exception_delivery_timeout",
+                    category: "anti_tamper",
+                    score: score,
+                    evidence: [
+                        "detected": snapshot.exceptionDeliveryTimeoutDetected ? "1" : "0",
+                        "handled": snapshot.exceptionDeliveryProbeHandled ? "1" : "0",
+                        "elapsed_ns": "\(snapshot.lastExceptionDeliveryProbeNs)",
+                        "anomaly_count": "\(snapshot.exceptionDeliveryTimeoutAnomalyCount)",
+                    ],
+                    state: .soft(confidence: snapshot.exceptionDeliveryProbeHandled ? 0.8 : 0.9),
+                    layer: 2,
+                    weightHint: snapshot.exceptionDeliveryProbeHandled ? 58 : 76
+                )
+            )
+        }
+
         signals.insert(
             RiskSignal(
                 id: SignalID.antiDebugWatchdogAnomaly,
@@ -817,6 +1144,8 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                     "thread_active": "\(snapshot.threadActive)",
                     "interval_seconds": "\(snapshot.intervalSeconds)",
                     "last_check_monotonic_ns": "\(snapshot.lastCheckMonotonicNs)",
+                    "software_bp_anomaly_count": "\(snapshot.softwareBreakpointAnomalyCount)",
+                    "exception_delivery_timeout_anomaly_count": "\(snapshot.exceptionDeliveryTimeoutAnomalyCount)",
                 ],
                 state: .tampered,
                 layer: 2,

@@ -101,7 +101,13 @@ public final class CPRiskKit: NSObject {
     private var previousSignalsDigest: String?
     /// High-risk signal IDs that are candidates for suppression detection.
     private static let highRiskSignalIds: Set<String> = [
+        "frida_detected",
+        SignalID.fridaModuleDetected,
+        SignalID.fridaModuleImage,
+        SignalID.fridaModuleSection,
+        SignalID.fridaModuleString,
         "frida_heap", "frida_stalker", "frida_socket", "frida_thread",
+        "frida_js_engine_heap", "frida_stalker_jit", "frida_unix_socket", "frida_exception_port", "thread_anomaly",
         "hook_detected", "objc_swizzle", "rwx_memory",
         "armor_runtime_init_failed", "integrity_runtime_tampered",
         "code_signature_invalid", "text_segment_tampered",
@@ -188,6 +194,23 @@ public final class CPRiskKit: NSObject {
         public let lastExceptionQueryKernReturn: Int32
         public let lastExceptionRegisterKernReturn: Int32
         public let lastCheckMonotonicNs: UInt64
+        public let signalProbeResult: Bool
+        public let hardwareBpDetected: Bool
+        public let softwareBreakpointDetected: Bool
+        public let csopsDebugged: Bool
+        public let suspiciousThreadCount: UInt32
+        public let singleStepDetected: Bool
+        public let ttyDetected: Bool
+        public let developerDiskDetected: Bool
+        public let exceptionDeliveryTimeoutDetected: Bool
+        public let exceptionDeliveryProbeHandled: Bool
+        public let lastExceptionDeliveryProbeNs: UInt64
+        public let signalProbeAnomalyCount: UInt64
+        public let hardwareBpAnomalyCount: UInt64
+        public let softwareBreakpointAnomalyCount: UInt64
+        public let csopsAnomalyCount: UInt64
+        public let suspiciousThreadAnomalyCount: UInt64
+        public let exceptionDeliveryTimeoutAnomalyCount: UInt64
 
         public var hasAnyAnomaly: Bool {
             anomalyFlags != 0
@@ -611,12 +634,14 @@ public final class CPRiskKit: NSObject {
         Self.maybeVerifyExceptionHandler()
 
         let context = buildRiskContext(config: runtimeConfig)
+        let serverPolicy = PolicyManager.shared.activePolicy
         let snapshot = RiskSnapshot(
             deviceID: context.deviceID,
             device: context.device,
             network: context.network,
             behavior: context.behavior,
-            jailbreak: context.jailbreak
+            jailbreak: context.jailbreak,
+            mutationStrategy: resolveMutationStrategy(from: serverPolicy)
         )
         let serverSignals = RiskSignalProviderRegistry.shared.serverSignals(snapshot: snapshot)
         stateLock.lock()
@@ -690,7 +715,6 @@ public final class CPRiskKit: NSObject {
             }
         }
 
-        let serverPolicy = PolicyManager.shared.activePolicy
         let policy = buildEnginePolicy(
             runtimeConfig: runtimeConfig,
             remoteConfig: remoteConfig,
@@ -1146,7 +1170,24 @@ public final class CPRiskKit: NSObject {
             lastExceptionHijackDetected: raw.last_exception_hijack_detected != 0,
             lastExceptionQueryKernReturn: raw.last_exception_query_kern_return,
             lastExceptionRegisterKernReturn: raw.last_exception_register_kern_return,
-            lastCheckMonotonicNs: raw.last_check_monotonic_ns
+            lastCheckMonotonicNs: raw.last_check_monotonic_ns,
+            signalProbeResult: raw.last_signal_probe_result != 0,
+            hardwareBpDetected: raw.last_hardware_bp_detected != 0,
+            softwareBreakpointDetected: raw.last_software_bp_detected != 0,
+            csopsDebugged: raw.last_csops_debugged != 0,
+            suspiciousThreadCount: raw.last_suspicious_thread_count,
+            singleStepDetected: raw.last_single_step_detected != 0,
+            ttyDetected: raw.last_tty_detected != 0,
+            developerDiskDetected: raw.last_developer_disk_detected != 0,
+            exceptionDeliveryTimeoutDetected: raw.last_exception_delivery_timeout_detected != 0,
+            exceptionDeliveryProbeHandled: raw.last_exception_delivery_probe_handled != 0,
+            lastExceptionDeliveryProbeNs: raw.last_exception_delivery_probe_ns,
+            signalProbeAnomalyCount: raw.signal_probe_anomaly_count,
+            hardwareBpAnomalyCount: raw.hardware_bp_anomaly_count,
+            softwareBreakpointAnomalyCount: raw.software_bp_anomaly_count,
+            csopsAnomalyCount: raw.csops_anomaly_count,
+            suspiciousThreadAnomalyCount: raw.suspicious_thread_anomaly_count,
+            exceptionDeliveryTimeoutAnomalyCount: raw.exception_delivery_timeout_anomaly_count
         )
     }
 
@@ -1588,14 +1629,7 @@ public final class CPRiskKit: NSObject {
             )
         }
 
-        let mutationStrategy = serverPolicy?.mutation.map { mutation in
-            MutationStrategy(
-                seed: mutation.seed,
-                shuffleChecks: mutation.shuffleChecks,
-                thresholdJitterBps: mutation.thresholdJitterBps,
-                scoreJitterBps: mutation.scoreJitterBps
-            )
-        }
+        let mutationStrategy = resolveMutationStrategy(from: serverPolicy)
 
         let blindChallengePolicy = serverPolicy?.blindChallenge.map { challenge in
             BlindChallengePolicy(
@@ -1630,6 +1664,17 @@ public final class CPRiskKit: NSObject {
             blocklistAction: (serverPolicy?.blocklist.isEmpty == false) ? .block : nil,
             scenarioPolicies: scenarioPolicies
         )
+    }
+
+    private func resolveMutationStrategy(from serverPolicy: ServerRiskPolicy?) -> MutationStrategy? {
+        serverPolicy?.mutation.map { mutation in
+            MutationStrategy(
+                seed: mutation.seed,
+                shuffleChecks: mutation.shuffleChecks,
+                thresholdJitterBps: mutation.thresholdJitterBps,
+                scoreJitterBps: mutation.scoreJitterBps
+            )
+        }
     }
 
     private func currentRemoteConfigProvider() -> RemoteConfigProvider? {

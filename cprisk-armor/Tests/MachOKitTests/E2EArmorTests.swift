@@ -6,6 +6,8 @@ import MetadataScrubber
 import DataSegmentEncryptor
 import IntegrityAnchor
 import StructureObfuscator
+import AntiDebugInjector
+import SymbolStripper
 import XCTest
 
 final class E2EArmorTests: XCTestCase {
@@ -51,6 +53,14 @@ final class E2EArmorTests: XCTestCase {
         let r5 = try StructureObfuscatorPass().execute(on: file, config: config)
         XCTAssertGreaterThan(r5.itemsProcessed, 0)
 
+        // Pass 7: AntiDebugInjector
+        let r7 = try AntiDebugInjectorPass().execute(on: file, config: config)
+        XCTAssertGreaterThan(r7.itemsProcessed, 0)
+
+        // Pass 6: SymbolStripper
+        let r6 = try SymbolStripperPass().execute(on: file, config: config)
+        XCTAssertGreaterThanOrEqual(r6.itemsProcessed, 0)
+
         // Sensitive strings must be gone from __cstring
         let postStrings = try file.findCStrings().map(\.value)
         XCTAssertFalse(postStrings.contains("frida-check"))
@@ -70,6 +80,10 @@ final class E2EArmorTests: XCTestCase {
         // String table and loader descriptor sections exist
         XCTAssertNotNil(try file.section(segment: "__DATA", section: ArmorABI.StringTable.sectionName))
         XCTAssertNotNil(try file.section(segment: "__DATA", section: ArmorABI.Loader.sectionName))
+        let antiDebugSection = try XCTUnwrap(
+            try file.section(segment: "__DATA", section: ArmorABI.AntiDebug.sectionName)
+        )
+        XCTAssertGreaterThan(Int(antiDebugSection.size), ArmorABI.AntiDebug.headerSize)
 
         // Validate structure and round-trip write
         let report = try file.validateStructure()
@@ -316,6 +330,8 @@ final class E2EArmorTests: XCTestCase {
         _ = try DataSegmentEncryptorPass().execute(on: file, config: config)
         _ = try MetadataScrubberPass().execute(on: file, config: config)
         _ = try StructureObfuscatorPass().execute(on: file, config: config)
+        _ = try AntiDebugInjectorPass().execute(on: file, config: config)
+        _ = try SymbolStripperPass().execute(on: file, config: config)
     }
 
     // MARK: - Fixture Builder

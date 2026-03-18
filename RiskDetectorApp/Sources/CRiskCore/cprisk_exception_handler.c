@@ -70,6 +70,59 @@ typedef struct {
 } __Reply__mach_exception_raise_state_identity_t;
 #pragma pack(pop)
 
+extern int cprisk_exception_handler_should_passthrough_brk_imm(uint16_t brk_imm);
+extern int cprisk_exception_handler_consume_reserved_brk_imm(uint16_t brk_imm);
+
+static int cprisk_breakpoint_immediate_from_state_i(
+    int flavor,
+    mach_msg_type_number_t state_count,
+    const natural_t *state,
+    uint16_t *out_imm
+) {
+    if (out_imm == NULL || state == NULL ||
+        flavor != ARM_THREAD_STATE64 ||
+        state_count < ARM_THREAD_STATE64_COUNT) {
+        return 0;
+    }
+
+    arm_thread_state64_t thread_state;
+    memset(&thread_state, 0, sizeof(thread_state));
+    memcpy(&thread_state, state, sizeof(thread_state));
+
+    const uintptr_t pc = (uintptr_t)thread_state.__pc;
+    if (pc == 0u) {
+        return 0;
+    }
+
+    uint32_t instr = 0u;
+    memcpy(&instr, (const void *)pc, sizeof(instr));
+    if ((instr & 0xFFE0001Fu) != 0xD4200000u) {
+        return 0;
+    }
+
+    *out_imm = (uint16_t)((instr >> 5) & 0xFFFFu);
+    return 1;
+}
+
+static int cprisk_advance_thread_pc_i(
+    int flavor,
+    mach_msg_type_number_t state_count,
+    natural_t *state
+) {
+    if (state == NULL ||
+        flavor != ARM_THREAD_STATE64 ||
+        state_count < ARM_THREAD_STATE64_COUNT) {
+        return 0;
+    }
+
+    arm_thread_state64_t thread_state;
+    memset(&thread_state, 0, sizeof(thread_state));
+    memcpy(&thread_state, state, sizeof(thread_state));
+    thread_state.__pc += 4u;
+    memcpy(state, &thread_state, sizeof(thread_state));
+    return 1;
+}
+
 static void *exception_handler_thread(void *arg) {
     (void)arg;
     char req_buf[sizeof(__Request__mach_exception_raise_state_identity_t)];
@@ -131,9 +184,17 @@ static void *exception_handler_thread(void *arg) {
                 memcpy(rep->new_state, old_state, state_count * sizeof(natural_t));
                 
                 if (r->exception == EXC_BREAKPOINT) {
-                    if (flavor == ARM_THREAD_STATE64 && state_count >= 34) {
-                        uint64_t *pc = (uint64_t *)(rep->new_state + 32);
-                        *pc += 4;
+                    uint16_t brk_imm = 0u;
+                    const int have_brk_imm = cprisk_breakpoint_immediate_from_state_i(
+                        flavor, state_count, old_state, &brk_imm);
+
+                    if (!cprisk_advance_thread_pc_i(flavor, rep->new_stateCnt, rep->new_state)) {
+                        rep->RetCode = KERN_FAILURE;
+                    } else if (have_brk_imm &&
+                               cprisk_exception_handler_should_passthrough_brk_imm(brk_imm)) {
+                        rep->RetCode = KERN_FAILURE;
+                    } else if (have_brk_imm) {
+                        (void)cprisk_exception_handler_consume_reserved_brk_imm(brk_imm);
                     }
                 } else if (r->exception == EXC_BAD_ACCESS) {
                     void *fault_addr = (void *)(uintptr_t)r->code[1];

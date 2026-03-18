@@ -37,6 +37,7 @@ public enum ArmorABI {
         public static let whiteboxCode = "__swift5_awbc"
         public static let whiteboxData = "__swift5_awbd"
         public static let whiteboxTag = "__swift5_awbt"
+        public static let antiDebugPlan = "__cpr_adbg7"
 
         public static let splitAnchorSections = [
             anchorA,
@@ -49,7 +50,133 @@ public enum ArmorABI {
             stringTable, loader, protectedBlob,
             anchorA, anchorB, anchorC, anchorD, fullAnchorHash,
             whiteboxMeta, whiteboxCode, whiteboxData, whiteboxTag,
+            antiDebugPlan,
         ]
+    }
+
+    public enum AntiDebug {
+        public static let abiVersion: UInt32 = 1
+        public static let magic: UInt32 = 0x43504137
+        public static let sectionName = Sections.antiDebugPlan
+        public static let headerSize = 48
+        public static let entrySize = 64
+        public static let targetNameFieldSize = 32
+
+        public static let flagHasSymbolTargets: UInt32 = 0x0000_0001
+        public static let flagHasSyntheticTargets: UInt32 = 0x0000_0002
+        public static let flagSeedFromConfig: UInt32 = 0x0000_0004
+        public static let flagSeedFromBinary: UInt32 = 0x0000_0008
+
+        public static let entryFlagSyntheticTarget: UInt32 = 0x0000_0001
+        public static let entryFlagInlinePatchReserved: UInt32 = 0x0000_0002
+        public static let entryFlagRuntimeGateReserved: UInt32 = 0x0000_0004
+
+        public static let policyRuntimeGate: UInt32 = 0x0000_0001
+        public static let policyCrashOnDebugger: UInt32 = 0x0000_0002
+        public static let policyTrapOnTamper: UInt32 = 0x0000_0004
+        public static let policyDelayResponse: UInt32 = 0x0000_0008
+        public static let policyEscalateIntegrity: UInt32 = 0x0000_0010
+
+        /// Packed layout:
+        /// { magic, version, flags, header_size, seed, text_base_address,
+        ///   probe_immediate, entry_count, entry_size, reserved }.
+        public struct Header {
+            public let magic: UInt32
+            public let version: UInt32
+            public let flags: UInt32
+            public let headerSize: UInt32
+            public let seed: UInt64
+            public let textBaseAddress: UInt64
+            public let probeImmediate: UInt32
+            public let entryCount: UInt32
+            public let entrySize: UInt32
+            public let reserved: UInt32
+
+            public init(
+                magic: UInt32 = AntiDebug.magic,
+                version: UInt32 = AntiDebug.abiVersion,
+                flags: UInt32,
+                headerSize: UInt32 = UInt32(AntiDebug.headerSize),
+                seed: UInt64,
+                textBaseAddress: UInt64,
+                probeImmediate: UInt32,
+                entryCount: UInt32,
+                entrySize: UInt32 = UInt32(AntiDebug.entrySize),
+                reserved: UInt32 = 0
+            ) {
+                self.magic = magic
+                self.version = version
+                self.flags = flags
+                self.headerSize = headerSize
+                self.seed = seed
+                self.textBaseAddress = textBaseAddress
+                self.probeImmediate = probeImmediate
+                self.entryCount = entryCount
+                self.entrySize = entrySize
+                self.reserved = reserved
+            }
+
+            public func serialized() -> Data {
+                var data = Data()
+                data.appendLittleEndian(magic)
+                data.appendLittleEndian(version)
+                data.appendLittleEndian(flags)
+                data.appendLittleEndian(headerSize)
+                data.appendLittleEndian(seed)
+                data.appendLittleEndian(textBaseAddress)
+                data.appendLittleEndian(probeImmediate)
+                data.appendLittleEndian(entryCount)
+                data.appendLittleEndian(entrySize)
+                data.appendLittleEndian(reserved)
+                return data
+            }
+        }
+
+        /// Packed layout:
+        /// { identifier_hash, patch_site_vm_offset, patch_site_file_offset,
+        ///   policy_bits, scatter_slot, entry_flags, target_name[32] }.
+        public struct Entry {
+            public let identifierHash: UInt64
+            public let patchSiteVMOffset: UInt64
+            public let patchSiteFileOffset: UInt32
+            public let policyBits: UInt32
+            public let scatterSlot: UInt32
+            public let entryFlags: UInt32
+            public let targetName: String
+
+            public init(
+                identifierHash: UInt64,
+                patchSiteVMOffset: UInt64,
+                patchSiteFileOffset: UInt32,
+                policyBits: UInt32,
+                scatterSlot: UInt32,
+                entryFlags: UInt32 = 0,
+                targetName: String
+            ) {
+                self.identifierHash = identifierHash
+                self.patchSiteVMOffset = patchSiteVMOffset
+                self.patchSiteFileOffset = patchSiteFileOffset
+                self.policyBits = policyBits
+                self.scatterSlot = scatterSlot
+                self.entryFlags = entryFlags
+                self.targetName = targetName
+            }
+
+            public func serialized() -> Data {
+                var data = Data()
+                data.appendLittleEndian(identifierHash)
+                data.appendLittleEndian(patchSiteVMOffset)
+                data.appendLittleEndian(patchSiteFileOffset)
+                data.appendLittleEndian(policyBits)
+                data.appendLittleEndian(scatterSlot)
+                data.appendLittleEndian(entryFlags)
+
+                var nameBytes = Array(targetName.utf8.prefix(AntiDebug.targetNameFieldSize))
+                nameBytes.append(contentsOf: repeatElement(0, count: max(0, AntiDebug.targetNameFieldSize - nameBytes.count)))
+                data.append(contentsOf: nameBytes)
+                return data
+            }
+        }
     }
 
     public enum WhiteBox {
@@ -405,6 +532,7 @@ public enum ArmorABI {
             set.insert(Sections.whiteboxCode)
             set.insert(Sections.whiteboxData)
             set.insert(Sections.whiteboxTag)
+            set.insert(Sections.antiDebugPlan)
             return set
         }()
 

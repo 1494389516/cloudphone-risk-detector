@@ -3,6 +3,9 @@
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 
 #include "include/cprisk_macho.h"
 
@@ -605,6 +608,18 @@ int cprisk_whitebox_evaluate_domain(
     const uint8_t input[32],
     uint8_t out[32]
 ) {
+#if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+    /* Entry trace check: deterministic but incorrect PRF output */
+    if (cprisk_is_being_traced()) {
+        const uint8_t *src = input ? input : s_zero_state_i;
+        cprisk_sha256_ctx pctx;
+        cprisk_sha256_init(&pctx);
+        cprisk_sha256_update(&pctx, src, CPRISK_WHITEBOX_STATE_SIZE);
+        cprisk_sha256_final(&pctx, out);
+        return 0;
+    }
+#endif
+
     struct cprisk_whitebox_bundle_i bundle;
     memset(&bundle, 0, sizeof(bundle));
     if (cprisk_whitebox_validate_bundle_i(&bundle) != 0)
@@ -623,6 +638,18 @@ int cprisk_whitebox_evaluate_domain(
         input ? input : s_zero_state_i,
         out);
     cprisk_secure_zero(&bundle.header, sizeof(bundle.header));
+
+#if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+    /* Exit trace check: debugger may attach mid-evaluation */
+    if (rc == 0 && cprisk_is_being_traced()) {
+        const uint8_t *src = input ? input : s_zero_state_i;
+        cprisk_sha256_ctx pctx;
+        cprisk_sha256_init(&pctx);
+        cprisk_sha256_update(&pctx, src, CPRISK_WHITEBOX_STATE_SIZE);
+        cprisk_sha256_final(&pctx, out);
+    }
+#endif
+
     return rc;
 }
 
@@ -641,6 +668,14 @@ int cprisk_derive_effective_signing_key(
     uint8_t runtime_material[CPRISK_ARMOR_HASH_SIZE];
     if (cprisk_get_runtime_material(runtime_material) != 0)
         return -1;
+
+#if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+    /* Corrupt runtime material under debugger so derived key is silently wrong */
+    if (cprisk_is_being_traced()) {
+        for (size_t pi = 0; pi < CPRISK_ARMOR_HASH_SIZE; pi++)
+            runtime_material[pi] ^= 0xA5u;
+    }
+#endif
 
     cprisk_hmac_sha256(runtime_material,
                        CPRISK_ARMOR_HASH_SIZE,
@@ -708,6 +743,16 @@ int cprisk_sign_with_derived_key(
     uint8_t derived_key[CPRISK_ARMOR_HASH_SIZE];
     if (cprisk_derive_effective_signing_key(base_key, base_key_len, derived_key) != 0)
         return -1;
+
+#if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+    /* Flip select key bytes under debugger — signature silently invalid */
+    if (cprisk_is_being_traced()) {
+        derived_key[0]  ^= 0xFFu;
+        derived_key[7]  ^= 0xFFu;
+        derived_key[15] ^= 0xFFu;
+        derived_key[23] ^= 0xFFu;
+    }
+#endif
 
     const int rc = cprisk_hmac_sha256_hex(derived_key,
                                           sizeof(derived_key),

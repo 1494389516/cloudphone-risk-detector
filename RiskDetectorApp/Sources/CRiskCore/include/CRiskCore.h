@@ -35,6 +35,15 @@ enum {
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DENY_ATTACH = 1u << 1,
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_PORT = 1u << 2,
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_QUERY = 1u << 3,
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SIGNAL_PROBE     = 1u << 4,
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_HARDWARE_BP      = 1u << 5,
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_CSOPS_DEBUGGED   = 1u << 6,
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SUSPICIOUS_THREAD = 1u << 7,
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SINGLE_STEP      = 1u << 8,
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TTY              = 1u << 9,
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DEVELOPER_DISK   = 1u << 10,
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SOFTWARE_BP      = 1u << 11,
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_DELIVERY_TIMEOUT = 1u << 12,
 };
 
 typedef struct cprisk_exception_handler_snapshot {
@@ -71,6 +80,23 @@ typedef struct cprisk_anti_debug_watchdog_snapshot {
     uint64_t deny_attach_error_count;
     uint64_t exception_anomaly_count;
     uint64_t last_check_monotonic_ns;
+    uint32_t last_signal_probe_result;
+    uint32_t last_hardware_bp_detected;
+    uint32_t last_software_bp_detected;
+    uint32_t last_csops_debugged;
+    uint32_t last_suspicious_thread_count;
+    uint32_t last_single_step_detected;
+    uint32_t last_tty_detected;
+    uint32_t last_developer_disk_detected;
+    uint32_t last_exception_delivery_timeout_detected;
+    uint32_t last_exception_delivery_probe_handled;
+    uint64_t last_exception_delivery_probe_ns;
+    uint64_t signal_probe_anomaly_count;
+    uint64_t hardware_bp_anomaly_count;
+    uint64_t software_bp_anomaly_count;
+    uint64_t csops_anomaly_count;
+    uint64_t suspicious_thread_anomaly_count;
+    uint64_t exception_delivery_timeout_anomaly_count;
 } cprisk_anti_debug_watchdog_snapshot_t;
 
 /// Invoke sysctlbyname via direct BSD syscall on arm64 Apple targets.
@@ -399,6 +425,64 @@ void cprisk_test_clear_whitebox_bundle(void);
 /// Uses task_info + dyld_all_image_infos; does not call dladdr or _dyld_*.
 /// Resistant to dladdr hook used to hide anonymous memory (e.g. Frida Stalker JIT).
 int cprisk_addr_in_any_image(const void *addr);
+
+/* ── Signal Probe Bitmask ──────────────────────────────────────────── */
+
+enum {
+    CPRISK_PROBE_SIGNAL_TRAP       = 1u << 0,
+    CPRISK_PROBE_HARDWARE_BP       = 1u << 1,
+    CPRISK_PROBE_SOFTWARE_BP       = 1u << 2,
+    CPRISK_PROBE_TTY               = 1u << 3,
+    CPRISK_PROBE_CSOPS             = 1u << 4,
+    CPRISK_PROBE_SINGLE_STEP       = 1u << 5,
+    CPRISK_PROBE_SUSPICIOUS_THREAD = 1u << 6,
+    CPRISK_PROBE_DEVELOPER_DISK    = 1u << 7,
+    CPRISK_PROBE_EXCEPTION_DELIVERY_TIMEOUT = 1u << 8,
+};
+
+enum {
+    CPRISK_BRK_IMM_SIGNAL_PROBE = 0xC0DEu,
+    CPRISK_BRK_IMM_EXCEPTION_DELIVERY_PROBE = 0xC0DFu,
+};
+
+/// Probe debugger presence via SIGTRAP signal delivery after BRK #0xC0DE.
+/// Returns 1 if a debugger intercepted the exception, 0 otherwise.
+int cprisk_probe_debugger_via_signal(void);
+
+/// Detect active hardware breakpoints/watchpoints via ARM debug registers.
+/// Returns the number of enabled HW breakpoint/watchpoint slots found.
+int cprisk_detect_hardware_breakpoints(void);
+
+/// Scan a memory region for software BRK instructions (excluding our own).
+/// Returns the number of foreign BRK instructions found.
+int cprisk_scan_software_breakpoints(const void *func_ptr, size_t size);
+
+/// Trigger a reserved breakpoint handled by our Mach exception port and flag
+/// suspicious delivery latency or fallback signal delivery.
+int cprisk_probe_exception_delivery_timeout(void);
+
+/// Detect if stdout is connected to a debug TTY (/dev/ttys* or /dev/pts*).
+/// Returns 1 if a debug terminal is detected, 0 otherwise.
+int cprisk_detect_tty_debug(void);
+
+/// Check the CS_DEBUGGED codesign flag via direct csops syscall.
+/// Returns 1 if the process is marked as debugged, 0 otherwise.
+int cprisk_csops_debug_check(void);
+
+/// Detect single-stepping by timing ~100 arithmetic instructions.
+/// Returns 1 if execution took suspiciously long (>50ms), 0 otherwise.
+int cprisk_detect_single_stepping(void);
+
+/// Enumerate Mach threads and check if any PC falls outside known images.
+/// Returns the count of suspicious threads (0 = normal).
+int cprisk_detect_suspicious_threads(void);
+
+/// Check for Developer Disk Image paths (debugserver, libMainThreadChecker).
+/// Returns 1 if any developer tool path is accessible, 0 otherwise.
+int cprisk_detect_developer_disk(void);
+
+/// Run all signal probes and return a bitmask of CPRISK_PROBE_* flags.
+uint32_t cprisk_run_all_signal_probes(void);
 
 #ifdef __cplusplus
 }

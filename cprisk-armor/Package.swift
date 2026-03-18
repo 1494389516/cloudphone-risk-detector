@@ -15,6 +15,7 @@ let package = Package(
         .target(name: "DataSegmentEncryptor", dependencies: ["MachOKit"]),
         .target(name: "IntegrityAnchor", dependencies: ["MachOKit"]),
         .target(name: "StructureObfuscator", dependencies: ["MachOKit"]),
+        .target(name: "AntiDebugInjector", dependencies: ["MachOKit"]),
         .target(name: "SymbolStripper", dependencies: ["MachOKit"]),
         .executableTarget(
             name: "cprisk-armor",
@@ -25,13 +26,14 @@ let package = Package(
                 "DataSegmentEncryptor",
                 "IntegrityAnchor",
                 "StructureObfuscator",
+                "AntiDebugInjector",
                 "SymbolStripper"
             ]
         ),
         .testTarget(name: "MachOKitTests", dependencies: [
             "MachOKit", "StringEncryptor", "MetadataScrubber",
             "DataSegmentEncryptor", "IntegrityAnchor", "StructureObfuscator",
-            "SymbolStripper",
+            "AntiDebugInjector", "SymbolStripper",
         ])
     ]
 )

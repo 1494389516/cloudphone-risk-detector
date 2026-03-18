@@ -1,6 +1,6 @@
-# CloudPhoneRiskKit 6.5 使用与构建说明
+# CloudPhoneRiskKit 6.6 使用与构建说明
 
-iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。6.0 引入自研壳（cprisk-armor）二进制保护与端云签名绑定；6.1 将壳升级为 5 Pass 工业化保护；6.2 对壳执行密码学重建（ABI v2：强制密钥注入 / HMAC 认证 / 随机 nonce / IntegrityAnchor HMAC），共 46 项漏洞修复；6.3 新增 Pass 6 符号表混淆、Codable 短别名 CodingKeys、ObjC selector 安全修复，壳升级为 6 Pass 全链路保护；6.4 将 SDK 架构改为 library.static + 全量 strip，IDA 中 SDK 函数全部显示为 sub_XXXX；6.5 引入白盒 PRF 引擎（5 域 S-box ~160KB，root key 不可逆提取）、AppSigningIdentityDetector 反重打包（TeamID/bundleID/entitlement 一致性 + 基线漂移检测）；后续新增 GPU 渲染指纹（Metal Compute Shader 像素哈希，检测虚拟 GPU）、IMU 噪声谱指纹（FFT 频域噪声特征 + 合成数据检测）、行为信号扩充（forceVariance / radiusVariance / swipeSpeedCV 共 11 项启发式，行为分上限提升至 45）、BehaviorThresholds 全量远程可配（13 项阈值 + 按设备型号分组覆盖）、采样窗口最小间隔保护（5s / 缓冲区翻倍）、反调试 watchdog 线程（CRiskCore 内每 3s 重调 ptrace/exception port 检测，异常自动转 RiskSignal 进入评分）。
+iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。6.0 引入自研壳（cprisk-armor）二进制保护与端云签名绑定；6.1 将壳升级为 5 Pass 工业化保护；6.2 对壳执行密码学重建（ABI v2：强制密钥注入 / HMAC 认证 / 随机 nonce / IntegrityAnchor HMAC），共 46 项漏洞修复；6.3 新增 Pass 6 符号表混淆、Codable 短别名 CodingKeys、ObjC selector 安全修复，壳升级为 6 Pass 全链路保护；6.4 将 SDK 架构改为 library.static + 全量 strip，IDA 中 SDK 函数全部显示为 sub_XXXX；6.5 引入白盒 PRF 引擎（5 域 S-box ~160KB，root key 不可逆提取）、AppSigningIdentityDetector 反重打包（TeamID/bundleID/entitlement 一致性 + 基线漂移检测）；后续新增 GPU 渲染指纹（Metal Compute Shader 像素哈希，检测虚拟 GPU）、IMU 噪声谱指纹（FFT 频域噪声特征 + 合成数据检测）、行为信号扩充（forceVariance / radiusVariance / swipeSpeedCV 共 11 项启发式，行为分上限提升至 45）、BehaviorThresholds 全量远程可配（13 项阈值 + 按设备型号分组覆盖）、采样窗口最小间隔保护（5s / 缓冲区翻倍）、反调试 watchdog 线程（CRiskCore 内每 3s 重调 `ptrace` / exception port / SIGTRAP / csops / 硬件断点 / 软件断点 / 可疑线程 / exception delivery timeout 检测，异常自动转 RiskSignal 进入评分）、`FridaModuleDetector`（模块名 / section / 字符串片段三路检测 Frida/Gum/Gadget）、以及基于 `MutationStrategy` 的反篡改检测顺序稳定随机化。最新版本的 cprisk-armor 已扩展为 **7 Pass**：新增 Pass 7 `AntiDebugInjector`，在 `__DATA,__cpr_adbg7` 中写入可运行时消费的 anti-debug injection plan ABI，为后续更强的 inline 注入预留编译期元数据。
 
 ---
 
@@ -39,7 +39,7 @@ open RiskDetectorApp.xcodeproj
 
 ### 2.4 壳工具链构建 (cprisk-armor)
 
-cprisk-armor 是编译后壳保护工具链，对 Mach-O 二进制执行 6 Pass 加固（字符串加密、Metadata 抹除、数据段加密、完整性锚点、结构混淆、符号表混淆）。6.4 起 SDK 以静态库交付，壳对最终 App 二进制执行加固。6.5 起 Pass 4 写入白盒 PRF 四 section（`__swift5_awbm/awbc/awbd/awbt`），Pass 1/3/4 密钥通过白盒 PRF 派生，运行时优先走白盒路径。
+cprisk-armor 是编译后壳保护工具链，对 Mach-O 二进制执行 7 Pass 加固（字符串加密、Metadata 抹除、数据段加密、完整性锚点、结构混淆、符号表混淆、Pass 7 anti-debug 注入计划）。6.4 起 SDK 以静态库交付，壳对最终 App 二进制执行加固。6.5 起 Pass 4 写入白盒 PRF 四 section（`__swift5_awbm/awbc/awbd/awbt`），Pass 1/3/4 密钥通过白盒 PRF 派生，运行时优先走白盒路径。最新 Pass 7 会把随机散布后的反调试注入计划写入 `__DATA,__cpr_adbg7`，运行时可按 `target identifier / patchSite offset / policy bits / probeImmediate` 读取并执行更强的 anti-debug gate。
 
 ```bash
 cd cprisk-armor
@@ -102,6 +102,27 @@ export CPRISK_ARMOR_KEY=<hex>; .build/release/cprisk-armor --input ... --output 
 | Pass 4 | 完整性锚点 + 白盒 PRF 四 section（6.5 起 anchor tag 白盒校验） | `cprisk_integrity.c` / `cprisk_whitebox.c` |
 | Pass 5 | 结构混淆（假 Section + 随机布局） | — (编译后不可逆) |
 | Pass 6 | 符号表混淆（SDK 本地符号名随机化） | — (编译后不可逆) |
+| Pass 7 | AntiDebug 注入计划 metadata（`__DATA,__cpr_adbg7`） | 后续运行时 anti-debug patch / gate / probe 解析器 |
+
+### 2.4.3 Pass 7 说明
+
+Pass 7 当前采用**编译期注入 metadata、运行时消费**的保守策略，而不是直接对任意函数做机器码重写。这样做的目的，是先把 anti-debug 注入计划做成稳定 ABI，再逐步演进到更强的 inline 注入。
+
+Pass 7 写入的 `__DATA,__cpr_adbg7` 至少包含：
+
+- `seed`：随机散布的稳定种子，优先复用 `PassConfig.randomSeed`
+- `probeImmediate`：保留的 `BRK immediate`
+- `textBaseAddress`
+- `entryCount / entrySize`
+- 每个 entry 的 `target identifier/hash`
+- `patchSiteVMOffset / patchSiteFileOffset`
+- `policyBits / entryFlags / scatterSlot`
+
+当前版本的 Pass 7 已可用于：
+
+- 对关键函数生成可复现的 anti-debug 注入计划
+- 为运行时的 patch/gate/延迟响应/异常探针预留 ABI
+- 在不重写 `__TEXT` 指令流的前提下，为后续更强对抗演进做准备
 
 ### 2.5 真机 vs 模拟器
 
@@ -236,7 +257,7 @@ let envelope = try await CPRiskKit.shared.buildSecureReportEnvelopeWithAttestati
 
 ## 8.1 壳保护与 v2a 签名 (6.0 / 6.1 / 6.2 / 6.5)
 
-自研壳在运行时由 CRiskCore 自动完成 HMAC 验证、解密与完整性校验，无需调用方额外操作。SDK 在 `start()` / `evaluate()` 时自动初始化 armor runtime。6.1 新增 Anti-Dump 页面保护、密钥安全清零和运行时完整性重校验。6.2 升级 ABI v2：每个加密项附带 HMAC 认证标签 + 随机 nonce，解密前先验 HMAC 完整性；完整性锚点改为 HMAC 绑定 rootKey，无密钥不可恢复 fullHash。6.3 新增 Pass 6 符号表混淆与 Codable 短别名防御。6.4 壳对最终 App 二进制执行加固，配合全量 strip 实现 `sub_XXXX` 级别逆向对抗。6.5 引入白盒 PRF 引擎：anchor 校验、字符串解密密钥、数据段加载密钥、签名材料（runtime material）全部通过白盒 PRF 派生，root key 融入 ~160KB S-box 表不可逆提取，内存 dump 无法还原原始密钥；白盒不可用时自动 fallback 到 legacy HMAC 路径。6.5 起 CRiskCore 启动反调试 watchdog 线程，每 3s 重调 `ptrace(PT_DENY_ATTACH)` 并检测 exception port 异常，检测到异常时自动转为 RiskSignal 参与评分。
+自研壳在运行时由 CRiskCore 自动完成 HMAC 验证、解密与完整性校验，无需调用方额外操作。SDK 在 `start()` / `evaluate()` 时自动初始化 armor runtime。6.1 新增 Anti-Dump 页面保护、密钥安全清零和运行时完整性重校验。6.2 升级 ABI v2：每个加密项附带 HMAC 认证标签 + 随机 nonce，解密前先验 HMAC 完整性；完整性锚点改为 HMAC 绑定 rootKey，无密钥不可恢复 fullHash。6.3 新增 Pass 6 符号表混淆与 Codable 短别名防御。6.4 壳对最终 App 二进制执行加固，配合全量 strip 实现 `sub_XXXX` 级别逆向对抗。6.5 引入白盒 PRF 引擎：anchor 校验、字符串解密密钥、数据段加载密钥、签名材料（runtime material）全部通过白盒 PRF 派生，root key 融入 ~160KB S-box 表不可逆提取，内存 dump 无法还原原始密钥；白盒不可用时自动 fallback 到 legacy HMAC 路径。后续版本继续强化反调试：关键密码学路径会在被调试时静默毒化输出，watchdog 线程每 3s 重调 `ptrace` 并执行 exception port、SIGTRAP/BRK、`csops(CS_DEBUGGED)`、硬件断点、软件断点、可疑线程、TTY、Developer Disk Image、single-step timing trap 与 exception delivery timeout 探针；相关异常自动转为 `software_breakpoint_detected`、`exception_delivery_timeout` 等 `RiskSignal` 进入评分。Pass 7 `AntiDebugInjector` 则把随机散布后的 injection plan 写入 `__DATA,__cpr_adbg7`，为后续更强的 runtime gate / inline patch 预留 ABI。
 
 **ReportEnvelope v2a 签名**：壳完整性 material 会自动混入 `buildSecureReportEnvelope` 的 HMAC 签名密钥派生链：
 
@@ -328,7 +349,7 @@ CPRiskKit.register(provider: MyProvider())
 | `threshold` | `Double` | `60` | 高风险总分阈值 |
 | `enableBehaviorDetect` | `Bool` | `true` | 行为指纹采集 |
 | `enableNetworkSignals` | `Bool` | `true` | 网络信号采集 |
-| `enableAntiTamper` | `Bool` | `true` | 反篡改 / Hook 检测（含反调试 watchdog 线程） |
+| `enableAntiTamper` | `Bool` | `true` | 反篡改 / Hook 检测（含反调试 watchdog、FridaModuleDetector、软件断点/异常超时信号） |
 | `enableTemporalAnalysis` | `Bool` | `false` | 时序模式分析 |
 | `enableRemoteConfig` | `Bool` | `false` | 远程配置拉取 |
 | `defaultScenario` | `RiskScenario` | `.default` | 默认评估场景 |
@@ -469,13 +490,15 @@ CPRiskKit.shared.setTextSegmentReferenceResolver(SignedReferenceResolver())
 2. **SchemeDetector**：需在宿主 App 的 `Info.plist` 添加 `LSApplicationQueriesSchemes`（如 `cydia`、`sileo`、`filza` 等），否则 `canOpenURL` 始终返回 `false`。
 3. **弱信号原则**：SDK 将不可用 / 无法获取的信号视为弱信号，不会因系统限制直接判定高风险。**强结论建议放在服务端做聚合判断**（IP 聚合、ASN、设备图谱、长连接流量模式等）。
 4. **日志开关**：`CPRiskKit.setLogEnabled(true)` 仅在 `DEBUG` 构建下生效。
-5. **壳工具链**：cprisk-armor（6 Pass / ABI v2）需在 `swift build` 之后对产物执行加固；**6.2 起必须通过 `--key` 提供加密密钥**；6.4 起壳对最终 App 二进制（而非 framework）执行加固；6.5 起白盒 PRF 四 section 需通过 `-Wl,-sectcreate` 预埋占位符（`whitebox_meta.bin` 等），壳更新而非追加；壳运行时由 CRiskCore 自动管理（含白盒/legacy 双路径 + HMAC 验证 + Anti-Dump + 密钥清零 + 完整性重校验），调用方无需手动介入。
+5. **壳工具链**：cprisk-armor（7 Pass / ABI v2）需在 `swift build` 之后对产物执行加固；**6.2 起必须通过 `--key` 提供加密密钥**；6.4 起壳对最终 App 二进制（而非 framework）执行加固；6.5 起白盒 PRF 四 section 需通过 `-Wl,-sectcreate` 预埋占位符（`whitebox_meta.bin` 等），壳更新而非追加；Pass 7 会额外写入 `__DATA,__cpr_adbg7` anti-debug 注入计划 metadata；壳运行时由 CRiskCore 自动管理（含白盒/legacy 双路径 + HMAC 验证 + Anti-Dump + 密钥清零 + 完整性重校验），调用方无需手动介入。
 6. **v2a 签名兼容**：服务端需同时支持 `v2`（无壳）和 `v2a`（壳绑定）签名验证；未加壳的 SDK 仍输出 `v2`。
 7. **服务端信号注入**：6.2 起 Release 下旧 `setExternalServerSignals()` 为 no-op，需使用 `setExternalServerSignalsVerified()` + HMAC 签名。
 8. **动态特征列表**：可通过 RemoteConfig 下发 `additionalSuspiciousLibraries` / `additionalSuspiciousPaths` / `additionalSuspiciousPorts` 扩展检测规则，无需发版。
 9. **行为阈值配置**：`BehaviorThresholds` 13 项阈值均有内置默认值，未下发时不影响评分。设备型号级 override（`deviceModelBehaviorOverrides`）优先级最高，适合针对特定机型微调灵敏度，避免误判（如 iPad Pro 的 ApplePencil 力度分布与手指有差异）。行为分上限由 `mbs`（`maxBehaviorScore`）控制，默认 45，可远程下调以降低行为维度权重。
 10. **GPU / IMU 指纹缓存**：`GPURenderFingerprintProvider` 和 `IMUNoiseSpectrumProvider` 均实现了结果缓存，首次采集后同一进程内复用，不重复触发 Metal 渲染 / FFT 采样；若需强制刷新，重启 App 进程即可。
-11. **反调试 watchdog**：`start()` 时自动启动，`stop()` 时停止；watchdog 检测到的异常（被调试、exception port 被篡改等）会通过 `AntiTamperingSignalProvider` 转为 `antiDebugWatchdogTraced`、`antiDebugWatchdogExceptionPort` 等 RiskSignal，参与评分。
+11. **反调试 watchdog**：`start()` 时自动启动，`stop()` 时停止；watchdog 检测到的异常（被调试、exception port 被篡改、硬件断点、软件断点、`csops`、异常分发超时等）会通过 `AntiTamperingSignalProvider` 转为 `antiDebugWatchdogTraced`、`software_breakpoint_detected`、`exception_delivery_timeout` 等 `RiskSignal`，参与评分。
+12. **Frida 模块检测**：`FridaModuleDetector` 会额外扫描已加载 image 名、可疑 Mach-O section 名以及 `__cstring/__const` 中的 Frida/Gum/Gadget 字符串片段；与 `FridaDetector` 的端口/文件/环境维度分工互补。
+13. **检测顺序随机化**：当 `MutationStrategy.shuffleChecks == true` 时，anti-tamper/debugger/frida 相关 detector 会按 `deviceID + scope + seed` 做稳定洗牌。同一设备顺序稳定，不同设备顺序可变，用于增加脚本化绕过成本。
 
 ---
 

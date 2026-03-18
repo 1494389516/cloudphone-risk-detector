@@ -1,11 +1,8 @@
 import CRiskCore
 import Darwin
 import Foundation
-import MachO
-
 struct FridaDetector: Detector {
     let knownPorts: [Int] = [27042, 27043, 23946]
-    let markers: [String] = ["frida", "frida-agent", "frida-server", "gadget", "gum", "gum-js-loop"]
     let knownServerPaths: [String] = [
         "/usr/sbin/frida-server",
         "/usr/bin/frida-server",
@@ -21,40 +18,23 @@ struct FridaDetector: Detector {
         var score: Double = 0
         var methods: [String] = []
 
-        if let imageHit = detectFridaImage() {
-            score += 35
-            methods.append("frida:dylib:\(imageHit)")
-        }
-
         if let envHit = detectFridaEnv() {
-            score += 20
+            score += 18
             methods.append("frida:env:\(envHit)")
         }
 
         if let port = detectOpenFridaPort() {
-            score += 15
+            score += 16
             methods.append("frida:port:\(port)")
         }
 
         if detectFridaFileArtifact() {
-            score += 20
+            score += 18
             methods.append("frida:file:server")
         }
 
-        return DetectorResult(score: score, methods: methods)
+        return DetectorResult(score: min(score, 45), methods: methods)
 #endif
-    }
-
-    private func detectFridaImage() -> String? {
-        let count = _dyld_image_count()
-        for index in 0..<count {
-            guard let imageName = _dyld_get_image_name(index) else { continue }
-            let name = String(cString: imageName).lowercased()
-            if let marker = markers.first(where: { name.contains($0) }) {
-                return marker
-            }
-        }
-        return nil
     }
 
     private func detectFridaEnv() -> String? {

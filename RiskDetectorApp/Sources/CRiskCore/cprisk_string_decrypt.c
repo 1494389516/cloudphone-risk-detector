@@ -11,6 +11,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 #include "include/cprisk_macho.h"
 #include "include/cprisk_sha256.h"
 #include "include/cprisk_secure_zero.h"
@@ -193,6 +196,16 @@ int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) 
     uint64_t hv;
     memcpy(&hv, dh, sizeof(hv));
     s_str_acc ^= cprisk_rotl64(hv, string_id % 64);
+
+#if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+    /* Subtle byte-level corruption under debugger; fixed accumulator poison
+       ensures downstream key derivation also silently fails. */
+    if (cprisk_is_being_traced()) {
+        for (uint32_t pi = 0; pi < dlen; pi++)
+            buffer[pi] ^= 0x01;
+        s_str_acc = 0xDEADBEEFCAFEBABEULL;
+    }
+#endif
 
     cprisk_secure_zero(ks, dlen);
     free(ks);
