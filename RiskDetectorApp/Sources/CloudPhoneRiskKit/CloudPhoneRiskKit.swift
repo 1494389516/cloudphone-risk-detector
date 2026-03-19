@@ -459,6 +459,7 @@ public final class CPRiskKit: NSObject {
     /// 减少内存转储风险。Swift 无 SecureString，无法清零字符串内存；及时置 nil 可缩短敏感数据驻留时间。
     /// **调用方应在用户登出时调用本方法。**
     @objc public func unbindAccount() {
+        resetArmorRuntime()
         stateLock.lock()
         boundAccountId = nil
         boundSceneTag = nil
@@ -513,7 +514,7 @@ public final class CPRiskKit: NSObject {
     @discardableResult
     @objc(setRemoteConfigEndpoint:)
     public func setRemoteConfigEndpoint(_ endpoint: String) -> Bool {
-        configureRemoteConfigProvider(urlString: endpoint)
+        return configureRemoteConfigProvider(urlString: endpoint)
     }
 
     /// 清除远程配置地址和缓存状态。
@@ -595,13 +596,13 @@ public final class CPRiskKit: NSObject {
     // MARK: - Evaluation
 
     @objc public func evaluate() -> CPRiskReport {
-        evaluate(config: .default)
+        return evaluate(config: .default)
     }
 
     /// 生成一次完整风控报告（保持 1.0 入口，内部走 2.0 决策链路）。
     @objc(evaluateWithConfig:)
     public func evaluate(config: CPRiskConfig = .default) -> CPRiskReport {
-        evaluate(config: config, scenario: config.defaultScenario)
+        return evaluate(config: config, scenario: config.defaultScenario)
     }
 
     /// 同步场景化评估（2.0 核心入口，Swift/ObjC 可用）。
@@ -697,7 +698,7 @@ public final class CPRiskKit: NSObject {
             let previousHighRisk = prevIds.intersection(Self.highRiskSignalIds)
             let currentHighRisk = allCurrentSignalIds.intersection(Self.highRiskSignalIds)
             let suppressedIds = previousHighRisk.subtracting(currentHighRisk)
-            if suppressedIds.count >= 2 || (previousHighRisk.count > 0 && currentHighRisk.isEmpty && previousHighRisk.count >= 1) {
+            if suppressedIds.count >= 2 || (previousHighRisk.count > 0 && currentHighRisk.isEmpty) {
                 let evidence = [
                     "suppressed_ids": suppressedIds.sorted().joined(separator: ","),
                     "previous_count": "\(previousHighRisk.count)",
@@ -866,9 +867,14 @@ public final class CPRiskKit: NSObject {
             payloadData = try removingPayloadKey("challengeBinding", from: payloadData)
         }
 
-        let effectiveKeyId = (keyId == "k1" && TrustChainManager.currentKeyRotationPolicy() != nil)
-            ? TrustChainManager.currentKeyId(baseKeyId: keyId)
-            : keyId
+        let effectiveKeyId: String
+        if keyId == "k1",
+           TrustChainManager.currentKeyRotationPolicy() != nil,
+           let rotatedKeyId = TrustChainManager.currentKeyId(baseKeyId: keyId) {
+            effectiveKeyId = rotatedKeyId
+        } else {
+            effectiveKeyId = keyId
+        }
 
         let trustLevel = TrustChainManager.evaluateTrustLevel(
             deviceID: report.deviceID,
@@ -901,17 +907,17 @@ public final class CPRiskKit: NSObject {
                 Logger.log("buildSecureReportEnvelope: armor material marked poisoned by runtime state")
                 throw SecureUploadError.armorRuntimeUnavailable(reason: "material_poisoned")
             } else {
-                Logger.log("buildSecureReportEnvelope: armor material marked poisoned, degrading to v2 signature")
+                Logger.log("buildSecureReportEnvelope: armor material marked poisoned, degrading to v2d signature")
                 signatureProvider = nil
-                signatureVersion = "v2"
+                signatureVersion = "v2d"
             }
         } else if requireArmor {
             Logger.log("buildSecureReportEnvelope: armor unavailable status=\(armorSnapshot.status.rawValue) reason=\(armorSnapshot.reason)")
             throw SecureUploadError.armorRuntimeUnavailable(reason: armorSnapshot.reason)
         } else {
-            Logger.log("buildSecureReportEnvelope: armor unavailable, degrading to v2 signature (status=\(armorSnapshot.status.rawValue))")
+            Logger.log("buildSecureReportEnvelope: armor unavailable, degrading to v2d signature (status=\(armorSnapshot.status.rawValue))")
             signatureProvider = nil
-            signatureVersion = "v2"
+            signatureVersion = "v2d"
         }
 
         let envelopeConfig = ReportEnvelope.Config(signatureVersion: signatureVersion)
@@ -1025,9 +1031,14 @@ public final class CPRiskKit: NSObject {
         keyId: String = "k1",
         requireAttestation: Bool = true
     ) async throws -> ReportEnvelope {
-        let effectiveKeyId = (keyId == "k1" && TrustChainManager.currentKeyRotationPolicy() != nil)
-            ? TrustChainManager.currentKeyId(baseKeyId: keyId)
-            : keyId
+        let effectiveKeyId: String
+        if keyId == "k1",
+           TrustChainManager.currentKeyRotationPolicy() != nil,
+           let rotatedKeyId = TrustChainManager.currentKeyId(baseKeyId: keyId) {
+            effectiveKeyId = rotatedKeyId
+        } else {
+            effectiveKeyId = keyId
+        }
 
         guard AppAttestSigner.isSupported else {
             if requireAttestation {
@@ -2122,12 +2133,17 @@ public final class CPRiskKit: NSObject {
         let rc = signatureBuffer.withUnsafeMutableBufferPointer { signaturePtr in
             keyData.withUnsafeBytes { keyRaw in
                 signatureInput.withUnsafeBytes { inputRaw in
-                    cprisk_sign_with_derived_key(
-                        keyRaw.bindMemory(to: UInt8.self).baseAddress,
+                    guard let keyPtr = keyRaw.bindMemory(to: UInt8.self).baseAddress,
+                          let inputPtr = inputRaw.bindMemory(to: UInt8.self).baseAddress,
+                          let sigPtr = signaturePtr.baseAddress else {
+                        return Int32(-1)
+                    }
+                    return cprisk_sign_with_derived_key(
+                        keyPtr,
                         keyData.count,
-                        inputRaw.bindMemory(to: UInt8.self).baseAddress,
+                        inputPtr,
                         signatureInput.count,
-                        signaturePtr.baseAddress
+                        sigPtr
                     )
                 }
             }
@@ -2156,12 +2172,17 @@ public final class CPRiskKit: NSObject {
         let rc = expectedCString.withUnsafeBufferPointer { signaturePtr in
             keyData.withUnsafeBytes { keyRaw in
                 signatureInput.withUnsafeBytes { inputRaw in
-                    cprisk_verify_with_derived_key(
-                        keyRaw.bindMemory(to: UInt8.self).baseAddress,
+                    guard let keyPtr = keyRaw.bindMemory(to: UInt8.self).baseAddress,
+                          let inputPtr = inputRaw.bindMemory(to: UInt8.self).baseAddress,
+                          let sigPtr = signaturePtr.baseAddress else {
+                        return Int32(-1)
+                    }
+                    return cprisk_verify_with_derived_key(
+                        keyPtr,
                         keyData.count,
-                        inputRaw.bindMemory(to: UInt8.self).baseAddress,
+                        inputPtr,
                         signatureInput.count,
-                        signaturePtr.baseAddress
+                        sigPtr
                     )
                 }
             }

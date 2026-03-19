@@ -45,7 +45,7 @@ enum PayloadCrypto {
             )
         }
         let key = try symmetricKey()
-        let cipherData = combined.dropFirst()
+        let cipherData = Data(combined.dropFirst())
         let box = try AES.GCM.SealedBox(combined: cipherData)
         return try AES.GCM.open(box, using: key)
     }

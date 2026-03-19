@@ -26,10 +26,12 @@ internal struct CFFReturnSink<Value> {
     }
 
     internal mutating func store(_ value: Value) {
+        guard case .pending = storage else { return }
         storage = .value(value)
     }
 
     internal mutating func poison() {
+        guard case .pending = storage else { return }
         storage = .poisoned
     }
 

@@ -663,7 +663,7 @@ public struct RiskDetectionEngine: Sendable {
 
         // 1. 越狱信号
         if context.jailbreak.confidence > 0 {
-            let jbScore = context.jailbreak.confidence
+            let jbScore = context.jailbreak.confidence * 100
             signals.append(
                 RiskSignal(
                     id: "jailbreak",
@@ -940,7 +940,7 @@ public struct RiskDetectionEngine: Sendable {
 
         let tamperedMultiplier = 1.0 + Double(tamperedCount) * 0.5
         let v3Component = (hardScore + softScore) * tamperedMultiplier
-        let total = min(100, legacyScore + v3Component)
+        let total = min(100, max(0, legacyScore + v3Component))
 
         return ScoreComponents(
             total: total,

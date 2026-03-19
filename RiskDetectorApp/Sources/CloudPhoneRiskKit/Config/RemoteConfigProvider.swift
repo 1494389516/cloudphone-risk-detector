@@ -318,14 +318,22 @@ public final class RemoteConfigProvider: @unchecked Sendable {
         lock.lock()
         let handlers = Array(updateHandlers.values)
         lock.unlock()
-        handlers.forEach { $0(config) }
+        for handler in handlers {
+            autoreleasepool {
+                handler(config)
+            }
+        }
     }
 
     private func handleError(_ error: Error) {
         lock.lock()
         let handlers = Array(errorHandlers.values)
         lock.unlock()
-        handlers.forEach { $0(error) }
+        for handler in handlers {
+            autoreleasepool {
+                handler(error)
+            }
+        }
     }
 
     private func startPeriodicUpdates() {

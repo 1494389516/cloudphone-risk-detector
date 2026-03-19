@@ -47,7 +47,7 @@ struct CFFConfig: Sendable, Codable, Equatable {
     }
 
     var normalizedFakeStateCount: Int {
-        enableFakeStates ? max(0, fakeStateCount) : 0
+        enableFakeStates ? max(0, min(fakeStateCount, 16)) : 0
     }
 
     static func debug(

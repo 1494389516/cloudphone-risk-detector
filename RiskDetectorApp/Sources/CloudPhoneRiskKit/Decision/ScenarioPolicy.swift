@@ -51,7 +51,7 @@ public struct ScenarioPolicy: Codable, Sendable {
         var m = try container.decodeIfPresent(Double.self, forKey: .mediumThreshold) ?? 30
         var h = try container.decodeIfPresent(Double.self, forKey: .highThreshold) ?? 55
         var c = try container.decodeIfPresent(Double.self, forKey: .criticalThreshold) ?? 80
-        if !m.isFinite || !h.isFinite || !c.isFinite || !(0 <= m && m < h && h < c && c <= 100) {
+        if !m.isFinite || !h.isFinite || !c.isFinite || !(0 <= m && m <= h && h <= c && c <= 100) {
             m = 30; h = 55; c = 80
         }
         mediumThreshold = m

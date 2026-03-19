@@ -19,7 +19,7 @@ import Foundation
 /// 6. 校验顶层 `device_id` / `scene` 与 payload 内部字段是否一致
 /// 7. 最后才进入风险数据入库、聚合和策略处理
 ///
-/// 签名语义不变：`sigVer|nonce|ts|sessionToken|reportId|keyId|fieldMappingVersion|canonicalPayloadJSON`
+/// 签名语义：`sigVer|nonce|ts|sessionToken|reportId|keyId|fieldMappingVersion|attestationKeyId|canonicalPayloadJSON`
 public struct GrpcReportPayload: Sendable {
     public let appId: String
     public let sdkVersion: String
@@ -228,6 +228,8 @@ extension ReportEnvelope {
 
         let fmv = fieldMappingVersion ?? ""
         let attestationKey = attestationKeyId ?? ""
+        // Signature format must match ReportEnvelope.buildSignatureInput:
+        // sigVer|nonce|ts|sessionToken|reportId|keyId|fieldMappingVersion|attestationKeyId|canonicalPayloadJSON
         let signatureInput = "\(sigVer)|\(nonce)|\(ts)|\(sessionToken)|\(reportId)|\(keyId)|\(fmv)|\(attestationKey)|\(canonicalPayload)"
         let signatureInputDigestHex = Self.sha256Hex(Data(signatureInput.utf8))
 

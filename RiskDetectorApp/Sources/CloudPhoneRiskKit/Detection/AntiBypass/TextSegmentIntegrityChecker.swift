@@ -421,10 +421,15 @@ enum TextSegmentIntegrityChecker {
         var cmd = UnsafeRawPointer(ptr).advanced(by: MemoryLayout<mach_header_64>.size)
         for _ in 0..<ptr.pointee.ncmds {
             let load = cmd.assumingMemoryBound(to: load_command.self).pointee
-            if load.cmd == LC_ENCRYPTION_INFO || load.cmd == LC_ENCRYPTION_INFO_64 {
-                let enc = cmd.advanced(by: 16).assumingMemoryBound(to: UInt32.self)
-                let cryptid = enc.pointee
-                return cryptid != 0
+            if load.cmd == LC_ENCRYPTION_INFO_64 {
+                guard load.cmdsize >= MemoryLayout<encryption_info_command_64>.size else { return false }
+                let enc = cmd.assumingMemoryBound(to: encryption_info_command_64.self).pointee
+                return enc.cryptid != 0
+            }
+            if load.cmd == LC_ENCRYPTION_INFO {
+                guard load.cmdsize >= MemoryLayout<encryption_info_command>.size else { return false }
+                let enc = cmd.assumingMemoryBound(to: encryption_info_command.self).pointee
+                return enc.cryptid != 0
             }
             cmd = cmd.advanced(by: Int(load.cmdsize))
         }

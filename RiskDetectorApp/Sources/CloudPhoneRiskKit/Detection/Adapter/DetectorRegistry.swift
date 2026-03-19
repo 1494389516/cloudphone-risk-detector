@@ -239,9 +239,8 @@ public final class DetectorRegistry {
     /// - Returns: 检测器实例，如果类型未注册则返回 nil
     public func createDetector(type: DetectorType) -> Detector? {
         lock.lock()
-        let factory = registry[type]
-        lock.unlock()
-        guard let factory else {
+        defer { lock.unlock() }
+        guard let factory = registry[type] else {
             Logger.log("DetectorRegistry.createDetector: \(type.rawValue) not found")
             return nil
         }

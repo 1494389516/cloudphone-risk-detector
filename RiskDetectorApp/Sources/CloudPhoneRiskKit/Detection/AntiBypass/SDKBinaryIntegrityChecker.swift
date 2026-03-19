@@ -375,6 +375,12 @@ enum SDKBinaryIntegrityChecker {
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ]
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecSuccess {
+            return
+        }
+        if status != errSecItemNotFound {
+            Logger.log("SDKBinaryIntegrityChecker.keychainWrite: SecItemUpdate failed (status=\(status))")
+        }
         if status == errSecItemNotFound {
             var addQuery = query
             addQuery[kSecValueData as String] = data

@@ -98,7 +98,8 @@ struct FileDetector: Detector {
         }
 
         // Score compensation: checked X of N paths → scale by N/X
-        let compensationFactor = suspiciousPaths.isEmpty ? 1.0 : Double(totalN) / Double(suspiciousPaths.count)
+        let rawFactor = suspiciousPaths.isEmpty ? 1.0 : Double(totalN) / Double(suspiciousPaths.count)
+        let compensationFactor = min(rawFactor, 4.0)
         score += suspiciousPathScore * compensationFactor
 
         if suspiciousPermissionScore > 0 {
