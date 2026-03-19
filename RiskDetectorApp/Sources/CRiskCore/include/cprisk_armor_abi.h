@@ -27,6 +27,28 @@
 #define CPRISK_ARMOR_SECTION_WHITEBOX_CODE "__swift5_awbc"
 #define CPRISK_ARMOR_SECTION_WHITEBOX_DATA "__swift5_awbd"
 #define CPRISK_ARMOR_SECTION_WHITEBOX_TAG "__swift5_awbt"
+#define CPRISK_ARMOR_SECTION_ANTI_DEBUG_PLAN "__objc_data2"
+
+#define CPRISK_ARMOR_ADBG_ABI_VERSION 1u
+#define CPRISK_ARMOR_ADBG_MAGIC 0x43504137u /* "CPA7" */
+#define CPRISK_ARMOR_ADBG_HEADER_SIZE 48u
+#define CPRISK_ARMOR_ADBG_ENTRY_SIZE 64u
+#define CPRISK_ARMOR_ADBG_TARGET_NAME_SIZE 32u
+
+#define CPRISK_ARMOR_ADBG_FLAG_HAS_SYMBOL_TARGETS 0x00000001u
+#define CPRISK_ARMOR_ADBG_FLAG_HAS_SYNTHETIC_TARGETS 0x00000002u
+#define CPRISK_ARMOR_ADBG_FLAG_SEED_FROM_CONFIG 0x00000004u
+#define CPRISK_ARMOR_ADBG_FLAG_SEED_FROM_BINARY 0x00000008u
+
+#define CPRISK_ARMOR_ADBG_ENTRY_FLAG_SYNTHETIC_TARGET 0x00000001u
+#define CPRISK_ARMOR_ADBG_ENTRY_FLAG_INLINE_PATCH_RESERVED 0x00000002u
+#define CPRISK_ARMOR_ADBG_ENTRY_FLAG_RUNTIME_GATE_RESERVED 0x00000004u
+
+#define CPRISK_ARMOR_ADBG_POLICY_RUNTIME_GATE 0x00000001u
+#define CPRISK_ARMOR_ADBG_POLICY_CRASH_ON_DEBUGGER 0x00000002u
+#define CPRISK_ARMOR_ADBG_POLICY_TRAP_ON_TAMPER 0x00000004u
+#define CPRISK_ARMOR_ADBG_POLICY_DELAY_RESPONSE 0x00000008u
+#define CPRISK_ARMOR_ADBG_POLICY_ESCALATE_INTEGRITY 0x00000010u
 
 #define CPRISK_ARMOR_WHITEBOX_ABI_VERSION 1u
 #define CPRISK_ARMOR_WHITEBOX_MAGIC 0x43505742u /* "CPWB" */
@@ -91,6 +113,29 @@ struct cprisk_armor_loader_entry {
     uint8_t  hmac_tag[CPRISK_ARMOR_HASH_SIZE];
 };
 
+struct cprisk_armor_antidebug_header {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t flags;
+    uint32_t header_size;
+    uint64_t seed;
+    uint64_t text_base_address;
+    uint32_t probe_immediate;
+    uint32_t entry_count;
+    uint32_t entry_size;
+    uint32_t reserved;
+};
+
+struct cprisk_armor_antidebug_entry {
+    uint64_t identifier_hash;
+    uint64_t patch_site_vm_offset;
+    uint32_t patch_site_file_offset;
+    uint32_t policy_bits;
+    uint32_t scatter_slot;
+    uint32_t entry_flags;
+    char target_name[CPRISK_ARMOR_ADBG_TARGET_NAME_SIZE];
+};
+
 struct cprisk_armor_whitebox_header {
     uint32_t magic;
     uint32_t version;
@@ -116,6 +161,10 @@ _Static_assert(sizeof(struct cprisk_armor_loader_header) == 12,
                "cprisk loader header ABI drift");
 _Static_assert(sizeof(struct cprisk_armor_loader_entry) == 128,
                "cprisk loader entry ABI drift");
+_Static_assert(sizeof(struct cprisk_armor_antidebug_header) == 48,
+               "cprisk anti-debug header ABI drift");
+_Static_assert(sizeof(struct cprisk_armor_antidebug_entry) == 64,
+               "cprisk anti-debug entry ABI drift");
 _Static_assert(sizeof(struct cprisk_armor_whitebox_header) == 48,
                "cprisk whitebox header ABI drift");
 _Static_assert(sizeof(struct cprisk_whitebox_probe_result) == 16,

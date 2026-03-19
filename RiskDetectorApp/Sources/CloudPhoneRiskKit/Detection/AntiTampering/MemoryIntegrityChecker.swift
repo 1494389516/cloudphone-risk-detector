@@ -3,15 +3,7 @@ import Foundation
 import MachO
 
 struct MemoryIntegrityChecker: Detector {
-    let suspiciousImageTokens = [
-        "frida",
-        "gadget",
-        "gum",
-        "substrate",
-        "substitute",
-        "libhooker",
-        "ellekit",
-    ]
+    var suspiciousImageTokens: [String] { ObfuscatedConstants.suspiciousLibraryTokensForIntegrity }
 
     let inlineHookWatchSymbols: [(name: String, score: Double)] = [
         ("malloc", 10),

@@ -30,6 +30,8 @@ static cprisk_munlock_func_t s_munlock_fn = NULL;
 static pthread_once_t s_dlsym_once = PTHREAD_ONCE_INIT;
 
 static volatile int s_mprotect_tampered = 0;
+static volatile uint32_t s_mprotect_direct_failure_count = 0u;
+static volatile uint32_t s_mprotect_fallback_success_count = 0u;
 
 static void init_dlsym_once(void) {
     s_mprotect_fn = (cprisk_mprotect_func_t)cprisk_dlsym("libsystem_kernel.dylib", "mprotect");
@@ -38,19 +40,40 @@ static void init_dlsym_once(void) {
 }
 
 static inline int cprisk_hidden_mprotect(void *addr, size_t len, int prot) {
+    int direct_errno = 0;
+    if (cprisk_mprotect_direct(addr, len, prot, &direct_errno) == 0) {
+        return 0;
+    }
+    s_mprotect_tampered = 1;
+    s_mprotect_direct_failure_count += 1u;
+
+    /* Safety fallback: keep legacy path for unsupported platforms/builds. */
     (void)pthread_once(&s_dlsym_once, init_dlsym_once);
     if (s_mprotect_fn) {
         int rc = s_mprotect_fn(addr, len, prot);
-        if (rc != 0)
+        if (rc == 0) {
+            s_mprotect_fallback_success_count += 1u;
+        } else {
             s_mprotect_tampered = 1;
+        }
         return rc;
     }
+
     s_mprotect_tampered = 1;
+    (void)direct_errno;
     return -1;
 }
 
 int cprisk_is_mprotect_tampered(void) {
     return s_mprotect_tampered;
+}
+
+uint32_t cprisk_get_mprotect_direct_failure_count(void) {
+    return s_mprotect_direct_failure_count;
+}
+
+uint32_t cprisk_get_mprotect_fallback_success_count(void) {
+    return s_mprotect_fallback_success_count;
 }
 
 static inline int cprisk_hidden_mlock(const void *addr, size_t len) {
@@ -660,6 +683,8 @@ void cprisk_unload_protected_data(void) {
     s_ldr_ready = 0;
     s_ldr_loaded = 0;
     s_data_acc = 0;
+    s_mprotect_direct_failure_count = 0u;
+    s_mprotect_fallback_success_count = 0u;
 
     pthread_mutex_unlock(&s_loader_mutex);
 }

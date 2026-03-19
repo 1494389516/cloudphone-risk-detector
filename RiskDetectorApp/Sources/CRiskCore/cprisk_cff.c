@@ -52,6 +52,30 @@ static uint32_t cprisk_cff_mix_seed(uint32_t seed, uint32_t entry_state) {
     return cprisk_cff_avalanche32(seed ^ (entry_state * 0x9E3779B1u) ^ 0xA24BAED5u);
 }
 
+static uint32_t cprisk_cff_default_seed(void) {
+    struct timespec now;
+    uint64_t monotonic_ns = 0u;
+    const uint64_t pid = (uint64_t)getpid();
+    const uint64_t tid_hash = cprisk_cff_thread_fingerprint();
+    const uintptr_t fn_addr_mix = (uintptr_t)&cprisk_cff_default_seed ^ (uintptr_t)&cprisk_cff_encode_state;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &now) == 0) {
+        monotonic_ns = ((uint64_t)now.tv_sec * 1000000000ULL) + (uint64_t)now.tv_nsec;
+    }
+
+    uint32_t seed = 0u;
+    seed ^= (uint32_t)pid;
+    seed ^= (uint32_t)(pid >> 32u);
+    seed ^= (uint32_t)tid_hash;
+    seed ^= (uint32_t)(tid_hash >> 32u);
+    seed ^= (uint32_t)monotonic_ns;
+    seed ^= (uint32_t)(monotonic_ns >> 29u);
+    seed ^= (uint32_t)fn_addr_mix;
+    seed ^= (uint32_t)(fn_addr_mix >> 32u);
+    seed = cprisk_cff_avalanche32(seed ^ 0x91E10DA5u);
+    return seed == 0u ? 1u : seed;
+}
+
 uint32_t cprisk_cff_encode_state(uint32_t state, uint32_t key, uint32_t salt) {
     const uint32_t mix = cprisk_cff_avalanche32(key ^ salt ^ 0x9E3779B9u);
     const uint32_t shift = (mix & 31u) | 1u;
@@ -95,7 +119,7 @@ void cprisk_cff_init(cprisk_cff_context_t *context, const cprisk_cff_config_t *c
 
     if (config == NULL) {
         memset(&local_config, 0, sizeof(local_config));
-        local_config.seed = 0xCFF0C0DEu;
+        local_config.seed = cprisk_cff_default_seed();
         local_config.entry_state = 0u;
         local_config.iteration_budget = CPRISK_CFF_ITERATION_BUDGET;
         local_config.release_build = (uint8_t)CPRISK_CFF_RELEASE_BUILD;

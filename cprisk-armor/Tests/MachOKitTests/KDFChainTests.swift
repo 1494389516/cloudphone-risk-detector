@@ -2,7 +2,7 @@ import DataSegmentEncryptor
 import Foundation
 import IntegrityAnchor
 import MachOKit
-import StringEncryptor
+@testable import StringEncryptor
 import XCTest
 
 final class KDFChainTests: XCTestCase {
@@ -85,12 +85,14 @@ final class KDFChainTests: XCTestCase {
         let firstEncrypted = content.subdata(
             in: (dataBase + firstOffset)..<(dataBase + firstOffset + firstLength)
         )
+        let dispatchSeed = deriveKeystreamDispatchSeed(key: expectedStringKey)
 
-        let keystream = Self.makeKeystream(
+        let keystream = buildKeystreamForRecord(
             key: expectedStringKey,
             stringID: firstID,
             nonce: firstNonce,
-            length: firstLength
+            length: firstLength,
+            dispatchSeed: dispatchSeed
         )
         let decrypted = Data(zip(firstEncrypted, keystream).map(^))
         XCTAssertEqual(String(data: decrypted, encoding: .utf8), "cprisk-bootstrap-v1")
@@ -157,26 +159,6 @@ final class KDFChainTests: XCTestCase {
     private static func textHash(from file: MachOFile) throws -> Data {
         let textSection = try XCTUnwrap(try file.section(segment: "__TEXT", section: "__text"))
         return sha256(try textSection.readContent(from: file.data))
-    }
-
-    private static func makeKeystream(key: Data, stringID: UInt32, nonce: Data, length: Int) -> Data {
-        var seed = Data()
-        seed.append(key)
-        var sid = stringID.littleEndian
-        withUnsafeBytes(of: &sid) { seed.append(contentsOf: $0) }
-        seed.append(nonce)
-
-        var block = sha256(seed)
-        var output = Data()
-        output.reserveCapacity(length)
-        while output.count < length {
-            let remaining = length - output.count
-            output.append(block.prefix(remaining))
-            if output.count < length {
-                block = sha256(block)
-            }
-        }
-        return output
     }
 
     private static func readLE32(_ data: Data, at offset: Int) -> UInt32 {

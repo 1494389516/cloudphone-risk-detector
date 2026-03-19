@@ -23,12 +23,7 @@ struct DylibInjectionDetector: Detector {
 
     // MARK: - Known-bad keywords (lowercase)
 
-    private static let suspiciousKeywords: [String] = [
-        "substrate", "substitute", "ellekit", "libhooker",
-        "cynject", "pspawn", "tweakinject", "cydiasubstrate",
-        "shadow", "libblackjack", "choicy", "sslkillswitch",
-        "flex", "revealdebug", "cycript",
-    ]
+    private static var suspiciousKeywords: [String] { ObfuscatedConstants.dylibInjectionSuspiciousKeywords }
 
     /// Rootless jailbreak and other non-standard prefixes.
     private static let suspiciousPrefixes: [String] = [
@@ -167,7 +162,7 @@ extension DylibInjectionDetector {
         if !countMethods.isEmpty {
             signals.append(RiskSignal(
                 id: "dylib_inject_image_count",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: min(Double(countMethods.count) * 15, 20),
                 evidence: ["detail": countMethods.joined(separator: ",")],
                 state: .soft(confidence: 0.6),
@@ -180,7 +175,7 @@ extension DylibInjectionDetector {
         if !keywordMethods.isEmpty {
             signals.append(RiskSignal(
                 id: "dylib_inject_suspicious_keyword",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: min(Double(keywordMethods.count) * 20, 50),
                 evidence: ["detail": keywordMethods.joined(separator: ",")],
                 state: .tampered,
@@ -193,7 +188,7 @@ extension DylibInjectionDetector {
         if !rootlessMethods.isEmpty {
             signals.append(RiskSignal(
                 id: "dylib_inject_rootless_jailbreak",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: min(Double(rootlessMethods.count) * 18, 40),
                 evidence: ["detail": rootlessMethods.joined(separator: ",")],
                 state: .tampered,
@@ -206,7 +201,7 @@ extension DylibInjectionDetector {
         if !envMethods.isEmpty {
             signals.append(RiskSignal(
                 id: "dylib_inject_env_insert",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: 30,
                 evidence: ["detail": envMethods.joined(separator: ",")],
                 state: .tampered,
@@ -219,7 +214,7 @@ extension DylibInjectionDetector {
         if !sandboxMethods.isEmpty {
             signals.append(RiskSignal(
                 id: "dylib_inject_out_of_sandbox",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: min(Double(sandboxMethods.count) * 12, 35),
                 evidence: ["detail": sandboxMethods.joined(separator: ",")],
                 state: .soft(confidence: 0.75),

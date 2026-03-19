@@ -194,7 +194,7 @@ public struct ScenarioPolicy: Codable, Sendable {
             // 支付场景的组合规则
             .init(
                 name: "jailbreak_vpn_payment",
-                requiredSignals: ["jailbreak", "vpn_active"],
+                requiredSignals: [ObfuscatedConstants.signalJailbreak, ObfuscatedConstants.requiredSignalVpnActive],
                 bonusScore: 40,
                 forceAction: .block
             ),
@@ -322,7 +322,7 @@ public struct SignalWeights: Codable, Sendable {
     /// 获取指定类别的权重
     public func weight(for category: String) -> Double {
         switch category.lowercased() {
-        case "jailbreak": return jailbreak
+        case ObfuscatedConstants.signalJailbreak: return jailbreak
         case "network": return network
         case "behavior": return behavior
         case "device": return device

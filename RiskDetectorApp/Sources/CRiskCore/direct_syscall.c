@@ -3,9 +3,11 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
@@ -203,6 +205,33 @@ int cprisk_access_direct(const char *path, int amode, int *error_out) {
 #endif
 }
 
+int cprisk_probe_path_snapshot(const char *path, cprisk_path_probe_snapshot_t *out_snapshot) {
+    if (path == NULL || out_snapshot == NULL) {
+        return -1;
+    }
+
+    out_snapshot->available_mask = CPRISK_PATH_PROBE_ACCESS | CPRISK_PATH_PROBE_STAT | CPRISK_PATH_PROBE_FOPEN;
+    out_snapshot->exists_mask = 0;
+
+    if (cprisk_access_direct(path, F_OK, NULL) == 0) {
+        out_snapshot->exists_mask |= CPRISK_PATH_PROBE_ACCESS;
+    }
+
+    struct stat sb;
+    memset(&sb, 0, sizeof(sb));
+    if (cprisk_stat_direct(path, &sb, NULL) == 0) {
+        out_snapshot->exists_mask |= CPRISK_PATH_PROBE_STAT;
+    }
+
+    FILE *fp = fopen(path, "rb");
+    if (fp != NULL) {
+        out_snapshot->exists_mask |= CPRISK_PATH_PROBE_FOPEN;
+        (void)fclose(fp);
+    }
+
+    return 0;
+}
+
 /* ── getpid / getppid / getuid ─────────────────────────────────────── */
 
 pid_t cprisk_getpid_direct(void) {
@@ -332,6 +361,33 @@ int cprisk_connect_direct(int sockfd, const struct sockaddr *addr, socklen_t add
     );
 #else
     return cprisk_finish_errno(connect(sockfd, addr, addrlen), error_out);
+#endif
+}
+
+/* ── mprotect ──────────────────────────────────────────────────────── */
+
+#ifndef SYS_mprotect
+#if defined(__APPLE__)
+#define SYS_mprotect 74
+#else
+#error "SYS_mprotect not defined for this platform"
+#endif
+#endif
+
+int cprisk_mprotect_direct(void *addr, size_t len, int prot, int *error_out) {
+#if CPRISK_DIRECT_SYSCALLS_AVAILABLE
+    return (int)cprisk_direct_syscall6(
+        SYS_mprotect,
+        (long)(uintptr_t)addr,
+        (long)len,
+        (long)prot,
+        0,
+        0,
+        0,
+        error_out
+    );
+#else
+    return cprisk_finish_errno(mprotect(addr, len, prot), error_out);
 #endif
 }
 

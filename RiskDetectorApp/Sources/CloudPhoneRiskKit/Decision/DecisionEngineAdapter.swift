@@ -66,7 +66,7 @@ public final class DecisionEngineAdapter: DecisionEngine {
     public var supportedFeatures: [String] {
         [
             "jailbreak_score",
-            "vpn_active",
+            ObfuscatedConstants.requiredSignalVpnActive,
             "proxy_enabled",
             "device_age_days",
             "touch_spread",

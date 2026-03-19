@@ -51,7 +51,7 @@ struct FridaSocketDetector: Detector {
         for prefix in suspiciousPaths {
             if access(prefix, F_OK) == 0 {
                 score += 12
-                methods.append("frida_socket:path:\(prefix)")
+                methods.append("\(ObfuscatedConstants.methodPrefixFridaSocketPath)\(prefix)")
             }
         }
 
@@ -65,9 +65,11 @@ struct FridaSocketDetector: Detector {
                     return String(data: Data(bytes: cptr, count: len), encoding: .utf8) ?? ""
                 }
                 let lower = name.lowercased()
-                if lower.hasPrefix("frida") || lower.hasPrefix(".frida") || lower.contains("linjector") {
+                if ObfuscatedConstants.fridaSocketEntryMarkers.contains(where: { marker in
+                    lower.hasPrefix(marker) || lower.contains(marker)
+                }) {
                     score += 15
-                    methods.append("frida_socket:tmp_entry:\(name)")
+                    methods.append("\(ObfuscatedConstants.methodPrefixFridaSocketTmpEntry)\(name)")
                     break
                 }
             }
@@ -92,9 +94,9 @@ struct FridaSocketDetector: Detector {
                 }
                 guard !path.isEmpty else { continue }
                 let lower = path.lowercased()
-                if lower.contains("frida") || lower.contains("linjector") || lower.contains("gum") {
+                if ObfuscatedConstants.fridaSocketPathMarkers.contains(where: { lower.contains($0) }) {
                     score += 18
-                    methods.append("frida_socket:unix_fd:\(path)")
+                    methods.append("\(ObfuscatedConstants.methodPrefixFridaSocketUnixFd)\(path)")
                     break
                 }
             }
@@ -190,11 +192,11 @@ extension FridaSocketDetector {
 
         var signals: [RiskSignal] = []
 
-        let socketMethods = result.methods.filter { $0.hasPrefix("frida_socket") }
+        let socketMethods = result.methods.filter { $0.hasPrefix(ObfuscatedConstants.detectorIDFridaSocket) }
         if !socketMethods.isEmpty {
             signals.append(RiskSignal(
-                id: "frida_unix_socket",
-                category: "anti_tamper",
+                id: ObfuscatedConstants.signalFridaUnixSocket,
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: min(Double(socketMethods.count) * 12, 25),
                 evidence: ["detail": socketMethods.joined(separator: ",")],
                 state: .tampered,
@@ -203,11 +205,11 @@ extension FridaSocketDetector {
             ))
         }
 
-        let timingMethods = result.methods.filter { $0.hasPrefix("timing_anomaly") }
+        let timingMethods = result.methods.filter { $0.hasPrefix(ObfuscatedConstants.methodPrefixTimingAnomaly) }
         if !timingMethods.isEmpty {
             signals.append(RiskSignal(
-                id: "frida_timing_anomaly",
-                category: "anti_tamper",
+                id: ObfuscatedConstants.signalFridaTimingAnomaly,
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: min(Double(timingMethods.count) * 10, 20),
                 evidence: ["detail": timingMethods.joined(separator: ",")],
                 state: .soft(confidence: 0.70),
@@ -216,11 +218,11 @@ extension FridaSocketDetector {
             ))
         }
 
-        let amplifiedMethods = result.methods.filter { $0.hasPrefix("timing_stalker_amplified") }
+        let amplifiedMethods = result.methods.filter { $0.hasPrefix(ObfuscatedConstants.methodPrefixTimingStalkerAmplified) }
         if !amplifiedMethods.isEmpty {
             signals.append(RiskSignal(
-                id: "frida_stalker_amplified",
-                category: "anti_tamper",
+                id: ObfuscatedConstants.signalFridaStalkerAmplified,
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: 20,
                 evidence: ["detail": amplifiedMethods.joined(separator: ",")],
                 state: .soft(confidence: 0.65),

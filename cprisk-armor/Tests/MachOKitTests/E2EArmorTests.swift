@@ -71,6 +71,10 @@ final class E2EArmorTests: XCTestCase {
         let r7 = try AntiDebugInjectorPass().execute(on: file, config: config)
         XCTAssertGreaterThan(r7.itemsProcessed, 0)
 
+        // Post-pass: __objc_data2 scrub (must also work independently from Pass 7)
+        let r7s = try ObjCData2ScrubberPass().execute(on: file, config: config)
+        XCTAssertGreaterThanOrEqual(r7s.itemsProcessed, 0)
+
         // Pass 6: SymbolStripper
         let r6 = try SymbolStripperPass().execute(on: file, config: config)
         XCTAssertGreaterThanOrEqual(r6.itemsProcessed, 0)
@@ -346,6 +350,7 @@ final class E2EArmorTests: XCTestCase {
         _ = try MetadataScrubberPass().execute(on: file, config: config)
         _ = try StructureObfuscatorPass().execute(on: file, config: config)
         _ = try AntiDebugInjectorPass().execute(on: file, config: config)
+        _ = try ObjCData2ScrubberPass().execute(on: file, config: config)
         _ = try SymbolStripperPass().execute(on: file, config: config)
     }
 

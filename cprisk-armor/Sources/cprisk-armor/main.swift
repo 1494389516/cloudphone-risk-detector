@@ -83,7 +83,7 @@ func printUsage() {
       --pass6           Pass 6: Symbol Stripping (nlist obfuscation)
       --pass7           Pass 7: Anti-Debug Metadata Injection
       --pass8           Pass 8: Instruction Substitution
-      --pass9           Pass 9: Control Flow Orchestrator (policy planning)
+      --pass9           Pass 9: Control Flow Orchestrator (policy-guided binary rewrite)
       --all             Enable all passes
       --cff-policy      Override cff_policy.yaml path for Pass 9
       --verbose         Verbose output
@@ -203,6 +203,19 @@ do {
         if verbose {
             print("    Items: \(result.itemsProcessed) | Bytes: \(result.bytesModified)")
             for detail in result.details { print("    - \(detail)") }
+        }
+    }
+
+    // Always attempt __objc_data2 scrub after selected passes.
+    // This keeps metadata clean even when users skip Pass 7 but input binary already contains the section.
+    if !enabledPasses.isEmpty {
+        let scrubPass = ObjCData2ScrubberPass()
+        if verbose { print("[*] Running Post Pass: \(scrubPass.name)") }
+        let scrubResult = try scrubPass.execute(on: machoFile, config: config)
+        allResults.append(scrubResult)
+        if verbose {
+            print("    Items: \(scrubResult.itemsProcessed) | Bytes: \(scrubResult.bytesModified)")
+            for detail in scrubResult.details { print("    - \(detail)") }
         }
     }
 

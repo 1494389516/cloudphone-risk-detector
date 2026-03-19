@@ -1,4 +1,4 @@
-# CloudPhoneRiskKit 6.7 使用与构建说明
+# CloudPhoneRiskKit 6.8 使用与构建说明
 
 iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。6.0 引入自研壳（cprisk-armor）二进制保护与端云签名绑定；6.1 将壳升级为 5 Pass 工业化保护；6.2 对壳执行密码学重建（ABI v2：强制密钥注入 / HMAC 认证 / 随机 nonce / IntegrityAnchor HMAC），共 46 项漏洞修复；6.3 新增 Pass 6 符号表混淆、Codable 短别名 CodingKeys、ObjC selector 安全修复，壳升级为 6 Pass 全链路保护；6.4 将 SDK 架构改为 library.static + 全量 strip，IDA 中 SDK 函数全部显示为 sub_XXXX；6.5 引入白盒 PRF 引擎（5 域 S-box ~160KB，root key 不可逆提取）、AppSigningIdentityDetector 反重打包（TeamID/bundleID/entitlement 一致性 + 基线漂移检测）；6.6 新增 Pass 7 AntiDebugInjector、Pass 8 InstructionSubstitution、FridaModuleDetector、反篡改检测顺序稳定随机化；6.7 引入**控制流平坦化（CFF）**与**反去混淆**：源码级 CFF 基础设施（CFFStateCodec / CFFDispatcher / CFFReturnSink / CFFRuntimeSalt）、DecisionTree / RiskDetectionEngine / ChallengeSession / TrustChainManager / anti_debug_watchdog 接入编码状态机、Pass 9 ControlFlowOrchestrator 策略编排（`cff_policy.yaml`）、异构 dispatcher（switch / if-else / dual-rail / region）、runtime salt 绑定、fail-closed 默认路径。cprisk-armor 现支持 **9 Pass**（含 Pass 9 CFF 策略编排骨架）。
 
@@ -16,6 +16,8 @@ iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，
 ---
 
 ## 2. 构建方式
+
+> **构建产物路径**：加壳二进制、Xcode DerivedData（如用于 IDA 分析）建议放在**桌面**（`~/Desktop/.artifacts`、`~/Desktop/.deriveddata-ida`），不放在项目目录内。详见 [构建产物与路径配置.md](./构建产物与路径配置.md)。
 
 ### 2.1 SPM 命令行构建
 

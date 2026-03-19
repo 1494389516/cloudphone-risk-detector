@@ -1,6 +1,7 @@
 # CloudPhoneRiskKit SDK 隐私声明
 
 > 文档定位：`CloudPhoneRiskKit` 的 SDK 级隐私声明  
+> 适用版本：SDK 6.8  
 > 适用对象：SDK 接入方、法务/隐私团队、客户安全评审  
 > 适用范围：iOS / iPadOS 端集成 `CloudPhoneRiskKit` 的场景  
 > 说明：本文描述的是 **SDK 自身的处理边界**，不替代宿主 App 的隐私政策、App Privacy 标签或 App Review Information
@@ -110,7 +111,7 @@ SDK 可能处理以下环境风险数据：
 - 设备/系统环境一致性信号
 - 代码段完整性校验结果
 - App Attest / 硬件信任根相关状态（若启用）
-- 反调试 watchdog 信号（如被调试、exception port 异常、硬件断点、软件断点、`csops` 调试态、异常分发超时）
+- 反调试 watchdog 信号（如被调试、exception port 异常、硬件断点、软件断点、`csops` 调试态、异常分发超时、双 watchdog 互监控、影子栈校验）
 - Frida/Gum/Gadget 模块特征（如已加载 image 名、可疑 Mach-O section 名、只读字符串片段）
 
 这些字段的共同特点是：
@@ -279,7 +280,7 @@ SDK 可以在设备侧本地完成：
 
 SDK 当前会在本地执行更强的运行时完整性探测，包括：
 
-- 反调试 watchdog 周期性探针
+- 反调试 watchdog 周期性探针（含双 watchdog 互监控、影子栈校验）
 - Frida/Gum/Gadget 模块名、section 名、字符串片段匹配
 - 检测顺序稳定随机化（按设备与策略种子改变 detector 执行顺序）
 
@@ -323,7 +324,7 @@ SDK 当前会在本地执行更强的运行时完整性探测，包括：
 - 用于**安全信号采集与风险决策**
 - 用于**识别动态注入、Frida 模块加载与调试篡改**
 
-另外，`cprisk-armor` 新增的 Pass 7 `AntiDebugInjector` 与 Pass 8 `InstructionSubstitution` 都属于**构建期二进制保护能力**。Pass 7 负责写入 anti-debug metadata ABI，Pass 8 负责对 `__TEXT.__text` 中的安全 ARM64 指令子集做 1:1 等长语义等价替换。二者都不会新增终端用户数据采集，只影响构建产物的代码与元数据形态，因此不改变 SDK 的隐私数据边界。
+另外，`cprisk-armor` 的 Pass 7 `AntiDebugInjector`、Pass 8 `InstructionSubstitution` 与 Pass 9 `ControlFlowOrchestrator`（CFF 控制流平坦化）都属于**构建期二进制保护能力**。Pass 7 负责写入 anti-debug metadata ABI，Pass 8 负责对 `__TEXT.__text` 中的安全 ARM64 指令子集做 1:1 等长语义等价替换，Pass 9 负责对策略编排的函数执行控制流平坦化。三者均不会新增终端用户数据采集，只影响构建产物的代码与元数据形态，因此不改变 SDK 的隐私数据边界。
 
 ---
 

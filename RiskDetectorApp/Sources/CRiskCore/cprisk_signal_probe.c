@@ -35,8 +35,15 @@
 #include <mach/mach_time.h>
 #include <sys/fcntl.h>
 #include <sys/param.h>
+#include "include/cprisk_macho.h"
 
 #define CPRISK_EXCEPTION_DELIVERY_TIMEOUT_NS 10000000ull
+#define CPRISK_SINGLE_STEP_DEFAULT_THRESHOLD_NS 50000000ull
+#define CPRISK_SINGLE_STEP_THRESHOLD_FLOOR_NS 5000000ull
+#define CPRISK_SINGLE_STEP_THRESHOLD_MULTIPLIER 16ull
+#define CPRISK_SINGLE_STEP_CALIBRATION_SAMPLES 9u
+#define CPRISK_SOFTWARE_BP_RANDOM_DEFAULT_WINDOWS 8u
+#define CPRISK_SOFTWARE_BP_RANDOM_DEFAULT_WINDOW_BYTES 768u
 
 /* ── (a) SIGTRAP signal probe ─────────────────────────────────────── */
 
@@ -46,8 +53,19 @@ static sigjmp_buf s_exception_delivery_jmpbuf;
 static volatile sig_atomic_t s_exception_delivery_sigtrap = 0;
 static atomic_uint_fast32_t s_exception_delivery_probe_armed = 0;
 static atomic_uint_fast32_t s_exception_delivery_probe_handled = 0;
-static atomic_uint_fast64_t s_exception_delivery_probe_start_abs = 0;
+static atomic_uint_fast64_t s_exception_delivery_probe_start_ns = 0;
 static atomic_uint_fast64_t s_exception_delivery_probe_last_ns = 0;
+static atomic_uint_fast64_t s_single_step_baseline_ns = 0;
+static atomic_uint_fast64_t s_single_step_threshold_ns = 0;
+static atomic_uint_fast32_t s_single_step_calibrated = 0;
+static atomic_flag s_single_step_calibration_lock = ATOMIC_FLAG_INIT;
+
+#if defined(__APPLE__) && (defined(__arm64__) || defined(__aarch64__)) && \
+    (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+#define CPRISK_TIMING_CNTPCT_AVAILABLE 1
+#else
+#define CPRISK_TIMING_CNTPCT_AVAILABLE 0
+#endif
 
 static uint64_t cprisk_mach_abs_to_ns_i(uint64_t delta_abs) {
     mach_timebase_info_data_t tb;
@@ -58,10 +76,52 @@ static uint64_t cprisk_mach_abs_to_ns_i(uint64_t delta_abs) {
     return delta_abs / tb.denom * tb.numer + (delta_abs % tb.denom) * tb.numer / tb.denom;
 }
 
+static uint64_t cprisk_monotonic_now_ns_i(void) {
+#if CPRISK_TIMING_CNTPCT_AVAILABLE
+    static uint64_t s_cntfrq = 0u;
+    if (s_cntfrq == 0u) {
+        __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(s_cntfrq));
+    }
+    if (s_cntfrq != 0u) {
+        uint64_t ticks = 0u;
+        __asm__ volatile("mrs %0, cntpct_el0" : "=r"(ticks));
+        return (ticks / s_cntfrq) * 1000000000ull +
+               ((ticks % s_cntfrq) * 1000000000ull) / s_cntfrq;
+    }
+#endif
+    return cprisk_mach_abs_to_ns_i(mach_absolute_time());
+}
+
+static uint64_t cprisk_random_u64_i(void) {
+    uint64_t value = 0u;
+    int err = 0;
+    if (cprisk_getentropy_direct(&value, sizeof(value), &err) == 0) {
+        return value;
+    }
+    (void)err;
+    value = cprisk_monotonic_now_ns_i();
+    value ^= ((uint64_t)(uintptr_t)&value << 21u);
+    value ^= value >> 7u;
+    value ^= value << 13u;
+    return value;
+}
+
+static uint64_t cprisk_prng_next_i(uint64_t *state) {
+    uint64_t x = *state;
+    if (x == 0u) {
+        x = 0xC3A5C85C97CB3127ULL;
+    }
+    x ^= x << 7u;
+    x ^= x >> 9u;
+    x ^= x << 8u;
+    *state = x;
+    return x;
+}
+
 static void cprisk_reset_exception_delivery_probe_state_i(void) {
     atomic_store(&s_exception_delivery_probe_armed, 0u);
     atomic_store(&s_exception_delivery_probe_handled, 0u);
-    atomic_store(&s_exception_delivery_probe_start_abs, 0u);
+    atomic_store(&s_exception_delivery_probe_start_ns, 0u);
     atomic_store(&s_exception_delivery_probe_last_ns, 0u);
 }
 
@@ -115,9 +175,12 @@ int cprisk_exception_handler_consume_reserved_brk_imm(uint16_t brk_imm) {
 
     const int armed = atomic_load(&s_exception_delivery_probe_armed) != 0u;
     uint64_t elapsed_ns = 0u;
-    const uint64_t start_abs = atomic_load(&s_exception_delivery_probe_start_abs);
-    if (armed && start_abs != 0u) {
-        elapsed_ns = cprisk_mach_abs_to_ns_i(mach_absolute_time() - start_abs);
+    const uint64_t start_ns = atomic_load(&s_exception_delivery_probe_start_ns);
+    if (armed && start_ns != 0u) {
+        const uint64_t now_ns = cprisk_monotonic_now_ns_i();
+        if (now_ns >= start_ns) {
+            elapsed_ns = now_ns - start_ns;
+        }
     }
 
     atomic_store(&s_exception_delivery_probe_last_ns, elapsed_ns);
@@ -147,14 +210,17 @@ int cprisk_probe_exception_delivery_timeout(void) {
     sigaction(SIGTRAP, &sa, &prev);
 
     if (sigsetjmp(s_exception_delivery_jmpbuf, 1) == 0) {
-        atomic_store(&s_exception_delivery_probe_start_abs, mach_absolute_time());
+        atomic_store(&s_exception_delivery_probe_start_ns, cprisk_monotonic_now_ns_i());
         atomic_store(&s_exception_delivery_probe_armed, 1u);
         __asm__ volatile("brk #0xC0DF");
     } else {
-        const uint64_t start_abs = atomic_load(&s_exception_delivery_probe_start_abs);
+        const uint64_t start_ns = atomic_load(&s_exception_delivery_probe_start_ns);
         uint64_t elapsed_ns = 0u;
-        if (start_abs != 0u) {
-            elapsed_ns = cprisk_mach_abs_to_ns_i(mach_absolute_time() - start_abs);
+        if (start_ns != 0u) {
+            const uint64_t now_ns = cprisk_monotonic_now_ns_i();
+            if (now_ns >= start_ns) {
+                elapsed_ns = now_ns - start_ns;
+            }
         }
         atomic_store(&s_exception_delivery_probe_last_ns, elapsed_ns);
         atomic_store(&s_exception_delivery_probe_armed, 0u);
@@ -233,6 +299,139 @@ int cprisk_scan_software_breakpoints(const void *func_ptr, size_t size) {
     return found;
 }
 
+struct cprisk_text_exec_section_i {
+    const uint8_t *base;
+    size_t size;
+};
+
+static size_t cprisk_collect_text_exec_sections_i(
+    const struct mach_header_64 *hdr,
+    struct cprisk_text_exec_section_i *out_sections,
+    size_t out_capacity
+) {
+    if (!hdr || !out_sections || out_capacity == 0u) {
+        return 0u;
+    }
+
+    const intptr_t slide = cprisk_compute_slide(hdr);
+    const uint8_t *cursor = (const uint8_t *)(hdr + 1);
+    const uint8_t *end = cursor + hdr->sizeofcmds;
+    size_t count = 0u;
+
+    for (uint32_t i = 0; i < hdr->ncmds; i++) {
+        if (cursor + sizeof(struct load_command) > end) {
+            break;
+        }
+        const struct load_command *lc = (const struct load_command *)cursor;
+        if (lc->cmdsize == 0u || cursor + lc->cmdsize > end) {
+            break;
+        }
+        if (lc->cmd == LC_SEGMENT_64) {
+            const struct segment_command_64 *seg =
+                (const struct segment_command_64 *)cursor;
+            const size_t seg_header_size = sizeof(struct segment_command_64);
+            const size_t sec_table_size =
+                (size_t)seg->nsects * sizeof(struct section_64);
+            if (sec_table_size / sizeof(struct section_64) != (size_t)seg->nsects ||
+                seg_header_size + sec_table_size > (size_t)lc->cmdsize) {
+                cursor += lc->cmdsize;
+                continue;
+            }
+            if (strncmp(seg->segname, "__TEXT", 16) == 0) {
+                const struct section_64 *sections =
+                    (const struct section_64 *)(cursor + sizeof(*seg));
+                for (uint32_t s = 0; s < seg->nsects; s++) {
+                    const struct section_64 *sec = &sections[s];
+                    const uint32_t attrs = sec->flags & SECTION_ATTRIBUTES_USR;
+                    const int executable =
+                        (attrs & (S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS)) != 0u ||
+                        strncmp(sec->sectname, "__text", 16) == 0;
+                    if (!executable || sec->size < 4u) {
+                        continue;
+                    }
+                    if (count >= out_capacity) {
+                        return count;
+                    }
+                    out_sections[count].base =
+                        (const uint8_t *)((uintptr_t)sec->addr + (uintptr_t)slide);
+                    out_sections[count].size = (size_t)sec->size;
+                    count++;
+                }
+            }
+        }
+        cursor += lc->cmdsize;
+    }
+
+    return count;
+}
+
+int cprisk_scan_software_breakpoints_randomized_text(
+    size_t sample_windows,
+    size_t window_size
+) {
+    if (sample_windows == 0u) {
+        sample_windows = CPRISK_SOFTWARE_BP_RANDOM_DEFAULT_WINDOWS;
+    }
+    if (window_size < 16u) {
+        window_size = CPRISK_SOFTWARE_BP_RANDOM_DEFAULT_WINDOW_BYTES;
+    }
+
+    const struct mach_header_64 *hdr =
+        cprisk_find_own_header((const void *)cprisk_scan_software_breakpoints_randomized_text);
+    if (!hdr) {
+        return 0;
+    }
+
+    struct cprisk_text_exec_section_i sections[32];
+    const size_t section_count =
+        cprisk_collect_text_exec_sections_i(hdr, sections, sizeof(sections) / sizeof(sections[0]));
+    if (section_count == 0u) {
+        return 0;
+    }
+
+    uint64_t rng = cprisk_random_u64_i() ^ (uint64_t)(uintptr_t)hdr;
+    const size_t start_idx = (size_t)(cprisk_prng_next_i(&rng) % section_count);
+    size_t windows = sample_windows;
+    if (windows > section_count * 4u) {
+        windows = section_count * 4u;
+    }
+
+    int found = 0;
+    for (size_t i = 0; i < windows; i++) {
+        const size_t idx = (start_idx + i) % section_count;
+        const uint8_t *base = sections[idx].base;
+        size_t sec_size = sections[idx].size;
+        if (!base || sec_size < 4u) {
+            continue;
+        }
+
+        size_t sample_size = window_size;
+        if (sample_size > sec_size) {
+            sample_size = sec_size;
+        }
+
+        size_t offset = 0u;
+        const size_t max_offset = sec_size - sample_size;
+        if (max_offset > 0u) {
+            offset = (size_t)(cprisk_prng_next_i(&rng) % (max_offset + 1u));
+        }
+
+        offset &= ~(size_t)0x3u;
+        if (offset >= sec_size) {
+            continue;
+        }
+        sample_size = sec_size - offset < sample_size ? (sec_size - offset) : sample_size;
+        sample_size &= ~(size_t)0x3u;
+        if (sample_size < 4u) {
+            continue;
+        }
+
+        found += cprisk_scan_software_breakpoints(base + offset, sample_size);
+    }
+
+    return found;
+}
+
 /* ── (d) TTY debug detection ──────────────────────────────────────── */
 
 int cprisk_detect_tty_debug(void) {
@@ -302,26 +501,107 @@ int cprisk_csops_debug_check(void) {
 
 /* ── (f) Single-step timing detection ─────────────────────────────── */
 
-#define CPRISK_SINGLE_STEP_THRESHOLD_NS 50000000ull  /* 50 ms */
+static uint64_t cprisk_single_step_workload_i(void) {
+    volatile uint64_t acc = 0x9E3779B97F4A7C15ULL;
+    for (int i = 0; i < 320; i++) {
+        acc ^= ((uint64_t)i * 0x100000001B3ULL) + 0x9E37u;
+        acc = (acc << 5u) | (acc >> 59u);
+    }
+    return acc;
+}
+
+static uint64_t cprisk_single_step_measure_once_i(void) {
+    const uint64_t t0 = cprisk_monotonic_now_ns_i();
+    const uint64_t acc = cprisk_single_step_workload_i();
+    (void)acc;
+    const uint64_t t1 = cprisk_monotonic_now_ns_i();
+    if (t1 < t0) {
+        return 0u;
+    }
+    return t1 - t0;
+}
+
+static uint64_t cprisk_single_step_threshold_from_baseline_i(uint64_t baseline_ns) {
+    if (baseline_ns == 0u) {
+        return CPRISK_SINGLE_STEP_DEFAULT_THRESHOLD_NS;
+    }
+    uint64_t threshold = baseline_ns * CPRISK_SINGLE_STEP_THRESHOLD_MULTIPLIER;
+    if (threshold / CPRISK_SINGLE_STEP_THRESHOLD_MULTIPLIER != baseline_ns) {
+        threshold = UINT64_MAX;
+    }
+    if (threshold < CPRISK_SINGLE_STEP_THRESHOLD_FLOOR_NS) {
+        threshold = CPRISK_SINGLE_STEP_THRESHOLD_FLOOR_NS;
+    }
+    return threshold;
+}
+
+static void cprisk_single_step_calibrate_if_needed_i(void) {
+    if (atomic_load(&s_single_step_calibrated) != 0u) {
+        return;
+    }
+
+    while (atomic_flag_test_and_set(&s_single_step_calibration_lock)) {
+    }
+
+    if (atomic_load(&s_single_step_calibrated) == 0u) {
+        uint64_t samples[CPRISK_SINGLE_STEP_CALIBRATION_SAMPLES];
+        memset(samples, 0, sizeof(samples));
+        for (size_t i = 0; i < CPRISK_SINGLE_STEP_CALIBRATION_SAMPLES; i++) {
+            samples[i] = cprisk_single_step_measure_once_i();
+        }
+
+        for (size_t i = 1; i < CPRISK_SINGLE_STEP_CALIBRATION_SAMPLES; i++) {
+            uint64_t key = samples[i];
+            size_t j = i;
+            while (j > 0u && samples[j - 1u] > key) {
+                samples[j] = samples[j - 1u];
+                j--;
+            }
+            samples[j] = key;
+        }
+
+        uint64_t baseline =
+            samples[CPRISK_SINGLE_STEP_CALIBRATION_SAMPLES / 2u];
+        if (baseline == 0u) {
+            baseline = CPRISK_SINGLE_STEP_THRESHOLD_FLOOR_NS / 2u;
+        }
+
+        atomic_store(&s_single_step_baseline_ns, baseline);
+        atomic_store(&s_single_step_threshold_ns,
+                     cprisk_single_step_threshold_from_baseline_i(baseline));
+        atomic_store(&s_single_step_calibrated, 1u);
+    }
+
+    atomic_flag_clear(&s_single_step_calibration_lock);
+}
 
 int cprisk_detect_single_stepping(void) {
-    mach_timebase_info_data_t tb;
-    if (mach_timebase_info(&tb) != KERN_SUCCESS || tb.denom == 0)
-        return 0;
+    cprisk_single_step_calibrate_if_needed_i();
 
-    uint64_t t0 = mach_absolute_time();
-
-    volatile uint64_t acc = 0;
-    for (int i = 0; i < 100; i++) {
-        acc += (uint64_t)i * 7u + 3u;
+    uint64_t threshold_ns = atomic_load(&s_single_step_threshold_ns);
+    if (threshold_ns == 0u) {
+        threshold_ns = CPRISK_SINGLE_STEP_DEFAULT_THRESHOLD_NS;
     }
-    (void)acc;
 
-    uint64_t t1 = mach_absolute_time();
-    uint64_t diff = t1 - t0;
-    uint64_t elapsed_ns = diff / tb.denom * tb.numer + (diff % tb.denom) * tb.numer / tb.denom;
+    const uint64_t elapsed_ns = cprisk_single_step_measure_once_i();
+    if (elapsed_ns > threshold_ns) {
+        return 1;
+    }
 
-    return (elapsed_ns > CPRISK_SINGLE_STEP_THRESHOLD_NS) ? 1 : 0;
+    if (elapsed_ns > 0u) {
+        uint64_t baseline_ns = atomic_load(&s_single_step_baseline_ns);
+        if (baseline_ns == 0u) {
+            baseline_ns = elapsed_ns;
+        } else {
+            /* EWMA smooths jitter and adapts to different device classes. */
+            baseline_ns = baseline_ns - (baseline_ns / 8u) + (elapsed_ns / 8u);
+        }
+        atomic_store(&s_single_step_baseline_ns, baseline_ns);
+        atomic_store(&s_single_step_threshold_ns,
+                     cprisk_single_step_threshold_from_baseline_i(baseline_ns));
+    }
+
+    return 0;
 }
 
 /* ── (g) Suspicious thread detection ──────────────────────────────── */
@@ -384,11 +664,17 @@ uint32_t cprisk_run_all_signal_probes(void) {
     if (cprisk_detect_hardware_breakpoints())
         result |= CPRISK_PROBE_HARDWARE_BP;
 
-    if (cprisk_scan_software_breakpoints(
-            (const void *)cprisk_probe_debugger_via_signal, 256) +
-        cprisk_scan_software_breakpoints(
-            (const void *)cprisk_probe_exception_delivery_timeout, 256))
+    int software_bp = 0;
+    software_bp += cprisk_scan_software_breakpoints(
+        (const void *)cprisk_probe_debugger_via_signal, 256);
+    software_bp += cprisk_scan_software_breakpoints(
+        (const void *)cprisk_probe_exception_delivery_timeout, 256);
+#if defined(TARGET_OS_IOS) && TARGET_OS_IOS
+    software_bp += cprisk_scan_software_breakpoints_randomized_text(0u, 0u);
+#endif
+    if (software_bp != 0) {
         result |= CPRISK_PROBE_SOFTWARE_BP;
+    }
 
     if (cprisk_detect_tty_debug())
         result |= CPRISK_PROBE_TTY;
@@ -411,6 +697,16 @@ uint32_t cprisk_run_all_signal_probes(void) {
     return result;
 }
 
+int cprisk_is_cntpct_clock_available(void) {
+#if CPRISK_TIMING_CNTPCT_AVAILABLE
+    uint64_t cntfrq = 0u;
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(cntfrq));
+    return cntfrq != 0u ? 1 : 0;
+#else
+    return 0;
+#endif
+}
+
 /* ===================================================================== */
 #else  /* !CPRISK_SIGNAL_PROBE_AVAILABLE — simulator / non-arm64 stubs */
 /* ===================================================================== */
@@ -422,6 +718,14 @@ int cprisk_scan_software_breakpoints(const void *func_ptr, size_t size) {
     (void)func_ptr; (void)size;
     return 0;
 }
+int cprisk_scan_software_breakpoints_randomized_text(
+    size_t sample_windows,
+    size_t window_size
+) {
+    (void)sample_windows;
+    (void)window_size;
+    return 0;
+}
 
 int cprisk_probe_exception_delivery_timeout(void) { return 0; }
 int cprisk_detect_tty_debug(void) { return 0; }
@@ -430,5 +734,6 @@ int cprisk_detect_single_stepping(void) { return 0; }
 int cprisk_detect_suspicious_threads(void) { return 0; }
 int cprisk_detect_developer_disk(void) { return 0; }
 uint32_t cprisk_run_all_signal_probes(void) { return 0; }
+int cprisk_is_cntpct_clock_available(void) { return 0; }
 
 #endif /* CPRISK_SIGNAL_PROBE_AVAILABLE */

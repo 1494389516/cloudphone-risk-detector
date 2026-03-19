@@ -56,15 +56,66 @@ public struct AppliedInstructionSubstitution: Equatable {
     }
 }
 
+public struct AppliedOpaquePredicateInjection: Equatable {
+    public let fileOffset: UInt64
+    public let originalRawValue: UInt32
+    public let replacementRawValue: UInt32
+    public let description: String
+
+    public init(
+        fileOffset: UInt64,
+        originalRawValue: UInt32,
+        replacementRawValue: UInt32,
+        description: String
+    ) {
+        self.fileOffset = fileOffset
+        self.originalRawValue = originalRawValue
+        self.replacementRawValue = replacementRawValue
+        self.description = description
+    }
+}
+
+public struct AppliedDeadCodeIsland: Equatable {
+    public let branchFileOffset: UInt64
+    public let deadInstructionFileOffset: UInt64
+    public let originalBranchRawValue: UInt32
+    public let originalDeadRawValue: UInt32
+    public let replacementBranchRawValue: UInt32
+    public let replacementDeadRawValue: UInt32
+    public let description: String
+
+    public init(
+        branchFileOffset: UInt64,
+        deadInstructionFileOffset: UInt64,
+        originalBranchRawValue: UInt32,
+        originalDeadRawValue: UInt32,
+        replacementBranchRawValue: UInt32,
+        replacementDeadRawValue: UInt32,
+        description: String
+    ) {
+        self.branchFileOffset = branchFileOffset
+        self.deadInstructionFileOffset = deadInstructionFileOffset
+        self.originalBranchRawValue = originalBranchRawValue
+        self.originalDeadRawValue = originalDeadRawValue
+        self.replacementBranchRawValue = replacementBranchRawValue
+        self.replacementDeadRawValue = replacementDeadRawValue
+        self.description = description
+    }
+}
+
 public struct SubstitutionEngineReport {
     public let scannedInstructionCount: Int
     public let eligibleCandidateCount: Int
     public let appliedCount: Int
     public let bytesModified: Int
     public let replacementRate: Double
+    public let opaquePredicateRate: Double
+    public let deadCodeIslandRate: Double
     public let skippedDataInCodeRangeCount: Int
     public let appliedGroupCounts: [InstructionSubstitutionGroup: Int]
     public let appliedSubstitutions: [AppliedInstructionSubstitution]
+    public let injectedOpaquePredicates: [AppliedOpaquePredicateInjection]
+    public let injectedDeadCodeIslands: [AppliedDeadCodeIsland]
 
     public init(
         scannedInstructionCount: Int,
@@ -72,28 +123,45 @@ public struct SubstitutionEngineReport {
         appliedCount: Int,
         bytesModified: Int,
         replacementRate: Double,
+        opaquePredicateRate: Double,
+        deadCodeIslandRate: Double,
         skippedDataInCodeRangeCount: Int,
         appliedGroupCounts: [InstructionSubstitutionGroup: Int],
-        appliedSubstitutions: [AppliedInstructionSubstitution]
+        appliedSubstitutions: [AppliedInstructionSubstitution],
+        injectedOpaquePredicates: [AppliedOpaquePredicateInjection],
+        injectedDeadCodeIslands: [AppliedDeadCodeIsland]
     ) {
         self.scannedInstructionCount = scannedInstructionCount
         self.eligibleCandidateCount = eligibleCandidateCount
         self.appliedCount = appliedCount
         self.bytesModified = bytesModified
         self.replacementRate = replacementRate
+        self.opaquePredicateRate = opaquePredicateRate
+        self.deadCodeIslandRate = deadCodeIslandRate
         self.skippedDataInCodeRangeCount = skippedDataInCodeRangeCount
         self.appliedGroupCounts = appliedGroupCounts
         self.appliedSubstitutions = appliedSubstitutions
+        self.injectedOpaquePredicates = injectedOpaquePredicates
+        self.injectedDeadCodeIslands = injectedDeadCodeIslands
     }
 }
 
 public final class SubstitutionEngine {
     public struct Configuration {
         public let replacementRate: Double
+        public let opaquePredicateRate: Double
+        public let deadCodeIslandRate: Double
         public let seed: UInt64
 
-        public init(replacementRate: Double = 0.40, seed: UInt64) {
+        public init(
+            replacementRate: Double = 0.40,
+            opaquePredicateRate: Double = 0.15,
+            deadCodeIslandRate: Double = 0.08,
+            seed: UInt64
+        ) {
             self.replacementRate = min(max(replacementRate, 0), 1)
+            self.opaquePredicateRate = min(max(opaquePredicateRate, 0), 1)
+            self.deadCodeIslandRate = min(max(deadCodeIslandRate, 0), 1)
             self.seed = seed == 0 ? 1 : seed
         }
     }
@@ -128,9 +196,13 @@ public final class SubstitutionEngine {
                 appliedCount: 0,
                 bytesModified: 0,
                 replacementRate: configuration.replacementRate,
+                opaquePredicateRate: configuration.opaquePredicateRate,
+                deadCodeIslandRate: configuration.deadCodeIslandRate,
                 skippedDataInCodeRangeCount: 0,
                 appliedGroupCounts: [:],
-                appliedSubstitutions: []
+                appliedSubstitutions: [],
+                injectedOpaquePredicates: [],
+                injectedDeadCodeIslands: []
             )
         }
 
@@ -138,9 +210,12 @@ public final class SubstitutionEngine {
         let scanBytes = textContent.count - (textContent.count % 4)
         let dataInCodeRanges = loadDataInCodeRanges(from: file, textSection: textSection)
         var candidates = [Candidate]()
+        var noEffectCandidates = [NoEffectCandidate]()
         candidates.reserveCapacity(scanBytes / 8)
+        noEffectCandidates.reserveCapacity(scanBytes / 12)
 
         let textBaseFileOffset = Int(textSection.offset)
+        let textEndFileOffset = textBaseFileOffset + scanBytes
         for byteOffset in stride(from: 0, to: scanBytes, by: 4) {
             let fileOffset = textBaseFileOffset + byteOffset
             if isMarkedAsData(fileOffset: fileOffset, ranges: dataInCodeRanges) {
@@ -157,6 +232,13 @@ public final class SubstitutionEngine {
                 continue
             }
 
+            if case .noEffect = decoded.kind {
+                noEffectCandidates.append(NoEffectCandidate(
+                    fileOffset: UInt64(fileOffset),
+                    originalRawValue: rawValue
+                ))
+            }
+
             candidates.append(Candidate(
                 fileOffset: UInt64(fileOffset),
                 originalRawValue: rawValue,
@@ -170,34 +252,35 @@ public final class SubstitutionEngine {
             candidateCount: candidates.count,
             replacementRate: configuration.replacementRate
         )
-        guard targetCount > 0 else {
-            return SubstitutionEngineReport(
-                scannedInstructionCount: scanBytes / 4,
-                eligibleCandidateCount: candidates.count,
-                appliedCount: 0,
-                bytesModified: 0,
-                replacementRate: configuration.replacementRate,
-                skippedDataInCodeRangeCount: dataInCodeRanges.count,
-                appliedGroupCounts: [:],
-                appliedSubstitutions: []
-            )
-        }
 
         var rng = SplitMix64(seed: configuration.seed)
-        candidates.shuffle(using: &rng)
-
-        let selected = Array(candidates.prefix(targetCount)).sorted { lhs, rhs in
-            lhs.fileOffset < rhs.fileOffset
+        let selected: [Candidate]
+        if targetCount > 0 {
+            candidates.shuffle(using: &rng)
+            selected = Array(candidates.prefix(targetCount)).sorted { lhs, rhs in
+                lhs.fileOffset < rhs.fileOffset
+            }
+        } else {
+            selected = []
         }
 
         var appliedGroupCounts = [InstructionSubstitutionGroup: Int]()
         var appliedSubstitutions = [AppliedInstructionSubstitution]()
         appliedSubstitutions.reserveCapacity(selected.count)
+        var injectedOpaquePredicates = [AppliedOpaquePredicateInjection]()
+        var injectedDeadCodeIslands = [AppliedDeadCodeIsland]()
+        var mutatedOffsets = Set<UInt64>()
+        mutatedOffsets.reserveCapacity(selected.count * 3)
+        var bytesModified = 0
 
         for candidate in selected {
             let optionIndex = Int(rng.next() % UInt64(candidate.replacementOptions.count))
             let chosen = candidate.replacementOptions[optionIndex]
-            try file.replaceBytes(at: candidate.fileOffset, with: ARM64Codec.data(for: chosen.rawValue))
+            if chosen.rawValue != candidate.originalRawValue {
+                try file.replaceBytes(at: candidate.fileOffset, with: ARM64Codec.data(for: chosen.rawValue))
+                bytesModified += 4
+            }
+            mutatedOffsets.insert(candidate.fileOffset)
 
             appliedGroupCounts[candidate.group, default: 0] += 1
             appliedSubstitutions.append(AppliedInstructionSubstitution(
@@ -209,15 +292,123 @@ public final class SubstitutionEngine {
             ))
         }
 
+        // Dead-code islands: [CBZ XZR, +8] [dead op]. Branch always skips dead op.
+        let remainingNoEffect = noEffectCandidates
+            .filter { !mutatedOffsets.contains($0.fileOffset) }
+            .sorted { $0.fileOffset < $1.fileOffset }
+        var islandCandidates = [DeadCodeIslandCandidate]()
+        islandCandidates.reserveCapacity(remainingNoEffect.count / 2)
+
+        if remainingNoEffect.count >= 2 {
+            for index in 0..<(remainingNoEffect.count - 1) {
+                let branchSlot = remainingNoEffect[index]
+                let deadSlot = remainingNoEffect[index + 1]
+                guard deadSlot.fileOffset == branchSlot.fileOffset + 4 else { continue }
+                let branchTarget = Int(branchSlot.fileOffset) + 8
+                guard branchTarget < textEndFileOffset else { continue }
+                guard !isMarkedAsData(fileOffset: branchTarget, ranges: dataInCodeRanges) else { continue }
+                islandCandidates.append(DeadCodeIslandCandidate(branchSlot: branchSlot, deadSlot: deadSlot))
+            }
+        }
+
+        let islandTarget = desiredReplacementCount(
+            candidateCount: islandCandidates.count,
+            replacementRate: configuration.deadCodeIslandRate
+        )
+        if islandTarget > 0 {
+            islandCandidates.shuffle(using: &rng)
+            var usedIslandOffsets = Set<UInt64>()
+            let branchReplacement = encodeCompareAndBranchZero(
+                branchIfZero: true,
+                immediateWords: 2
+            )
+
+            for candidate in islandCandidates {
+                guard injectedDeadCodeIslands.count < islandTarget else { break }
+                let branchOffset = candidate.branchSlot.fileOffset
+                let deadOffset = candidate.deadSlot.fileOffset
+                guard !mutatedOffsets.contains(branchOffset),
+                      !mutatedOffsets.contains(deadOffset),
+                      !usedIslandOffsets.contains(branchOffset),
+                      !usedIslandOffsets.contains(deadOffset) else {
+                    continue
+                }
+
+                let deadReplacement = chooseDeadInstructionRawValue(
+                    avoiding: candidate.deadSlot.originalRawValue,
+                    using: &rng
+                )
+
+                if branchReplacement != candidate.branchSlot.originalRawValue {
+                    try file.replaceBytes(at: branchOffset, with: ARM64Codec.data(for: branchReplacement))
+                    bytesModified += 4
+                }
+                if deadReplacement != candidate.deadSlot.originalRawValue {
+                    try file.replaceBytes(at: deadOffset, with: ARM64Codec.data(for: deadReplacement))
+                    bytesModified += 4
+                }
+
+                mutatedOffsets.insert(branchOffset)
+                mutatedOffsets.insert(deadOffset)
+                usedIslandOffsets.insert(branchOffset)
+                usedIslandOffsets.insert(deadOffset)
+                injectedDeadCodeIslands.append(AppliedDeadCodeIsland(
+                    branchFileOffset: branchOffset,
+                    deadInstructionFileOffset: deadOffset,
+                    originalBranchRawValue: candidate.branchSlot.originalRawValue,
+                    originalDeadRawValue: candidate.deadSlot.originalRawValue,
+                    replacementBranchRawValue: branchReplacement,
+                    replacementDeadRawValue: deadReplacement,
+                    description: "CBZ XZR, +8 island gate + unreachable dead op"
+                ))
+            }
+        }
+
+        // Opaque predicate injection: CBNZ XZR, +4 (branch target equals fallthrough).
+        let opaqueEligible = noEffectCandidates
+            .filter { !mutatedOffsets.contains($0.fileOffset) }
+        let opaqueTarget = desiredReplacementCount(
+            candidateCount: opaqueEligible.count,
+            replacementRate: configuration.opaquePredicateRate
+        )
+        if opaqueTarget > 0 {
+            var shuffledOpaque = opaqueEligible
+            shuffledOpaque.shuffle(using: &rng)
+            let opaqueReplacement = encodeCompareAndBranchZero(
+                branchIfZero: false,
+                immediateWords: 1
+            )
+
+            for candidate in shuffledOpaque.prefix(opaqueTarget) {
+                if opaqueReplacement != candidate.originalRawValue {
+                    try file.replaceBytes(at: candidate.fileOffset, with: ARM64Codec.data(for: opaqueReplacement))
+                    bytesModified += 4
+                }
+                mutatedOffsets.insert(candidate.fileOffset)
+                injectedOpaquePredicates.append(AppliedOpaquePredicateInjection(
+                    fileOffset: candidate.fileOffset,
+                    originalRawValue: candidate.originalRawValue,
+                    replacementRawValue: opaqueReplacement,
+                    description: "CBNZ XZR, +4 opaque predicate (same-target edge)"
+                ))
+            }
+        }
+
         return SubstitutionEngineReport(
             scannedInstructionCount: scanBytes / 4,
             eligibleCandidateCount: candidates.count,
-            appliedCount: appliedSubstitutions.count,
-            bytesModified: appliedSubstitutions.count * 4,
+            appliedCount: appliedSubstitutions.count
+                + injectedOpaquePredicates.count
+                + injectedDeadCodeIslands.count,
+            bytesModified: bytesModified,
             replacementRate: configuration.replacementRate,
+            opaquePredicateRate: configuration.opaquePredicateRate,
+            deadCodeIslandRate: configuration.deadCodeIslandRate,
             skippedDataInCodeRangeCount: dataInCodeRanges.count,
             appliedGroupCounts: appliedGroupCounts,
-            appliedSubstitutions: appliedSubstitutions
+            appliedSubstitutions: appliedSubstitutions,
+            injectedOpaquePredicates: injectedOpaquePredicates,
+            injectedDeadCodeIslands: injectedDeadCodeIslands
         )
     }
 
@@ -414,6 +605,41 @@ public final class SubstitutionEngine {
         return min(candidateCount, max(1, scaled))
     }
 
+    private func encodeCompareAndBranchZero(branchIfZero: Bool, immediateWords: Int) -> UInt32 {
+        let clamped = max(min(immediateWords, 0x3FFFF), 0)
+        let base: UInt32 = branchIfZero ? 0xB400_0000 : 0xB500_0000
+        let imm19 = UInt32(clamped) & 0x7FFFF
+        return base
+            | (imm19 << 5)
+            | ARM64RegisterWidth.zeroRegisterIndex
+    }
+
+    private func chooseDeadInstructionRawValue<R: RandomNumberGenerator>(
+        avoiding originalRawValue: UInt32,
+        using rng: inout R
+    ) -> UInt32 {
+        let options = [
+            ARM64Codec.encodeMoveAlias(
+                destinationRegister: ARM64RegisterWidth.zeroRegisterIndex,
+                sourceRegister: ARM64RegisterWidth.zeroRegisterIndex,
+                width: .x64
+            ),
+            ARM64Codec.encodeAndSelf(
+                destinationRegister: ARM64RegisterWidth.zeroRegisterIndex,
+                sourceRegister: ARM64RegisterWidth.zeroRegisterIndex,
+                width: .x64
+            ),
+            ARM64Codec.encodeNOP(),
+        ]
+        var seen = Set<UInt32>()
+        let uniqueOptions = options.filter { seen.insert($0).inserted }
+        guard !uniqueOptions.isEmpty else { return ARM64Codec.encodeNOP() }
+        let filtered = uniqueOptions.filter { $0 != originalRawValue }
+        let pool = filtered.isEmpty ? uniqueOptions : filtered
+        let index = Int(rng.next() % UInt64(pool.count))
+        return pool[index]
+    }
+
     private func loadDataInCodeRanges(from file: MachOFile, textSection: Section) -> [DataInCodeRange] {
         guard textSection.size <= UInt64(Int.max) else { return [] }
 
@@ -495,6 +721,16 @@ private struct Candidate {
     let group: InstructionSubstitutionGroup
     let sourceDescription: String
     let replacementOptions: [ReplacementOption]
+}
+
+private struct NoEffectCandidate {
+    let fileOffset: UInt64
+    let originalRawValue: UInt32
+}
+
+private struct DeadCodeIslandCandidate {
+    let branchSlot: NoEffectCandidate
+    let deadSlot: NoEffectCandidate
 }
 
 private struct ReplacementOption {

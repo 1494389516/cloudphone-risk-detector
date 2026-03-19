@@ -10,7 +10,7 @@ struct FridaHeapDetector: Detector {
 
     func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)
-        return DetectorResult(score: 0, methods: ["frida:unavailable_simulator"])
+        return DetectorResult(score: 0, methods: [ObfuscatedConstants.methodFridaUnavailableSimulator])
 #else
         let heapResult = detectJSEngineHeap()
         let stalkerResult = detectStalkerJITPages()
@@ -19,7 +19,7 @@ struct FridaHeapDetector: Detector {
         var methods = heapResult.methods + stalkerResult.methods
 
         if methods.isEmpty {
-            return DetectorResult(score: 0, methods: ["frida:clean"])
+            return DetectorResult(score: 0, methods: [ObfuscatedConstants.methodFridaClean])
         }
 
         return DetectorResult(score: min(score, 80), methods: methods)
@@ -102,10 +102,10 @@ struct FridaHeapDetector: Detector {
         // V8 typically allocates 20–100MB of anonymous rw- memory
         if totalAnonRWSize > 30 * 1024 * 1024 {
             score += 20
-            methods.append("frida_heap:v8_heap_\(totalAnonRWSize / (1024 * 1024))MB")
+            methods.append("\(ObfuscatedConstants.methodPrefixFridaHeap)v8_heap_\(totalAnonRWSize / (1024 * 1024))MB")
         } else if totalAnonRWSize > 15 * 1024 * 1024 && largeAnonRWCount > 5 {
             score += 12
-            methods.append("frida_heap:suspicious_anon_\(largeAnonRWCount)_regions")
+            methods.append("\(ObfuscatedConstants.methodPrefixFridaHeap)suspicious_anon_\(largeAnonRWCount)_regions")
         }
 
         return (score, methods)
@@ -180,9 +180,9 @@ struct FridaHeapDetector: Detector {
         }
 
         if jitPageCount > 3 {
-            return (15, ["frida_stalker:jit_pages_\(jitPageCount)"])
+            return (15, ["\(ObfuscatedConstants.methodPrefixFridaStalker)jit_pages_\(jitPageCount)"])
         } else if jitPageCount > 0 {
-            return (8, ["frida_stalker:jit_pages_\(jitPageCount)"])
+            return (8, ["\(ObfuscatedConstants.methodPrefixFridaStalker)jit_pages_\(jitPageCount)"])
         }
 
         return (0, [])
@@ -199,11 +199,11 @@ extension FridaHeapDetector {
 
         var signals: [RiskSignal] = []
 
-        let heapMethods = result.methods.filter { $0.hasPrefix("frida_heap") }
+        let heapMethods = result.methods.filter { $0.hasPrefix(ObfuscatedConstants.detectorIDFridaHeap) }
         if !heapMethods.isEmpty {
             signals.append(RiskSignal(
-                id: "frida_js_engine_heap",
-                category: "anti_tamper",
+                id: ObfuscatedConstants.signalFridaJSEngineHeap,
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: min(Double(heapMethods.count) * 15, 25),
                 evidence: ["detail": heapMethods.joined(separator: ",")],
                 state: .tampered,
@@ -212,11 +212,11 @@ extension FridaHeapDetector {
             ))
         }
 
-        let stalkerMethods = result.methods.filter { $0.hasPrefix("frida_stalker") }
+        let stalkerMethods = result.methods.filter { $0.hasPrefix(ObfuscatedConstants.signalFridaStalker) }
         if !stalkerMethods.isEmpty {
             signals.append(RiskSignal(
-                id: "frida_stalker_jit",
-                category: "anti_tamper",
+                id: ObfuscatedConstants.signalFridaStalkerJit,
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: 15,
                 evidence: ["detail": stalkerMethods.joined(separator: ",")],
                 state: .tampered,

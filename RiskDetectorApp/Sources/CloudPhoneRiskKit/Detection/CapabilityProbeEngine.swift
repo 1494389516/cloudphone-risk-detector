@@ -105,6 +105,15 @@ public final class CapabilityProbeEngine: @unchecked Sendable {
         return info
     }()
 
+    private static let probeDyldFridaID = "dyld_\(ObfuscatedConstants.keywordFrida)"
+    private static let hookFrameworkNeedles: [String] = [
+        ObfuscatedConstants.keywordFrida,
+        StringDeobfuscator.base64Decode("c3Vic3RyYXRl"),
+        StringDeobfuscator.base64Decode("c3Vic3RpdHV0ZQ=="),
+        StringDeobfuscator.base64Decode("ZG9iYnk="),
+        "fish\(ObfuscatedConstants.keywordHook)",
+    ]
+
     // MARK: - 配置
 
     public struct Config: Sendable {
@@ -201,8 +210,7 @@ public final class CapabilityProbeEngine: @unchecked Sendable {
 
             // ③ 调用栈出现陌生帧（Hook 框架特征）
             if let frame = result.callerFrame {
-                let hookFrameworks = ["frida", "substrate", "substitute", "dobby", "fishhook"]
-                if hookFrameworks.contains(where: { frame.lowercased().contains($0) }) {
+                if Self.hookFrameworkNeedles.contains(where: { frame.lowercased().contains($0) }) {
                     suspicion += 5
                 }
             }
@@ -275,7 +283,7 @@ public final class CapabilityProbeEngine: @unchecked Sendable {
         [
             ProbeDefinition(id: "stat_bash", expectedOutcome: .fail, maxElapsedMicros: config.maxElapsedMicros),
             ProbeDefinition(id: "stat_apt", expectedOutcome: .fail, maxElapsedMicros: config.maxElapsedMicros),
-            ProbeDefinition(id: "dyld_frida", expectedOutcome: .fail, maxElapsedMicros: config.maxElapsedMicros),
+            ProbeDefinition(id: Self.probeDyldFridaID, expectedOutcome: .fail, maxElapsedMicros: config.maxElapsedMicros),
             ProbeDefinition(id: "sock_27042", expectedOutcome: .fail, maxElapsedMicros: config.maxElapsedMicros),
             ProbeDefinition(id: "sock_27043", expectedOutcome: .fail, maxElapsedMicros: config.maxElapsedMicros),
             ProbeDefinition(id: "sock_23946", expectedOutcome: .fail, maxElapsedMicros: config.maxElapsedMicros),
@@ -290,7 +298,7 @@ public final class CapabilityProbeEngine: @unchecked Sendable {
             return statFile("/bin/bash")
         case "stat_apt":
             return statFile("/etc/apt")
-        case "dyld_frida":
+        case Self.probeDyldFridaID:
             return dlopenFrida()
         case "sock_27042":
             return canConnect(port: 27042)
@@ -333,19 +341,26 @@ public final class CapabilityProbeEngine: @unchecked Sendable {
 
     /// stat 文件探针
     private func statFile(_ path: String) -> Bool {
-        access(path, F_OK) == 0
+        path.withCString {
+            DynamicSymbolResolver.access($0, F_OK) == 0
+        }
     }
 
     /// dlopen Frida dylib 探针
     private func dlopenFrida() -> Bool {
+        let keywordFrida = ObfuscatedConstants.keywordFrida
+        let capitalizedFrida = keywordFrida.prefix(1).uppercased() + keywordFrida.dropFirst()
         let fridaLibs = [
-            "FridaGadget.dylib",
-            "frida-agent-arm64.dylib",
-            "frida-agent.dylib",
-            "frida-server"
+            "\(capitalizedFrida)Gadget.dylib",
+            "\(keywordFrida)-agent-arm64.dylib",
+            "\(keywordFrida)-agent.dylib",
+            "\(keywordFrida)-server"
         ]
         for lib in fridaLibs {
-            if dlopen(lib, RTLD_NOW) != nil {
+            let opened = lib.withCString {
+                DynamicSymbolResolver.dlopen($0, RTLD_NOW)
+            }
+            if opened != nil {
                 return true
             }
         }
@@ -354,9 +369,9 @@ public final class CapabilityProbeEngine: @unchecked Sendable {
 
     /// 端口连接探针
     private func canConnect(port: Int) -> Bool {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        let fd = DynamicSymbolResolver.socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { return false }
-        defer { close(fd) }
+        defer { _ = DynamicSymbolResolver.close(fd) }
 
         var addr = sockaddr_in()
         addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
@@ -366,7 +381,7 @@ public final class CapabilityProbeEngine: @unchecked Sendable {
 
         let result = withUnsafePointer(to: &addr) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                DynamicSymbolResolver.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
         }
         return result == 0

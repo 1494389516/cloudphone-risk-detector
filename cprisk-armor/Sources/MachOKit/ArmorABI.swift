@@ -37,7 +37,7 @@ public enum ArmorABI {
         public static let whiteboxCode = "__swift5_awbc"
         public static let whiteboxData = "__swift5_awbd"
         public static let whiteboxTag = "__swift5_awbt"
-        public static let antiDebugPlan = "__cpr_adbg7"
+        public static let antiDebugPlan = "__objc_data2"
 
         public static let splitAnchorSections = [
             anchorA,
@@ -54,6 +54,64 @@ public enum ArmorABI {
         ]
     }
 
+    public enum StringEncryption {
+        /// Section names scanned by Pass 1.
+        ///
+        /// Keep this list in sync with runtime hardening expectations:
+        /// - `__cstring`: legacy C string literals.
+        /// - `__const` / `__constg_swiftt`: Swift string-literal related payloads.
+        /// - `__data`: conservative scan for ASCII literals embedded in writable data.
+        ///
+        /// Matching is section-name based and applies across all segments.
+        public static let sourceSectionNames: Set<String> = [
+            "__cstring",
+            "__const",
+            "__constg_swiftt",
+            "__data",
+        ]
+
+        /// Sections that should only encrypt `mustEncrypt` literals to reduce
+        /// runtime compatibility risk.
+        public static let sensitiveOnlySectionNames: Set<String> = [
+            "__data",
+        ]
+
+        /// Sections where literals must be printable ASCII to be considered.
+        public static let asciiOnlySectionNames: Set<String> = [
+            "__data",
+        ]
+
+        /// `__data` 额外扫描：在保持“敏感优先”前提下，补齐非传统 C 字符串形态。
+        /// 这些扫描器只用于发现候选，不改变“__data 仅加密 mustEncrypt”的策略。
+        public static let enhancedDataScanSectionNames: Set<String> = [
+            "__data",
+        ]
+
+        /// 启用 UTF-16LE null-terminated 可读串检测（例如宽字符敏感常量）。
+        public static let utf16LENullTerminatedSectionNames: Set<String> = [
+            "__data",
+        ]
+
+        /// 启用长度前缀（1B/2B LE）可读串检测。
+        public static let lengthPrefixedSectionNames: Set<String> = [
+            "__data",
+        ]
+
+        /// 启用边界受限的非终止 ASCII 可读串检测（bounded run）。
+        public static let boundedRunSectionNames: Set<String> = [
+            "__data",
+        ]
+
+        /// 扫描候选最短文本长度（字符数）。
+        public static let minimumCandidateCharacterLength = 4
+        /// 非终止 bounded run 的最短长度（字节）。
+        public static let minimumBoundedRunLength = 6
+        /// 长度前缀候选最大长度（字节）。
+        public static let maximumLengthPrefixedByteLength = 192
+        /// bounded run 候选最大长度（字节）。
+        public static let maximumBoundedRunByteLength = 160
+    }
+
     public enum AntiDebug {
         public static let abiVersion: UInt32 = 1
         public static let magic: UInt32 = 0x43504137
@@ -61,6 +119,17 @@ public enum ArmorABI {
         public static let headerSize = 48
         public static let entrySize = 64
         public static let targetNameFieldSize = 32
+        public static let headerHeaderSizeOffset = 12
+        public static let headerSeedOffset = 16
+        public static let headerEntryCountOffset = 36
+        public static let headerEntrySizeOffset = 40
+        public static let entryIdentifierHashOffset = 0
+        public static let entryPatchSiteVMOffset = 8
+        public static let entryPatchSiteFileOffset = 16
+        public static let entryPolicyBitsOffset = 20
+        public static let entryScatterSlotOffset = 24
+        public static let entryFlagsOffset = 28
+        public static let entryTargetNameOffset = 32
 
         public static let flagHasSymbolTargets: UInt32 = 0x0000_0001
         public static let flagHasSyntheticTargets: UInt32 = 0x0000_0002

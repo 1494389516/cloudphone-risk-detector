@@ -1,8 +1,8 @@
 /*
- * CRiskCore - Anti-debug via SVC direct syscall for ptrace(PT_DENY_ATTACH).
- * Bypasses user-space hooks (e.g. Frida on ptrace) by invoking the syscall directly.
+ * CRiskCore - Anti-debug via SVC direct deny-attach syscall.
+ * Bypasses user-space hooks by invoking the kernel trap path directly.
  *
- * ARM64 iOS: ptrace syscall #26, PT_DENY_ATTACH = 31.
+ * ARM64 iOS: deny-attach syscall #26, request code = 31.
  * Darwin ABI: x16 = syscall number, x0-x3 = args.
  *
  * Also provides P_TRACED detection via sysctl to detect if the process is
@@ -30,10 +30,10 @@ int cprisk_deny_attach_status(int *error_out) {
     register long x1 __asm("x1") = 0;   /* pid = 0 (self) */
     register long x2 __asm("x2") = 0;   /* addr = 0 */
     register long x3 __asm("x3") = 0;   /* data = 0 */
-    register long x16 __asm("x16") = 26; /* ptrace syscall number */
+    register long x16 __asm("x16") = 26; /* deny-attach syscall number */
     unsigned int did_error = 0;
 
-    /* SVC #0x80: direct BSD syscall, bypasses libc/ptrace hooks */
+    /* SVC #0x80: direct BSD syscall, bypasses libc hook surface */
     __asm__ volatile (
         "svc #0x80\n"
         "cset %w[did_error], cs\n"

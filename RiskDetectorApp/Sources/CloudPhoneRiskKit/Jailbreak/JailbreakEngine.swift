@@ -84,7 +84,7 @@ final class JailbreakEngine {
         #endif
 
         if config.enableHookDetect {
-            accumulateDetector("hook", &score, &methods) { try HookDetector().detect() }
+            accumulateDetector(ObfuscatedConstants.keywordHook, &score, &methods) { try HookDetector().detect() }
         }
 
         methods = Array(Set(methods)).sorted()

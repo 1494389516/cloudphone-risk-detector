@@ -18,10 +18,6 @@ struct ObjCSwizzleDetector: Detector {
 
     private var methodChecks: [MethodCheck] {
         var checks: [MethodCheck] = [
-            // File system methods (critical for jailbreak detection bypass)
-            MethodCheck(className: "NSFileManager", selector: "fileExistsAtPath:", expectedFramework: "Foundation", score: 15),
-            MethodCheck(className: "NSFileManager", selector: "contentsOfDirectoryAtPath:error:", expectedFramework: "Foundation", score: 12),
-
             // Process info (environment variable spoofing)
             MethodCheck(className: "NSProcessInfo", selector: "environment", expectedFramework: "Foundation", score: 12),
 
@@ -112,7 +108,7 @@ struct ObjCSwizzleDetector: Detector {
         if let firstInstruction = safeReadFirstInstruction(at: impRaw) {
             if firstInstruction >= 0x14000000 && firstInstruction <= 0x17FFFFFF {
                 score += 50
-                methods.append("objc_inline_hook_detected:\(check.className).\(check.selector)")
+                methods.append("\(ObfuscatedConstants.signalObjcInlineHookDetected):\(check.className).\(check.selector)")
                 return
             }
         }
@@ -155,7 +151,7 @@ struct ObjCSwizzleDetector: Detector {
         var methods: [String] = []
         var foundLabels: Set<String> = []
 
-        let suspiciousLabels = ["frida", "gum-js", "gmain", "gdbus", "re.frida", "linjector"]
+        let suspiciousLabels = ObfuscatedConstants.fridaQueueLabelMarkers
 
         var threadList: thread_act_array_t?
         var threadCount: mach_msg_type_number_t = 0
@@ -182,7 +178,7 @@ struct ObjCSwizzleDetector: Detector {
                     if threadName.contains(label) && !foundLabels.contains(label) {
                         foundLabels.insert(label)
                         score += 12
-                        methods.append("suspicious_queue:\(label)")
+                        methods.append("\(ObfuscatedConstants.methodPrefixSuspiciousQueue)\(label)")
                         break
                     }
                 }
@@ -206,7 +202,7 @@ extension ObjCSwizzleDetector {
         if !swizzleMethods.isEmpty {
             signals.append(RiskSignal(
                 id: "objc_method_swizzled",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: min(Double(swizzleMethods.count) * 12, 30),
                 evidence: [
                     "swizzled_methods": swizzleMethods.joined(separator: ","),
@@ -218,11 +214,11 @@ extension ObjCSwizzleDetector {
             ))
         }
 
-        let inlineHookMethods = result.methods.filter { $0.hasPrefix("objc_inline_hook_detected") }
+        let inlineHookMethods = result.methods.filter { $0.hasPrefix(ObfuscatedConstants.signalObjcInlineHookDetected) }
         if !inlineHookMethods.isEmpty {
             signals.append(RiskSignal(
-                id: "objc_inline_hook_detected",
-                category: "anti_tamper",
+                id: ObfuscatedConstants.signalObjcInlineHookDetected,
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: 50,
                 evidence: [
                     "methods": inlineHookMethods.joined(separator: ","),
@@ -234,11 +230,11 @@ extension ObjCSwizzleDetector {
             ))
         }
 
-        let queueMethods = result.methods.filter { $0.hasPrefix("suspicious_queue") }
+        let queueMethods = result.methods.filter { $0.hasPrefix(ObfuscatedConstants.methodPrefixSuspiciousQueue) }
         if !queueMethods.isEmpty {
             signals.append(RiskSignal(
-                id: "frida_dispatch_queue",
-                category: "anti_tamper",
+                id: ObfuscatedConstants.signalFridaDispatchQueue,
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: min(Double(queueMethods.count) * 10, 20),
                 evidence: ["queues": queueMethods.joined(separator: ",")],
                 state: .tampered,

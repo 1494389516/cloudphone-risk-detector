@@ -13,7 +13,7 @@ final class LayeredConsistencyProvider: RiskSignalProvider {
         "sysctl",
         "getenv",
         "dlopen",
-        "ptrace",
+        ObfuscatedConstants.denyAttachToken,
     ]
 
     private static let rtldDefault = UnsafeMutableRawPointer(bitPattern: -2)
@@ -79,8 +79,8 @@ final class LayeredConsistencyProvider: RiskSignalProvider {
         if tampered.isEmpty {
             return [
                 RiskSignal(
-                    id: "hook_detected",
-                    category: "anti_tamper",
+                    id: ObfuscatedConstants.signalHookDetected,
+                    category: ObfuscatedConstants.categoryAntiTamper,
                     score: 0,
                     evidence: ["status": "clean"],
                     state: .hard(detected: false),
@@ -95,19 +95,19 @@ final class LayeredConsistencyProvider: RiskSignalProvider {
 
         return [
             RiskSignal(
-                id: "hook_detected",
-                category: "anti_tamper",
+                id: ObfuscatedConstants.signalHookDetected,
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: 0,
-                evidence: ["hooked": tampered.joined(separator: ",")],
+                evidence: [ObfuscatedConstants.evidenceKeyHooked: tampered.joined(separator: ",")],
                 state: hookState,
                 layer: 2,
                 weightHint: 80
             ),
             RiskSignal(
                 id: "tampering_detected",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: 0,
-                evidence: ["hooked": tampered.joined(separator: ",")],
+                evidence: [ObfuscatedConstants.evidenceKeyHooked: tampered.joined(separator: ",")],
                 state: .tampered,
                 layer: 2,
                 weightHint: 85
@@ -131,7 +131,7 @@ final class LayeredConsistencyProvider: RiskSignalProvider {
         let confidence = min(0.9, ratio / 30.0)
         return RiskSignal(
             id: "timing_anomaly",
-            category: "anti_tamper",
+            category: ObfuscatedConstants.categoryAntiTamper,
             score: 0,
             evidence: ["ratio": String(format: "%.1f", ratio)],
             state: .soft(confidence: confidence),

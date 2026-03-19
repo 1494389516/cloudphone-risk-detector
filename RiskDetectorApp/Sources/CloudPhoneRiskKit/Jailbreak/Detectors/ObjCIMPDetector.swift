@@ -18,24 +18,11 @@ struct ObjCIMPDetector: Detector {
         "/usr/lib/libobjc.",
     ]
 
-    let suspiciousImageTokens: [String] = [
-        "frida",
-        "gadget",
-        "gum",
-        "substrate",
-        "substitute",
-        "libhooker",
-        "ellekit",
-        "tweak",
-        "hook",
-    ]
+    let suspiciousImageTokens: [String] = ObfuscatedConstants.hookSuspiciousImageTokensCore
 
     func detect() throws -> DetectorResult {
         var targets: [Target] = []
 
-        if let fm = NSClassFromString("NSFileManager") {
-            targets.append(Target(cls: fm, sel: #selector(FileManager.fileExists(atPath:)), id: "nsfilemanager_fileExists", score: 8))
-        }
         if let bundle = NSClassFromString("NSBundle") {
             targets.append(Target(cls: bundle, sel: #selector(getter: Bundle.bundleIdentifier), id: "bundle_bundleIdentifier", score: 6))
             targets.append(Target(cls: bundle, sel: #selector(Bundle.object(forInfoDictionaryKey:)), id: "bundle_infoKey", score: 6))
@@ -66,7 +53,7 @@ struct ObjCIMPDetector: Detector {
             if !isTrustedImpImagePath(path) {
                 score += t.score
                 methods.append("objc_imp:\(t.id)")
-                Logger.log("jailbreak.objcimp.hit: \(t.id) path=\(path) (+\(t.score))")
+                Logger.log("\(ObfuscatedConstants.keywordJailbreak).objcimp.hit: \(t.id) path=\(path) (+\(t.score))")
             }
         }
 

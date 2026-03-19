@@ -101,18 +101,18 @@ public final class CPRiskKit: NSObject {
     private var previousSignalsDigest: String?
     /// High-risk signal IDs that are candidates for suppression detection.
     private static let highRiskSignalIds: Set<String> = [
-        "frida_detected",
+        ObfuscatedConstants.signalFridaDetected,
         SignalID.fridaModuleDetected,
         SignalID.fridaModuleImage,
         SignalID.fridaModuleSection,
         SignalID.fridaModuleString,
-        "frida_heap", "frida_stalker", "frida_socket", "frida_thread",
-        "frida_js_engine_heap", "frida_stalker_jit", "frida_unix_socket", "frida_exception_port", "thread_anomaly",
-        "hook_detected", "objc_swizzle", "rwx_memory",
-        "armor_runtime_init_failed", "integrity_runtime_tampered",
-        "code_signature_invalid", "text_segment_tampered",
-        "app_signing_identity_tampered", "app_signing_baseline_changed",
-        "kernel_hook_timing_anomaly", "kernel_hook_stalker_amplified",
+        ObfuscatedConstants.detectorIDFridaHeap, ObfuscatedConstants.signalFridaStalker, ObfuscatedConstants.detectorIDFridaSocket, ObfuscatedConstants.detectorIDFridaThread,
+        ObfuscatedConstants.signalFridaJSEngineHeap, ObfuscatedConstants.signalFridaStalkerJit, ObfuscatedConstants.signalFridaUnixSocket, ObfuscatedConstants.signalFridaExceptionPort, ObfuscatedConstants.signalThreadAnomaly,
+        SignalID.hookDetected, ObfuscatedConstants.detectorIDObjCSwizzle, "rwx_memory",
+        ObfuscatedConstants.signalArmorRuntimeInitFailed, ObfuscatedConstants.signalIntegrityRuntimeTampered,
+        "code_signature_invalid", ObfuscatedConstants.signalTextSegmentTampered,
+        ObfuscatedConstants.signalAppSigningIdentityTampered, ObfuscatedConstants.signalAppSigningBaselineChanged,
+        ObfuscatedConstants.signalKernelHookTimingAnomaly, ObfuscatedConstants.signalKernelHookStalkerAmplified,
         "system_library_wx_mapping", "system_library_anonymous_exec_region",
         "app_image_segment_layout_anomaly"
     ]
@@ -211,10 +211,30 @@ public final class CPRiskKit: NSObject {
         public let csopsAnomalyCount: UInt64
         public let suspiciousThreadAnomalyCount: UInt64
         public let exceptionDeliveryTimeoutAnomalyCount: UInt64
+        public let peerWatchdogAnomalyCount: UInt64
+        public let shadowStackAnomalyCount: UInt64
+        public let lastPeerWatchdogStalled: Bool
+        public let lastShadowStackMismatch: Bool
 
         public var hasAnyAnomaly: Bool {
             anomalyFlags != 0
         }
+    }
+
+    public struct AntiDebugPlanSnapshot: Sendable {
+        public let sectionPresent: Bool
+        public let sectionValid: Bool
+        public let parseError: UInt32
+        public let entryCount: UInt32
+        public let policyUnionBits: UInt32
+        public let lastAppliedPolicyBits: UInt32
+        public let lastProbeBits: UInt32
+        public let lastGateClosed: Bool
+        public let lastSoftFailMode: Bool
+        public let lastDelayNs: UInt64
+        public let consumeCount: UInt64
+        public let escalationCount: UInt64
+        public let trapEventCount: UInt64
     }
 
     private struct ArmorRootKeyResolution {
@@ -271,7 +291,7 @@ public final class CPRiskKit: NSObject {
         cprisk_register_exception_handler()
         let watchdogStartResult = cprisk_start_anti_debug_watchdog()
         if watchdogStartResult != 0 {
-            Logger.log("anti_debug_watchdog.start failed rc=\(watchdogStartResult)")
+            Logger.log("anti_debug_\(ObfuscatedConstants.keywordWatchdog).start failed rc=\(watchdogStartResult)")
         }
         _ = ensureArmorRuntimeStarted(trigger: "start")
         DyldImageMonitor.shared.start()
@@ -281,7 +301,7 @@ public final class CPRiskKit: NSObject {
         let sid = currentSessionId
         stateLock.unlock()
         #if DEBUG
-        Logger.log("start() sessionId=\(sid ?? "")")
+        Logger.log("sdk_start sid=\(sid ?? "")")
         #endif
         if !AppAttestSignalProvider.isHardwareTrustSupported {
             Logger.log("app_attest: hardware_trust_unsupported (evaluate will emit signal weight=95)")
@@ -298,7 +318,7 @@ public final class CPRiskKit: NSObject {
     }
 
     @objc public func stop() {
-        Logger.log("stop()")
+        Logger.log("sdk_stop")
         removeGraphFeedbackReEvaluateObserver()
         cprisk_stop_anti_debug_watchdog()
         resetArmorRuntime()
@@ -752,12 +772,12 @@ public final class CPRiskKit: NSObject {
             if case .tampered? = $0.state { return true }
             return false
         }
-        let antiTamperHit = tamperedSignals.contains { $0.category == "anti_tamper" || $0.category == "integrity" }
+        let antiTamperHit = tamperedSignals.contains { $0.category == ObfuscatedConstants.categoryAntiTamper || $0.category == "integrity" }
         var mergedJailbreak = context.jailbreak
         if antiTamperHit && !mergedJailbreak.isJailbroken {
             let antiTamperMethods = tamperedSignals
-                .filter { $0.category == "anti_tamper" || $0.category == "integrity" }
-                .map { "anti_tamper:\($0.id)" }
+                .filter { $0.category == ObfuscatedConstants.categoryAntiTamper || $0.category == "integrity" }
+                .map { "\(ObfuscatedConstants.antiTamperMethodPrefix)\($0.id)" }
             let boostedConfidence = max(mergedJailbreak.confidence, tamperedSignals.map { $0.score }.reduce(0, +) * 0.5)
             mergedJailbreak = DetectionResult(
                 isJailbroken: boostedConfidence >= 50,
@@ -869,9 +889,8 @@ public final class CPRiskKit: NSObject {
 
         let effectiveKeyId: String
         if keyId == "k1",
-           TrustChainManager.currentKeyRotationPolicy() != nil,
-           let rotatedKeyId = TrustChainManager.currentKeyId(baseKeyId: keyId) {
-            effectiveKeyId = rotatedKeyId
+           TrustChainManager.currentKeyRotationPolicy() != nil {
+            effectiveKeyId = TrustChainManager.currentKeyId(baseKeyId: keyId)
         } else {
             effectiveKeyId = keyId
         }
@@ -1033,9 +1052,8 @@ public final class CPRiskKit: NSObject {
     ) async throws -> ReportEnvelope {
         let effectiveKeyId: String
         if keyId == "k1",
-           TrustChainManager.currentKeyRotationPolicy() != nil,
-           let rotatedKeyId = TrustChainManager.currentKeyId(baseKeyId: keyId) {
-            effectiveKeyId = rotatedKeyId
+           TrustChainManager.currentKeyRotationPolicy() != nil {
+            effectiveKeyId = TrustChainManager.currentKeyId(baseKeyId: keyId)
         } else {
             effectiveKeyId = keyId
         }
@@ -1199,7 +1217,31 @@ public final class CPRiskKit: NSObject {
             softwareBreakpointAnomalyCount: raw.software_bp_anomaly_count,
             csopsAnomalyCount: raw.csops_anomaly_count,
             suspiciousThreadAnomalyCount: raw.suspicious_thread_anomaly_count,
-            exceptionDeliveryTimeoutAnomalyCount: raw.exception_delivery_timeout_anomaly_count
+            exceptionDeliveryTimeoutAnomalyCount: raw.exception_delivery_timeout_anomaly_count,
+            peerWatchdogAnomalyCount: raw.peer_watchdog_anomaly_count,
+            shadowStackAnomalyCount: raw.shadow_stack_anomaly_count,
+            lastPeerWatchdogStalled: raw.last_peer_watchdog_stalled != 0,
+            lastShadowStackMismatch: raw.last_shadow_stack_mismatch != 0
+        )
+    }
+
+    public func antiDebugPlanSnapshot() -> AntiDebugPlanSnapshot {
+        var raw = cprisk_antidebug_plan_snapshot_t()
+        _ = cprisk_get_antidebug_plan_snapshot(&raw)
+        return AntiDebugPlanSnapshot(
+            sectionPresent: raw.section_present != 0,
+            sectionValid: raw.section_valid != 0,
+            parseError: raw.parse_error,
+            entryCount: raw.entry_count,
+            policyUnionBits: raw.policy_union_bits,
+            lastAppliedPolicyBits: raw.last_applied_policy_bits,
+            lastProbeBits: raw.last_probe_bits,
+            lastGateClosed: raw.last_gate_closed != 0,
+            lastSoftFailMode: raw.last_soft_fail_mode != 0,
+            lastDelayNs: raw.last_delay_ns,
+            consumeCount: raw.consume_count,
+            escalationCount: raw.escalation_count,
+            trapEventCount: raw.trap_event_count
         )
     }
 
@@ -2020,7 +2062,7 @@ public final class CPRiskKit: NSObject {
             score = snapshot.anchorPresent ? 40 : 18
             state = .unavailable
         case .failed:
-            signalID = "armor_runtime_init_failed"
+            signalID = ObfuscatedConstants.signalArmorRuntimeInitFailed
             score = 72
             state = .tampered
         case .inactive, .active:
@@ -2043,7 +2085,7 @@ public final class CPRiskKit: NSObject {
 
         return RiskSignal(
             id: signalID,
-            category: "anti_tamper",
+            category: ObfuscatedConstants.categoryAntiTamper,
             score: score,
             evidence: evidence,
             state: state,
@@ -2058,7 +2100,7 @@ public final class CPRiskKit: NSObject {
     /// the wrong key and server verification fails.
     private static func integrityRecheckPoisonedSignal() -> RiskSignal {
         RiskSignal(
-            id: "integrity_runtime_tampered",
+            id: ObfuscatedConstants.signalIntegrityRuntimeTampered,
             category: "integrity",
             score: 85,
             evidence: ["reason": "integrity_poison_flag_set"],
@@ -2070,8 +2112,8 @@ public final class CPRiskKit: NSObject {
 
     private static func mprotectTamperedSignal() -> RiskSignal {
         RiskSignal(
-            id: "memory_protection_tampered",
-            category: "anti_tamper",
+            id: ObfuscatedConstants.signalMemoryProtectionTampered,
+            category: ObfuscatedConstants.categoryAntiTamper,
             score: 85,
             evidence: ["detail": "mprotect_syscall_blocked"],
             state: .tampered,

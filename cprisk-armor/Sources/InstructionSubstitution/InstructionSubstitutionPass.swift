@@ -17,14 +17,24 @@ private enum InstructionSubstitutionSeedOrigin {
 
 public final class InstructionSubstitutionPass: ArmorPass {
     public static let defaultReplacementRate = 0.40
+    public static let defaultOpaquePredicateRate = 0.15
+    public static let defaultDeadCodeIslandRate = 0.08
 
     public let name = "InstructionSubstitution"
 
     private let replacementRate: Double
+    private let opaquePredicateRate: Double
+    private let deadCodeIslandRate: Double
     private let engine: SubstitutionEngine
 
-    public init(replacementRate: Double = InstructionSubstitutionPass.defaultReplacementRate) {
+    public init(
+        replacementRate: Double = InstructionSubstitutionPass.defaultReplacementRate,
+        opaquePredicateRate: Double = InstructionSubstitutionPass.defaultOpaquePredicateRate,
+        deadCodeIslandRate: Double = InstructionSubstitutionPass.defaultDeadCodeIslandRate
+    ) {
         self.replacementRate = min(max(replacementRate, 0), 1)
+        self.opaquePredicateRate = min(max(opaquePredicateRate, 0), 1)
+        self.deadCodeIslandRate = min(max(deadCodeIslandRate, 0), 1)
         self.engine = SubstitutionEngine()
     }
 
@@ -48,6 +58,8 @@ public final class InstructionSubstitutionPass: ArmorPass {
             to: file,
             configuration: SubstitutionEngine.Configuration(
                 replacementRate: replacementRate,
+                opaquePredicateRate: opaquePredicateRate,
+                deadCodeIslandRate: deadCodeIslandRate,
                 seed: seed
             )
         )
@@ -56,6 +68,8 @@ public final class InstructionSubstitutionPass: ArmorPass {
             "Scanned \(report.scannedInstructionCount) 4-byte slots in __TEXT.__text",
             "Eligible substitutions: \(report.eligibleCandidateCount)",
             String(format: "Configured replacement rate: %.0f%%", replacementRate * 100),
+            String(format: "Opaque predicate rate: %.0f%%", opaquePredicateRate * 100),
+            String(format: "Dead-code island rate: %.0f%%", deadCodeIslandRate * 100),
             "Seed: \(seed) (\(seedOrigin.description))",
         ]
 
@@ -64,14 +78,20 @@ public final class InstructionSubstitutionPass: ArmorPass {
         }
 
         if report.appliedCount == 0 {
-            details.append("Applied no substitutions")
+            details.append("Applied no substitutions/injections")
         } else {
-            details.append("Applied \(report.appliedCount) equal-length substitutions")
+            details.append("Applied \(report.appliedCount) total equal-length rewrites")
             for group in InstructionSubstitutionGroup.allCases {
                 let count = report.appliedGroupCounts[group, default: 0]
                 if count > 0 {
                     details.append("\(group.summaryLabel): \(count) \(group.detailLabel)")
                 }
+            }
+            if !report.injectedOpaquePredicates.isEmpty {
+                details.append("Opaque predicates injected: \(report.injectedOpaquePredicates.count)")
+            }
+            if !report.injectedDeadCodeIslands.isEmpty {
+                details.append("Dead-code islands injected: \(report.injectedDeadCodeIslands.count)")
             }
         }
 
@@ -86,6 +106,27 @@ public final class InstructionSubstitutionPass: ArmorPass {
                     entry.originalRawValue,
                     entry.replacementRawValue,
                     entry.description
+                ))
+            }
+            for entry in report.injectedOpaquePredicates.prefix(6) {
+                let relativeOffset = entry.fileOffset - textBaseOffset
+                details.append(String(
+                    format: "Opaque predicate @ __text+0x%llX: 0x%08X -> 0x%08X (%@)",
+                    relativeOffset,
+                    entry.originalRawValue,
+                    entry.replacementRawValue,
+                    entry.description
+                ))
+            }
+            for entry in report.injectedDeadCodeIslands.prefix(6) {
+                let relativeOffset = entry.branchFileOffset - textBaseOffset
+                details.append(String(
+                    format: "Dead-code island @ __text+0x%llX: gate 0x%08X -> 0x%08X, dead 0x%08X -> 0x%08X",
+                    relativeOffset,
+                    entry.originalBranchRawValue,
+                    entry.replacementBranchRawValue,
+                    entry.originalDeadRawValue,
+                    entry.replacementDeadRawValue
                 ))
             }
         }

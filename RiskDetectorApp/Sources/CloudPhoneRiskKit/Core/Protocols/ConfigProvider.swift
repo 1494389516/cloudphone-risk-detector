@@ -9,7 +9,7 @@ public protocol ConfigProvider: Sendable {
 public protocol ConfigReading: Sendable {
     func getDecisionConfig(for scenario: ProtocolRiskScenario) async -> DecisionConfig
     func getPolicy(for scenario: ProtocolRiskScenario) async -> PolicyConfig
-    func getProviderDetectorConfig(for detectorId: String) -> ProviderDetectorConfig?
+    func getProviderDetectorConfig(for detectorId: String) -> PDC?
     func isDetectorEnabled(_ detectorId: String) -> Bool
 }
 
@@ -60,7 +60,7 @@ public struct ProviderConfig: Sendable, Codable {
     public var isEffective: Bool { Date() >= effectiveTime && !isExpired }
 }
 
-public protocol ProviderDetectorConfig: Sendable, Codable {
+public protocol PDC: Sendable, Codable {
     var detectorId: String { get }
     var isEnabled: Bool { get set }
 }
@@ -98,10 +98,10 @@ public struct ProviderDetectorConfigs: Sendable, Codable {
         self.environment = environment
     }
 
-    public subscript(_ detectorId: String) -> ProviderDetectorConfig? {
+    public subscript(_ detectorId: String) -> PDC? {
         switch detectorId {
-        case "jailbreak": return jailbreak
-        case "anti_tamper": return antiTamper
+        case ObfuscatedConstants.keywordJailbreak: return jailbreak
+        case ObfuscatedConstants.categoryAntiTamper: return antiTamper
         case "behavior": return behavior
         case "network": return network
         case "device": return device
@@ -111,8 +111,8 @@ public struct ProviderDetectorConfigs: Sendable, Codable {
     }
 }
 
-public struct JailbreakProviderDetectorConfig: ProviderDetectorConfig {
-    public let detectorId = "jailbreak"
+public struct JailbreakProviderDetectorConfig: PDC {
+    public let detectorId = ObfuscatedConstants.keywordJailbreak
     public var isEnabled: Bool
     public var threshold: Double
     public var enableFileDetect: Bool
@@ -159,8 +159,8 @@ public struct JailbreakProviderDetectorConfig: ProviderDetectorConfig {
     public static let full = Self()
 }
 
-public struct AntiTamperProviderDetectorConfig: ProviderDetectorConfig {
-    public let detectorId = "anti_tamper"
+public struct AntiTamperProviderDetectorConfig: PDC {
+    public let detectorId = ObfuscatedConstants.categoryAntiTamper
     public var isEnabled: Bool
     public var threshold: Double
     public var enableCodeIntegrityCheck: Bool
@@ -201,7 +201,7 @@ public struct AntiTamperProviderDetectorConfig: ProviderDetectorConfig {
     public static let `default` = Self()
 }
 
-public struct BehaviorProviderDetectorConfig: ProviderDetectorConfig {
+public struct BehaviorProviderDetectorConfig: PDC {
     public let detectorId = "behavior"
     public var isEnabled: Bool
     public var touchSamplingDuration: TimeInterval
@@ -247,7 +247,7 @@ public struct BehaviorProviderDetectorConfig: ProviderDetectorConfig {
     public static let `default` = Self()
 }
 
-public struct NetworkProviderDetectorConfig: ProviderDetectorConfig {
+public struct NetworkProviderDetectorConfig: PDC {
     public let detectorId = "network"
     public var isEnabled: Bool
     public var detectVPN: Bool
@@ -281,7 +281,7 @@ public struct NetworkProviderDetectorConfig: ProviderDetectorConfig {
     public static let `default` = Self()
 }
 
-public struct DeviceProviderDetectorConfig: ProviderDetectorConfig {
+public struct DeviceProviderDetectorConfig: PDC {
     public let detectorId = "device"
     public var isEnabled: Bool
     public var detectSimulator: Bool
@@ -311,7 +311,7 @@ public struct DeviceProviderDetectorConfig: ProviderDetectorConfig {
     public static let `default` = Self()
 }
 
-public struct EnvironmentProviderDetectorConfig: ProviderDetectorConfig {
+public struct EnvironmentProviderDetectorConfig: PDC {
     public let detectorId = "environment"
     public var isEnabled: Bool
     public var detectProxy: Bool
@@ -418,8 +418,8 @@ public struct WeightConfig: Sendable, Codable {
 
     public subscript(_ detectorId: String) -> Double {
         switch detectorId {
-        case "jailbreak": return jailbreak
-        case "anti_tamper": return antiTamper
+        case ObfuscatedConstants.keywordJailbreak: return jailbreak
+        case ObfuscatedConstants.categoryAntiTamper: return antiTamper
         case "behavior": return behavior
         case "network": return network
         case "device": return device
@@ -557,7 +557,11 @@ public struct ScenarioConfig: Sendable, Codable {
     }
 
     private static let defaultDetectors: [String] = [
-        "jailbreak", "anti_tamper", "behavior", "network", "device"
+        ObfuscatedConstants.keywordJailbreak,
+        ObfuscatedConstants.categoryAntiTamper,
+        "behavior",
+        "network",
+        "device",
     ]
 
     public static let login = ScenarioConfig(threshold: 60, mediumProtocolRiskAction: .challenge, highProtocolRiskAction: .block)
@@ -592,7 +596,9 @@ public struct PolicyConfig: Sendable, Codable {
         self.threshold = threshold
         self.mediumProtocolRiskAction = mediumProtocolRiskAction
         self.highProtocolRiskAction = highProtocolRiskAction
-        self.enabledDetectors = enabledDetectors.isEmpty ? ["jailbreak", "anti_tamper", "behavior", "network", "device"] : enabledDetectors
+        self.enabledDetectors = enabledDetectors.isEmpty
+            ? [ObfuscatedConstants.keywordJailbreak, ObfuscatedConstants.categoryAntiTamper, "behavior", "network", "device"]
+            : enabledDetectors
         self.customWeights = customWeights
     }
 }

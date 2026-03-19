@@ -19,33 +19,76 @@ public final class DetectorRegistry {
     // MARK: - 检测器类型
 
     /// 检测器类型枚举
-    public enum DetectorType: String, CaseIterable, Sendable {
+    public enum DetectorType: CaseIterable, Sendable {
         // 原有越狱检测器
-        case file = "file"
-        case dyld = "dyld"
-        case env = "env"
-        case sysctl = "sysctl"
-        case scheme = "scheme"
-        case hook = "hook"
+        case file
+        case dyld
+        case env
+        case sysctl
+        case scheme
+        case hook
 
         // 新增反篡改检测器
-        case antiTampering = "anti_tampering"
-        case debugger = "debugger"
-        case frida = "frida"
-        case fridaModule = "frida_module"
-        case dylibInjection = "dylib_injection"
-        case codeSignature = "code_signature"
-        case memoryIntegrity = "memory_integrity"
+        case antiTampering
+        case debugger
+        case frida
+        case fridaModule
+        case dylibInjection
+        case codeSignature
+        case memoryIntegrity
+
+        public var rawValue: String {
+            switch self {
+            case .file: return "file"
+            case .dyld: return "dyld"
+            case .env: return "env"
+            case .sysctl: return "sysctl"
+            case .scheme: return "scheme"
+            case .hook: return ObfuscatedConstants.keywordHook
+            case .antiTampering: return ObfuscatedConstants.detectorIDAntiTampering
+            case .debugger: return ObfuscatedConstants.detectorIDDebugger
+            case .frida: return ObfuscatedConstants.keywordFrida
+            case .fridaModule: return ObfuscatedConstants.detectorIDFridaModule
+            case .dylibInjection: return "dylib_injection"
+            case .codeSignature: return "code_signature"
+            case .memoryIntegrity: return "memory_integrity"
+            }
+        }
+
+        public init?(rawValue: String) {
+            guard let match = Self.allCases.first(where: { $0.rawValue == rawValue }) else {
+                return nil
+            }
+            self = match
+        }
     }
 
     /// 检测器分组
-    public enum DetectorGroup: String, CaseIterable, Sendable {
-        case jailbreak = "jailbreak"
-        case antiTamper = "anti_tamper"
-        case integrity = "integrity"
+    public enum DetectorGroup: CaseIterable, Sendable {
+        case jailbreak
+        case antiTamper
+        case integrity
+
+        public var rawValue: String {
+            switch self {
+            case .jailbreak: return ObfuscatedConstants.detectorGroupJailbreak
+            case .antiTamper: return ObfuscatedConstants.categoryAntiTamper
+            case .integrity: return "integrity"
+            }
+        }
+
+        public init?(rawValue: String) {
+            guard let match = Self.allCases.first(where: { $0.rawValue == rawValue }) else {
+                return nil
+            }
+            self = match
+        }
     }
 
     private enum CFF {
+        static let detectTypeLabel = "dr_dt_v1"
+        static let detectGroupLabel = "dr_dg_v1"
+
         static let detectTypeConfig = CFFConfig.adaptive(
             functionSeed: 0xA37C_19E4_5B62_D08F,
             protectionTier: .light,
@@ -65,7 +108,7 @@ public final class DetectorRegistry {
                 functionSeed: detectTypeConfig.functionSeed,
                 inputs: CFFRuntimeSaltInputs(
                     extraWords: [stableHash64(type.rawValue)],
-                    strings: ["DetectorRegistry.detect(type:)", type.rawValue],
+                    strings: [detectTypeLabel, type.rawValue],
                     flags: [true]
                 )
             )
@@ -76,7 +119,7 @@ public final class DetectorRegistry {
                 functionSeed: detectGroupConfig.functionSeed,
                 inputs: CFFRuntimeSaltInputs(
                     extraWords: [stableHash64(group.rawValue), UInt64(detectorCount)],
-                    strings: ["DetectorRegistry.detect(group:)", group.rawValue],
+                    strings: [detectGroupLabel, group.rawValue],
                     flags: [detectorCount > 0]
                 )
             )
@@ -128,23 +171,23 @@ public final class DetectorRegistry {
 
     /// 内置检测器元数据注册表
     private static let manifests: [DetectorType: DetectorManifest] = [
-        .file: DetectorManifest(signalOverlapGroup: "jailbreak_file"),
+        .file: DetectorManifest(signalOverlapGroup: ObfuscatedConstants.overlapGroupJailbreakFile),
         .dyld: DetectorManifest(signalOverlapGroup: "dyld"),
         .env: DetectorManifest(),
         .sysctl: DetectorManifest(),
         .scheme: DetectorManifest(),
-        .hook: DetectorManifest(signalOverlapGroup: "hook"),
+        .hook: DetectorManifest(signalOverlapGroup: ObfuscatedConstants.overlapGroupHook),
         .antiTampering: DetectorManifest(
             dependsOn: [.debugger],
-            signalOverlapGroup: "anti_tamper"
+            signalOverlapGroup: ObfuscatedConstants.categoryAntiTamper
         ),
-        .debugger: DetectorManifest(signalOverlapGroup: "anti_tamper"),
+        .debugger: DetectorManifest(signalOverlapGroup: ObfuscatedConstants.categoryAntiTamper),
         .frida: DetectorManifest(
-            signalOverlapGroup: "frida",
+            signalOverlapGroup: ObfuscatedConstants.overlapGroupFrida,
             priority: 120
         ),
         .fridaModule: DetectorManifest(
-            signalOverlapGroup: "frida",
+            signalOverlapGroup: ObfuscatedConstants.overlapGroupFrida,
             priority: 125
         ),
         .dylibInjection: DetectorManifest(
@@ -261,7 +304,7 @@ public final class DetectorRegistry {
         let finishState: UInt32 = 0x36
 
         let anomalyResult = DetectorResult(score: 80, methods: ["detector_anomaly_\(type.rawValue)"])
-        let cffKey = CFFStateCodec.deriveSeed(function: "DetectorRegistry.detect(type:)", config: cffConfig)
+        let cffKey = CFFStateCodec.deriveSeed(function: CFF.detectTypeLabel, config: cffConfig)
         let effectiveSalt = cffConfig.enableRuntimeSalt ? salt : salt ^ 0x13579BDF
 
         func encodeState(_ rawState: UInt32) -> UInt32 {
@@ -307,7 +350,7 @@ public final class DetectorRegistry {
                     do {
                         result = try detector?.detect() ?? .empty
                     } catch {
-                        Logger.log("DetectorRegistry.detect(\(type.rawValue)) threw: \(error)")
+                        Logger.log("detector_exec_failed:\(type.rawValue):\(error)")
                         result = anomalyResult
                     }
                     encodedState = encodeState(finishState)
@@ -338,7 +381,7 @@ public final class DetectorRegistry {
                     do {
                         result = try detector?.detect() ?? .empty
                     } catch {
-                        Logger.log("DetectorRegistry.detect(\(type.rawValue)) threw: \(error)")
+                        Logger.log("detector_exec_failed:\(type.rawValue):\(error)")
                         result = anomalyResult
                     }
                     encodedState = encodeState(finishState)
@@ -375,7 +418,7 @@ public final class DetectorRegistry {
         var typeIndex = 0
         var currentType: DetectorType?
         var loopBudget = max(24, orderedTypes.count * 5 + 10)
-        let cffKey = CFFStateCodec.deriveSeed(function: "DetectorRegistry.detect(group:)", config: cffConfig)
+        let cffKey = CFFStateCodec.deriveSeed(function: CFF.detectGroupLabel, config: cffConfig)
         let effectiveSalt = cffConfig.enableRuntimeSalt ? salt : salt ^ 0x13579BDF
 
         func encodeState(_ rawState: UInt32) -> UInt32 {

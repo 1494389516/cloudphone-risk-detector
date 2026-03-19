@@ -2,31 +2,7 @@ import Foundation
 import MachO
 
 struct DyldDetector: Detector {
-    let suspiciousLibraries = [
-        "frida",
-        "gadget",
-        "gum",
-        "substrate",
-        "libsubstrate",
-        "substitute",
-        "libsubstitute",
-        "cycript",
-        "libcycript",
-        "libhooker",
-        "ellekit",
-        "sslkill",
-        "sslkill switch",
-        "sslkillswitch",
-        "preferenceloader",
-        "flex",
-        "rocketbootstrap",
-        "activator",
-        "libactivator",
-        "cephei",
-        "tweakinject",
-        "shadow",
-        "dopamine",
-    ]
+    var suspiciousLibraries: [String] { ObfuscatedConstants.suspiciousLibraryTokensForDyld }
 
     func detect() throws -> DetectorResult {
         var score: Double = 0

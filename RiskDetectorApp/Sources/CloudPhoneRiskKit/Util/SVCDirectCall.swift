@@ -5,6 +5,287 @@ import Foundation
 
 private let rtldDefault = UnsafeMutableRawPointer(bitPattern: -2)
 
+/// Centralized runtime symbol resolver for sensitive libc APIs.
+/// - Stores symbol bytes in obfuscated form.
+/// - Resolves via dlsym at runtime.
+/// - Signs/authenticates resolved function pointers with PAC when available.
+enum DynamicSymbolResolver {
+    typealias SocketFn = @convention(c) (Int32, Int32, Int32) -> Int32
+    typealias ConnectFn = @convention(c) (Int32, UnsafePointer<sockaddr>?, socklen_t) -> Int32
+    typealias CloseFn = @convention(c) (Int32) -> Int32
+    typealias AccessFn = @convention(c) (UnsafePointer<CChar>?, Int32) -> Int32
+    typealias SysctlByNameFn = @convention(c) (
+        UnsafePointer<CChar>?,
+        UnsafeMutableRawPointer?,
+        UnsafeMutablePointer<size_t>?,
+        UnsafeRawPointer?,
+        size_t
+    ) -> Int32
+    typealias DlopenFn = @convention(c) (UnsafePointer<CChar>?, Int32) -> UnsafeMutableRawPointer?
+    typealias TaskForPidFn = @convention(c) (
+        mach_port_name_t,
+        pid_t,
+        UnsafeMutablePointer<mach_port_name_t>?
+    ) -> kern_return_t
+
+    private enum SymbolID: String {
+        case sysctlByName
+        case socket
+        case connect
+        case close
+        case access
+        case dlopen
+        case taskForPid
+    }
+
+    private struct SymbolRecipe {
+        let encodedSymbol: [UInt8]
+        let symbolKey: UInt8
+        let encodedImage: [UInt8]?
+        let imageKey: UInt8
+        let discriminatorSalt: UInt64
+    }
+
+    private struct SignedEntry {
+        let signedPointer: UnsafeMutableRawPointer
+        let discriminator: UInt
+    }
+
+    private static let lock = NSLock()
+    private static var cache: [SymbolID: SignedEntry] = [:]
+
+    private static let recipes: [SymbolID: SymbolRecipe] = [
+        .sysctlByName: SymbolRecipe(
+            encodedSymbol: [0x45, 0x4F, 0x45, 0x55, 0x42, 0x5A, 0x54, 0x4F, 0x58, 0x57, 0x5B, 0x53],
+            symbolKey: 0x36,
+            encodedImage: nil,
+            imageKey: 0x00,
+            discriminatorSalt: 0xA179_F31C_05D2_8441
+        ),
+        .socket: SymbolRecipe(
+            encodedSymbol: [0x5A, 0x46, 0x4A, 0x42, 0x4C, 0x5D],
+            symbolKey: 0x29,
+            encodedImage: nil,
+            imageKey: 0x00,
+            discriminatorSalt: 0xFC12_E739_BA9D_0042
+        ),
+        .connect: SymbolRecipe(
+            encodedSymbol: [0x28, 0x24, 0x25, 0x25, 0x2E, 0x28, 0x3F],
+            symbolKey: 0x4B,
+            encodedImage: nil,
+            imageKey: 0x00,
+            discriminatorSalt: 0x88D1_7C2A_E963_91D4
+        ),
+        .close: SymbolRecipe(
+            encodedSymbol: [0x10, 0x1F, 0x1C, 0x00, 0x16],
+            symbolKey: 0x73,
+            encodedImage: nil,
+            imageKey: 0x00,
+            discriminatorSalt: 0x3E71_2B95_C004_F8AA
+        ),
+        .access: SymbolRecipe(
+            encodedSymbol: [0x34, 0x36, 0x36, 0x30, 0x26, 0x26],
+            symbolKey: 0x55,
+            encodedImage: nil,
+            imageKey: 0x00,
+            discriminatorSalt: 0xD7B6_4E51_93CB_262A
+        ),
+        .dlopen: SymbolRecipe(
+            encodedSymbol: [0x7B, 0x73, 0x70, 0x6F, 0x7A, 0x71],
+            symbolKey: 0x1F,
+            encodedImage: nil,
+            imageKey: 0x00,
+            discriminatorSalt: 0x4FB9_1887_4602_1CE1
+        ),
+        .taskForPid: SymbolRecipe(
+            encodedSymbol: [0x4D, 0x58, 0x4A, 0x52, 0x66, 0x5F, 0x56, 0x4B, 0x66, 0x49, 0x50, 0x5D],
+            symbolKey: 0x39,
+            encodedImage: nil,
+            imageKey: 0x00,
+            discriminatorSalt: 0x6C51_0A9D_14E2_77BC
+        )
+    ]
+
+    static func socket(_ domain: Int32, _ type: Int32, _ protocol: Int32) -> Int32 {
+        if let socketFn: SocketFn = resolveFunction(for: .socket, as: SocketFn.self) {
+            return socketFn(domain, type, `protocol`)
+        }
+
+        var rawErrno: CInt = 0
+        let fd = cprisk_socket_direct(domain, type, `protocol`, &rawErrno)
+        if rawErrno != 0 {
+            errno = rawErrno
+        }
+        return fd
+    }
+
+    static func connect(_ sockfd: Int32, _ addr: UnsafePointer<sockaddr>?, _ addrlen: socklen_t) -> Int32 {
+        if let connectFn: ConnectFn = resolveFunction(for: .connect, as: ConnectFn.self) {
+            return connectFn(sockfd, addr, addrlen)
+        }
+
+        var rawErrno: CInt = 0
+        let rc = cprisk_connect_direct(sockfd, addr, addrlen, &rawErrno)
+        if rawErrno != 0 {
+            errno = rawErrno
+        }
+        return rc
+    }
+
+    static func close(_ fd: Int32) -> Int32 {
+        if let closeFn: CloseFn = resolveFunction(for: .close, as: CloseFn.self) {
+            return closeFn(fd)
+        }
+
+        var rawErrno: CInt = 0
+        let rc = cprisk_close_direct(fd, &rawErrno)
+        if rawErrno != 0 {
+            errno = rawErrno
+        }
+        return rc
+    }
+
+    static func access(_ path: UnsafePointer<CChar>?, _ mode: Int32) -> Int32 {
+        if let accessFn: AccessFn = resolveFunction(for: .access, as: AccessFn.self) {
+            return accessFn(path, mode)
+        }
+
+        var rawErrno: CInt = 0
+        let rc = cprisk_access_direct(path, mode, &rawErrno)
+        if rawErrno != 0 {
+            errno = rawErrno
+        }
+        return rc
+    }
+
+    static func sysctlByName(
+        _ name: UnsafePointer<CChar>?,
+        _ oldp: UnsafeMutableRawPointer?,
+        _ oldlenp: UnsafeMutablePointer<size_t>?,
+        _ newp: UnsafeRawPointer?,
+        _ newlen: size_t
+    ) -> Int32 {
+        if let sysctlByNameFn: SysctlByNameFn = resolveFunction(for: .sysctlByName, as: SysctlByNameFn.self) {
+            return sysctlByNameFn(name, oldp, oldlenp, newp, newlen)
+        }
+
+        var rawErrno: CInt = 0
+        let rc = cprisk_sysctlbyname_direct(name, oldp, oldlenp, newp, newlen, &rawErrno)
+        if rawErrno != 0 {
+            errno = rawErrno
+        }
+        return rc
+    }
+
+    static func dlopen(_ path: UnsafePointer<CChar>?, _ mode: Int32) -> UnsafeMutableRawPointer? {
+        if let dlopenFn: DlopenFn = resolveFunction(for: .dlopen, as: DlopenFn.self) {
+            return dlopenFn(path, mode)
+        }
+        return nil
+    }
+
+    static func taskForPid(
+        _ targetTask: mach_port_name_t,
+        _ pid: pid_t,
+        _ taskOut: UnsafeMutablePointer<mach_port_name_t>?
+    ) -> kern_return_t {
+        if let taskForPidFn: TaskForPidFn = resolveFunction(for: .taskForPid, as: TaskForPidFn.self) {
+            return taskForPidFn(targetTask, pid, taskOut)
+        }
+        taskOut?.pointee = mach_port_name_t(MACH_PORT_NULL)
+        return kern_return_t(KERN_FAILURE)
+    }
+
+    private static func resolveFunction<T>(for symbolID: SymbolID, as type: T.Type) -> T? {
+        guard let entry = resolveSignedEntry(for: symbolID) else {
+            return nil
+        }
+        guard let authed = authenticate(entry, for: symbolID) else {
+            return nil
+        }
+        return unsafeBitCast(authed, to: type)
+    }
+
+    private static func resolveSignedEntry(for symbolID: SymbolID) -> SignedEntry? {
+        lock.lock()
+        if let cached = cache[symbolID] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        guard let recipe = recipes[symbolID] else {
+            return nil
+        }
+
+        let symbolName = deobfuscate(recipe.encodedSymbol, key: recipe.symbolKey)
+        let imageName: String? = recipe.encodedImage.map { deobfuscate($0, key: recipe.imageKey) }
+        let handle = imageName.flatMap { name in
+            name.withCString { Darwin.dlopen($0, RTLD_NOW | RTLD_LOCAL) }
+        } ?? rtldDefault
+
+        guard let handle else {
+            return nil
+        }
+
+        guard let symbolPtr = symbolName.withCString({ dlsym(handle, $0) }) else {
+            return nil
+        }
+
+        let discriminator = makeDiscriminator(symbol: symbolName, image: imageName, salt: recipe.discriminatorSalt)
+        guard let signed = cprisk_pac_sign_function_pointer(symbolPtr, discriminator) else {
+            return nil
+        }
+        let created = SignedEntry(signedPointer: signed, discriminator: discriminator)
+
+        lock.lock()
+        let existing = cache[symbolID]
+        if existing == nil {
+            cache[symbolID] = created
+        }
+        let finalEntry = cache[symbolID]
+        lock.unlock()
+
+        return finalEntry
+    }
+
+    private static func authenticate(_ entry: SignedEntry, for symbolID: SymbolID) -> UnsafeMutableRawPointer? {
+        guard let authed = cprisk_pac_auth_function_pointer(entry.signedPointer, entry.discriminator) else {
+            cprisk_force_integrity_poison()
+            lock.lock()
+            cache.removeValue(forKey: symbolID)
+            lock.unlock()
+            return nil
+        }
+        return authed
+    }
+
+    @inline(__always)
+    private static func deobfuscate(_ bytes: [UInt8], key: UInt8) -> String {
+        let decoded = bytes.map { $0 ^ key }
+        return String(decoding: decoded, as: UTF8.self)
+    }
+
+    @inline(__always)
+    private static func makeDiscriminator(symbol: String, image: String?, salt: UInt64) -> UInt {
+        var state = fnv1a64(symbol)
+        if let image {
+            state ^= fnv1a64(image)
+        }
+        return UInt(truncatingIfNeeded: state ^ salt)
+    }
+
+    @inline(__always)
+    private static func fnv1a64(_ input: String) -> UInt64 {
+        var hash: UInt64 = 0xCBF2_9CE4_8422_2325
+        for byte in input.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01B3
+        }
+        return hash
+    }
+}
+
 enum LibcPrologueGuard {
     private static let criticalSymbols = [
         "access", "sysctlbyname", "sysctl", "dladdr", "backtrace"
@@ -133,6 +414,42 @@ enum LibcPrologueGuard {
 }
 
 enum SVCDirectCall {
+    struct StandardPathProbeSnapshot {
+        let access: Bool?
+        let stat: Bool?
+        let fopen: Bool?
+
+        var availableProbeCount: Int {
+            [access, stat, fopen].filter { $0 != nil }.count
+        }
+
+        var availableValues: [Bool] {
+            [access, stat, fopen].compactMap { $0 }
+        }
+
+        var existsAny: Bool {
+            availableValues.contains(true)
+        }
+    }
+
+    struct SecurePathProbeSnapshot {
+        let access: Bool?
+        let stat: Bool?
+        let lstat: Bool?
+
+        var availableProbeCount: Int {
+            [access, stat, lstat].compactMap { $0 }.count
+        }
+
+        var unavailableProbeCount: Int {
+            3 - availableProbeCount
+        }
+
+        var anySecureProbeAvailable: Bool {
+            availableProbeCount > 0
+        }
+    }
+
     /// 通过 CRiskCore 的 arm64 直 syscall 路径调用 sysctlbyname。
     /// 当直 syscall 不可用或失败时返回 nil，不静默回退到标准 libc，
     /// 以便 DualPathValidator 识别安全路径失效。
@@ -228,10 +545,49 @@ enum SVCDirectCall {
         }
     }
 
-    /// App Store 兼容路径不再依赖文件元数据类 API，因此不暴露 inode/st_dev/st_size。
-    /// 若后续需要恢复元数据基线能力，应在企业分发构建中单独启用。
+    /// 通过 direct lstat 读取 inode/st_dev/st_size，用于跨时间基线漂移检测。
+    /// 失败时返回 nil，由上层回退为“无基线可用”逻辑而非崩溃。
     static func secureLstatDetail(path: String) -> (inode: UInt64, stDev: UInt32, stSize: Int64)? {
-        nil
+        return path.withCString { cPath in
+            var rawErrno: CInt = 0
+            var sb = stat()
+            let result = cprisk_lstat_direct(cPath, &sb, &rawErrno)
+            guard result == 0 else {
+                return nil
+            }
+
+            let inode = UInt64(sb.st_ino)
+            let stDev = UInt32(truncatingIfNeeded: sb.st_dev)
+            let stSize = Int64(sb.st_size)
+            return (inode: inode, stDev: stDev, stSize: stSize)
+        }
+    }
+
+    static func securePathProbeSnapshot(_ path: String, mode: CInt = F_OK) -> SecurePathProbeSnapshot {
+        SecurePathProbeSnapshot(
+            access: secureAccess(path, mode: mode),
+            stat: secureStat(path),
+            lstat: secureLstat(path)
+        )
+    }
+
+    static func standardPathProbeSnapshot(_ path: String) -> StandardPathProbeSnapshot {
+        var cSnapshot = cprisk_path_probe_snapshot_t(available_mask: 0, exists_mask: 0)
+        let status = path.withCString { cprisk_probe_path_snapshot($0, &cSnapshot) }
+        guard status == 0 else {
+            return StandardPathProbeSnapshot(access: nil, stat: nil, fopen: nil)
+        }
+
+        func probeValue(_ probeMask: UInt32) -> Bool? {
+            guard (cSnapshot.available_mask & probeMask) != 0 else { return nil }
+            return (cSnapshot.exists_mask & probeMask) != 0
+        }
+
+        return StandardPathProbeSnapshot(
+            access: probeValue(UInt32(CPRISK_PATH_PROBE_ACCESS)),
+            stat: probeValue(UInt32(CPRISK_PATH_PROBE_STAT)),
+            fopen: probeValue(UInt32(CPRISK_PATH_PROBE_FOPEN))
+        )
     }
 
     /// 通过 CRiskCore 的 arm64 直 syscall 路径调用 access。
@@ -339,39 +695,35 @@ struct DualPathValidator {
         return (secure ?? std, tampered, bypassed, traced, hooked)
     }
 
-    /// 同时调用高层 fileExists / 标准 access / 加固 access，结果不一致则判定为 tampered。
-    /// 当 secure 路径返回 nil（安全路径不可用）且标准路径有值时，判定 tampered=true。
+    /// 同时调用 C 层标准路径探针（access/stat/fopen）与加固 access；
+    /// 结果不一致或安全路径不可用且标准路径命中时，判定 tampered。
     static func validateFileStat(path: String) -> (exists: Bool, tampered: Bool, bypassed: Bool, traced: Bool, inlineHooked: Bool) {
         let hooked = inlineHookDetected
 
-        var fileManagerExists = false
-        var stdAccessExists = false
-
+        var standardSnapshot = SVCDirectCall.StandardPathProbeSnapshot(access: nil, stat: nil, fopen: nil)
         let t1 = measure {
-            fileManagerExists = FileManager.default.fileExists(atPath: path)
-        }
-        let t2 = measure {
-            stdAccessExists = path.withCString { access($0, F_OK) == 0 }
+            standardSnapshot = SVCDirectCall.standardPathProbeSnapshot(path)
         }
 
         var secureAccessExists: Bool?
-
-        let t3 = measure { secureAccessExists = SVCDirectCall.secureAccess(path) }
+        let t2 = measure { secureAccessExists = SVCDirectCall.secureAccess(path) }
 
         // 50 纳秒：检测「时序注入绕过」，任一探针异常快则 bypassed。
-        let bypassed = t1 < 50 || t2 < 50 || t3 < 50
-        let traced = isTracedTiming(t1, t2, t3)
+        let bypassed = t1 < 50 || t2 < 50
+        let traced = isTracedTiming(t1, t2)
 
-        // 安全路径返回 nil 且 std 有值：安全路径失效本身即异常，判定 tampered
+        let standardValues = standardSnapshot.availableValues
+        let standardExists = standardSnapshot.existsAny
+
+        // 安全路径返回 nil 且标准探针命中：安全路径失效本身即异常，判定 tampered
         let secureUnavailableButStdHasValue =
-            secureAccessExists == nil && (fileManagerExists || stdAccessExists)
-        // 双路均有值时，结果不一致则 tampered
+            secureAccessExists == nil && standardExists
+        // 双路均有值时，任一标准探针与 secure 结论冲突则 tampered
         let mismatchWhenBothAvailable =
-            (secureAccessExists != nil && secureAccessExists != fileManagerExists)
-            || (secureAccessExists != nil && secureAccessExists != stdAccessExists)
+            secureAccessExists != nil && standardValues.contains { $0 != secureAccessExists }
         let tampered = secureUnavailableButStdHasValue || mismatchWhenBothAvailable
         if tampered { LibcPrologueGuard.invalidateCache() }
-        let exists = (secureAccessExists ?? stdAccessExists) || fileManagerExists
+        let exists = (secureAccessExists ?? standardExists) || standardExists
         return (exists, tampered, bypassed, traced, hooked)
     }
 }

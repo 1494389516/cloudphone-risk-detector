@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
 #ifdef __APPLE__
@@ -41,6 +42,411 @@ static int s_integrity_hash_saved;
 static int s_integrity_poisoned;
 
 static uint64_t s_init_elapsed_ns;
+
+static const struct mach_header_64 *cprisk_own_hdr_i(void);
+
+static void cprisk_prepare_deception_material_i(
+    const uint8_t *root_material,
+    const uint8_t *full_anchor_hash,
+    const uint8_t *integrity_hash
+);
+
+#ifndef CPRISK_ANTI_DEBUG_HARD_CRASH_ON_DEBUGGER
+#define CPRISK_ANTI_DEBUG_HARD_CRASH_ON_DEBUGGER 0
+#endif
+
+enum {
+    CPRISK_ADBG_PARSE_OK_I = 0u,
+    CPRISK_ADBG_PARSE_TRUNCATED_I = 1u,
+    CPRISK_ADBG_PARSE_MAGIC_I = 2u,
+    CPRISK_ADBG_PARSE_VERSION_I = 3u,
+    CPRISK_ADBG_PARSE_LAYOUT_I = 4u,
+    CPRISK_ADBG_PARSE_BOUNDS_I = 5u,
+    CPRISK_ADBG_PARSE_TOO_MANY_ENTRIES_I = 6u
+};
+
+enum {
+    CPRISK_ADBG_TRIGGER_INIT_I = 1u << 0,
+    CPRISK_ADBG_TRIGGER_INIT_FAILURE_I = 1u << 1,
+    CPRISK_ADBG_TRIGGER_INTEGRITY_TAMPER_I = 1u << 2
+};
+
+typedef struct cprisk_adbg_runtime_plan_i {
+    uint32_t loaded;
+    uint32_t section_present;
+    uint32_t section_valid;
+    uint32_t parse_error;
+    uint32_t entry_count;
+    uint32_t policy_union_bits;
+    uint64_t seed;
+    uint64_t text_base_address;
+    uint32_t probe_immediate;
+} cprisk_adbg_runtime_plan_t;
+
+typedef struct cprisk_adbg_runtime_entry_i {
+    uint64_t identifier_hash;
+    uint32_t policy_bits;
+    uint32_t entry_flags;
+    uint32_t scatter_slot;
+} cprisk_adbg_runtime_entry_t;
+
+static cprisk_adbg_runtime_plan_t s_adbg_plan_i;
+static cprisk_antidebug_plan_snapshot_t s_adbg_snapshot_i;
+static cprisk_adbg_runtime_entry_t s_adbg_entries_i[CPRISK_MAX_ENTRY_COUNT];
+static uint32_t s_adbg_entry_count_i = 0u;
+static uint8_t *s_test_adbg_plan_i = NULL;
+static size_t s_test_adbg_plan_len_i = 0u;
+
+static uint32_t cprisk_popcount32_i(uint32_t value) {
+    uint32_t count = 0u;
+    while (value != 0u) {
+        count += value & 1u;
+        value >>= 1u;
+    }
+    return count;
+}
+
+static int cprisk_mul_size_checked_i(size_t lhs, size_t rhs, size_t *out) {
+    if (out == NULL)
+        return -1;
+    if (lhs != 0u && rhs > SIZE_MAX / lhs)
+        return -1;
+    *out = lhs * rhs;
+    return 0;
+}
+
+static void cprisk_antidebug_reset_plan_state_i(void) {
+    memset(&s_adbg_plan_i, 0, sizeof(s_adbg_plan_i));
+    memset(&s_adbg_snapshot_i, 0, sizeof(s_adbg_snapshot_i));
+    memset(s_adbg_entries_i, 0, sizeof(s_adbg_entries_i));
+    s_adbg_entry_count_i = 0u;
+}
+
+static int cprisk_antidebug_section_bytes_i(const uint8_t **out_bytes, size_t *out_len) {
+    if (!out_bytes || !out_len)
+        return -1;
+
+    *out_bytes = NULL;
+    *out_len = 0u;
+
+    if (s_test_adbg_plan_i != NULL && s_test_adbg_plan_len_i > 0u) {
+        *out_bytes = s_test_adbg_plan_i;
+        *out_len = s_test_adbg_plan_len_i;
+        return 0;
+    }
+
+    const struct mach_header_64 *hdr = cprisk_own_hdr_i();
+    if (!hdr)
+        return -1;
+
+    unsigned long sec_size = 0;
+    const uint8_t *sec = cprisk_find_section(
+        hdr,
+        CPRISK_ARMOR_SEGMENT_DATA,
+        CPRISK_ARMOR_SECTION_ANTI_DEBUG_PLAN,
+        &sec_size);
+    if (!sec || sec_size == 0u)
+        return 0;
+
+    *out_bytes = sec;
+    *out_len = (size_t)sec_size;
+    return 0;
+}
+
+static void cprisk_antidebug_load_plan_i(void) {
+    if (s_adbg_plan_i.loaded != 0u)
+        return;
+
+    s_adbg_plan_i.loaded = 1u;
+
+    const uint8_t *bytes = NULL;
+    size_t bytes_len = 0u;
+    if (cprisk_antidebug_section_bytes_i(&bytes, &bytes_len) != 0 || bytes == NULL || bytes_len == 0u) {
+        return;
+    }
+
+    s_adbg_plan_i.section_present = 1u;
+    s_adbg_snapshot_i.section_present = 1u;
+
+    if (bytes_len < sizeof(struct cprisk_armor_antidebug_header)) {
+        s_adbg_plan_i.parse_error = CPRISK_ADBG_PARSE_TRUNCATED_I;
+        s_adbg_snapshot_i.parse_error = CPRISK_ADBG_PARSE_TRUNCATED_I;
+        return;
+    }
+
+    struct cprisk_armor_antidebug_header header;
+    memcpy(&header, bytes, sizeof(header));
+
+    if (header.magic != CPRISK_ARMOR_ADBG_MAGIC) {
+        s_adbg_plan_i.parse_error = CPRISK_ADBG_PARSE_MAGIC_I;
+        s_adbg_snapshot_i.parse_error = CPRISK_ADBG_PARSE_MAGIC_I;
+        return;
+    }
+    if (header.version < CPRISK_ARMOR_ADBG_ABI_VERSION) {
+        s_adbg_plan_i.parse_error = CPRISK_ADBG_PARSE_VERSION_I;
+        s_adbg_snapshot_i.parse_error = CPRISK_ADBG_PARSE_VERSION_I;
+        return;
+    }
+    if (header.header_size < sizeof(struct cprisk_armor_antidebug_header) ||
+        header.entry_size < sizeof(struct cprisk_armor_antidebug_entry)) {
+        s_adbg_plan_i.parse_error = CPRISK_ADBG_PARSE_LAYOUT_I;
+        s_adbg_snapshot_i.parse_error = CPRISK_ADBG_PARSE_LAYOUT_I;
+        return;
+    }
+    if (header.entry_count > CPRISK_MAX_ENTRY_COUNT) {
+        s_adbg_plan_i.parse_error = CPRISK_ADBG_PARSE_TOO_MANY_ENTRIES_I;
+        s_adbg_snapshot_i.parse_error = CPRISK_ADBG_PARSE_TOO_MANY_ENTRIES_I;
+        return;
+    }
+
+    size_t entries_bytes = 0u;
+    if (cprisk_mul_size_checked_i((size_t)header.entry_count, (size_t)header.entry_size, &entries_bytes) != 0) {
+        s_adbg_plan_i.parse_error = CPRISK_ADBG_PARSE_BOUNDS_I;
+        s_adbg_snapshot_i.parse_error = CPRISK_ADBG_PARSE_BOUNDS_I;
+        return;
+    }
+    if ((size_t)header.header_size > bytes_len || entries_bytes > bytes_len - (size_t)header.header_size) {
+        s_adbg_plan_i.parse_error = CPRISK_ADBG_PARSE_BOUNDS_I;
+        s_adbg_snapshot_i.parse_error = CPRISK_ADBG_PARSE_BOUNDS_I;
+        return;
+    }
+
+    const uint8_t *entry_cursor = bytes + (size_t)header.header_size;
+    uint32_t policy_union = 0u;
+    uint32_t parsed_entries = 0u;
+    for (uint32_t i = 0u; i < header.entry_count; i++) {
+        struct cprisk_armor_antidebug_entry entry;
+        memcpy(&entry, entry_cursor, sizeof(entry));
+        policy_union |= entry.policy_bits;
+        if (parsed_entries < CPRISK_MAX_ENTRY_COUNT) {
+            s_adbg_entries_i[parsed_entries].identifier_hash = entry.identifier_hash;
+            s_adbg_entries_i[parsed_entries].policy_bits = entry.policy_bits;
+            s_adbg_entries_i[parsed_entries].entry_flags = entry.entry_flags;
+            s_adbg_entries_i[parsed_entries].scatter_slot = entry.scatter_slot;
+            parsed_entries += 1u;
+        }
+        entry_cursor += (size_t)header.entry_size;
+    }
+    s_adbg_entry_count_i = parsed_entries;
+
+    s_adbg_plan_i.section_valid = 1u;
+    s_adbg_plan_i.parse_error = CPRISK_ADBG_PARSE_OK_I;
+    s_adbg_plan_i.entry_count = header.entry_count;
+    s_adbg_plan_i.policy_union_bits = policy_union;
+    s_adbg_plan_i.seed = header.seed;
+    s_adbg_plan_i.text_base_address = header.text_base_address;
+    s_adbg_plan_i.probe_immediate = header.probe_immediate;
+
+    s_adbg_snapshot_i.section_valid = 1u;
+    s_adbg_snapshot_i.parse_error = CPRISK_ADBG_PARSE_OK_I;
+    s_adbg_snapshot_i.entry_count = header.entry_count;
+    s_adbg_snapshot_i.policy_union_bits = policy_union;
+}
+
+static uint32_t cprisk_antidebug_select_policy_bits_i(
+    uint32_t probe_bits,
+    int high_risk,
+    uint32_t *out_selected_entries,
+    uint64_t *out_identifier_mix
+) {
+    if (out_selected_entries)
+        *out_selected_entries = 0u;
+    if (out_identifier_mix)
+        *out_identifier_mix = 0u;
+
+    if (s_adbg_entry_count_i == 0u) {
+        return s_adbg_plan_i.policy_union_bits;
+    }
+
+    const uint64_t selector_seed =
+        s_adbg_plan_i.seed ^
+        ((uint64_t)probe_bits << 11u) ^
+        ((uint64_t)s_adbg_plan_i.probe_immediate << 3u) ^
+        0x9E3779B97F4A7C15ULL;
+
+    uint32_t selected_bits = 0u;
+    uint32_t selected_count = 0u;
+    uint64_t selected_mix = 0u;
+
+    for (uint32_t i = 0u; i < s_adbg_entry_count_i; i++) {
+        const cprisk_adbg_runtime_entry_t *entry = &s_adbg_entries_i[i];
+        if (entry->policy_bits == 0u) {
+            continue;
+        }
+
+        const uint64_t gate =
+            entry->identifier_hash ^
+            selector_seed ^
+            ((uint64_t)entry->scatter_slot << 32u) ^
+            ((uint64_t)entry->entry_flags << 9u);
+        const int always_gate =
+            (entry->policy_bits & CPRISK_ARMOR_ADBG_POLICY_RUNTIME_GATE) != 0u;
+        const int selected = always_gate != 0
+            ? 1
+            : (high_risk
+                ? ((gate & 0x3u) != 0u)
+                : ((gate & 0x7u) == 0u));
+        if (!selected) {
+            continue;
+        }
+
+        selected_bits |= entry->policy_bits;
+        selected_count += 1u;
+        selected_mix ^= entry->identifier_hash ^ gate;
+    }
+
+    if (selected_bits == 0u) {
+        selected_bits = s_adbg_plan_i.policy_union_bits;
+    }
+
+    if (out_selected_entries)
+        *out_selected_entries = selected_count;
+    if (out_identifier_mix)
+        *out_identifier_mix = selected_mix;
+    return selected_bits;
+}
+
+static uint64_t cprisk_antidebug_delay_response_i(uint64_t seed, uint32_t probe_immediate, int high_risk) {
+    uint64_t mix = seed ^ ((uint64_t)probe_immediate << 17u) ^ 0x9E3779B97F4A7C15ULL;
+    uint64_t delay_ns = 500000ull + (mix % 1500000ull); /* 0.5ms .. 2.0ms */
+    if (high_risk)
+        delay_ns += 20000000ull + ((mix >> 11u) % 30000000ull); /* +20ms .. +50ms */
+
+    struct timespec req;
+    req.tv_sec = (time_t)(delay_ns / 1000000000ull);
+    req.tv_nsec = (long)(delay_ns % 1000000000ull);
+    (void)nanosleep(&req, NULL);
+    return delay_ns;
+}
+
+static void cprisk_antidebug_apply_policies_i(uint32_t trigger_flags, int init_rc_hint, int integrity_rc_hint) {
+    cprisk_antidebug_load_plan_i();
+    if (s_adbg_plan_i.section_valid == 0u || s_adbg_plan_i.policy_union_bits == 0u)
+        return;
+    const uint32_t strong_probe_mask =
+        CPRISK_PROBE_SIGNAL_TRAP |
+        CPRISK_PROBE_HARDWARE_BP |
+        CPRISK_PROBE_SOFTWARE_BP |
+        CPRISK_PROBE_CSOPS |
+        CPRISK_PROBE_EXCEPTION_DELIVERY_TIMEOUT |
+        CPRISK_PROBE_SUSPICIOUS_THREAD;
+    const uint32_t weak_probe_mask =
+        CPRISK_PROBE_SINGLE_STEP |
+        CPRISK_PROBE_TTY |
+        CPRISK_PROBE_DEVELOPER_DISK;
+
+    const int traced = cprisk_is_being_traced();
+    const uint32_t probe_bits = cprisk_run_all_signal_probes();
+    const uint32_t strong_hits = cprisk_popcount32_i(probe_bits & strong_probe_mask);
+    const uint32_t weak_hits = cprisk_popcount32_i(probe_bits & weak_probe_mask);
+    const int debug_strength = (traced ? 3 : 0) + (int)(strong_hits * 2u + weak_hits);
+    const int debugger_likely = traced != 0 || debug_strength >= 3;
+    const int debugger_confirmed = traced != 0 || debug_strength >= 5 || strong_hits >= 2u;
+    const int integrity_tampered =
+        (trigger_flags & CPRISK_ADBG_TRIGGER_INTEGRITY_TAMPER_I) != 0u ||
+        integrity_rc_hint > 0;
+    const int init_failed = init_rc_hint != 0;
+    const int high_risk = debugger_likely || integrity_tampered || init_failed;
+    uint32_t selected_entries = 0u;
+    uint64_t selected_identifier_mix = 0u;
+    const uint32_t policy_bits = cprisk_antidebug_select_policy_bits_i(
+        probe_bits,
+        high_risk,
+        &selected_entries,
+        &selected_identifier_mix
+    );
+    uint32_t applied = 0u;
+
+    s_adbg_snapshot_i.consume_count += 1u;
+    s_adbg_snapshot_i.last_probe_bits = probe_bits;
+    s_adbg_snapshot_i.last_gate_closed = 0u;
+    s_adbg_snapshot_i.last_soft_fail_mode = 0u;
+    s_adbg_snapshot_i.last_delay_ns = 0u;
+    (void)selected_entries;
+    (void)selected_identifier_mix;
+
+    if ((policy_bits & CPRISK_ARMOR_ADBG_POLICY_RUNTIME_GATE) != 0u) {
+        applied |= CPRISK_ARMOR_ADBG_POLICY_RUNTIME_GATE;
+        cprisk_deny_attach();
+        if (debugger_likely) {
+            s_adbg_snapshot_i.last_gate_closed = 1u;
+            cprisk_prepare_deception_material_i(NULL, NULL, NULL);
+            s_integrity_deception_active = 1;
+        }
+    }
+
+    if ((policy_bits & CPRISK_ARMOR_ADBG_POLICY_DELAY_RESPONSE) != 0u) {
+        applied |= CPRISK_ARMOR_ADBG_POLICY_DELAY_RESPONSE;
+        s_adbg_snapshot_i.last_delay_ns = cprisk_antidebug_delay_response_i(
+            s_adbg_plan_i.seed, s_adbg_plan_i.probe_immediate, high_risk);
+    }
+
+    if ((policy_bits & CPRISK_ARMOR_ADBG_POLICY_ESCALATE_INTEGRITY) != 0u && high_risk) {
+        applied |= CPRISK_ARMOR_ADBG_POLICY_ESCALATE_INTEGRITY;
+        s_adbg_snapshot_i.escalation_count += 1u;
+        cprisk_force_integrity_poison();
+    }
+
+    if ((policy_bits & CPRISK_ARMOR_ADBG_POLICY_TRAP_ON_TAMPER) != 0u &&
+        (integrity_tampered || init_failed || (trigger_flags & CPRISK_ADBG_TRIGGER_INIT_FAILURE_I) != 0u)) {
+        applied |= CPRISK_ARMOR_ADBG_POLICY_TRAP_ON_TAMPER;
+        s_adbg_snapshot_i.trap_event_count += 1u;
+        if (cprisk_probe_exception_delivery_timeout() != 0 || debugger_likely) {
+            cprisk_force_integrity_poison();
+        }
+    }
+
+    if ((policy_bits & CPRISK_ARMOR_ADBG_POLICY_CRASH_ON_DEBUGGER) != 0u && debugger_confirmed) {
+        applied |= CPRISK_ARMOR_ADBG_POLICY_CRASH_ON_DEBUGGER;
+        s_adbg_snapshot_i.last_soft_fail_mode = 1u;
+        cprisk_force_integrity_poison();
+        cprisk_prepare_deception_material_i(NULL, NULL, NULL);
+        s_integrity_deception_active = 1;
+#if CPRISK_ANTI_DEBUG_HARD_CRASH_ON_DEBUGGER
+        if (debug_strength >= 7) {
+            __builtin_trap();
+        }
+#endif
+    }
+
+    s_adbg_snapshot_i.last_applied_policy_bits = applied;
+}
+
+int cprisk_get_antidebug_plan_snapshot(cprisk_antidebug_plan_snapshot_t *out_snapshot) {
+    if (!out_snapshot)
+        return -1;
+    *out_snapshot = s_adbg_snapshot_i;
+    return 0;
+}
+
+int cprisk_test_set_antidebug_plan(const uint8_t *plan, size_t plan_len) {
+    if (!plan || plan_len == 0u)
+        return -1;
+
+    uint8_t *copy = (uint8_t *)malloc(plan_len);
+    if (!copy)
+        return -1;
+    memcpy(copy, plan, plan_len);
+
+    if (s_test_adbg_plan_i != NULL) {
+        cprisk_secure_zero(s_test_adbg_plan_i, s_test_adbg_plan_len_i);
+        free(s_test_adbg_plan_i);
+    }
+    s_test_adbg_plan_i = copy;
+    s_test_adbg_plan_len_i = plan_len;
+    cprisk_antidebug_reset_plan_state_i();
+    return 0;
+}
+
+void cprisk_test_clear_antidebug_plan(void) {
+    if (s_test_adbg_plan_i != NULL) {
+        cprisk_secure_zero(s_test_adbg_plan_i, s_test_adbg_plan_len_i);
+        free(s_test_adbg_plan_i);
+    }
+    s_test_adbg_plan_i = NULL;
+    s_test_adbg_plan_len_i = 0u;
+    cprisk_antidebug_reset_plan_state_i();
+}
 
 static const struct mach_header_64 *cprisk_own_hdr_i(void) {
     return cprisk_find_own_header((const void *)cprisk_own_hdr_i);
@@ -173,7 +579,14 @@ static void cprisk_derive_decoy_material_i(
     static const uint8_t label[] = "cprisk.runtime.decoy.v1";
     static const uint8_t missing_root[] = "missing-root";
     static const uint8_t missing_anchor[] = "missing-anchor";
-    static const uint8_t missing_integrity[] = "missing-integrity";
+    static const uint8_t missing_integrity_enc[] = {
+        0x37, 0x33, 0x29, 0x29, 0x33, 0x34, 0x3D, 0x77, 0x33,
+        0x34, 0x2E, 0x3F, 0x3D, 0x28, 0x33, 0x2E, 0x23
+    };
+    uint8_t missing_integrity_dec[sizeof(missing_integrity_enc)];
+    for (size_t i = 0; i < sizeof(missing_integrity_enc); i++) {
+        missing_integrity_dec[i] = (uint8_t)(missing_integrity_enc[i] ^ 0x5A);
+    }
 
     cprisk_sha256_ctx ctx;
     cprisk_sha256_init(&ctx);
@@ -192,10 +605,11 @@ static void cprisk_derive_decoy_material_i(
     if (integrity_hash)
         cprisk_sha256_update(&ctx, integrity_hash, CPRISK_ARMOR_HASH_SIZE);
     else
-        cprisk_sha256_update(&ctx, missing_integrity, sizeof(missing_integrity) - 1U);
+        cprisk_sha256_update(&ctx, missing_integrity_dec, sizeof(missing_integrity_dec));
 
     cprisk_mix_stable_deception_context_i(&ctx);
     cprisk_sha256_final(&ctx, out_hash);
+    cprisk_secure_zero(missing_integrity_dec, sizeof(missing_integrity_dec));
 }
 
 static void cprisk_prepare_deception_material_i(
@@ -785,6 +1199,7 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
     cprisk_secure_zero(s_runtime_material, sizeof(s_runtime_material));
     cprisk_secure_zero(s_saved_integrity_hash, sizeof(s_saved_integrity_hash));
     cprisk_secure_zero(s_deception_material, sizeof(s_deception_material));
+    cprisk_antidebug_reset_plan_state_i();
 
     cprisk_fill_root_material_i(root_key, root_key_len, root_material);
 
@@ -806,19 +1221,13 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
     }
 
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
-    /* Inline single-step timing probe: ~100 arithmetic ops complete in
-       microseconds normally; >50ms indicates instruction-level tracing. */
-    {
-        uint64_t t_probe_0 = cprisk_monotonic_ns();
-        volatile uint32_t step_acc = 0x5A5A5A5Au;
-        for (int step_j = 0; step_j < 100; step_j++)
-            step_acc = step_acc * 0x01010101u + (uint32_t)step_j;
-        (void)step_acc;
-        uint64_t t_probe_1 = cprisk_monotonic_ns();
-        if (t_probe_1 - t_probe_0 > 50000000ULL)
-            s_integrity_deception_active = 1;
+    /* Reuse adaptive baseline from signal-probe single-step detector. */
+    if (cprisk_detect_single_stepping()) {
+        s_integrity_deception_active = 1;
     }
 #endif
+
+    cprisk_antidebug_apply_policies_i(CPRISK_ADBG_TRIGGER_INIT_I, 0, 0);
 
     memcpy(s_saved_integrity_hash, integrity, CPRISK_ARMOR_HASH_SIZE);
     s_integrity_hash_saved = 1;
@@ -842,6 +1251,12 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
 
 cleanup:
     if (rc != 0) {
+        cprisk_antidebug_apply_policies_i(
+            CPRISK_ADBG_TRIGGER_INIT_FAILURE_I,
+            rc,
+            rc == -2 ? 1 : 0);
+    }
+    if (rc != 0) {
         cprisk_secure_zero(s_runtime_material, sizeof(s_runtime_material));
         s_runtime_material_ready = 0;
     }
@@ -864,6 +1279,7 @@ void cprisk_cleanup_protection(void) {
     s_integrity_poisoned = 0;
     s_integrity_deception_active = 0;
     s_init_elapsed_ns = 0;
+    cprisk_antidebug_reset_plan_state_i();
     cprisk_cleanup_string_decryptor();
     cprisk_unload_protected_data();
 }
@@ -892,6 +1308,10 @@ int cprisk_recheck_integrity(void) {
     if (cprisk_is_being_traced()) {
         cprisk_prepare_deception_material_i(NULL, NULL, NULL);
         s_integrity_deception_active = 1;
+        cprisk_antidebug_apply_policies_i(
+            CPRISK_ADBG_TRIGGER_INTEGRITY_TAMPER_I,
+            0,
+            1);
         return 0;
     }
 #endif
@@ -906,6 +1326,10 @@ int cprisk_recheck_integrity(void) {
             cprisk_prepare_deception_material_i(NULL, NULL, NULL);
             s_integrity_deception_active = 1;
         }
+        cprisk_antidebug_apply_policies_i(
+            CPRISK_ADBG_TRIGGER_INTEGRITY_TAMPER_I,
+            0,
+            -2);
         cprisk_secure_zero(current, sizeof(current));
         return -2;
     }
@@ -922,6 +1346,10 @@ int cprisk_recheck_integrity(void) {
             cprisk_prepare_deception_material_i(NULL, NULL, NULL);
             s_integrity_deception_active = 1;
         }
+        cprisk_antidebug_apply_policies_i(
+            CPRISK_ADBG_TRIGGER_INTEGRITY_TAMPER_I,
+            0,
+            1);
         return 1;
     }
     return 0;

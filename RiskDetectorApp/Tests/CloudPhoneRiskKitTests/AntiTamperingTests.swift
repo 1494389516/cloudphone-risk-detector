@@ -53,7 +53,11 @@ final class AntiTamperingTests: XCTestCase {
         softwareBreakpointAnomalyCount: UInt64 = 0,
         csopsAnomalyCount: UInt64 = 0,
         suspiciousThreadAnomalyCount: UInt64 = 0,
-        exceptionDeliveryTimeoutAnomalyCount: UInt64 = 0
+        exceptionDeliveryTimeoutAnomalyCount: UInt64 = 0,
+        peerWatchdogAnomalyCount: UInt64 = 0,
+        shadowStackAnomalyCount: UInt64 = 0,
+        lastPeerWatchdogStalled: Bool = false,
+        lastShadowStackMismatch: Bool = false
     ) -> CPRiskKit.AntiDebugWatchdogSnapshot {
         CPRiskKit.AntiDebugWatchdogSnapshot(
             supported: supported,
@@ -91,7 +95,11 @@ final class AntiTamperingTests: XCTestCase {
             softwareBreakpointAnomalyCount: softwareBreakpointAnomalyCount,
             csopsAnomalyCount: csopsAnomalyCount,
             suspiciousThreadAnomalyCount: suspiciousThreadAnomalyCount,
-            exceptionDeliveryTimeoutAnomalyCount: exceptionDeliveryTimeoutAnomalyCount
+            exceptionDeliveryTimeoutAnomalyCount: exceptionDeliveryTimeoutAnomalyCount,
+            peerWatchdogAnomalyCount: peerWatchdogAnomalyCount,
+            shadowStackAnomalyCount: shadowStackAnomalyCount,
+            lastPeerWatchdogStalled: lastPeerWatchdogStalled,
+            lastShadowStackMismatch: lastShadowStackMismatch
         )
     }
 

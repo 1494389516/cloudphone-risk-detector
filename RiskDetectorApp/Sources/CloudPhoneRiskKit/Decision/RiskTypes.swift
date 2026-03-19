@@ -84,15 +84,14 @@ public enum InternalRiskLevel: String, Codable, Sendable {
     }
 
     /// 从分数计算风险等级
+    /// 无效分数（NaN/无穷/负值）统一返回 .low，避免误判
     public static func from(score: Double) -> InternalRiskLevel {
-        guard score.isFinite else { return score > 0 ? .critical : .low }
-        guard score >= 0 else { return .low }
-        switch score {
-        case 0..<30: return .low
-        case 30..<55: return .medium
-        case 55..<80: return .high
-        default: return .critical
-        }
+        if !score.isFinite { return .low }
+        if score < 0 { return .low }
+        if score < 30 { return .low }
+        if score < 55 { return .medium }
+        if score < 80 { return .high }
+        return .critical
     }
 
     /// 映射到公开API的3级风险等级

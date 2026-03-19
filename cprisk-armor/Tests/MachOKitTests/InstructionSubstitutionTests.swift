@@ -142,6 +142,49 @@ final class InstructionSubstitutionTests: XCTestCase {
         XCTAssertNotEqual(outputA, outputC, "different seed should alter at least one substitution choice")
     }
 
+    func testEngineInjectsOpaquePredicatesAndDeadCodeIslands() throws {
+        let inputURL = try Self.writeFixture(
+            named: "subst_pass_injection",
+            textInstructions: Self.denseNoEffectInstructions
+        )
+        defer { try? FileManager.default.removeItem(at: inputURL) }
+
+        let file = try MachOFile(url: inputURL)
+        let engine = SubstitutionEngine()
+        let report = try engine.apply(
+            to: file,
+            configuration: SubstitutionEngine.Configuration(
+                replacementRate: 0,
+                opaquePredicateRate: 1.0,
+                deadCodeIslandRate: 1.0,
+                seed: 0xD00D_BAAD
+            )
+        )
+
+        XCTAssertGreaterThan(report.bytesModified, 0, "injection mode should modify bytes")
+        XCTAssertGreaterThan(report.injectedOpaquePredicates.count, 0, "opaque predicates should be injected")
+        XCTAssertGreaterThan(report.injectedDeadCodeIslands.count, 0, "dead-code islands should be injected")
+    }
+
+    func testPassReportsOpaquePredicateAndDeadCodeStatistics() throws {
+        let inputURL = try Self.writeFixture(
+            named: "subst_pass_stats",
+            textInstructions: Self.denseNoEffectInstructions
+        )
+        defer { try? FileManager.default.removeItem(at: inputURL) }
+
+        let file = try MachOFile(url: inputURL)
+        let pass = InstructionSubstitutionPass(
+            replacementRate: 0,
+            opaquePredicateRate: 1.0,
+            deadCodeIslandRate: 1.0
+        )
+        let result = try pass.execute(on: file, config: PassConfig(randomSeed: 0xABCD_1234))
+        XCTAssertGreaterThan(result.bytesModified, 0)
+        XCTAssertTrue(result.details.contains(where: { $0.contains("Opaque predicates injected") }))
+        XCTAssertTrue(result.details.contains(where: { $0.contains("Dead-code islands injected") }))
+    }
+
     func testPassMutatesTextButPreservesMachOStructure() throws {
         let inputURL = try Self.writeFixture(
             named: "subst_pass_integration",
@@ -387,6 +430,13 @@ final class InstructionSubstitutionTests: XCTestCase {
         movAlias(rd: 16, rm: 17),
         addZero(rd: 18, rn: 19),
         movz(rd: 20, imm16: 0x003F),
+    ]
+
+    private static let denseNoEffectInstructions: [UInt32] = [
+        nop, nop, nop, nop,
+        nop, nop, nop, nop,
+        nop, nop, nop, nop,
+        nop, nop, nop, nop,
     ]
 
     private static let nonReplaceableInstructionIndices = [7, 8, 9, 10, 11, 12]

@@ -3,13 +3,7 @@ import Darwin
 import Foundation
 struct FridaDetector: Detector {
     let knownPorts: [Int] = [27042, 27043, 23946]
-    let knownServerPaths: [String] = [
-        "/usr/sbin/frida-server",
-        "/usr/bin/frida-server",
-        "/usr/local/bin/frida-server",
-        "/var/jb/usr/sbin/frida-server",
-        "/var/jb/usr/bin/frida-server",
-    ]
+    let knownServerPaths: [String] = ObfuscatedConstants.fridaServerPaths
 
     func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)
@@ -20,17 +14,17 @@ struct FridaDetector: Detector {
 
         if let envHit = detectFridaEnv() {
             score += 18
-            methods.append("frida:env:\(envHit)")
+            methods.append("\(ObfuscatedConstants.methodPrefixFridaEnv)\(envHit)")
         }
 
         if let port = detectOpenFridaPort() {
             score += 16
-            methods.append("frida:port:\(port)")
+            methods.append("\(ObfuscatedConstants.methodPrefixFridaPort)\(port)")
         }
 
         if detectFridaFileArtifact() {
             score += 18
-            methods.append("frida:file:server")
+            methods.append("\(ObfuscatedConstants.methodPrefixFridaFile)server")
         }
 
         return DetectorResult(score: min(score, 45), methods: methods)
@@ -38,11 +32,11 @@ struct FridaDetector: Detector {
     }
 
     private func detectFridaEnv() -> String? {
-        let keys = ["FRIDA", "FRIDA_VERSION", "FRIDA_SCRIPT", "DYLD_INSERT_LIBRARIES"]
+        let keys = ObfuscatedConstants.fridaEnvKeys
         for key in keys {
             guard let value = getenv(key) else { continue }
             let text = String(cString: value).lowercased()
-            if text.contains("frida") || key.contains("FRIDA") {
+            if text.contains(ObfuscatedConstants.keywordFrida) || key.contains(ObfuscatedConstants.fridaEnvNeedleUpper) {
                 return key.lowercased()
             }
         }
@@ -89,7 +83,7 @@ struct FridaDetector: Detector {
         let result = path.withCString { cprisk_access_direct($0, F_OK, &rawErrno) }
         if result == 0 { return true }
         if rawErrno == ENOENT || rawErrno == ENOTDIR { return false }
-        Logger.log("[FridaDetector] fileExists(\(path)) errno=\(rawErrno), treating as non-existent")
+        Logger.log("[FD] fileExists(\(path)) errno=\(rawErrno), treating as non-existent")
         return false
     }
 }

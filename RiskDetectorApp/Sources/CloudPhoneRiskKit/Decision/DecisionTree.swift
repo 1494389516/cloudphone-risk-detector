@@ -763,11 +763,11 @@ extension DecisionTree {
                     .condition(
                         ConditionNode(
                             id: "check_jailbreak_vpn",
-                            condition: .signalExists("jailbreak"),
+                            condition: .signalExists(ObfuscatedConstants.signalJailbreak),
                             trueBranch: .condition(
                                 ConditionNode(
                                     id: "check_vpn",
-                                    condition: .signalExists("vpn_active"),
+                                    condition: .signalExists(ObfuscatedConstants.requiredSignalVpnActive),
                                     trueBranch: .action(ActionNode(id: "block_combo", action: .block, reason: "越狱设备使用VPN进行支付")),
                                     falseBranch: .action(ActionNode(id: "block_jailbreak_only", action: .block, reason: "越狱设备禁止支付"))
                                 )

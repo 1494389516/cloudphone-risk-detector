@@ -59,7 +59,8 @@ internal enum CFFStateCodec {
         namespace: String? = nil,
         config: CFFConfig
     ) -> UInt32 {
-        let flavorMarker: UInt64 = config.buildFlavor == .release ? 0xCFF0_C0DE_51A7_0001 : 0xCFF0_C0DE_51A7_0000
+        let flavorSeed = stableHash64(config.buildFlavor == .release ? "rel" : "dbg")
+        let flavorMarker = avalanche64(flavorSeed ^ config.functionSeed ^ 0x9E37_79B9_7F4A_7C15)
         let namespaceHash = stableHash64(namespace ?? "CloudPhoneRiskKit")
         let functionHash = stableHash64(function)
         let tierBits = config.protectionTier.rawValue.utf8.reduce(UInt64(0)) { partialResult, byte in

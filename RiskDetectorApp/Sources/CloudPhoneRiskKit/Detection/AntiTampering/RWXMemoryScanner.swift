@@ -211,7 +211,7 @@ extension RWXMemoryScanner {
             signals.append(
                 RiskSignal(
                     id: "rwx_anonymous",
-                    category: "anti_tamper",
+                    category: ObfuscatedConstants.categoryAntiTamper,
                     score: 40,
                     evidence: [
                         "count": "\(anonymousRegions.count)",
@@ -229,7 +229,7 @@ extension RWXMemoryScanner {
             signals.append(
                 RiskSignal(
                     id: "anonymous_executable_memory",
-                    category: "anti_tamper",
+                    category: ObfuscatedConstants.categoryAntiTamper,
                     score: 40,
                     evidence: [
                         "count": "\(anonymousRXRegions.count)",
@@ -247,7 +247,7 @@ extension RWXMemoryScanner {
             signals.append(
                 RiskSignal(
                     id: SignalID.stalkerJitRWX,
-                    category: "anti_tamper",
+                    category: ObfuscatedConstants.categoryAntiTamper,
                     score: min(Double(assessment.jitLikeCount) * 12 + 12, 42),
                     evidence: [
                         "count": "\(jitLikeRegions.count)",
@@ -266,7 +266,7 @@ extension RWXMemoryScanner {
             signals.append(
                 RiskSignal(
                     id: SignalID.rwxJitCoexistence,
-                    category: "anti_tamper",
+                    category: ObfuscatedConstants.categoryAntiTamper,
                     score: 18,
                     evidence: [
                         "anonymous_rwx_count": "\(assessment.anonymousRWXCount)",
@@ -283,7 +283,7 @@ extension RWXMemoryScanner {
             signals.append(
                 RiskSignal(
                     id: "rwx_multiple",
-                    category: "anti_tamper",
+                    category: ObfuscatedConstants.categoryAntiTamper,
                     score: 20,
                     evidence: ["count": "\(regions.count)"],
                     state: .soft(confidence: 0.7),

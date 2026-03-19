@@ -29,9 +29,11 @@ public struct OrchestratedFunctionPlan: Equatable, Sendable {
 
 public final class ControlFlowOrchestrator {
     public let policy: FunctionCFFPolicy
+    private let seedMaterial: UInt64
 
-    public init(policy: FunctionCFFPolicy) {
+    public init(policy: FunctionCFFPolicy, seedMaterial: UInt64 = 0) {
         self.policy = policy
+        self.seedMaterial = seedMaterial
     }
 
     public func buildPlans() -> [OrchestratedFunctionPlan] {
@@ -50,7 +52,8 @@ public final class ControlFlowOrchestrator {
         let stateEncodingPlan = StateEncodingPlan.recommended(
             for: symbol,
             tier: tier,
-            options: policy.antiDeobfuscation
+            options: policy.antiDeobfuscation,
+            buildSeed: seedMaterial
         )
         let runtimeDependencyPlan = RuntimeDependencyPlan.recommended(
             for: tier,
@@ -140,15 +143,23 @@ public struct ControlFlowOrchestratorPass: ArmorPass {
 
         let policyURL = try ControlFlowOrchestrator.resolvePolicyURL(explicitPath: policyFilePath)
         let policy = try FunctionCFFPolicy.load(from: policyURL)
-        let plans = ControlFlowOrchestrator(policy: policy).buildPlans()
+        let buildSeed = try deriveBuildSeed(file: file, key: config.encryptionKey)
+        let plans = ControlFlowOrchestrator(policy: policy, seedMaterial: buildSeed).buildPlans()
+        let rewriteReport = try ControlFlowBinaryRewriter(policy: policy, plans: plans).apply(
+            to: file,
+            verbose: config.verbose
+        )
 
         var details = [
             "policy: \(policyURL.path)",
             "version: \(policy.version)",
             "heavy=\(policy.heavy.count) light=\(policy.light.count) regionOnly=\(policy.regionOnly.count) never=\(policy.never.count)",
             "runtimeSalt=\(policy.antiDeobfuscation.enableRuntimeSalt) fakeStateReleaseOnly=\(policy.antiDeobfuscation.enableFakeStateReleaseOnly) multiDispatcher=\(policy.antiDeobfuscation.enableMultiDispatcher)",
-            "pass8Aware=\(policy.antiDeobfuscation.enablePass8CFFAwareness)"
+            "pass8Aware=\(policy.antiDeobfuscation.enablePass8CFFAwareness)",
+            String(format: "stateSeedMaterial=0x%016llX", buildSeed)
         ]
+
+        details.append(contentsOf: rewriteReport.details)
 
         if config.verbose {
             details.append(contentsOf: plans.map(\.summaryLine))
@@ -156,9 +167,72 @@ public struct ControlFlowOrchestratorPass: ArmorPass {
 
         return PassResult(
             passName: name,
-            itemsProcessed: plans.count,
-            bytesModified: 0,
+            itemsProcessed: rewriteReport.modifiedFunctionCount,
+            bytesModified: rewriteReport.bytesModified,
             details: details
         )
     }
+
+    private func deriveBuildSeed(file: MachOFile, key: Data?) throws -> UInt64 {
+        var hash = CFFSeedFNV.offsetBasis
+
+        hash = fnvMix(hash, value: UInt64(file.header.numberOfCommands))
+        hash = fnvMix(hash, value: UInt64(file.header.sizeOfCommands))
+        hash = fnvMix(hash, value: UInt64(file.header.fileType))
+
+        let segments = try file.segments()
+        for segment in segments {
+            hash = fnvMix(hash, string: segment.name)
+            hash = fnvMix(hash, value: segment.vmAddress)
+            hash = fnvMix(hash, value: segment.vmSize)
+            hash = fnvMix(hash, value: segment.fileOffset)
+            hash = fnvMix(hash, value: segment.fileSize)
+
+            for section in segment.sections {
+                hash = fnvMix(hash, string: section.sectionName)
+                hash = fnvMix(hash, value: section.address)
+                hash = fnvMix(hash, value: section.size)
+                hash = fnvMix(hash, value: UInt64(section.offset))
+            }
+        }
+
+        if let key {
+            for byte in key {
+                hash = fnvMix(hash, byte: byte)
+            }
+        }
+
+        return hash == 0 ? 1 : hash
+    }
+}
+
+private enum CFFSeedFNV {
+    static let offsetBasis: UInt64 = 0xCBF29CE484222325
+    static let prime: UInt64 = 0x00000100000001B3
+}
+
+private func fnvMix(_ hash: UInt64, byte: UInt8) -> UInt64 {
+    var mixed = hash
+    mixed ^= UInt64(byte)
+    mixed &*= CFFSeedFNV.prime
+    return mixed
+}
+
+private func fnvMix(_ hash: UInt64, value: UInt64) -> UInt64 {
+    var littleEndian = value.littleEndian
+    return withUnsafeBytes(of: &littleEndian) { bytes in
+        var mixed = hash
+        for byte in bytes {
+            mixed = fnvMix(mixed, byte: byte)
+        }
+        return mixed
+    }
+}
+
+private func fnvMix(_ hash: UInt64, string: String) -> UInt64 {
+    var mixed = hash
+    for byte in string.utf8 {
+        mixed = fnvMix(mixed, byte: byte)
+    }
+    return mixed
 }

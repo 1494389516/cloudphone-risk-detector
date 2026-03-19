@@ -44,7 +44,7 @@ private enum SeedOrigin {
 /// Pass 7: emit a runtime-readable anti-debug injection plan section.
 ///
 /// This pass intentionally avoids inline patching live machine code. Instead it
-/// reserves a stable ABI in `__DATA,__cpr_adbg7` so the runtime can later map
+/// reserves a stable ABI in `__DATA,__objc_data2` so the runtime can later map
 /// target identifiers, offsets, and policy bits to a stronger in-memory patcher.
 public final class AntiDebugInjectorPass: ArmorPass {
     public let name = "AntiDebugInjector"
@@ -140,6 +140,21 @@ public final class AntiDebugInjectorPass: ArmorPass {
                     )
                 )
             }
+        }
+
+        let scrubReport = ObjCData2MangledSymbolScrubber.sanitize(
+            payload: &payload,
+            buildSeedHint: config.randomSeed
+        )
+        if scrubReport.scrubbedTargetNames > 0 {
+            details.append(
+                "Scrubbed \(scrubReport.scrubbedTargetNames) leaked target_name values in \(ArmorABI.dataSegmentName).\(ArmorABI.AntiDebug.sectionName)"
+            )
+        }
+        if scrubReport.remappedIdentifierHashes > 0 {
+            details.append(
+                "Remapped \(scrubReport.remappedIdentifierHashes) identifier_hash values with build-scoped salt"
+            )
         }
 
         _ = try file.addOrUpdateSection(
@@ -372,6 +387,260 @@ public final class AntiDebugInjectorPass: ArmorPass {
     }
 }
 
+enum ObjCData2MangledSymbolScrubber {
+    private static let leakPrefixes = [
+        "_$s17CloudPhoneRiskKit",
+        "_$s21CloudPhoneRiskAppCore",
+    ]
+
+    private static let semanticLeakKeywords = [
+        "cloudphonerisk",
+        "riskdetector",
+        "riskappcore",
+        "criskcore",
+    ]
+
+    private static let replacementAlphabet = Array("abcdefghijklmnopqrstuvwxyz0123456789".utf8)
+
+    struct ObjCData2ScrubReport: Equatable {
+        let parsed: Bool
+        let entryCount: Int
+        let scrubbedTargetNames: Int
+        let remappedIdentifierHashes: Int
+        let bytesModified: Int
+    }
+
+    /// Backward-compatible entry point used by older tests/callers.
+    @discardableResult
+    static func scrub(in payload: inout Data) -> Int {
+        sanitize(payload: &payload).scrubbedTargetNames
+    }
+
+    /// Unified sanitizer for `__DATA,__objc_data2`:
+    /// 1) scrub semantic leaks in `target_name`;
+    /// 2) remap `identifier_hash` using a build-scoped salt to remove stable identifiers.
+    static func sanitize(payload: inout Data, buildSeedHint: UInt64? = nil) -> ObjCData2ScrubReport {
+        guard payload.count >= ArmorABI.AntiDebug.headerSize else {
+            return ObjCData2ScrubReport(parsed: false, entryCount: 0, scrubbedTargetNames: 0, remappedIdentifierHashes: 0, bytesModified: 0)
+        }
+
+        let headerSize = Int(readLE32(payload, at: ArmorABI.AntiDebug.headerHeaderSizeOffset))
+        let entryCount = Int(readLE32(payload, at: ArmorABI.AntiDebug.headerEntryCountOffset))
+        let entrySize = Int(readLE32(payload, at: ArmorABI.AntiDebug.headerEntrySizeOffset))
+        let headerSeed = readLE64(payload, at: ArmorABI.AntiDebug.headerSeedOffset)
+
+        guard entryCount >= 0,
+              headerSize >= ArmorABI.AntiDebug.headerSize,
+              entrySize >= ArmorABI.AntiDebug.entrySize else {
+            return ObjCData2ScrubReport(parsed: false, entryCount: 0, scrubbedTargetNames: 0, remappedIdentifierHashes: 0, bytesModified: 0)
+        }
+
+        let (entriesBytes, overflow) = entryCount.multipliedReportingOverflow(by: entrySize)
+        guard !overflow,
+              headerSize <= payload.count,
+              entriesBytes <= payload.count - headerSize else {
+            return ObjCData2ScrubReport(parsed: false, entryCount: 0, scrubbedTargetNames: 0, remappedIdentifierHashes: 0, bytesModified: 0)
+        }
+
+        let mappingSalt = buildMappingSalt(
+            headerSeed: headerSeed,
+            buildSeedHint: buildSeedHint,
+            entryCount: entryCount
+        )
+
+        var scrubbed = 0
+        var remapped = 0
+        var bytesModified = 0
+
+        for index in 0..<entryCount {
+            let entryBase = headerSize + index * entrySize
+
+            let nameBase = entryBase + ArmorABI.AntiDebug.entryTargetNameOffset
+            let nameFieldEnd = nameBase + ArmorABI.AntiDebug.targetNameFieldSize
+            guard nameFieldEnd <= payload.count else { break }
+
+            var bytes = [UInt8](payload[nameBase..<nameFieldEnd])
+            let visibleLength = bytes.firstIndex(of: 0) ?? bytes.count
+            if visibleLength > 0 {
+                let currentName = String(decoding: bytes.prefix(visibleLength), as: UTF8.self)
+                if shouldScrubTargetName(currentName) {
+                    let replacement = semanticlessReplacement(
+                        source: Array(bytes.prefix(visibleLength)),
+                        length: visibleLength
+                    )
+                    for offset in 0..<visibleLength {
+                        bytes[offset] = replacement[offset]
+                        payload[nameBase + offset] = replacement[offset]
+                    }
+                    if visibleLength < bytes.count {
+                        payload[nameBase + visibleLength] = 0
+                    }
+                    scrubbed += 1
+                    bytesModified += visibleLength
+                }
+            }
+
+            let patchSiteVMOffset = readLE64(payload, at: entryBase + ArmorABI.AntiDebug.entryPatchSiteVMOffset)
+            let patchSiteFileOffset = readLE32(payload, at: entryBase + ArmorABI.AntiDebug.entryPatchSiteFileOffset)
+            let policyBits = readLE32(payload, at: entryBase + ArmorABI.AntiDebug.entryPolicyBitsOffset)
+            let scatterSlot = readLE32(payload, at: entryBase + ArmorABI.AntiDebug.entryScatterSlotOffset)
+            let entryFlags = readLE32(payload, at: entryBase + ArmorABI.AntiDebug.entryFlagsOffset)
+            let hashOffset = entryBase + ArmorABI.AntiDebug.entryIdentifierHashOffset
+            let currentHash = readLE64(payload, at: hashOffset)
+            let remappedHash = remappedIdentifierHash(
+                mappingSalt: mappingSalt,
+                entryIndex: index,
+                patchSiteVMOffset: patchSiteVMOffset,
+                patchSiteFileOffset: patchSiteFileOffset,
+                policyBits: policyBits,
+                scatterSlot: scatterSlot,
+                entryFlags: entryFlags
+            )
+            if currentHash != remappedHash {
+                writeLE64(&payload, at: hashOffset, value: remappedHash)
+                remapped += 1
+                bytesModified += MemoryLayout<UInt64>.size
+            }
+        }
+
+        return ObjCData2ScrubReport(
+            parsed: true,
+            entryCount: entryCount,
+            scrubbedTargetNames: scrubbed,
+            remappedIdentifierHashes: remapped,
+            bytesModified: bytesModified
+        )
+    }
+
+    static func buildMappingSalt(headerSeed: UInt64, buildSeedHint: UInt64?, entryCount: Int) -> UInt64 {
+        var hash = FNV1A64.offsetBasis
+        hash = mix(hash, value: headerSeed)
+        hash = mix(hash, value: UInt64(entryCount))
+        if let buildSeedHint {
+            hash = mix(hash, value: buildSeedHint)
+        }
+        hash = mix(hash, value: 0x4350_5249_534B_4144) // "CPRISKAD"
+        return avalanche64ForScrub(hash)
+    }
+
+    static func remappedIdentifierHash(
+        mappingSalt: UInt64,
+        entryIndex: Int,
+        patchSiteVMOffset: UInt64,
+        patchSiteFileOffset: UInt32,
+        policyBits: UInt32,
+        scatterSlot: UInt32,
+        entryFlags: UInt32
+    ) -> UInt64 {
+        var hash = mappingSalt
+        hash = mix(hash, value: UInt64(entryIndex))
+        hash = mix(hash, value: patchSiteVMOffset)
+        hash = mix(hash, value: UInt64(patchSiteFileOffset))
+        hash = mix(hash, value: UInt64(policyBits))
+        hash = mix(hash, value: UInt64(scatterSlot))
+        hash = mix(hash, value: UInt64(entryFlags))
+        hash = mix(hash, value: 0xA7D0_0001)
+        return avalanche64ForScrub(hash)
+    }
+
+    private static func semanticlessReplacement(source: [UInt8], length: Int) -> [UInt8] {
+        guard length > 0 else { return [] }
+        var state = fnv1a64(source)
+        var output = [UInt8]()
+        output.reserveCapacity(length)
+        for _ in 0..<length {
+            state = state &* 2862933555777941757 &+ 3037000493
+            let idx = Int(state % UInt64(replacementAlphabet.count))
+            output.append(replacementAlphabet[idx])
+        }
+        return output
+    }
+
+    private static func shouldScrubTargetName(_ targetName: String) -> Bool {
+        if leakPrefixes.contains(where: { targetName.hasPrefix($0) }) {
+            return true
+        }
+        let lowered = targetName.lowercased()
+        return semanticLeakKeywords.contains(where: { lowered.contains($0) })
+    }
+
+    private static func readLE32(_ data: Data, at offset: Int) -> UInt32 {
+        guard offset >= 0, offset + 4 <= data.count else { return 0 }
+        return data.subdata(in: offset..<(offset + 4)).withUnsafeBytes {
+            UInt32(littleEndian: $0.load(as: UInt32.self))
+        }
+    }
+
+    private static func readLE64(_ data: Data, at offset: Int) -> UInt64 {
+        guard offset >= 0, offset + 8 <= data.count else { return 0 }
+        return data.subdata(in: offset..<(offset + 8)).withUnsafeBytes {
+            UInt64(littleEndian: $0.load(as: UInt64.self))
+        }
+    }
+
+    private static func writeLE64(_ data: inout Data, at offset: Int, value: UInt64) {
+        guard offset >= 0, offset + 8 <= data.count else { return }
+        var littleEndian = value.littleEndian
+        withUnsafeBytes(of: &littleEndian) { bytes in
+            for index in 0..<8 {
+                data[offset + index] = bytes[index]
+            }
+        }
+    }
+}
+
+public final class ObjCData2ScrubberPass: ArmorPass {
+    public let name = "ObjCData2Scrubber"
+
+    public init() {}
+
+    public func execute(on file: MachOFile, config: PassConfig) throws -> PassResult {
+        guard let section = try file.section(segment: ArmorABI.dataSegmentName, section: ArmorABI.AntiDebug.sectionName) else {
+            return PassResult(
+                passName: name,
+                itemsProcessed: 0,
+                bytesModified: 0,
+                details: ["Skipped: \(ArmorABI.dataSegmentName).\(ArmorABI.AntiDebug.sectionName) not found"]
+            )
+        }
+
+        var payload = try section.readContent(from: file.data)
+        guard !payload.isEmpty else {
+            return PassResult(
+                passName: name,
+                itemsProcessed: 0,
+                bytesModified: 0,
+                details: ["Skipped: \(ArmorABI.dataSegmentName).\(ArmorABI.AntiDebug.sectionName) is empty"]
+            )
+        }
+
+        let report = ObjCData2MangledSymbolScrubber.sanitize(
+            payload: &payload,
+            buildSeedHint: config.randomSeed
+        )
+
+        if report.bytesModified > 0 {
+            try file.replaceBytes(at: UInt64(section.offset), with: payload)
+        }
+
+        var details = [String]()
+        if !report.parsed {
+            details.append("Skipped: existing section layout is not compatible with AntiDebug ABI")
+        } else {
+            details.append("Entries parsed: \(report.entryCount)")
+            details.append("target_name scrubbed: \(report.scrubbedTargetNames)")
+            details.append("identifier_hash remapped: \(report.remappedIdentifierHashes)")
+        }
+
+        return PassResult(
+            passName: name,
+            itemsProcessed: report.entryCount,
+            bytesModified: report.bytesModified,
+            details: details
+        )
+    }
+}
+
 private enum FNV1A64 {
     static let offsetBasis: UInt64 = 0xCBF29CE484222325
     static let prime: UInt64 = 0x00000100000001B3
@@ -380,6 +649,15 @@ private enum FNV1A64 {
 private func fnv1a64(_ string: String) -> UInt64 {
     var hash = FNV1A64.offsetBasis
     for byte in string.utf8 {
+        hash ^= UInt64(byte)
+        hash &*= FNV1A64.prime
+    }
+    return hash
+}
+
+private func fnv1a64(_ bytes: [UInt8]) -> UInt64 {
+    var hash = FNV1A64.offsetBasis
+    for byte in bytes {
         hash ^= UInt64(byte)
         hash &*= FNV1A64.prime
     }
@@ -405,4 +683,14 @@ private func mix(_ hash: UInt64, value: UInt64) -> UInt64 {
         }
         return mixed
     }
+}
+
+private func avalanche64ForScrub(_ value: UInt64) -> UInt64 {
+    var v = value
+    v ^= v >> 33
+    v &*= 0xFF51_AFD7_ED55_8CCD
+    v ^= v >> 33
+    v &*= 0xC4CE_B9FE_1A85_EC53
+    v ^= v >> 33
+    return v == 0 ? 1 : v
 }

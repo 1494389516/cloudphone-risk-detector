@@ -52,10 +52,10 @@ public enum DecoyFieldInjector {
 
 public struct RuntimeFieldMapping {
     private static let semanticFields: [String] = [
-        "jailbreak_score", "vm_detected", "imu_variance",
+        "\(ObfuscatedConstants.keywordJailbreak)_score", "vm_detected", "imu_variance",
         "battery_charge_counter", "drm_level", "mount_anomaly",
-        "rwx_detected", "hook_detected", "timing_anomaly",
-        "touch_entropy", "sensor_entropy", "vpn_active",
+        "rwx_detected", ObfuscatedConstants.signalHookDetected, "timing_anomaly",
+        "touch_entropy", "sensor_entropy", ObfuscatedConstants.requiredSignalVpnActive,
         "proxy_enabled", "device_model", "gpu_name",
         "kernel_version", "board_id", "score", "isHighRisk"
     ]

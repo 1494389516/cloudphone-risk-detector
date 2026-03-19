@@ -239,7 +239,7 @@ struct RandomizedDetection: Detector {
         let ppid = cprisk_getppid_direct()
         guard ppid > 1 else { return false }
         guard let parent = processPath(for: ppid)?.lowercased() else { return false }
-        return parent.contains("frida") || parent.contains("lldb")
+        return parent.contains(ObfuscatedConstants.keywordFrida) || parent.contains(ObfuscatedConstants.keywordLldb)
     }
 }
 

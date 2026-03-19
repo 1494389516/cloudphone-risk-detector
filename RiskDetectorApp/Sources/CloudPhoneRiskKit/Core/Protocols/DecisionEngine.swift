@@ -48,14 +48,14 @@ public struct DecisionConfig: Sendable, Codable {
         self.extras = extras
     }
 
-    private static let defaultDetectors: Set<String> = [
-        "jailbreak",
-        "anti_tamper",
+    private static var defaultDetectors: Set<String> { [
+        ObfuscatedConstants.signalJailbreak,
+        ObfuscatedConstants.categoryAntiTamper,
         "behavior",
         "network",
         "device",
         "environment"
-    ]
+    ] }
 }
 
 public struct FeatureVector: Sendable, Codable {
