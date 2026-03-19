@@ -152,7 +152,7 @@ struct RWXMemoryScanner: Detector {
                     userTag = UInt32(extInfo.user_tag)
                     shareMode = UInt32(extInfo.share_mode)
                     isAnonymous = anonymousUserTags.contains(userTag)
-                    if isRWX {
+                    if isRX {
                         isAnonymous = anonymousUserTags.contains(userTag)
                     }
                     if isRX {

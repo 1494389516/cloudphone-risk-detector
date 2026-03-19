@@ -467,7 +467,7 @@ extension ChallengeTrigger {
 
     /// challenge 是否在有效期内
     public static func isChallengeValid(_ challenge: BlindChallenge, timestamp: Int64 = nowMillis()) -> Bool {
-        timestamp <= challenge.expiresAt
+        timestamp < challenge.expiresAt
     }
 
     /// 客户端生成 challenge 绑定签名

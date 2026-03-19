@@ -185,7 +185,7 @@ public final class RiskHistoryStore {
             return LoadedState(events: [], freshness: anchor)
         }
 
-        if state.freshness.sequence < anchor.sequence && state.freshness.latestTimestamp < anchor.latestTimestamp {
+        if state.freshness.sequence < anchor.sequence || state.freshness.latestTimestamp < anchor.latestTimestamp {
             Logger.log("RiskHistoryStore: freshness rollback detected")
             clearPersistedDataLocked(resetAnchor: false)
             return LoadedState(events: [], freshness: anchor)

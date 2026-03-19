@@ -513,7 +513,7 @@ public final class CPRiskKit: NSObject {
     @discardableResult
     @objc(setRemoteConfigEndpoint:)
     public func setRemoteConfigEndpoint(_ endpoint: String) -> Bool {
-        configureRemoteConfigProvider(urlString: endpoint)
+        return configureRemoteConfigProvider(urlString: endpoint)
     }
 
     /// 清除远程配置地址和缓存状态。
@@ -595,13 +595,13 @@ public final class CPRiskKit: NSObject {
     // MARK: - Evaluation
 
     @objc public func evaluate() -> CPRiskReport {
-        evaluate(config: .default)
+        return evaluate(config: .default)
     }
 
     /// 生成一次完整风控报告（保持 1.0 入口，内部走 2.0 决策链路）。
     @objc(evaluateWithConfig:)
     public func evaluate(config: CPRiskConfig = .default) -> CPRiskReport {
-        evaluate(config: config, scenario: config.defaultScenario)
+        return evaluate(config: config, scenario: config.defaultScenario)
     }
 
     /// 同步场景化评估（2.0 核心入口，Swift/ObjC 可用）。

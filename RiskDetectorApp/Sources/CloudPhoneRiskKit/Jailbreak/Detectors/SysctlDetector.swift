@@ -175,7 +175,7 @@ struct SysctlDetector: Detector {
 
     private func parentProcessName() -> (name: String?, tampered: Bool) {
         let ppid = cprisk_getppid_direct()
-        guard let result = readProcessInfo(pid: ppid) else { return (nil, false) }
+        guard let result = readProcessInfo(pid: ppid) else { return (nil, true) }
         let name = processComm(result.info)
         return (name.isEmpty ? nil : name, result.tampered)
     }

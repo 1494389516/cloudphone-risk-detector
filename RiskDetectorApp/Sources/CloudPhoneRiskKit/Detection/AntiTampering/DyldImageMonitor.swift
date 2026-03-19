@@ -171,7 +171,7 @@ final class DyldImageMonitor: @unchecked Sendable {
 
 extension DyldImageMonitor: Detector {
     func detect() throws -> DetectorResult {
-        evaluate()
+        return evaluate()
     }
 }
 

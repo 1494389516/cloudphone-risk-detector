@@ -147,7 +147,7 @@ enum SVCDirectCall {
             let result = buf.withUnsafeMutableBufferPointer { buffer in
                 cprisk_sysctlbyname_direct(cName, buffer.baseAddress, &size, nil, 0, &rawErrno)
             }
-            if result != 0 || size == 0 {
+            if result != 0 || size == 0 || Int(size) > buf.count {
                 return nil
             }
             if buf[Int(size) - 1] != 0 {
