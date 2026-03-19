@@ -663,7 +663,7 @@ public struct RiskDetectionEngine: Sendable {
 
         // 1. 越狱信号
         if context.jailbreak.confidence > 0 {
-            let jbScore = context.jailbreak.confidence
+            let jbScore = context.jailbreak.confidence * 100
             signals.append(
                 RiskSignal(
                     id: "jailbreak",

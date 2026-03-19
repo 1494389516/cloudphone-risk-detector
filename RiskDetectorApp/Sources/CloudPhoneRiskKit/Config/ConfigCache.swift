@@ -45,8 +45,8 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             config = try container.decode(RemoteConfig.self, forKey: .config)
             cachedAt = try container.decode(TimeInterval.self, forKey: .cachedAt)
-            isVerifiedByServer = (try? container.decodeIfPresent(Bool.self, forKey: .isVerifiedByServer)) ?? false
-            contentHash = try? container.decodeIfPresent(String.self, forKey: .contentHash)
+            isVerifiedByServer = try container.decodeIfPresent(Bool.self, forKey: .isVerifiedByServer) ?? false
+            contentHash = try container.decodeIfPresent(String.self, forKey: .contentHash)
         }
 
         fileprivate static func computeContentHash(for config: RemoteConfig) -> String? {

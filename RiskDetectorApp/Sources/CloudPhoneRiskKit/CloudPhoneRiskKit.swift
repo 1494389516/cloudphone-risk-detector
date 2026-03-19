@@ -459,6 +459,7 @@ public final class CPRiskKit: NSObject {
     /// 减少内存转储风险。Swift 无 SecureString，无法清零字符串内存；及时置 nil 可缩短敏感数据驻留时间。
     /// **调用方应在用户登出时调用本方法。**
     @objc public func unbindAccount() {
+        resetArmorRuntime()
         stateLock.lock()
         boundAccountId = nil
         boundSceneTag = nil
@@ -697,7 +698,7 @@ public final class CPRiskKit: NSObject {
             let previousHighRisk = prevIds.intersection(Self.highRiskSignalIds)
             let currentHighRisk = allCurrentSignalIds.intersection(Self.highRiskSignalIds)
             let suppressedIds = previousHighRisk.subtracting(currentHighRisk)
-            if suppressedIds.count >= 2 || (previousHighRisk.count > 0 && currentHighRisk.isEmpty && previousHighRisk.count >= 1) {
+            if suppressedIds.count >= 2 || (previousHighRisk.count > 0 && currentHighRisk.isEmpty) {
                 let evidence = [
                     "suppressed_ids": suppressedIds.sorted().joined(separator: ","),
                     "previous_count": "\(previousHighRisk.count)",
@@ -866,9 +867,14 @@ public final class CPRiskKit: NSObject {
             payloadData = try removingPayloadKey("challengeBinding", from: payloadData)
         }
 
-        let effectiveKeyId = (keyId == "k1" && TrustChainManager.currentKeyRotationPolicy() != nil)
-            ? TrustChainManager.currentKeyId(baseKeyId: keyId)
-            : keyId
+        let effectiveKeyId: String
+        if keyId == "k1",
+           TrustChainManager.currentKeyRotationPolicy() != nil,
+           let rotatedKeyId = TrustChainManager.currentKeyId(baseKeyId: keyId) {
+            effectiveKeyId = rotatedKeyId
+        } else {
+            effectiveKeyId = keyId
+        }
 
         let trustLevel = TrustChainManager.evaluateTrustLevel(
             deviceID: report.deviceID,
@@ -1025,9 +1031,14 @@ public final class CPRiskKit: NSObject {
         keyId: String = "k1",
         requireAttestation: Bool = true
     ) async throws -> ReportEnvelope {
-        let effectiveKeyId = (keyId == "k1" && TrustChainManager.currentKeyRotationPolicy() != nil)
-            ? TrustChainManager.currentKeyId(baseKeyId: keyId)
-            : keyId
+        let effectiveKeyId: String
+        if keyId == "k1",
+           TrustChainManager.currentKeyRotationPolicy() != nil,
+           let rotatedKeyId = TrustChainManager.currentKeyId(baseKeyId: keyId) {
+            effectiveKeyId = rotatedKeyId
+        } else {
+            effectiveKeyId = keyId
+        }
 
         guard AppAttestSigner.isSupported else {
             if requireAttestation {
@@ -2122,12 +2133,17 @@ public final class CPRiskKit: NSObject {
         let rc = signatureBuffer.withUnsafeMutableBufferPointer { signaturePtr in
             keyData.withUnsafeBytes { keyRaw in
                 signatureInput.withUnsafeBytes { inputRaw in
-                    cprisk_sign_with_derived_key(
-                        keyRaw.bindMemory(to: UInt8.self).baseAddress,
+                    guard let keyPtr = keyRaw.bindMemory(to: UInt8.self).baseAddress,
+                          let inputPtr = inputRaw.bindMemory(to: UInt8.self).baseAddress,
+                          let sigPtr = signaturePtr.baseAddress else {
+                        return Int32(-1)
+                    }
+                    return cprisk_sign_with_derived_key(
+                        keyPtr,
                         keyData.count,
-                        inputRaw.bindMemory(to: UInt8.self).baseAddress,
+                        inputPtr,
                         signatureInput.count,
-                        signaturePtr.baseAddress
+                        sigPtr
                     )
                 }
             }
@@ -2156,12 +2172,17 @@ public final class CPRiskKit: NSObject {
         let rc = expectedCString.withUnsafeBufferPointer { signaturePtr in
             keyData.withUnsafeBytes { keyRaw in
                 signatureInput.withUnsafeBytes { inputRaw in
-                    cprisk_verify_with_derived_key(
-                        keyRaw.bindMemory(to: UInt8.self).baseAddress,
+                    guard let keyPtr = keyRaw.bindMemory(to: UInt8.self).baseAddress,
+                          let inputPtr = inputRaw.bindMemory(to: UInt8.self).baseAddress,
+                          let sigPtr = signaturePtr.baseAddress else {
+                        return Int32(-1)
+                    }
+                    return cprisk_verify_with_derived_key(
+                        keyPtr,
                         keyData.count,
-                        inputRaw.bindMemory(to: UInt8.self).baseAddress,
+                        inputPtr,
                         signatureInput.count,
-                        signaturePtr.baseAddress
+                        sigPtr
                     )
                 }
             }

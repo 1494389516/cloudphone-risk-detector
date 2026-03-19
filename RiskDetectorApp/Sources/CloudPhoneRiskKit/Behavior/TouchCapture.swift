@@ -249,7 +249,7 @@ private enum TouchMath {
     static func variance(values: [Double]) -> Double? {
         guard values.count >= 2 else { return nil }
         let mean = values.reduce(0, +) / Double(values.count)
-        let v = values.map { pow($0 - mean, 2) }.reduce(0, +) / Double(values.count)
+        let v = values.map { pow($0 - mean, 2) }.reduce(0, +) / Double(values.count - 1)
         return v
     }
 
