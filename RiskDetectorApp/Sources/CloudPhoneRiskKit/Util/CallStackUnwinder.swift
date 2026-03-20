@@ -210,6 +210,7 @@ public enum CallStackUnwinder {
 
         for _ in 0..<ptr.pointee.ncmds {
             let load = cmd.assumingMemoryBound(to: load_command.self).pointee
+            guard load.cmdsize >= MemoryLayout<load_command>.size else { break }
             if load.cmd == LC_SEGMENT_64 {
                 let seg = cmd.assumingMemoryBound(to: segment_command_64.self).pointee
                 if tupleStringEquals(seg.segname, "__TEXT") {

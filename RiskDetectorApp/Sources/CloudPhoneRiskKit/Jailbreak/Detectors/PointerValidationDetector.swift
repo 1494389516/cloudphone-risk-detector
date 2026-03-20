@@ -113,6 +113,7 @@ enum MachOTextRange {
                     return start..<end
                 }
             }
+            guard lc.cmdsize >= MemoryLayout<load_command>.size else { break }
             cmdPtr = cmdPtr.advanced(by: Int(lc.cmdsize))
         }
         return nil

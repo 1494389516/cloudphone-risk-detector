@@ -239,6 +239,7 @@ enum SDKBinaryIntegrityChecker {
         var cmd = header.advanced(by: MemoryLayout<mach_header_64>.size)
         for _ in 0..<ptr.pointee.ncmds {
             let loadCmd = cmd.assumingMemoryBound(to: load_command.self).pointee
+            guard loadCmd.cmdsize >= MemoryLayout<load_command>.size else { break }
             if loadCmd.cmd == LC_CODE_SIGNATURE {
                 return true
             }
@@ -277,6 +278,7 @@ enum SDKBinaryIntegrityChecker {
         var cmd = header.advanced(by: MemoryLayout<mach_header_64>.size)
         for _ in 0..<ptr.pointee.ncmds {
             let loadCmd = cmd.assumingMemoryBound(to: load_command.self).pointee
+            guard loadCmd.cmdsize >= MemoryLayout<load_command>.size else { break }
             if loadCmd.cmd == LC_UUID {
                 let uuidCmd = cmd.assumingMemoryBound(to: uuid_command.self).pointee
                 let bytes = withUnsafeBytes(of: uuidCmd.uuid) { Array($0) }
@@ -294,6 +296,7 @@ enum SDKBinaryIntegrityChecker {
         var cmd = header.advanced(by: MemoryLayout<mach_header_64>.size)
         for _ in 0..<ptr.pointee.ncmds {
             let loadCmd = cmd.assumingMemoryBound(to: load_command.self).pointee
+            guard loadCmd.cmdsize >= MemoryLayout<load_command>.size else { break }
             if loadCmd.cmd == LC_SEGMENT_64 {
                 let seg = cmd.assumingMemoryBound(to: segment_command_64.self).pointee
                 let segName = withUnsafePointer(to: seg.segname) { ptr in
@@ -321,6 +324,7 @@ enum SDKBinaryIntegrityChecker {
         var cmd = header.advanced(by: MemoryLayout<mach_header_64>.size)
         for _ in 0..<ptr.pointee.ncmds {
             let loadCmd = cmd.assumingMemoryBound(to: load_command.self).pointee
+            guard loadCmd.cmdsize >= MemoryLayout<load_command>.size else { break }
             if loadCmd.cmd == LC_SEGMENT_64 {
                 let seg = cmd.assumingMemoryBound(to: segment_command_64.self).pointee
                 totalSize += seg.filesize

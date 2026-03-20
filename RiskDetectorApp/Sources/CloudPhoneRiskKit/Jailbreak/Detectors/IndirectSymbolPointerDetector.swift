@@ -84,6 +84,7 @@ struct IndirectSymbolPointerDetector: Detector {
                     }
                 }
             }
+            guard lc.cmdsize >= MemoryLayout<load_command>.size else { break }
             cmdPtr = cmdPtr.advanced(by: Int(lc.cmdsize))
         }
 
