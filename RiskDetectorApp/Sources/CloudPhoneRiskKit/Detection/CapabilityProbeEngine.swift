@@ -85,7 +85,7 @@ public struct CapabilityScore: Codable, Sendable {
             ],
             state: RiskSignalState.soft(confidence: confidence),
             layer: 3,
-            weightHint: Double(riskContribution) / 100.0
+            weightHint: min(Double(riskContribution), 100)
         )
     }
 }

@@ -270,6 +270,11 @@ struct PhysicalSensorProbe: Detector {
 
         // 磁力计：总场强 0 或不在 25-65 μT -> +15
         let magMagnitudes = mSamples.map { sqrt($0.x * $0.x + $0.y * $0.y + $0.z * $0.z) }
+        guard !magMagnitudes.isEmpty else {
+            score += 15
+            methods.append("physical_sensor:magnetometer_no_samples")
+            return (score, methods)
+        }
         let magMean = magMagnitudes.reduce(0, +) / Double(magMagnitudes.count)
         if magMean < 0.1 {
             score += 15

@@ -229,7 +229,7 @@ private enum TouchMath {
         guard intervals.count >= 2 else { return nil }
         let mean = intervals.reduce(0, +) / Double(intervals.count)
         guard mean > 0 else { return nil }
-        let variance = intervals.map { pow($0 - mean, 2) }.reduce(0, +) / Double(intervals.count)
+        let variance = intervals.map { pow($0 - mean, 2) }.reduce(0, +) / Double(intervals.count - 1)
         let std = sqrt(variance)
         return std / mean
     }
@@ -257,7 +257,7 @@ private enum TouchMath {
         guard values.count >= 3 else { return nil }
         let mean = values.reduce(0, +) / Double(values.count)
         guard mean > 0 else { return nil }
-        let variance = values.map { pow($0 - mean, 2) }.reduce(0, +) / Double(values.count)
+        let variance = values.map { pow($0 - mean, 2) }.reduce(0, +) / Double(values.count - 1)
         return sqrt(variance) / mean
     }
 
