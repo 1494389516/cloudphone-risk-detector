@@ -288,6 +288,7 @@ private extension SystemLibrarySegmentLayoutDetector {
 
             let regionStart = UInt64(address)
             let regionEnd = regionStart &+ UInt64(size)
+            guard regionEnd >= regionStart else { break }
             if regionStart >= imageEnd {
                 break
             }

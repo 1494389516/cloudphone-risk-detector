@@ -110,7 +110,7 @@ public struct TimeWindow: Sendable, Codable {
     /// 检查给定时间戳是否在窗口内
     public func contains(_ timestamp: TimeInterval) -> Bool {
         let (start, end) = getActualRange()
-        return timestamp >= start && timestamp <= end
+        return timestamp >= start && timestamp < end
     }
 }
 

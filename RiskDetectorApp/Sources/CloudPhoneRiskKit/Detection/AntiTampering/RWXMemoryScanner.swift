@@ -184,8 +184,8 @@ struct RWXMemoryScanner: Detector {
                 }
             }
 
-            address += size
             if size == 0 { break }
+            address += size
             iteration += 1
         }
 

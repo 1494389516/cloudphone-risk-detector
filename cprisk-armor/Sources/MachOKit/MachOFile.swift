@@ -774,7 +774,8 @@ public final class MachOFile {
         var cursor = segStart
         for range in occupied {
             guard let aligned = try? alignUp(cursor, to: alignment) else { return nil }
-            if aligned + contentLength <= range.start {
+            guard let alignedEnd = try? checkedAdd(aligned, contentLength, context: "findAvailableRange gap check") else { return nil }
+            if alignedEnd <= range.start {
                 let delta = aligned - segStart
                 return (aligned, segment.vmAddress + UInt64(delta))
             }
@@ -782,7 +783,8 @@ public final class MachOFile {
         }
 
         guard let alignedTail = try? alignUp(cursor, to: alignment) else { return nil }
-        if alignedTail + contentLength <= segEnd {
+        guard let tailEnd = try? checkedAdd(alignedTail, contentLength, context: "findAvailableRange tail check") else { return nil }
+        if tailEnd <= segEnd {
             let delta = alignedTail - segStart
             return (alignedTail, segment.vmAddress + UInt64(delta))
         }
