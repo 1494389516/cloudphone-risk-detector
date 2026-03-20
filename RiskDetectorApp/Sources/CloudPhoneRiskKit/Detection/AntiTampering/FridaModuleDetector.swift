@@ -210,6 +210,7 @@ struct FridaModuleDetector: Detector {
 
         for _ in 0..<Int(header64.pointee.ncmds) {
             let loadCommand = command.assumingMemoryBound(to: load_command.self).pointee
+            guard loadCommand.cmdsize >= MemoryLayout<load_command>.size else { break }
             defer { command = command.advanced(by: Int(loadCommand.cmdsize)) }
 
             guard loadCommand.cmd == LC_SEGMENT_64 else { continue }

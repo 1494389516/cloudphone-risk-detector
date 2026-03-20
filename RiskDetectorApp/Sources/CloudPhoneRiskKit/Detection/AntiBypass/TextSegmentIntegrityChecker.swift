@@ -384,6 +384,7 @@ enum TextSegmentIntegrityChecker {
 
         for _ in 0..<ptr.pointee.ncmds {
             let load = cmd.assumingMemoryBound(to: load_command.self).pointee
+            guard load.cmdsize >= MemoryLayout<load_command>.size else { break }
             if load.cmd == LC_SEGMENT_64 {
                 let seg = cmd.assumingMemoryBound(to: segment_command_64.self).pointee
                 if tupleStringEquals(seg.segname, "__TEXT") {
@@ -421,6 +422,7 @@ enum TextSegmentIntegrityChecker {
         var cmd = UnsafeRawPointer(ptr).advanced(by: MemoryLayout<mach_header_64>.size)
         for _ in 0..<ptr.pointee.ncmds {
             let load = cmd.assumingMemoryBound(to: load_command.self).pointee
+            guard load.cmdsize >= MemoryLayout<load_command>.size else { break }
             if load.cmd == LC_ENCRYPTION_INFO_64 {
                 guard load.cmdsize >= MemoryLayout<encryption_info_command_64>.size else { return false }
                 let enc = cmd.assumingMemoryBound(to: encryption_info_command_64.self).pointee
@@ -527,6 +529,7 @@ enum TextSegmentIntegrityChecker {
         var cmd = UnsafeRawPointer(ptr).advanced(by: MemoryLayout<mach_header_64>.size)
         for _ in 0..<ptr.pointee.ncmds {
             let load = cmd.assumingMemoryBound(to: load_command.self).pointee
+            guard load.cmdsize >= MemoryLayout<load_command>.size else { break }
             if load.cmd == LC_UUID {
                 let uuidCmd = cmd.assumingMemoryBound(to: uuid_command.self).pointee
                 let bytes = withUnsafeBytes(of: uuidCmd.uuid) { Array($0) }

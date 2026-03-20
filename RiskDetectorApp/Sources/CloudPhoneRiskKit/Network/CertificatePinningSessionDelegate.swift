@@ -98,6 +98,7 @@ public final class CertificatePinningSessionDelegate: NSObject, URLSessionDelega
         guard let publicKey = SecCertificateCopyKey(certificate) else { return nil }
         var error: Unmanaged<CFError>?
         guard let publicKeyData = SecKeyCopyExternalRepresentation(publicKey, &error) as Data? else {
+            error?.takeRetainedValue()  // release to avoid leak
             return nil
         }
         let hash = SHA256.hash(data: publicKeyData)

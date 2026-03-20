@@ -51,6 +51,7 @@ struct DyldInterposeDetector: Detector {
 
             for _ in 0..<header64.pointee.ncmds {
                 let loadCmd = cmd.assumingMemoryBound(to: load_command.self).pointee
+                guard loadCmd.cmdsize >= MemoryLayout<load_command>.size else { break }
                 if loadCmd.cmd == LC_SEGMENT_64 {
                     let seg = cmd.assumingMemoryBound(to: segment_command_64.self).pointee
                     let segName = withUnsafePointer(to: seg.segname) { ptr in

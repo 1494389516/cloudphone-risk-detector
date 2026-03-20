@@ -80,6 +80,7 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
             Logger.log("server_aggregate.setVerified rejected: no key configured")
             return
         }
+        let capturedKey = key
         lock.unlock()
 
         guard let payload = try? JSONEncoder().encode(signals) else {
@@ -87,12 +88,18 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
             return
         }
 
-        guard HMAC<SHA256>.isValidAuthenticationCode(signature, authenticating: payload, using: key) else {
+        guard HMAC<SHA256>.isValidAuthenticationCode(signature, authenticating: payload, using: capturedKey) else {
             Logger.log("server_aggregate.setVerified rejected: HMAC mismatch")
             return
         }
 
         lock.lock()
+        // Re-check key hasn't been cleared between verification and store
+        guard serverSignalKey != nil else {
+            lock.unlock()
+            Logger.log("server_aggregate.setVerified rejected: key cleared during verification")
+            return
+        }
         current = signals
         lock.unlock()
         Logger.log("server_aggregate.setVerified: accepted")
