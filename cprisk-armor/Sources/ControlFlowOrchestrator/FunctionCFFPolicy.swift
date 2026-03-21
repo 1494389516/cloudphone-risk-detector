@@ -13,6 +13,10 @@ public struct AntiDeobfuscationOptions: Codable, Equatable, Sendable {
     public var enableMultiDispatcher: Bool = true
     public var enableDefaultPoisonForHeavy: Bool = true
     public var enablePass8CFFAwareness: Bool = true
+    /// When true, Pass 9 may swap physically adjacent NOP islands under CBZ/CBNZ (+8) patterns (safe subset).
+    public var enableBinaryCFGShuffle: Bool = true
+    /// When true, Pass 9 may replace a NOP slot with an always-false CBNZ XZR veneer (same execution path).
+    public var enableCFGOpaqueIslands: Bool = true
 
     public init() {}
 }
@@ -172,6 +176,10 @@ private func apply(optionKey key: String, value: String, into options: inout Ant
         options.enableDefaultPoisonForHeavy = boolValue
     case "enable_pass8_cff_awareness":
         options.enablePass8CFFAwareness = boolValue
+    case "enable_binary_cfg_shuffle":
+        options.enableBinaryCFGShuffle = boolValue
+    case "enable_cfg_opaque_islands":
+        options.enableCFGOpaqueIslands = boolValue
     default:
         break
     }

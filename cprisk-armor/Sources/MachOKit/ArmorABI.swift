@@ -41,6 +41,7 @@ public enum ArmorABI {
         public static let importEncryptedTable = "__swift5_imp"
         public static let headerBackup = "__cprisk_hbhdr"
         public static let chainMeta = "__swift5_cpmt"
+        public static let textEncryption = "__swift5_txte"
 
         public static let splitAnchorSections = [
             anchorA,
@@ -53,7 +54,7 @@ public enum ArmorABI {
             stringTable, loader, protectedBlob,
             anchorA, anchorB, anchorC, anchorD, fullAnchorHash,
             whiteboxMeta, whiteboxCode, whiteboxData, whiteboxTag,
-            antiDebugPlan, importEncryptedTable, headerBackup, chainMeta,
+            antiDebugPlan, importEncryptedTable, headerBackup, chainMeta, textEncryption,
         ]
     }
 
@@ -629,6 +630,7 @@ public enum ArmorABI {
             set.insert(Sections.importEncryptedTable)
             set.insert(Sections.headerBackup)
             set.insert(Sections.chainMeta)
+            set.insert(Sections.textEncryption)
             return set
         }()
 

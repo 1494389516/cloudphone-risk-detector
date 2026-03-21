@@ -31,6 +31,11 @@
 #define CPRISK_ARMOR_SECTION_IMPORT_ENCRYPTED_TABLE "__swift5_imp"
 #define CPRISK_ARMOR_SECTION_HEADER_BACKUP "__cprisk_hbhdr"
 #define CPRISK_ARMOR_SECTION_CHAIN_META "__swift5_cpmt"
+#define CPRISK_ARMOR_SECTION_TEXT_ENCRYPT "__swift5_txte"
+
+#define CPRISK_TEXT_ENCRYPT_MAGIC 0x45545043u /* "CPTE" little-endian */
+#define CPRISK_TEXT_ENCRYPT_ABI_VERSION 1u
+#define CPRISK_TEXT_ENCRYPT_ENTRY_FLAG_NONE 0u
 
 #define CPRISK_ARMOR_ADBG_ABI_VERSION 1u
 #define CPRISK_ARMOR_ADBG_MAGIC 0x43504137u /* "CPA7" */
@@ -152,6 +157,23 @@ struct cprisk_armor_whitebox_header {
     uint8_t  config_digest[CPRISK_ARMOR_HASH_SIZE];
 };
 
+struct cprisk_text_encrypt_header {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t count;
+    uint32_t flags;
+};
+
+struct cprisk_text_encrypt_entry {
+    uint64_t vm_addr;
+    uint64_t size;
+    uint32_t key_id;
+    uint32_t flags;
+    uint8_t  nonce[CPRISK_ARMOR_NONCE_SIZE];
+    uint8_t  hmac_tag[CPRISK_ARMOR_HASH_SIZE];
+    uint8_t  content_hash[CPRISK_ARMOR_HASH_SIZE];
+};
+
 struct cprisk_whitebox_probe_result {
     uint32_t abi_version;
     uint32_t capabilities;
@@ -175,6 +197,10 @@ _Static_assert(sizeof(struct cprisk_armor_antidebug_entry) == 64,
                "cprisk anti-debug entry ABI drift");
 _Static_assert(sizeof(struct cprisk_armor_whitebox_header) == 48,
                "cprisk whitebox header ABI drift");
+_Static_assert(sizeof(struct cprisk_text_encrypt_header) == 16,
+               "cprisk text encrypt header ABI drift");
+_Static_assert(sizeof(struct cprisk_text_encrypt_entry) == 96,
+               "cprisk text encrypt entry ABI drift");
 _Static_assert(sizeof(struct cprisk_whitebox_probe_result) == 16,
                "cprisk whitebox probe ABI drift");
 _Static_assert(CPRISK_ARMOR_ANCHOR_LANE_COUNT * CPRISK_ARMOR_ANCHOR_LANE_SIZE ==

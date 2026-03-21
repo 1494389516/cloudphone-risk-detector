@@ -218,6 +218,378 @@ final class ControlFlowOrchestratorTests: XCTestCase {
         XCTAssertNoThrow(try file.validateStructure())
     }
 
+    /// Three unconditional blocks forming an in-function cycle (B→+4, B→+8, B→entry).
+    /// A trailing symbol bounds VM range so `functionSizeBytes` is exactly 12 (no padding inside the function).
+    func testPass9MultiBasicBlockReorderShufflesThreeBlockCycleAndPreservesBranchSemantics() throws {
+        let bForward4 = Self.encodeARM64UnconditionalB(deltaBytes: 4)
+        let bBack8 = Self.encodeARM64UnconditionalB(deltaBytes: -8)
+        let fixtureURL = try Self.writePass9Fixture(
+            named: "pass9_multi_bb_cycle",
+            symbols: [
+                ("_MultiBB.cycle3", 0x1800),
+                ("_MultiBB.boundary", 0x180C)
+            ],
+            functionBlocks: [
+                [bForward4, bForward4, bBack8],
+                [0xD503_201F]
+            ]
+        )
+        // Light tier: requiredPatchSlots == 1 so a 2–3 instruction structural rewrite is not rolled back
+        // when there are no neutral-eligible slots (function is all unconditional branches).
+        // The boundary symbol must be a managed tier (not `never`) so it appears in `matchedCandidates`
+        // and caps the VM range of `MultiBB.cycle3` at 12 bytes.
+        let policyURL = try Self.writePass9Policy(
+            named: "pass9_multi_bb_cycle",
+            heavy: [],
+            light: ["MultiBB.cycle3", "MultiBB.boundary"],
+            never: [],
+            regionOnly: []
+        )
+        defer {
+            try? FileManager.default.removeItem(at: fixtureURL)
+            try? FileManager.default.removeItem(at: policyURL)
+        }
+
+        let file = try MachOFile(url: fixtureURL)
+        let textSection = try XCTUnwrap(try file.section(segment: "__TEXT", section: "__text"))
+        let textStart = Int(textSection.offset)
+        let fnFileOffset = textStart + 0x0 // symbol at __text base
+        let functionSpan = 12
+
+        let before = try textSection.readContent(from: file.data)
+        let targetsBefore = Self.unconditionalBranchTargets(
+            in: before,
+            baseFileOffset: fnFileOffset,
+            fromSectionOffset: 0,
+            byteCount: functionSpan
+        )
+
+        let result = try ControlFlowOrchestratorPass(policyFilePath: policyURL.path).execute(
+            on: file,
+            config: PassConfig(verbose: true)
+        )
+
+        let after = try textSection.readContent(from: file.data)
+        let targetsAfter = Self.unconditionalBranchTargets(
+            in: after,
+            baseFileOffset: fnFileOffset,
+            fromSectionOffset: 0,
+            byteCount: functionSpan
+        )
+
+        XCTAssertGreaterThan(result.itemsProcessed, 0)
+        XCTAssertTrue(
+            result.details.contains(where: { $0.contains("CFG multi-bb reorder") }),
+            "expected multi-basic-block reorder to win over branch-stub shuffle; details=\(result.details)"
+        )
+
+        let multiPatches = result.details.filter { $0.contains("CFG multi-bb reorder") }
+        XCTAssertGreaterThanOrEqual(multiPatches.count, 1)
+
+        let structuralChangeLines = result.details.filter { line in
+            line.contains("patch __text+") && line.contains("CFG multi-bb reorder")
+        }
+        XCTAssertGreaterThanOrEqual(
+            structuralChangeLines.count,
+            2,
+            "multi-bb reorder should move more than one instruction slot; got \(structuralChangeLines.count)"
+        )
+
+        XCTAssertEqual(
+            targetsBefore.sorted(),
+            targetsAfter.sorted(),
+            "PC-relative branch fixup must preserve the multiset of jump targets"
+        )
+        for t in targetsAfter {
+            XCTAssertTrue(
+                [fnFileOffset, fnFileOffset + 4, fnFileOffset + 8].contains(t),
+                "rewritten branches should still target only original block entry PCs"
+            )
+        }
+
+        XCTAssertNoThrow(try file.validateStructure())
+    }
+
+    /// Unconditional branch to an address that is not a block leader makes multi-bb reorder bail out.
+    /// With only B instructions, neutral substitution cannot run → Pass9 skips and reports the reason.
+    func testPass9MultiBasicBlockReorderAbortsOnExternalBranchTargetAndSkipsWithReason() throws {
+        let bForward4 = Self.encodeARM64UnconditionalB(deltaBytes: 4)
+        let bToExternal = Self.encodeARM64UnconditionalB(deltaBytes: 0x4000)
+        let fixtureURL = try Self.writePass9Fixture(
+            named: "pass9_multi_bb_external_target",
+            symbols: [
+                ("_MultiBB.badExit", 0x1800),
+                ("_MultiBB.boundary2", 0x180C)
+            ],
+            functionBlocks: [
+                [bForward4, bForward4, bToExternal],
+                [0xD503_201F]
+            ]
+        )
+        let policyURL = try Self.writePass9Policy(
+            named: "pass9_multi_bb_external_target",
+            heavy: ["MultiBB.badExit"],
+            light: ["MultiBB.boundary2"],
+            never: [],
+            regionOnly: []
+        )
+        defer {
+            try? FileManager.default.removeItem(at: fixtureURL)
+            try? FileManager.default.removeItem(at: policyURL)
+        }
+
+        let file = try MachOFile(url: fixtureURL)
+        let result = try ControlFlowOrchestratorPass(policyFilePath: policyURL.path).execute(
+            on: file,
+            config: PassConfig(verbose: true)
+        )
+
+        XCTAssertTrue(
+            result.details.contains(where: { line in
+                line.contains("[skipped]") && line.contains("MultiBB.badExit")
+            }),
+            "expected badExit to be skipped; details=\(result.details)"
+        )
+        XCTAssertFalse(result.details.contains(where: { $0.contains("CFG multi-bb reorder") }))
+        XCTAssertTrue(result.details.contains(where: { $0.contains("skipped functions: 1") }))
+        XCTAssertTrue(
+            result.details.contains(where: { $0.contains("insufficient rewritable entry instructions") }),
+            "details=\(result.details)"
+        )
+        XCTAssertNoThrow(try file.validateStructure())
+    }
+
+    /// NOP padding run (≥3 words) enables switch-style TBZ/TBNZ-on-WZR dispatcher + dead bogus NOPs; semantics match NOP slide.
+    func testPass9SwitchDispatcherInjectedWithBogusAndPreservesLayout() throws {
+        let eightData: [UInt32] = [
+            0xAA0A03E9, 0x9100018B, 0xD10001CD, 0x8A10020F,
+            0xAA120251, 0xD503201F, 0xAA1403F4, 0x910002B5
+        ]
+        let nopRun = [UInt32](repeating: 0xD503_201F, count: 4)
+        let ret: UInt32 = 0xD65F03C0
+        let body = eightData + nopRun + [ret]
+        let fnBytes = body.count * 4
+        let fixtureURL = try Self.writePass9Fixture(
+            named: "pass9_switch_dispatcher",
+            symbols: [
+                ("_Switch.dispatch", 0x1800),
+                ("_Switch.boundary", 0x1800 + UInt64(fnBytes))
+            ],
+            functionBlocks: [
+                body,
+                [0xD503_201F]
+            ]
+        )
+        let policyURL = try Self.writePass9Policy(
+            named: "pass9_switch_dispatcher",
+            heavy: ["Switch.dispatch"],
+            light: ["Switch.boundary"],
+            never: [],
+            regionOnly: [],
+            enableMultiDispatcher: true
+        )
+        defer {
+            try? FileManager.default.removeItem(at: fixtureURL)
+            try? FileManager.default.removeItem(at: policyURL)
+        }
+
+        let file = try MachOFile(url: fixtureURL)
+        let textSection = try XCTUnwrap(try file.section(segment: "__TEXT", section: "__text"))
+        let textStart = Int(textSection.offset)
+        let before = try textSection.readContent(from: file.data)
+
+        let result = try ControlFlowOrchestratorPass(policyFilePath: policyURL.path).execute(
+            on: file,
+            config: PassConfig(verbose: true)
+        )
+
+        let after = try textSection.readContent(from: file.data)
+        XCTAssertGreaterThan(result.itemsProcessed, 0)
+        XCTAssertNotEqual(before, after)
+
+        XCTAssertTrue(
+            result.details.contains(where: { $0.contains("CFG switch dispatcher") }),
+            "expected switch dispatcher; details=\(result.details)"
+        )
+        XCTAssertTrue(result.details.contains(where: { $0.contains("bogus block") }))
+
+        let nopRunSectionOffset = eightData.count * 4
+        let head = Self.readWordLE(after, at: nopRunSectionOffset)
+        XCTAssertNotEqual(head, 0xD503_201F, "first NOP should become TBZ dispatcher")
+        XCTAssertEqual((head >> 24) & 0xFF, 0x36, "live dispatcher should be TBZ (WZR)")
+
+        let dead1 = Self.readWordLE(after, at: nopRunSectionOffset + 4)
+        let dead2 = Self.readWordLE(after, at: nopRunSectionOffset + 8)
+        XCTAssertNotEqual(dead1, 0xD503_201F, "second slot is unreachable TBZ/TBNZ (dead arm), not NOP")
+        XCTAssertNotEqual(dead2, 0xD503_201F, "third slot is unreachable TBZ/TBNZ (dead arm), not NOP")
+        XCTAssertEqual((dead1 >> 24) & 0xFF, 0x36, "dead arm[1] is TBZ")
+        XCTAssertEqual((dead2 >> 24) & 0xFF, 0x37, "dead arm[2] is TBNZ")
+
+        XCTAssertEqual(Self.readWordLE(after, at: nopRunSectionOffset + 12), 0xD503_201F, "join slot stays NOP")
+
+        let retOffset = nopRunSectionOffset + 16
+        XCTAssertEqual(Self.readWordLE(before, at: retOffset), Self.readWordLE(after, at: retOffset), "RET after NOP run unchanged")
+
+        let uBefore = Self.unconditionalBranchTargets(
+            in: before,
+            baseFileOffset: textStart,
+            fromSectionOffset: 0,
+            byteCount: body.count * 4
+        )
+        let uAfter = Self.unconditionalBranchTargets(
+            in: after,
+            baseFileOffset: textStart,
+            fromSectionOffset: 0,
+            byteCount: body.count * 4
+        )
+        XCTAssertEqual(uBefore.sorted(), uAfter.sorted(), "B/BL targets multiset unchanged in function span")
+
+        XCTAssertNoThrow(try file.validateStructure())
+    }
+
+    /// Fewer than three consecutive NOPs cannot host the switch dispatcher; Pass9 must fall back without "switch dispatcher" lines.
+    func testPass9SwitchDispatcherNotUsedWhenNopRunTooShort() throws {
+        let eightData: [UInt32] = [
+            0xAA0A03E9, 0x9100018B, 0xD10001CD, 0x8A10020F,
+            0xAA120251, 0xD503201F, 0xAA1403F4, 0x910002B5
+        ]
+        let shortNops = [UInt32](repeating: 0xD503_201F, count: 2)
+        let ret: UInt32 = 0xD65F03C0
+        let body = eightData + shortNops + [ret]
+        let fnBytes = body.count * 4
+        let fixtureURL = try Self.writePass9Fixture(
+            named: "pass9_switch_short_nop",
+            symbols: [
+                ("_Switch.shortNop", 0x1800),
+                ("_Switch.boundaryShort", 0x1800 + UInt64(fnBytes))
+            ],
+            functionBlocks: [
+                body,
+                [0xD503_201F]
+            ]
+        )
+        let policyURL = try Self.writePass9Policy(
+            named: "pass9_switch_short_nop",
+            heavy: ["Switch.shortNop"],
+            light: ["Switch.boundaryShort"],
+            never: [],
+            regionOnly: [],
+            enableMultiDispatcher: true
+        )
+        defer {
+            try? FileManager.default.removeItem(at: fixtureURL)
+            try? FileManager.default.removeItem(at: policyURL)
+        }
+
+        let file = try MachOFile(url: fixtureURL)
+        let result = try ControlFlowOrchestratorPass(policyFilePath: policyURL.path).execute(
+            on: file,
+            config: PassConfig(verbose: true)
+        )
+
+        XCTAssertGreaterThan(result.itemsProcessed, 0)
+        XCTAssertFalse(result.details.contains(where: { $0.contains("CFG switch dispatcher") }))
+        XCTAssertNoThrow(try file.validateStructure())
+    }
+
+    /// With multi-dispatcher off, the same fixture must not apply switch injection (fail-safe path uses other rewrites or neutral only).
+    func testPass9SwitchDispatcherSkippedWhenMultiDispatcherDisabled() throws {
+        let eightData: [UInt32] = [
+            0xAA0A03E9, 0x9100018B, 0xD10001CD, 0x8A10020F,
+            0xAA120251, 0xD503201F, 0xAA1403F4, 0x910002B5
+        ]
+        let nopRun = [UInt32](repeating: 0xD503_201F, count: 4)
+        let ret: UInt32 = 0xD65F03C0
+        let body = eightData + nopRun + [ret]
+        let fnBytes = body.count * 4
+        let fixtureURL = try Self.writePass9Fixture(
+            named: "pass9_switch_off",
+            symbols: [
+                ("_Switch.dispatchOff", 0x1800),
+                ("_Switch.boundaryOff", 0x1800 + UInt64(fnBytes))
+            ],
+            functionBlocks: [
+                body,
+                [0xD503_201F]
+            ]
+        )
+        let policyURL = try Self.writePass9Policy(
+            named: "pass9_switch_off",
+            heavy: ["Switch.dispatchOff"],
+            light: ["Switch.boundaryOff"],
+            never: [],
+            regionOnly: [],
+            enableMultiDispatcher: false
+        )
+        defer {
+            try? FileManager.default.removeItem(at: fixtureURL)
+            try? FileManager.default.removeItem(at: policyURL)
+        }
+
+        let file = try MachOFile(url: fixtureURL)
+        let result = try ControlFlowOrchestratorPass(policyFilePath: policyURL.path).execute(
+            on: file,
+            config: PassConfig(verbose: true)
+        )
+
+        XCTAssertGreaterThan(result.itemsProcessed, 0)
+        XCTAssertFalse(result.details.contains(where: { $0.contains("CFG switch dispatcher") }))
+        XCTAssertNoThrow(try file.validateStructure())
+    }
+
+    func testPass9PerformsBranchStubCFGReorderWithRelocationFixup() throws {
+        let fixtureURL = try Self.writePass9Fixture(
+            named: "pass9_cfg_reorder_branch_stubs",
+            symbols: [
+                ("_DecisionTree.decide", 0x1800),
+            ],
+            functionBlocks: [
+                [
+                    0xB4000040, // CBZ X0, +8
+                    0x14000005, // B +20 (from +4 -> +24)
+                    0x14000002, // B +8  (from +8 -> +16)
+                    0xAA0A03E9,
+                    0x9100018B,
+                    0x8A10020F,
+                    0xAA120251,
+                    0xD503201F,
+                ],
+            ]
+        )
+        let policyURL = try Self.writePass9Policy(
+            named: "pass9_cfg_reorder_branch_stubs",
+            heavy: ["DecisionTree.decide"],
+            light: [],
+            never: [],
+            regionOnly: []
+        )
+        defer {
+            try? FileManager.default.removeItem(at: fixtureURL)
+            try? FileManager.default.removeItem(at: policyURL)
+        }
+
+        let file = try MachOFile(url: fixtureURL)
+        let textSection = try XCTUnwrap(try file.section(segment: "__TEXT", section: "__text"))
+        let before = try textSection.readContent(from: file.data)
+
+        let result = try ControlFlowOrchestratorPass(policyFilePath: policyURL.path).execute(
+            on: file,
+            config: PassConfig(verbose: true)
+        )
+
+        let after = try textSection.readContent(from: file.data)
+        XCTAssertGreaterThan(result.itemsProcessed, 0)
+        XCTAssertNotEqual(before, after)
+
+        // Head predicate is inverted (CBZ -> CBNZ), and branch stubs are reordered
+        // with PC-relative fixup so absolute targets remain stable.
+        XCTAssertEqual(Self.readWordLE(after, at: 0x00), 0xB5000040)
+        XCTAssertEqual(Self.readWordLE(after, at: 0x04), 0x14000003)
+        XCTAssertEqual(Self.readWordLE(after, at: 0x08), 0x14000004)
+        XCTAssertTrue(result.details.contains(where: { $0.contains("CFG branch-stub reorder") }))
+        XCTAssertNoThrow(try file.validateStructure())
+    }
+
     func testCoverageAdvisorSuggestsSafeDefaults() {
         let policy = FunctionCFFPolicy(
             version: 2,
@@ -249,9 +621,11 @@ final class ControlFlowOrchestratorTests: XCTestCase {
         heavy: [String],
         light: [String],
         never: [String],
-        regionOnly: [String]
+        regionOnly: [String],
+        enableMultiDispatcher: Bool = true
     ) throws -> URL {
         let url = temporaryURL(named: "\(name)_policy", ext: "yaml")
+        let md = enableMultiDispatcher ? "true" : "false"
         let contents = """
         version: 2
         functions:
@@ -266,7 +640,7 @@ final class ControlFlowOrchestratorTests: XCTestCase {
         anti_deobfuscation:
           enable_runtime_salt: true
           enable_fake_state_release_only: true
-          enable_multi_dispatcher: true
+          enable_multi_dispatcher: \(md)
           enable_default_poison_for_heavy: true
           enable_pass8_cff_awareness: true
         """
@@ -407,6 +781,52 @@ final class ControlFlowOrchestratorTests: XCTestCase {
     private static func leBytes(_ value: UInt32) -> Data {
         var le = value.littleEndian
         return withUnsafeBytes(of: &le) { Data($0) }
+    }
+
+    private static func readWordLE(_ data: Data, at offset: Int) -> UInt32 {
+        precondition(offset >= 0 && offset + 4 <= data.count)
+        return UInt32(data[offset])
+            | (UInt32(data[offset + 1]) << 8)
+            | (UInt32(data[offset + 2]) << 16)
+            | (UInt32(data[offset + 3]) << 24)
+    }
+
+    private static func encodeARM64UnconditionalB(deltaBytes: Int) -> UInt32 {
+        precondition(deltaBytes % 4 == 0)
+        let words = deltaBytes / 4
+        precondition(words >= -(1 << 25) && words < (1 << 25))
+        let imm26 = UInt32(bitPattern: Int32(words)) & 0x03FF_FFFF
+        return 0x1400_0000 | imm26
+    }
+
+    private static func arm64UnconditionalBranchTargetPC(fileOffset: Int, raw: UInt32) -> Int? {
+        guard (raw & 0xFC00_0000) == 0x1400_0000 else { return nil }
+        var immBits = raw & 0x03FF_FFFF
+        if (immBits & 0x0200_0000) != 0 {
+            immBits |= 0xFC00_0000
+        }
+        let signed = Int32(bitPattern: immBits)
+        return fileOffset + Int(signed) * 4
+    }
+
+    private static func unconditionalBranchTargets(
+        in data: Data,
+        baseFileOffset: Int,
+        fromSectionOffset: Int,
+        byteCount: Int
+    ) -> [Int] {
+        var targets = [Int]()
+        var offset = fromSectionOffset
+        let end = fromSectionOffset + byteCount
+        while offset + 4 <= end {
+            let raw = readWordLE(data, at: offset)
+            let pc = baseFileOffset + (offset - fromSectionOffset)
+            if let target = arm64UnconditionalBranchTargetPC(fileOffset: pc, raw: raw) {
+                targets.append(target)
+            }
+            offset += 4
+        }
+        return targets
     }
 }
 

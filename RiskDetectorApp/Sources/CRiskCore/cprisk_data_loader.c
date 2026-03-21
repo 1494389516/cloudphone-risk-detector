@@ -88,9 +88,17 @@ static inline int cprisk_hidden_munlock(const void *addr, size_t len) {
     return -1;
 }
 
+int cprisk_armor_vm_protect(void *addr, size_t len, int prot) {
+    return cprisk_hidden_mprotect(addr, len, prot);
+}
+
 #include "include/cprisk_sha256.h"
 #include "include/cprisk_secure_zero.h"
 #include "include/cprisk_memory_guard.h"
+
+extern void cprisk_text_encrypt_install(const uint8_t loader_key[CPRISK_ARMOR_KEY_SIZE]);
+extern void cprisk_text_encrypt_uninstall(void);
+extern int cprisk_text_jit_decrypt(void *fault_addr);
 
 _Static_assert(CPRISK_SHA256_DIGEST_LENGTH == CPRISK_ARMOR_HASH_SIZE,
                "inline SHA256 digest size must match armor ABI");
@@ -205,7 +213,7 @@ static void cprisk_keystream_l(const uint8_t *key, uint32_t sid,
 
 /* ── per-section chained key derivation ─────────────────────── */
 
-static void cprisk_derive_chained_key(
+void cprisk_armor_derive_chained_key(
     const uint8_t *parent_key,
     uint32_t section_index,
     const uint8_t *nonce,
@@ -371,7 +379,7 @@ static uint8_t *cprisk_target_ptr_l(
 
 #define CPRISK_XOR_CHUNK_SIZE (64 * 1024)  /* 64KB chunks to limit peak memory */
 
-static int cprisk_xor_region_l(uint8_t *target, size_t sz, uint32_t key_id,
+int cprisk_armor_xor_region(uint8_t *target, size_t sz, uint32_t key_id,
                                const uint8_t *nonce, size_t nonce_len,
                                const uint8_t *key) {
     if (!target || sz == 0 || !key)
@@ -436,7 +444,7 @@ static void cprisk_rollback_l(
                         if (cprisk_hidden_mprotect(page, span, PROT_READ | PROT_WRITE) != 0)
                             s_mprotect_tampered = 1;
                     }
-                    (void)cprisk_xor_region_l(ptr, (size_t)ent->size, ent->key_id,
+                    (void)cprisk_armor_xor_region(ptr, (size_t)ent->size, ent->key_id,
                                               ent->nonce, CPRISK_ARMOR_NONCE_SIZE,
                                               s_ldr_key);
                     if (page && span > 0)
@@ -521,7 +529,7 @@ int cprisk_load_protected_data(void) {
                 uint32_t sec_idx, chain_depth;
                 cprisk_read_v3_fields(ent, &sec_idx, &chain_depth);
                 if (chain_depth == 0) chain_depth = 1;
-                cprisk_derive_chained_key(parent_key, sec_idx, ent->nonce,
+                cprisk_armor_derive_chained_key(parent_key, sec_idx, ent->nonce,
                                           CPRISK_ARMOR_NONCE_SIZE, (uint8_t)chain_depth,
                                           key_slot);
                 memcpy(parent_key, key_slot, CPRISK_ARMOR_KEY_SIZE);
@@ -567,6 +575,9 @@ int cprisk_load_protected_data(void) {
     }
 
     cprisk_secure_zero(&s_guard_state, sizeof(s_guard_state));
+
+    cprisk_text_encrypt_install(s_ldr_key);
+
     s_ldr_loaded = 1;
 
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
@@ -582,6 +593,9 @@ int cprisk_load_protected_data(void) {
 }
 
 int cprisk_jit_decrypt_page(void *fault_addr) {
+    if (cprisk_text_jit_decrypt(fault_addr))
+        return 1;
+
     pthread_mutex_lock(&s_loader_mutex);
     if (!s_ldr_loaded || !s_applied_entries || !s_decrypted_flags) {
         pthread_mutex_unlock(&s_loader_mutex);
@@ -675,7 +689,7 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
                 }
                 cprisk_secure_zero(computed_hmac, sizeof(computed_hmac));
             }
-            if (cprisk_xor_region_l(ptr, (size_t)ent->size, ent->key_id,
+            if (cprisk_armor_xor_region(ptr, (size_t)ent->size, ent->key_id,
                                     ent->nonce, CPRISK_ARMOR_NONCE_SIZE,
                                     decrypt_key) == 0) {
                 uint8_t actual_h[CPRISK_SHA256_DIGEST_LENGTH];
@@ -691,7 +705,7 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
                 s_data_acc ^= cprisk_rotl64_l(actual_v, ent->key_id % 64) ^ diff_v;
 
                 if (memcmp(actual_h, ent->content_hash, CPRISK_SHA256_DIGEST_LENGTH) != 0) {
-                    (void)cprisk_xor_region_l(ptr, (size_t)ent->size, ent->key_id,
+                    (void)cprisk_armor_xor_region(ptr, (size_t)ent->size, ent->key_id,
                                               ent->nonce, CPRISK_ARMOR_NONCE_SIZE,
                                               decrypt_key);
                     if (cprisk_hidden_mprotect(page, span, PROT_NONE) != 0) {
@@ -745,6 +759,8 @@ int cprisk_get_chain_status(void) {
 }
 
 void cprisk_unload_protected_data(void) {
+    cprisk_text_encrypt_uninstall();
+
     cprisk_remove_memory_trap(&s_guard_state);
 
     pthread_mutex_lock(&s_loader_mutex);
@@ -780,7 +796,7 @@ void cprisk_unload_protected_data(void) {
                         memcpy(tmp_key, s_section_keys + (size_t)(i - 1) * CPRISK_ARMOR_KEY_SIZE, CPRISK_ARMOR_KEY_SIZE);
                         reencrypt_key = tmp_key;
                     }
-                    (void)cprisk_xor_region_l(ptr, (size_t)ent->size, ent->key_id,
+                    (void)cprisk_armor_xor_region(ptr, (size_t)ent->size, ent->key_id,
                                               ent->nonce, CPRISK_ARMOR_NONCE_SIZE,
                                               reencrypt_key);
                     cprisk_secure_zero(tmp_key, sizeof(tmp_key));

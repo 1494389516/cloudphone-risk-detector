@@ -778,6 +778,69 @@ final class AntiTamperingTests: XCTestCase {
         )
     }
 
+    func testFridaDetectorMemorySignatureHookPath_builtinDisabledStillEmits() throws {
+        FridaDetector.clearMemorySignatureHooks()
+        setenv("CPRISK_FRIDA_MEMSIG", "1", 1)
+        setenv("CPRISK_FRIDA_MEMSIG_BUILTIN", "0", 1)
+        defer {
+            unsetenv("CPRISK_FRIDA_MEMSIG")
+            unsetenv("CPRISK_FRIDA_MEMSIG_BUILTIN")
+            FridaDetector.clearMemorySignatureHooks()
+        }
+
+        FridaDetector.registerMemorySignatureHook {
+            "hook-only-memsig"
+        }
+        let detector = FridaDetector()
+        let result = try detector.detect()
+#if targetEnvironment(simulator)
+        XCTAssertTrue(result.methods.contains("unavailable_simulator"))
+#else
+        XCTAssertTrue(
+            result.methods.contains(where: {
+                $0 == "\(ObfuscatedConstants.methodPrefixFridaMemorySig)hook-only-memsig"
+            }),
+            "hook path must work when builtin scan is disabled via env"
+        )
+#endif
+    }
+
+    func testFridaBuiltinMemorySignature_firstMatchInBuffer() {
+        let marker = ObfuscatedConstants.fridaStringMarkers.first { $0.utf8.count >= 8 }!
+        let payload = "prefix-\(marker)-suffix"
+        let hit = FridaBuiltinMemorySignatureScanner.firstMatchInBufferForTesting(Data(payload.utf8))
+        XCTAssertEqual(hit, marker)
+    }
+
+    func testFridaBuiltinMemorySignature_noMatchInBuffer() {
+        XCTAssertNil(
+            FridaBuiltinMemorySignatureScanner.firstMatchInBufferForTesting(Data("clean-buffer-no-markers-xyz".utf8))
+        )
+    }
+
+    func testFridaBuiltinMemorySignature_envBuiltinToggle() {
+        withEnvironmentValue(key: "CPRISK_FRIDA_MEMSIG_BUILTIN", value: nil) {
+            XCTAssertTrue(FridaBuiltinMemorySignatureScanner.isBuiltinEnabled())
+        }
+        withEnvironmentValue(key: "CPRISK_FRIDA_MEMSIG_BUILTIN", value: "0") {
+            XCTAssertFalse(FridaBuiltinMemorySignatureScanner.isBuiltinEnabled())
+        }
+        withEnvironmentValue(key: "CPRISK_FRIDA_MEMSIG_BUILTIN", value: "1") {
+            XCTAssertTrue(FridaBuiltinMemorySignatureScanner.isBuiltinEnabled())
+        }
+    }
+
+    #if DEBUG
+    func testFridaBuiltinMemorySignature_builtinOffDoesNotEnterPerformScan() {
+        FridaBuiltinMemorySignatureScanner.resetDebugCountersForTests()
+        let before = FridaBuiltinMemorySignatureScanner.debugPerformScanCount
+        withEnvironmentValue(key: "CPRISK_FRIDA_MEMSIG_BUILTIN", value: "0") {
+            _ = FridaBuiltinMemorySignatureScanner.scanIfNeeded()
+        }
+        XCTAssertEqual(FridaBuiltinMemorySignatureScanner.debugPerformScanCount, before)
+    }
+    #endif
+
     func testFridaModuleDetectorMarkers() {
         let detector = FridaModuleDetector()
         XCTAssertTrue(detector.moduleMarkers.contains("frida"))

@@ -161,12 +161,15 @@ public enum ARM64CompareBranchForm: Equatable {
     case cbz
     case cbnz
     case csincCond
+    /// PC-relative `B.<cond>` (condition code stored in `ARM64CompareBranch.register` for encoding round-trips).
+    case bConditional
 
     public var description: String {
         switch self {
         case .cbz: return "CBZ pattern"
         case .cbnz: return "CBNZ pattern"
         case .csincCond: return "CSINC conditional"
+        case .bConditional: return "B.cond"
         }
     }
 }
@@ -344,7 +347,7 @@ public enum ARM64Codec {
         if let decoded = decodeLogicalImmediate(rawValue) {
             return decoded
         }
-        if let decoded = decodeConditionalBranch(rawValue) {
+        if let decoded = decodeCompareBranch(rawValue) {
             return decoded
         }
         if let decoded = decodeCSEL(rawValue) {
@@ -357,9 +360,6 @@ public enum ARM64Codec {
             return decoded
         }
         if let decoded = decodeLoadLiteral(rawValue) {
-            return decoded
-        }
-        if let decoded = decodeCompareBranch(rawValue) {
             return decoded
         }
         if let decoded = decodeLogicalShiftedRegisterVariant(rawValue) {
@@ -498,6 +498,11 @@ public enum ARM64Codec {
                     sourceTrue: 31,
                     sourceFalse: 31,
                     condition: 1
+                )
+            case .bConditional:
+                return encodeBCond(
+                    conditionCode: cb.register,
+                    immediateBytes: Int(cb.immediate)
                 )
             }
 
@@ -770,6 +775,28 @@ public enum ARM64Codec {
         return 0xB500_0000 | ((UInt32(clamped) & 0x7FFFF) << 5) | (destinationRegister & 0x1F)
     }
 
+    /// `B.<cond>` PC-relative branch (offset must be a multiple of 4; encoded as signed imm19 words).
+    public static func encodeBCond(conditionCode: UInt32, immediateBytes: Int) -> UInt32 {
+        precondition(immediateBytes % 4 == 0, "B.cond offset must be 4-byte aligned")
+        let wordOffset = immediateBytes / 4
+        let imm19 = UInt32(bitPattern: Int32(wordOffset)) & 0x7FFFF
+        return 0x5400_0000 | (imm19 << 5) | (conditionCode & 0xF)
+    }
+
+    /// `SUBS` with shifted register form, shift = LSL #0 (sets flags for `B.cond` veneers).
+    public static func encodeSUBSShiftedRegister(
+        destination: UInt32,
+        source1: UInt32,
+        source2: UInt32,
+        width: ARM64RegisterWidth
+    ) -> UInt32 {
+        let high: UInt32 = width.is64Bit ? 0xEB00_0000 : 0x6B00_0000
+        return high
+            | ((source2 & 0x1F) << 16)
+            | ((source1 & 0x1F) << 5)
+            | (destination & 0x1F)
+    }
+
     // MARK: - Group I Encode Functions
 
     public static func encodeMADD(
@@ -869,20 +896,6 @@ public enum ARM64Codec {
 
     // MARK: - Group F Decode Functions
 
-    private static func decodeConditionalBranch(_ raw: UInt32) -> ARM64DecodedInstruction? {
-        let high = (raw >> 24) & 0x7F
-        guard high == 0x34 || high == 0x35 else { return nil }
-        let isCbnz = high == 0x35
-        let imm19 = (raw >> 5) & 0x7FFFF
-        let rt = raw & 0x1F
-        let imm = expandPCRelativeOffset(Int32(imm19 << 2))
-        let form: ARM64ConditionalBranchForm = isCbnz ? .cbnz : .cbz
-        return ARM64DecodedInstruction(
-            rawValue: raw,
-            kind: .conditionalBranch(ARM64ConditionalBranch(form: form, register: rt, immediate: imm))
-        )
-    }
-
     private static func decodeCSEL(_ raw: UInt32) -> ARM64DecodedInstruction? {
         guard (raw & 0xFF800000) == 0x9A800000 else { return nil }
         guard (raw & (1 << 20)) == 0 else { return nil }
@@ -911,7 +924,13 @@ public enum ARM64Codec {
 
     // MARK: - Group G Decode Functions
 
+    /// CBZ/CBNZ and `B.<cond>` share compare/branch-like semantics for substitution passes.
+    /// `B.<cond>` stores the condition code in `register` (0...15) and the PC-relative byte offset in `immediate`.
     private static func decodeCompareBranch(_ raw: UInt32) -> ARM64DecodedInstruction? {
+        if let bCond = decodeBCondInstruction(raw) {
+            return bCond
+        }
+
         let high = (raw >> 24) & 0x7F
         guard high == 0x34 || high == 0x35 else { return nil }
         let isCbnz = high == 0x35
@@ -922,6 +941,22 @@ public enum ARM64Codec {
         return ARM64DecodedInstruction(
             rawValue: raw,
             kind: .compareBranch(ARM64CompareBranch(form: form, register: rt, immediate: imm))
+        )
+    }
+
+    /// `B.<cond>`: top byte 0x54, imm19 in bits [23:5], condition in bits [3:0].
+    private static func decodeBCondInstruction(_ raw: UInt32) -> ARM64DecodedInstruction? {
+        guard (raw & 0xFF00_0010) == 0x5400_0000 else { return nil }
+        let imm19 = (raw >> 5) & 0x7FFFF
+        let cond = raw & 0xF
+        let imm = expandPCRelativeOffset(Int32(imm19 << 2))
+        return ARM64DecodedInstruction(
+            rawValue: raw,
+            kind: .compareBranch(ARM64CompareBranch(
+                form: .bConditional,
+                register: cond,
+                immediate: imm
+            ))
         )
     }
 

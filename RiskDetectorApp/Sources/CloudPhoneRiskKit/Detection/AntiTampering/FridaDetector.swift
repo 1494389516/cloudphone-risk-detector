@@ -98,7 +98,8 @@ struct FridaDetector: Detector {
         return min(parsed, 65535)
     }
 
-    private var memorySignatureScanEnabled: Bool {
+    /// 可选：外部/测试注入的内存命中（显式 `CPRISK_FRIDA_MEMSIG=1` 才启用，避免与内置扫描耦合）。
+    private var hookMemorySignatureScanEnabled: Bool {
         guard let raw = ProcessInfo.processInfo.environment["CPRISK_FRIDA_MEMSIG"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() else {
@@ -252,16 +253,21 @@ struct FridaDetector: Detector {
     }
 
     private func detectMemorySignatureHit() -> String? {
-        guard memorySignatureScanEnabled else { return nil }
-        Self.memSigLock.lock()
-        let hooks = Self.memorySignatureHooks
-        Self.memSigLock.unlock()
-        for hook in hooks {
-            guard let hit = hook()?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !hit.isEmpty else {
-                continue
+        if hookMemorySignatureScanEnabled {
+            Self.memSigLock.lock()
+            let hooks = Self.memorySignatureHooks
+            Self.memSigLock.unlock()
+            for hook in hooks {
+                guard let hit = hook()?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !hit.isEmpty else {
+                    continue
+                }
+                return hit
             }
-            return hit
+        }
+
+        if let builtinHit = FridaBuiltinMemorySignatureScanner.scanIfNeeded() {
+            return builtinHit
         }
         return nil
     }

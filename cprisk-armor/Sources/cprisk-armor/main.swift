@@ -11,6 +11,7 @@ import ControlFlowOrchestrator
 import SymbolStripper
 import ImportEncryptor
 import HeaderEncryptor
+import TextSegmentEncryptor
 import Security
 
 // MARK: - CLI Options
@@ -62,6 +63,7 @@ func parseArguments() -> CLIOptions {
         case "--pass9": options.passes.insert(9)
         case "--pass10": options.passes.insert(10)
         case "--pass11": options.passes.insert(11)
+        case "--pass12": options.passes.insert(12)
         case "--all":   options.allPasses = true
         case "--verbose": options.verbose = true
         case "--help":
@@ -95,6 +97,7 @@ func printUsage() {
       --pass9           Pass 9: Control Flow Orchestrator (policy-guided binary rewrite)
       --pass10          Pass 10: Import Table Encryption
       --pass11          Pass 11: Header Encryption
+      --pass12          Pass 12: __TEXT.__text page encryption + metadata
       --all             Enable all passes
       --cff-policy      Override cff_policy.yaml path for Pass 9
       --build-seed      Build randomization seed (u64, decimal or 0x-prefixed hex)
@@ -106,7 +109,7 @@ func printUsage() {
       CPRISK_ARMOR_BUILD_SEED Decimal or 0x-prefixed seed for deterministic randomization (preferred override)
       CPRISK_BUILD_SEED       Legacy alias for CPRISK_ARMOR_BUILD_SEED (fallback when --build-seed is missing)
 
-    A key is REQUIRED when any encryption pass (1, 3, 4) or --all is enabled.
+    A key is REQUIRED when any encryption pass (1, 3, 4, 12) or --all is enabled.
     """)
 }
 
@@ -224,7 +227,7 @@ guard let inputPath = options.inputPath else {
 
 let outputPath = options.outputPath ?? (inputPath + "_armored")
 let verbose = options.verbose
-let enabledPasses: Set<Int> = options.allPasses ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] : options.passes
+let enabledPasses: Set<Int> = options.allPasses ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] : options.passes
 
 if enabledPasses.isEmpty {
     fputs("Warning: No passes enabled. Use --all or --passN flags.\n", stderr)
@@ -237,12 +240,18 @@ if enabledPasses.contains(3) && !enabledPasses.contains(4) {
     exit(1)
 }
 
-let encryptionPassIDs: Set<Int> = [1, 3, 4, 10, 11]
+if enabledPasses.contains(12) && !enabledPasses.contains(4) {
+    fputs("Error: --pass12 requires --pass4 (Integrity Anchor).\n", stderr)
+    fputs("Enable both with --pass12 --pass4 or use --all.\n", stderr)
+    exit(1)
+}
+
+let encryptionPassIDs: Set<Int> = [1, 3, 4, 10, 11, 12]
 let needsKey = !enabledPasses.isDisjoint(with: encryptionPassIDs)
 let keyData = resolveEncryptionKey(from: options)
 
 if needsKey && keyData == nil {
-    fputs("Error: encryption passes (1, 3, 4, 10, 11) require a key.\n", stderr)
+    fputs("Error: encryption passes (1, 3, 4, 10, 11, 12) require a key.\n", stderr)
     fputs("Provide one via --key <hex>, --key-file <path>, or CPRISK_ARMOR_KEY env var.\n", stderr)
     exit(1)
 }
@@ -288,6 +297,7 @@ do {
         (7, AntiDebugInjectorPass()),
         (9, ControlFlowOrchestratorPass(policyFilePath: options.cffPolicyPath)),
         (10, ImportEncryptorPass()),
+        (12, TextSegmentEncryptorPass()),
         (6, SymbolStripperPass()),
     ]
 

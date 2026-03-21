@@ -12,6 +12,7 @@ public enum InstructionSubstitutionGroup: String, CaseIterable, Hashable {
     case groupH
     case groupI
     case groupJ
+    case groupK
 
     var summaryLabel: String {
         switch self {
@@ -25,6 +26,7 @@ public enum InstructionSubstitutionGroup: String, CaseIterable, Hashable {
         case .groupH: return "Group H"
         case .groupI: return "Group I"
         case .groupJ: return "Group J"
+        case .groupK: return "Group K"
         }
     }
 
@@ -41,15 +43,17 @@ public enum InstructionSubstitutionGroup: String, CaseIterable, Hashable {
         case .groupE:
             return "MOVZ / ORR logical immediate (const-unfold)"
         case .groupF:
-            return "CBZ/CBNZ <-> CSEL/CSINC"
+            return "CSEL/CSINC compare-select patterns"
         case .groupG:
-            return "Compare-and-branch patterns"
+            return "CBZ/CBNZ/B.cond compare-and-branch"
         case .groupH:
             return "ADD/SUB/EOR/BIC shifted register"
         case .groupI:
             return "MADD/MSUB/MUL multiply-accumulate"
         case .groupJ:
             return "LDR literal / ADRP+ADD"
+        case .groupK:
+            return "8-byte branch veneers (SUBS + B.cond)"
         }
     }
 }
@@ -226,15 +230,35 @@ public final class SubstitutionEngine {
             )
         }
 
-        let textContent = try textSection.readContent(from: file.data)
+        var textContent = try textSection.readContent(from: file.data)
         let scanBytes = textContent.count - (textContent.count % 4)
         let dataInCodeRanges = loadDataInCodeRanges(from: file, textSection: textSection)
+        let textBaseFileOffset = Int(textSection.offset)
+
+        var rng = SplitMix64(seed: configuration.seed)
+        var veneerSubstitutions = [AppliedInstructionSubstitution]()
+        var veneerBytes = 0
+        var veneerMutated = Set<UInt64>()
+        let veneerOutcome = try applyCompareBranchVeneers(
+            to: file,
+            textBaseFileOffset: textBaseFileOffset,
+            scanBytes: scanBytes,
+            dataInCodeRanges: dataInCodeRanges,
+            configuration: configuration,
+            rng: &rng
+        )
+        veneerSubstitutions = veneerOutcome.substitutions
+        veneerBytes = veneerOutcome.bytesModified
+        veneerMutated = veneerOutcome.mutatedOffsets
+        if veneerBytes > 0 {
+            textContent = try textSection.readContent(from: file.data)
+        }
+
         var candidates = [Candidate]()
         var noEffectCandidates = [NoEffectCandidate]()
         candidates.reserveCapacity(scanBytes / 8)
         noEffectCandidates.reserveCapacity(scanBytes / 12)
 
-        let textBaseFileOffset = Int(textSection.offset)
         let textEndFileOffset = textBaseFileOffset + scanBytes
         for byteOffset in stride(from: 0, to: scanBytes, by: 4) {
             let fileOffset = textBaseFileOffset + byteOffset
@@ -273,7 +297,6 @@ public final class SubstitutionEngine {
             replacementRate: configuration.replacementRate
         )
 
-        var rng = SplitMix64(seed: configuration.seed)
         let selected: [Candidate]
         if targetCount > 0 {
             candidates.shuffle(using: &rng)
@@ -284,16 +307,21 @@ public final class SubstitutionEngine {
             selected = []
         }
 
+        let selectedForMain = selected.filter { !veneerMutated.contains($0.fileOffset) }
+
         var appliedGroupCounts = [InstructionSubstitutionGroup: Int]()
-        var appliedSubstitutions = [AppliedInstructionSubstitution]()
-        appliedSubstitutions.reserveCapacity(selected.count)
+        if !veneerSubstitutions.isEmpty {
+            appliedGroupCounts[.groupK] = veneerSubstitutions.count
+        }
+        var appliedSubstitutions = veneerSubstitutions
+        appliedSubstitutions.reserveCapacity(veneerSubstitutions.count + selectedForMain.count)
         var injectedOpaquePredicates = [AppliedOpaquePredicateInjection]()
         var injectedDeadCodeIslands = [AppliedDeadCodeIsland]()
-        var mutatedOffsets = Set<UInt64>()
-        mutatedOffsets.reserveCapacity(selected.count * 3)
-        var bytesModified = 0
+        var mutatedOffsets = veneerMutated
+        mutatedOffsets.reserveCapacity(veneerMutated.count + selectedForMain.count * 3)
+        var bytesModified = veneerBytes
 
-        for candidate in selected {
+        for candidate in selectedForMain {
             let optionIndex = Int(rng.next() % UInt64(candidate.replacementOptions.count))
             let chosen = candidate.replacementOptions[optionIndex]
             if chosen.rawValue != candidate.originalRawValue {
@@ -597,12 +625,13 @@ public final class SubstitutionEngine {
 
             options = orderedUniqueOptions(excluding: decoded.rawValue, options: candidates)
 
-        case .conditionalBranch(let cb):
-            _ = cb
+        case .conditionalBranch:
+            // CSEL/CSINC patterns are flag/data-flow sensitive; CBZ/CBNZ are classified as `compareBranch`.
             options = []
 
-        case .compareBranch(let cb):
-            _ = cb
+        case .compareBranch:
+            // CBZ/CBNZ/B.cond single-word polymorphism is unsafe without context; 8-byte SUBS + B.cond veneers
+            // are applied separately in `applyCompareBranchVeneers` (Group K).
             options = []
 
         case .logicalShifted(let ls):
@@ -808,6 +837,109 @@ public final class SubstitutionEngine {
 
         let scaled = Int(Double(candidateCount) * replacementRate)
         return min(candidateCount, max(1, scaled))
+    }
+
+    /// 8-byte template: `SUBS XZR/WZR, Rt, Rt` + `B.EQ/B.NE +4` replaces `CBZ/CBNZ, +8` + `NOP` + `NOP`
+    /// with identical control-flow semantics (flags from SUBS match the zero / non-zero test).
+    private func applyCompareBranchVeneers(
+        to file: MachOFile,
+        textBaseFileOffset: Int,
+        scanBytes: Int,
+        dataInCodeRanges: [DataInCodeRange],
+        configuration: Configuration,
+        rng: inout SplitMix64
+    ) throws -> (substitutions: [AppliedInstructionSubstitution], bytesModified: Int, mutatedOffsets: Set<UInt64>) {
+        var pool = [UInt64]()
+        let textEnd = textBaseFileOffset + scanBytes
+        for byteOffset in stride(from: 0, to: scanBytes - 8, by: 4) {
+            let i0 = textBaseFileOffset + byteOffset
+            let i1 = i0 + 4
+            let i2 = i0 + 8
+            if i2 >= textEnd { continue }
+            if isMarkedAsData(fileOffset: i0, ranges: dataInCodeRanges) { continue }
+            if isMarkedAsData(fileOffset: i1, ranges: dataInCodeRanges) { continue }
+            if isMarkedAsData(fileOffset: i2, ranges: dataInCodeRanges) { continue }
+
+            guard let head = try? file.data.readUInt32LE(at: i0),
+                  let tail = try? file.data.readUInt32LE(at: i1),
+                  let tail2 = try? file.data.readUInt32LE(at: i2) else { continue }
+
+            guard let decoded = ARM64Codec.decode(head),
+                  case .compareBranch(let cb) = decoded.kind else { continue }
+            guard cb.immediate == 8 else { continue }
+            guard tail == ARM64Codec.nopRawValue, tail2 == ARM64Codec.nopRawValue else { continue }
+
+            switch cb.form {
+            case .cbz, .cbnz:
+                pool.append(UInt64(i0))
+            default:
+                continue
+            }
+        }
+
+        let target = desiredReplacementCount(candidateCount: pool.count, replacementRate: configuration.replacementRate)
+        guard target > 0, !pool.isEmpty else {
+            return ([], 0, [])
+        }
+
+        pool.shuffle(using: &rng)
+        let chosen = Array(pool.prefix(target)).sorted()
+
+        var substitutions = [AppliedInstructionSubstitution]()
+        var mutated = Set<UInt64>()
+        var bytes = 0
+        var occupied = Set<Int>()
+
+        for fileOffsetU in chosen {
+            let i0 = Int(fileOffsetU)
+            let range = stride(from: i0, to: i0 + 8, by: 4)
+            if range.contains(where: { occupied.contains($0) }) {
+                continue
+            }
+
+            guard let head = try? file.data.readUInt32LE(at: i0) else { continue }
+            guard let decoded = ARM64Codec.decode(head),
+                  case .compareBranch(let cb) = decoded.kind else { continue }
+            guard cb.immediate == 8 else { continue }
+
+            let width: ARM64RegisterWidth = ((head >> 31) & 1) == 1 ? .x64 : .w32
+            let cond: UInt32
+            switch cb.form {
+            case .cbz:
+                cond = 0 // EQ / matches CBZ zero test
+            case .cbnz:
+                cond = 1 // NE / matches CBNZ non-zero test
+            default:
+                continue
+            }
+
+            let subs = ARM64Codec.encodeSUBSShiftedRegister(
+                destination: ARM64RegisterWidth.zeroRegisterIndex,
+                source1: cb.register,
+                source2: cb.register,
+                width: width
+            )
+            let bcond = ARM64Codec.encodeBCond(conditionCode: cond, immediateBytes: 4)
+
+            try file.replaceBytes(at: UInt64(i0), with: ARM64Codec.data(for: subs))
+            try file.replaceBytes(at: UInt64(i0 + 4), with: ARM64Codec.data(for: bcond))
+
+            bytes += 8
+            for o in range {
+                occupied.insert(o)
+                mutated.insert(UInt64(o))
+            }
+
+            substitutions.append(AppliedInstructionSubstitution(
+                fileOffset: UInt64(i0),
+                originalRawValue: head,
+                replacementRawValue: subs,
+                group: .groupK,
+                description: "compare-branch + NOP x2 -> SUBS + B.cond veneer (second insn at +0x4)"
+            ))
+        }
+
+        return (substitutions, bytes, mutated)
     }
 
     private func encodeCompareAndBranchZero(branchIfZero: Bool, immediateWords: Int) -> UInt32 {
