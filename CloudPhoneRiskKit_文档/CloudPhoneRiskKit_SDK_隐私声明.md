@@ -81,6 +81,20 @@ SDK 当前自带的 privacy manifest 文件位于：
 - SDK **显式声明空的 `NSPrivacyTrackingDomains`**
 - SDK **不以广告追踪为目的**使用所采集数据
 
+### 3.4 6.8 版本升级是否改变隐私声明范围
+
+不会。
+
+6.8 主要新增的是**运行时完整性与二进制保护能力**，例如：
+
+- Pass 7 runtime gate
+- Pass 10 ImportEncryptor
+- Pass 11 HeaderEncryptor
+- 更早期的异常端口抢占
+- 多频 watchdog / timing canary / Frida 行为指纹增强
+
+这些能力会增强 SDK 的反调试、反篡改和逆向对抗强度，但**不会新增 privacy manifest 中的 collected data 类型，也不会新增 Required Reason API 类别**。因此从隐私边界上看，6.8 仍然以 `Device ID`、`UserDefaults`、`SystemBootTime` 这三项 manifest 事实为基线。
+
 ---
 
 ## 4. SDK 可能处理的数据类型
@@ -244,6 +258,14 @@ SDK 可以在设备侧本地完成：
 
 > SDK 是否“上传数据”不是一个只看 SDK 就能单独回答的问题，必须结合宿主 App 的调用方式来判断。
 
+### 5.3 一个最容易误判的点
+
+很多客户会把“SDK 在本地看到了什么”与“宿主 App 实际对外发送了什么”混为一谈。更稳妥的理解方式是：
+
+- SDK 本地为了做风控而读取、计算、比对某些信号，并不等于这些信号一定会离开设备
+- 只有当宿主 App 选择上报 `CPRiskReport`、`ReportEnvelope`、`GrpcReportPayload` 或自定义抽取其中字段时，相关数据才进入宿主 App 的对外披露范围
+- 6.8 的 runtime gate / import/header 保护只增强代码保护，不会单独增加新的用户数据出境路径
+
 ---
 
 ## 6. 可选能力与隐私边界
@@ -303,6 +325,16 @@ SDK 当前会在本地执行更强的运行时完整性探测，包括：
 
 - 宿主 App 的隐私声明不能只写“纯本地处理”
 - 宿主 App 需要对网络交互和服务端数据使用负责
+
+### 6.5 权限与隐私边界不要混写
+
+接入方在对外文档里，最好把下面三件事分开写：
+
+1. **privacy manifest 事实**：当前 SDK 自声明的是 `Device ID`、`UserDefaults`、`SystemBootTime`
+2. **系统权限说明**：例如 `NSMotionUsageDescription`、`NSFaceIDUsageDescription`
+3. **App Privacy / 隐私政策**：取决于宿主 App 是否把风险报告、行为摘要、环境信号上传到服务端
+
+这样能避免客户把“需要权限说明”误解成“SDK manifest 已经声明了这类 collected data”，也能避免把安全实现细节误写成隐私采集范围。
 
 ---
 

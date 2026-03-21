@@ -97,6 +97,22 @@
 
 这类“否定性声明”在成熟 SDK 文档里很重要，因为审核和客户法务最先问的常常不是“你收什么”，而是“你是不是在 tracking”。
 
+### 4.4 6.8 版本升级对合规披露的影响
+
+6.8 这次升级主要新增的是**二进制保护与运行时完整性增强**，包括：
+
+- Pass 7 runtime gate
+- Pass 10 ImportEncryptor
+- Pass 11 HeaderEncryptor
+- 更早期的异常端口抢占
+- 多频 watchdog / timing canary / Frida 行为指纹增强
+
+这些能力会改变**构建产物的代码形态、运行时完整性检查强度和逆向对抗强度**，但**不会新增 privacy manifest 中的数据类别，也不会新增 Required Reason API 类别**。因此，宿主 App 在合规披露上最需要关注的，仍然是：
+
+1. SDK manifest 的三项基础事实：`Device ID`、`UserDefaults`、`SystemBootTime`
+2. 宿主 App 是否把风险报告、行为摘要、环境信号上传到服务端
+3. 宿主 App 是否启用了 Motion / Face ID / URL Scheme 等需要额外权限说明或审核解释的能力
+
 ---
 
 ## 5. 为什么这次不声明 `FileTimestamp`
@@ -263,6 +279,15 @@ Any queried URL schemes are limited to jailbreak or device-integrity checks.
 > **只要某类数据离开设备、进入你们服务端，并参与账号级、设备级、风控级决策，就不要把它视为“未收集”。**
 
 SDK 文档可以给你分类建议，但最终 `App Privacy` 的责任主体始终是宿主 App。
+
+### 8.4 一个更实用的披露口诀
+
+为了避免法务、产品和客户端对“是否算收集”理解不一致，可以直接用下面这条内部判断规则：
+
+- **SDK 本地采集但不上报**：重点落在 SDK manifest、权限说明、审核备注，不等同于宿主 App 一定要把所有字段都填进 `App Privacy`
+- **SDK 生成报告且宿主 App 上报**：按照“哪些字段离开设备”来填 `App Privacy`
+- **宿主 App 把字段与账号、手机号、用户中心 ID 绑定**：除了数据类型本身，还要重新评估 `Linked` 是否应为 `true`
+- **6.8 的 runtime gate / import/header 保护**：属于安全实现增强，不单独生成新的隐私披露项
 
 ---
 
@@ -497,7 +522,7 @@ cprisk-armor --input <app_binary> --output <output> --pass3 --pass4 --pass5 --pa
 
 ### 11.5 运行时能力的合规说明
 
-除了构建时的 9 个 Pass，SDK 的 CRiskCore 运行时还包含以下能力：
+除了构建时的 11 个 Pass，SDK 的 CRiskCore 运行时还包含以下能力：
 
 | 运行时能力 | 实现 | 合规风险 | 建议 |
 |-----------|------|---------|------|
@@ -507,7 +532,9 @@ cprisk-armor --input <app_binary> --output <output> --pass3 --pass4 --pass5 --pa
 | 完整性重校验 | `cprisk_recheck_integrity()` | 低 — 标准反篡改手段 | 始终开启 |
 | Anti-Debug | `cprisk_deny_attach()` | 低 — `ptrace(PT_DENY_ATTACH)` 是公开 API | 始终开启 |
 | 反调试 Watchdog | `cprisk_start_anti_debug_watchdog()` | 低 — 周期性重调 `ptrace`、exception port、SIGTRAP、csops、硬件断点、软件断点、异常分发超时、双 watchdog 互监控、影子栈校验等，异常转 RiskSignal | 始终开启 |
-| Pass 7 运行时消费 | 读取 `__DATA,__cpr_adbg7` 计划并做 anti-debug gate | 低至中 — 当前主要是 metadata 驱动，未做任意机器码重写 | 金融 App 可开；普通 App 可随审核历史逐步启用 |
+| Pass 7 运行时消费 | 读取 `__DATA,__cpr_adbg7` 计划并做 anti-debug gate | 低至中 — 运行时会在关键点插入 gate，但仍明显弱于大规模机器码重写 | 金融 App 可开；普通 App 可随审核历史逐步启用 |
+| Pass 10 导入恢复 | `cprisk_import_resolver.c` | 低 — 主要改变符号恢复方式，不新增数据采集 | 可开 |
+| Pass 11 Header 恢复 | `cprisk_header_restore.c` | 低至中 — 影响镜像头字段恢复，但有 sanity fallback | 金融 App 可开；普通 App 视审核历史启用 |
 | Pass 9 CFF 运行时 | 源码级 CFF 状态机（CFFDispatcher / CFFStateCodec） | 低 — 纯逻辑层控制流编码，不新增系统调用或数据采集 | 始终开启（SDK 内嵌） |
 
 ### 11.6 合规参考：同类商用 SDK 的保护等级
