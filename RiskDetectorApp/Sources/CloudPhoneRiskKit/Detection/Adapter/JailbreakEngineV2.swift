@@ -192,14 +192,18 @@ public final class JailbreakEngineV2 {
 
     private func runDetectorWithTimeout(_ work: @escaping () throws -> DetectorResult, detectorName: String, timeout: TimeInterval) -> DetectorResult {
         let semaphore = DispatchSemaphore(value: 0)
-        var result: DetectorResult = Self.emptyDetectorResult
+        final class ResultBox: @unchecked Sendable {
+            var value: DetectorResult
+            init(_ v: DetectorResult) { value = v }
+        }
+        let box = ResultBox(Self.emptyDetectorResult)
         let queue = DispatchQueue(label: "detector.timeout", qos: .userInitiated)
         queue.async {
             do {
-                result = try work()
+                box.value = try work()
             } catch {
                 Logger.log("detector \(detectorName) threw: \(error)")
-                result = DetectorResult(score: 80, methods: ["detector_anomaly_\(detectorName)"])
+                box.value = DetectorResult(score: 80, methods: ["detector_anomaly_\(detectorName)"])
             }
             semaphore.signal()
         }
@@ -208,7 +212,7 @@ public final class JailbreakEngineV2 {
             Logger.log("detector \(detectorName) timeout after \(timeout)s")
             return DetectorResult(score: 80, methods: ["detector_timeout_\(detectorName)"])
         }
-        return result
+        return box.value
     }
 
     private static let emptyDetectorResult = DetectorResult.empty

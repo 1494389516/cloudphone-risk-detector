@@ -210,7 +210,9 @@ struct RandomizedDetection: Detector {
         let delay = rng.randomInRange(config.minDelayUs...config.maxDelayUs)
         let before = DispatchTime.now().uptimeNanoseconds
         usleep(delay)
-        let elapsed = DispatchTime.now().uptimeNanoseconds - before
+        let after = DispatchTime.now().uptimeNanoseconds
+        guard after >= before else { return true }  // clock went backward = anomaly
+        let elapsed = after - before
         let expected = UInt64(delay) * 1_000
         return elapsed < expected / 2 || elapsed > expected * 4
     }
