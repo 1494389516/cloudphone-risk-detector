@@ -1337,6 +1337,9 @@ public struct RiskDetectionEngine: Sendable {
         scenario: RiskScenario,
         deviceID: String
     ) -> BlindChallengeRule {
+        guard !policy.rules.isEmpty else {
+            return BlindChallengeRule(id: "_noop")
+        }
         if policy.rules.count == 1 {
             return policy.rules[0]
         }

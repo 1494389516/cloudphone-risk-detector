@@ -195,6 +195,7 @@ final class IMUNoiseSpectrumProvider: RiskSignalProvider {
     private func spectrumNoiseFloor(spectrum: [Double]) -> Double {
         guard spectrum.count > 4 else { return -100 }
         let highFreq = Array(spectrum.suffix(spectrum.count / 4))
+        guard !highFreq.isEmpty else { return -100 }
         let sorted = highFreq.sorted()
         return sorted[sorted.count / 2]
     }

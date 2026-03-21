@@ -109,11 +109,13 @@ enum MachOTextRange {
                 }
                 if segname == "__TEXT" {
                     let start = UInt64(UInt(bitPattern: header))
-                    let end = start &+ seg.vmsize
+                    let (end, overflow) = start.addingReportingOverflow(seg.vmsize)
+                    guard !overflow else { return nil }
                     return start..<end
                 }
             }
-            guard lc.cmdsize >= MemoryLayout<load_command>.size else { break }
+            guard lc.cmdsize >= MemoryLayout<load_command>.size,
+                  lc.cmdsize <= 1024 * 1024 else { break }
             cmdPtr = cmdPtr.advanced(by: Int(lc.cmdsize))
         }
         return nil

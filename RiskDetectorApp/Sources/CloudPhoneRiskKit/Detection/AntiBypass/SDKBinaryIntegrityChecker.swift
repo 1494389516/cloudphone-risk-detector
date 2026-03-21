@@ -334,7 +334,7 @@ enum SDKBinaryIntegrityChecker {
         
         let sizeStr = "\(totalSize)"
         if let storedSize = keychainRead(account: keychainSizeAcc) {
-            guard let stored = UInt64(storedSize) else {
+            guard let stored = UInt64(storedSize), stored > 0 else {
                 return false
             }
             let ratio = Double(totalSize) / Double(stored)

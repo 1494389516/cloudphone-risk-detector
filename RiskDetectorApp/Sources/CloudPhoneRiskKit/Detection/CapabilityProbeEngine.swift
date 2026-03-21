@@ -265,7 +265,8 @@ public final class CapabilityProbeEngine: @unchecked Sendable {
         // 转换为微秒
         let tb = Self.timebaseInfo
         let diff = end - start
-        let elapsedNanos = diff / UInt64(tb.denom) * UInt64(tb.numer) + (diff % UInt64(tb.denom)) * UInt64(tb.numer) / UInt64(tb.denom)
+        let denom = UInt64(max(tb.denom, 1))
+        let elapsedNanos = diff / denom * UInt64(tb.numer) + (diff % denom) * UInt64(tb.numer) / denom
         let elapsedMicros = elapsedNanos / 1000
 
         return ProbeResult(

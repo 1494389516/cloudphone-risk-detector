@@ -614,7 +614,7 @@ struct DualPathValidator {
         let start = mach_absolute_time()
         block()
         let end = mach_absolute_time()
-        return (end - start) * UInt64(timebaseInfo.numer) / UInt64(timebaseInfo.denom)
+        return (end - start) * UInt64(timebaseInfo.numer) / UInt64(max(timebaseInfo.denom, 1))
     }
 
     static var inlineHookDetected: Bool {

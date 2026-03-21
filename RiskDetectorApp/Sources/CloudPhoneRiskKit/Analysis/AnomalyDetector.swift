@@ -144,12 +144,12 @@ public final class AnomalyDetector {
         }
 
         let mean = samples.reduce(0, +) / Double(samples.count)
-        let variance = samples.map { pow($0 - mean, 2) }.reduce(0, +) / Double(samples.count)
+        let variance = samples.map { pow($0 - mean, 2) }.reduce(0, +) / Double(samples.count - 1)
         let stdDev = sqrt(variance)
 
         guard stdDev > 0 else {
             // 历史样本完全稳定时，只要当前值偏离历史均值，就应视为强异常。
-            if value == mean {
+            if abs(value - mean) < 1e-15 {
                 return ZScoreResult(zScore: 0, isAnomalous: false, threshold: threshold)
             }
             return ZScoreResult(zScore: .infinity, isAnomalous: true, threshold: threshold)

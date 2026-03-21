@@ -68,7 +68,7 @@ enum IntegrityBaselineEnvCheck {
         guard let parentPath = processPath(for: ppid), !parentPath.isEmpty else { return nil }
         let normalized = parentPath.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let needles = ObfuscatedConstants.sysctlSuspiciousParentNeedles
-        if let hit = needles.first(where: { normalized.contains($0) }) {
+        if needles.contains(where: { normalized.contains($0) }) {
             return (parentPath as NSString).lastPathComponent
         }
         return nil

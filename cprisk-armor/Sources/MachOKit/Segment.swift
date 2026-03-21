@@ -56,8 +56,9 @@ public struct Segment {
         numberOfSections = try commandData.readUInt32(at: 64)
         flags = try commandData.readUInt32(at: 68)
 
-        let expectedCommandSize = Self.headerSize + Int(numberOfSections) * Section.size
-        guard expectedCommandSize <= commandData.count else {
+        let (sectionBytes, mulOF) = Int(numberOfSections).multipliedReportingOverflow(by: Section.size)
+        let (expectedCommandSize, addOF) = Self.headerSize.addingReportingOverflow(sectionBytes)
+        guard !mulOF, !addOF, expectedCommandSize <= commandData.count else {
             throw MachOError.invalidData("Segment \(name) command is too small for \(numberOfSections) sections")
         }
 

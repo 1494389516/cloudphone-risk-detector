@@ -106,7 +106,9 @@ struct ObjCSwizzleDetector: Detector {
 
         #if arch(arm64)
         if let firstInstruction = safeReadFirstInstruction(at: impRaw) {
-            if firstInstruction >= 0x14000000 && firstInstruction <= 0x17FFFFFF {
+            let isB  = firstInstruction >= 0x14000000 && firstInstruction <= 0x17FFFFFF
+            let isBL = firstInstruction >= 0x94000000 && firstInstruction <= 0x97FFFFFF
+            if isB || isBL {
                 score += 50
                 methods.append("\(ObfuscatedConstants.signalObjcInlineHookDetected):\(check.className).\(check.selector)")
                 return

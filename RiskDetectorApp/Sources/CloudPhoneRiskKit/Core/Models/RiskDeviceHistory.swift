@@ -133,7 +133,7 @@ public struct RiskDeviceHistory: Codable, Sendable {
         let minScore = scores.min() ?? 0
 
         // 标准差
-        let variance = scores.map { pow($0 - meanScore, 2) }.reduce(0, +) / count
+        let variance = scores.map { pow($0 - meanScore, 2) }.reduce(0, +) / Double(max(scores.count - 1, 1))
         let stdScore = sqrt(variance)
 
         // 时间跨度

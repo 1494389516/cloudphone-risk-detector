@@ -170,7 +170,7 @@ public final class TemporalFeaturesCalculator {
         // 7. 风险分数统计
         let scores = snapshots.map { $0.riskScore }
         let averageRiskScore = scores.reduce(0, +) / Double(scores.count)
-        let variance = scores.map { pow($0 - averageRiskScore, 2) }.reduce(0, +) / Double(scores.count)
+        let variance = scores.map { pow($0 - averageRiskScore, 2) }.reduce(0, +) / Double(max(scores.count - 1, 1))
         let riskScoreStdDev = sqrt(variance)
         let maxRiskScore = scores.max() ?? 0
         let minRiskScore = scores.min() ?? 0
@@ -294,7 +294,7 @@ public final class TemporalFeaturesCalculator {
         let actionCounts = withBehavior.map { Double($0.actionCount) }
         if actionCounts.max() ?? 0 > 0 {
             let avg = actionCounts.reduce(0, +) / Double(actionCounts.count)
-            let variance = actionCounts.map { pow($0 - avg, 2) }.reduce(0, +) / Double(actionCounts.count)
+            let variance = actionCounts.map { pow($0 - avg, 2) }.reduce(0, +) / Double(max(actionCounts.count - 1, 1))
             let stdDev = sqrt(variance)
             if avg > 0 {
                 cvs.append(stdDev / avg)
@@ -308,7 +308,7 @@ public final class TemporalFeaturesCalculator {
         }
         if tapSwipeRatios.max() ?? 0 > 0 {
             let avg = tapSwipeRatios.reduce(0, +) / Double(tapSwipeRatios.count)
-            let variance = tapSwipeRatios.map { pow($0 - avg, 2) }.reduce(0, +) / Double(tapSwipeRatios.count)
+            let variance = tapSwipeRatios.map { pow($0 - avg, 2) }.reduce(0, +) / Double(max(tapSwipeRatios.count - 1, 1))
             let stdDev = sqrt(variance)
             if avg > 0 {
                 cvs.append(stdDev / avg)
@@ -319,7 +319,7 @@ public final class TemporalFeaturesCalculator {
         let correlations = withBehavior.compactMap { $0.touchMotionCorrelation }
         if correlations.count >= 2 {
             let avg = correlations.reduce(0, +) / Double(correlations.count)
-            let variance = correlations.map { pow($0 - avg, 2) }.reduce(0, +) / Double(correlations.count)
+            let variance = correlations.map { pow($0 - avg, 2) }.reduce(0, +) / Double(correlations.count - 1)
             let stdDev = sqrt(variance)
             if avg > 0 {
                 cvs.append(stdDev / avg)

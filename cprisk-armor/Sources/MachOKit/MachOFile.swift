@@ -401,7 +401,7 @@ public final class MachOFile {
             )
 
             let nameFileOffset = stroff + Int(n_strx)
-            let maxLen = Swift.min(4096, stroff + strsize - Int(n_strx))
+            let maxLen = Swift.min(4096, strsize - Int(n_strx))
             let name: String
             let nameLength: Int
             if Int(n_strx) < strsize, nameFileOffset < data.count, maxLen > 0 {
@@ -484,15 +484,13 @@ public final class MachOFile {
         for index in 0..<entryCount {
             let entryFileOffset = sectionFileOffset + index * 4
             let relativePointer = try data.readInt32(at: entryFileOffset)
-            let descriptorFileOffset = entryFileOffset + Int(relativePointer)
-
-            guard descriptorFileOffset >= 0, descriptorFileOffset + 12 <= data.count else { continue }
+            let (descriptorFileOffset, dOF) = entryFileOffset.addingReportingOverflow(Int(relativePointer))
+            guard !dOF, descriptorFileOffset >= 0, descriptorFileOffset + 12 <= data.count else { continue }
 
             let nameFieldOffset = descriptorFileOffset + 8
             let nameRelativePointer = try data.readInt32(at: nameFieldOffset)
-            let nameFileOffset = nameFieldOffset + Int(nameRelativePointer)
-
-            guard nameFileOffset >= 0, nameFileOffset < data.count else { continue }
+            let (nameFileOffset, nOF) = nameFieldOffset.addingReportingOverflow(Int(nameRelativePointer))
+            guard !nOF, nameFileOffset >= 0, nameFileOffset < data.count else { continue }
 
             // Scan until \0 to get full type name; cap at 4096 to avoid pathological inputs.
             let maxLen = Swift.min(4096, data.count - nameFileOffset)
