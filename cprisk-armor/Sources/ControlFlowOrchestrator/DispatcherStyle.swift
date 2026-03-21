@@ -14,6 +14,7 @@ public enum DispatcherStyle: String, CaseIterable, Codable, Sendable {
     case switchLoop
     case ifElseChain
     case dualRail
+    case splitIndirect
     case regionCascade
 
     public static func choose(
@@ -35,11 +36,13 @@ public enum DispatcherStyle: String, CaseIterable, Codable, Sendable {
                 return .switchLoop
             }
 
-            switch hash % 3 {
+            switch hash % 4 {
             case 0:
                 return .switchLoop
             case 1:
                 return .ifElseChain
+            case 2:
+                return .splitIndirect
             default:
                 return .dualRail
             }

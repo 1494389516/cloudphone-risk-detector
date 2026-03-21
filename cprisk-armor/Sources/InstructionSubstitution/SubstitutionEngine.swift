@@ -7,6 +7,11 @@ public enum InstructionSubstitutionGroup: String, CaseIterable, Hashable {
     case groupC
     case groupD
     case groupE
+    case groupF
+    case groupG
+    case groupH
+    case groupI
+    case groupJ
 
     var summaryLabel: String {
         switch self {
@@ -15,6 +20,11 @@ public enum InstructionSubstitutionGroup: String, CaseIterable, Hashable {
         case .groupC: return "Group C"
         case .groupD: return "Group D"
         case .groupE: return "Group E"
+        case .groupF: return "Group F"
+        case .groupG: return "Group G"
+        case .groupH: return "Group H"
+        case .groupI: return "Group I"
+        case .groupJ: return "Group J"
         }
     }
 
@@ -29,7 +39,17 @@ public enum InstructionSubstitutionGroup: String, CaseIterable, Hashable {
         case .groupD:
             return "NOP / XZR no-effect"
         case .groupE:
-            return "MOVZ / ORR logical immediate"
+            return "MOVZ / ORR logical immediate (const-unfold)"
+        case .groupF:
+            return "CBZ/CBNZ <-> CSEL/CSINC"
+        case .groupG:
+            return "Compare-and-branch patterns"
+        case .groupH:
+            return "ADD/SUB/EOR/BIC shifted register"
+        case .groupI:
+            return "MADD/MSUB/MUL multiply-accumulate"
+        case .groupJ:
+            return "LDR literal / ADRP+ADD"
         }
     }
 }
@@ -448,6 +468,18 @@ public final class SubstitutionEngine {
                     ),
                     description: ARM64RegisterCopyForm.orrSelf.description
                 ),
+                ReplacementOption(
+                    rawValue: ARM64Codec.encodeLogicalShiftedRegister(
+                        destination: copy.destinationRegister,
+                        source1: copy.sourceRegister,
+                        source2: ARM64RegisterWidth.zeroRegisterIndex,
+                        shiftType: 0,
+                        shiftAmount: 0,
+                        opc: 2,
+                        width: copy.width
+                    ),
+                    description: "EOR with XZR (arith-equivalent copy)"
+                ),
             ]
 
             if canUseAddSub {
@@ -515,6 +547,18 @@ public final class SubstitutionEngine {
                     ),
                     description: ARM64NoEffectForm.discardViaOrrSelf.description
                 ),
+                ReplacementOption(
+                    rawValue: ARM64Codec.encodeLogicalShiftedRegister(
+                        destination: ARM64RegisterWidth.zeroRegisterIndex,
+                        source1: source,
+                        source2: ARM64RegisterWidth.zeroRegisterIndex,
+                        shiftType: 0,
+                        shiftAmount: 0,
+                        opc: 2,
+                        width: width
+                    ),
+                    description: "discard via EOR with XZR"
+                ),
             ])
 
             options = orderedUniqueOptions(excluding: decoded.rawValue, options: candidates)
@@ -533,18 +577,159 @@ public final class SubstitutionEngine {
                 description: ARM64ImmediateLoadForm.movzZeroShift.description
             )]
 
-            if let orrRawValue = ARM64Codec.encodeORRLogicalImmediate(
+            let orrVariants = ARM64Codec.encodeORRLogicalImmediateVariants(
                 destinationRegister: load.destinationRegister,
                 immediate: load.immediate,
                 width: load.width
-            ) {
+            )
+            if !orrVariants.isEmpty {
+                for (idx, variantRawValue) in orrVariants.enumerated() {
+                    candidates.append(ReplacementOption(
+                        rawValue: variantRawValue,
+                        description: idx == 0
+                            ? ARM64ImmediateLoadForm
+                                .orrLogicalImmediate(ARM64BitmaskImmediateEncoding(n: 0, immr: 0, imms: 0))
+                                .description
+                            : "ORR logical immediate alt#\(idx + 1)"
+                    ))
+                }
+            }
+
+            options = orderedUniqueOptions(excluding: decoded.rawValue, options: candidates)
+
+        case .conditionalBranch(let cb):
+            _ = cb
+            options = []
+
+        case .compareBranch(let cb):
+            _ = cb
+            options = []
+
+        case .logicalShifted(let ls):
+            var candidates = [ReplacementOption]()
+
+            let isEquivalentCopyCandidate =
+                ls.sourceRegister2 == ARM64RegisterWidth.zeroRegisterIndex
+                && ls.shiftType == 0
+                && ls.shiftAmount == 0
+
+            if isEquivalentCopyCandidate {
+                candidates.append(contentsOf: [
+                    ReplacementOption(
+                        rawValue: ARM64Codec.encodeAddShiftedRegister(
+                            destination: ls.destinationRegister,
+                            source1: ls.sourceRegister1,
+                            source2: ls.sourceRegister2,
+                            shiftType: ls.shiftType,
+                            shiftAmount: ls.shiftAmount,
+                            width: ls.width
+                        ),
+                        description: "ADD shifted zero (arith-equivalent)"
+                    ),
+                    ReplacementOption(
+                        rawValue: ARM64Codec.encodeSubShiftedRegister(
+                            destination: ls.destinationRegister,
+                            source1: ls.sourceRegister1,
+                            source2: ls.sourceRegister2,
+                            shiftType: ls.shiftType,
+                            shiftAmount: ls.shiftAmount,
+                            width: ls.width
+                        ),
+                        description: "SUB shifted zero (arith-equivalent)"
+                    ),
+                    ReplacementOption(
+                        rawValue: ARM64Codec.encodeLogicalShiftedRegister(
+                            destination: ls.destinationRegister,
+                            source1: ls.sourceRegister1,
+                            source2: ls.sourceRegister2,
+                            shiftType: ls.shiftType,
+                            shiftAmount: ls.shiftAmount,
+                            opc: 2,
+                            width: ls.width
+                        ),
+                        description: "EOR shifted zero (arith-equivalent)"
+                    ),
+                    ReplacementOption(
+                        rawValue: ARM64Codec.encodeLogicalShiftedRegister(
+                            destination: ls.destinationRegister,
+                            source1: ls.sourceRegister1,
+                            source2: ls.sourceRegister2,
+                            shiftType: ls.shiftType,
+                            shiftAmount: ls.shiftAmount,
+                            opc: 3,
+                            width: ls.width
+                        ),
+                        description: "BIC shifted zero (arith-equivalent)"
+                    ),
+                ])
+            }
+
+            options = orderedUniqueOptions(excluding: decoded.rawValue, options: candidates)
+
+        case .multiplyAccumulate(let ma):
+            var candidates = [ReplacementOption]()
+
+            switch ma.form {
+            case .madd:
+                if ma.accumulator == ARM64RegisterWidth.zeroRegisterIndex {
+                    candidates.append(ReplacementOption(
+                        rawValue: ARM64Codec.encodeMSUB(
+                            destination: ma.destinationRegister,
+                            multiplicand: ma.multiplicand,
+                            multiplier: ma.multiplier,
+                            accumulator: ma.accumulator
+                        ),
+                        description: "MSUB with XZR acc (arith-equivalent MUL)"
+                    ))
+                    candidates.append(ReplacementOption(
+                        rawValue: ARM64Codec.encodeMADD(
+                            destination: ma.destinationRegister,
+                            multiplicand: ma.multiplicand,
+                            multiplier: ma.multiplier,
+                            accumulator: ARM64RegisterWidth.zeroRegisterIndex
+                        ),
+                        description: ARM64MultiplyAccumulateForm.mul.description
+                    ))
+                }
+            case .msub:
+                if ma.accumulator == ARM64RegisterWidth.zeroRegisterIndex {
+                    candidates.append(ReplacementOption(
+                        rawValue: ARM64Codec.encodeMADD(
+                            destination: ma.destinationRegister,
+                            multiplicand: ma.multiplicand,
+                            multiplier: ma.multiplier,
+                            accumulator: ma.accumulator
+                        ),
+                        description: "MADD with XZR acc (arith-equivalent MUL)"
+                    ))
+                }
+            case .mul:
+                // MUL -> MADD with XZR accumulator
                 candidates.append(ReplacementOption(
-                    rawValue: orrRawValue,
-                    description: ARM64ImmediateLoadForm
-                        .orrLogicalImmediate(ARM64BitmaskImmediateEncoding(n: 0, immr: 0, imms: 0))
-                        .description
+                    rawValue: ARM64Codec.encodeMADD(
+                        destination: ma.destinationRegister,
+                        multiplicand: ma.multiplicand,
+                        multiplier: ma.multiplier,
+                        accumulator: ARM64RegisterWidth.zeroRegisterIndex
+                    ),
+                    description: ARM64MultiplyAccumulateForm.madd.description
                 ))
             }
+
+            options = orderedUniqueOptions(excluding: decoded.rawValue, options: candidates)
+
+        case .loadLiteral(let ll):
+            var candidates = [ReplacementOption]()
+
+            // LDR literal can be kept but represented differently
+            candidates.append(ReplacementOption(
+                rawValue: ARM64Codec.encodeLoadLiteral(
+                    destinationRegister: ll.destinationRegister,
+                    immediate: ll.immediate,
+                    width: ll.width
+                ),
+                description: ARM64LoadLiteralForm.ldrLiteral.description
+            ))
 
             options = orderedUniqueOptions(excluding: decoded.rawValue, options: candidates)
         }
@@ -560,6 +745,16 @@ public final class SubstitutionEngine {
             return noEffect.form.description
         case .immediateLoad(let load):
             return load.form.description
+        case .conditionalBranch(let cb):
+            return cb.form.description
+        case .compareBranch(let cb):
+            return cb.form.description
+        case .logicalShifted(let ls):
+            return ls.form.description
+        case .multiplyAccumulate(let ma):
+            return ma.form.description
+        case .loadLiteral(let ll):
+            return ll.form.description
         }
     }
 
@@ -578,6 +773,16 @@ public final class SubstitutionEngine {
             return .groupD
         case .immediateLoad:
             return .groupE
+        case .conditionalBranch:
+            return .groupF
+        case .compareBranch:
+            return .groupG
+        case .logicalShifted:
+            return .groupH
+        case .multiplyAccumulate:
+            return .groupI
+        case .loadLiteral:
+            return .groupJ
         }
     }
 

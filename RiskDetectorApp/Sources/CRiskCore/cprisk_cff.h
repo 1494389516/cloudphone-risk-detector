@@ -35,6 +35,13 @@ typedef enum cprisk_cff_default_action {
     CPRISK_CFF_DEFAULT_TRAP = 2,
 } cprisk_cff_default_action_t;
 
+typedef enum cprisk_cff_codec_style {
+    CPRISK_CFF_CODEC_STYLE_AUTO = 0,
+    CPRISK_CFF_CODEC_STYLE_XOR_ROTATE = 1,
+    CPRISK_CFF_CODEC_STYLE_ADD_ROTATE_XOR = 2,
+    CPRISK_CFF_CODEC_STYLE_AFFINE = 3,
+} cprisk_cff_codec_style_t;
+
 typedef struct cprisk_cff_config {
     uint32_t seed;
     uint32_t runtime_salt;
@@ -42,7 +49,7 @@ typedef struct cprisk_cff_config {
     uint32_t iteration_budget;
     uint8_t release_build;
     uint8_t enable_fake_states;
-    uint8_t reserved0;
+    uint8_t codec_style;
     uint8_t reserved1;
     cprisk_cff_default_action_t default_action;
 } cprisk_cff_config_t;
@@ -56,12 +63,14 @@ typedef struct cprisk_cff_context {
     uint8_t release_build;
     uint8_t enable_fake_states;
     uint8_t fake_state_budget;
-    uint8_t reserved0;
+    uint8_t codec_style;
     cprisk_cff_default_action_t default_action;
 } cprisk_cff_context_t;
 
 uint32_t cprisk_cff_encode_state(uint32_t state, uint32_t key, uint32_t salt);
 uint32_t cprisk_cff_decode_state(uint32_t encoded_state, uint32_t key, uint32_t salt);
+uint32_t cprisk_cff_encode_state_with_style(uint32_t state, uint32_t key, uint32_t salt, cprisk_cff_codec_style_t style);
+uint32_t cprisk_cff_decode_state_with_style(uint32_t encoded_state, uint32_t key, uint32_t salt, cprisk_cff_codec_style_t style);
 uint32_t cprisk_cff_runtime_salt(uint32_t seed, uint32_t runtime_hint);
 
 void cprisk_cff_init(cprisk_cff_context_t *context, const cprisk_cff_config_t *config);

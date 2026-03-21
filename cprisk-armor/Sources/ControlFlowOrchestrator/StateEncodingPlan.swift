@@ -3,6 +3,7 @@ import Foundation
 public enum StateEncodingStyle: String, CaseIterable, Codable, Sendable {
     case xorRotate
     case addRotateXor
+    case affine
 }
 
 public enum UnexpectedStateBehavior: String, Codable, Sendable {
@@ -40,11 +41,11 @@ public struct StateEncodingPlan: Codable, Equatable, Sendable {
 
         switch tier {
         case .heavy:
-            style = .addRotateXor
+            style = (seed & 1) == 0 ? .addRotateXor : .affine
             releaseFakeStateCount = options.enableFakeStateReleaseOnly ? 2 : 0
             unexpectedStateBehavior = options.enableDefaultPoisonForHeavy ? .poison : .failClosed
         case .regionOnly:
-            style = .addRotateXor
+            style = (seed & 2) == 0 ? .addRotateXor : .affine
             releaseFakeStateCount = options.enableFakeStateReleaseOnly ? 1 : 0
             unexpectedStateBehavior = .failClosed
         case .light:

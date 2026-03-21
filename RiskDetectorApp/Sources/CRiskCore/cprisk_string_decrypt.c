@@ -27,6 +27,7 @@ static uint8_t  s_dec_key[CPRISK_ARMOR_KEY_SIZE];
 static int      s_dec_ready;
 static uint64_t s_str_acc;
 static uint64_t s_dispatch_seed;
+static uint8_t  s_per_string_key[CPRISK_ARMOR_KEY_SIZE];
 
 /* ── internal ──────────────────────────────────────────────────────── */
 
@@ -302,6 +303,24 @@ static void cprisk_keystream_distributed(const uint8_t *key, uint32_t sid,
     cprisk_keystream_dispatch_level1(key, sid, nonce, nonce_len, out, len, dispatch_seed);
 }
 
+/* ── per-string key derivation ─────────────────────────────────────── */
+
+static void cprisk_derive_per_string_key(
+    uint32_t string_id,
+    const uint8_t *nonce
+) {
+    uint8_t material[4 + CPRISK_ARMOR_NONCE_SIZE];
+    material[0] = (uint8_t)(string_id);
+    material[1] = (uint8_t)(string_id >> 8);
+    material[2] = (uint8_t)(string_id >> 16);
+    material[3] = (uint8_t)(string_id >> 24);
+    memcpy(material + 4, nonce, CPRISK_ARMOR_NONCE_SIZE);
+
+    cprisk_hmac_sha256(s_dec_key, CPRISK_ARMOR_KEY_SIZE,
+                       material, sizeof(material), s_per_string_key);
+    cprisk_secure_zero(material, sizeof(material));
+}
+
 /* ── public API ────────────────────────────────────────────────────── */
 
 int cprisk_init_string_decryptor(const uint8_t *key, size_t key_len) {
@@ -402,7 +421,8 @@ int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) 
     if (!ks)
         return -1;
     memset(ks, 0, dlen);
-    cprisk_keystream_distributed(s_dec_key, string_id,
+    cprisk_derive_per_string_key(string_id, ent->nonce);
+    cprisk_keystream_distributed(s_per_string_key, string_id,
                                  ent->nonce, CPRISK_ARMOR_NONCE_SIZE, ks, dlen,
                                  s_dispatch_seed);
 
@@ -441,6 +461,7 @@ uint64_t cprisk_get_string_integrity_accumulator(void) {
 
 void cprisk_cleanup_string_decryptor(void) {
     cprisk_secure_zero(s_dec_key, sizeof(s_dec_key));
+    cprisk_secure_zero(s_per_string_key, sizeof(s_per_string_key));
     s_dec_ready = 0;
     s_str_acc = 0;
     s_dispatch_seed = 0;

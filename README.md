@@ -64,16 +64,18 @@
 | **6.5** | **白盒加密 + 反重打包** | 白盒 PRF 引擎（5 域 table-driven SPN，~160KB S-box 嵌入二进制，root key 不可逆提取）、anchor/字符串/数据段/签名材料全链路白盒派生（替代 legacy HMAC 路径）、AppSigningIdentityDetector 反重打包（TeamID/bundleID/entitlement 一致性 + 基线漂移检测 + integrity poison 联动）、白盒 4 section 占位符预埋（`__swift5_awbm/awbc/awbd/awbt`）、cprisk-armor IntegrityAnchorPass 白盒集成、CRiskCore 白盒运行时（validate bundle → PRF evaluate → signing helper）、v2a 签名链白盒化 |
 | **6.6** | **反调试纵深 + Pass 7/8 + Frida 模块检测** | cprisk-armor Pass 7 AntiDebugInjector（`__DATA,__cpr_adbg7` 编译期注入计划 ABI）+ Pass 8 InstructionSubstitution（对 `__TEXT.__text` 做 1:1 等长语义等价替换）、关键密码学路径被调试时静默毒化、watchdog 多维探针（SIGTRAP/csops/硬件断点/软件断点/异常分发超时/可疑线程/TTY/Developer Disk）、FridaModuleDetector（image/section/字符串三路 Frida/Gum/Gadget 检测）、反篡改检测顺序稳定随机化（MutationStrategy.shuffleChecks）、`software_breakpoint_detected` / `exception_delivery_timeout` 等新 RiskSignal |
 | **6.7** | **控制流平坦化 + 反去混淆 + Pass 9** | 源码级 CFF 基础设施（CFFStateCodec / CFFDispatcher / CFFReturnSink / CFFRuntimeSalt）、DecisionTree / RiskDetectionEngine / ChallengeSession / TrustChainManager / anti_debug_watchdog 接入编码状态机、Pass 9 ControlFlowOrchestrator 策略编排（`cff_policy.yaml`）、异构 dispatcher（switch / if-else / dual-rail / region）、runtime salt 绑定、fail-closed 默认路径、避免 OLLVM 模板化特征 |
+| **6.8** | **反调试 Runtime Gate + Pass 10/11 + CFF/白盒强化** | `__thread_init` 早期异常端口抢占与竞态回收、AntiDebug plan 运行时 inline patch gate（`BRK #0xC0E0`）、Unix syscall vs Mach 路径交叉校验、Frida 协议指纹与可选全端口扫描、多频 watchdog + 互监 deadline、关键路径 timing canary、白盒 PRF 增强扩散层、Pass 10 ImportEncryptor、Pass 11 HeaderEncryptor、CFF 新增 `splitIndirect` dispatcher 与 `affine` 编码风格、CFF 覆盖建议器 |
 ## 架构概览
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│          Layer 0: 自研壳 (cprisk-armor) ABI v2           │
+│        Layer 0: 自研壳 (cprisk-armor) ABI v2 / 11 Pass    │
 │   全量字符串加密+HMAC / 多 Section 数据段加密+HMAC       │
 │   完整性锚点 HMAC / Metadata 抹除 / 结构混淆 / Anti-Dump │
-│   Pass 6 符号表混淆 / Pass 7 AntiDebug ABI / Pass 8 指令替换 / Pass 9 CFF 编排 │
+│   Pass 6 符号表混淆 / Pass 7 Runtime Gate / Pass 8 指令替换 │
+│   Pass 9 CFF 编排 / Pass 10 ImportEncryptor / Pass 11 HeaderEncryptor │
 │   短别名 CodingKeys / 全量 strip / 强制密钥注入          │
-│   白盒 PRF (5域 S-box ~160KB) / 反重打包 TeamID 校验    │
+│   白盒 PRF (5域 S-box ~160KB, 强扩散) / 反重打包 TeamID │
 ├────────────────────────────────────────────────────────┤
 │                   业务应用层                             │
 │            evaluate(scenario: .payment)                │
@@ -114,18 +116,24 @@
 
 ---
 
-## 6.7 新增能力 — 控制流平坦化 + 反去混淆 + Pass 9
+## 6.8 新增能力 — 反调试 Runtime Gate + Pass 10/11 + CFF/白盒强化
 
-6.7 引入源码级控制流平坦化（CFF）与反去混淆设计：Swift 侧 CFF 基础设施（CFFStateCodec、CFFDispatcher、CFFReturnSink、CFFRuntimeSalt）、DecisionTree / RiskDetectionEngine / ChallengeSession / TrustChainManager / anti_debug_watchdog 接入编码状态机；cprisk-armor Pass 9 ControlFlowOrchestrator 读取 `cff_policy.yaml` 为函数分配 CFF 计划（heavy/light/never/regionOnly）；刻意避免 OLLVM 模板化特征（异构 dispatcher、runtime salt、fail-closed 默认、region 拆分）。
+6.8 在 6.7 的源码级 CFF 与 Pass 9 基础上，继续补齐三条关键链路：第一，反调试从“探针 + metadata”升级到“**最早期异常端口抢占 + AntiDebug plan 运行时 gate**”，实现 `__thread_init` 阶段注册、constructor 阶段回收校验，以及按 plan 对关键 patch site 注入 `BRK #0xC0E0` 的 inline runtime gate；第二，壳从 9 Pass 升级到 **11 Pass**，补齐 Pass 10 `ImportEncryptor` 与 Pass 11 `HeaderEncryptor`，并在运行时加入 import 解析缓存、header restore sanity fallback 与 dyld/OS 混合时序钩子；第三，CFF 与白盒继续强化，引入 `splitIndirect` dispatcher、`affine` 编码风格、CFF 覆盖建议器，以及白盒 PRF 的增强扩散层。
 
-### 6.7 核心改动
+### 6.8 核心改动
 
 | 改动 | 说明 |
 |------|------|
-| **Swift CFF 基础设施** | `CFFStateCodec` 编码/解码、`CFFDispatcher` 异构分支、`CFFReturnSink` 统一收口、`CFFRuntimeSalt` 运行时盐混合 |
-| **业务 CFF 接入** | DecisionTree.decide、RiskDetectionEngine 四 region、ChallengeSession、TrustChainManager、anti_debug_watchdog |
-| **Pass 9: ControlFlowOrchestrator** | 读取 `cff_policy.yaml`，为函数分配 dispatcher 风格、状态编码计划、运行时依赖计划 |
-| **反去混淆设计** | 避免唯一高入度 dispatcher、state 非裸常量、return 收口、runtime salt 绑定、fail-closed 默认 |
+| **早期异常端口抢占** | `__DATA,__thread_init` 阶段执行 `deny-attach + exception handler register`，并在 constructor 阶段做端口指纹对比与 hijack reclaim，缩小 Frida gadget 抢占窗口 |
+| **Runtime Gate 落地** | `AntiDebugInjector` 写入的 anti-debug plan 现在由运行时消费：解析 `patchSiteVMOffset`、在关键点写入 `BRK #0xC0E0`、由异常处理器在“非调试”路径透明跳过、在“调试/篡改”路径毒化 |
+| **Mach/Unix 双路径交叉校验** | `sysctl(P_TRACED)`、Mach exception ports、`task_info(TASK_EXTMOD_INFO)`、Mach port 数量异常联动，降低单一路径被 hook 时的盲区 |
+| **Frida 行为指纹升级** | 除固定端口/路径外，新增本地监听端口协议探测（`poll + AUTH/HTTP/NUL` 多探针）、D-Bus/Frida/Gum 响应指纹、可选全端口扫描与可插拔内存签名 hook |
+| **多频 watchdog** | watchdog 拆分为高/中/低频检查，加入 worker heartbeat / deadline 互监控与 peer stall 检测，覆盖“闪电 attach → 操作 → detach”窗口 |
+| **关键路径 timing canary** | 在完整性/密码学关键路径引入段间比例 timing canary，检测选择性单步与 DBI 导致的非线性时序膨胀 |
+| **Pass 10: ImportEncryptor** | 加密 bind/import 符号名写入 `__DATA.__swift5_imp`，运行时经白盒 domain 8 派生密钥解密并 `dlsym`，带完整性校验与解析缓存 |
+| **Pass 11: HeaderEncryptor** | 将 `mach_header_64` 关键字段加密备份到 `__DATA.__cprisk_hbhdr`，运行时优先还原，失败走 sanity-checked fallback 而非硬崩 |
+| **CFF 反模式识别强化** | `CFFDispatcher` 新增 `splitIndirect` 风格，状态编码新增 `affine`；Pass 9 增加 coverage advisor，帮助把更多高价值函数纳入 CFF 管理范围 |
+| **白盒 PRF 增强扩散** | 保持 ABI 四轮记录格式不变，但每轮执行双子轮 + 强扩散层（MDS-like byte mix），提升对白盒 DFA/CPA 的成本 |
 
 ---
 
@@ -294,7 +302,7 @@
                           ↓
                     App 二进制 (SDK 代码静态链入)
                           ↓
-                    cprisk-armor CLI (8 Pass, ABI v2)
+                    cprisk-armor CLI (11 Pass, ABI v2)
                     --key <hex> / --key-file / CPRISK_ARMOR_KEY
                     ┌─ Pass 1: StringEncryptor       (白盒 PRF 密钥 + HMAC + nonce)
                     ├─ Pass 2: MetadataScrubber      (元数据抹除)
@@ -303,7 +311,9 @@
                     ├─ Pass 3: DataSegmentEncryptor  (白盒 PRF 密钥 + HMAC + nonce)
                     ├─ Pass 5: StructureObfuscator   (结构混淆, 安全随机)
                     ├─ Pass 7: AntiDebugInjector     (anti-debug 注入计划 __cpr_adbg7)
-                    └─ Pass 6: SymbolStripper        (SDK 符号表混淆)
+                    ├─ Pass 6: SymbolStripper        (SDK 符号表混淆)
+                    ├─ Pass 10: ImportEncryptor      (导入表加密)
+                    └─ Pass 11: HeaderEncryptor      (Header 加密)
                           ↓
                     xcrun strip -x && xcrun strip  (全量符号剥离)
                           ↓
@@ -408,7 +418,7 @@
 .
 ├── cprisk-armor/                         # 编译后壳工具链 (SPM CLI)
 │   ├── Sources/
-│   │   ├── cprisk-armor/                  # CLI 入口 (8 Pass 编排)
+│   │   ├── cprisk-armor/                  # CLI 入口 (11 Pass 编排)
 │   │   ├── MachOKit/                     # Mach-O 读写库
 │   │   ├── StringEncryptor/              # Pass 1: 全量字符串加密
 │   │   ├── MetadataScrubber/             # Pass 2: Metadata 抹除
@@ -470,7 +480,7 @@
 
 ## 安全设计概要
 
-SDK 采用纵深防御架构：**cprisk-armor 自研壳（9 Pass / ABI v2）** 在编译后对二进制执行全量字符串加密（HMAC 认证 + 随机 nonce）、Metadata 抹除、多 Section 数据段加密（HMAC 认证）、完整性锚点（HMAC 绑定 rootKey + **白盒 PRF 5 域 S-box**）、结构混淆、**符号表混淆**（Pass 6 SymbolStripper）、**AntiDebug 注入计划 ABI**（Pass 7 AntiDebugInjector）、**ARM64 指令替换**（Pass 8 InstructionSubstitution）以及 **CFF 策略编排**（Pass 9 ControlFlowOrchestrator），强制密钥注入消除零密钥降级；**白盒 PRF 引擎**将 root key 融入 ~160KB S-box 查找表不可逆提取，anchor 校验、字符串解密密钥、数据段加载密钥、签名材料全部通过白盒 PRF 派生，内存 dump 无法还原原始密钥；**AppSigningIdentityDetector** 检测重打包/重签名（TeamID/bundleID/entitlement 一致性 + 基线漂移 + integrity poison 联动）；**SDK 以 library.static 交付**，全部代码静态链入 App 二进制后执行 `strip -x` + `strip` 全量剥离，IDA 中 SDK 函数显示为 `sub_XXXX`，消除静态分析与逆向还原特征；**Codable 短别名 CodingKeys** 消除 Small String Optimization 导致的指令流字符串泄漏；**Anti-Dump 页面保护**（`vm_region_64`）检测攻击者重映射，**密钥安全清零**覆盖全部中间态敏感材料；**内联 SHA-256 + 自包含 Mach-O 解析**消除 CommonCrypto 与 dyld API 的 Hook 攻击面，阻断 Clean Copy 攻击；**渗透式毒化**将壳完整性 material 绑定到 ReportEnvelope 签名派生链（v2a），篡改即签名失效而非 crash，攻击者无法定位防护点；**字符串全量混淆**（`ObfuscatedJailbreakStrings`）防止静态特征提取；**DualPathValidator 双路/三路验证**确保检测结果不被单点绕过；**HMAC-SHA256 签名**覆盖报告全字段防篡改，**SignedRiskConclusion v2** 将 signals 摘要纳入签名域；**Keychain + AES-GCM 加密存储**保护本地数据与历史记录，**Keychain 策略统一** `AfterFirstUnlockThisDeviceOnly`；**配置签名信任链**（远端 → 缓存 → 运行时）杜绝配置注入，**DEBUG/Release 行为对齐**消除调试放行路径；**__TEXT 段哈希 + SDK 二进制完整性校验 + 基线交叉验证**检测代码篡改与基线投毒；**Provider 注册表封印 + ConditionExpression 封印 + 实例锁定**防止运行时替换；**ServerSignals HMAC 来源校验 + Challenge HMAC 校验**防止注入伪造信号与中间人篡改挑战结果；**动态可疑特征列表**支持服务端热更新检测规则；**Frida 五维对抗**（线程 / 端口 / V8 堆 / Socket / 时序）全覆盖；**LibcPrologueGuard + KernelHookSideChannel** 实现 Inline Hook 穿透与内核级 Hook 侧信道检测；**IntegrityBaselineEnvCheck** 首启环境把关防止基线投毒；**App Attest 强制模式** 消除所有静默降级路径；**行为数据用后清零**防止内存 Dump 提取。
+SDK 采用纵深防御架构：**cprisk-armor 自研壳（11 Pass / ABI v2）** 在编译后对二进制执行全量字符串加密（HMAC 认证 + 随机 nonce）、Metadata 抹除、多 Section 数据段加密（HMAC 认证）、完整性锚点（HMAC 绑定 rootKey + **白盒 PRF 5 域 S-box**）、结构混淆、**符号表混淆**（Pass 6 SymbolStripper）、**AntiDebug 运行时 gate**（Pass 7 AntiDebugInjector + runtime inline patch gate）、**ARM64 指令替换**（Pass 8 InstructionSubstitution）、**CFF 策略编排**（Pass 9 ControlFlowOrchestrator）、**导入表加密**（Pass 10 ImportEncryptor）以及 **Header 加密**（Pass 11 HeaderEncryptor），强制密钥注入消除零密钥降级；**白盒 PRF 引擎**将 root key 融入 ~160KB S-box 查找表不可逆提取，并通过增强扩散层提高差分分析成本，anchor 校验、字符串解密密钥、数据段加载密钥、导入/头恢复密钥、签名材料全部通过白盒 PRF 派生；**AppSigningIdentityDetector** 检测重打包/重签名（TeamID/bundleID/entitlement 一致性 + 基线漂移 + integrity poison 联动）；**SDK 以 library.static 交付**，全部代码静态链入 App 二进制后执行 `strip -x` + `strip` 全量剥离，IDA 中 SDK 函数显示为 `sub_XXXX`，消除静态分析与逆向还原特征；**Codable 短别名 CodingKeys** 消除 Small String Optimization 导致的指令流字符串泄漏；**Anti-Dump 页面保护**（`vm_region_64`）检测攻击者重映射，**密钥安全清零**覆盖全部中间态敏感材料；**内联 SHA-256 + 自包含 Mach-O 解析**消除 CommonCrypto 与 dyld API 的 Hook 攻击面，阻断 Clean Copy 攻击；**渗透式毒化**将壳完整性 material 绑定到 ReportEnvelope 签名派生链（v2a），篡改即签名失效而非 crash，攻击者无法定位防护点；**字符串全量混淆**（`ObfuscatedJailbreakStrings`）防止静态特征提取；**DualPathValidator 双路/三路验证**确保检测结果不被单点绕过；**HMAC-SHA256 签名**覆盖报告全字段防篡改，**SignedRiskConclusion v2** 将 signals 摘要纳入签名域；**Keychain + AES-GCM 加密存储**保护本地数据与历史记录，**Keychain 策略统一** `AfterFirstUnlockThisDeviceOnly`；**配置签名信任链**（远端 → 缓存 → 运行时）杜绝配置注入，**DEBUG/Release 行为对齐**消除调试放行路径；**__TEXT 段哈希 + SDK 二进制完整性校验 + 基线交叉验证**检测代码篡改与基线投毒；**Provider 注册表封印 + ConditionExpression 封印 + 实例锁定**防止运行时替换；**ServerSignals HMAC 来源校验 + Challenge HMAC 校验**防止注入伪造信号与中间人篡改挑战结果；**动态可疑特征列表**支持服务端热更新检测规则；**Frida 行为指纹 + 协议探测 + Mach/Unix 双路径反调试**扩大用户态注入检测面；**LibcPrologueGuard + KernelHookSideChannel** 实现 Inline Hook 穿透与内核级 Hook 侧信道检测；**IntegrityBaselineEnvCheck** 首启环境把关防止基线投毒；**App Attest 强制模式** 消除所有静默降级路径；**行为数据用后清零**防止内存 Dump 提取。
 
 ### 盲区三：PhysicalSensorProbe 预热与支付场景 UX
 
@@ -611,4 +621,4 @@ cd RiskDetectorApp && swift test --scratch-path "${TMPDIR:-/tmp}/cloudphone-risk
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 6.8 — 控制流平坦化 + Pass 9 + 反去混淆 (9 Pass)</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 6.8 — Runtime Gate + Pass 10/11 + CFF/白盒强化 (11 Pass)</sub></p>

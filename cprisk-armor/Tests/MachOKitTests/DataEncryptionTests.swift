@@ -83,7 +83,9 @@ final class DataEncryptionTests: XCTestCase {
                     size: sec.4,
                     contentHash: hashes[i],
                     nonce: testNonce,
-                    hmacTag: testHmac
+                    hmacTag: testHmac,
+                    sectionIndex: UInt32(i + 1),
+                    chainedKeyDepth: 1
                 ).serialized()
             )
         }
@@ -106,6 +108,8 @@ final class DataEncryptionTests: XCTestCase {
             XCTAssertEqual(payload.subdata(in: (base + 56)..<(base + 88)), hashes[i])
             XCTAssertEqual(payload.subdata(in: (base + 88)..<(base + 96)), testNonce)
             XCTAssertEqual(payload.subdata(in: (base + 96)..<(base + 128)), testHmac)
+            XCTAssertEqual(readLE32(payload, at: base + 128), UInt32(i + 1))
+            XCTAssertEqual(readLE32(payload, at: base + 132), 1)
         }
     }
 
@@ -131,7 +135,8 @@ final class DataEncryptionTests: XCTestCase {
                     segmentName: e.seg, sectionName: e.sec,
                     keyID: e.keyID, vmAddress: e.addr,
                     size: e.sz, contentHash: hashes[i],
-                    nonce: dummyNonce, hmacTag: dummyHmac
+                    nonce: dummyNonce, hmacTag: dummyHmac,
+                    sectionIndex: UInt32(i + 1), chainedKeyDepth: 1
                 ).serialized()
             )
         }
@@ -146,6 +151,8 @@ final class DataEncryptionTests: XCTestCase {
             XCTAssertEqual(readLE64(payload, at: base + 40), e.addr)
             XCTAssertEqual(readLE64(payload, at: base + 48), e.sz)
             XCTAssertEqual(payload.subdata(in: (base + 56)..<(base + 88)), hashes[i])
+            XCTAssertEqual(readLE32(payload, at: base + 128), UInt32(i + 1))
+            XCTAssertEqual(readLE32(payload, at: base + 132), 1)
         }
     }
 

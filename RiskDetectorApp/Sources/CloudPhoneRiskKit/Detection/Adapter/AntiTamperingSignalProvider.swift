@@ -5,7 +5,7 @@ private enum AntiTamperingSignalProviderCFF {
     static let signalsConfig = CFFConfig.adaptive(
         functionSeed: 0x63AF_19D2_8C54_B7E1,
         protectionTier: .light,
-        dispatcherStyle: .dualRail,
+        dispatcherStyle: .splitIndirect,
         codecStyle: .xorRotate
     )
     /// Non-semantic CFF domain tag to avoid leaking concrete symbol names.
@@ -90,6 +90,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         var enableHoneypotMemory: Bool = true
         var enableKernelHookSideChannel: Bool = true
         var enableSystemLibrarySegmentLayoutDetect: Bool = true
+        var enableSwiftRuntimeIntegrity: Bool = true
         var enableLibcPrologueGuard: Bool = true
         var enableDyldImageMonitor: Bool = true
         var enableDylibInjectionDetect: Bool = true
@@ -266,6 +267,10 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         orderedChecks(snapshot: snapshot, baseScore: snapshot.jailbreak.confidence)
             .map(\.id)
             .filter { Self.randomizableDetectorIDs.contains($0) }
+    }
+
+    func configuredCheckIDs(snapshot: RiskSnapshot) -> [String] {
+        buildChecks(snapshot: snapshot, baseScore: snapshot.jailbreak.confidence).map(\.id)
     }
 
     private static let randomizableDetectorIDs: Set<String> = [
@@ -603,6 +608,12 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         if configuration.enableSystemLibrarySegmentLayoutDetect {
             checks.append(DetectorCheck(id: "system_library_segment_layout") {
                 try SystemLibrarySegmentLayoutDetector().asSignals()
+            })
+        }
+
+        if configuration.enableSwiftRuntimeIntegrity {
+            checks.append(DetectorCheck(id: SwiftRuntimeIntegrityDetector.detectorID) {
+                SwiftRuntimeIntegrityDetector().asSignals()
             })
         }
 
@@ -960,11 +971,14 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
             // 分解具体检测维度
             let fridaCategories = [
                 (ObfuscatedConstants.methodPrefixFridaPort, "\(fridaPrefix)_port", 30),
+                (ObfuscatedConstants.methodPrefixFridaProto, "\(fridaPrefix)_proto", 34),
+                (ObfuscatedConstants.methodPrefixFridaListen, "\(fridaPrefix)_listen", 14),
                 (ObfuscatedConstants.methodPrefixFridaFile, "\(fridaPrefix)_file", 20),
                 (ObfuscatedConstants.methodPrefixFridaSymbol, "\(fridaPrefix)_symbol", 20),
                 (ObfuscatedConstants.methodPrefixFridaThread, "\(fridaPrefix)_thread", 20),
                 (ObfuscatedConstants.methodPrefixFridaProcess, "\(fridaPrefix)_process", 30),
-                (ObfuscatedConstants.methodPrefixFridaEnv, "\(fridaPrefix)_environment", 25)
+                (ObfuscatedConstants.methodPrefixFridaEnv, "\(fridaPrefix)_environment", 25),
+                (ObfuscatedConstants.methodPrefixFridaMemorySig, "\(fridaPrefix)_memsig", 20)
             ]
             
             for method in result.methods {
@@ -1301,6 +1315,23 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                 ))
             }
 
+            if planSnapshot.inlinePatchFailureCount > 0 || planSnapshot.inlinePatchTampered {
+                signals.append(RiskSignal(
+                    id: "antidebug_inline_patch_tamper",
+                    category: ObfuscatedConstants.categoryAntiTamper,
+                    score: 86,
+                    evidence: [
+                        "inline_patch_armed": planSnapshot.inlinePatchArmed ? "1" : "0",
+                        "inline_patch_count": "\(planSnapshot.inlinePatchCount)",
+                        "inline_patch_failure_count": "\(planSnapshot.inlinePatchFailureCount)",
+                        "inline_patch_tampered": planSnapshot.inlinePatchTampered ? "1" : "0"
+                    ],
+                    state: .tampered,
+                    layer: 2,
+                    weightHint: 90
+                ))
+            }
+
             if planSnapshot.lastGateClosed ||
                 planSnapshot.lastSoftFailMode ||
                 planSnapshot.escalationCount > 0 ||
@@ -1375,6 +1406,9 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         let exceptionDeliveryTimeoutFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_DELIVERY_TIMEOUT)) != 0
         let peerStallFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_WATCHDOG_PEER_STALL)) != 0
         let shadowStackFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SHADOW_STACK)) != 0
+        let dbiMarkerFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DBI_MARKER)) != 0
+        let timingSidechannelFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TIMING_SIDECHANNEL)) != 0
+        let traceCrosscheckFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACE_CROSSCHECK)) != 0
 
         var maxScore = 0.0
         var anomalyKinds: [String] = []
@@ -1465,6 +1499,26 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
             )
         }
 
+        if traceCrosscheckFlag {
+            let score = 66.0
+            maxScore = max(maxScore, score)
+            anomalyKinds.append("trace_crosscheck")
+            signals.append(
+                RiskSignal(
+                    id: "\(ObfuscatedConstants.detectorIDAntiDebugWatchdog)_trace_crosscheck",
+                    category: ObfuscatedConstants.categoryAntiTamper,
+                    score: score,
+                    evidence: [
+                        "anomaly_flags": "\(snapshot.anomalyFlags)",
+                        "mechanism": "unix_sysctl_vs_mach_crosscheck"
+                    ],
+                    state: .tampered,
+                    layer: 2,
+                    weightHint: 82
+                )
+            )
+        }
+
         if softwareBreakpointFlag || snapshot.softwareBreakpointDetected {
             let score = snapshot.softwareBreakpointDetected ? 58.0 : 34.0
             maxScore = max(maxScore, score)
@@ -1547,6 +1601,52 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
             )
         }
 
+        if dbiMarkerFlag || snapshot.dbiDetected {
+            let score = snapshot.dbiDetected ? 68.0 : 54.0
+            maxScore = max(maxScore, score)
+            anomalyKinds.append("dbi_marker")
+            signals.append(
+                RiskSignal(
+                    id: "\(ObfuscatedConstants.detectorIDAntiDebugWatchdog)_dbi_marker",
+                    category: ObfuscatedConstants.categoryAntiTamper,
+                    score: score,
+                    evidence: [
+                        "detected": snapshot.dbiDetected ? "1" : "0",
+                        "marker_flags": "\(snapshot.dbiMarkerFlags)",
+                        "dbi_anomaly_count": "\(snapshot.dbiAnomalyCount)",
+                    ],
+                    state: .tampered,
+                    layer: 2,
+                    weightHint: 84
+                )
+            )
+        }
+
+        if timingSidechannelFlag || snapshot.timingAnomalyFlags != 0 {
+            let isHard = snapshot.timingProbeMaxNs > snapshot.timingProbeThresholdNs
+                && snapshot.timingProbeThresholdNs > 0
+            let score = isHard ? 62.0 : 46.0
+            maxScore = max(maxScore, score)
+            anomalyKinds.append("timing_sidechannel")
+            signals.append(
+                RiskSignal(
+                    id: "\(ObfuscatedConstants.detectorIDAntiDebugWatchdog)_timing_sidechannel",
+                    category: ObfuscatedConstants.categoryAntiTamper,
+                    score: score,
+                    evidence: [
+                        "timing_anomaly_flags": "\(snapshot.timingAnomalyFlags)",
+                        "timing_median_ns": "\(snapshot.timingProbeMedianNs)",
+                        "timing_max_ns": "\(snapshot.timingProbeMaxNs)",
+                        "timing_threshold_ns": "\(snapshot.timingProbeThresholdNs)",
+                        "timing_anomaly_count": "\(snapshot.timingAnomalyCount)",
+                    ],
+                    state: isHard ? .tampered : .soft(confidence: 0.78),
+                    layer: 2,
+                    weightHint: isHard ? 78 : 64
+                )
+            )
+        }
+
         signals.insert(
             RiskSignal(
                 id: SignalID.antiDebugWatchdogAnomaly,
@@ -1560,6 +1660,13 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                     "last_check_monotonic_ns": "\(snapshot.lastCheckMonotonicNs)",
                     "software_bp_anomaly_count": "\(snapshot.softwareBreakpointAnomalyCount)",
                     "exception_delivery_timeout_anomaly_count": "\(snapshot.exceptionDeliveryTimeoutAnomalyCount)",
+                    "dbi_marker_flags": "\(snapshot.dbiMarkerFlags)",
+                    "dbi_anomaly_count": "\(snapshot.dbiAnomalyCount)",
+                    "timing_anomaly_flags": "\(snapshot.timingAnomalyFlags)",
+                    "timing_median_ns": "\(snapshot.timingProbeMedianNs)",
+                    "timing_max_ns": "\(snapshot.timingProbeMaxNs)",
+                    "timing_threshold_ns": "\(snapshot.timingProbeThresholdNs)",
+                    "timing_anomaly_count": "\(snapshot.timingAnomalyCount)",
                 ],
                 state: .tampered,
                 layer: 2,

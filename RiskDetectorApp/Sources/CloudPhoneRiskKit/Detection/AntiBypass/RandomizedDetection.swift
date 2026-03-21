@@ -7,7 +7,7 @@ private enum RandomizedDetectionCFF {
     static let detectConfig = CFFConfig.adaptive(
         functionSeed: 0x9D42_A3F1_56C8_2B17,
         protectionTier: .light,
-        dispatcherStyle: .dualRail,
+        dispatcherStyle: .splitIndirect,
         codecStyle: .xorRotate
     )
 

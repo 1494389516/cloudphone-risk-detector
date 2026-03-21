@@ -38,6 +38,9 @@ public enum ArmorABI {
         public static let whiteboxData = "__swift5_awbd"
         public static let whiteboxTag = "__swift5_awbt"
         public static let antiDebugPlan = "__objc_data2"
+        public static let importEncryptedTable = "__swift5_imp"
+        public static let headerBackup = "__cprisk_hbhdr"
+        public static let chainMeta = "__swift5_cpmt"
 
         public static let splitAnchorSections = [
             anchorA,
@@ -50,7 +53,7 @@ public enum ArmorABI {
             stringTable, loader, protectedBlob,
             anchorA, anchorB, anchorC, anchorD, fullAnchorHash,
             whiteboxMeta, whiteboxCode, whiteboxData, whiteboxTag,
-            antiDebugPlan,
+            antiDebugPlan, importEncryptedTable, headerBackup, chainMeta,
         ]
     }
 
@@ -253,7 +256,11 @@ public enum ArmorABI {
         public static let magic: UInt32 = 0x43505742
         public static let engineReadyFlag: UInt32 = 0x0000_0001
         public static let signingPipelineFlag: UInt32 = 0x0000_0002
+        public static let enhancedDiffusionFlag: UInt32 = 0x0000_0004
         public static let roundCount: UInt32 = 4
+        /// Runtime-compatible strengthening target: keep ABI roundCount=4 while
+        /// executing two deterministic sub-rounds per round.
+        public static let effectiveRoundTarget = 8
         public static let stateSize = ArmorABI.hashSize
         public static let permutationSize = ArmorABI.hashSize
         public static let roundConstantSize = Int(roundCount) * ArmorABI.hashSize
@@ -279,6 +286,10 @@ public enum ArmorABI {
             case anchorAccumulatorSeed = 3
             case loaderKey = 4
             case runtimeMaterial = 5
+            case deviceBoundKey = 6        // Domain 6: 设备绑定密钥派生
+            case sessionBoundKey = 7       // Domain 7: 会话绑定密钥派生
+            case importEncryptionKey = 8    // Domain 8: Import table 加密密钥
+            case headerEncryptionKey = 9   // Domain 9: Header 加密密钥
         }
 
         public enum Sections {
@@ -286,8 +297,11 @@ public enum ArmorABI {
             public static let code = ArmorABI.Sections.whiteboxCode
             public static let data = ArmorABI.Sections.whiteboxData
             public static let tag = ArmorABI.Sections.whiteboxTag
+            public static let importEncryptedTable = ArmorABI.Sections.importEncryptedTable
+            public static let headerBackup = ArmorABI.Sections.headerBackup
+            public static let chainMeta = ArmorABI.Sections.chainMeta
 
-            public static let allReserved = [metadata, code, data, tag]
+            public static let allReserved = [metadata, code, data, tag, importEncryptedTable, headerBackup, chainMeta]
         }
 
         /// Packed layout:
@@ -482,7 +496,7 @@ public enum ArmorABI {
         public static let sectionName = Sections.loader
         public static let protectedSectionName = Sections.protectedBlob
         public static let headerSize = 12
-        public static let entrySize = 128
+        public static let entrySize = 136
 
         /// Packed layout: { magic, version, count }.
         public struct Header {
@@ -511,7 +525,7 @@ public enum ArmorABI {
 
         /// Packed layout:
         /// { segment_name[16], section_name[16], key_id, flags, vm_addr, size,
-        ///   content_hash[32], nonce[8], hmac_tag[32] }.
+        ///   content_hash[32], nonce[8], hmac_tag[32], section_index, chained_key_depth }.
         public struct Entry {
             public let segmentName: String
             public let sectionName: String
@@ -522,6 +536,8 @@ public enum ArmorABI {
             public let contentHash: Data
             public let nonce: Data
             public let hmacTag: Data
+            public let sectionIndex: UInt32
+            public let chainedKeyDepth: UInt32
 
             public init(
                 segmentName: String,
@@ -532,7 +548,9 @@ public enum ArmorABI {
                 size: UInt64,
                 contentHash: Data,
                 nonce: Data,
-                hmacTag: Data
+                hmacTag: Data,
+                sectionIndex: UInt32 = 0,
+                chainedKeyDepth: UInt32 = 0
             ) {
                 precondition(contentHash.count == ArmorABI.hashSize, "contentHash must be 32 bytes")
                 precondition(nonce.count == ArmorABI.nonceSize, "nonce must be 8 bytes")
@@ -546,6 +564,8 @@ public enum ArmorABI {
                 self.contentHash = contentHash
                 self.nonce = nonce
                 self.hmacTag = hmacTag
+                self.sectionIndex = sectionIndex
+                self.chainedKeyDepth = chainedKeyDepth
             }
 
             public func serialized() -> Data {
@@ -563,6 +583,8 @@ public enum ArmorABI {
                 data.append(contentHash)
                 data.append(nonce)
                 data.append(hmacTag)
+                data.appendLittleEndian(sectionIndex)
+                data.appendLittleEndian(chainedKeyDepth)
                 return data
             }
         }
@@ -576,6 +598,8 @@ public enum ArmorABI {
             "__swift5_fieldmd",
             "__swift5_assocty",
             Sections.protectedBlob,
+            Sections.importEncryptedTable,
+            Sections.headerBackup,
         ]
 
         /// `__DATA` sections that must **never** be encrypted (dyld / ObjC runtime dependencies).
@@ -602,6 +626,9 @@ public enum ArmorABI {
             set.insert(Sections.whiteboxData)
             set.insert(Sections.whiteboxTag)
             set.insert(Sections.antiDebugPlan)
+            set.insert(Sections.importEncryptedTable)
+            set.insert(Sections.headerBackup)
+            set.insert(Sections.chainMeta)
             return set
         }()
 

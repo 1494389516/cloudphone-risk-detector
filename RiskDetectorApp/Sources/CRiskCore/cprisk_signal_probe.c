@@ -13,6 +13,8 @@
 #include <stdatomic.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdlib.h>
+#include <pthread.h>
 
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
@@ -33,6 +35,7 @@
 #include <mach/mach.h>
 #include <mach/arm/thread_status.h>
 #include <mach/mach_time.h>
+#include <mach-o/dyld.h>
 #include <sys/fcntl.h>
 #include <sys/param.h>
 #include "include/cprisk_macho.h"
@@ -42,6 +45,10 @@
 #define CPRISK_SINGLE_STEP_THRESHOLD_FLOOR_NS 5000000ull
 #define CPRISK_SINGLE_STEP_THRESHOLD_MULTIPLIER 16ull
 #define CPRISK_SINGLE_STEP_CALIBRATION_SAMPLES 9u
+#define CPRISK_TIMING_SAMPLE_COUNT 7u
+#define CPRISK_TIMING_MEDIAN_MULTIPLIER 14ull
+#define CPRISK_TIMING_SPIKE_MULTIPLIER 22ull
+#define CPRISK_TIMING_JITTER_DIVISOR 4ull
 #define CPRISK_SOFTWARE_BP_RANDOM_DEFAULT_WINDOWS 8u
 #define CPRISK_SOFTWARE_BP_RANDOM_DEFAULT_WINDOW_BYTES 768u
 
@@ -59,6 +66,12 @@ static atomic_uint_fast64_t s_single_step_baseline_ns = 0;
 static atomic_uint_fast64_t s_single_step_threshold_ns = 0;
 static atomic_uint_fast32_t s_single_step_calibrated = 0;
 static atomic_flag s_single_step_calibration_lock = ATOMIC_FLAG_INIT;
+static atomic_uint_fast32_t s_dbi_last_marker_flags = 0;
+static atomic_uint_fast32_t s_dbi_last_hit_count = 0;
+static atomic_uint_fast32_t s_timing_last_anomaly_flags = 0;
+static atomic_uint_fast64_t s_timing_last_median_ns = 0;
+static atomic_uint_fast64_t s_timing_last_max_ns = 0;
+static atomic_uint_fast64_t s_timing_last_threshold_ns = 0;
 
 #if defined(__APPLE__) && (defined(__arm64__) || defined(__aarch64__)) && \
     (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
@@ -116,6 +129,257 @@ static uint64_t cprisk_prng_next_i(uint64_t *state) {
     x ^= x << 8u;
     *state = x;
     return x;
+}
+
+static int cprisk_ascii_tolower_i(int c) {
+    if (c >= 'A' && c <= 'Z') {
+        return c + ('a' - 'A');
+    }
+    return c;
+}
+
+static int cprisk_contains_token_ascii_i(const char *haystack, const char *needle) {
+    if (!haystack || !needle || needle[0] == '\0') {
+        return 0;
+    }
+
+    size_t nlen = 0u;
+    while (needle[nlen] != '\0') {
+        nlen++;
+    }
+    if (nlen == 0u) {
+        return 0;
+    }
+
+    for (size_t i = 0u; haystack[i] != '\0'; i++) {
+        size_t j = 0u;
+        while (j < nlen) {
+            const int hc = cprisk_ascii_tolower_i((unsigned char)haystack[i + j]);
+            const int nc = cprisk_ascii_tolower_i((unsigned char)needle[j]);
+            if (haystack[i + j] == '\0' || hc != nc) {
+                break;
+            }
+            j++;
+        }
+        if (j == nlen) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int cprisk_contains_any_token_i(
+    const char *text,
+    const char *const *tokens,
+    size_t token_count
+) {
+    if (!text || !tokens || token_count == 0u) {
+        return 0;
+    }
+
+    for (size_t i = 0u; i < token_count; i++) {
+        if (tokens[i] && cprisk_contains_token_ascii_i(text, tokens[i])) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static uint32_t cprisk_detect_dbi_env_markers_i(int *hit_count_out) {
+    static const char *const strict_env_keys[] = {
+        "PIN_VM",
+        "PIN_ROOT",
+        "PIN_CRT",
+        "PIN_APP_DYLIB",
+        "DYNAMORIO_OPTIONS",
+        "DYNAMORIO_HOME",
+        "DYNAMORIO_LOGDIR",
+        "VALGRIND_LAUNCHER",
+        "VALGRIND_LIB",
+        "VALGRIND_OPTS",
+    };
+    static const char *const tokenized_env_keys[] = {
+        "DYLD_INSERT_LIBRARIES",
+    };
+    static const char *const dbi_tokens[] = {
+        "pinvm",
+        "pincrt",
+        "/pin/",
+        "dynamorio",
+        "libdynamorio",
+        "drrun",
+        "valgrind",
+        "vgpreload",
+        "memcheck",
+        "helgrind",
+        "drmemory",
+    };
+
+    int hit_count = 0;
+    uint32_t flags = 0u;
+
+    for (size_t i = 0u; i < sizeof(strict_env_keys) / sizeof(strict_env_keys[0]); i++) {
+        const char *value = getenv(strict_env_keys[i]);
+        if (value && value[0] != '\0') {
+            flags |= CPRISK_DBI_MARKER_ENV;
+            hit_count++;
+        }
+    }
+
+    for (size_t i = 0u; i < sizeof(tokenized_env_keys) / sizeof(tokenized_env_keys[0]); i++) {
+        const char *value = getenv(tokenized_env_keys[i]);
+        if (!value || value[0] == '\0') {
+            continue;
+        }
+        if (cprisk_contains_any_token_i(
+                value, dbi_tokens, sizeof(dbi_tokens) / sizeof(dbi_tokens[0]))) {
+            flags |= CPRISK_DBI_MARKER_ENV;
+            hit_count++;
+        }
+    }
+
+    if (hit_count_out) {
+        *hit_count_out = hit_count;
+    }
+    return flags;
+}
+
+static uint32_t cprisk_detect_dbi_image_markers_i(int *hit_count_out) {
+    static const char *const image_tokens[] = {
+        "pinvm",
+        "pincrt",
+        "libdynamorio",
+        "dynamorio",
+        "drrun",
+        "valgrind",
+        "vgpreload",
+        "memcheck",
+        "helgrind",
+        "drmemory",
+    };
+
+    uint32_t flags = 0u;
+    int hit_count = 0;
+    const uint32_t image_count = _dyld_image_count();
+    for (uint32_t i = 0u; i < image_count; i++) {
+        const char *name = _dyld_get_image_name(i);
+        if (!name || name[0] == '\0') {
+            continue;
+        }
+        if (cprisk_contains_any_token_i(
+                name, image_tokens, sizeof(image_tokens) / sizeof(image_tokens[0]))) {
+            flags |= CPRISK_DBI_MARKER_IMAGE;
+            hit_count++;
+        }
+    }
+
+    if (hit_count_out) {
+        *hit_count_out = hit_count;
+    }
+    return flags;
+}
+
+static uint32_t cprisk_detect_dbi_thread_markers_i(int *hit_count_out) {
+    static const char *const thread_tokens[] = {
+        "dynamorio",
+        "drrun",
+        "drhelper",
+        "drmemory",
+        "valgrind",
+        "memcheck",
+        "helgrind",
+        "pinvm",
+        "pin-worker",
+        "pin-tool",
+    };
+
+    uint32_t flags = 0u;
+    int hit_count = 0;
+    thread_act_array_t threads = NULL;
+    mach_msg_type_number_t thread_count = 0;
+    if (task_threads(mach_task_self(), &threads, &thread_count) != KERN_SUCCESS) {
+        if (hit_count_out) {
+            *hit_count_out = 0;
+        }
+        return 0u;
+    }
+
+    for (mach_msg_type_number_t i = 0; i < thread_count; i++) {
+        char name[64];
+        memset(name, 0, sizeof(name));
+        pthread_t pthread_handle = pthread_from_mach_thread_np(threads[i]);
+        if ((uintptr_t)pthread_handle == 0u) {
+            continue;
+        }
+        if (pthread_getname_np(pthread_handle, name, sizeof(name)) != 0 || name[0] == '\0') {
+            continue;
+        }
+        if (cprisk_contains_any_token_i(
+                name, thread_tokens, sizeof(thread_tokens) / sizeof(thread_tokens[0]))) {
+            flags |= CPRISK_DBI_MARKER_THREAD;
+            hit_count++;
+        }
+    }
+
+    vm_deallocate(
+        mach_task_self(),
+        (vm_address_t)threads,
+        sizeof(thread_act_t) * thread_count);
+
+    if (hit_count_out) {
+        *hit_count_out = hit_count;
+    }
+    return flags;
+}
+
+static uint64_t cprisk_mul_u64_saturating_i(uint64_t a, uint64_t b) {
+    if (a == 0u || b == 0u) {
+        return 0u;
+    }
+    if (a > UINT64_MAX / b) {
+        return UINT64_MAX;
+    }
+    return a * b;
+}
+
+int cprisk_detect_dbi_markers(void) {
+    int env_hits = 0;
+    int image_hits = 0;
+    int thread_hits = 0;
+
+    uint32_t marker_flags = 0u;
+    marker_flags |= cprisk_detect_dbi_env_markers_i(&env_hits);
+    marker_flags |= cprisk_detect_dbi_image_markers_i(&image_hits);
+    marker_flags |= cprisk_detect_dbi_thread_markers_i(&thread_hits);
+
+    const int total_hits = env_hits + image_hits + thread_hits;
+    atomic_store(&s_dbi_last_marker_flags, marker_flags);
+    atomic_store(&s_dbi_last_hit_count, total_hits > 0 ? (uint32_t)total_hits : 0u);
+    return total_hits;
+}
+
+uint32_t cprisk_get_last_dbi_marker_flags(void) {
+    return atomic_load(&s_dbi_last_marker_flags);
+}
+
+int cprisk_get_last_dbi_marker_hit_count(void) {
+    return (int)atomic_load(&s_dbi_last_hit_count);
+}
+
+uint32_t cprisk_get_last_timing_anomaly_flags(void) {
+    return atomic_load(&s_timing_last_anomaly_flags);
+}
+
+uint64_t cprisk_get_last_timing_probe_median_ns(void) {
+    return atomic_load(&s_timing_last_median_ns);
+}
+
+uint64_t cprisk_get_last_timing_probe_max_ns(void) {
+    return atomic_load(&s_timing_last_max_ns);
+}
+
+uint64_t cprisk_get_last_timing_probe_threshold_ns(void) {
+    return atomic_load(&s_timing_last_threshold_ns);
 }
 
 static void cprisk_reset_exception_delivery_probe_state_i(void) {
@@ -234,6 +498,99 @@ int cprisk_probe_exception_delivery_timeout(void) {
     return (!handled || elapsed_ns > CPRISK_EXCEPTION_DELIVERY_TIMEOUT_NS) ? 1 : 0;
 }
 
+/* ── (b) Thread exception-port detection ──────────────────────────── */
+
+static mach_port_t cprisk_expected_exception_port_i(void) {
+    exception_mask_t masks[EXC_TYPES_COUNT];
+    mach_port_t ports[EXC_TYPES_COUNT];
+    exception_behavior_t behaviors[EXC_TYPES_COUNT];
+    thread_state_flavor_t flavors[EXC_TYPES_COUNT];
+    mach_msg_type_number_t count = EXC_TYPES_COUNT;
+    mach_port_t expected = MACH_PORT_NULL;
+
+    const exception_mask_t mask = EXC_MASK_BREAKPOINT | EXC_MASK_BAD_ACCESS;
+    kern_return_t kr = task_get_exception_ports(
+        mach_task_self(),
+        mask,
+        masks,
+        &count,
+        ports,
+        behaviors,
+        flavors
+    );
+    if (kr == KERN_SUCCESS) {
+        for (mach_msg_type_number_t i = 0; i < count; i++) {
+            if ((masks[i] & EXC_MASK_BREAKPOINT) != 0u) {
+                expected = ports[i];
+            }
+            if (ports[i] != MACH_PORT_NULL) {
+                mach_port_deallocate(mach_task_self(), ports[i]);
+            }
+        }
+    }
+    return expected;
+}
+
+int cprisk_detect_thread_exception_ports(void) {
+    const mach_port_t expected_port = cprisk_expected_exception_port_i();
+    thread_act_array_t threads = NULL;
+    mach_msg_type_number_t thread_count = 0;
+    const exception_mask_t mask = EXC_MASK_BREAKPOINT | EXC_MASK_BAD_ACCESS;
+
+    if (task_threads(mach_task_self(), &threads, &thread_count) != KERN_SUCCESS) {
+        return 0;
+    }
+
+    int mismatched = 0;
+    for (mach_msg_type_number_t i = 0; i < thread_count; i++) {
+        exception_mask_t masks[EXC_TYPES_COUNT];
+        mach_port_t ports[EXC_TYPES_COUNT];
+        exception_behavior_t behaviors[EXC_TYPES_COUNT];
+        thread_state_flavor_t flavors[EXC_TYPES_COUNT];
+        mach_msg_type_number_t count = EXC_TYPES_COUNT;
+
+        kern_return_t kr = thread_get_exception_ports(
+            threads[i],
+            mask,
+            masks,
+            &count,
+            ports,
+            behaviors,
+            flavors
+        );
+        if (kr != KERN_SUCCESS) {
+            continue;
+        }
+
+        int thread_mismatch = 0;
+        for (mach_msg_type_number_t j = 0; j < count; j++) {
+            if ((masks[j] & EXC_MASK_BREAKPOINT) == 0u) {
+                if (ports[j] != MACH_PORT_NULL) {
+                    mach_port_deallocate(mach_task_self(), ports[j]);
+                }
+                continue;
+            }
+            if (ports[j] != MACH_PORT_NULL &&
+                (expected_port == MACH_PORT_NULL || ports[j] != expected_port)) {
+                thread_mismatch = 1;
+            }
+            if (ports[j] != MACH_PORT_NULL) {
+                mach_port_deallocate(mach_task_self(), ports[j]);
+            }
+        }
+
+        if (thread_mismatch) {
+            mismatched++;
+        }
+    }
+
+    vm_deallocate(mach_task_self(),
+                  (vm_address_t)threads,
+                  sizeof(thread_act_t) * thread_count);
+
+    return mismatched;
+}
+
 /* ── (b) Hardware breakpoint detection ────────────────────────────── */
 
 int cprisk_detect_hardware_breakpoints(void) {
@@ -286,12 +643,15 @@ int cprisk_scan_software_breakpoints(const void *func_ptr, size_t size) {
         0xD4200000u | ((uint32_t)CPRISK_BRK_IMM_SIGNAL_PROBE << 5);
     const uint32_t exception_delivery_brk =
         0xD4200000u | ((uint32_t)CPRISK_BRK_IMM_EXCEPTION_DELIVERY_PROBE << 5);
+    const uint32_t runtime_gate_brk =
+        0xD4200000u | ((uint32_t)CPRISK_BRK_IMM_RUNTIME_GATE << 5);
 
     for (size_t i = 0; i < word_count; i++) {
         uint32_t instr = start[i];
         if ((instr & 0xFFE00000u) == 0xD4200000u &&
             instr != signal_probe_brk &&
-            instr != exception_delivery_brk) {
+            instr != exception_delivery_brk &&
+            instr != runtime_gate_brk) {
             found++;
         }
     }
@@ -575,33 +935,124 @@ static void cprisk_single_step_calibrate_if_needed_i(void) {
     atomic_flag_clear(&s_single_step_calibration_lock);
 }
 
+static uint64_t cprisk_add_u64_saturating_i(uint64_t a, uint64_t b) {
+    if (UINT64_MAX - a < b) {
+        return UINT64_MAX;
+    }
+    return a + b;
+}
+
+static void cprisk_sort_u64_samples_i(uint64_t *samples, size_t count) {
+    if (!samples || count <= 1u) {
+        return;
+    }
+    for (size_t i = 1u; i < count; i++) {
+        uint64_t key = samples[i];
+        size_t j = i;
+        while (j > 0u && samples[j - 1u] > key) {
+            samples[j] = samples[j - 1u];
+            j--;
+        }
+        samples[j] = key;
+    }
+}
+
+static uint32_t cprisk_timing_probe_eval_i(
+    uint64_t *median_ns_out,
+    uint64_t *max_ns_out,
+    uint64_t *threshold_ns_out
+) {
+    uint64_t samples[CPRISK_TIMING_SAMPLE_COUNT];
+    memset(samples, 0, sizeof(samples));
+    for (size_t i = 0u; i < CPRISK_TIMING_SAMPLE_COUNT; i++) {
+        samples[i] = cprisk_single_step_measure_once_i();
+    }
+    cprisk_sort_u64_samples_i(samples, CPRISK_TIMING_SAMPLE_COUNT);
+
+    const uint64_t median_ns = samples[CPRISK_TIMING_SAMPLE_COUNT / 2u];
+    const uint64_t max_ns = samples[CPRISK_TIMING_SAMPLE_COUNT - 1u];
+
+    uint64_t baseline_ns = atomic_load(&s_single_step_baseline_ns);
+    if (baseline_ns == 0u) {
+        baseline_ns = median_ns;
+    }
+    if (baseline_ns == 0u) {
+        baseline_ns = CPRISK_SINGLE_STEP_THRESHOLD_FLOOR_NS / 2u;
+    }
+
+    uint64_t median_threshold_ns =
+        cprisk_mul_u64_saturating_i(baseline_ns, CPRISK_TIMING_MEDIAN_MULTIPLIER);
+    if (median_threshold_ns < CPRISK_SINGLE_STEP_THRESHOLD_FLOOR_NS) {
+        median_threshold_ns = CPRISK_SINGLE_STEP_THRESHOLD_FLOOR_NS;
+    }
+    uint64_t spike_threshold_ns =
+        cprisk_mul_u64_saturating_i(baseline_ns, CPRISK_TIMING_SPIKE_MULTIPLIER);
+    if (spike_threshold_ns < median_threshold_ns) {
+        spike_threshold_ns = median_threshold_ns;
+    }
+
+    uint64_t jitter_margin_ns = median_ns / CPRISK_TIMING_JITTER_DIVISOR;
+    const uint64_t threshold_margin_ns = median_threshold_ns / CPRISK_TIMING_JITTER_DIVISOR;
+    if (jitter_margin_ns < threshold_margin_ns) {
+        jitter_margin_ns = threshold_margin_ns;
+    }
+    if (jitter_margin_ns < 500000ull) {
+        jitter_margin_ns = 500000ull;
+    }
+
+    uint32_t anomaly_flags = 0u;
+    if (median_ns > median_threshold_ns) {
+        anomaly_flags |= CPRISK_TIMING_ANOMALY_MEDIAN;
+    }
+    if (max_ns > spike_threshold_ns) {
+        anomaly_flags |= CPRISK_TIMING_ANOMALY_SPIKE;
+    }
+    if (max_ns > cprisk_add_u64_saturating_i(median_ns, jitter_margin_ns) &&
+        max_ns > median_threshold_ns) {
+        anomaly_flags |= CPRISK_TIMING_ANOMALY_JITTER;
+    }
+
+    if (median_ns_out) {
+        *median_ns_out = median_ns;
+    }
+    if (max_ns_out) {
+        *max_ns_out = max_ns;
+    }
+    if (threshold_ns_out) {
+        *threshold_ns_out = median_threshold_ns;
+    }
+
+    if (median_ns > 0u) {
+        if (anomaly_flags == 0u) {
+            baseline_ns = baseline_ns - (baseline_ns / 8u) + (median_ns / 8u);
+            atomic_store(&s_single_step_baseline_ns, baseline_ns);
+            atomic_store(&s_single_step_threshold_ns,
+                         cprisk_single_step_threshold_from_baseline_i(baseline_ns));
+        } else if (atomic_load(&s_single_step_baseline_ns) == 0u) {
+            atomic_store(&s_single_step_baseline_ns, median_ns);
+            atomic_store(&s_single_step_threshold_ns,
+                         cprisk_single_step_threshold_from_baseline_i(median_ns));
+        }
+    }
+
+    return anomaly_flags;
+}
+
 int cprisk_detect_single_stepping(void) {
     cprisk_single_step_calibrate_if_needed_i();
 
-    uint64_t threshold_ns = atomic_load(&s_single_step_threshold_ns);
-    if (threshold_ns == 0u) {
-        threshold_ns = CPRISK_SINGLE_STEP_DEFAULT_THRESHOLD_NS;
-    }
+    uint64_t median_ns = 0u;
+    uint64_t max_ns = 0u;
+    uint64_t threshold_ns = 0u;
+    const uint32_t anomaly_flags =
+        cprisk_timing_probe_eval_i(&median_ns, &max_ns, &threshold_ns);
 
-    const uint64_t elapsed_ns = cprisk_single_step_measure_once_i();
-    if (elapsed_ns > threshold_ns) {
-        return 1;
-    }
+    atomic_store(&s_timing_last_anomaly_flags, anomaly_flags);
+    atomic_store(&s_timing_last_median_ns, median_ns);
+    atomic_store(&s_timing_last_max_ns, max_ns);
+    atomic_store(&s_timing_last_threshold_ns, threshold_ns);
 
-    if (elapsed_ns > 0u) {
-        uint64_t baseline_ns = atomic_load(&s_single_step_baseline_ns);
-        if (baseline_ns == 0u) {
-            baseline_ns = elapsed_ns;
-        } else {
-            /* EWMA smooths jitter and adapts to different device classes. */
-            baseline_ns = baseline_ns - (baseline_ns / 8u) + (elapsed_ns / 8u);
-        }
-        atomic_store(&s_single_step_baseline_ns, baseline_ns);
-        atomic_store(&s_single_step_threshold_ns,
-                     cprisk_single_step_threshold_from_baseline_i(baseline_ns));
-    }
-
-    return 0;
+    return anomaly_flags != 0u ? 1 : 0;
 }
 
 /* ── (g) Suspicious thread detection ──────────────────────────────── */
@@ -661,6 +1112,11 @@ uint32_t cprisk_run_all_signal_probes(void) {
     if (cprisk_probe_debugger_via_signal())
         result |= CPRISK_PROBE_SIGNAL_TRAP;
 
+    const int thread_exception_ports = cprisk_detect_thread_exception_ports();
+    if (thread_exception_ports != 0) {
+        result |= CPRISK_PROBE_THREAD_EXCEPTION_PORT;
+    }
+
     if (cprisk_detect_hardware_breakpoints())
         result |= CPRISK_PROBE_HARDWARE_BP;
 
@@ -682,8 +1138,11 @@ uint32_t cprisk_run_all_signal_probes(void) {
     if (cprisk_csops_debug_check())
         result |= CPRISK_PROBE_CSOPS;
 
-    if (cprisk_detect_single_stepping())
+    const int single_step_detected = cprisk_detect_single_stepping();
+    if (single_step_detected)
         result |= CPRISK_PROBE_SINGLE_STEP;
+    if (cprisk_get_last_timing_anomaly_flags() != 0u)
+        result |= CPRISK_PROBE_TIMING_ANOMALY;
 
     if (cprisk_detect_suspicious_threads())
         result |= CPRISK_PROBE_SUSPICIOUS_THREAD;
@@ -693,6 +1152,12 @@ uint32_t cprisk_run_all_signal_probes(void) {
 
     if (cprisk_probe_exception_delivery_timeout())
         result |= CPRISK_PROBE_EXCEPTION_DELIVERY_TIMEOUT;
+
+    if (cprisk_detect_dbi_markers() > 0)
+        result |= CPRISK_PROBE_DBI_MARKER;
+
+    if (cprisk_trace_crosscheck_inconsistent() != 0)
+        result |= CPRISK_PROBE_TRACE_CROSSCHECK;
 
     return result;
 }
@@ -712,6 +1177,7 @@ int cprisk_is_cntpct_clock_available(void) {
 /* ===================================================================== */
 
 int cprisk_probe_debugger_via_signal(void) { return 0; }
+int cprisk_detect_thread_exception_ports(void) { return 0; }
 int cprisk_detect_hardware_breakpoints(void) { return 0; }
 
 int cprisk_scan_software_breakpoints(const void *func_ptr, size_t size) {
@@ -733,6 +1199,13 @@ int cprisk_csops_debug_check(void) { return 0; }
 int cprisk_detect_single_stepping(void) { return 0; }
 int cprisk_detect_suspicious_threads(void) { return 0; }
 int cprisk_detect_developer_disk(void) { return 0; }
+int cprisk_detect_dbi_markers(void) { return 0; }
+uint32_t cprisk_get_last_dbi_marker_flags(void) { return 0u; }
+int cprisk_get_last_dbi_marker_hit_count(void) { return 0; }
+uint32_t cprisk_get_last_timing_anomaly_flags(void) { return 0u; }
+uint64_t cprisk_get_last_timing_probe_median_ns(void) { return 0u; }
+uint64_t cprisk_get_last_timing_probe_max_ns(void) { return 0u; }
+uint64_t cprisk_get_last_timing_probe_threshold_ns(void) { return 0u; }
 uint32_t cprisk_run_all_signal_probes(void) { return 0; }
 int cprisk_is_cntpct_clock_available(void) { return 0; }
 

@@ -29,6 +29,12 @@ internal enum CFFStateCodec {
             let shift = Int((((key &>> 3) ^ salt) & 0x1F) | 1)
             let mixed = (state &+ addend).rotatedLeft(by: shift)
             return mixed ^ avalanche32(key ^ 0xA24BAED5) ^ (salt &* 0x165667B1)
+        case .affine:
+            let mask = avalanche32(key &+ salt &+ 0x51ED270B)
+            let multiplier = (avalanche32(key ^ salt.rotatedLeft(by: 7) ^ 0xD1B54A35) | 1)
+            let addend = avalanche32((key &* 0x9E3779B1) ^ salt ^ 0x94D049BB)
+            let masked = state ^ mask
+            return (masked &* multiplier &+ addend) ^ key.rotatedLeft(by: Int((salt & 0x1F) | 1))
         }
     }
 
@@ -50,6 +56,14 @@ internal enum CFFStateCodec {
             let shift = Int((((key &>> 3) ^ salt) & 0x1F) | 1)
             let unmasked = state ^ avalanche32(key ^ 0xA24BAED5) ^ (salt &* 0x165667B1)
             return unmasked.rotatedRight(by: shift) &- addend
+        case .affine:
+            let mask = avalanche32(key &+ salt &+ 0x51ED270B)
+            let multiplier = (avalanche32(key ^ salt.rotatedLeft(by: 7) ^ 0xD1B54A35) | 1)
+            let inverse = modularInverse32(multiplier)
+            let addend = avalanche32((key &* 0x9E3779B1) ^ salt ^ 0x94D049BB)
+            let unxored = state ^ key.rotatedLeft(by: Int((salt & 0x1F) | 1))
+            let unscaled = (unxored &- addend) &* inverse
+            return unscaled ^ mask
         }
     }
 
@@ -138,6 +152,17 @@ internal enum CFFStateCodec {
             hash &*= 0x100000001B3
         }
         return hash
+    }
+
+    @inline(__always)
+    private static func modularInverse32(_ oddValue: UInt32) -> UInt32 {
+        var inverse = oddValue
+        inverse &*= (UInt32(2) &- (oddValue &* inverse))
+        inverse &*= (UInt32(2) &- (oddValue &* inverse))
+        inverse &*= (UInt32(2) &- (oddValue &* inverse))
+        inverse &*= (UInt32(2) &- (oddValue &* inverse))
+        inverse &*= (UInt32(2) &- (oddValue &* inverse))
+        return inverse
     }
 }
 

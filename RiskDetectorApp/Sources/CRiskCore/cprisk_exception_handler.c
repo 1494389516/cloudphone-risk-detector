@@ -18,6 +18,7 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 #include <TargetConditionals.h>
 
@@ -36,11 +37,16 @@ static cprisk_exception_handler_snapshot_t s_status = {
     .last_query_succeeded = 0u,
     .last_reclaim_attempted = 0u,
     .last_hijack_detected = 0u,
+    .early_phase_captured = 0u,
+    .last_race_detected = 0u,
     .last_query_kern_return = (int32_t)KERN_FAILURE,
     .last_register_kern_return = (int32_t)KERN_FAILURE,
     .verify_count = 0u,
     .reclaim_count = 0u,
 };
+static uint64_t s_early_port_fingerprint = 0u;
+static uint32_t s_early_port_fingerprint_valid = 0u;
+static uint32_t s_late_phase_checked = 0u;
 
 #define EXC_EXCEPTION_RAISE_STATE_IDENTITY 2403
 #define MACH_EXCEPTION_RAISE_STATE_IDENTITY 2407
@@ -72,16 +78,79 @@ typedef struct {
 
 extern int cprisk_exception_handler_should_passthrough_brk_imm(uint16_t brk_imm);
 extern int cprisk_exception_handler_consume_reserved_brk_imm(uint16_t brk_imm);
+extern int cprisk_exception_handler_handle_runtime_gate_brk(uint16_t brk_imm, uintptr_t brk_pc);
+
+static uint64_t cprisk_mix64_i(uint64_t value) {
+    value ^= value >> 33u;
+    value *= 0xff51afd7ed558ccdULL;
+    value ^= value >> 33u;
+    value *= 0xc4ceb9fe1a85ec53ULL;
+    value ^= value >> 33u;
+    return value;
+}
+
+static uint64_t cprisk_exception_port_fingerprint_i(
+    const exception_mask_t *masks,
+    const mach_port_t *ports,
+    const exception_behavior_t *behaviors,
+    const thread_state_flavor_t *flavors,
+    mach_msg_type_number_t count
+) {
+    uint64_t fingerprint = 0x43505249534B4558ULL; /* "CPRISKEX" */
+    for (mach_msg_type_number_t i = 0; i < count; i++) {
+        uint64_t lane = ((uint64_t)(uint32_t)masks[i] << 32u) ^ (uint64_t)(uint32_t)ports[i];
+        lane ^= ((uint64_t)(uint32_t)behaviors[i] << 16u);
+        lane ^= (uint64_t)(uint32_t)flavors[i];
+        lane ^= (uint64_t)i * 0x9E3779B97F4A7C15ULL;
+        fingerprint ^= cprisk_mix64_i(lane);
+        fingerprint = (fingerprint << 7u) | (fingerprint >> (64u - 7u));
+        fingerprint ^= 0xA5A5A5A55A5A5A5AULL;
+    }
+    return fingerprint ^ ((uint64_t)count << 48u);
+}
+
+static int cprisk_query_exception_port_fingerprint_i(
+    exception_mask_t query_mask,
+    uint64_t *out_fingerprint
+) {
+    if (out_fingerprint == NULL) {
+        return -1;
+    }
+
+    exception_mask_t masks[EXC_TYPES_COUNT];
+    mach_port_t ports[EXC_TYPES_COUNT];
+    exception_behavior_t behaviors[EXC_TYPES_COUNT];
+    thread_state_flavor_t flavors[EXC_TYPES_COUNT];
+    mach_msg_type_number_t count = EXC_TYPES_COUNT;
+    kern_return_t kr = task_get_exception_ports(
+        mach_task_self(), query_mask, masks, &count, ports, behaviors, flavors);
+    if (kr != KERN_SUCCESS) {
+        return -1;
+    }
+
+    *out_fingerprint = cprisk_exception_port_fingerprint_i(
+        masks, ports, behaviors, flavors, count);
+    for (mach_msg_type_number_t i = 0; i < count; i++) {
+        if (ports[i] != MACH_PORT_NULL) {
+            mach_port_deallocate(mach_task_self(), ports[i]);
+        }
+    }
+    return 0;
+}
 
 static int cprisk_breakpoint_immediate_from_state_i(
     int flavor,
     mach_msg_type_number_t state_count,
     const natural_t *state,
-    uint16_t *out_imm
+    uint16_t *out_imm,
+    uintptr_t *out_pc
 ) {
     if (out_imm == NULL || state == NULL ||
         flavor != ARM_THREAD_STATE64 ||
         state_count < ARM_THREAD_STATE64_COUNT) {
+        if (out_pc != NULL) {
+            *out_pc = 0u;
+        }
         return 0;
     }
 
@@ -91,6 +160,9 @@ static int cprisk_breakpoint_immediate_from_state_i(
 
     const uintptr_t pc = (uintptr_t)thread_state.__pc;
     if (pc == 0u) {
+        if (out_pc != NULL) {
+            *out_pc = 0u;
+        }
         return 0;
     }
 
@@ -107,16 +179,25 @@ static int cprisk_breakpoint_immediate_from_state_i(
     if (kr != KERN_SUCCESS || region_addr > (vm_address_t)pc ||
         (vm_address_t)pc + sizeof(uint32_t) > region_addr + region_size ||
         !(info.protection & VM_PROT_READ)) {
+        if (out_pc != NULL) {
+            *out_pc = 0u;
+        }
         return 0;
     }
 
     uint32_t instr = 0u;
     memcpy(&instr, (const void *)pc, sizeof(instr));
     if ((instr & 0xFFE0001Fu) != 0xD4200000u) {
+        if (out_pc != NULL) {
+            *out_pc = 0u;
+        }
         return 0;
     }
 
     *out_imm = (uint16_t)((instr >> 5) & 0xFFFFu);
+    if (out_pc != NULL) {
+        *out_pc = pc;
+    }
     return 1;
 }
 
@@ -201,8 +282,9 @@ static void *exception_handler_thread(void *arg) {
                 
                 if (r->exception == EXC_BREAKPOINT) {
                     uint16_t brk_imm = 0u;
+                    uintptr_t brk_pc = 0u;
                     const int have_brk_imm = cprisk_breakpoint_immediate_from_state_i(
-                        flavor, state_count, old_state, &brk_imm);
+                        flavor, state_count, old_state, &brk_imm, &brk_pc);
 
                     if (!cprisk_advance_thread_pc_i(flavor, rep->new_stateCnt, rep->new_state)) {
                         rep->RetCode = KERN_FAILURE;
@@ -210,7 +292,13 @@ static void *exception_handler_thread(void *arg) {
                                cprisk_exception_handler_should_passthrough_brk_imm(brk_imm)) {
                         rep->RetCode = KERN_FAILURE;
                     } else if (have_brk_imm) {
-                        (void)cprisk_exception_handler_consume_reserved_brk_imm(brk_imm);
+                        const int gate_action =
+                            cprisk_exception_handler_handle_runtime_gate_brk(brk_imm, brk_pc);
+                        if (gate_action < 0) {
+                            rep->RetCode = KERN_FAILURE;
+                        } else if (gate_action == 0) {
+                            (void)cprisk_exception_handler_consume_reserved_brk_imm(brk_imm);
+                        }
                     }
                 } else if (r->exception == EXC_BAD_ACCESS) {
                     void *fault_addr = (void *)(uintptr_t)r->code[1];
@@ -306,6 +394,24 @@ void cprisk_register_exception_handler(void) {
     pthread_mutex_unlock(&s_mutex);
 }
 
+void cprisk_capture_early_exception_ports(void) {
+    const exception_mask_t mask = EXC_MASK_BREAKPOINT | EXC_MASK_BAD_ACCESS;
+    uint64_t fingerprint = 0u;
+
+    pthread_mutex_lock(&s_mutex);
+    if (cprisk_query_exception_port_fingerprint_i(mask, &fingerprint) == 0) {
+        s_early_port_fingerprint = fingerprint;
+        s_early_port_fingerprint_valid = 1u;
+        s_late_phase_checked = 0u;
+        s_status.early_phase_captured = 1u;
+    } else {
+        s_early_port_fingerprint = 0u;
+        s_early_port_fingerprint_valid = 0u;
+        s_status.early_phase_captured = 0u;
+    }
+    pthread_mutex_unlock(&s_mutex);
+}
+
 /*
  * TLS 回调时序加固：__mod_init_func 阶段早期抢占验证
  *
@@ -356,6 +462,15 @@ void cprisk_verify_exception_handler(void) {
 
     s_status.last_query_succeeded = 1u;
     s_status.registered = 1u;
+    if (s_early_port_fingerprint_valid != 0u && s_late_phase_checked == 0u) {
+        const uint64_t current_fingerprint = cprisk_exception_port_fingerprint_i(
+            masks, ports, behaviors, flavors, count);
+        s_late_phase_checked = 1u;
+        if (current_fingerprint != s_early_port_fingerprint) {
+            s_status.last_race_detected = 1u;
+            cprisk_force_integrity_poison();
+        }
+    }
 
     for (mach_msg_type_number_t i = 0; i < count; i++) {
         if ((masks[i] & (EXC_MASK_BREAKPOINT | EXC_MASK_BAD_ACCESS)) && ports[i] != s_exception_port) {
@@ -396,6 +511,10 @@ int cprisk_get_exception_handler_snapshot(cprisk_exception_handler_snapshot_t *o
 #else
 
 void cprisk_register_exception_handler(void) {
+    (void)0;
+}
+
+void cprisk_capture_early_exception_ports(void) {
     (void)0;
 }
 

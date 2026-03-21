@@ -33,6 +33,7 @@ struct cprisk_guard_state {
     uint32_t trap_count;
     int      pages_protected;
     int      protect_failed;
+    uint8_t  poison_mode_enabled;  /* when set, guard-page SIGBUS triggers integrity poison */
 };
 
 int  cprisk_protect_decrypted_pages(void *region, size_t len);
@@ -41,6 +42,11 @@ int  cprisk_verify_page_protection(void *region, size_t len);
 int  cprisk_install_memory_trap(void *region, size_t len,
                                 struct cprisk_guard_state *state);
 void cprisk_remove_memory_trap(struct cprisk_guard_state *state);
+
+/* Optional SIGBUS guard wiring for active anti-dump trapping.
+ * install_memory_trap/remove_memory_trap already call these internally. */
+int  cprisk_install_sigbus_guard(struct cprisk_guard_state *state);
+void cprisk_remove_sigbus_guard(struct cprisk_guard_state *state);
 
 #ifdef __cplusplus
 }

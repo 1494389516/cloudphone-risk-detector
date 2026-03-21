@@ -114,6 +114,22 @@ final class StructureObfuscatorTests: XCTestCase {
             .appendingPathComponent("\(name)_\(UUID().uuidString).macho")
     }
 
+    private static func approximateEntropy(_ data: Data) -> Double {
+        guard !data.isEmpty else { return 0 }
+        var histogram = [Int](repeating: 0, count: 256)
+        for byte in data {
+            histogram[Int(byte)] += 1
+        }
+
+        let length = Double(data.count)
+        var entropy = 0.0
+        for count in histogram where count > 0 {
+            let p = Double(count) / length
+            entropy -= p * log2(p)
+        }
+        return entropy
+    }
+
     // MARK: - A. Decoy Section Injection
 
     func testDecoySectionInjectionAddsSections() throws {
@@ -157,6 +173,28 @@ final class StructureObfuscatorTests: XCTestCase {
             XCTAssertLessThanOrEqual(content.count, 512)
             XCTAssertEqual(content.count % 8, 0, "Content should be 8-byte aligned")
             XCTAssertGreaterThanOrEqual(content.count, 12, "Must have at least a 12-byte header")
+        }
+    }
+
+    func testDecoySectionEntropyIsShapedAndNonSynthetic() throws {
+        let url = try Self.writeFixture(named: "decoy_entropy")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let file = try MachOFile(url: url)
+        _ = try StructureObfuscatorPass().execute(on: file, config: PassConfig(randomSeed: 2026))
+
+        let dataSeg = try XCTUnwrap(try file.segment(named: "__DATA"))
+        let decoySections = dataSeg.sections.filter { $0.sectionName != "__const" }
+        XCTAssertFalse(decoySections.isEmpty)
+
+        for section in decoySections {
+            let content = try section.readContent(from: file.data)
+            let entropy = Self.approximateEntropy(content)
+            XCTAssertGreaterThan(entropy, 3.5, "decoy entropy too low; appears synthetic")
+            XCTAssertLessThan(entropy, 7.95, "decoy entropy too high; appears pure random")
+
+            let uniqueByteCount = Set(content).count
+            XCTAssertGreaterThan(uniqueByteCount, 24, "decoy should contain mixed payload patterns")
         }
     }
 

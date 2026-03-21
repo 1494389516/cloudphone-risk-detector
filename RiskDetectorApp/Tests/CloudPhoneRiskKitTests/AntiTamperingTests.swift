@@ -1,4 +1,6 @@
+import Foundation
 import XCTest
+import CRiskCore
 @testable import CloudPhoneRiskKit
 
 final class AntiTamperingTests: XCTestCase {
@@ -15,6 +17,41 @@ final class AntiTamperingTests: XCTestCase {
             jailbreak: TestFixtures.makeDetectionResult(),
             mutationStrategy: mutationStrategy
         )
+    }
+
+    private func withEnvironmentValue(
+        key: String,
+        value: String?,
+        perform body: () -> Void
+    ) {
+        let original = getenv(key).map { String(cString: $0) }
+        if let value {
+            _ = setenv(key, value, 1)
+        } else {
+            _ = unsetenv(key)
+        }
+
+        defer {
+            if let original {
+                _ = setenv(key, original, 1)
+            } else {
+                _ = unsetenv(key)
+            }
+        }
+
+        body()
+    }
+
+    private func waitForWatchdogSnapshot(
+        timeout: TimeInterval = 2.0
+    ) -> CPRiskKit.AntiDebugWatchdogSnapshot {
+        var snapshot = CPRiskKit.shared.antiDebugWatchdogSnapshot()
+        let deadline = Date().addingTimeInterval(timeout)
+        while snapshot.supported && snapshot.running && snapshot.iterationCount == 0 && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+            snapshot = CPRiskKit.shared.antiDebugWatchdogSnapshot()
+        }
+        return snapshot
     }
 
     private func makeWatchdogSnapshot(
@@ -57,7 +94,15 @@ final class AntiTamperingTests: XCTestCase {
         peerWatchdogAnomalyCount: UInt64 = 0,
         shadowStackAnomalyCount: UInt64 = 0,
         lastPeerWatchdogStalled: Bool = false,
-        lastShadowStackMismatch: Bool = false
+        lastShadowStackMismatch: Bool = false,
+        dbiDetected: Bool = false,
+        dbiMarkerFlags: UInt32 = 0,
+        timingAnomalyFlags: UInt32 = 0,
+        timingProbeMedianNs: UInt64 = 0,
+        timingProbeMaxNs: UInt64 = 0,
+        timingProbeThresholdNs: UInt64 = 0,
+        dbiAnomalyCount: UInt64 = 0,
+        timingAnomalyCount: UInt64 = 0
     ) -> CPRiskKit.AntiDebugWatchdogSnapshot {
         CPRiskKit.AntiDebugWatchdogSnapshot(
             supported: supported,
@@ -99,7 +144,15 @@ final class AntiTamperingTests: XCTestCase {
             peerWatchdogAnomalyCount: peerWatchdogAnomalyCount,
             shadowStackAnomalyCount: shadowStackAnomalyCount,
             lastPeerWatchdogStalled: lastPeerWatchdogStalled,
-            lastShadowStackMismatch: lastShadowStackMismatch
+            lastShadowStackMismatch: lastShadowStackMismatch,
+            dbiDetected: dbiDetected,
+            dbiMarkerFlags: dbiMarkerFlags,
+            timingAnomalyFlags: timingAnomalyFlags,
+            timingProbeMedianNs: timingProbeMedianNs,
+            timingProbeMaxNs: timingProbeMaxNs,
+            timingProbeThresholdNs: timingProbeThresholdNs,
+            dbiAnomalyCount: dbiAnomalyCount,
+            timingAnomalyCount: timingAnomalyCount
         )
     }
 
@@ -363,6 +416,195 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertEqual(summary.evidence["anomaly_kinds"], "traced,deny_attach,exception_port,exception_query")
     }
 
+    func testCRiskCoreDBIProbeFlagsEnvMarkersAndAggregateProbeBit() throws {
+        guard CPRiskKit.shared.antiDebugWatchdogSnapshot().supported else {
+            throw XCTSkip("signal probe is unavailable on this platform")
+        }
+
+        withEnvironmentValue(key: "PIN_VM", value: "1") {
+            let hitCount = cprisk_detect_dbi_markers()
+            let markerFlags = cprisk_get_last_dbi_marker_flags()
+            let aggregateFlags = cprisk_run_all_signal_probes()
+
+            XCTAssertGreaterThanOrEqual(Int(hitCount), 1)
+            XCTAssertGreaterThanOrEqual(cprisk_get_last_dbi_marker_hit_count(), 1)
+            XCTAssertNotEqual(markerFlags & UInt32(CPRISK_DBI_MARKER_ENV), 0)
+            XCTAssertNotEqual(aggregateFlags & UInt32(CPRISK_PROBE_DBI_MARKER), 0)
+        }
+    }
+
+    func testCRiskCoreTimingProbeExposesAnomalyFlagsAndMetrics() throws {
+        guard CPRiskKit.shared.antiDebugWatchdogSnapshot().supported else {
+            throw XCTSkip("timing probe is unavailable on this platform")
+        }
+
+        let singleStepDetected = cprisk_detect_single_stepping()
+        let timingFlags = cprisk_get_last_timing_anomaly_flags()
+        let medianNs = cprisk_get_last_timing_probe_median_ns()
+        let maxNs = cprisk_get_last_timing_probe_max_ns()
+        let thresholdNs = cprisk_get_last_timing_probe_threshold_ns()
+        let aggregateFlags = cprisk_run_all_signal_probes()
+
+        let knownMask = UInt32(CPRISK_TIMING_ANOMALY_MEDIAN)
+            | UInt32(CPRISK_TIMING_ANOMALY_SPIKE)
+            | UInt32(CPRISK_TIMING_ANOMALY_JITTER)
+
+        XCTAssertGreaterThan(thresholdNs, 0)
+        XCTAssertGreaterThanOrEqual(maxNs, medianNs)
+        XCTAssertEqual(timingFlags & ~knownMask, 0)
+
+        if singleStepDetected != 0 {
+            XCTAssertNotEqual(timingFlags, 0)
+        }
+        if cprisk_get_last_timing_anomaly_flags() != 0 {
+            XCTAssertNotEqual(aggregateFlags & UInt32(CPRISK_PROBE_TIMING_ANOMALY), 0)
+        }
+    }
+
+    func testCRiskCoreDeviceKeyDerivationSucceeds() {
+        let rootKey = [UInt8](repeating: 0x11, count: Int(CPRISK_ARMOR_KEY_SIZE))
+        var deviceKey = [UInt8](repeating: 0, count: Int(CPRISK_ARMOR_KEY_SIZE))
+
+        let rc = rootKey.withUnsafeBufferPointer { rootPtr in
+            deviceKey.withUnsafeMutableBufferPointer { devicePtr in
+                cprisk_derive_device_key(rootPtr.baseAddress, devicePtr.baseAddress)
+            }
+        }
+
+        XCTAssertEqual(rc, 0)
+        XCTAssertTrue(deviceKey.contains { $0 != 0 })
+        let boundFlag = cprisk_is_device_bound()
+        XCTAssertTrue(boundFlag == 0 || boundFlag == 1)
+    }
+
+    func testCRiskCorePACSelfTestAndFlags() {
+        let rc = cprisk_pac_self_test(0xA5A5_A5A5)
+        XCTAssertEqual(rc, 0)
+
+        let flags = cprisk_get_last_pac_cfi_flags()
+        if cprisk_pac_is_arm64e_supported() == 0 {
+            XCTAssertNotEqual(flags & UInt32(CPRISK_PAC_CFI_FLAG_UNAVAILABLE), 0)
+        } else {
+            XCTAssertEqual(flags & UInt32(CPRISK_PAC_CFI_FLAG_UNAVAILABLE), 0)
+        }
+        XCTAssertEqual(flags & UInt32(CPRISK_PAC_CFI_FLAG_SELFTEST_FAILED), 0)
+    }
+
+    func testCRiskCorePACCoreCallbackValidation() {
+        let rc = cprisk_pac_validate_core_callbacks()
+        XCTAssertEqual(rc, 0)
+
+        let flags = cprisk_get_last_pac_cfi_flags()
+        XCTAssertEqual(flags & UInt32(CPRISK_PAC_CFI_FLAG_CALLBACK_VALIDATION_FAILED), 0)
+        XCTAssertEqual(flags & UInt32(CPRISK_PAC_CFI_FLAG_SIGN_FAILED), 0)
+        XCTAssertEqual(flags & UInt32(CPRISK_PAC_CFI_FLAG_AUTH_FAILED), 0)
+        XCTAssertEqual(flags & UInt32(CPRISK_PAC_CFI_FLAG_WEAK_BINDING), 0)
+        if cprisk_pac_is_arm64e_supported() == 0 {
+            XCTAssertNotEqual(flags & UInt32(CPRISK_PAC_CFI_FLAG_UNAVAILABLE), 0)
+        } else {
+            XCTAssertEqual(flags & UInt32(CPRISK_PAC_CFI_FLAG_UNAVAILABLE), 0)
+        }
+    }
+
+    func testCRiskCoreThreadExceptionPortsAndHardwareProbeBits() throws {
+        guard CPRiskKit.shared.antiDebugWatchdogSnapshot().supported else {
+            throw XCTSkip("signal probe is unavailable on this platform")
+        }
+
+        let hw = cprisk_detect_hardware_breakpoints()
+        let threadPorts = cprisk_detect_thread_exception_ports()
+        let aggregateFlags = cprisk_run_all_signal_probes()
+
+        if hw > 0 {
+            XCTAssertNotEqual(aggregateFlags & UInt32(CPRISK_PROBE_HARDWARE_BP), 0)
+        } else {
+            XCTAssertEqual(aggregateFlags & UInt32(CPRISK_PROBE_HARDWARE_BP), 0)
+        }
+        if threadPorts > 0 {
+            XCTAssertNotEqual(aggregateFlags & UInt32(CPRISK_PROBE_THREAD_EXCEPTION_PORT), 0)
+        } else {
+            XCTAssertEqual(aggregateFlags & UInt32(CPRISK_PROBE_THREAD_EXCEPTION_PORT), 0)
+        }
+    }
+
+    func testWatchdogSnapshotReflectsExceptionPortAndHardwareBits() throws {
+        guard CPRiskKit.shared.antiDebugWatchdogSnapshot().supported else {
+            throw XCTSkip("watchdog is unavailable on this platform")
+        }
+
+        CPRiskKit.shared.stop()
+        CPRiskKit.shared.start()
+        defer { CPRiskKit.shared.stop() }
+
+        let snapshot = waitForWatchdogSnapshot(timeout: 3.0)
+
+        if snapshot.hardwareBpDetected {
+            XCTAssertNotEqual(
+                snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_HARDWARE_BP),
+                0
+            )
+        }
+        if snapshot.lastExceptionPortHealthy == false {
+            XCTAssertNotEqual(
+                snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_PORT),
+                0
+            )
+        }
+    }
+
+    func testAntiDebugWatchdogSnapshotIncludesDBIMarkerAnomaly() throws {
+        guard CPRiskKit.shared.antiDebugWatchdogSnapshot().supported else {
+            throw XCTSkip("watchdog is unavailable on this platform")
+        }
+
+        withEnvironmentValue(key: "PIN_VM", value: "1") {
+            CPRiskKit.shared.stop()
+            CPRiskKit.shared.start()
+            defer { CPRiskKit.shared.stop() }
+
+            let dbiAnomalyFlag = UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DBI_MARKER)
+            var snapshot = waitForWatchdogSnapshot()
+            let deadline = Date().addingTimeInterval(2.0)
+            while snapshot.running &&
+                    Date() < deadline &&
+                    (snapshot.anomalyFlags & dbiAnomalyFlag) == 0 {
+                Thread.sleep(forTimeInterval: 0.05)
+                snapshot = CPRiskKit.shared.antiDebugWatchdogSnapshot()
+            }
+
+            XCTAssertTrue(snapshot.running)
+            XCTAssertNotEqual(snapshot.anomalyFlags & dbiAnomalyFlag, 0)
+        }
+    }
+
+    func testAntiDebugWatchdogSignalsIncludeDBIAndTimingAnomalies() {
+        let provider = AntiTamperingSignalProvider()
+        let flags = UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DBI_MARKER)
+            | UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TIMING_SIDECHANNEL)
+
+        let snapshot = makeWatchdogSnapshot(
+            anomalyFlags: flags,
+            dbiDetected: true,
+            dbiMarkerFlags: UInt32(CPRISK_DBI_MARKER_ENV),
+            timingAnomalyFlags: UInt32(CPRISK_TIMING_ANOMALY_MEDIAN),
+            timingProbeMedianNs: 1_500_000,
+            timingProbeMaxNs: 2_900_000,
+            timingProbeThresholdNs: 1_200_000,
+            dbiAnomalyCount: 3,
+            timingAnomalyCount: 4
+        )
+
+        let signals = provider.antiDebugWatchdogSignals(from: snapshot)
+        XCTAssertTrue(signals.contains { $0.id == "\(ObfuscatedConstants.detectorIDAntiDebugWatchdog)_dbi_marker" })
+        XCTAssertTrue(signals.contains { $0.id == "\(ObfuscatedConstants.detectorIDAntiDebugWatchdog)_timing_sidechannel" })
+
+        guard let summary = signals.first(where: { $0.id == SignalID.antiDebugWatchdogAnomaly }) else {
+            return XCTFail("missing watchdog summary signal")
+        }
+        XCTAssertTrue(summary.evidence["anomaly_kinds"]?.contains("dbi_marker") ?? false)
+        XCTAssertTrue(summary.evidence["anomaly_kinds"]?.contains("timing_sidechannel") ?? false)
+    }
+
     func testProtectedDuplicateSignalsAreCollapsedToStrongestSignal() {
         let provider = AntiTamperingSignalProvider()
         let input = [
@@ -503,10 +745,37 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertTrue(detector.knownPorts.contains(23946))
     }
 
+    func testFridaDetectorExtendedMethodPrefixes() {
+        XCTAssertEqual(ObfuscatedConstants.methodPrefixFridaProto, "frida:proto:")
+        XCTAssertEqual(ObfuscatedConstants.methodPrefixFridaListen, "frida:listen:")
+        XCTAssertEqual(ObfuscatedConstants.methodPrefixFridaMemorySig, "frida:memsig:")
+    }
+
     func testFridaDetectorScoreCapped() throws {
         let detector = FridaDetector()
         let result = try detector.detect()
         XCTAssertLessThanOrEqual(result.score, 45)
+    }
+
+    func testFridaDetectorMemorySignatureHookPath() throws {
+        FridaDetector.clearMemorySignatureHooks()
+        setenv("CPRISK_FRIDA_MEMSIG", "1", 1)
+        defer {
+            unsetenv("CPRISK_FRIDA_MEMSIG")
+            FridaDetector.clearMemorySignatureHooks()
+        }
+
+        FridaDetector.registerMemorySignatureHook {
+            "gum-inline-sig"
+        }
+        let detector = FridaDetector()
+        let result = try detector.detect()
+        XCTAssertTrue(
+            result.methods.contains(where: {
+                $0.hasPrefix(ObfuscatedConstants.methodPrefixFridaMemorySig)
+            }),
+            "memory-signature hook should emit frida:memsig:* evidence when enabled"
+        )
     }
 
     func testFridaModuleDetectorMarkers() {

@@ -9,6 +9,9 @@ import AntiDebugInjector
 import InstructionSubstitution
 import ControlFlowOrchestrator
 import SymbolStripper
+import ImportEncryptor
+import HeaderEncryptor
+import Security
 
 // MARK: - CLI Options
 
@@ -21,6 +24,7 @@ struct CLIOptions {
     var keyHex: String?
     var keyFile: String?
     var cffPolicyPath: String?
+    var buildSeedRaw: String?
 }
 
 func parseArguments() -> CLIOptions {
@@ -44,6 +48,9 @@ func parseArguments() -> CLIOptions {
         case "--cff-policy":
             i += 1
             if i < args.count { options.cffPolicyPath = args[i] }
+        case "--build-seed":
+            i += 1
+            if i < args.count { options.buildSeedRaw = args[i] }
         case "--pass1": options.passes.insert(1)
         case "--pass2": options.passes.insert(2)
         case "--pass3": options.passes.insert(3)
@@ -53,6 +60,8 @@ func parseArguments() -> CLIOptions {
         case "--pass7": options.passes.insert(7)
         case "--pass8": options.passes.insert(8)
         case "--pass9": options.passes.insert(9)
+        case "--pass10": options.passes.insert(10)
+        case "--pass11": options.passes.insert(11)
         case "--all":   options.allPasses = true
         case "--verbose": options.verbose = true
         case "--help":
@@ -84,13 +93,18 @@ func printUsage() {
       --pass7           Pass 7: Anti-Debug Metadata Injection
       --pass8           Pass 8: Instruction Substitution
       --pass9           Pass 9: Control Flow Orchestrator (policy-guided binary rewrite)
+      --pass10          Pass 10: Import Table Encryption
+      --pass11          Pass 11: Header Encryption
       --all             Enable all passes
       --cff-policy      Override cff_policy.yaml path for Pass 9
+      --build-seed      Build randomization seed (u64, decimal or 0x-prefixed hex)
       --verbose         Verbose output
       --help            Show this help
 
     Environment:
-      CPRISK_ARMOR_KEY  Hex-encoded key (fallback when --key/--key-file not set)
+      CPRISK_ARMOR_KEY        Hex-encoded key (fallback when --key/--key-file not set)
+      CPRISK_ARMOR_BUILD_SEED Decimal or 0x-prefixed seed for deterministic randomization (preferred override)
+      CPRISK_BUILD_SEED       Legacy alias for CPRISK_ARMOR_BUILD_SEED (fallback when --build-seed is missing)
 
     A key is REQUIRED when any encryption pass (1, 3, 4) or --all is enabled.
     """)
@@ -127,6 +141,77 @@ private func dataFromHex(_ hex: String) -> Data? {
     return data
 }
 
+enum BuildSeedOrigin: String {
+    case cli = "cli"
+    case env = "env"
+    case random = "random"
+}
+
+struct BuildSeedResolution {
+    let seed: UInt64
+    let origin: BuildSeedOrigin
+}
+
+private func parseBuildSeed(_ raw: String) -> UInt64? {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+
+    if trimmed.hasPrefix("0x") || trimmed.hasPrefix("0X") {
+        return UInt64(trimmed.dropFirst(2), radix: 16)
+    }
+    return UInt64(trimmed, radix: 10)
+}
+
+private func secureRandomSeed() throws -> UInt64 {
+    var randomBytes: UInt64 = 0
+    let status = SecRandomCopyBytes(kSecRandomDefault, MemoryLayout<UInt64>.size, &randomBytes)
+    if status != errSecSuccess {
+        throw NSError(
+            domain: "cprisk-armor",
+            code: Int(status),
+            userInfo: [NSLocalizedDescriptionKey: "SecRandomCopyBytes failed with status \(status)"]
+        )
+    }
+    return randomBytes == 0 ? 1 : randomBytes
+}
+
+private func resolveBuildSeed(from options: CLIOptions) throws -> BuildSeedResolution {
+    if let cliRaw = options.buildSeedRaw {
+        guard let parsed = parseBuildSeed(cliRaw) else {
+            throw NSError(
+                domain: "cprisk-armor",
+                code: 1001,
+                userInfo: [NSLocalizedDescriptionKey: "invalid --build-seed value '\(cliRaw)'"]
+            )
+        }
+        return BuildSeedResolution(seed: parsed == 0 ? 1 : parsed, origin: .cli)
+    }
+
+    if let envRaw = ProcessInfo.processInfo.environment["CPRISK_ARMOR_BUILD_SEED"] {
+        guard let parsed = parseBuildSeed(envRaw) else {
+            throw NSError(
+                domain: "cprisk-armor",
+                code: 1002,
+                userInfo: [NSLocalizedDescriptionKey: "invalid CPRISK_ARMOR_BUILD_SEED value '\(envRaw)'"]
+            )
+        }
+        return BuildSeedResolution(seed: parsed == 0 ? 1 : parsed, origin: .env)
+    }
+
+    if let envRaw = ProcessInfo.processInfo.environment["CPRISK_BUILD_SEED"] {
+        guard let parsed = parseBuildSeed(envRaw) else {
+            throw NSError(
+                domain: "cprisk-armor",
+                code: 1003,
+                userInfo: [NSLocalizedDescriptionKey: "invalid CPRISK_BUILD_SEED value '\(envRaw)'"]
+            )
+        }
+        return BuildSeedResolution(seed: parsed == 0 ? 1 : parsed, origin: .env)
+    }
+
+    return BuildSeedResolution(seed: try secureRandomSeed(), origin: .random)
+}
+
 // MARK: - Main
 
 let options = parseArguments()
@@ -139,7 +224,7 @@ guard let inputPath = options.inputPath else {
 
 let outputPath = options.outputPath ?? (inputPath + "_armored")
 let verbose = options.verbose
-let enabledPasses: Set<Int> = options.allPasses ? [1, 2, 3, 4, 5, 6, 7, 8, 9] : options.passes
+let enabledPasses: Set<Int> = options.allPasses ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] : options.passes
 
 if enabledPasses.isEmpty {
     fputs("Warning: No passes enabled. Use --all or --passN flags.\n", stderr)
@@ -152,18 +237,26 @@ if enabledPasses.contains(3) && !enabledPasses.contains(4) {
     exit(1)
 }
 
-let encryptionPassIDs: Set<Int> = [1, 3, 4]
+let encryptionPassIDs: Set<Int> = [1, 3, 4, 10, 11]
 let needsKey = !enabledPasses.isDisjoint(with: encryptionPassIDs)
 let keyData = resolveEncryptionKey(from: options)
 
 if needsKey && keyData == nil {
-    fputs("Error: encryption passes (1, 3, 4) require a key.\n", stderr)
+    fputs("Error: encryption passes (1, 3, 4, 10, 11) require a key.\n", stderr)
     fputs("Provide one via --key <hex>, --key-file <path>, or CPRISK_ARMOR_KEY env var.\n", stderr)
     exit(1)
 }
 
 if let key = keyData, key.allSatisfy({ $0 == 0 }) {
     fputs("Error: all-zero key rejected — the armor chain would be trivially reversible.\n", stderr)
+    exit(1)
+}
+
+let buildSeed: BuildSeedResolution
+do {
+    buildSeed = try resolveBuildSeed(from: options)
+} catch {
+    fputs("Error: \(error.localizedDescription)\n", stderr)
     exit(1)
 }
 
@@ -179,9 +272,10 @@ do {
         print("[*] Header: \(validity) | Commands: \(machoFile.header.numberOfCommands) | Type: \(machoFile.header.fileType)")
         print("[*] Segments: \(try machoFile.segments().map(\.name).joined(separator: ", "))")
         if keyData != nil { print("[*] Encryption key: provided (\(ArmorABI.keySize) bytes)") }
+        print(String(format: "[*] Build seed: 0x%016llX (%@)", buildSeed.seed, buildSeed.origin.rawValue))
     }
 
-    let config = PassConfig(verbose: verbose, encryptionKey: keyData)
+    let config = PassConfig(verbose: verbose, encryptionKey: keyData, randomSeed: buildSeed.seed)
     var allResults = [PassResult]()
     let passes: [(Int, ArmorPass)] = [
         (1, StringEncryptorPass()),
@@ -189,9 +283,11 @@ do {
         (8, InstructionSubstitutionPass()),
         (4, IntegrityAnchorPass()),
         (3, DataSegmentEncryptorPass()),
+        (11, HeaderEncryptorPass()),
         (5, StructureObfuscatorPass()),
         (7, AntiDebugInjectorPass()),
         (9, ControlFlowOrchestratorPass(policyFilePath: options.cffPolicyPath)),
+        (10, ImportEncryptorPass()),
         (6, SymbolStripperPass()),
     ]
 

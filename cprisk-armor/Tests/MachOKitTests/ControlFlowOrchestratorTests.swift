@@ -79,6 +79,23 @@ final class ControlFlowOrchestratorTests: XCTestCase {
         XCTAssertTrue(regionPlan.antiDeobfuscationPlan.pass8CFFAwarenessEnabled)
     }
 
+    func testHeavyTierStateEncodingSupportsAffineOrAddRotateXor() {
+        let policy = FunctionCFFPolicy(
+            version: 2,
+            heavy: ["DecisionTree.decide"],
+            light: [],
+            never: [],
+            regionOnly: [],
+            antiDeobfuscation: AntiDeobfuscationOptions()
+        )
+        let plan = ControlFlowOrchestrator(policy: policy, seedMaterial: 0x2026).buildPlans().first
+        XCTAssertNotNil(plan)
+        XCTAssertTrue(
+            plan?.stateEncodingPlan.style == .addRotateXor || plan?.stateEncodingPlan.style == .affine,
+            "heavy tier should use a stronger codec style"
+        )
+    }
+
     func testRepositoryPolicyLightTierMatchesCurrentFunctionNames() throws {
         let policyURL = try ControlFlowOrchestrator.resolvePolicyURL()
         let policy = try FunctionCFFPolicy.load(from: policyURL)
@@ -199,6 +216,32 @@ final class ControlFlowOrchestratorTests: XCTestCase {
         XCTAssertTrue(result.details.contains(where: { $0.contains("skipped functions: 1") }))
         XCTAssertTrue(result.details.contains(where: { $0.contains("insufficient rewritable entry instructions") }))
         XCTAssertNoThrow(try file.validateStructure())
+    }
+
+    func testCoverageAdvisorSuggestsSafeDefaults() {
+        let policy = FunctionCFFPolicy(
+            version: 2,
+            heavy: ["DecisionTree.decide"],
+            light: ["DetectorRegistry.detectAll"],
+            never: ["direct_syscall.cprisk_direct_syscall0"],
+            regionOnly: [],
+            antiDeobfuscation: AntiDeobfuscationOptions()
+        )
+
+        let suggestion = CFFPolicyCoverageAdvisor.suggestExpansions(
+            policy: policy,
+            availableSymbols: [
+                "_RiskDetectionEngine.collectAndAugmentSignals",
+                "_AntiTamperingDetector.detect",
+                "_direct_syscall.cprisk_direct_syscall6",
+                "_CloudPhoneRiskKitTests.testFoo"
+            ]
+        )
+
+        XCTAssertTrue(suggestion.heavy.contains("RiskDetectionEngine.collectAndAugmentSignals"))
+        XCTAssertTrue(suggestion.light.contains("AntiTamperingDetector.detect"))
+        XCTAssertTrue(suggestion.never.contains("direct_syscall.cprisk_direct_syscall6"))
+        XCTAssertTrue(suggestion.skipped.contains("CloudPhoneRiskKitTests.testFoo"))
     }
 
     private static func writePass9Policy(

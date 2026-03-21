@@ -92,14 +92,14 @@ public final class DetectorRegistry {
         static let detectTypeConfig = CFFConfig.adaptive(
             functionSeed: 0xA37C_19E4_5B62_D08F,
             protectionTier: .light,
-            dispatcherStyle: .dualRail,
+            dispatcherStyle: .splitIndirect,
             codecStyle: .xorRotate
         )
 
         static let detectGroupConfig = CFFConfig.adaptive(
             functionSeed: 0x5CE1_8A20_7F39_B4D1,
             protectionTier: .light,
-            dispatcherStyle: .dualRail,
+            dispatcherStyle: .splitIndirect,
             codecStyle: .xorRotate
         )
 

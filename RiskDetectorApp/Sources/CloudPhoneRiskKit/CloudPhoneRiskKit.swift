@@ -215,6 +215,14 @@ public final class CPRiskKit: NSObject {
         public let shadowStackAnomalyCount: UInt64
         public let lastPeerWatchdogStalled: Bool
         public let lastShadowStackMismatch: Bool
+        public let dbiDetected: Bool
+        public let dbiMarkerFlags: UInt32
+        public let timingAnomalyFlags: UInt32
+        public let timingProbeMedianNs: UInt64
+        public let timingProbeMaxNs: UInt64
+        public let timingProbeThresholdNs: UInt64
+        public let dbiAnomalyCount: UInt64
+        public let timingAnomalyCount: UInt64
 
         public var hasAnyAnomaly: Bool {
             anomalyFlags != 0
@@ -235,6 +243,10 @@ public final class CPRiskKit: NSObject {
         public let consumeCount: UInt64
         public let escalationCount: UInt64
         public let trapEventCount: UInt64
+        public let inlinePatchCount: UInt64
+        public let inlinePatchFailureCount: UInt64
+        public let inlinePatchArmed: Bool
+        public let inlinePatchTampered: Bool
     }
 
     private struct ArmorRootKeyResolution {
@@ -284,16 +296,22 @@ public final class CPRiskKit: NSObject {
     /// 启动自动采集（全局触摸 + 传感器）。
     /// 建议在 `application(_:didFinishLaunchingWithOptions:)` 里尽早调用。
     @objc public func start() {
-#if os(iOS) && !targetEnvironment(macCatalyst)
-        cprisk_erase_macho_header()
-#endif
         cprisk_deny_attach()
         cprisk_register_exception_handler()
         let watchdogStartResult = cprisk_start_anti_debug_watchdog()
         if watchdogStartResult != 0 {
             Logger.log("anti_debug_\(ObfuscatedConstants.keywordWatchdog).start failed rc=\(watchdogStartResult)")
         }
-        _ = ensureArmorRuntimeStarted(trigger: "start")
+        let armorSnapshot = ensureArmorRuntimeStarted(trigger: "start")
+#if os(iOS) && !targetEnvironment(macCatalyst)
+        if armorSnapshot.status == .active {
+            cprisk_erase_macho_header()
+        }
+#endif
+        let antiDumpStartResult = cprisk_start_anti_dump_probe(5)
+        if antiDumpStartResult != 0 {
+            Logger.log("anti_dump_probe.start failed rc=\(antiDumpStartResult)")
+        }
         DyldImageMonitor.shared.start()
         BuildConfig.configureForRelease()
         stateLock.lock()
@@ -320,6 +338,7 @@ public final class CPRiskKit: NSObject {
     @objc public func stop() {
         Logger.log("sdk_stop")
         removeGraphFeedbackReEvaluateObserver()
+        cprisk_stop_anti_dump_probe()
         cprisk_stop_anti_debug_watchdog()
         resetArmorRuntime()
 #if canImport(UIKit)
@@ -1221,7 +1240,15 @@ public final class CPRiskKit: NSObject {
             peerWatchdogAnomalyCount: raw.peer_watchdog_anomaly_count,
             shadowStackAnomalyCount: raw.shadow_stack_anomaly_count,
             lastPeerWatchdogStalled: raw.last_peer_watchdog_stalled != 0,
-            lastShadowStackMismatch: raw.last_shadow_stack_mismatch != 0
+            lastShadowStackMismatch: raw.last_shadow_stack_mismatch != 0,
+            dbiDetected: raw.last_dbi_detected != 0,
+            dbiMarkerFlags: raw.last_dbi_marker_flags,
+            timingAnomalyFlags: raw.last_timing_anomaly_flags,
+            timingProbeMedianNs: raw.last_timing_probe_median_ns,
+            timingProbeMaxNs: raw.last_timing_probe_max_ns,
+            timingProbeThresholdNs: raw.last_timing_probe_threshold_ns,
+            dbiAnomalyCount: raw.dbi_anomaly_count,
+            timingAnomalyCount: raw.timing_anomaly_count
         )
     }
 
@@ -1241,7 +1268,11 @@ public final class CPRiskKit: NSObject {
             lastDelayNs: raw.last_delay_ns,
             consumeCount: raw.consume_count,
             escalationCount: raw.escalation_count,
-            trapEventCount: raw.trap_event_count
+            trapEventCount: raw.trap_event_count,
+            inlinePatchCount: raw.inline_patch_count,
+            inlinePatchFailureCount: raw.inline_patch_failure_count,
+            inlinePatchArmed: raw.inline_patch_armed != 0,
+            inlinePatchTampered: raw.last_inline_patch_tamper != 0
         )
     }
 

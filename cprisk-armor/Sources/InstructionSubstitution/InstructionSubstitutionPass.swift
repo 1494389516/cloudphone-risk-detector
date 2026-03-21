@@ -16,9 +16,9 @@ private enum InstructionSubstitutionSeedOrigin {
 }
 
 public final class InstructionSubstitutionPass: ArmorPass {
-    public static let defaultReplacementRate = 0.40
-    public static let defaultOpaquePredicateRate = 0.15
-    public static let defaultDeadCodeIslandRate = 0.08
+    public static let defaultReplacementRate = 0.65
+    public static let defaultOpaquePredicateRate = 0.22
+    public static let defaultDeadCodeIslandRate = 0.12
 
     public let name = "InstructionSubstitution"
 

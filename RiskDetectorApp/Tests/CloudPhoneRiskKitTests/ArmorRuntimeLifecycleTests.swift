@@ -293,6 +293,41 @@ final class ArmorRuntimeLifecycleTests: XCTestCase {
         XCTAssertNotEqual(snapshot.parse_error, 0)
     }
 
+    func testInlinePatchGateFailurePoisonsSafely() {
+        let payload = makeAntiDebugPlanPayload(
+            policyBits: UInt32(CPRISK_ARMOR_ADBG_POLICY_RUNTIME_GATE)
+                | UInt32(CPRISK_ARMOR_ADBG_POLICY_TRAP_ON_TAMPER),
+            entryFlags: UInt32(CPRISK_ARMOR_ADBG_ENTRY_FLAG_INLINE_PATCH_RESERVED)
+                | UInt32(CPRISK_ARMOR_ADBG_ENTRY_FLAG_RUNTIME_GATE_RESERVED)
+        )
+
+        let injectRC = payload.withUnsafeBytes { raw -> Int32 in
+            cprisk_test_set_antidebug_plan(
+                raw.bindMemory(to: UInt8.self).baseAddress,
+                payload.count
+            )
+        }
+        XCTAssertEqual(injectRC, 0)
+
+        let keyData = Data(repeating: 0x42, count: 32)
+        _ = keyData.withUnsafeBytes { raw -> Int32 in
+            cprisk_init_protection(
+                raw.bindMemory(to: UInt8.self).baseAddress,
+                keyData.count
+            )
+        }
+
+        var snapshot = cprisk_antidebug_plan_snapshot_t()
+        XCTAssertEqual(cprisk_get_antidebug_plan_snapshot(&snapshot), 0)
+        XCTAssertEqual(snapshot.section_valid, 1)
+        XCTAssertGreaterThan(
+            snapshot.inline_patch_failure_count,
+            0,
+            "invalid test patch-site must fail closed and be recorded"
+        )
+        XCTAssertEqual(snapshot.last_inline_patch_tamper, 1)
+    }
+
     func testStringDecryptPathSelectorIsDeterministicForSeed() {
         let seed: UInt64 = 0xA17C_9E51_42D0_77B3
         let nonce: [UInt8] = [0x11, 0x22, 0x33, 0x44, 0xAA, 0xBB, 0xCC, 0xDD]
@@ -316,7 +351,10 @@ final class ArmorRuntimeLifecycleTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(seen.count, 3, "path selector should spread calls across multiple variants")
     }
 
-    private func makeAntiDebugPlanPayload(policyBits: UInt32) -> Data {
+    private func makeAntiDebugPlanPayload(
+        policyBits: UInt32,
+        entryFlags: UInt32 = UInt32(CPRISK_ARMOR_ADBG_ENTRY_FLAG_RUNTIME_GATE_RESERVED)
+    ) -> Data {
         var data = Data()
 
         data.appendLE(UInt32(CPRISK_ARMOR_ADBG_MAGIC))
@@ -335,7 +373,7 @@ final class ArmorRuntimeLifecycleTests: XCTestCase {
         data.appendLE(UInt32(0x2000))
         data.appendLE(policyBits)
         data.appendLE(UInt32(0))
-        data.appendLE(UInt32(CPRISK_ARMOR_ADBG_ENTRY_FLAG_RUNTIME_GATE_RESERVED))
+        data.appendLE(entryFlags)
         data.appendFixedCString("_risk_guard_entry", length: Int(CPRISK_ARMOR_ADBG_TARGET_NAME_SIZE))
 
         return data

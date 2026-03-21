@@ -6,7 +6,7 @@ private enum AntiTamperingDetectorCFF {
     static let detectConfig = CFFConfig.adaptive(
         functionSeed: 0x7EA1_42D0_9B53_6C2F,
         protectionTier: .light,
-        dispatcherStyle: .dualRail,
+        dispatcherStyle: .splitIndirect,
         codecStyle: .xorRotate
     )
 

@@ -94,7 +94,11 @@ public final class StructureObfuscatorPass: ArmorPass {
 
             let units = 8 + Int(rng.next() % 57)
             let size = units * 8
-            let content = Self.generateStructuredContent(size: size, using: &rng)
+            let content = Self.generateStructuredContent(
+                size: size,
+                sectionName: sectionName,
+                using: &rng
+            )
 
             try file.addOrUpdateSection(
                 segment: ArmorABI.dataSegmentName,
@@ -119,31 +123,108 @@ public final class StructureObfuscatorPass: ArmorPass {
         )
     }
 
-    /// Build structured random data that mimics real section content:
-    ///   [magic:4][version:4][count:4][pointer-like values:N×8]
-    /// This fools tools that apply heuristics on section payloads.
-    private static func generateStructuredContent(size: Int, using rng: inout SeededRNG) -> Data {
+    /// Build mixed-structure payloads with pointer-like lanes, dead-code-like
+    /// words, and constrained entropy shaping to avoid synthetic signatures.
+    private static func generateStructuredContent(
+        size: Int,
+        sectionName: String,
+        using rng: inout SeededRNG
+    ) -> Data {
         var data = Data(capacity: size)
 
-        let magic = UInt32(truncatingIfNeeded: rng.next())
-        let version = UInt32(rng.next() % 16 + 1)
-        let payloadBytes = size - 12
-        let pointerCount = UInt32(max(1, payloadBytes / 8))
+        let magic = UInt32(truncatingIfNeeded: rng.next() ^ 0x4350_5345)
+        let version = UInt32((rng.next() % 7) + 1)
+        let flavor = UInt32((rng.next() % 3) + 1)
+        let payloadBytes = size - 16
+        let unitCount = UInt32(max(1, payloadBytes / 8))
 
         appendLE32(&data, magic)
         appendLE32(&data, version)
-        appendLE32(&data, pointerCount)
+        appendLE32(&data, unitCount)
+        appendLE32(&data, flavor)
 
-        while data.count + 8 <= size {
-            let ptr: UInt64 = 0x0000000100000000 | (rng.next() & 0x00000000FFFFFE00)
-            appendLE64(&data, ptr)
-        }
-
+        var laneIndex = 0
         while data.count < size {
-            data.append(UInt8(truncatingIfNeeded: rng.next()))
+            let laneType = Int((rng.next() ^ UInt64(laneIndex)) % 4)
+            switch laneType {
+            case 0:
+                if data.count + 8 <= size {
+                    // Pointer-like lane near canonical image ranges.
+                    let base: UInt64 = (rng.next() & 1) == 0
+                        ? 0x0000000100000000
+                        : 0x0000000180000000
+                    let ptr = base | (rng.next() & 0x0000000000FF_FC00)
+                    appendLE64(&data, ptr)
+                }
+            case 1:
+                if data.count + 4 <= size {
+                    // Dead-code-like AArch64 words (NOP/ISB/ORR XZR patterns).
+                    let deadWords: [UInt32] = [
+                        0xD503_201F, // NOP
+                        0xD503_3FDF, // ISB
+                        0xAA1F_03E0, // MOV X0, XZR
+                        0x8A1F_03FF, // AND XZR, XZR, XZR
+                    ]
+                    let word = deadWords[Int(rng.next() % UInt64(deadWords.count))]
+                        ^ UInt32(truncatingIfNeeded: (rng.next() & 0x0000_0003) << 5)
+                    appendLE32(&data, word)
+                }
+            case 2:
+                let tokenPool = [
+                    "__swift5",
+                    "__objc",
+                    "__auth",
+                    "__stubs",
+                    sectionName
+                ]
+                let token = tokenPool[Int(rng.next() % UInt64(tokenPool.count))]
+                for b in token.utf8 where data.count < size {
+                    data.append(b)
+                }
+                if data.count < size {
+                    data.append(0)
+                }
+            default:
+                if data.count < size {
+                    data.append(UInt8(truncatingIfNeeded: rng.next() ^ 0xA5A5_A5A5))
+                }
+            }
+            laneIndex += 1
         }
 
-        return data
+        if data.count > size {
+            data.removeSubrange(size..<data.count)
+        }
+
+        // Entropy shaping: avoid low-entropy synthetic lanes and stable repeats.
+        let entropy = approximateEntropy(data)
+        if entropy < 4.2 {
+            for index in stride(from: 0, to: data.count, by: 7) {
+                data[index] ^= UInt8(truncatingIfNeeded: rng.next())
+            }
+        } else if entropy > 7.7 {
+            for index in stride(from: 3, to: data.count, by: 11) {
+                data[index] ^= UInt8((index * 29) & 0xFF)
+            }
+        }
+
+        return Data(data.prefix(size))
+    }
+
+    private static func approximateEntropy(_ data: Data) -> Double {
+        guard !data.isEmpty else { return 0 }
+        var histogram = [Int](repeating: 0, count: 256)
+        for byte in data {
+            histogram[Int(byte)] += 1
+        }
+
+        let length = Double(data.count)
+        var entropy = 0.0
+        for count in histogram where count > 0 {
+            let p = Double(count) / length
+            entropy -= p * log2(p)
+        }
+        return entropy
     }
 
     private static func appendLE32(_ data: inout Data, _ value: UInt32) {

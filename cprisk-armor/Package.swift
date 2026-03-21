@@ -19,6 +19,8 @@ let package = Package(
         .target(name: "InstructionSubstitution", dependencies: ["MachOKit"]),
         .target(name: "ControlFlowOrchestrator", dependencies: ["MachOKit"]),
         .target(name: "SymbolStripper", dependencies: ["MachOKit"]),
+        .target(name: "ImportEncryptor", dependencies: ["MachOKit"]),
+        .target(name: "HeaderEncryptor", dependencies: ["MachOKit"]),
         .executableTarget(
             name: "cprisk-armor",
             dependencies: [
@@ -31,13 +33,15 @@ let package = Package(
                 "AntiDebugInjector",
                 "InstructionSubstitution",
                 "ControlFlowOrchestrator",
-                "SymbolStripper"
+                "SymbolStripper",
+                "ImportEncryptor",
+                "HeaderEncryptor"
             ]
         ),
         .testTarget(name: "MachOKitTests", dependencies: [
             "MachOKit", "StringEncryptor", "MetadataScrubber",
             "DataSegmentEncryptor", "IntegrityAnchor", "StructureObfuscator",
-            "AntiDebugInjector", "InstructionSubstitution", "ControlFlowOrchestrator", "SymbolStripper",
+            "AntiDebugInjector", "InstructionSubstitution", "ControlFlowOrchestrator", "SymbolStripper", "ImportEncryptor", "HeaderEncryptor",
         ])
     ]
 )

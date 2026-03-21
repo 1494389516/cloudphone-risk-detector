@@ -152,6 +152,65 @@ final class KDFChainTests: XCTestCase {
         XCTAssertNoThrow(try file.validateStructure())
     }
 
+    func testLoaderEntriesUseChainedKeysPerSection() throws {
+        let url = try Self.writeFixture(named: "wb_chain_kdf")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let file = try MachOFile(url: url)
+        let config = PassConfig(encryptionKey: Self.testRootKey)
+
+        _ = try IntegrityAnchorPass().execute(on: file, config: config)
+        _ = try StringEncryptorPass().execute(on: file, config: config)
+        _ = try DataSegmentEncryptorPass().execute(on: file, config: config)
+
+        let loaderSection = try XCTUnwrap(
+            try file.section(segment: ArmorABI.dataSegmentName, section: ArmorABI.Loader.sectionName)
+        )
+        let loaderBytes = try loaderSection.readContent(from: file.data)
+        let entries = try Self.decodeLoaderEntries(from: loaderBytes)
+        XCTAssertGreaterThan(entries.count, 1, "need at least 2 entries to verify chaining")
+
+        let fullAnchorHash = try Self.readFullAnchorHash(from: file)
+        let integrityHash = Self.sha256(fullAnchorHash + fullAnchorHash + fullAnchorHash)
+        let loaderKey = deriveLoaderKey(
+            rootKey: Self.testRootKey,
+            fullAnchorHash: fullAnchorHash,
+            integrityHash: integrityHash,
+            anchorAccumulator: anchorBoundAccumulator(
+                rootKey: Self.testRootKey,
+                fullAnchorHash: fullAnchorHash,
+                integrityHash: integrityHash
+            )
+        )
+
+        var parentKey = loaderKey
+        for (idx, entry) in entries.enumerated() {
+            let depth = entry.chainedKeyDepth == 0 ? 1 : entry.chainedKeyDepth
+            let sectionKey = Self.deriveChainedKey(
+                parentKey: parentKey,
+                sectionIndex: entry.sectionIndex,
+                nonce: entry.nonce,
+                depth: depth
+            )
+            XCTAssertNotEqual(sectionKey, parentKey, "section \(idx) key must differ from parent")
+
+            let section = try XCTUnwrap(
+                try file.section(segment: entry.segmentName, section: entry.sectionName)
+            )
+            let ciphertext = try section.readContent(from: file.data)
+            var hmacMsg = entry.nonce
+            hmacMsg.append(ciphertext)
+
+            let expectedTag = ArmorABI.hmacSHA256(key: sectionKey, message: hmacMsg)
+            XCTAssertEqual(expectedTag, entry.hmacTag, "HMAC must be derived from chained key")
+
+            let loaderTag = ArmorABI.hmacSHA256(key: loaderKey, message: hmacMsg)
+            XCTAssertNotEqual(loaderTag, entry.hmacTag, "HMAC must not reuse loader key")
+
+            parentKey = sectionKey
+        }
+    }
+
     private static func sha256(_ data: Data) -> Data {
         ArmorWhiteBox.sha256(data)
     }
@@ -165,6 +224,97 @@ final class KDFChainTests: XCTestCase {
         data.subdata(in: offset..<(offset + 4)).withUnsafeBytes {
             UInt32(littleEndian: $0.load(as: UInt32.self))
         }
+    }
+
+    private static func readFullAnchorHash(from file: MachOFile) throws -> Data {
+        var digest = Data(repeating: 0, count: ArmorABI.hashSize)
+        for (i, name) in ArmorABI.Integrity.splitSectionNames.enumerated() {
+            let section = try XCTUnwrap(try file.section(segment: ArmorABI.dataSegmentName, section: name))
+            let lane = try section.readContent(from: file.data)
+            digest.replaceSubrange(i * 8..<(i * 8 + 8), with: lane.prefix(8))
+        }
+        return digest
+    }
+
+    private struct LoaderEntry {
+        let segmentName: String
+        let sectionName: String
+        let keyID: UInt32
+        let vmAddress: UInt64
+        let size: UInt64
+        let contentHash: Data
+        let nonce: Data
+        let hmacTag: Data
+        let sectionIndex: UInt32
+        let chainedKeyDepth: UInt32
+    }
+
+    private static func decodeLoaderEntries(from data: Data) throws -> [LoaderEntry] {
+        let headerSize = 12
+        guard data.count >= headerSize else { throw XCTSkip("loader header truncated") }
+        let count = readLE32(data, at: 8)
+        let entrySize = 136
+        var entries: [LoaderEntry] = []
+        var offset = headerSize
+        for _ in 0..<count {
+            guard offset + entrySize <= data.count else { break }
+            let entry = data.subdata(in: offset..<(offset + entrySize))
+            let segmentName = entry.subdata(in: 0..<16).withUnsafeBytes { raw -> String in
+                let bytes = raw.bindMemory(to: UInt8.self)
+                let len = bytes.firstIndex(where: { $0 == 0 }) ?? 16
+                return String(decoding: bytes.prefix(len), as: UTF8.self)
+            }
+            let sectionName = entry.subdata(in: 16..<32).withUnsafeBytes { raw -> String in
+                let bytes = raw.bindMemory(to: UInt8.self)
+                let len = bytes.firstIndex(where: { $0 == 0 }) ?? 16
+                return String(decoding: bytes.prefix(len), as: UTF8.self)
+            }
+            let keyID = entry.subdata(in: 32..<36).withUnsafeBytes { UInt32(littleEndian: $0.load(as: UInt32.self)) }
+            let vmAddr = entry.subdata(in: 40..<48).withUnsafeBytes { UInt64(littleEndian: $0.load(as: UInt64.self)) }
+            let size = entry.subdata(in: 48..<56).withUnsafeBytes { UInt64(littleEndian: $0.load(as: UInt64.self)) }
+            let contentHash = entry.subdata(in: 56..<88)
+            let nonce = entry.subdata(in: 88..<96)
+            let hmacTag = entry.subdata(in: 96..<128)
+            let sectionIndex = entry.subdata(in: 128..<132).withUnsafeBytes { UInt32(littleEndian: $0.load(as: UInt32.self)) }
+            let chainedDepth = entry.subdata(in: 132..<136).withUnsafeBytes { UInt32(littleEndian: $0.load(as: UInt32.self)) }
+            entries.append(LoaderEntry(
+                segmentName: segmentName,
+                sectionName: sectionName,
+                keyID: keyID,
+                vmAddress: vmAddr,
+                size: size,
+                contentHash: contentHash,
+                nonce: nonce,
+                hmacTag: hmacTag,
+                sectionIndex: sectionIndex,
+                chainedKeyDepth: chainedDepth
+            ))
+            offset += entrySize
+        }
+        return entries
+    }
+
+    private static func deriveChainedKey(
+        parentKey: Data,
+        sectionIndex: UInt32,
+        nonce: Data,
+        depth: UInt32
+    ) -> Data {
+        var material = Data()
+        var idx = sectionIndex.littleEndian
+        withUnsafeBytes(of: &idx) { material.append(contentsOf: $0) }
+        material.append(nonce)
+
+        var key = ArmorABI.hmacSHA256(key: parentKey, message: material)
+        if depth > 1 {
+            for d in 1..<depth {
+                key = ArmorABI.hmacSHA256(key: key, message: Data("cprisk.chained.v1.".utf8))
+                var dm = key
+                dm.append(UInt8(d))
+                key = ArmorABI.hmacSHA256(key: dm, message: dm)
+            }
+        }
+        return key
     }
 
     private static func writeFixture(named name: String) throws -> URL {

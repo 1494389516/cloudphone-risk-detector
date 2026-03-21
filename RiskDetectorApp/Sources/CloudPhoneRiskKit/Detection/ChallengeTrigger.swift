@@ -5,7 +5,7 @@ private enum ChallengeTriggerCFF {
     static let shouldTriggerConfig = CFFConfig.adaptive(
         functionSeed: 0xB5E2_71CA_4D3F_8096,
         protectionTier: .light,
-        dispatcherStyle: .dualRail,
+        dispatcherStyle: .splitIndirect,
         codecStyle: .xorRotate
     )
 

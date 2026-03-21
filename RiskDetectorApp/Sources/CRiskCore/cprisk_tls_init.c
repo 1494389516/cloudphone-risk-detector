@@ -24,6 +24,7 @@ static void cprisk_tls_init_callback(void) {
 
     /* 2. 抢占异常端口；若 Frida 后执行覆盖，constructor 阶段会重新抢占 */
     cprisk_register_exception_handler();
+    cprisk_capture_early_exception_ports();
 }
 
 /* 

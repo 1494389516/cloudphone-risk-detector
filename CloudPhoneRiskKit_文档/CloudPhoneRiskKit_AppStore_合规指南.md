@@ -176,7 +176,7 @@
 
 #### 口径 A：完整版（推荐，全量开启 armor 保护时使用）
 
-适用场景：SDK 全量启用 cprisk-armor 构建期 + 运行时保护（字符串加密、数据段加密、完整性校验、Mach-O header 擦除、JIT 按页解密、Pass 7 anti-debug injection metadata、Pass 8 instruction substitution、Pass 9 CFF 控制流平坦化等），不做任何裁剪。
+适用场景：SDK 全量启用 cprisk-armor 构建期 + 运行时保护（字符串加密、数据段加密、完整性校验、Mach-O header 擦除、JIT 按页解密、Pass 7 anti-debug runtime gate、Pass 8 instruction substitution、Pass 9 CFF 控制流编排、Pass 10 import encryption、Pass 11 header encryption 等），不做任何裁剪。
 
 ```text
 This app integrates CloudPhoneRiskKit, a fraud-prevention and device-integrity SDK.
@@ -408,11 +408,13 @@ cprisk-armor --input <app_binary> --output <output> --all --key <hex>
 | Pass 4 | 完整性锚点 + 白盒 PRF（6.5） | 是 |
 | Pass 5 | 结构混淆 | 是 |
 | Pass 6 | 符号剥离 | 是 |
-| Pass 7 | AntiDebug 注入计划 metadata | 是 |
+| Pass 7 | AntiDebug 注入计划 + runtime gate | 是 |
 | Pass 8 | InstructionSubstitution（1:1 等长指令替换） | 是 |
 | Pass 9 | ControlFlowOrchestrator（CFF 控制流平坦化） | 是 |
+| Pass 10 | ImportEncryptor（导入表加密） | 是 |
+| Pass 11 | HeaderEncryptor（Header 加密） | 是 |
 
-运行时能力全量开启：Mach-O Header 擦除、JIT 按页解密、异常端口保护、watchdog 多维反调试探针（含双 watchdog 互监控、影子栈校验）、Pass 7 anti-debug 注入计划消费；构建产物侧同时包含 Pass 8 对 `__TEXT.__text` 的保守等长指令替换与 Pass 9 CFF 策略编排。
+运行时能力全量开启：Mach-O Header 擦除、JIT 按页解密、异常端口保护、watchdog 多维反调试探针（含双 watchdog 互监控、影子栈校验）、Pass 7 anti-debug runtime gate、Pass 10 导入解析恢复、Pass 11 header sanity restore；构建产物侧同时包含 Pass 8 对 `__TEXT.__text` 的保守等长指令替换与 Pass 9 CFF 策略编排。
 
 **适用场景**：
 
@@ -427,7 +429,7 @@ cprisk-armor --input <app_binary> --output <output> --all --key <hex>
 #### Profile B：AppStore Safe（保守策略）
 
 ```bash
-cprisk-armor --input <app_binary> --output <output> --pass3 --pass4 --pass5 --pass6 --pass7 --key <hex>
+cprisk-armor --input <app_binary> --output <output> --pass3 --pass4 --pass5 --pass6 --pass7 --pass10 --pass11 --key <hex>
 ```
 
 | Pass | 名称 | 启用 | 说明 |
@@ -438,9 +440,11 @@ cprisk-armor --input <app_binary> --output <output> --pass3 --pass4 --pass5 --pa
 | Pass 4 | 完整性锚点 + 白盒 PRF（6.5） | 是 | 完整性校验链 + 白盒 S-box 表正常工作 |
 | Pass 5 | 结构混淆 | 是 | Mach-O 结构层面混淆 |
 | Pass 6 | 符号剥离 | 是 | 等价于 `strip -x`，完全标准操作 |
-| Pass 7 | AntiDebug 注入计划 metadata | 是 | 仅写入 `__DATA,__cpr_adbg7` ABI，不直接改写 `__TEXT` 指令流，审核风险低 |
+| Pass 7 | AntiDebug 注入计划 + runtime gate | 是 | 通过 `__DATA,__cpr_adbg7` 驱动运行时 gate，风险仍低于大规模机器码重写 |
 | Pass 8 | InstructionSubstitution（1:1 等长指令替换） | **否** | 会直接改写 `__TEXT.__text` 指令流；虽然不做 CFG flattening、只改安全子集，但首发提审阶段建议关闭 |
 | Pass 9 | ControlFlowOrchestrator（CFF 控制流平坦化） | **否** | 会改写 `__TEXT.__text` 控制流结构；首发提审阶段建议关闭 |
+| Pass 10 | ImportEncryptor（导入表加密） | 是 | 主要影响导入名的静态可见性，不改变业务逻辑路径 |
+| Pass 11 | HeaderEncryptor（Header 加密） | 是 | 运行时会做 sanity fallback，审核风险通常低于直接改写 `__TEXT` |
 
 **适用场景**：
 
@@ -472,11 +476,13 @@ cprisk-armor --input <app_binary> --output <output> --pass3 --pass4 --pass5 --pa
 | Pass 4 完整性锚点 + 白盒 | 多了非标准 section（含 ~160KB 白盒 S-box） | 不影响执行 | 不太可能 |
 | Pass 5 结构混淆 | segment/section 布局异常 | 不影响 dyld 加载 | 不太可能 |
 | Pass 6 符号剥离 | nlist 表被混淆 | 不影响执行 | 不太可能 |
-| Pass 7 AntiDebug metadata | 多一个自定义 `__DATA` section，内容是 anti-debug 注入计划 ABI | 仅为运行时 patch/gate 预留计划，不直接改写机器码 | 低 |
+| Pass 7 AntiDebug runtime gate | 多一个自定义 `__DATA` section，并驱动运行时 patch/gate | 由运行时在关键点插入 `BRK #0xC0E0` 守门，风险高于纯 metadata 但仍低于大规模 CFG 重写 | 低至中 |
 | Pass 8 InstructionSubstitution | 直接改写 `__TEXT.__text` 中的部分 ARM64 指令 | 1:1 等长、语义等价、仅限安全子集，但本质上属于机器码重写 | 中 |
 | Pass 9 ControlFlowOrchestrator | 改写 `__TEXT.__text` 中策略编排函数的控制流结构 | CFF 编排骨架，源码级状态机已在 SDK 内落地 | 中 |
+| Pass 10 ImportEncryptor | 导入符号名从静态明文变成运行时恢复 | 主要影响符号可见性，不影响 App 正常执行路径 | 低 |
+| Pass 11 HeaderEncryptor | 头部关键字段被加密并在运行时恢复 | 若恢复失败有 sanity fallback，不依赖隐藏私有 API | 低至中 |
 
-**结论**：Pass 1（字符串加密）和 Pass 2（元数据擦除）是最容易影响苹果静态扫描器正常工作的 Pass；Pass 8、Pass 9 均直接作用于 `__TEXT.__text`，首发提审阶段建议关闭。AppStore Safe Profile 关闭 Pass 1、Pass 2、Pass 8、Pass 9，保留其余五个，既能提供有效保护（完整性校验 + 数据加密 + 结构混淆 + 符号剥离 + anti-debug 注入计划 ABI），又尽量不干扰苹果的审核流程。
+**结论**：Pass 1（字符串加密）和 Pass 2（元数据擦除）是最容易影响苹果静态扫描器正常工作的 Pass；Pass 8、Pass 9 直接作用于 `__TEXT.__text`，首发提审阶段建议关闭。AppStore Safe Profile 关闭 Pass 1、Pass 2、Pass 8、Pass 9，保留 Pass 3/4/5/6/7/10/11，既能提供有效保护（完整性校验 + 数据加密 + 结构混淆 + 符号剥离 + anti-debug runtime gate + import/header 保护），又尽量不干扰苹果的审核流程。
 
 ### 11.4 渐进开启策略
 

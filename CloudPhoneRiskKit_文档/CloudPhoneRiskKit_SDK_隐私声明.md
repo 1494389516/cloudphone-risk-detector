@@ -324,7 +324,7 @@ SDK 当前会在本地执行更强的运行时完整性探测，包括：
 - 用于**安全信号采集与风险决策**
 - 用于**识别动态注入、Frida 模块加载与调试篡改**
 
-另外，`cprisk-armor` 的 Pass 7 `AntiDebugInjector`、Pass 8 `InstructionSubstitution` 与 Pass 9 `ControlFlowOrchestrator`（CFF 控制流平坦化）都属于**构建期二进制保护能力**。Pass 7 负责写入 anti-debug metadata ABI，Pass 8 负责对 `__TEXT.__text` 中的安全 ARM64 指令子集做 1:1 等长语义等价替换，Pass 9 负责对策略编排的函数执行控制流平坦化。三者均不会新增终端用户数据采集，只影响构建产物的代码与元数据形态，因此不改变 SDK 的隐私数据边界。
+另外，`cprisk-armor` 的 Pass 7 `AntiDebugInjector`、Pass 8 `InstructionSubstitution`、Pass 9 `ControlFlowOrchestrator`、Pass 10 `ImportEncryptor` 与 Pass 11 `HeaderEncryptor` 都属于**构建期二进制保护能力**。Pass 7 负责写入 anti-debug metadata ABI 并驱动运行时 gate，Pass 8 负责对 `__TEXT.__text` 中的安全 ARM64 指令子集做 1:1 等长语义等价替换，Pass 9 负责对策略编排的函数执行控制流平坦化，Pass 10/11 分别负责导入表与 header 关键字段的加密/恢复。它们均不会新增终端用户数据采集，只影响构建产物的代码与元数据形态，因此不改变 SDK 的隐私数据边界。
 
 ---
 

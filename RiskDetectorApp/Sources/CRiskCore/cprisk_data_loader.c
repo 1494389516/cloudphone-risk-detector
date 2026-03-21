@@ -112,6 +112,12 @@ static int      s_ldr_loaded;
 static uint64_t s_data_acc;
 static struct cprisk_guard_state s_guard_state;
 
+/* ── per-section chained key derivation state ────────────────── */
+static int      s_chain_initialized = 0;
+static uint8_t  s_prev_section_key[CPRISK_ARMOR_KEY_SIZE];
+static uint8_t *s_section_keys = NULL;  /* count * 32 bytes */
+static uint32_t s_entry_count = 0;
+
 static struct cprisk_armor_loader_entry *s_applied_entries = NULL;
 static int      *s_decrypted_flags = NULL;
 static uint32_t s_applied_count = 0;
@@ -195,6 +201,64 @@ static void cprisk_keystream_l(const uint8_t *key, uint32_t sid,
                                const uint8_t *nonce, size_t nonce_len,
                                uint8_t *out, size_t len) {
     cprisk_keystream_at_l(key, sid, nonce, nonce_len, 0, out, len);
+}
+
+/* ── per-section chained key derivation ─────────────────────── */
+
+static void cprisk_derive_chained_key(
+    const uint8_t *parent_key,
+    uint32_t section_index,
+    const uint8_t *nonce,
+    size_t nonce_len,
+    uint8_t depth,
+    uint8_t out_key[CPRISK_ARMOR_KEY_SIZE]
+) {
+    /* Level 1: HMAC(parent, index || nonce) */
+    uint8_t chain_material[4 + CPRISK_ARMOR_NONCE_SIZE];
+    chain_material[0] = (uint8_t)(section_index);
+    chain_material[1] = (uint8_t)(section_index >> 8);
+    chain_material[2] = (uint8_t)(section_index >> 16);
+    chain_material[3] = (uint8_t)(section_index >> 24);
+    memcpy(chain_material + 4, nonce, nonce_len);
+
+    cprisk_hmac_sha256(parent_key, CPRISK_ARMOR_KEY_SIZE,
+                       chain_material, 4 + nonce_len, out_key);
+    cprisk_secure_zero(chain_material, sizeof(chain_material));
+
+    /* Depth levels beyond 1: recursive HMAC */
+    for (uint8_t d = 1; d < depth; d++) {
+        uint8_t round_key[CPRISK_ARMOR_KEY_SIZE];
+        memcpy(round_key, out_key, CPRISK_ARMOR_KEY_SIZE);
+
+        uint8_t label[] = "cprisk.chained.v1.";
+        cprisk_hmac_sha256(round_key, CPRISK_ARMOR_KEY_SIZE,
+                           label, sizeof(label) - 1, out_key);
+
+        uint8_t depth_material[CPRISK_ARMOR_KEY_SIZE + 1];
+        memcpy(depth_material, out_key, CPRISK_ARMOR_KEY_SIZE);
+        depth_material[CPRISK_ARMOR_KEY_SIZE] = d;
+        cprisk_hmac_sha256(depth_material, CPRISK_ARMOR_KEY_SIZE + 1,
+                           depth_material, CPRISK_ARMOR_KEY_SIZE + 1, out_key);
+
+        cprisk_secure_zero(round_key, sizeof(round_key));
+        cprisk_secure_zero(depth_material, sizeof(depth_material));
+    }
+}
+
+static int cprisk_is_v3_entry(const struct cprisk_armor_loader_entry *entry) {
+    return entry && entry->section_index != 0u;
+}
+
+static void cprisk_read_v3_fields(
+    const struct cprisk_armor_loader_entry *entry,
+    uint32_t *out_section_index,
+    uint32_t *out_chained_depth
+) {
+    if (!entry || !out_section_index || !out_chained_depth) {
+        return;
+    }
+    *out_section_index = entry->section_index;
+    *out_chained_depth = entry->chained_key_depth;
 }
 
 static int cprisk_copy_fixed_name_l(const char raw[16], char out[17]) {
@@ -308,8 +372,9 @@ static uint8_t *cprisk_target_ptr_l(
 #define CPRISK_XOR_CHUNK_SIZE (64 * 1024)  /* 64KB chunks to limit peak memory */
 
 static int cprisk_xor_region_l(uint8_t *target, size_t sz, uint32_t key_id,
-                               const uint8_t *nonce, size_t nonce_len) {
-    if (!target || sz == 0)
+                               const uint8_t *nonce, size_t nonce_len,
+                               const uint8_t *key) {
+    if (!target || sz == 0 || !key)
         return -1;
 
     size_t chunk_sz = (sz < CPRISK_XOR_CHUNK_SIZE) ? sz : CPRISK_XOR_CHUNK_SIZE;
@@ -324,7 +389,7 @@ static int cprisk_xor_region_l(uint8_t *target, size_t sz, uint32_t key_id,
         if (todo > chunk_sz)
             todo = chunk_sz;
 
-        cprisk_keystream_at_l(s_ldr_key, key_id, nonce, nonce_len, off, ks, todo);
+        cprisk_keystream_at_l(key, key_id, nonce, nonce_len, off, ks, todo);
         for (size_t i = 0; i < todo; i++)
             target[off + i] ^= ks[i];
 
@@ -372,7 +437,8 @@ static void cprisk_rollback_l(
                             s_mprotect_tampered = 1;
                     }
                     (void)cprisk_xor_region_l(ptr, (size_t)ent->size, ent->key_id,
-                                              ent->nonce, CPRISK_ARMOR_NONCE_SIZE);
+                                              ent->nonce, CPRISK_ARMOR_NONCE_SIZE,
+                                              s_ldr_key);
                     if (page && span > 0)
                         cprisk_hidden_munlock(page, span);
                 }
@@ -418,23 +484,54 @@ int cprisk_load_protected_data(void) {
     if (count > 0) {
         struct cprisk_armor_loader_entry *entries_tmp = NULL;
         int *flags_tmp = NULL;
+        uint8_t *keys_tmp = NULL;
         entries_tmp = (struct cprisk_armor_loader_entry *)calloc((size_t)count, sizeof(struct cprisk_armor_loader_entry));
         flags_tmp = (int *)calloc((size_t)count, sizeof(*s_decrypted_flags));
-        if (!entries_tmp || !flags_tmp) {
+        keys_tmp = (uint8_t *)calloc((size_t)count * CPRISK_ARMOR_KEY_SIZE, sizeof(uint8_t));
+        if (!entries_tmp || !flags_tmp || !keys_tmp) {
             free(entries_tmp);
             free(flags_tmp);
+            free(keys_tmp);
             return -1;
         }
         pthread_mutex_lock(&s_loader_mutex);
         free(s_applied_entries);
         free(s_decrypted_flags);
+        free(s_section_keys);
         s_applied_entries = entries_tmp;
         s_decrypted_flags = flags_tmp;
+        s_section_keys = keys_tmp;
         s_applied_count = 0;
+        s_entry_count = count;
         pthread_mutex_unlock(&s_loader_mutex);
     }
 
     s_data_acc = 0;
+    s_chain_initialized = 0;
+    cprisk_secure_zero(s_prev_section_key, sizeof(s_prev_section_key));
+
+    /* Precompute per-entry chained keys to allow out-of-order JIT faults. */
+    if (s_section_keys && count > 0) {
+        uint8_t parent_key[CPRISK_ARMOR_KEY_SIZE];
+        memcpy(parent_key, s_ldr_key, CPRISK_ARMOR_KEY_SIZE);
+        for (uint32_t i = 0; i < count; i++) {
+            const struct cprisk_armor_loader_entry *ent = &entries[i];
+            uint8_t *key_slot = s_section_keys + (size_t)i * CPRISK_ARMOR_KEY_SIZE;
+            if (cprisk_is_v3_entry(ent)) {
+                uint32_t sec_idx, chain_depth;
+                cprisk_read_v3_fields(ent, &sec_idx, &chain_depth);
+                if (chain_depth == 0) chain_depth = 1;
+                cprisk_derive_chained_key(parent_key, sec_idx, ent->nonce,
+                                          CPRISK_ARMOR_NONCE_SIZE, (uint8_t)chain_depth,
+                                          key_slot);
+                memcpy(parent_key, key_slot, CPRISK_ARMOR_KEY_SIZE);
+                s_chain_initialized = 1;
+            } else {
+                memcpy(key_slot, s_ldr_key, CPRISK_ARMOR_KEY_SIZE);
+            }
+        }
+        cprisk_secure_zero(parent_key, sizeof(parent_key));
+    }
 
     for (uint32_t i = 0; i < count; i++) {
         const struct cprisk_armor_loader_entry *ent = &entries[i];
@@ -527,6 +624,17 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
                 return 0;
             }
 
+            /* Determine which key to use: v3 chained key or v2 global key */
+            uint8_t section_key[CPRISK_ARMOR_KEY_SIZE];
+            const uint8_t *decrypt_key;
+            if (cprisk_is_v3_entry(ent) && s_section_keys && i < s_entry_count) {
+                memcpy(section_key, s_section_keys + (size_t)i * CPRISK_ARMOR_KEY_SIZE, CPRISK_ARMOR_KEY_SIZE);
+                decrypt_key = section_key;
+            } else {
+                /* v2 backward compatibility: use global loader key */
+                decrypt_key = s_ldr_key;
+            }
+
             /* Verify HMAC-SHA256(key, nonce || ciphertext) before decrypting */
             {
                 if (ent->size > SIZE_MAX - CPRISK_ARMOR_NONCE_SIZE) {
@@ -551,7 +659,7 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
                 memcpy(hmac_msg, ent->nonce, CPRISK_ARMOR_NONCE_SIZE);
                 memcpy(hmac_msg + CPRISK_ARMOR_NONCE_SIZE, ptr, (size_t)ent->size);
                 uint8_t computed_hmac[CPRISK_ARMOR_HASH_SIZE];
-                cprisk_hmac_sha256(s_ldr_key, CPRISK_ARMOR_KEY_SIZE,
+                cprisk_hmac_sha256(decrypt_key, CPRISK_ARMOR_KEY_SIZE,
                                    hmac_msg, hmac_msg_len, computed_hmac);
                 cprisk_secure_zero(hmac_msg, hmac_msg_len);
                 free(hmac_msg);
@@ -568,7 +676,8 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
                 cprisk_secure_zero(computed_hmac, sizeof(computed_hmac));
             }
             if (cprisk_xor_region_l(ptr, (size_t)ent->size, ent->key_id,
-                                    ent->nonce, CPRISK_ARMOR_NONCE_SIZE) == 0) {
+                                    ent->nonce, CPRISK_ARMOR_NONCE_SIZE,
+                                    decrypt_key) == 0) {
                 uint8_t actual_h[CPRISK_SHA256_DIGEST_LENGTH];
                 uint8_t diff[CPRISK_SHA256_DIGEST_LENGTH];
                 cprisk_sha256(ptr, (size_t)ent->size, actual_h);
@@ -583,7 +692,8 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
 
                 if (memcmp(actual_h, ent->content_hash, CPRISK_SHA256_DIGEST_LENGTH) != 0) {
                     (void)cprisk_xor_region_l(ptr, (size_t)ent->size, ent->key_id,
-                                              ent->nonce, CPRISK_ARMOR_NONCE_SIZE);
+                                              ent->nonce, CPRISK_ARMOR_NONCE_SIZE,
+                                              decrypt_key);
                     if (cprisk_hidden_mprotect(page, span, PROT_NONE) != 0) {
                         s_mprotect_tampered = 1;
                         cprisk_force_integrity_poison();
@@ -630,6 +740,10 @@ uint64_t cprisk_get_data_integrity_accumulator(void) {
     return s_data_acc;
 }
 
+int cprisk_get_chain_status(void) {
+    return s_chain_initialized;
+}
+
 void cprisk_unload_protected_data(void) {
     cprisk_remove_memory_trap(&s_guard_state);
 
@@ -660,8 +774,16 @@ void cprisk_unload_protected_data(void) {
                 }
                 if (s_decrypted_flags[i - 1]) {
                     /* Page was JIT-decrypted: re-encrypt before releasing. */
+                    const uint8_t *reencrypt_key = s_ldr_key;
+                    uint8_t tmp_key[CPRISK_ARMOR_KEY_SIZE];
+                    if (cprisk_is_v3_entry(ent) && s_section_keys && (i - 1) < s_entry_count) {
+                        memcpy(tmp_key, s_section_keys + (size_t)(i - 1) * CPRISK_ARMOR_KEY_SIZE, CPRISK_ARMOR_KEY_SIZE);
+                        reencrypt_key = tmp_key;
+                    }
                     (void)cprisk_xor_region_l(ptr, (size_t)ent->size, ent->key_id,
-                                              ent->nonce, CPRISK_ARMOR_NONCE_SIZE);
+                                              ent->nonce, CPRISK_ARMOR_NONCE_SIZE,
+                                              reencrypt_key);
+                    cprisk_secure_zero(tmp_key, sizeof(tmp_key));
                 }
                 if (page && span > 0)
                     cprisk_hidden_munlock(page, span);
@@ -677,9 +799,16 @@ void cprisk_unload_protected_data(void) {
         free(s_decrypted_flags);
         s_decrypted_flags = NULL;
     }
+    if (s_section_keys) {
+        cprisk_secure_zero(s_section_keys, (size_t)s_entry_count * CPRISK_ARMOR_KEY_SIZE);
+        free(s_section_keys);
+        s_section_keys = NULL;
+    }
+    s_entry_count = 0;
     s_applied_count = 0;
 
     cprisk_secure_zero(s_ldr_key, sizeof(s_ldr_key));
+    cprisk_secure_zero(s_prev_section_key, sizeof(s_prev_section_key));
     s_ldr_ready = 0;
     s_ldr_loaded = 0;
     s_data_acc = 0;
@@ -690,62 +819,13 @@ void cprisk_unload_protected_data(void) {
 }
 
 static void cprisk_erase_macho_header_once(void) {
-    const struct mach_header_64 *hdr = cprisk_own_hdr_l();
-    if (!hdr)
-        return;
-
-    /* Sanity-check ncmds only; the loop is already bounded by both `end` and
-     * `page_end`, so a large-but-legitimate sizeofcmds is handled safely.
-     * The previous `sizeofcmds > 0x1000` guard was too restrictive: real
-     * production binaries routinely have sizeofcmds > 0x2000, causing the
-     * function to silently return without erasing anything. */
-    if (hdr->ncmds >= 4096u)
-        return;
-
-    uintptr_t page_start = (uintptr_t)hdr & ~(uintptr_t)0xFFF;
-    size_t page_size = 0x1000; /* Standard 4K page */
-
-    if ((uintptr_t)hdr != page_start)
-        return; /* Header not at start of page, safer to abort */
-
-    volatile int mp_rc = -1;
-    mp_rc = cprisk_hidden_mprotect((void *)page_start, page_size, PROT_READ | PROT_WRITE);
-    if (mp_rc != 0)
-        return;
-
-    struct mach_header_64 *mut_hdr = (struct mach_header_64 *)hdr;
-    if (mut_hdr->sizeofcmds > page_size - sizeof(struct mach_header_64))
-        return;
-
-    /* Zero out the magic number to break basic memory dumpers */
-    mut_hdr->magic = 0;
-
-    uint8_t *cursor = (uint8_t *)(mut_hdr + 1);
-    uint8_t *end = (uint8_t *)mut_hdr + sizeof(struct mach_header_64) + mut_hdr->sizeofcmds;
-    uintptr_t page_end = page_start + page_size;
-
-    for (uint32_t i = 0; i < mut_hdr->ncmds; i++) {
-        if (cursor + sizeof(struct load_command) > end || cursor + sizeof(struct load_command) > (uint8_t *)page_end)
-            break;
-
-        struct load_command *lc = (struct load_command *)cursor;
-        size_t remaining = (size_t)(end - cursor);
-        if (lc->cmdsize == 0 || lc->cmdsize > remaining)
-            break;
-
-        size_t cmd_size = lc->cmdsize;
-        if (lc->cmd == LC_ENCRYPTION_INFO_64) {
-            /* Zero out encryption info to break dumpers trying to read cryptid */
-            cprisk_secure_zero(lc, cmd_size);
-        }
-
-        cursor += cmd_size;
-    }
-
-    if (cprisk_hidden_mprotect((void *)page_start, page_size, PROT_READ) != 0) {
-        s_mprotect_tampered = 1;
+    /* Legacy path used to zero Mach-O header fields (including magic),
+     * which is noisy and can break downstream tooling. The hardened path
+     * restores encrypted header fields from __DATA.__cprisk_hbhdr when present.
+     * If restore fails, fail-closed via poison without mutating the header. */
+    int rc = cprisk_restore_macho_header();
+    if (rc < 0)
         cprisk_force_integrity_poison();
-    }
 }
 
 void cprisk_erase_macho_header(void) {

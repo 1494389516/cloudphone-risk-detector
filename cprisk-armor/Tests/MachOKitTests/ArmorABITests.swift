@@ -35,7 +35,9 @@ final class ArmorABITests: XCTestCase {
             size: 0x0102030405060708,
             contentHash: hash,
             nonce: nonce,
-            hmacTag: hmac
+            hmacTag: hmac,
+            sectionIndex: 1,
+            chainedKeyDepth: 1
         ).serialized()
 
         XCTAssertEqual(entry.count, ArmorABI.Loader.entrySize)
@@ -48,6 +50,8 @@ final class ArmorABITests: XCTestCase {
         XCTAssertEqual(entry.subdata(in: 56..<88), hash)
         XCTAssertEqual(entry.subdata(in: 88..<96), nonce)
         XCTAssertEqual(entry.subdata(in: 96..<128), hmac)
+        XCTAssertEqual(readLE32(entry, at: 128), 1)
+        XCTAssertEqual(readLE32(entry, at: 132), 1)
     }
 
     func testIntegrityHelpersMatchRuntimeContract() {

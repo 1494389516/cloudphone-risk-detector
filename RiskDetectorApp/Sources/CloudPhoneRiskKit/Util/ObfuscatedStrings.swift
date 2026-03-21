@@ -326,6 +326,14 @@ enum ObfuscatedConstants {
         StringDeobfuscator.base64Decode("ZnJpZGE6cG9ydDo=")
     }
 
+    static var methodPrefixFridaProto: String {
+        StringDeobfuscator.base64Decode("ZnJpZGE6cHJvdG86")
+    }
+
+    static var methodPrefixFridaListen: String {
+        StringDeobfuscator.base64Decode("ZnJpZGE6bGlzdGVuOg==")
+    }
+
     static var methodPrefixFridaFile: String {
         StringDeobfuscator.base64Decode("ZnJpZGE6ZmlsZTo=")
     }
@@ -340,6 +348,10 @@ enum ObfuscatedConstants {
 
     static var methodPrefixFridaProcess: String {
         StringDeobfuscator.base64Decode("ZnJpZGE6cHJvY2Vzczo=")
+    }
+
+    static var methodPrefixFridaMemorySig: String {
+        StringDeobfuscator.base64Decode("ZnJpZGE6bWVtc2lnOg==")
     }
 
     static var methodPrefixFridaModuleImage: String {
