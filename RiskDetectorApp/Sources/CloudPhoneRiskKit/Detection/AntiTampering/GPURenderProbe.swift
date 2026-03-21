@@ -107,8 +107,9 @@ struct GPURenderProbe: Detector {
         
         var timebaseInfo = mach_timebase_info_data_t()
         mach_timebase_info(&timebaseInfo)
-        let allocNs = Double(allocEnd - start) * Double(timebaseInfo.numer) / Double(timebaseInfo.denom)
-        let fillNs = Double(fillEnd - allocEnd) * Double(timebaseInfo.numer) / Double(timebaseInfo.denom)
+        let denom = Double(max(timebaseInfo.denom, 1))
+        let allocNs = Double(allocEnd - start) * Double(timebaseInfo.numer) / denom
+        let fillNs = Double(fillEnd - allocEnd) * Double(timebaseInfo.numer) / denom
         
         // Real GPU: buffer allocation < 1ms, fill < 5ms
         // Virtual: allocation may take > 10ms, fill > 50ms
@@ -123,7 +124,7 @@ struct GPURenderProbe: Detector {
             cmdBuffer.commit()
             cmdBuffer.waitUntilCompleted()
             let gpuEnd = mach_absolute_time()
-            let gpuNs = Double(gpuEnd - gpuStart) * Double(timebaseInfo.numer) / Double(timebaseInfo.denom)
+            let gpuNs = Double(gpuEnd - gpuStart) * Double(timebaseInfo.numer) / denom
             
             // Real GPU: empty command buffer completes in < 1ms
             // Software rendering: may take > 5ms

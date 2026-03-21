@@ -182,7 +182,9 @@ struct RWXMemoryScanner: Detector {
             }
 
             if size == 0 { break }
-            address += size
+            let (next, overflow) = address.addingReportingOverflow(size)
+            if overflow { break }
+            address = next
             iteration += 1
         }
 

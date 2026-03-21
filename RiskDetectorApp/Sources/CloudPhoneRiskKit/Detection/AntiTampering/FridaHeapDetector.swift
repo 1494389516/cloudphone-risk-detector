@@ -91,8 +91,10 @@ struct FridaHeapDetector: Detector {
                 }
             }
 
-            address += size
             if size == 0 { break }
+            let (next, overflow) = address.addingReportingOverflow(size)
+            if overflow { break }
+            address = next
             iteration += 1
         }
 
@@ -174,8 +176,10 @@ struct FridaHeapDetector: Detector {
                 }
             }
 
-            address += size
             if size == 0 { break }
+            let (next, overflow) = address.addingReportingOverflow(size)
+            if overflow { break }
+            address = next
             iteration += 1
         }
 

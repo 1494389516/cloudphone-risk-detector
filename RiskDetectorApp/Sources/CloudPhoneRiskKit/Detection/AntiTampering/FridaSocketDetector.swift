@@ -17,7 +17,7 @@ struct FridaSocketDetector: Detector {
     }()
 
     private static func nanoseconds(from ticks: UInt64) -> UInt64 {
-        ticks * UInt64(timebaseInfo.numer) / UInt64(timebaseInfo.denom)
+        ticks * UInt64(timebaseInfo.numer) / UInt64(max(timebaseInfo.denom, 1))
     }
 
     func detect() throws -> DetectorResult {

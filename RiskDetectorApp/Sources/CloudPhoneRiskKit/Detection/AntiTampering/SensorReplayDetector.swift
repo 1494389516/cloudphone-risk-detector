@@ -96,7 +96,7 @@ struct SensorReplayDetector: Detector {
             let start = mach_absolute_time()
             usleep(delay)
             let end = mach_absolute_time()
-            let elapsed = Double(end - start) * Double(timebaseInfo.numer) / Double(timebaseInfo.denom) / 1000.0 // to microseconds
+            let elapsed = Double(end - start) * Double(timebaseInfo.numer) / Double(max(timebaseInfo.denom, 1)) / 1000.0 // to microseconds
             actualDelays.append(elapsed)
         }
         
