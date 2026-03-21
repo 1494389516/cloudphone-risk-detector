@@ -153,9 +153,6 @@ struct RWXMemoryScanner: Detector {
                     shareMode = UInt32(extInfo.share_mode)
                     isAnonymous = anonymousUserTags.contains(userTag)
                     if isRX {
-                        isAnonymous = anonymousUserTags.contains(userTag)
-                    }
-                    if isRX {
                         inImage = UnsafeRawPointer(bitPattern: UInt(extAddress)).map { cprisk_addr_in_any_image($0) != 0 } ?? false
                         let isPrivateOrEmpty = extInfo.share_mode == 3 || extInfo.share_mode == 0
                         if isPrivateOrEmpty && isAnonymous && !inImage {

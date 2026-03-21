@@ -228,7 +228,7 @@ final class LayeredConsistencyProvider: RiskSignalProvider {
             let t0 = mach_absolute_time()
             _ = cprisk_getpid_direct()
             let t1 = mach_absolute_time()
-            let ns = Double(t1 - t0) * Double(timebase.numer) / Double(timebase.denom)
+            let ns = Double(t1 - t0) * Double(timebase.numer) / Double(max(timebase.denom, 1))
             values.append(UInt64(ns))
         }
         guard !values.isEmpty else { return 0 }
@@ -249,7 +249,7 @@ final class LayeredConsistencyProvider: RiskSignalProvider {
             let t0 = mach_absolute_time()
             _ = sysctlbyname("hw.machine", nil, &size, nil, 0)
             let t1 = mach_absolute_time()
-            let ns = Double(t1 - t0) * Double(timebase.numer) / Double(timebase.denom)
+            let ns = Double(t1 - t0) * Double(timebase.numer) / Double(max(timebase.denom, 1))
             values.append(UInt64(ns))
         }
         guard !values.isEmpty else { return 0 }

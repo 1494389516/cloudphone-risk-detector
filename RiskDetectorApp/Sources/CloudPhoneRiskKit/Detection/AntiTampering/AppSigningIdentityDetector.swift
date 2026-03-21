@@ -484,7 +484,8 @@ struct AppSigningIdentityDetector: Detector {
             return true
         }
 
-        guard entitledBundleIdentifier.hasSuffix(".*") else {
+        guard entitledBundleIdentifier.hasSuffix(".*"),
+              entitledBundleIdentifier.count > 2 else {
             return false
         }
 

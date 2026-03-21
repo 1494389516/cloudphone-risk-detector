@@ -245,7 +245,9 @@ struct TimingRatioBaseline {
             return TimingStats(median: 0, p95: 0)
         }
 
-        let median = sorted[count / 2]
+        let median = count % 2 == 1
+            ? sorted[count / 2]
+            : (sorted[count / 2 - 1] + sorted[count / 2]) / 2
         let p95Index = min(Int(Double(count) * 0.95), count - 1)
         let p95 = sorted[p95Index]
         return TimingStats(median: median, p95: p95)

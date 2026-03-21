@@ -63,7 +63,7 @@ struct SensorReplayDetector: Detector {
         // Calculate coefficient of variation
         let mean = intervals.reduce(0, +) / Double(intervals.count)
         guard mean > 0 else { return (0, []) }
-        let variance = intervals.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(intervals.count)
+        let variance = intervals.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(max(intervals.count - 1, 1))
         let stddev = sqrt(variance)
         let cv = stddev / mean
         
@@ -112,7 +112,7 @@ struct SensorReplayDetector: Detector {
         // Check if all ratios are nearly identical (quantized replay)
         let ratioMean = ratios.reduce(0, +) / Double(ratios.count)
         guard ratioMean > 0 else { return (0, []) }
-        let ratioVariance = ratios.map { ($0 - ratioMean) * ($0 - ratioMean) }.reduce(0, +) / Double(ratios.count)
+        let ratioVariance = ratios.map { ($0 - ratioMean) * ($0 - ratioMean) }.reduce(0, +) / Double(max(ratios.count - 1, 1))
         let ratioCV = sqrt(ratioVariance) / ratioMean
         
         if ratioCV < 0.01 {

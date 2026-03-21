@@ -17,10 +17,12 @@ final class SecureFileStore: @unchecked Sendable {
     private let baseDirectory: URL
 
     init(subdirectory: String = "CloudPhoneRiskKit/secure_store") {
-        let appSupport = FileManager.default.urls(
+        guard let appSupport = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
-        ).first!
+        ).first else {
+            preconditionFailure("ApplicationSupportDirectory unavailable")
+        }
         self.baseDirectory = appSupport.appendingPathComponent(subdirectory, isDirectory: true)
     }
 
