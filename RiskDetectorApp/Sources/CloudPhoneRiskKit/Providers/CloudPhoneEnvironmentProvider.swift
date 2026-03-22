@@ -285,7 +285,11 @@ public final class CloudPhoneEnvironmentProvider: RiskSignalProvider {
         let detected = !suspiciousProcesses.isEmpty
 
         if detected {
+            #if DEBUG
             Logger.log("CloudPhoneEnv: suspicious processes found: \(suspiciousProcesses)")
+            #else
+            Logger.log("CloudPhoneEnv: suspicious processes detected count=\(suspiciousProcesses.count)")
+            #endif
         }
 
         return [
@@ -445,10 +449,8 @@ public final class CloudPhoneEnvironmentProvider: RiskSignalProvider {
         let actualCount = size / MemoryLayout<kinfo_proc>.stride
         for i in 0..<actualCount {
             var info = procList[i]
-            let name = withUnsafePointer(to: &info.kp_proc.p_comm) { ptr in
-                ptr.withMemoryRebound(to: CChar.self, capacity: Int(MAXCOMM)) {
-                    String(cString: $0)
-                }
+            let name = withUnsafePointer(to: &info.kp_proc.p_comm) { ptr -> String in
+                String(cString: UnsafeRawPointer(ptr).assumingMemoryBound(to: CChar.self))
             }
             let lower = name.lowercased()
             for pattern in patterns {

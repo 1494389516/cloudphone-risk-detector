@@ -161,10 +161,12 @@ struct RuntimeIntegrityValidator: Detector {
             "_fopen",
         ]
 
-        for symbolName in symbolsToCheck {
-            guard let handle = dlopen(nil, RTLD_NOW) else { continue }
-            defer { dlclose(handle) }
+        guard let handle = dlopen(nil, RTLD_NOW) else {
+            return CheckResult(anomalyDetected: false, methods: [])
+        }
+        defer { dlclose(handle) }
 
+        for symbolName in symbolsToCheck {
             guard let symAddr = dlsym(handle, String(symbolName.dropFirst())) else {
                 continue
             }
@@ -247,10 +249,12 @@ struct RuntimeIntegrityValidator: Detector {
             ("_open", "libsystem_kernel"),
         ]
 
-        for (symbol, expectedImage) in symbolChecks {
-            guard let handle = dlopen(nil, RTLD_NOW) else { continue }
-            defer { dlclose(handle) }
+        guard let handle = dlopen(nil, RTLD_NOW) else {
+            return CheckResult(anomalyDetected: false, methods: [])
+        }
+        defer { dlclose(handle) }
 
+        for (symbol, expectedImage) in symbolChecks {
             guard let symAddr = dlsym(handle, String(symbol.dropFirst())) else {
                 anomalies.append("runtime_integrity:symbol_missing:\(symbol)")
                 continue

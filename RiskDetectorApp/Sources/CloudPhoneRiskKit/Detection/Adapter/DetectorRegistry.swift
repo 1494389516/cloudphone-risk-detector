@@ -211,7 +211,10 @@ public final class DetectorRegistry {
     private let lock = UnfairLock()
 
     /// 封印后拒绝一切 register/unregister 操作
-    public private(set) var isSealed = false
+    private var _isSealed = false
+    public var isSealed: Bool {
+        lock.withLock { _isSealed }
+    }
 
     // MARK: - 注册表
     
@@ -254,7 +257,7 @@ public final class DetectorRegistry {
     ///   - factory: 检测器工厂闭包
     public func register(type: DetectorType, factory: @escaping DetectorFactory) {
         lock.withLock {
-            guard !isSealed else {
+            guard !_isSealed else {
                 Logger.log("DetectorRegistry.register rejected (sealed): \(type.rawValue)")
                 return
             }
@@ -267,7 +270,7 @@ public final class DetectorRegistry {
     /// - Parameter type: 检测器类型
     public func unregister(type: DetectorType) {
         lock.withLock {
-            guard !isSealed else {
+            guard !_isSealed else {
                 Logger.log("DetectorRegistry.unregister rejected (sealed): \(type.rawValue)")
                 return
             }
@@ -279,7 +282,7 @@ public final class DetectorRegistry {
     /// 封印注册表，调用后拒绝一切 register/unregister 操作
     public func seal() {
         lock.withLock {
-            isSealed = true
+            _isSealed = true
             Logger.log("DetectorRegistry.sealed")
         }
     }
