@@ -140,6 +140,9 @@ public final class SubstitutionEngine {
         var candidates = [Candidate]()
         candidates.reserveCapacity(scanBytes / 8)
 
+        guard textSection.offset <= UInt64(Int.max) else {
+            throw MachOError.invalidData("Text section offset \(textSection.offset) exceeds addressable range")
+        }
         let textBaseFileOffset = Int(textSection.offset)
         for byteOffset in stride(from: 0, to: scanBytes, by: 4) {
             let fileOffset = textBaseFileOffset + byteOffset

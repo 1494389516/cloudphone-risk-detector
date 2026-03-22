@@ -320,10 +320,11 @@ private final class CustomEvaluatorRegistry: @unchecked Sendable {
 #endif
 
     func evaluate(id: String, context: EvaluationContext) -> Bool {
+        let evaluatorCopy: ((EvaluationContext) -> Bool)?
         lock.lock()
-        let evaluator = evaluators[id]
+        evaluatorCopy = evaluators[id]
         lock.unlock()
-        return evaluator?(context) ?? false
+        return evaluatorCopy?(context) ?? false
     }
 }
 

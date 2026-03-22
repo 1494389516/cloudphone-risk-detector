@@ -66,6 +66,10 @@ enum StorageIntegrityGuard {
 
         let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
 
+        if addStatus == errSecSuccess {
+            return newKey
+        }
+
         if addStatus == errSecDuplicateItem {
             var existing: AnyObject?
             if SecItemCopyMatching(query as CFDictionary, &existing) == errSecSuccess,
@@ -77,6 +81,7 @@ enum StorageIntegrityGuard {
             }
         }
 
+        Logger.log("StorageIntegrityGuard: SecItemAdd failed with status \(addStatus)")
         return newKey
     }
 }

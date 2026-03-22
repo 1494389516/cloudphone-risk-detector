@@ -94,8 +94,10 @@ final class MotionSampler {
 
     private func zeroSensitiveBuffersLocked() {
         series.withUnsafeMutableBufferPointer { buf in
-            guard let base = buf.baseAddress else { return }
-            memset(base, 0, buf.count * MemoryLayout<MotionSample>.stride)
+            guard let base = buf.baseAddress, buf.count > 0 else { return }
+            let (byteCount, overflow) = buf.count.multipliedReportingOverflow(by: MemoryLayout<MotionSample>.stride)
+            guard !overflow else { return }
+            memset(base, 0, byteCount)
         }
         series.removeAll(keepingCapacity: false)
         sampleCount = 0

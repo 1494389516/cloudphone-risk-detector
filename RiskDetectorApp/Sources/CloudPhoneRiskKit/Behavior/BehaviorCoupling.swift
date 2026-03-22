@@ -24,8 +24,8 @@ enum BehaviorCoupling {
 
         func idx(_ t: TimeInterval) -> Int? {
             let p = (t - start) / span
-            if p < 0 || p > 1 { return nil }
-            let i = Int(floor(p * Double(bucketCount)))
+            guard p >= 0, p <= 1 else { return nil }
+            let i = p >= 1.0 ? bucketCount - 1 : Int(floor(p * Double(bucketCount)))
             return min(max(i, 0), bucketCount - 1)
         }
 

@@ -152,7 +152,8 @@ struct FridaThreadDetector: Detector {
             return (0, [])
         }
 
-        for i in 0..<Int(count) {
+        let safeCount = min(Int(count), Int(EXC_TYPES_COUNT))
+        for i in 0..<safeCount {
             let port = ports[i]
             if port != MACH_PORT_NULL && port != mach_port_t(bitPattern: -1) {
                 score += 20

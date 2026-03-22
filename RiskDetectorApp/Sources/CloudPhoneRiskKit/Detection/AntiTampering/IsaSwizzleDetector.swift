@@ -56,10 +56,10 @@ struct IsaSwizzleDetector: Detector {
             // The actual class name should start with the expected prefix
             // (could be a subclass like _NSConcreteFileManager, that's OK)
             // But if it's something completely different, that's suspicious
-            if !actualName.contains(expectedPrefix.replacingOccurrences(of: "NS", with: "")) &&
+            let strippedPrefix = expectedPrefix.replacingOccurrences(of: "NS", with: "")
+            if !actualName.contains(strippedPrefix) &&
                !actualName.hasPrefix(expectedPrefix) &&
-               !actualName.hasPrefix("_" + expectedPrefix) &&
-               !actualName.contains(expectedPrefix) {
+               !actualName.hasPrefix("_" + expectedPrefix) {
                 score += 15
                 methods.append("isa_swizzle:\(expectedPrefix)→\(actualName)")
             }

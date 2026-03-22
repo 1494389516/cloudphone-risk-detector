@@ -104,9 +104,15 @@ struct IndirectSymbolPointerDetector: Detector {
         let linkeditBase = UInt64(Int64(linkedit.vmaddr) + slide) - UInt64(linkedit.fileoff)
         guard linkeditBase != 0 else { return .empty }
 
-        let symPtr = UnsafeRawPointer(bitPattern: UInt(linkeditBase + UInt64(symtab.symoff)))
-        let strPtr = UnsafeRawPointer(bitPattern: UInt(linkeditBase + UInt64(symtab.stroff)))
-        let indirectPtr = UnsafeRawPointer(bitPattern: UInt(linkeditBase + UInt64(dysymtab.indirectsymoff)))
+        let symAddr = linkeditBase + UInt64(symtab.symoff)
+        let strAddr = linkeditBase + UInt64(symtab.stroff)
+        let indirectAddr = linkeditBase + UInt64(dysymtab.indirectsymoff)
+        guard symAddr <= UInt64(UInt.max), strAddr <= UInt64(UInt.max), indirectAddr <= UInt64(UInt.max) else {
+            return .empty
+        }
+        let symPtr = UnsafeRawPointer(bitPattern: UInt(symAddr))
+        let strPtr = UnsafeRawPointer(bitPattern: UInt(strAddr))
+        let indirectPtr = UnsafeRawPointer(bitPattern: UInt(indirectAddr))
         guard
             let symPtr,
             let strPtr,

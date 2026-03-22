@@ -56,7 +56,9 @@ struct EnvDetector: Detector {
 
         var out: [String: String] = [:]
         var i = 0
-        while i < 512, let entryPtr = envp.advanced(by: i).pointee {
+        // environ is NULL-terminated; the `let entryPtr` check handles the terminator.
+        // Cap at 1024 to prevent runaway iteration on corrupted environ.
+        while i < 1024, let entryPtr = envp.advanced(by: i).pointee {
             let entry = String(cString: entryPtr)
             if let idx = entry.firstIndex(of: "=") {
                 let key = String(entry[..<idx])

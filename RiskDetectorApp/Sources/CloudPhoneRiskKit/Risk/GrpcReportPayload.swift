@@ -121,7 +121,10 @@ public struct GrpcReportPayload: Sendable {
         payload: Data
     ) -> Data {
         var hasher = SHA256()
-        hasher.update(data: Data("\(nonce)|\(ts)|\(reportId)|".utf8))
+        // Length-prefix each field to prevent delimiter collision when fields contain '|'
+        let nonceBytes = Data(nonce.utf8)
+        let reportIdBytes = Data(reportId.utf8)
+        hasher.update(data: Data("\(nonceBytes.count):\(nonce)|\(ts)|\(reportIdBytes.count):\(reportId)|".utf8))
         hasher.update(data: payload)
         return Data(hasher.finalize())
     }

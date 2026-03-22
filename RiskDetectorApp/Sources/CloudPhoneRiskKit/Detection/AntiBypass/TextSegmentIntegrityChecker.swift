@@ -394,8 +394,9 @@ enum TextSegmentIntegrityChecker {
                         if tupleStringEquals(sect.pointee.sectname, "__text") {
                             let addr = UInt64(Int64(sect.pointee.addr) + slide)
                             let size = sect.pointee.size
-                            guard size > 0, size < 50 * 1024 * 1024 else { return nil }
-                            guard let bytes = UnsafeRawPointer(bitPattern: UInt(truncatingIfNeeded: addr)) else {
+                            guard size > 0, size < 50 * 1024 * 1024,
+                                  addr > 0, addr <= UInt64(UInt.max) else { return nil }
+                            guard let bytes = UnsafeRawPointer(bitPattern: UInt(addr)) else {
                                 return nil
                             }
                             let data = Data(bytes: bytes, count: Int(size))
