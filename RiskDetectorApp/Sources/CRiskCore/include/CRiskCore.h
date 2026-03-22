@@ -313,7 +313,7 @@ int cprisk_get_antidebug_plan_snapshot(
 /// and zeroes out the magic number and key load commands to thwart memory dumping.
 void cprisk_erase_macho_header(void);
 
-/// Restore encrypted mach_header_64 fields from the __DATA.__cprisk_hbhdr
+/// Restore encrypted mach_header_64 fields from the __DATA.__swift5_mhsav
 /// backup section.  Supports both legacy fixed marker and per-binary
 /// camouflaged reserved values.
 /// Returns 0 on success, 1 if no restoration needed/already restored, -1 on error.
@@ -415,7 +415,7 @@ int cprisk_runtime_material_ready(void);
 /* ── Import Table Encryption Resolver ──────────────────────────────── */
 
 /// Resolve a symbol from the encrypted import table by index.
-/// Reads __DATA.__swift5_imp, verifies HMAC-SHA256 integrity, decrypts
+/// Reads __DATA.__swift5_dyrel, verifies HMAC-SHA256 integrity, decrypts
 /// the symbol name via SHA256-based keystream, and resolves it via dlsym.
 ///
 /// symbol_index: zero-based index into the encrypted import table.
@@ -657,6 +657,27 @@ void cprisk_test_clear_antidebug_plan(void);
 /// Uses task_info + dyld_all_image_infos; does not call dladdr or _dyld_*.
 /// Resistant to dladdr hook used to hide anonymous memory (e.g. Frida Stalker JIT).
 int cprisk_addr_in_any_image(const void *addr);
+
+/* ── Frida / Gum runtime hints (dyld image paths, dlsym, proc table) ─ */
+
+enum {
+    CPRISK_FRIDA_RT_IMAGE = 1u << 0,
+    CPRISK_FRIDA_RT_DLSYM = 1u << 1,
+    CPRISK_FRIDA_RT_PROC = 1u << 2,
+};
+
+typedef struct cprisk_frida_runtime_snapshot {
+    uint32_t supported;
+    uint32_t flags;
+    uint32_t image_hit_count;
+    uint32_t dlsym_hit_count;
+    uint32_t proc_hit_count;
+} cprisk_frida_runtime_snapshot_t;
+
+/// Populate runtime Frida/Gum hints. On simulator, `supported` is 0.
+/// Returns 0 on success, -1 when `out` is NULL.
+int cprisk_frida_runtime_snapshot(cprisk_frida_runtime_snapshot_t *out);
+#define CPRISK_FRIDA_RUNTIME_SNAPSHOT_DECLARED 1
 
 /* ── Signal Probe Bitmask ──────────────────────────────────────────── */
 

@@ -68,15 +68,26 @@ final class ControlFlowBinaryRewriter {
             )
         }
 
+        /// Every `__TEXT.__text` symbol entry VM address (including `never`-tier symbols omitted from
+        /// `matchedCandidates`). Using only the managed-candidate chain for the last symbol wrongly
+        /// extended the VM range to `textVMEnd`, swallowing following never-tier functions.
+        let sortedTextSymbolEntries = Self.sortedTextSymbolEntryAddresses(
+            symbols: symbols,
+            textVMStart: textVMStart,
+            textVMEnd: textVMEnd
+        )
+
         var modified = [CFFModifiedFunctionRecord]()
         var skipped = [CFFSkippedFunctionRecord]()
         modified.reserveCapacity(matchedCandidates.count)
         skipped.reserveCapacity(matchedCandidates.count)
 
-        for (index, candidate) in matchedCandidates.enumerated() {
-            let functionVMEnd = (index + 1 < matchedCandidates.count)
-                ? matchedCandidates[index + 1].entryVMAddress
-                : textVMEnd
+        for candidate in matchedCandidates {
+            let functionVMEnd = Self.nextTextSymbolEntry(
+                after: candidate.entryVMAddress,
+                sortedEntries: sortedTextSymbolEntries,
+                textVMEnd: textVMEnd
+            )
 
             guard functionVMEnd > candidate.entryVMAddress else {
                 skipped.append(CFFSkippedFunctionRecord(
@@ -162,6 +173,32 @@ final class ControlFlowBinaryRewriter {
             bytesModified: bytesModified,
             details: details
         )
+    }
+
+    private static func sortedTextSymbolEntryAddresses(
+        symbols: [SymbolEntry],
+        textVMStart: UInt64,
+        textVMEnd: UInt64
+    ) -> [UInt64] {
+        var addresses = Set<UInt64>()
+        for symbol in symbols {
+            guard symbol.nlist.typeField == Nlist64Entry.N_SECT else { continue }
+            let vm = symbol.nlist.n_value
+            guard vm >= textVMStart, vm < textVMEnd else { continue }
+            addresses.insert(vm)
+        }
+        return addresses.sorted()
+    }
+
+    private static func nextTextSymbolEntry(
+        after entry: UInt64,
+        sortedEntries: [UInt64],
+        textVMEnd: UInt64
+    ) -> UInt64 {
+        for addr in sortedEntries where addr > entry {
+            return addr
+        }
+        return textVMEnd
     }
 
     private func collectManagedCandidates(
@@ -262,7 +299,6 @@ final class ControlFlowBinaryRewriter {
             blockApprox: blockApprox
         )
         var excludedStructuralOffsets = Set(structuralPatches.map(\.fileOffset))
-        let scanRange = candidate.entryFileOffset..<(candidate.entryFileOffset + scanSlots * 4)
 
         func buildNeutralPatchable(excluding excluded: Set<Int>) -> [CFFPatchableSlot] {
             var slots = [CFFPatchableSlot]()
@@ -287,23 +323,20 @@ final class ControlFlowBinaryRewriter {
             return slots
         }
 
-        func structuralCoverageInScan(_ patches: [CFFPatchMutation]) -> Int {
-            patches.reduce(into: Set<Int>()) { covered, patch in
-                if scanRange.contains(patch.fileOffset) {
-                    covered.insert(patch.fileOffset)
-                }
-            }.count
-        }
-
+        /// Structural CFG mutations (dispatcher / reorder / opaque island) count toward the per-function
+        /// rewrite budget even when their patch sites sit outside the linear neutral scan window. The
+        /// previous “in-scan only” rule forced `requiredNeutralSlots` to stay high unless *both*
+        /// structural patches and neutral substitutions landed in the prologue-sized window — a common
+        /// cause of `itemsProcessed == 0` on real Swift/ObjC functions where padding and dispatcher
+        /// islands live past the first ~32 instructions.
+        let structuralCoverage = structuralPatches.count
         var patchable = buildNeutralPatchable(excluding: excludedStructuralOffsets)
-        var structuralCoverage = structuralCoverageInScan(structuralPatches)
         var requiredNeutralSlots = max(0, candidate.requiredPatchSlots - structuralCoverage)
 
         if patchable.count < requiredNeutralSlots, !structuralPatches.isEmpty {
             structuralPatches = []
             excludedStructuralOffsets = []
             patchable = buildNeutralPatchable(excluding: [])
-            structuralCoverage = 0
             requiredNeutralSlots = candidate.requiredPatchSlots
         }
 
@@ -1112,7 +1145,13 @@ private struct CFFPolicySymbolIndex {
         }
 
         for (tail, entry) in uniqueTail where tail.count >= 8 {
-            if normalizedSymbol == tail || normalizedSymbol.hasSuffix(tail) {
+            // Swift mangled symbols embed identifiers as length-prefixed tokens (e.g.
+            // "...19RiskDetectionEngineC8evaluate..."), so policy tails rarely sit at suffix.
+            // Allow substring hits for unique long tails to keep Pass9 effective on stripped
+            // Release binaries while still preferring exact/normalized matches above.
+            if normalizedSymbol == tail
+                || normalizedSymbol.hasSuffix(tail)
+                || normalizedSymbol.contains(tail) {
                 return (entry.policySymbol, entry.tier)
             }
         }
@@ -1138,14 +1177,23 @@ private struct CFFPolicySymbolIndex {
 }
 
 private extension FunctionCFFTier {
+    /// Admission policy for Pass9 binary rewrite: scan the first N 4-byte instruction slots for
+    /// neutral substitutions; require M successful slots (after structural mutations consume coverage).
+    /// Wider scans improve hit rate on real Swift/ObjC prologues where neutral patterns appear past
+    /// the first few words; heavy tier asks for fewer *neutral* slots when structural CFG mutations apply.
     var rewriteProfile: (requiredPatchSlots: Int, scanSlots: Int)? {
         switch self {
         case .heavy:
-            return (requiredPatchSlots: 3, scanSlots: 8)
+            // Structural mutations often satisfy part of the budget; keep a modest neutral requirement.
+            return (requiredPatchSlots: 2, scanSlots: 56)
+        case .medium:
+            // Real binaries: Swift prologues may lack neutral-decodable slots early; one substitution
+            // plus a wider scan hits “medium” targets without forcing risky multi-slot rewrites.
+            return (requiredPatchSlots: 1, scanSlots: 72)
         case .regionOnly:
-            return (requiredPatchSlots: 2, scanSlots: 6)
+            return (requiredPatchSlots: 1, scanSlots: 44)
         case .light:
-            return (requiredPatchSlots: 1, scanSlots: 4)
+            return (requiredPatchSlots: 1, scanSlots: 44)
         case .never:
             return nil
         }
@@ -1157,6 +1205,8 @@ private extension FunctionCFFTier {
             return 30
         case .regionOnly:
             return 20
+        case .medium:
+            return 15
         case .light:
             return 10
         case .never:
@@ -1169,6 +1219,8 @@ private extension FunctionCFFTier {
         case .heavy:
             return 6
         case .regionOnly:
+            return 5
+        case .medium:
             return 5
         case .light:
             return 4

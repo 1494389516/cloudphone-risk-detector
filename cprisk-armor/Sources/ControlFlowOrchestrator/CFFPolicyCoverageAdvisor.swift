@@ -2,21 +2,24 @@ import Foundation
 
 public struct CFFPolicyCoverageSuggestion: Equatable, Sendable {
     public let heavy: [String]
+    public let medium: [String]
     public let light: [String]
     public let never: [String]
     public let skipped: [String]
 
     public var isEmpty: Bool {
-        heavy.isEmpty && light.isEmpty && never.isEmpty
+        heavy.isEmpty && medium.isEmpty && light.isEmpty && never.isEmpty
     }
 
     public init(
         heavy: [String],
+        medium: [String] = [],
         light: [String],
         never: [String],
         skipped: [String]
     ) {
         self.heavy = heavy
+        self.medium = medium
         self.light = light
         self.never = never
         self.skipped = skipped
@@ -32,6 +35,7 @@ public enum CFFPolicyCoverageAdvisor {
         let normalizedManaged = Set(policy.allManagedFunctions.map(normalizeSymbol))
 
         var heavy = [String]()
+        var medium = [String]()
         var light = [String]()
         var never = [String]()
         var skipped = [String]()
@@ -62,10 +66,16 @@ public enum CFFPolicyCoverageAdvisor {
                 append(symbol, into: &light, limit: limitPerTier)
                 continue
             }
+
+            if shouldMedium(symbol) {
+                append(symbol, into: &medium, limit: limitPerTier)
+                continue
+            }
         }
 
         return CFFPolicyCoverageSuggestion(
             heavy: heavy.sorted(),
+            medium: medium.sorted(),
             light: light.sorted(),
             never: never.sorted(),
             skipped: skipped.sorted()
@@ -77,6 +87,8 @@ public enum CFFPolicyCoverageAdvisor {
             "functions:",
             "  heavy:",
             yamlList(suggestion.heavy),
+            "  medium:",
+            yamlList(suggestion.medium),
             "  light:",
             yamlList(suggestion.light),
             "  never:",
@@ -119,6 +131,23 @@ private func shouldHeavy(_ symbol: String) -> Bool {
         "cprisk_watchdog_",
     ]
     return heavyMarkers.contains(where: { symbol.contains($0) })
+}
+
+/// Sits between heavy and light: AST/evaluator helpers and shared orchestration paths that benefit
+/// from Pass9 admission between light and heavy (evaluated after `shouldLight` so keyword-based
+/// detection symbols stay in the light bucket).
+private func shouldMedium(_ symbol: String) -> Bool {
+    if shouldHeavy(symbol) { return false }
+    let mediumMarkers = [
+        "ConditionNode.",
+        "ConditionExpression.",
+        "ScoreActionNode.",
+        "TrustChainManager.should",
+        "ChallengeSession.mark",
+        "RiskDetectionEngine.fastDigest",
+        "RiskDetectionEngine.treeCommit",
+    ]
+    return mediumMarkers.contains(where: { symbol.contains($0) })
 }
 
 private func shouldLight(_ symbol: String) -> Bool {

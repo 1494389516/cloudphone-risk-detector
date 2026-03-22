@@ -9,7 +9,7 @@ private enum TextArmorSeed {
 }
 
 /// Pass 12: encrypts a conservative inner range of `__TEXT,__text` at page granularity
-/// (skips first and last page) and emits `__DATA,__swift5_txte` metadata for CRiskCore.
+/// (skips first and last page) and emits `__DATA` text-encryption metadata (`ArmorABI.Sections.textEncryption`) for CRiskCore.
 public final class TextSegmentEncryptorPass: ArmorPass {
     public let name = "TextSegmentEncryptor"
 
@@ -253,7 +253,7 @@ public final class TextSegmentEncryptorPass: ArmorPass {
 private enum TextEncryption {
     static let magic: UInt32 = 0x45545043 /* "CPTE" LE */
     static let abiVersion: UInt32 = 1
-    static let sectionName = "__swift5_txte"
+    static let sectionName = ArmorABI.Sections.textEncryption
     static let sectionIndexBase: UInt32 = 100_000
 
     struct Header {

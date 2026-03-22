@@ -1,7 +1,7 @@
 /*
  * CRiskCore - Import Table Encryption resolver for cprisk-armor ABI.
  *
- * Reads the encrypted import table from __DATA.__swift5_imp,
+ * Reads the encrypted import table from __DATA.__swift5_dyrel,
  * verifies HMAC-SHA256 integrity, decrypts symbol names via
  * SHA256-based keystream, and resolves them via dlsym.
  *

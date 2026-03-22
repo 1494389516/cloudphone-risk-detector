@@ -3,7 +3,7 @@ import Foundation
 import MachOKit
 
 /// Pass 3.5 / Pass 11: Encrypt mach_header_64 critical fields and store them
-/// in a dedicated `__DATA.__cprisk_hbhdr` section.  At runtime, CRiskCore
+/// in a dedicated `__DATA` `ArmorABI.Sections.headerBackup` section.  At runtime, CRiskCore
 /// reads the backup section, verifies the HMAC, decrypts the fields via XOR
 /// keystream, and restores the header before dyld finishes processing.
 ///

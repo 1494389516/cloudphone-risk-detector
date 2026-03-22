@@ -7,18 +7,21 @@ functions:
     - RiskDetectionEngine.scoreAndForceDecision
     - RiskDetectionEngine.treeCommitVerdict
     - DecisionTree.decide
-    - ConditionNode.evaluate
-    - ConditionExpression.evaluate
-    - ScoreActionNode.evaluate
     - ChallengeSession.transition
     - ChallengeSession.advance
     - ChallengeSession.bindChallenge
-    - ChallengeSession.markSubmitted
     - TrustChainManager.evaluateTrustLevel
     - TrustChainManager.deriveSessionKey
     - TrustChainManager.buildKeyResolver
-    - TrustChainManager.shouldRefreshAttestation
     - anti_debug_watchdog.cprisk_watchdog_run_iteration
+
+  # 中等：整函数二进制改写预算介于 light/heavy 之间（Pass9 默认更宽的扫描窗口）
+  medium:
+    - ConditionNode.evaluate
+    - ConditionExpression.evaluate
+    - ScoreActionNode.evaluate
+    - TrustChainManager.shouldRefreshAttestation
+    - ChallengeSession.markSubmitted
 
   # 轻量平坦化：高频检测流程，强调低开销与异构分发
   light:

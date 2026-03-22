@@ -26,6 +26,8 @@ struct CLIOptions {
     var keyFile: String?
     var cffPolicyPath: String?
     var buildSeedRaw: String?
+    /// Pass 2: `conservative` (default) or `aggressive` Swift metadata scrub.
+    var metadataScrubLevelRaw: String?
 }
 
 func parseArguments() -> CLIOptions {
@@ -66,6 +68,9 @@ func parseArguments() -> CLIOptions {
         case "--pass12": options.passes.insert(12)
         case "--all":   options.allPasses = true
         case "--verbose": options.verbose = true
+        case "--metadata-scrub-level":
+            i += 1
+            if i < args.count { options.metadataScrubLevelRaw = args[i] }
         case "--help":
             printUsage()
             exit(0)
@@ -101,6 +106,9 @@ func printUsage() {
       --all             Enable all passes
       --cff-policy      Override cff_policy.yaml path for Pass 9
       --build-seed      Build randomization seed (u64, decimal or 0x-prefixed hex)
+      --metadata-scrub-level conservative|aggressive
+                        Pass 2 Swift metadata: conservative (default, string payloads only)
+                        or aggressive (full section overwrite; higher breakage risk)
       --verbose         Verbose output
       --help            Show this help
 
@@ -108,6 +116,7 @@ func printUsage() {
       CPRISK_ARMOR_KEY        Hex-encoded key (fallback when --key/--key-file not set)
       CPRISK_ARMOR_BUILD_SEED Decimal or 0x-prefixed seed for deterministic randomization (preferred override)
       CPRISK_BUILD_SEED       Legacy alias for CPRISK_ARMOR_BUILD_SEED (fallback when --build-seed is missing)
+      CPRISK_METADATA_SCRUB_LEVEL  Pass 2: conservative (default) or aggressive
 
     A key is REQUIRED when any encryption pass (1, 3, 4, 12) or --all is enabled.
     """)
@@ -176,6 +185,20 @@ private func secureRandomSeed() throws -> UInt64 {
         )
     }
     return randomBytes == 0 ? 1 : randomBytes
+}
+
+/// Resolve Pass 2 Swift metadata scrub level: CLI > env > conservative (default).
+private func resolveSwiftMetadataScrubLevel(from options: CLIOptions) -> SwiftMetadataScrubLevel {
+    if let raw = options.metadataScrubLevelRaw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        if raw == "aggressive" { return .aggressive }
+        return .conservative
+    }
+    if let env = ProcessInfo.processInfo.environment["CPRISK_METADATA_SCRUB_LEVEL"]?
+        .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    {
+        if env == "aggressive" { return .aggressive }
+    }
+    return .conservative
 }
 
 private func resolveBuildSeed(from options: CLIOptions) throws -> BuildSeedResolution {
@@ -284,7 +307,13 @@ do {
         print(String(format: "[*] Build seed: 0x%016llX (%@)", buildSeed.seed, buildSeed.origin.rawValue))
     }
 
-    let config = PassConfig(verbose: verbose, encryptionKey: keyData, randomSeed: buildSeed.seed)
+    let metadataScrubLevel = resolveSwiftMetadataScrubLevel(from: options)
+    let config = PassConfig(
+        verbose: verbose,
+        encryptionKey: keyData,
+        randomSeed: buildSeed.seed,
+        swiftMetadataScrubLevel: metadataScrubLevel
+    )
     var allResults = [PassResult]()
     let passes: [(Int, ArmorPass)] = [
         (1, StringEncryptorPass()),

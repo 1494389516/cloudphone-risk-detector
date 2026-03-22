@@ -153,22 +153,37 @@ public protocol ArmorPass {
     func execute(on file: MachOFile, config: PassConfig) throws -> PassResult
 }
 
+/// How aggressively Pass 2 (MetadataScrubber) rewrites Swift metadata sections other than `__swift5_types`.
+///
+/// - `conservative` (default): Overwrite only identifiable C-string / mangling-like payloads inside
+///   `__swift5_proto`, `__swift5_fieldmd`, etc., preserving descriptor layout and relative pointers.
+/// - `aggressive`: Overwrite entire section contents with random bytes (stronger anti-IDA, higher
+///   risk of breaking reflection, some dynamic features, or tooling that reads those blobs).
+public enum SwiftMetadataScrubLevel: Int, Sendable {
+    case conservative = 0
+    case aggressive = 1
+}
+
 public struct PassConfig {
     public let verbose: Bool
     public let encryptionKey: Data?
     public let randomSeed: UInt64?
     public let buildSeed: UInt64
+    /// Pass 2 only: Swift metadata scrub intensity (see ``SwiftMetadataScrubLevel``).
+    public let swiftMetadataScrubLevel: SwiftMetadataScrubLevel
 
     public init(
         verbose: Bool = false,
         encryptionKey: Data? = nil,
         randomSeed: UInt64? = nil,
-        buildSeed: UInt64 = 0
+        buildSeed: UInt64 = 0,
+        swiftMetadataScrubLevel: SwiftMetadataScrubLevel = .conservative
     ) {
         self.verbose = verbose
         self.encryptionKey = encryptionKey
         self.randomSeed = randomSeed
         self.buildSeed = buildSeed
+        self.swiftMetadataScrubLevel = swiftMetadataScrubLevel
     }
 }
 

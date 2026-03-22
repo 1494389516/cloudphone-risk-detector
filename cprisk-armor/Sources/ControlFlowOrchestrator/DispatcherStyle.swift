@@ -29,7 +29,7 @@ public enum DispatcherStyle: String, CaseIterable, Codable, Sendable {
             return .disabled
         case .regionOnly:
             return .regionCascade
-        case .light:
+        case .light, .medium:
             return (hash & 1) == 0 ? .switchLoop : .ifElseChain
         case .heavy:
             guard enableMultiDispatcher else {

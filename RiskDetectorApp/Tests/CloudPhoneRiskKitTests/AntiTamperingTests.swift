@@ -749,6 +749,18 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertEqual(ObfuscatedConstants.methodPrefixFridaProto, "frida:proto:")
         XCTAssertEqual(ObfuscatedConstants.methodPrefixFridaListen, "frida:listen:")
         XCTAssertEqual(ObfuscatedConstants.methodPrefixFridaMemorySig, "frida:memsig:")
+        XCTAssertEqual(ObfuscatedConstants.methodPrefixFridaRuntime, "frida:runtime:")
+        XCTAssertEqual(ObfuscatedConstants.methodPrefixFridaRuntimeFused, "frida:runtime_fused:")
+    }
+
+    func testCFridaRuntimeSnapshotAPI() {
+        var snap = cprisk_frida_runtime_snapshot_t()
+        XCTAssertEqual(cprisk_frida_runtime_snapshot(&snap), 0)
+#if targetEnvironment(simulator)
+        XCTAssertEqual(snap.supported, 0)
+#else
+        XCTAssertEqual(snap.supported, 1)
+#endif
     }
 
     func testFridaDetectorScoreCapped() throws {

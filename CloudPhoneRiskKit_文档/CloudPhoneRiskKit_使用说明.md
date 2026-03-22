@@ -73,7 +73,69 @@ export CPRISK_ARMOR_KEY=<hex>; .build/release/cprisk-armor --input ... --output 
 
 未设置 `CPRISK_ARMOR_KEY` 时，脚本会跳过加固并输出 warning，不影响构建。
 
-### 2.4.1.1 可选的 Release metadata 收敛 / Hikari 编译接入
+### 2.4.1.1 固定构建流程（推荐）
+
+后续若需要稳定地产出**可拖入 IDA 的壳后二进制**，建议固定使用下面这套流程，而不是临时拼装命令：
+
+```bash
+# 1) 当 project.yml 有变化、或新增/删除了源文件后，先同步 Xcode 工程
+cd RiskDetectorApp
+xcodegen generate
+
+# 2) 编译 Release 产物（推荐 arm64-only，避免 x86_64 模拟器侧链接噪音）
+xcodebuild \
+  -project RiskDetectorApp.xcodeproj \
+  -scheme RiskDetectorApp \
+  -configuration Release \
+  -sdk iphonesimulator \
+  -destination "generic/platform=iOS Simulator" \
+  ARCHS=arm64 \
+  EXCLUDED_ARCHS=x86_64 \
+  ONLY_ACTIVE_ARCH=YES \
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_REQUIRED=NO \
+  STRIP_INSTALLED_PRODUCT=YES \
+  STRIP_STYLE=all \
+  STRIP_SWIFT_SYMBOLS=YES \
+  DEAD_CODE_STRIPPING=YES \
+  clean build
+
+# 3) 构建壳工具（首次或壳源码有变更时执行）
+cd ../cprisk-armor
+swift build -c release
+
+# 4) 对最终 App 二进制执行全量加壳
+export CPRISK_ARMOR_KEY=<64-char-hex-string>
+.build/arm64-apple-macosx/release/cprisk-armor \
+  --input /path/to/RiskDetectorApp.app/RiskDetectorApp \
+  --output /path/to/RiskDetectorApp.app/RiskDetectorApp \
+  --all \
+  --key "$CPRISK_ARMOR_KEY"
+```
+
+**为什么推荐固定这样做：**
+
+1. `xcodegen generate` 用来同步 `project.yml` 与 `project.pbxproj`。若新增 `.c/.swift` 后不重新生成工程，Xcode 实际编译列表可能仍是旧的，最终表现为 `libCRiskCore.a` 缺 `.o`、链接时报 `_cprisk_* undefined`。
+2. `xcodebuild ... Release ...` 负责生成干净的最终 App 可执行文件；6.4 起建议对**最终 App 二进制**而不是 framework / static library 单独加壳。
+3. `cprisk-armor --all` 负责字符串加密、metadata 抹除、导入表加密、header 加密、text 页加密等全链路保护。
+
+**6.8+ 当前实现的额外说明：**
+
+- `SymbolStripper` 已在工具链内自动清空 `LC_SYMTAB/LC_DYSYMTAB` 关键字段，**不再需要**额外用 Python 手动修补 `symoff/nsyms` 才能让 IDA 正常显示 `sub_XXXX`。
+- `project.yml` 必须预留以下 section placeholder，否则 Pass 10/11/12 可能因尝试“追加 section”而失败：
+  - `__swift5_imp`
+  - `__cprisk_hbhdr`
+  - `__swift5_cpmt`
+  - `__swift5_txte`
+- 白盒 PRF 相关 placeholder（如 `whitebox_code.bin`、`whitebox_data.bin`）尺寸需要与当前 `ArmorABI.WhiteBox.Domain` 数量保持一致；白盒域数量扩展后，应同步更新占位文件大小。
+
+**适用建议：**
+
+- 做逆向分析：建议直接取第 4 步产物。
+- 做本地调试：可先停在第 2 步，避免壳影响符号/调试体验。
+- 改过 `project.yml`、placeholder 或壳 ABI 后：务必重新执行 1 → 4 全流程，不要复用旧工程或旧壳产物。
+
+### 2.4.1.2 可选的 Release metadata 收敛 / Hikari 编译接入
 
 为避免影响默认本地开发，工程只在 **Release + 显式环境变量** 下启用额外收敛：
 
@@ -514,7 +576,7 @@ CPRiskKit.shared.setTextSegmentReferenceResolver(SignedReferenceResolver())
 2. **SchemeDetector**：需在宿主 App 的 `Info.plist` 添加 `LSApplicationQueriesSchemes`（如 `cydia`、`sileo`、`filza` 等），否则 `canOpenURL` 始终返回 `false`。
 3. **弱信号原则**：SDK 将不可用 / 无法获取的信号视为弱信号，不会因系统限制直接判定高风险。**强结论建议放在服务端做聚合判断**（IP 聚合、ASN、设备图谱、长连接流量模式等）。
 4. **日志开关**：`CPRiskKit.setLogEnabled(true)` 仅在 `DEBUG` 构建下生效。
-5. **壳工具链**：cprisk-armor（11 Pass / ABI v2）需在 `swift build` 之后对产物执行加固；**6.2 起必须通过 `--key` 提供加密密钥**；6.4 起壳对最终 App 二进制（而非 framework）执行加固；6.5 起白盒 PRF 四 section 需通过 `-Wl,-sectcreate` 预埋占位符（`whitebox_meta.bin` 等），壳更新而非追加；6.8 起可显式启用 `--pass10` / `--pass11`，分别对应 Import Table Encryption 与 Header Encryption；Pass 7 会写入 `__DATA,__cpr_adbg7` anti-debug 注入计划并由运行时消费为 gate，Pass 8 会对 `__TEXT.__text` 中可安全替换的 ARM64 指令做 1:1 等长改写；壳运行时由 CRiskCore 自动管理（含白盒/legacy 双路径 + HMAC 验证 + Anti-Dump + 密钥清零 + 完整性重校验 + import/header 恢复链），调用方无需手动介入。
+5. **壳工具链**：cprisk-armor（11 Pass / ABI v2）需在 `swift build` 之后对产物执行加固；**6.2 起必须通过 `--key` 提供加密密钥**；6.4 起壳对最终 App 二进制（而非 framework）执行加固；6.5 起白盒 PRF 四 section 需通过 `-Wl,-sectcreate` 预埋占位符（`whitebox_meta.bin` 等），壳更新而非追加；6.8 起可显式启用 `--pass10` / `--pass11`，分别对应 Import Table Encryption 与 Header Encryption；Pass 7 会写入 anti-debug 注入计划并由运行时消费为 gate，Pass 8 会对 `__TEXT.__text` 中可安全替换的 ARM64 指令做 1:1 等长改写；Pass 10/11/12 依赖 `__swift5_imp` / `__cprisk_hbhdr` / `__swift5_cpmt` / `__swift5_txte` 等预留 section；当前工具链已内建 `LC_SYMTAB/LC_DYSYMTAB` 清零逻辑，**不需要额外 Python 后处理**；壳运行时由 CRiskCore 自动管理（含白盒/legacy 双路径 + HMAC 验证 + Anti-Dump + 密钥清零 + 完整性重校验 + import/header 恢复链），调用方无需手动介入。
 6. **v2a 签名兼容**：服务端需同时支持 `v2`（无壳）和 `v2a`（壳绑定）签名验证；未加壳的 SDK 仍输出 `v2`。
 7. **服务端信号注入**：6.2 起 Release 下旧 `setExternalServerSignals()` 为 no-op，需使用 `setExternalServerSignalsVerified()` + HMAC 签名。
 8. **动态特征列表**：可通过 RemoteConfig 下发 `additionalSuspiciousLibraries` / `additionalSuspiciousPaths` / `additionalSuspiciousPorts` 扩展检测规则，无需发版。

@@ -354,6 +354,16 @@ enum ObfuscatedConstants {
         StringDeobfuscator.base64Decode("ZnJpZGE6bWVtc2lnOg==")
     }
 
+    /// CRiskCore `cprisk_frida_runtime_snapshot` channels (dyld / dlsym / proc).
+    static var methodPrefixFridaRuntime: String {
+        StringDeobfuscator.base64Decode("ZnJpZGE6cnVudGltZTo=")
+    }
+
+    /// Emitted when two or more runtime channels agree (higher confidence).
+    static var methodPrefixFridaRuntimeFused: String {
+        StringDeobfuscator.base64Decode("ZnJpZGE6cnVudGltZV9mdXNlZDo=")
+    }
+
     static var methodPrefixFridaModuleImage: String {
         StringDeobfuscator.base64Decode("ZnJpZGFfbW9kdWxlOmltYWdlOg==")
     }

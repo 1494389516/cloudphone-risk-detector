@@ -6,7 +6,7 @@ import Security
 /// Pass 10: Import Table Encryption
 ///
 /// Encrypts import symbol names discovered from LC_DYLD_INFO_ONLY bind streams
-/// and stores them in __DATA.__swift5_imp. At runtime, CRiskCore resolves
+/// and stores them in `__DATA` `ArmorABI.Sections.importEncryptedTable`. At runtime, CRiskCore resolves
 /// symbols via dlsym on first use.
 ///
 /// Security properties:
@@ -90,7 +90,7 @@ public final class ImportEncryptorPass: ArmorPass {
         // Step 6: Build encrypted import table
         let encryptedData = try buildEncryptedTable(symbols: toEncrypt, key: importKey)
 
-        // Step 7: Write encrypted table to __DATA.__swift5_imp section.
+        // Step 7: Write encrypted table to the import-encryption section.
         _ = try file.addOrUpdateSection(
             segment: ArmorABI.dataSegmentName,
             section: ArmorABI.Sections.importEncryptedTable,

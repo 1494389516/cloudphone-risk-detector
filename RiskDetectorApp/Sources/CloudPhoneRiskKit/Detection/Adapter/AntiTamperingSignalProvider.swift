@@ -978,7 +978,9 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                 (ObfuscatedConstants.methodPrefixFridaThread, "\(fridaPrefix)_thread", 20),
                 (ObfuscatedConstants.methodPrefixFridaProcess, "\(fridaPrefix)_process", 30),
                 (ObfuscatedConstants.methodPrefixFridaEnv, "\(fridaPrefix)_environment", 25),
-                (ObfuscatedConstants.methodPrefixFridaMemorySig, "\(fridaPrefix)_memsig", 20)
+                (ObfuscatedConstants.methodPrefixFridaMemorySig, "\(fridaPrefix)_memsig", 20),
+                (ObfuscatedConstants.methodPrefixFridaRuntime, "\(fridaPrefix)_runtime", 22),
+                (ObfuscatedConstants.methodPrefixFridaRuntimeFused, "\(fridaPrefix)_runtime_fused", 48)
             ]
             
             for method in result.methods {

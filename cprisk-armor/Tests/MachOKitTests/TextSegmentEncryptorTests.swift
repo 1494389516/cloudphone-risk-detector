@@ -35,7 +35,7 @@ final class TextSegmentEncryptorTests: XCTestCase {
         XCTAssertNotEqual(before.subdata(in: (4096 * 2)..<(4096 * 3)),
                           after.subdata(in: (4096 * 2)..<(4096 * 3)))
 
-        let meta = try XCTUnwrap(try file.section(segment: "__DATA", section: "__swift5_txte"))
+        let meta = try XCTUnwrap(try file.section(segment: "__DATA", section: ArmorABI.Sections.textEncryption))
         let payload = try meta.readContent(from: file.data)
         XCTAssertGreaterThanOrEqual(payload.count, 16)
         XCTAssertEqual(Self.readLE32(payload, at: 0), 0x45545043) // "CPTE"

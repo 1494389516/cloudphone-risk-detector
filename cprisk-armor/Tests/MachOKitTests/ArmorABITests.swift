@@ -164,4 +164,18 @@ final class ArmorABITests: XCTestCase {
         )
         XCTAssertEqual(header.subdata(in: 16..<48), configDigest)
     }
+
+    /// Guardrail: Swift producer `ArmorABI.Sections` must stay aligned with `cprisk_armor_abi.h`
+    /// (`RiskDetectorApp/Sources/CRiskCore/include/cprisk_armor_abi.h`) for link-time `-sectcreate`
+    /// and runtime lookup.
+    func testDisguisedCustomSectionNamesMatchCRiskABIHeader() {
+        XCTAssertEqual(ArmorABI.Sections.whiteboxMeta, "__swift5_mdext")
+        XCTAssertEqual(ArmorABI.Sections.whiteboxCode, "__swift5_mdbdy")
+        XCTAssertEqual(ArmorABI.Sections.whiteboxData, "__swift5_mddsc")
+        XCTAssertEqual(ArmorABI.Sections.whiteboxTag, "__swift5_mdchk")
+        XCTAssertEqual(ArmorABI.Sections.importEncryptedTable, "__swift5_dyrel")
+        XCTAssertEqual(ArmorABI.Sections.headerBackup, "__swift5_mhsav")
+        XCTAssertEqual(ArmorABI.Sections.chainMeta, "__swift5_ptmap")
+        XCTAssertEqual(ArmorABI.Sections.textEncryption, "__swift5_cgenc")
+    }
 }

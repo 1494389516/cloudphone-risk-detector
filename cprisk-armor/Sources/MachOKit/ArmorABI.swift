@@ -33,15 +33,18 @@ public enum ArmorABI {
         public static let anchorC = "__swift5_ac"
         public static let anchorD = "__swift5_ad"
         public static let fullAnchorHash = "__swift5_acfun"
-        public static let whiteboxMeta = "__swift5_awbm"
-        public static let whiteboxCode = "__swift5_awbc"
-        public static let whiteboxData = "__swift5_awbd"
-        public static let whiteboxTag = "__swift5_awbt"
+        /// Producer/runtime contract names: styled like Swift `__swift5_*` metadata tables.
+        public static let whiteboxMeta = "__swift5_mdext"
+        public static let whiteboxCode = "__swift5_mdbdy"
+        public static let whiteboxData = "__swift5_mddsc"
+        public static let whiteboxTag = "__swift5_mdchk"
         public static let antiDebugPlan = "__objc_data2"
-        public static let importEncryptedTable = "__swift5_imp"
-        public static let headerBackup = "__cprisk_hbhdr"
-        public static let chainMeta = "__swift5_cpmt"
-        public static let textEncryption = "__swift5_txte"
+        public static let importEncryptedTable = "__swift5_dyrel"
+        public static let headerBackup = "__swift5_mhsav"
+        public static let chainMeta = "__swift5_ptmap"
+        public static let textEncryption = "__swift5_cgenc"
+        /// Pass 5: Swift descriptor pointer-table shuffle mapping (when `__swift5_ptmap` is too small).
+        public static let swiftMetadataMap = "__sw5_mdmap"
 
         public static let splitAnchorSections = [
             anchorA,
@@ -55,6 +58,7 @@ public enum ArmorABI {
             anchorA, anchorB, anchorC, anchorD, fullAnchorHash,
             whiteboxMeta, whiteboxCode, whiteboxData, whiteboxTag,
             antiDebugPlan, importEncryptedTable, headerBackup, chainMeta, textEncryption,
+            swiftMetadataMap,
         ]
     }
 
@@ -428,6 +432,23 @@ public enum ArmorABI {
         ]
     }
 
+    /// Packed layout emitted by Pass 5 (`StructureObfuscator`) for Swift relative-pointer table shuffles.
+    ///
+    /// **Runtime restore trigger (optional consumer):** After `dyld` maps the image, locate
+    /// `__DATA,__swift5_ptmap` or `__DATA,__sw5_mdmap`, verify `magic == CPMD`, then for each record
+    /// recompute the same Fisher–Yates permutation from `subseed` (see `SwiftMetadataShuffle` in
+    /// StructureObfuscator) and invert the slot rewrite — only needed if a tool requires the
+    /// original compiler ordering; execution does not depend on table order.
+    ///
+    /// Header: `{ magic, abi_version, flags, record_count, build_seed, reserved64 }` (32 bytes).
+    /// Record: `{ segment[16], section[16], file_offset, entry_count, subseed }` (48 bytes).
+    public enum SwiftMetadataDescriptorShuffle {
+        public static let magic: UInt32 = 0x444D5043 // "CPMD" in file order
+        public static let abiVersion: UInt32 = 1
+        public static let headerSize = 32
+        public static let recordSize = 48
+    }
+
     public enum StringTable {
         /// Table guard sentinel in little-endian.
         public static let magic: UInt32 = 0x43505354
@@ -631,6 +652,7 @@ public enum ArmorABI {
             set.insert(Sections.headerBackup)
             set.insert(Sections.chainMeta)
             set.insert(Sections.textEncryption)
+            set.insert(Sections.swiftMetadataMap)
             return set
         }()
 

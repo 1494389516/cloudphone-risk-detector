@@ -2,6 +2,8 @@ import Foundation
 
 public enum FunctionCFFTier: String, CaseIterable, Codable, Sendable {
     case heavy
+    /// Between heavy and light: stronger than light binary rewrite budget without full heavy orchestration defaults.
+    case medium
     case light
     case never
     case regionOnly
@@ -24,6 +26,7 @@ public struct AntiDeobfuscationOptions: Codable, Equatable, Sendable {
 public struct FunctionCFFPolicy: Codable, Equatable, Sendable {
     public let version: Int
     public let heavy: [String]
+    public let medium: [String]
     public let light: [String]
     public let never: [String]
     public let regionOnly: [String]
@@ -32,6 +35,7 @@ public struct FunctionCFFPolicy: Codable, Equatable, Sendable {
     public init(
         version: Int,
         heavy: [String],
+        medium: [String] = [],
         light: [String],
         never: [String],
         regionOnly: [String],
@@ -39,6 +43,7 @@ public struct FunctionCFFPolicy: Codable, Equatable, Sendable {
     ) {
         self.version = version
         self.heavy = heavy
+        self.medium = medium
         self.light = light
         self.never = never
         self.regionOnly = regionOnly
@@ -49,6 +54,8 @@ public struct FunctionCFFPolicy: Codable, Equatable, Sendable {
         switch tier {
         case .heavy:
             return heavy
+        case .medium:
+            return medium
         case .light:
             return light
         case .never:
@@ -60,6 +67,7 @@ public struct FunctionCFFPolicy: Codable, Equatable, Sendable {
 
     public func tier(for symbol: String) -> FunctionCFFTier? {
         if heavy.contains(symbol) { return .heavy }
+        if medium.contains(symbol) { return .medium }
         if light.contains(symbol) { return .light }
         if never.contains(symbol) { return .never }
         if regionOnly.contains(symbol) { return .regionOnly }
@@ -67,7 +75,7 @@ public struct FunctionCFFPolicy: Codable, Equatable, Sendable {
     }
 
     public var allManagedFunctions: [String] {
-        unique(heavy + light + never + regionOnly)
+        unique(heavy + medium + light + never + regionOnly)
     }
 
     public static func load(from url: URL) throws -> FunctionCFFPolicy {
@@ -84,6 +92,7 @@ public struct FunctionCFFPolicy: Codable, Equatable, Sendable {
 
         var version = 1
         var heavy: [String] = []
+        var medium: [String] = []
         var light: [String] = []
         var never: [String] = []
         var regionOnly: [String] = []
@@ -130,13 +139,14 @@ public struct FunctionCFFPolicy: Codable, Equatable, Sendable {
                 guard section == .functions, sanitized.hasPrefix("- ") else { continue }
                 let symbol = String(sanitized.dropFirst(2)).trimmingCharacters(in: .whitespaces)
                 guard !symbol.isEmpty, let tier = activeTier else { continue }
-                append(symbol, to: tier, heavy: &heavy, light: &light, never: &never, regionOnly: &regionOnly)
+                append(symbol, to: tier, heavy: &heavy, medium: &medium, light: &light, never: &never, regionOnly: &regionOnly)
             }
         }
 
         return FunctionCFFPolicy(
             version: version,
             heavy: unique(heavy),
+            medium: unique(medium),
             light: unique(light),
             never: unique(never),
             regionOnly: unique(regionOnly),
@@ -189,6 +199,7 @@ private func append(
     _ symbol: String,
     to tier: FunctionCFFTier,
     heavy: inout [String],
+    medium: inout [String],
     light: inout [String],
     never: inout [String],
     regionOnly: inout [String]
@@ -196,6 +207,8 @@ private func append(
     switch tier {
     case .heavy:
         heavy.append(symbol)
+    case .medium:
+        medium.append(symbol)
     case .light:
         light.append(symbol)
     case .never:

@@ -1,7 +1,7 @@
 /*
  * cprisk_header_restore.c — Runtime header decryption for cprisk-armor.
  *
- * Consumes the `__DATA.__cprisk_hbhdr` section produced by Pass 11
+ * Consumes the `__DATA.__swift5_mhsav` section produced by Pass 11
  * (HeaderEncryptorPass).  Verifies HMAC-SHA256 before writing decrypted
  * fields back to mach_header_64.
  *
@@ -406,7 +406,7 @@ static int cprisk_restore_macho_header_impl_i(void) {
 
 /* ── public API ─────────────────────────────────────────────────────────── */
 
-/* Restore mach_header_64 fields from __DATA.__cprisk_hbhdr.
+/* Restore mach_header_64 fields from __DATA.__swift5_mhsav.
  *
  * Uses one eager attempt (pthread_once) for fast path + stable idempotence.
  * If the eager path fails (for example due to startup ordering), later calls

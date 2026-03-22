@@ -1,6 +1,6 @@
 import XCTest
 import MachOKit
-import StructureObfuscator
+@testable import StructureObfuscator
 
 final class StructureObfuscatorTests: XCTestCase {
 
@@ -309,6 +309,8 @@ final class StructureObfuscatorTests: XCTestCase {
             ArmorABI.Sections.anchorC,
             ArmorABI.Sections.anchorD,
             ArmorABI.Sections.fullAnchorHash,
+            ArmorABI.Sections.chainMeta,
+            ArmorABI.Sections.swiftMetadataMap,
         ]
 
         let dataSeg = try XCTUnwrap(try file.segment(named: "__DATA"))
@@ -345,6 +347,21 @@ final class StructureObfuscatorTests: XCTestCase {
         )
         let afterContent = try afterSection.readContent(from: file.data)
         XCTAssertEqual(beforeContent, afterContent)
+    }
+
+    // MARK: - F. Swift descriptor shuffle (Pass 5)
+
+    func testSwiftShufflePermutationIsDeterministic() {
+        let sub = deriveSwiftShuffleSubseed(
+            segment: "__TEXT",
+            section: "__swift5_types",
+            masterSeed: 0xCAFE
+        )
+        let a = swiftShufflePermutation(entryCount: 20, subseed: sub)
+        let b = swiftShufflePermutation(entryCount: 20, subseed: sub)
+        XCTAssertEqual(a, b)
+        XCTAssertEqual(a.count, 20)
+        XCTAssertEqual(Set(a), Set(0..<20))
     }
 
     // MARK: - E. PassResult Reporting

@@ -10,6 +10,8 @@ final class ControlFlowOrchestratorTests: XCTestCase {
           heavy:
             - RiskDetectionEngine.collectAndAugmentSignals
             - anti_debug_watchdog.cprisk_watchdog_run_iteration
+          medium:
+            - ConditionNode.evaluate
           light:
             - MutationPlanner.maybeShuffle
           never:
@@ -28,6 +30,7 @@ final class ControlFlowOrchestratorTests: XCTestCase {
 
         XCTAssertEqual(policy.version, 2)
         XCTAssertEqual(policy.tier(for: "RiskDetectionEngine.collectAndAugmentSignals"), .heavy)
+        XCTAssertEqual(policy.tier(for: "ConditionNode.evaluate"), .medium)
         XCTAssertEqual(policy.tier(for: "MutationPlanner.maybeShuffle"), .light)
         XCTAssertEqual(policy.tier(for: "direct_syscall.cprisk_direct_syscall0"), .never)
         XCTAssertEqual(policy.tier(for: "RiskDetectionEngine.evaluate"), .regionOnly)
@@ -39,6 +42,7 @@ final class ControlFlowOrchestratorTests: XCTestCase {
         let policy = FunctionCFFPolicy(
             version: 2,
             heavy: ["DecisionTree.decide"],
+            medium: ["ConditionNode.evaluate"],
             light: ["MutationPlanner.maybeShuffle"],
             never: ["direct_syscall.cprisk_direct_syscall0"],
             regionOnly: ["RiskDetectionEngine.evaluate"],
@@ -49,6 +53,7 @@ final class ControlFlowOrchestratorTests: XCTestCase {
         let plans = orchestrator.buildPlans()
 
         let heavyPlan = try XCTUnwrap(plans.first { $0.symbol == "DecisionTree.decide" })
+        let mediumPlan = try XCTUnwrap(plans.first { $0.symbol == "ConditionNode.evaluate" })
         let lightPlan = try XCTUnwrap(plans.first { $0.symbol == "MutationPlanner.maybeShuffle" })
         let neverPlan = try XCTUnwrap(plans.first { $0.symbol == "direct_syscall.cprisk_direct_syscall0" })
         let regionPlan = try XCTUnwrap(plans.first { $0.symbol == "RiskDetectionEngine.evaluate" })
@@ -60,6 +65,10 @@ final class ControlFlowOrchestratorTests: XCTestCase {
         XCTAssertTrue(heavyPlan.antiDeobfuscationPlan.fakeStateReleaseOnlyEnabled)
         XCTAssertTrue(heavyPlan.antiDeobfuscationPlan.multiDispatcherEnabled)
         XCTAssertTrue(heavyPlan.antiDeobfuscationPlan.pass8CFFAwarenessEnabled)
+
+        XCTAssertEqual(mediumPlan.tier, .medium)
+        XCTAssertEqual(mediumPlan.antiDeobfuscationPlan.runtimeSaltMode, .advisory)
+        XCTAssertFalse(mediumPlan.antiDeobfuscationPlan.multiDispatcherEnabled)
 
         XCTAssertEqual(lightPlan.tier, .light)
         XCTAssertEqual(lightPlan.antiDeobfuscationPlan.runtimeSaltMode, .advisory)
@@ -83,6 +92,7 @@ final class ControlFlowOrchestratorTests: XCTestCase {
         let policy = FunctionCFFPolicy(
             version: 2,
             heavy: ["DecisionTree.decide"],
+            medium: [],
             light: [],
             never: [],
             regionOnly: [],
@@ -215,6 +225,44 @@ final class ControlFlowOrchestratorTests: XCTestCase {
         XCTAssertEqual(result.bytesModified, 0)
         XCTAssertTrue(result.details.contains(where: { $0.contains("skipped functions: 1") }))
         XCTAssertTrue(result.details.contains(where: { $0.contains("insufficient rewritable entry instructions") }))
+        XCTAssertNoThrow(try file.validateStructure())
+    }
+
+    /// When the switch-style dispatcher lands in a trailing NOP island, structural patches can fully
+    /// satisfy the per-function budget even if the prologue contains no neutral-decodable slots.
+    func testPass9StructuralPathOutsidePrologueCountsTowardBudget() throws {
+        let nop: UInt32 = 0xD503_201F
+        let filler: UInt32 = 0xFFFF_FFFF
+        var block = [UInt32](repeating: filler, count: 36)
+        block.append(contentsOf: [nop, nop, nop, nop])
+
+        let fixtureURL = try Self.writePass9Fixture(
+            named: "pass9_structural_only_deep",
+            symbols: [
+                ("_HeavyTarget.structuralDeep", 0x1800)
+            ],
+            functionBlocks: [block]
+        )
+        let policyURL = try Self.writePass9Policy(
+            named: "pass9_structural_only_deep",
+            heavy: ["HeavyTarget.structuralDeep"],
+            light: [],
+            never: [],
+            regionOnly: []
+        )
+        defer {
+            try? FileManager.default.removeItem(at: fixtureURL)
+            try? FileManager.default.removeItem(at: policyURL)
+        }
+
+        let file = try MachOFile(url: fixtureURL)
+        let result = try ControlFlowOrchestratorPass(policyFilePath: policyURL.path).execute(
+            on: file,
+            config: PassConfig(verbose: false)
+        )
+
+        XCTAssertGreaterThan(result.itemsProcessed, 0)
+        XCTAssertGreaterThan(result.bytesModified, 0)
         XCTAssertNoThrow(try file.validateStructure())
     }
 
@@ -594,6 +642,7 @@ final class ControlFlowOrchestratorTests: XCTestCase {
         let policy = FunctionCFFPolicy(
             version: 2,
             heavy: ["DecisionTree.decide"],
+            medium: [],
             light: ["DetectorRegistry.detectAll"],
             never: ["direct_syscall.cprisk_direct_syscall0"],
             regionOnly: [],
@@ -619,6 +668,7 @@ final class ControlFlowOrchestratorTests: XCTestCase {
     private static func writePass9Policy(
         named name: String,
         heavy: [String],
+        medium: [String] = [],
         light: [String],
         never: [String],
         regionOnly: [String],
@@ -631,6 +681,8 @@ final class ControlFlowOrchestratorTests: XCTestCase {
         functions:
           heavy:
         \(yamlList(heavy))
+          medium:
+        \(yamlList(medium))
           light:
         \(yamlList(light))
           never:

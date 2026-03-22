@@ -48,6 +48,10 @@ public struct StateEncodingPlan: Codable, Equatable, Sendable {
             style = (seed & 2) == 0 ? .addRotateXor : .affine
             releaseFakeStateCount = options.enableFakeStateReleaseOnly ? 1 : 0
             unexpectedStateBehavior = .failClosed
+        case .medium:
+            style = (seed & 3) == 0 ? .xorRotate : .addRotateXor
+            releaseFakeStateCount = 0
+            unexpectedStateBehavior = .failClosed
         case .light:
             style = .xorRotate
             releaseFakeStateCount = 0

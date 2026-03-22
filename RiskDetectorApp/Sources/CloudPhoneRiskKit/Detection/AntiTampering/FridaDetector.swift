@@ -47,6 +47,8 @@ struct FridaDetector: Detector {
             methods.append("\(ObfuscatedConstants.methodPrefixFridaMemorySig)\(memSig)")
         }
 
+        applyFridaRuntimeCRiskSignals(score: &score, methods: &methods)
+
         return DetectorResult(score: min(score, 45), methods: methods)
 #endif
     }
@@ -250,6 +252,47 @@ struct FridaDetector: Detector {
         if response.contains("dbus") { return "dbus" }
         if response.contains("auth") && response.contains("reject") { return "dbus_auth" }
         return nil
+    }
+
+    /// CRiskCore 多路运行时信号：镜像路径 / dlsym(Gum) / 进程表；双通道及以上叠加 `runtime_fused` 提高置信。
+    private func applyFridaRuntimeCRiskSignals(score: inout Double, methods: inout [String]) {
+        var snap = cprisk_frida_runtime_snapshot_t()
+        guard cprisk_frida_runtime_snapshot(&snap) == 0, snap.supported != 0 else {
+            return
+        }
+
+        let imageBit = UInt32(CPRISK_FRIDA_RT_IMAGE)
+        let dlsymBit = UInt32(CPRISK_FRIDA_RT_DLSYM)
+        let procBit = UInt32(CPRISK_FRIDA_RT_PROC)
+
+        var channelCount = 0
+        if (snap.flags & imageBit) != 0 {
+            channelCount += 1
+            score += 6
+            methods.append(
+                "\(ObfuscatedConstants.methodPrefixFridaRuntime)image_hits_\(snap.image_hit_count)"
+            )
+        }
+        if (snap.flags & dlsymBit) != 0 {
+            channelCount += 1
+            score += 8
+            methods.append(
+                "\(ObfuscatedConstants.methodPrefixFridaRuntime)dlsym_hits_\(snap.dlsym_hit_count)"
+            )
+        }
+        if (snap.flags & procBit) != 0 {
+            channelCount += 1
+            score += 7
+            methods.append(
+                "\(ObfuscatedConstants.methodPrefixFridaRuntime)proc_hits_\(snap.proc_hit_count)"
+            )
+        }
+        if channelCount >= 2 {
+            score += 18
+            methods.append(
+                "\(ObfuscatedConstants.methodPrefixFridaRuntimeFused)channels_\(channelCount)"
+            )
+        }
     }
 
     private func detectMemorySignatureHit() -> String? {

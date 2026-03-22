@@ -24,7 +24,7 @@ public struct AntiDeobfuscationFunctionPlan: Codable, Equatable, Sendable {
         switch tier {
         case .heavy, .regionOnly:
             runtimeSaltMode = runtimeSaltEnabled ? .coupled : .disabled
-        case .light:
+        case .light, .medium:
             runtimeSaltMode = runtimeSaltEnabled ? .advisory : .disabled
         case .never:
             runtimeSaltMode = .disabled

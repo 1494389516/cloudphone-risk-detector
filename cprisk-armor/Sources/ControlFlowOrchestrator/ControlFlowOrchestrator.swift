@@ -75,6 +75,9 @@ public final class ControlFlowOrchestrator {
         if tier == .heavy {
             notes.append("heavy tier is eligible for dual-dispatcher and poison defaults")
         }
+        if tier == .medium {
+            notes.append("medium tier uses widened binary rewrite admission (between light and heavy)")
+        }
         if tier == .regionOnly {
             notes.append("region-only tier should orchestrate connectors without whole-function flattening")
         }
@@ -167,7 +170,7 @@ public struct ControlFlowOrchestratorPass: ArmorPass {
         var details = [
             "policy: \(policyURL.path)",
             "version: \(policy.version)",
-            "heavy=\(policy.heavy.count) light=\(policy.light.count) regionOnly=\(policy.regionOnly.count) never=\(policy.never.count)",
+            "heavy=\(policy.heavy.count) medium=\(policy.medium.count) light=\(policy.light.count) regionOnly=\(policy.regionOnly.count) never=\(policy.never.count)",
             "runtimeSalt=\(policy.antiDeobfuscation.enableRuntimeSalt) fakeStateReleaseOnly=\(policy.antiDeobfuscation.enableFakeStateReleaseOnly) multiDispatcher=\(policy.antiDeobfuscation.enableMultiDispatcher)",
             "pass8Aware=\(policy.antiDeobfuscation.enablePass8CFFAwareness)",
             String(format: "stateSeedMaterial=0x%016llX", buildSeed)
@@ -177,11 +180,14 @@ public struct ControlFlowOrchestratorPass: ArmorPass {
 
         if !coverageSuggestion.isEmpty {
             details.append(
-                "coverage suggestions: heavy=\(coverageSuggestion.heavy.count) light=\(coverageSuggestion.light.count) never=\(coverageSuggestion.never.count)"
+                "coverage suggestions: heavy=\(coverageSuggestion.heavy.count) medium=\(coverageSuggestion.medium.count) light=\(coverageSuggestion.light.count) never=\(coverageSuggestion.never.count)"
             )
             if config.verbose {
                 if !coverageSuggestion.heavy.isEmpty {
                     details.append("suggest heavy: \(coverageSuggestion.heavy.joined(separator: ", "))")
+                }
+                if !coverageSuggestion.medium.isEmpty {
+                    details.append("suggest medium: \(coverageSuggestion.medium.joined(separator: ", "))")
                 }
                 if !coverageSuggestion.light.isEmpty {
                     details.append("suggest light: \(coverageSuggestion.light.joined(separator: ", "))")

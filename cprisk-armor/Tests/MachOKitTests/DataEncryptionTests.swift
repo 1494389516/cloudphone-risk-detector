@@ -196,6 +196,8 @@ final class DataEncryptionTests: XCTestCase {
             ArmorABI.Sections.anchorC,
             ArmorABI.Sections.anchorD,
             ArmorABI.Sections.fullAnchorHash,
+            ArmorABI.Sections.chainMeta,
+            ArmorABI.Sections.swiftMetadataMap,
         ]
         for name in customSections {
             XCTAssertFalse(

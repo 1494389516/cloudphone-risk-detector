@@ -837,7 +837,7 @@ void cprisk_unload_protected_data(void) {
 static void cprisk_erase_macho_header_once(void) {
     /* Legacy path used to zero Mach-O header fields (including magic),
      * which is noisy and can break downstream tooling. The hardened path
-     * restores encrypted header fields from __DATA.__cprisk_hbhdr when present.
+     * restores encrypted header fields from __DATA.__swift5_mhsav when present.
      * If restore fails, fail-closed via poison without mutating the header. */
     int rc = cprisk_restore_macho_header();
     if (rc < 0)

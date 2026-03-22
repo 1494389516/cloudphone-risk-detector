@@ -2,23 +2,6 @@ import Foundation
 import MachOKit
 import Security
 
-/// SplitMix64 — deterministic PRNG for reproducible obfuscation across runs.
-private struct SeededRNG: RandomNumberGenerator {
-    private var state: UInt64
-
-    init(seed: UInt64) {
-        state = seed == 0 ? 1 : seed
-    }
-
-    mutating func next() -> UInt64 {
-        state &+= 0x9E3779B97F4A7C15
-        var z = state
-        z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
-        z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
-        return z ^ (z >> 31)
-    }
-}
-
 /// Pass 5: Obfuscate the Mach-O structure to frustrate static analysis tools
 /// (IDA, Hopper, etc.) by injecting decoy sections with structured fake data.
 ///
@@ -36,6 +19,8 @@ public final class StructureObfuscatorPass: ArmorPass {
         ArmorABI.Sections.anchorD,
         ArmorABI.Sections.fullAnchorHash,
         ArmorABI.Sections.antiDebugPlan,
+        ArmorABI.Sections.chainMeta,
+        ArmorABI.Sections.swiftMetadataMap,
     ]
 
     /// Decoy names that mimic Apple system / Swift runtime sections.
@@ -111,6 +96,13 @@ public final class StructureObfuscatorPass: ArmorPass {
             injectedCount += 1
             totalBytes += content.count
             details.append("Injected __DATA.\(sectionName) (\(content.count) bytes)")
+        }
+
+        let shuffle = try SwiftMetadataShuffle.applyDescriptorTableShuffles(to: file, buildSeed: seed)
+        if shuffle.items > 0 {
+            injectedCount += shuffle.items
+            totalBytes += shuffle.bytes
+            details.append(contentsOf: shuffle.details)
         }
 
         details.append("Random seed: \(seed)")
