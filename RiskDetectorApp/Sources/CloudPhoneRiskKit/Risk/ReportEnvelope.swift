@@ -612,7 +612,7 @@ public protocol NonceReplayProtecting: AnyObject {
 
 public final class InMemoryNonceReplayStore: NonceReplayProtecting {
     private var storage: [String: Int64] = [:]
-    private let lock = NSLock()
+    private let lock = UnfairLock()
 
     public init() {}
 
@@ -620,18 +620,17 @@ public final class InMemoryNonceReplayStore: NonceReplayProtecting {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let key = "\(sessionToken):\(nonce)"
 
-        lock.lock()
-        defer { lock.unlock() }
+        return lock.withLock {
+            // 惰性清理过期项
+            storage = storage.filter { $0.value > now }
 
-        // 惰性清理过期项
-        storage = storage.filter { $0.value > now }
+            if storage[key] != nil {
+                return false
+            }
 
-        if storage[key] != nil {
-            return false
+            storage[key] = expiresAtMillis
+            return true
         }
-
-        storage[key] = expiresAtMillis
-        return true
     }
 }
 

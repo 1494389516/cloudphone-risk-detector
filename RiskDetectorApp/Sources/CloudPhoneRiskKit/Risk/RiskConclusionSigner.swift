@@ -158,7 +158,7 @@ private final class KeychainSalt {
     private let service = "CloudPhoneRiskKit"
     private let account = "device_key_salt"
     private let saltLength = 32
-    private let lock = NSLock()
+    private let lock = NSLock()  // NSLock: Keychain I/O inside lock
 
     func getOrCreate() -> String {
         getOrCreateWithPersistedFlag().0
@@ -166,28 +166,27 @@ private final class KeychainSalt {
 
     /// 返回 (salt, wasPersisted)：wasPersisted 为 true 表示从 Keychain 读取到已有 salt
     func getOrCreateWithPersistedFlag() -> (String, Bool) {
-        lock.lock()
-        defer { lock.unlock() }
+        return lock.withLock {
+            if let existing = read() { return (existing, true) }
 
-        if let existing = read() { return (existing, true) }
+            var bytes = [UInt8](repeating: 0, count: saltLength)
+            defer { secureZeroBytes(&bytes) }
+            var status = SecRandomCopyBytes(kSecRandomDefault, saltLength, &bytes)
+            if status != errSecSuccess {
+                status = SecRandomCopyBytes(kSecRandomDefault, saltLength, &bytes)
+            }
+            if status != errSecSuccess {
+                let fallback = "\(UUID().uuidString)\(mach_absolute_time())"
+                let hash = SHA256.hash(data: Data(fallback.utf8))
+                bytes = Array(hash.prefix(saltLength))
+            }
 
-        var bytes = [UInt8](repeating: 0, count: saltLength)
-        defer { secureZeroBytes(&bytes) }
-        var status = SecRandomCopyBytes(kSecRandomDefault, saltLength, &bytes)
-        if status != errSecSuccess {
-            status = SecRandomCopyBytes(kSecRandomDefault, saltLength, &bytes)
+            let hex = bytes.map { String(format: "%02x", $0) }.joined()
+            if let existing = save(hex) {
+                return (existing, true)
+            }
+            return (hex, false)
         }
-        if status != errSecSuccess {
-            let fallback = "\(UUID().uuidString)\(mach_absolute_time())"
-            let hash = SHA256.hash(data: Data(fallback.utf8))
-            bytes = Array(hash.prefix(saltLength))
-        }
-
-        let hex = bytes.map { String(format: "%02x", $0) }.joined()
-        if let existing = save(hex) {
-            return (existing, true)
-        }
-        return (hex, false)
     }
 
     private func read() -> String? {

@@ -38,12 +38,15 @@ public actor RiskEvaluationActor {
         config: CPRiskConfig = .default,
         scenario: RiskScenario = .default
     ) -> CPRiskReport {
-        // 限流检查
+        // 限流检查：连续快速调用超过阈值时返回缓存结果
         if let lastTime = lastEvaluationTime,
            Date().timeIntervalSince(lastTime) < rateLimitCooldown {
             consecutiveEvaluations += 1
             if consecutiveEvaluations > 10 {
                 Logger.warn("RiskEvaluationActor: rate limited — \(consecutiveEvaluations) rapid evaluations")
+                if let cached = lastVerdict {
+                    return cached
+                }
             }
         } else {
             consecutiveEvaluations = 0
@@ -51,7 +54,7 @@ public actor RiskEvaluationActor {
 
         lastEvaluationTime = Date()
 
-        // 代理到 CPRiskKit 的同步方法
+        // 代理到 CPRiskKit 的同步方法（CPRiskKit 内部有自己的锁保护）
         let report = CPRiskKit.shared.evaluate(config: config, scenario: scenario)
         lastVerdict = report
         return report

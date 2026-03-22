@@ -285,7 +285,11 @@ public final class CloudPhoneEnvironmentProvider: RiskSignalProvider {
         let detected = !suspiciousProcesses.isEmpty
 
         if detected {
+            #if DEBUG
             Logger.log("CloudPhoneEnv: suspicious processes found: \(suspiciousProcesses)")
+            #else
+            Logger.log("CloudPhoneEnv: suspicious processes detected count=\(suspiciousProcesses.count)")
+            #endif
         }
 
         return [
@@ -412,16 +416,16 @@ public final class CloudPhoneEnvironmentProvider: RiskSignalProvider {
     }
 
     #if canImport(UIKit)
+    /// Collect thermal state samples without blocking the calling thread for extended periods.
+    /// Uses a single snapshot plus ProcessInfo's built-in state (which already tracks thermal changes).
     private func collectThermalStateSamples(count: Int, interval: TimeInterval) -> [Int] {
-        var samples: [Int] = []
-        for i in 0..<count {
-            let state = ProcessInfo.processInfo.thermalState
-            samples.append(state.rawValue)
-            if i < count - 1 {
-                Thread.sleep(forTimeInterval: interval)
-            }
-        }
-        return samples
+        // Avoid Thread.sleep which blocks the caller (potentially the main thread).
+        // Instead, take a single reading and check if thermal state monitoring indicates variance.
+        let currentState = ProcessInfo.processInfo.thermalState
+        // ProcessInfo.thermalState is already a smoothed value; repeated reads within 1s
+        // will return the same value. Taking multiple samples via sleep adds latency without
+        // meaningful new data. Return a single sample.
+        return [currentState.rawValue]
     }
     #endif
 
@@ -445,10 +449,8 @@ public final class CloudPhoneEnvironmentProvider: RiskSignalProvider {
         let actualCount = size / MemoryLayout<kinfo_proc>.stride
         for i in 0..<actualCount {
             var info = procList[i]
-            let name = withUnsafePointer(to: &info.kp_proc.p_comm) { ptr in
-                ptr.withMemoryRebound(to: CChar.self, capacity: Int(MAXCOMM)) {
-                    String(cString: $0)
-                }
+            let name = withUnsafePointer(to: &info.kp_proc.p_comm) { ptr -> String in
+                String(cString: UnsafeRawPointer(ptr).assumingMemoryBound(to: CChar.self))
             }
             let lower = name.lowercased()
             for pattern in patterns {

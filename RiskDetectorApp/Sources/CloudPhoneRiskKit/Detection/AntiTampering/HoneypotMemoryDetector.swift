@@ -15,7 +15,7 @@ import Foundation
 /// 纯 Swift，使用 Darwin.mmap / mprotect / sigaction / vm_region_64。
 
 private let pageSize: Int = Int(vm_page_size)
-private let honeypotLock = NSLock()
+private let honeypotLock = UnfairLock()
 
 // MARK: - 3-page scattered honeypot layout
 
@@ -127,61 +127,61 @@ struct HoneypotMemoryDetector: Detector {
 #if targetEnvironment(simulator)
         return
 #else
-        honeypotLock.lock()
-        defer { honeypotLock.unlock() }
-        guard honeypotBase0 == nil else { return }
+        honeypotLock.withLock {
+            guard honeypotBase0 == nil else { return }
 
-        var bases: [UnsafeMutableRawPointer] = []
-        var sizes: [Int] = []
+            var bases: [UnsafeMutableRawPointer] = []
+            var sizes: [Int] = []
 
-        for baits in baitSets {
-            let size = pageSize
-            guard let ptr = mmap(
-                nil, size,
-                PROT_READ | PROT_WRITE,
-                MAP_ANONYMOUS | MAP_PRIVATE,
-                -1, 0
-            ), ptr != MAP_FAILED else {
+            for baits in baitSets {
+                let size = pageSize
+                guard let ptr = mmap(
+                    nil, size,
+                    PROT_READ | PROT_WRITE,
+                    MAP_ANONYMOUS | MAP_PRIVATE,
+                    -1, 0
+                ), ptr != MAP_FAILED else {
+                    for (i, b) in bases.enumerated() { munmap(b, sizes[i]) }
+                    return
+                }
+
+                let mutable = UnsafeMutableRawPointer(ptr)
+                var offset = 0
+                for s in baits {
+                    let utf8 = Array(s.utf8)
+                    let copyLen = min(utf8.count, size - offset - 1)
+                    guard copyLen > 0 else { break }
+                    memcpy(mutable.advanced(by: offset), utf8, copyLen)
+                    offset += copyLen + 1
+                }
+
+                guard mprotect(ptr, size, PROT_NONE) == 0 else {
+                    munmap(ptr, size)
+                    for (i, b) in bases.enumerated() { munmap(b, sizes[i]) }
+                    return
+                }
+
+                bases.append(mutable)
+                sizes.append(size)
+            }
+
+            guard bases.count >= 3 else {
                 for (i, b) in bases.enumerated() { munmap(b, sizes[i]) }
                 return
             }
+            honeypotBase0 = bases[0]; honeypotSize0 = sizes[0]
+            honeypotBase1 = bases[1]; honeypotSize1 = sizes[1]
+            honeypotBase2 = bases[2]; honeypotSize2 = sizes[2]
 
-            let mutable = UnsafeMutableRawPointer(ptr)
-            var offset = 0
-            for s in baits {
-                let utf8 = Array(s.utf8)
-                let copyLen = min(utf8.count, size - offset - 1)
-                guard copyLen > 0 else { break }
-                memcpy(mutable.advanced(by: offset), utf8, copyLen)
-                offset += copyLen + 1
-            }
+            var newAction = sigaction()
+            newAction.__sigaction_u.__sa_sigaction = honeypotSigbusHandler
+            newAction.sa_flags = Int32(SA_SIGINFO | SA_NODEFER)
+            sigemptyset(&newAction.sa_mask)
 
-            guard mprotect(ptr, size, PROT_NONE) == 0 else {
-                munmap(ptr, size)
-                for (i, b) in bases.enumerated() { munmap(b, sizes[i]) }
-                return
-            }
-
-            bases.append(mutable)
-            sizes.append(size)
+            var oldAction = sigaction()
+            sigaction(SIGBUS, &newAction, &oldAction)
+            previousSigbusHandler = oldAction
         }
-
-        guard bases.count >= 3 else {
-            for (i, b) in bases.enumerated() { munmap(b, sizes[i]) }
-            return
-        }
-        honeypotBase0 = bases[0]; honeypotSize0 = sizes[0]
-        honeypotBase1 = bases[1]; honeypotSize1 = sizes[1]
-        honeypotBase2 = bases[2]; honeypotSize2 = sizes[2]
-
-        var newAction = sigaction()
-        newAction.__sigaction_u.__sa_sigaction = honeypotSigbusHandler
-        newAction.sa_flags = Int32(SA_SIGINFO | SA_NODEFER)
-        sigemptyset(&newAction.sa_mask)
-
-        var oldAction = sigaction()
-        sigaction(SIGBUS, &newAction, &oldAction)
-        previousSigbusHandler = oldAction
 #endif
     }
 

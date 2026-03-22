@@ -10,7 +10,7 @@ public enum ConfigSignatureVerifier {
         public let reason: String?
     }
 
-    private static let lock = NSLock()
+    private static let lock = UnfairLock()
     private static let keychainService = "CloudPhoneRiskKit.ConfigSigning"
     private static let keychainAccount = "verification_key"
     private static let accessible = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
@@ -18,37 +18,35 @@ public enum ConfigSignatureVerifier {
     /// Configure with UTF-8 signing key. Returns false if keychain save failed; verify is only valid after true.
     @discardableResult
     public static func configure(serverSigningKey: String) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        var keyData = Data(serverSigningKey.utf8)
-        defer { secureZeroData(&keyData) }
-        let hashed = SHA256.hash(data: keyData)
-        let keyBytes = Data(hashed)
-        guard saveKeyToKeychain(keyBytes) else {
-            Logger.log("ConfigSignatureVerifier.configure(serverSigningKey): keychain save failed")
-            return false
+        lock.withLock {
+            var keyData = Data(serverSigningKey.utf8)
+            defer { secureZeroData(&keyData) }
+            let hashed = SHA256.hash(data: keyData)
+            let keyBytes = Data(hashed)
+            guard saveKeyToKeychain(keyBytes) else {
+                Logger.log("ConfigSignatureVerifier.configure(serverSigningKey): keychain save failed")
+                return false
+            }
+            return true
         }
-        return true
     }
 
     /// Configure with raw key data. Returns false if keychain save failed; verify is only valid after true.
     @discardableResult
     public static func configure(serverSigningKeyData: Data) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        var keyData = serverSigningKeyData
-        defer { secureZeroData(&keyData) }
-        guard saveKeyToKeychain(keyData) else {
-            Logger.log("ConfigSignatureVerifier.configure(serverSigningKeyData): keychain save failed")
-            return false
+        lock.withLock {
+            var keyData = serverSigningKeyData
+            defer { secureZeroData(&keyData) }
+            guard saveKeyToKeychain(keyData) else {
+                Logger.log("ConfigSignatureVerifier.configure(serverSigningKeyData): keychain save failed")
+                return false
+            }
+            return true
         }
-        return true
     }
 
     public static var isConfigured: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return keychainHasKey()
+        lock.withLock { keychainHasKey() }
     }
 
     public static var isConfiguredForDebug: Bool {
@@ -70,15 +68,13 @@ public enum ConfigSignatureVerifier {
         }
 
         // 回退到 HMAC-SHA256 对称验签（兼容旧配置）
-        lock.lock()
-        guard let keyBytes = readKeyFromKeychain() else {
-            lock.unlock()
+        let keyBytes: Data? = lock.withLock { readKeyFromKeychain() }
+        guard let keyBytes else {
             #if DEBUG
             Logger.log("⚠️ ConfigSignatureVerifier.verify: not configured in DEBUG — returning isValid=false. Use isConfiguredForDebug to check setup.")
             #endif
             return VerificationResult(isValid: false, reason: "verification_not_configured")
         }
-        lock.unlock()
 
         var mutableKeyBytes = keyBytes
         defer { secureZeroData(&mutableKeyBytes) }
@@ -104,18 +100,18 @@ public enum ConfigSignatureVerifier {
     /// 配置 Ed25519 公钥用于配置签名验证（推荐：SDK 仅持有公钥，无法伪造配置）
     @discardableResult
     public static func configureEd25519PublicKey(_ publicKeyBytes: Data) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        guard publicKeyBytes.count == 32 else {
-            Logger.log("ConfigSignatureVerifier.configureEd25519: invalid key size \(publicKeyBytes.count), expected 32")
-            return false
+        lock.withLock {
+            guard publicKeyBytes.count == 32 else {
+                Logger.log("ConfigSignatureVerifier.configureEd25519: invalid key size \(publicKeyBytes.count), expected 32")
+                return false
+            }
+            // 验证公钥格式合法性
+            guard (try? Curve25519.Signing.PublicKey(rawRepresentation: publicKeyBytes)) != nil else {
+                Logger.log("ConfigSignatureVerifier.configureEd25519: invalid Ed25519 public key format")
+                return false
+            }
+            return saveToKeychain(publicKeyBytes, account: ed25519KeychainAccount)
         }
-        // 验证公钥格式合法性
-        guard (try? Curve25519.Signing.PublicKey(rawRepresentation: publicKeyBytes)) != nil else {
-            Logger.log("ConfigSignatureVerifier.configureEd25519: invalid Ed25519 public key format")
-            return false
-        }
-        return saveToKeychain(publicKeyBytes, account: ed25519KeychainAccount)
     }
 
     /// 配置 Ed25519 公钥（hex 编码）
@@ -129,18 +125,14 @@ public enum ConfigSignatureVerifier {
     }
 
     public static var isEd25519Configured: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return readFromKeychain(account: ed25519KeychainAccount) != nil
+        lock.withLock { readFromKeychain(account: ed25519KeychainAccount) != nil }
     }
 
     private static func verifyEd25519(payload: Data, signatureHex: String) -> VerificationResult? {
-        lock.lock()
-        guard let pubKeyBytes = readFromKeychain(account: ed25519KeychainAccount) else {
-            lock.unlock()
+        let pubKeyBytes: Data? = lock.withLock { readFromKeychain(account: ed25519KeychainAccount) }
+        guard let pubKeyBytes else {
             return nil // Ed25519 未配置，回退到 HMAC
         }
-        lock.unlock()
 
         guard let signatureData = Data(hexString: signatureHex) else {
             return VerificationResult(isValid: false, reason: "invalid_signature_format")

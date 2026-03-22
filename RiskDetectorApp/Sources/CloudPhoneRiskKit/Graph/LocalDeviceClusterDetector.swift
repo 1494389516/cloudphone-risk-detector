@@ -29,7 +29,7 @@ public final class LocalDeviceClusterDetector: @unchecked Sendable {
 
     /// key: IP 或 sessionId，value: [(hwProfileHash, timestamp)]
     private var cache: [String: [Entry]] = [:]
-    private let lock = NSLock()
+    private let lock = UnfairLock()
 
     private init() {}
 
@@ -45,49 +45,46 @@ public final class LocalDeviceClusterDetector: @unchecked Sendable {
         guard let k = key, !k.isEmpty else { return nil }
         guard !hwProfileHash.isEmpty else { return nil }
 
-        lock.lock()
-        defer { lock.unlock() }
+        return lock.withLock {
+            let now = Date().timeIntervalSince1970
+            let cutoff = now - Self.timeWindowSeconds
 
-        let now = Date().timeIntervalSince1970
-        let cutoff = now - Self.timeWindowSeconds
+            var entries = cache[k] ?? []
+            entries.append(Entry(hwProfileHash: hwProfileHash, timestamp: now))
 
-        var entries = cache[k] ?? []
-        entries.append(Entry(hwProfileHash: hwProfileHash, timestamp: now))
+            // 清理过期
+            entries = entries.filter { $0.timestamp > cutoff }
 
-        // 清理过期
-        entries = entries.filter { $0.timestamp > cutoff }
+            // 限制历史长度
+            if entries.count > Self.maxHistoryCount {
+                entries = Array(entries.suffix(Self.maxHistoryCount))
+            }
 
-        // 限制历史长度
-        if entries.count > Self.maxHistoryCount {
-            entries = Array(entries.suffix(Self.maxHistoryCount))
+            cache[k] = entries
+
+            let distinctHashes = Set(entries.map(\.hwProfileHash))
+            if distinctHashes.count >= Self.clusterThreshold {
+                return RiskSignal(
+                    id: "local_device_cluster",
+                    category: "server",
+                    score: 12,
+                    evidence: [
+                        "key": k,
+                        "distinct_devices": "\(distinctHashes.count)",
+                        "window_seconds": "\(Int(Self.timeWindowSeconds))"
+                    ],
+                    state: .soft(confidence: min(1.0, Double(distinctHashes.count) / 10.0)),
+                    layer: 4,
+                    weightHint: 55
+                )
+            }
+
+            return nil
         }
-
-        cache[k] = entries
-
-        let distinctHashes = Set(entries.map(\.hwProfileHash))
-        if distinctHashes.count >= Self.clusterThreshold {
-            return RiskSignal(
-                id: "local_device_cluster",
-                category: "server",
-                score: 12,
-                evidence: [
-                    "key": k,
-                    "distinct_devices": "\(distinctHashes.count)",
-                    "window_seconds": "\(Int(Self.timeWindowSeconds))"
-                ],
-                state: .soft(confidence: min(1.0, Double(distinctHashes.count) / 10.0)),
-                layer: 4,
-                weightHint: 55
-            )
-        }
-
-        return nil
     }
 
     /// 清空缓存（如用户登出时调用，降低内存驻留）
     public func clear() {
-        lock.lock()
-        cache.removeAll()
-        lock.unlock()
+        lock.withLock { cache.removeAll() }
     }
 }

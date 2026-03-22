@@ -47,7 +47,7 @@ public final class ChallengeSession: @unchecked Sendable {
 
     // MARK: - 状态
 
-    private let lock = NSLock()
+    private let lock = UnfairLock()
     private var _state: ChallengeSessionState = .idle
     private var _currentChallengeId: String?
     private var _submittedChallengeIds: Set<String> = []
@@ -57,39 +57,29 @@ public final class ChallengeSession: @unchecked Sendable {
 
     /// 当前状态
     public var state: ChallengeSessionState {
-        lock.lock()
-        defer { lock.unlock() }
-        return _state
+        lock.withLock { _state }
     }
 
     /// 当前绑定的 challengeId（与 session 一一对应）
     public var currentChallengeId: String? {
-        lock.lock()
-        defer { lock.unlock() }
-        return _currentChallengeId
+        lock.withLock { _currentChallengeId }
     }
 
     /// 已提交的 challengeId 集合（防重放：每个 challengeId 只能提交一次）
     public var submittedChallengeIds: Set<String> {
-        lock.lock()
-        defer { lock.unlock() }
-        return _submittedChallengeIds
+        lock.withLock { _submittedChallengeIds }
     }
 
     /// 下一轮挑战（服务端通过 nextChallenge 下发，用于多轮递进）
     /// 第一轮：轻量探针（GPU 渲染、传感器熵）
     /// 第二轮：重量级探针（内存完整性、代码签名验证）
     public var nextChallenge: ChallengeTrigger.BlindChallenge? {
-        lock.lock()
-        defer { lock.unlock() }
-        return _nextChallenge
+        lock.withLock { _nextChallenge }
     }
 
     /// 探针执行状态（超时/不支持时上报）
     public var executionStatus: ChallengeExecutionStatus {
-        lock.lock()
-        defer { lock.unlock() }
-        return _executionStatus
+        lock.withLock { _executionStatus }
     }
 
     // MARK: - 合法状态转换
@@ -118,111 +108,109 @@ public final class ChallengeSession: @unchecked Sendable {
     /// - Returns: 是否转换成功
     @discardableResult
     public func transition(to target: ChallengeSessionState) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
+        lock.withLock {
+            let salt = ChallengeSessionCFF.salt(
+                state: _state,
+                currentChallengeId: _currentChallengeId,
+                executionStatus: _executionStatus,
+                submittedCount: _submittedChallengeIds.count,
+                extraStrings: [target.rawValue]
+            )
+            let seed: UInt32 = 0x1D4F29B7
+            let entryState: UInt32 = 0x11
+            let validateState: UInt32 = 0x12
+            let rejectState: UInt32 = 0x13
+            let commitState: UInt32 = 0x14
 
-        let salt = ChallengeSessionCFF.salt(
-            state: _state,
-            currentChallengeId: _currentChallengeId,
-            executionStatus: _executionStatus,
-            submittedCount: _submittedChallengeIds.count,
-            extraStrings: [target.rawValue]
-        )
-        let seed: UInt32 = 0x1D4F29B7
-        let entryState: UInt32 = 0x11
-        let validateState: UInt32 = 0x12
-        let rejectState: UInt32 = 0x13
-        let commitState: UInt32 = 0x14
+            var sink = CFFReturnSink<Bool>()
+            var encodedState = CFFStateCodec.encode(entryState, seed: seed, salt: salt)
 
-        var sink = CFFReturnSink<Bool>()
-        var encodedState = CFFStateCodec.encode(entryState, seed: seed, salt: salt)
+            while !sink.isResolved {
+                let decodedState = CFFStateCodec.decode(encodedState, seed: seed, salt: salt)
 
-        while !sink.isResolved {
-            let decodedState = CFFStateCodec.decode(encodedState, seed: seed, salt: salt)
-
-            if decodedState == entryState {
-                encodedState = CFFStateCodec.encode(validateState, seed: seed, salt: salt)
-            } else if decodedState == validateState {
-                let allowed = Self.validTransitions[_state]?.contains(target) ?? false
-                encodedState = CFFStateCodec.encode(allowed ? commitState : rejectState, seed: seed, salt: salt)
-            } else if decodedState == rejectState {
-                #if DEBUG
-                Logger.log("ChallengeSession.transition rejected: \(_state.rawValue) -> \(target.rawValue)")
-                #endif
-                sink.store(false)
-            } else if decodedState == commitState {
-                _state = target
-                #if DEBUG
-                Logger.log("ChallengeSession.transition: \(target.rawValue)")
-                #endif
-                sink.store(true)
-            } else {
-                sink.store(false)
+                if decodedState == entryState {
+                    encodedState = CFFStateCodec.encode(validateState, seed: seed, salt: salt)
+                } else if decodedState == validateState {
+                    let allowed = Self.validTransitions[_state]?.contains(target) ?? false
+                    encodedState = CFFStateCodec.encode(allowed ? commitState : rejectState, seed: seed, salt: salt)
+                } else if decodedState == rejectState {
+                    #if DEBUG
+                    Logger.log("ChallengeSession.transition rejected: \(_state.rawValue) -> \(target.rawValue)")
+                    #endif
+                    sink.store(false)
+                } else if decodedState == commitState {
+                    _state = target
+                    #if DEBUG
+                    Logger.log("ChallengeSession.transition: \(target.rawValue)")
+                    #endif
+                    sink.store(true)
+                } else {
+                    sink.store(false)
+                }
             }
-        }
 
-        return sink.resolve(or: false)
+            return sink.resolve(or: false)
+        }
     }
 
     /// 推进到下一合法状态（按预设流转顺序）
     /// - Returns: 是否推进成功
     @discardableResult
     public func advance() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
+        lock.withLock {
+            let salt = ChallengeSessionCFF.salt(
+                state: _state,
+                currentChallengeId: _currentChallengeId,
+                executionStatus: _executionStatus,
+                submittedCount: _submittedChallengeIds.count
+            )
+            let seed: UInt32 = 0x6B7A3E19
+            let entryState: UInt32 = 0x21
+            let classifyState: UInt32 = 0x22
+            let commitState: UInt32 = 0x23
 
-        let salt = ChallengeSessionCFF.salt(
-            state: _state,
-            currentChallengeId: _currentChallengeId,
-            executionStatus: _executionStatus,
-            submittedCount: _submittedChallengeIds.count
-        )
-        let seed: UInt32 = 0x6B7A3E19
-        let entryState: UInt32 = 0x21
-        let classifyState: UInt32 = 0x22
-        let commitState: UInt32 = 0x23
+            var sink = CFFReturnSink<Bool>()
+            var encodedState = CFFStateCodec.encode(entryState, seed: seed, salt: salt)
+            var nextState: ChallengeSessionState?
 
-        var sink = CFFReturnSink<Bool>()
-        var encodedState = CFFStateCodec.encode(entryState, seed: seed, salt: salt)
-        var nextState: ChallengeSessionState?
-
-        while !sink.isResolved {
-            switch CFFStateCodec.decode(encodedState, seed: seed, salt: salt) {
-            case entryState:
-                encodedState = CFFStateCodec.encode(classifyState, seed: seed, salt: salt)
-            case classifyState:
-                switch _state {
-                case .idle:
-                    nextState = .issued
-                case .issued:
-                    nextState = .executing
-                case .executing:
-                    nextState = .submitted
-                case .submitted:
-                    nextState = nil
-                case .verified, .failed:
-                    nextState = .closed
-                case .closed:
-                    nextState = nil
-                }
-                if nextState != nil {
-                    encodedState = CFFStateCodec.encode(commitState, seed: seed, salt: salt)
-                } else {
+            while !sink.isResolved {
+                switch CFFStateCodec.decode(encodedState, seed: seed, salt: salt) {
+                case entryState:
+                    encodedState = CFFStateCodec.encode(classifyState, seed: seed, salt: salt)
+                case classifyState:
+                    switch _state {
+                    case .idle:
+                        nextState = .issued
+                    case .issued:
+                        nextState = .executing
+                    case .executing:
+                        nextState = .submitted
+                    case .submitted:
+                        nextState = nil
+                    case .verified, .failed:
+                        nextState = .closed
+                    case .closed:
+                        nextState = nil
+                    }
+                    if nextState != nil {
+                        encodedState = CFFStateCodec.encode(commitState, seed: seed, salt: salt)
+                    } else {
+                        sink.store(false)
+                    }
+                case commitState:
+                    if let nextState {
+                        _state = nextState
+                        sink.store(true)
+                    } else {
+                        sink.store(false)
+                    }
+                default:
                     sink.store(false)
                 }
-            case commitState:
-                if let nextState {
-                    _state = nextState
-                    sink.store(true)
-                } else {
-                    sink.store(false)
-                }
-            default:
-                sink.store(false)
             }
-        }
 
-        return sink.resolve(or: false)
+            return sink.resolve(or: false)
+        }
     }
 
     // MARK: - 业务方法
@@ -232,62 +220,57 @@ public final class ChallengeSession: @unchecked Sendable {
     /// - Returns: 是否成功（需从 idle 转换）
     @discardableResult
     public func bindChallenge(_ challenge: ChallengeTrigger.BlindChallenge) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
+        lock.withLock {
+            let salt = ChallengeSessionCFF.salt(
+                state: _state,
+                currentChallengeId: _currentChallengeId,
+                executionStatus: _executionStatus,
+                submittedCount: _submittedChallengeIds.count,
+                extraStrings: [challenge.challengeId, challenge.seed],
+                extraWords: [UInt64(challenge.probeIds.count), UInt64(bitPattern: challenge.expiresAt)]
+            )
+            let seed: UInt32 = 0x54A73C91
+            let entryState: UInt32 = 0x31
+            let validateState: UInt32 = 0x32
+            let commitState: UInt32 = 0x33
+            let rejectState: UInt32 = 0x34
 
-        let salt = ChallengeSessionCFF.salt(
-            state: _state,
-            currentChallengeId: _currentChallengeId,
-            executionStatus: _executionStatus,
-            submittedCount: _submittedChallengeIds.count,
-            extraStrings: [challenge.challengeId, challenge.seed],
-            extraWords: [UInt64(challenge.probeIds.count), UInt64(bitPattern: challenge.expiresAt)]
-        )
-        let seed: UInt32 = 0x54A73C91
-        let entryState: UInt32 = 0x31
-        let validateState: UInt32 = 0x32
-        let commitState: UInt32 = 0x33
-        let rejectState: UInt32 = 0x34
+            var sink = CFFReturnSink<Bool>()
+            var encodedState = CFFStateCodec.encode(entryState, seed: seed, salt: salt)
 
-        var sink = CFFReturnSink<Bool>()
-        var encodedState = CFFStateCodec.encode(entryState, seed: seed, salt: salt)
+            while !sink.isResolved {
+                let decodedState = CFFStateCodec.decode(encodedState, seed: seed, salt: salt)
 
-        while !sink.isResolved {
-            let decodedState = CFFStateCodec.decode(encodedState, seed: seed, salt: salt)
-
-            if decodedState == entryState {
-                encodedState = CFFStateCodec.encode(validateState, seed: seed, salt: salt)
-            } else if decodedState == validateState {
-                encodedState = CFFStateCodec.encode(_state == .idle ? commitState : rejectState, seed: seed, salt: salt)
-            } else if decodedState == commitState {
-                _currentChallengeId = challenge.challengeId
-                _state = .issued
-                sink.store(true)
-            } else if decodedState == rejectState {
-                #if DEBUG
-                Logger.log("ChallengeSession.bindChallenge rejected: state=\(_state.rawValue)")
-                #endif
-                sink.store(false)
-            } else {
-                sink.store(false)
+                if decodedState == entryState {
+                    encodedState = CFFStateCodec.encode(validateState, seed: seed, salt: salt)
+                } else if decodedState == validateState {
+                    encodedState = CFFStateCodec.encode(_state == .idle ? commitState : rejectState, seed: seed, salt: salt)
+                } else if decodedState == commitState {
+                    _currentChallengeId = challenge.challengeId
+                    _state = .issued
+                    sink.store(true)
+                } else if decodedState == rejectState {
+                    #if DEBUG
+                    Logger.log("ChallengeSession.bindChallenge rejected: state=\(_state.rawValue)")
+                    #endif
+                    sink.store(false)
+                } else {
+                    sink.store(false)
+                }
             }
-        }
 
-        return sink.resolve(or: false)
+            return sink.resolve(or: false)
+        }
     }
 
     /// 检查 challengeId 是否与当前 session 绑定一致
     public func isChallengeIdBound(_ challengeId: String) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return _currentChallengeId == challengeId
+        lock.withLock { _currentChallengeId == challengeId }
     }
 
     /// 检查 challengeId 是否已提交（防重放）
     public func hasSubmitted(_ challengeId: String) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return _submittedChallengeIds.contains(challengeId)
+        lock.withLock { _submittedChallengeIds.contains(challengeId) }
     }
 
     /// 标记 challengeId 已提交（防重放：每个 challengeId 只能提交一次）
@@ -295,83 +278,78 @@ public final class ChallengeSession: @unchecked Sendable {
     /// - Returns: 是否成功（未重复提交）
     @discardableResult
     public func markSubmitted(_ challengeId: String) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
+        lock.withLock {
+            let salt = ChallengeSessionCFF.salt(
+                state: _state,
+                currentChallengeId: _currentChallengeId,
+                executionStatus: _executionStatus,
+                submittedCount: _submittedChallengeIds.count,
+                extraStrings: [challengeId]
+            )
+            let seed: UInt32 = 0x7C92E40D
+            let entryState: UInt32 = 0x41
+            let replayCheckState: UInt32 = 0x42
+            let insertState: UInt32 = 0x43
+            let rejectState: UInt32 = 0x44
 
-        let salt = ChallengeSessionCFF.salt(
-            state: _state,
-            currentChallengeId: _currentChallengeId,
-            executionStatus: _executionStatus,
-            submittedCount: _submittedChallengeIds.count,
-            extraStrings: [challengeId]
-        )
-        let seed: UInt32 = 0x7C92E40D
-        let entryState: UInt32 = 0x41
-        let replayCheckState: UInt32 = 0x42
-        let insertState: UInt32 = 0x43
-        let rejectState: UInt32 = 0x44
+            var sink = CFFReturnSink<Bool>()
+            var encodedState = CFFStateCodec.encode(entryState, seed: seed, salt: salt)
 
-        var sink = CFFReturnSink<Bool>()
-        var encodedState = CFFStateCodec.encode(entryState, seed: seed, salt: salt)
-
-        while !sink.isResolved {
-            switch CFFStateCodec.decode(encodedState, seed: seed, salt: salt) {
-            case entryState:
-                encodedState = CFFStateCodec.encode(replayCheckState, seed: seed, salt: salt)
-            case replayCheckState:
-                let nextState = _submittedChallengeIds.contains(challengeId) ? rejectState : insertState
-                encodedState = CFFStateCodec.encode(nextState, seed: seed, salt: salt)
-            case insertState:
-                _submittedChallengeIds.insert(challengeId)
-                sink.store(true)
-            case rejectState:
-                #if DEBUG
-                Logger.log("ChallengeSession.markSubmitted rejected: challengeId=\(challengeId) already submitted (replay)")
-                #endif
-                sink.store(false)
-            default:
-                sink.store(false)
+            while !sink.isResolved {
+                switch CFFStateCodec.decode(encodedState, seed: seed, salt: salt) {
+                case entryState:
+                    encodedState = CFFStateCodec.encode(replayCheckState, seed: seed, salt: salt)
+                case replayCheckState:
+                    let nextState = _submittedChallengeIds.contains(challengeId) ? rejectState : insertState
+                    encodedState = CFFStateCodec.encode(nextState, seed: seed, salt: salt)
+                case insertState:
+                    _submittedChallengeIds.insert(challengeId)
+                    sink.store(true)
+                case rejectState:
+                    #if DEBUG
+                    Logger.log("ChallengeSession.markSubmitted rejected: challengeId=\(challengeId) already submitted (replay)")
+                    #endif
+                    sink.store(false)
+                default:
+                    sink.store(false)
+                }
             }
-        }
 
-        return sink.resolve(or: false)
+            return sink.resolve(or: false)
+        }
     }
 
     /// 设置下一轮挑战（服务端下发）
     public func setNextChallenge(_ challenge: ChallengeTrigger.BlindChallenge?) {
-        lock.lock()
-        defer { lock.unlock() }
-        _nextChallenge = challenge
+        lock.withLock { _nextChallenge = challenge }
     }
 
     /// 设置探针执行状态（超时/不支持时调用）
     public func setExecutionStatus(_ status: ChallengeExecutionStatus) {
-        lock.lock()
-        defer { lock.unlock() }
-        _executionStatus = status
+        lock.withLock { _executionStatus = status }
     }
 
     /// 重置 session 到 idle（用于新一轮）
     public func reset() {
-        lock.lock()
-        defer { lock.unlock() }
-        _state = .idle
-        _currentChallengeId = nil
-        _nextChallenge = nil
-        _executionStatus = .completed
-        // 保留 _submittedChallengeIds 以持续防重放
+        lock.withLock {
+            _state = .idle
+            _currentChallengeId = nil
+            _nextChallenge = nil
+            _executionStatus = .completed
+            // 保留 _submittedChallengeIds 以持续防重放
+        }
     }
 
     /// 完全清空（包括已提交记录和 challenge key，慎用）
     public func clearAll() {
-        lock.lock()
-        defer { lock.unlock() }
-        _state = .idle
-        _currentChallengeId = nil
-        _submittedChallengeIds.removeAll()
-        _nextChallenge = nil
-        _executionStatus = .completed
-        _challengeKey = nil
+        lock.withLock {
+            _state = .idle
+            _currentChallengeId = nil
+            _submittedChallengeIds.removeAll()
+            _nextChallenge = nil
+            _executionStatus = .completed
+            _challengeKey = nil
+        }
     }
 }
 
@@ -414,17 +392,13 @@ public struct ChallengeVerificationResult: Codable, Sendable {
 extension ChallengeSession {
     /// Configure the HMAC key used to verify `ChallengeVerificationResult`.
     public func configureChallengeKey(_ key: Data) {
-        lock.lock()
-        defer { lock.unlock() }
-        _challengeKey = SymmetricKey(data: key)
+        lock.withLock { _challengeKey = SymmetricKey(data: key) }
     }
 
     /// Verify the HMAC on a `ChallengeVerificationResult`.
     /// Returns a `challenge_hmac_mismatch` signal if verification fails, or nil on success / no key configured.
     public func verifyResult(_ result: ChallengeVerificationResult) -> RiskSignal? {
-        lock.lock()
-        let key = _challengeKey
-        lock.unlock()
+        let key: SymmetricKey? = lock.withLock { _challengeKey }
 
         guard let key else { return nil }
 

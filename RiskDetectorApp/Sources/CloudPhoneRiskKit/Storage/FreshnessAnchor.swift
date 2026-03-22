@@ -22,76 +22,73 @@ final class FreshnessAnchor {
     private let service = "CloudPhoneRiskKit.FreshnessAnchor"
     private let account: String
     private let accessible = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-    private let lock = NSLock()
+    private let lock = NSLock()  // NSLock: Keychain I/O inside lock
 
     init(account: String) {
         self.account = account
     }
 
     func read() -> FreshnessState? {
-        lock.lock()
-        defer { lock.unlock() }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecAttrAccessible as String: accessible,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess, let data = item as? Data else {
-            return nil
+        lock.withLock {
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: account,
+                kSecAttrAccessible as String: accessible,
+                kSecReturnData as String: true,
+                kSecMatchLimit as String: kSecMatchLimitOne,
+            ]
+            var item: CFTypeRef?
+            let status = SecItemCopyMatching(query as CFDictionary, &item)
+            guard status == errSecSuccess, let data = item as? Data else {
+                return nil
+            }
+            return try? JSONDecoder().decode(FreshnessState.self, from: data)
         }
-        return try? JSONDecoder().decode(FreshnessState.self, from: data)
     }
 
     func write(_ state: FreshnessState) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
+        lock.withLock {
+            guard let data = try? JSONEncoder().encode(state) else {
+                return false
+            }
 
-        guard let data = try? JSONEncoder().encode(state) else {
-            return false
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: account,
+            ]
+            let attributes: [String: Any] = [
+                kSecValueData as String: data,
+                kSecAttrAccessible as String: accessible,
+            ]
+
+            let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+            if updateStatus == errSecSuccess {
+                return true
+            }
+            if updateStatus != errSecItemNotFound {
+                return false
+            }
+
+            var addQuery = query
+            addQuery[kSecValueData as String] = data
+            addQuery[kSecAttrAccessible as String] = accessible
+            return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
         }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        let attributes: [String: Any] = [
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: accessible,
-        ]
-
-        let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        if updateStatus == errSecSuccess {
-            return true
-        }
-        if updateStatus != errSecItemNotFound {
-            return false
-        }
-
-        var addQuery = query
-        addQuery[kSecValueData as String] = data
-        addQuery[kSecAttrAccessible as String] = accessible
-        return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
     }
 
     func remove() {
-        lock.lock()
-        defer { lock.unlock() }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        let status = SecItemDelete(query as CFDictionary)
-        if status != errSecSuccess && status != errSecItemNotFound {
-            Logger.log("FreshnessAnchor: SecItemDelete failed with status \(status)")
+        lock.withLock {
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: account,
+            ]
+            let status = SecItemDelete(query as CFDictionary)
+            if status != errSecSuccess && status != errSecItemNotFound {
+                Logger.log("FreshnessAnchor: SecItemDelete failed with status \(status)")
+            }
         }
     }
 }

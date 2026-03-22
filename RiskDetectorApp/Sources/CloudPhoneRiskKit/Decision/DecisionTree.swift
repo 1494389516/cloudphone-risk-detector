@@ -277,53 +277,56 @@ extension ConditionExpression {
 }
 
 private final class CustomEvaluatorRegistry: @unchecked Sendable {
-    private let lock = NSLock()
+    private let lock = UnfairLock()
     private var evaluators: [String: (EvaluationContext) -> Bool] = [:]
     private var isSealed = false
 
     func register(id: String, evaluator: @escaping (EvaluationContext) -> Bool) {
-        lock.lock()
-        if isSealed {
-            lock.unlock()
-            Logger.log("CustomEvaluatorRegistry.register rejected (sealed): \(id)")
-            return
+        let rejected = lock.withLock { () -> Bool in
+            if isSealed {
+                return true
+            }
+            evaluators[id] = evaluator
+            return false
         }
-        evaluators[id] = evaluator
-        lock.unlock()
+        if rejected {
+            Logger.log("CustomEvaluatorRegistry.register rejected (sealed): \(id)")
+        }
     }
 
     func unregister(id: String) {
-        lock.lock()
-        if isSealed {
-            lock.unlock()
-            Logger.log("CustomEvaluatorRegistry.unregister rejected (sealed): \(id)")
-            return
+        let rejected = lock.withLock { () -> Bool in
+            if isSealed {
+                return true
+            }
+            evaluators.removeValue(forKey: id)
+            return false
         }
-        evaluators.removeValue(forKey: id)
-        lock.unlock()
+        if rejected {
+            Logger.log("CustomEvaluatorRegistry.unregister rejected (sealed): \(id)")
+        }
     }
 
     func seal() {
-        lock.lock()
-        isSealed = true
-        lock.unlock()
+        lock.withLock {
+            isSealed = true
+        }
         Logger.log("CustomEvaluatorRegistry.sealed")
     }
 
 #if DEBUG
     func unsealForTesting() {
-        lock.lock()
-        isSealed = false
-        evaluators.removeAll()
-        lock.unlock()
+        lock.withLock {
+            isSealed = false
+            evaluators.removeAll()
+        }
     }
 #endif
 
     func evaluate(id: String, context: EvaluationContext) -> Bool {
-        let evaluatorCopy: ((EvaluationContext) -> Bool)?
-        lock.lock()
-        evaluatorCopy = evaluators[id]
-        lock.unlock()
+        let evaluatorCopy: ((EvaluationContext) -> Bool)? = lock.withLock {
+            evaluators[id]
+        }
         return evaluatorCopy?(context) ?? false
     }
 }

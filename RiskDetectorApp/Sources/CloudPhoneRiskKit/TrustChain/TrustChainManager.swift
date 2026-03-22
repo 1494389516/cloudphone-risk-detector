@@ -85,7 +85,7 @@ public struct KeyRotationPolicy: Codable, Sendable {
 public enum TrustChainManager {
 
     private static let sessionKeyInfo = Data("CloudPhoneRiskKit.SessionKey.v1".utf8)
-    private static let lock = NSLock()
+    private static let lock = UnfairLock()
     private static var lastAttestationCheck: TimeInterval = 0
     private static let attestationCheckInterval: TimeInterval = 3600
 
@@ -357,9 +357,7 @@ public enum TrustChainManager {
     /// 检查是否需要 re-attestation
     /// 当前实现：基于时间间隔的简单检查；完整实现需服务端下发 challenge
     public static func shouldRefreshAttestation() -> Bool {
-        lock.lock()
-        let last = lastAttestationCheck
-        lock.unlock()
+        let last: TimeInterval = lock.withLock { lastAttestationCheck }
 
         let cffSalt = TrustChainCFF.salt(
             policyVersion: currentDeviceKeyVersion(),
@@ -392,9 +390,7 @@ public enum TrustChainManager {
 
     /// 标记 attestation 检查完成
     public static func markAttestationChecked() {
-        lock.lock()
-        lastAttestationCheck = Date().timeIntervalSince1970
-        lock.unlock()
+        lock.withLock { lastAttestationCheck = Date().timeIntervalSince1970 }
     }
 
     /// 获取 attestation 降级时的 TrustLevel

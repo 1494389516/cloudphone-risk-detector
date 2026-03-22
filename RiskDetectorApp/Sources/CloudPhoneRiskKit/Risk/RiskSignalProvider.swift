@@ -102,65 +102,62 @@ final class RiskSignalProviderRegistry {
     ]
 
     func seal() {
-        lock.lock()
-        defer { lock.unlock() }
-        isSealed = true
-        for provider in providers {
-            sealedProviderTypes[provider.id] = ObjectIdentifier(type(of: provider))
-            if Self.internalProviderIDs.contains(provider.id) {
-                sealedProviderInstances[provider.id] = ObjectIdentifier(provider)
+        lock.withLock {
+            isSealed = true
+            for provider in providers {
+                sealedProviderTypes[provider.id] = ObjectIdentifier(type(of: provider))
+                if Self.internalProviderIDs.contains(provider.id) {
+                    sealedProviderInstances[provider.id] = ObjectIdentifier(provider)
+                }
             }
         }
     }
 
     func register(_ provider: RiskSignalProvider) {
-        lock.lock()
-        defer { lock.unlock() }
-        if isSealed {
-            if !Self.internalProviderIDs.contains(provider.id) {
-                Logger.log("provider.register rejected (sealed): id=\(provider.id)")
-                return
+        lock.withLock {
+            if isSealed {
+                if !Self.internalProviderIDs.contains(provider.id) {
+                    Logger.log("provider.register rejected (sealed): id=\(provider.id)")
+                    return
+                }
+                if let expectedType = sealedProviderTypes[provider.id],
+                   ObjectIdentifier(type(of: provider)) != expectedType {
+                    Logger.log("provider.register rejected (type mismatch): id=\(provider.id)")
+                    return
+                }
+                if let expectedInstance = sealedProviderInstances[provider.id],
+                   ObjectIdentifier(provider) != expectedInstance {
+                    instanceReplacedProviderIDs.insert(provider.id)
+                    Logger.log("provider.register rejected (instance mismatch): id=\(provider.id)")
+                    return
+                }
             }
-            if let expectedType = sealedProviderTypes[provider.id],
-               ObjectIdentifier(type(of: provider)) != expectedType {
-                Logger.log("provider.register rejected (type mismatch): id=\(provider.id)")
-                return
-            }
-            if let expectedInstance = sealedProviderInstances[provider.id],
-               ObjectIdentifier(provider) != expectedInstance {
-                instanceReplacedProviderIDs.insert(provider.id)
-                Logger.log("provider.register rejected (instance mismatch): id=\(provider.id)")
-                return
-            }
+            providers.removeAll { $0.id == provider.id }
+            providers.append(provider)
         }
-        providers.removeAll { $0.id == provider.id }
-        providers.append(provider)
     }
 
     func unregister(id: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        if isSealed, Self.internalProviderIDs.contains(id) {
-            tamperedUnregisterAttempts += 1
-            Logger.log("provider.unregister rejected (sealed internal): id=\(id) attempts=\(tamperedUnregisterAttempts)")
-            return
+        lock.withLock {
+            if isSealed, Self.internalProviderIDs.contains(id) {
+                tamperedUnregisterAttempts += 1
+                Logger.log("provider.unregister rejected (sealed internal): id=\(id) attempts=\(tamperedUnregisterAttempts)")
+                return
+            }
+            providers.removeAll { $0.id == id }
         }
-        providers.removeAll { $0.id == id }
     }
 
     func listIDs() -> [String] {
-        lock.lock()
-        defer { lock.unlock() }
-        return providers.map(\.id)
+        lock.withLock {
+            providers.map(\.id)
+        }
     }
 
     func signals(snapshot: RiskSnapshot) -> [RiskSignal] {
-        lock.lock()
-        let current = providers
-        let knownActive = activeProviderIDs
-        let unregisterAttempts = tamperedUnregisterAttempts
-        let replacedIDs = instanceReplacedProviderIDs
-        lock.unlock()
+        let (current, knownActive, unregisterAttempts, replacedIDs) = lock.withLock {
+            (providers, activeProviderIDs, tamperedUnregisterAttempts, instanceReplacedProviderIDs)
+        }
 
         var out: [RiskSignal] = []
         var newlyActive: Set<String> = []
@@ -192,9 +189,7 @@ final class RiskSignalProviderRegistry {
 
         for provider in current {
             // 跳过连续失败过多的 provider
-            lock.lock()
-            let failures = consecutiveFailures[provider.id] ?? 0
-            lock.unlock()
+            let failures = lock.withLock { consecutiveFailures[provider.id] ?? 0 }
             if failures >= Self.maxConsecutiveFailures {
                 Logger.log("provider[\(provider.id)]: skipped (consecutive failures=\(failures))")
                 continue
@@ -204,9 +199,7 @@ final class RiskSignalProviderRegistry {
 
             if !collected.isEmpty {
                 newlyActive.insert(provider.id)
-                lock.lock()
-                consecutiveFailures[provider.id] = 0
-                lock.unlock()
+                lock.withLock { consecutiveFailures[provider.id] = 0 }
                 Logger.log("provider[\(provider.id)]: signals=\(collected.count)")
                 for s in collected where s.score > 0 {
                     #if DEBUG
@@ -226,17 +219,13 @@ final class RiskSignalProviderRegistry {
             }
         }
 
-        lock.lock()
-        activeProviderIDs.formUnion(newlyActive)
-        lock.unlock()
+        lock.withLock { activeProviderIDs.formUnion(newlyActive) }
 
         return out
     }
 
     func serverSignals(snapshot: RiskSnapshot) -> ServerSignals? {
-        lock.lock()
-        let current = providers
-        lock.unlock()
+        let current = lock.withLock { providers }
 
         var merged: ServerSignals?
         for provider in current {
@@ -276,9 +265,7 @@ final class RiskSignalProviderRegistry {
         let timeout = DispatchTime.now() + Self.providerTimeoutSeconds
         if semaphore.wait(timeout: timeout) == .timedOut {
             Logger.log("provider[\(provider.id)]: timed out after \(Self.providerTimeoutSeconds)s")
-            lock.lock()
-            consecutiveFailures[provider.id, default: 0] += 1
-            lock.unlock()
+            lock.withLock { consecutiveFailures[provider.id, default: 0] += 1 }
             return []
         }
 

@@ -211,7 +211,10 @@ public final class DetectorRegistry {
     private let lock = UnfairLock()
 
     /// 封印后拒绝一切 register/unregister 操作
-    public private(set) var isSealed = false
+    private var _isSealed = false
+    public var isSealed: Bool {
+        lock.withLock { _isSealed }
+    }
 
     // MARK: - 注册表
     
@@ -253,48 +256,48 @@ public final class DetectorRegistry {
     ///   - type: 检测器类型
     ///   - factory: 检测器工厂闭包
     public func register(type: DetectorType, factory: @escaping DetectorFactory) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !isSealed else {
-            Logger.log("DetectorRegistry.register rejected (sealed): \(type.rawValue)")
-            return
+        lock.withLock {
+            guard !_isSealed else {
+                Logger.log("DetectorRegistry.register rejected (sealed): \(type.rawValue)")
+                return
+            }
+            registry[type] = factory
+            Logger.log("DetectorRegistry.register: \(type.rawValue)")
         }
-        registry[type] = factory
-        Logger.log("DetectorRegistry.register: \(type.rawValue)")
     }
     
     /// 注销检测器
     /// - Parameter type: 检测器类型
     public func unregister(type: DetectorType) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !isSealed else {
-            Logger.log("DetectorRegistry.unregister rejected (sealed): \(type.rawValue)")
-            return
+        lock.withLock {
+            guard !_isSealed else {
+                Logger.log("DetectorRegistry.unregister rejected (sealed): \(type.rawValue)")
+                return
+            }
+            registry.removeValue(forKey: type)
+            Logger.log("DetectorRegistry.unregister: \(type.rawValue)")
         }
-        registry.removeValue(forKey: type)
-        Logger.log("DetectorRegistry.unregister: \(type.rawValue)")
     }
 
     /// 封印注册表，调用后拒绝一切 register/unregister 操作
     public func seal() {
-        lock.lock()
-        defer { lock.unlock() }
-        isSealed = true
-        Logger.log("DetectorRegistry.sealed")
+        lock.withLock {
+            _isSealed = true
+            Logger.log("DetectorRegistry.sealed")
+        }
     }
     
     /// 创建检测器实例
     /// - Parameter type: 检测器类型
     /// - Returns: 检测器实例，如果类型未注册则返回 nil
     public func createDetector(type: DetectorType) -> Detector? {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let factory = registry[type] else {
-            Logger.log("DetectorRegistry.createDetector: \(type.rawValue) not found")
-            return nil
+        lock.withLock {
+            guard let factory = registry[type] else {
+                Logger.log("DetectorRegistry.createDetector: \(type.rawValue) not found")
+                return nil
+            }
+            return factory()
         }
-        return factory()
     }
     
     /// 执行指定类型的检测

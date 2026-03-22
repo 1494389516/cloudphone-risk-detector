@@ -24,7 +24,7 @@ final class KeychainDeviceID {
     static let shared = KeychainDeviceID()
     private init() {}
 
-    private let lock = NSLock()
+    private let lock = NSLock()  // NSLock: Keychain I/O inside lock
     private let service = "CloudPhoneRiskKit"
     private let account = "device_id"
     /// SDK 4.4 Phase 6: 设备绑定，兼容无密码设备；避免 kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly
@@ -36,38 +36,38 @@ final class KeychainDeviceID {
     private let unavailableDeviceID = "CPRISKKIT-DEVICE-ID-UNAVAILABLE"
 
     func getOrCreate() -> String {
-        lock.lock()
-        defer { lock.unlock() }
-        if let existing = read() {
-            let usedFallback = saveFallback(existing)
-            if usedFallback {
-                Logger.log("KeychainDeviceID: persisted device ID to fallback store (keychain primary read succeeded)")
+        lock.withLock {
+            if let existing = read() {
+                let usedFallback = saveFallback(existing)
+                if usedFallback {
+                    Logger.log("KeychainDeviceID: persisted device ID to fallback store (keychain primary read succeeded)")
+                }
+                return existing
             }
-            return existing
-        }
 
-        if let fallback = readFallback() {
-            if save(fallback) {
-                return fallback
+            if let fallback = readFallback() {
+                if save(fallback) {
+                    return fallback
+                }
+                // Keychain 写失败，仅 UserDefaults 有值：返回 ephemeral 前缀，服务端可识别并限制高信任请求
+                Logger.log("KeychainDeviceID: keychain unavailable, using ephemeral-tagged fallback copy")
+                return "ephemeral:\(fallback)"
             }
-            // Keychain 写失败，仅 UserDefaults 有值：返回 ephemeral 前缀，服务端可识别并限制高信任请求
-            Logger.log("KeychainDeviceID: keychain unavailable, using ephemeral-tagged fallback copy")
-            return "ephemeral:\(fallback)"
-        }
 
-        let newID = UUID().uuidString
-        let fallbackSaved = saveFallback(newID)
-        if save(newID) {
-            return newID
-        }
-        if fallbackSaved {
-            Logger.log("KeychainDeviceID: keychain save failed, returning ephemeral-tagged fallback ID (fallback store used)")
+            let newID = UUID().uuidString
+            let fallbackSaved = saveFallback(newID)
+            if save(newID) {
+                return newID
+            }
+            if fallbackSaved {
+                Logger.log("KeychainDeviceID: keychain save failed, returning ephemeral-tagged fallback ID (fallback store used)")
+                return "ephemeral:\(newID)"
+            }
+            // 并发写入竞争：再次尝试读取（另一线程可能已写入）
+            if let retry = read() { return retry }
+            Logger.log("KeychainDeviceID: save failed, returning ephemeral-tagged fallback ID (no fallback store)")
             return "ephemeral:\(newID)"
         }
-        // 并发写入竞争：再次尝试读取（另一线程可能已写入）
-        if let retry = read() { return retry }
-        Logger.log("KeychainDeviceID: save failed, returning ephemeral-tagged fallback ID (no fallback store)")
-        return "ephemeral:\(newID)"
     }
 
     private func read() -> String? {

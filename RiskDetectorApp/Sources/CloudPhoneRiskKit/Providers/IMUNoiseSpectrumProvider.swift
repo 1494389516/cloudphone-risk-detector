@@ -55,7 +55,7 @@ final class IMUNoiseSpectrumProvider: RiskSignalProvider {
         var samples = [Double]()
         samples.reserveCapacity(requiredCount)
         let semaphore = DispatchSemaphore(value: 0)
-        let sampleLock = NSLock()
+        let sampleLock = UnfairLock()
         let queue = OperationQueue()
         queue.qualityOfService = .userInitiated
 
@@ -67,13 +67,12 @@ final class IMUNoiseSpectrumProvider: RiskSignalProvider {
                 data.acceleration.y * data.acceleration.y +
                 data.acceleration.z * data.acceleration.z
             )
-            sampleLock.lock()
-            let count = samples.count
-            if count < requiredCount {
-                samples.append(mag)
+            let done = sampleLock.withLock { () -> Bool in
+                if samples.count < requiredCount {
+                    samples.append(mag)
+                }
+                return samples.count >= requiredCount
             }
-            let done = samples.count >= requiredCount
-            sampleLock.unlock()
             if done { semaphore.signal() }
         }
 
@@ -81,9 +80,7 @@ final class IMUNoiseSpectrumProvider: RiskSignalProvider {
         _ = semaphore.wait(timeout: timeout)
         manager.stopAccelerometerUpdates()
 
-        sampleLock.lock()
-        let collectedSamples = Array(samples.prefix(requiredCount))
-        sampleLock.unlock()
+        let collectedSamples = sampleLock.withLock { Array(samples.prefix(requiredCount)) }
 
         guard collectedSamples.count >= requiredCount else {
             return [RiskSignal(

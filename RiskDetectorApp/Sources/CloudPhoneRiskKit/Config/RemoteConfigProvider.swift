@@ -27,29 +27,25 @@ public final class RemoteConfigProvider: @unchecked Sendable {
     private static let circuitBreakerCooldowns: [TimeInterval] = [30, 60, 120, 300]
 
     public var currentConfig: RemoteConfig {
-        lock.lock()
-        defer { lock.unlock() }
-        return _currentConfig
+        lock.withLock { _currentConfig }
     }
 
     public var isFetching: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return _isFetching
+        lock.withLock { _isFetching }
     }
 
     public var isConfigStale: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        guard _lastSuccessfulFetchTime > 0 else { return true }
-        return Date().timeIntervalSince1970 - _lastSuccessfulFetchTime > _configStalenessThreshold
+        lock.withLock {
+            guard _lastSuccessfulFetchTime > 0 else { return true }
+            return Date().timeIntervalSince1970 - _lastSuccessfulFetchTime > _configStalenessThreshold
+        }
     }
 
     public var configAge: TimeInterval {
-        lock.lock()
-        defer { lock.unlock() }
-        guard _lastSuccessfulFetchTime > 0 else { return .infinity }
-        return Date().timeIntervalSince1970 - _lastSuccessfulFetchTime
+        lock.withLock {
+            guard _lastSuccessfulFetchTime > 0 else { return .infinity }
+            return Date().timeIntervalSince1970 - _lastSuccessfulFetchTime
+        }
     }
 
     public init(
@@ -90,21 +86,21 @@ public final class RemoteConfigProvider: @unchecked Sendable {
     }
 
     public func configurePinning(hashes: Set<String>) {
-        lock.lock()
-        urlSession.invalidateAndCancel()
-        urlSession = CertificatePinningSessionDelegate.pinnedSession(
-            hashes: hashes,
-            allowsSystemCA: false
-        )
-        lock.unlock()
+        lock.withLock {
+            urlSession.invalidateAndCancel()
+            urlSession = CertificatePinningSessionDelegate.pinnedSession(
+                hashes: hashes,
+                allowsSystemCA: false
+            )
+        }
     }
 
     public func reloadCachedConfigTrustState() {
         if let cached = cache.load(), !cached.isExpired(duration: cacheValidityDuration) {
             applyConfig(Self.releaseHardenedConfig(cached.config))
-            lock.lock()
-            _lastSuccessfulFetchTime = cached.cachedAt
-            lock.unlock()
+            lock.withLock {
+                _lastSuccessfulFetchTime = cached.cachedAt
+            }
         } else {
             applyConfig(fallbackConfig)
         }
@@ -122,15 +118,18 @@ public final class RemoteConfigProvider: @unchecked Sendable {
             return
         }
 
-        lock.lock()
-        if _isFetching {
-            lock.unlock()
+        let session: URLSession? = lock.withLock {
+            if _isFetching {
+                return nil
+            }
+            _isFetching = true
+            return urlSession
+        }
+
+        guard let session else {
             completion(.failure(.alreadyFetching))
             return
         }
-        _isFetching = true
-        let session = urlSession
-        lock.unlock()
 
         var request = URLRequest(url: configURL)
         request.httpMethod = "GET"
@@ -146,9 +145,7 @@ public final class RemoteConfigProvider: @unchecked Sendable {
             }
 
             defer {
-                self.lock.lock()
-                self._isFetching = false
-                self.lock.unlock()
+                self.lock.withLock { self._isFetching = false }
             }
 
             if let error {
@@ -199,9 +196,7 @@ public final class RemoteConfigProvider: @unchecked Sendable {
                     Logger.log("remote_config: server signing key not configured, cache entry will be marked unverified")
                 }
                 self.cache.save(config, verifiedByServer: verifiedByServer)
-                self.lock.lock()
-                self._lastSuccessfulFetchTime = Date().timeIntervalSince1970
-                self.lock.unlock()
+                self.lock.withLock { self._lastSuccessfulFetchTime = Date().timeIntervalSince1970 }
                 self.notifyUpdate(config)
                 self.recordSuccess()
                 completion(.success(config))
@@ -220,27 +215,27 @@ public final class RemoteConfigProvider: @unchecked Sendable {
 
     @discardableResult
     public func registerUpdate(handler: @escaping ConfigUpdateHandler) -> Token {
-        lock.lock()
-        defer { lock.unlock() }
-        let id = UUID()
-        updateHandlers[id] = handler
-        return Token(id: id, owner: self)
+        lock.withLock {
+            let id = UUID()
+            updateHandlers[id] = handler
+            return Token(id: id, owner: self)
+        }
     }
 
     @discardableResult
     public func registerErrorHandler(handler: @escaping ConfigErrorHandler) -> Token {
-        lock.lock()
-        defer { lock.unlock() }
-        let id = UUID()
-        errorHandlers[id] = handler
-        return Token(id: id, owner: self)
+        lock.withLock {
+            let id = UUID()
+            errorHandlers[id] = handler
+            return Token(id: id, owner: self)
+        }
     }
 
     public func unregister(token: Token) {
-        lock.lock()
-        defer { lock.unlock() }
-        updateHandlers.removeValue(forKey: token.id)
-        errorHandlers.removeValue(forKey: token.id)
+        lock.withLock {
+            updateHandlers.removeValue(forKey: token.id)
+            errorHandlers.removeValue(forKey: token.id)
+        }
     }
 
     public var isCircuitBreakerOpen: Bool {
@@ -264,29 +259,29 @@ public final class RemoteConfigProvider: @unchecked Sendable {
     }
 
     private func isCircuitOpen() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        guard _consecutiveFailures >= Self.circuitBreakerThreshold else { return false }
-        return Date().timeIntervalSince1970 < _circuitOpenUntil
+        lock.withLock {
+            guard _consecutiveFailures >= Self.circuitBreakerThreshold else { return false }
+            return Date().timeIntervalSince1970 < _circuitOpenUntil
+        }
     }
 
     private func recordSuccess() {
-        lock.lock()
-        _consecutiveFailures = 0
-        _circuitOpenUntil = 0
-        lock.unlock()
+        lock.withLock {
+            _consecutiveFailures = 0
+            _circuitOpenUntil = 0
+        }
     }
 
     private func recordFailure() {
-        lock.lock()
-        _consecutiveFailures += 1
-        if _consecutiveFailures >= Self.circuitBreakerThreshold {
-            let cooldownIndex = min(_consecutiveFailures - Self.circuitBreakerThreshold, Self.circuitBreakerCooldowns.count - 1)
-            let cooldown = Self.circuitBreakerCooldowns[cooldownIndex]
-            _circuitOpenUntil = Date().timeIntervalSince1970 + cooldown
-            Logger.log("remote_config.circuit_breaker: open for \(cooldown)s (failures=\(_consecutiveFailures))")
+        lock.withLock {
+            _consecutiveFailures += 1
+            if _consecutiveFailures >= Self.circuitBreakerThreshold {
+                let cooldownIndex = min(_consecutiveFailures - Self.circuitBreakerThreshold, Self.circuitBreakerCooldowns.count - 1)
+                let cooldown = Self.circuitBreakerCooldowns[cooldownIndex]
+                _circuitOpenUntil = Date().timeIntervalSince1970 + cooldown
+                Logger.log("remote_config.circuit_breaker: open for \(cooldown)s (failures=\(_consecutiveFailures))")
+            }
         }
-        lock.unlock()
     }
 
     private func parseAndValidate(data: Data) throws -> RemoteConfig {
@@ -301,9 +296,9 @@ public final class RemoteConfigProvider: @unchecked Sendable {
     }
 
     private func applyConfig(_ config: RemoteConfig) {
-        lock.lock()
-        defer { lock.unlock() }
-        _currentConfig = config
+        lock.withLock {
+            _currentConfig = config
+        }
     }
 
     private static func releaseHardenedConfig(_ config: RemoteConfig) -> RemoteConfig {
@@ -315,9 +310,7 @@ public final class RemoteConfigProvider: @unchecked Sendable {
     }
 
     private func notifyUpdate(_ config: RemoteConfig) {
-        lock.lock()
-        let handlers = Array(updateHandlers.values)
-        lock.unlock()
+        let handlers = lock.withLock { Array(updateHandlers.values) }
         for handler in handlers {
             autoreleasepool {
                 handler(config)
@@ -326,9 +319,7 @@ public final class RemoteConfigProvider: @unchecked Sendable {
     }
 
     private func handleError(_ error: Error) {
-        lock.lock()
-        let handlers = Array(errorHandlers.values)
-        lock.unlock()
+        let handlers = lock.withLock { Array(errorHandlers.values) }
         for handler in handlers {
             autoreleasepool {
                 handler(error)
@@ -338,36 +329,34 @@ public final class RemoteConfigProvider: @unchecked Sendable {
 
     private func startPeriodicUpdates() {
         // 用 _schedulingTimer 标记"已提交调度"，防止在 async 派发期间被重复调用
-        lock.lock()
-        guard timer == nil && !_schedulingTimer else {
-            lock.unlock()
-            return
+        let interval: TimeInterval? = lock.withLock {
+            guard timer == nil && !_schedulingTimer else { return nil }
+            _schedulingTimer = true
+            return updateInterval
         }
-        _schedulingTimer = true
-        let interval = updateInterval
-        lock.unlock()
+        guard let interval else { return }
 
         let schedule: () -> Void = { [weak self] in
             guard let self else { return }
-            self.lock.lock()
-            defer { self.lock.unlock() }
-            // 二次检查：确保 Timer 仍未被创建（防止两次 async 同时执行）
-            guard self.timer == nil else { return }
-            let t = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-                guard let self else { return }
-                self.fetchLatest { result in
-                    if case .failure(let error) = result {
-                        Logger.log("remote_config.periodic_update failed: \(error.localizedDescription)")
-                        if self.isConfigStale {
-                            Logger.log("remote_config: config is stale (age=\(Int(self.configAge))s), falling back to default")
-                            self.reloadCachedConfigTrustState()
+            self.lock.withLock {
+                // 二次检查：确保 Timer 仍未被创建（防止两次 async 同时执行）
+                guard self.timer == nil else { return }
+                let t = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+                    guard let self else { return }
+                    self.fetchLatest { result in
+                        if case .failure(let error) = result {
+                            Logger.log("remote_config.periodic_update failed: \(error.localizedDescription)")
+                            if self.isConfigStale {
+                                Logger.log("remote_config: config is stale (age=\(Int(self.configAge))s), falling back to default")
+                                self.reloadCachedConfigTrustState()
+                            }
                         }
                     }
                 }
+                RunLoop.main.add(t, forMode: .common)
+                self.timer = t
+                self._schedulingTimer = false
             }
-            RunLoop.main.add(t, forMode: .common)
-            self.timer = t
-            self._schedulingTimer = false
         }
         if Thread.isMainThread {
             schedule()

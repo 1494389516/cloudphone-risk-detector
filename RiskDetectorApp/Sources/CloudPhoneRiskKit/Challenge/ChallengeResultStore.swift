@@ -12,7 +12,7 @@ public final class ChallengeResultStore: @unchecked Sendable {
 
     public static let shared = ChallengeResultStore()
 
-    private let lock = NSLock()
+    private let lock = UnfairLock()
     private var _lastChallengeId: String?
     private var _lastAdjustedScore: Double?
     private var _lastPassed: Bool?
@@ -22,69 +22,63 @@ public final class ChallengeResultStore: @unchecked Sendable {
 
     /// 存储 HMAC 校验失败时的信号，供下一次 evaluate 注入
     func storePendingMismatchSignal(_ signal: RiskSignal) {
-        lock.lock()
-        _pendingMismatchSignals.append(signal)
-        lock.unlock()
+        lock.withLock { _pendingMismatchSignals.append(signal) }
     }
 
     /// 消费并返回待注入的 HMAC 校验失败信号
     func consumePendingMismatchSignals() -> [RiskSignal] {
-        lock.lock()
-        let signals = _pendingMismatchSignals
-        _pendingMismatchSignals = []
-        lock.unlock()
-        return signals
+        lock.withLock {
+            let signals = _pendingMismatchSignals
+            _pendingMismatchSignals = []
+            return signals
+        }
     }
 
     /// 应用挑战验证结果（由 CPRiskKit.applyChallengeResult 调用）
     /// 对 adjustedScore 做范围校验：超出 [-100, 100] 时裁剪并记录日志，避免负值或超大值污染分数
     public func apply(result: ChallengeVerificationResult) {
-        lock.lock()
-        defer { lock.unlock() }
-        _lastChallengeId = result.challengeId
-        _lastPassed = result.passed
+        lock.withLock {
+            _lastChallengeId = result.challengeId
+            _lastPassed = result.passed
 
-        let raw = result.adjustedScore
-        if let v = raw {
-            if Self.offsetRange.contains(v) {
-                _lastAdjustedScore = v
+            let raw = result.adjustedScore
+            if let v = raw {
+                if Self.offsetRange.contains(v) {
+                    _lastAdjustedScore = v
+                } else {
+                    let clamped = min(max(v, Self.offsetRange.lowerBound), Self.offsetRange.upperBound)
+                    _lastAdjustedScore = clamped
+                    Logger.log("ChallengeResultStore.apply: adjustedScore=\(v) out of range [\(Self.offsetRange.lowerBound), \(Self.offsetRange.upperBound)], clamped to \(clamped) — check if server returns absolute score instead of delta")
+                }
             } else {
-                let clamped = min(max(v, Self.offsetRange.lowerBound), Self.offsetRange.upperBound)
-                _lastAdjustedScore = clamped
-                Logger.log("ChallengeResultStore.apply: adjustedScore=\(v) out of range [\(Self.offsetRange.lowerBound), \(Self.offsetRange.upperBound)], clamped to \(clamped) — check if server returns absolute score instead of delta")
+                _lastAdjustedScore = nil
             }
-        } else {
-            _lastAdjustedScore = nil
-        }
 
-        #if DEBUG
-        Logger.log("ChallengeResultStore.apply: challengeId=\(result.challengeId) passed=\(result.passed) adjustedScore=\(_lastAdjustedScore?.description ?? "nil")")
-        #endif
+            #if DEBUG
+            Logger.log("ChallengeResultStore.apply: challengeId=\(result.challengeId) passed=\(result.passed) adjustedScore=\(_lastAdjustedScore?.description ?? "nil")")
+            #endif
+        }
     }
 
     /// 消费并返回分数偏移（下一次 evaluate 使用后清除）
     /// - Returns: 偏移量，无则返回 nil
     public func consumeScoreOffset() -> Double? {
-        lock.lock()
-        defer { lock.unlock() }
-        let offset = _lastAdjustedScore
-        _lastAdjustedScore = nil
-        _lastChallengeId = nil
-        _lastPassed = nil
-        return offset
+        lock.withLock {
+            let offset = _lastAdjustedScore
+            _lastAdjustedScore = nil
+            _lastChallengeId = nil
+            _lastPassed = nil
+            return offset
+        }
     }
 
     /// 获取当前分数偏移（不消费）
     public func currentScoreOffset() -> Double? {
-        lock.lock()
-        defer { lock.unlock() }
-        return _lastAdjustedScore
+        lock.withLock { _lastAdjustedScore }
     }
 
     /// 是否有待消费的偏移
     public var hasPendingOffset: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return _lastAdjustedScore != nil
+        lock.withLock { _lastAdjustedScore != nil }
     }
 }

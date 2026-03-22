@@ -52,7 +52,7 @@ public final class RiskHistoryStore {
         var freshness: FreshnessState
     }
 
-    private let lock = NSLock()
+    private let lock = UnfairLock()
     private let fileStore: SecureFileStore
     private let key = "cloudphone_risk_history_v1"
     private let hmacKey = "cloudphone_risk_history_v1_hmac"
@@ -79,19 +79,16 @@ public final class RiskHistoryStore {
     }
 
     public func append(_ event: RiskHistoryEvent) {
-        lock.lock()
-        defer { lock.unlock() }
-
-        var state = loadStateLocked()
-        state.events.append(event)
-        state.events = pruneLocked(state.events)
-        saveLocked(state)
+        lock.withLock {
+            var state = loadStateLocked()
+            state.events.append(event)
+            state.events = pruneLocked(state.events)
+            saveLocked(state)
+        }
     }
 
     public func pattern(now: TimeInterval = Date().timeIntervalSince1970) -> TimePattern {
-        lock.lock()
-        let events = loadStateLocked().events
-        lock.unlock()
+        let events = lock.withLock { loadStateLocked().events }
 
         let windowStart = now - Self.patternWindowSeconds
         let recent = events.filter { $0.t >= windowStart && $0.t <= now }.sorted { $0.t < $1.t }

@@ -14,7 +14,7 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
 
     let id = "server_aggregate"
 
-    private let lock = NSLock()
+    private let lock = UnfairLock()
     private var current: ServerSignals?
     private var graphFeatures: GraphFeatures?
     private var serverSignalKey: SymmetricKey?
@@ -30,24 +30,20 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
 
     /// 清空图特征，避免跨账号/跨会话残留。
     func clearGraphFeatures() {
-        lock.lock()
-        graphFeatures = nil
-        lock.unlock()
+        lock.withLock { graphFeatures = nil }
     }
 
     /// Configure the HMAC key used by `setVerified(_:signature:)`.
     func configureServerSignalKey(_ key: Data) {
-        lock.lock()
-        serverSignalKey = SymmetricKey(data: key)
-        lock.unlock()
+        lock.withLock { serverSignalKey = SymmetricKey(data: key) }
     }
 
     /// 清空服务端信号和图特征，Release 下始终可用（用于 clearExternalServerSignals）。
     func clear() {
-        lock.lock()
-        current = nil
-        graphFeatures = nil
-        lock.unlock()
+        lock.withLock {
+            current = nil
+            graphFeatures = nil
+        }
         Logger.log("server_aggregate.clear")
     }
 
@@ -62,9 +58,7 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
             return
         }
         #if DEBUG
-        lock.lock()
-        current = signals
-        lock.unlock()
+        lock.withLock { current = signals }
         Logger.log("server_aggregate.set (deprecated): set")
         #else
         Logger.log("server_aggregate.set rejected: use setVerified in Release builds")
@@ -74,14 +68,10 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
     /// Accept server signals only after HMAC-SHA256 verification.
     /// `signature` = HMAC-SHA256(serverSignalKey, canonicalJSON(signals)).
     func setVerified(_ signals: ServerSignals, signature: Data) {
-        lock.lock()
-        guard let key = serverSignalKey else {
-            lock.unlock()
+        guard let capturedKey = lock.withLock({ serverSignalKey }) else {
             Logger.log("server_aggregate.setVerified rejected: no key configured")
             return
         }
-        let capturedKey = key
-        lock.unlock()
 
         guard let payload = try? JSONEncoder().encode(signals) else {
             Logger.log("server_aggregate.setVerified rejected: encode failed")
@@ -93,15 +83,16 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
             return
         }
 
-        lock.lock()
-        // Re-check key hasn't been cleared between verification and store
-        guard serverSignalKey != nil else {
-            lock.unlock()
+        let accepted = lock.withLock { () -> Bool in
+            // Re-check key hasn't been cleared between verification and store
+            guard serverSignalKey != nil else { return false }
+            current = signals
+            return true
+        }
+        if !accepted {
             Logger.log("server_aggregate.setVerified rejected: key cleared during verification")
             return
         }
-        current = signals
-        lock.unlock()
         Logger.log("server_aggregate.setVerified: accepted")
     }
 
@@ -113,16 +104,16 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
         isInDenseSubgraph: Bool?,
         riskTags: [String]?
     ) {
-        lock.lock()
-        graphFeatures = GraphFeatures(
-            communityId: communityId,
-            communityRiskDensity: communityRiskDensity,
-            hwProfileDegree: hwProfileDegree,
-            devicePageRank: devicePageRank,
-            isInDenseSubgraph: isInDenseSubgraph,
-            riskTags: riskTags
-        )
-        lock.unlock()
+        lock.withLock {
+            graphFeatures = GraphFeatures(
+                communityId: communityId,
+                communityRiskDensity: communityRiskDensity,
+                hwProfileDegree: hwProfileDegree,
+                devicePageRank: devicePageRank,
+                isInDenseSubgraph: isInDenseSubgraph,
+                riskTags: riskTags
+            )
+        }
         #if DEBUG
         Logger.log("server_aggregate.setGraphFeatures: community=\(communityId ?? "nil")")
         #endif
@@ -148,10 +139,7 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
     }
 
     func serverSignals(snapshot: RiskSnapshot) -> ServerSignals? {
-        lock.lock()
-        let s = current
-        let gf = graphFeatures
-        lock.unlock()
+        let (s, gf) = lock.withLock { (current, graphFeatures) }
         guard s != nil || gf != nil else { return nil }
         var merged = s ?? ServerSignals()
         if let gf {
@@ -170,10 +158,7 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
     }
 
     func signals(snapshot: RiskSnapshot) -> [RiskSignal] {
-        lock.lock()
-        let s = current
-        let gf = graphFeatures
-        lock.unlock()
+        let (s, gf) = lock.withLock { (current, graphFeatures) }
         guard s != nil || gf != nil else { return [] }
 
         var out: [RiskSignal] = []

@@ -8,10 +8,10 @@ import Foundation
 /// 则判定为 late_tamper（跨时间点篡改）。
 ///
 /// - 基线采集使用 SVC 直调（cprisk_lstat_direct），与校验路径一致
-/// - 存储使用 NSLock 保证线程安全
+/// - 存储使用 UnfairLock 保证线程安全
 /// - 若 start() 未被调用（evaluate-only 路径），基线为空，跳过基线校验
 public enum DualPathBaselineStore {
-    private static let lock = NSLock()
+    private static let lock = UnfairLock()
 
     /// 单条基线记录：path + inode + st_dev + st_size + 采集时间
     public struct BaselineEntry: Sendable {
@@ -35,17 +35,13 @@ public enum DualPathBaselineStore {
 
     /// 是否已执行过基线采集（start() 被调用后为 true）
     public static var hasBaseline: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return hasCollected
+        lock.withLock { hasCollected }
     }
 
     /// 对指定路径列表执行基线采集，使用 SVC 直调 cprisk_lstat_direct。
     /// 仅记录成功 stat 的路径；ENOENT/失败的不入库，校验时视为无基线可对比。
     public static func collectBaseline(paths: [String]) {
-        lock.lock()
-        hasCollected = true
-        lock.unlock()
+        lock.withLock { hasCollected = true }
 
         let now = Date().timeIntervalSince1970
         var collected: [String: BaselineEntry] = [:]
@@ -61,9 +57,7 @@ public enum DualPathBaselineStore {
             )
         }
 
-        lock.lock()
-        baselineByPath = collected
-        lock.unlock()
+        lock.withLock { baselineByPath = collected }
 
         #if DEBUG
         Logger.log("dual_path_baseline: collected \(collected.count) entries for \(paths.count) paths")
@@ -86,9 +80,7 @@ public enum DualPathBaselineStore {
         currentStDev: UInt32,
         minDriftIntervalSeconds: TimeInterval = 1.0
     ) -> Bool {
-        lock.lock()
-        let entry = baselineByPath[path]
-        lock.unlock()
+        let entry = lock.withLock { baselineByPath[path] }
 
         guard let entry else { return false }
 
@@ -103,8 +95,6 @@ public enum DualPathBaselineStore {
 
     /// 判断指定路径是否有基线记录（用于短路逻辑）
     public static func hasBaseline(for path: String) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return baselineByPath[path] != nil
+        lock.withLock { baselineByPath[path] != nil }
     }
 }

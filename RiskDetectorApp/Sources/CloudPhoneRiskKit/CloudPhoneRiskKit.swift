@@ -76,14 +76,14 @@ public final class CPRiskKit: NSObject {
 #endif
 
     private let evaluateQueue = DispatchQueue(label: "CloudPhoneRiskKit.Evaluate", qos: .utility)
-    private let stateLock = NSLock()
+    private let stateLock = UnfairLock()
     /// 保护 cprisk_init_protection 单次执行，避免在持 stateLock 期间调用可能阻塞的 C 函数
-    private let armorInitLock = NSLock()
+    private let armorInitLock = UnfairLock()
 
     /// Throttle cprisk_verify_exception_handler to avoid syscall on every evaluate().
     private static let verifyThrottleInterval: TimeInterval = 5.0
     private static var lastExceptionVerifyTime: TimeInterval = 0
-    private static let verifyThrottleLock = NSLock()
+    private static let verifyThrottleLock = UnfairLock()
 
     private var remoteConfigProvider: RemoteConfigProvider?
     private var remoteConfigEndpoint: URL?
@@ -118,7 +118,7 @@ public final class CPRiskKit: NSObject {
     ]
 
     private static let remoteConfigEndpointKey = "com.cloudphone.riskkit.remote.endpoint"
-    private static let remoteTrustLock = NSLock()
+    private static let remoteTrustLock = UnfairLock()
     private static var pinnedCertificateHashes: Set<String> = []
     private static let localPolicyInjectionAllowed: Bool = {
 #if DEBUG
@@ -324,10 +324,10 @@ public final class CPRiskKit: NSObject {
         }
         DyldImageMonitor.shared.start()
         BuildConfig.configureForRelease()
-        stateLock.lock()
-        currentSessionId = UUID().uuidString
-        let sid = currentSessionId
-        stateLock.unlock()
+        let sid = stateLock.withLock { () -> String? in
+            currentSessionId = UUID().uuidString
+            return currentSessionId
+        }
         #if DEBUG
         Logger.log("sdk_start sid=\(sid ?? "")")
         #endif
@@ -439,9 +439,9 @@ public final class CPRiskKit: NSObject {
 
     @objc public static func configurePinnedCertificateHashes(_ hashes: [String]) {
         let normalized = normalizedPinnedCertificateHashes(from: hashes)
-        remoteTrustLock.lock()
-        pinnedCertificateHashes = normalized
-        remoteTrustLock.unlock()
+        remoteTrustLock.withLock {
+            pinnedCertificateHashes = normalized
+        }
 
         PolicyManager.shared.configurePinning(hashes: normalized)
         shared.applyPinnedCertificateHashes(normalized)
@@ -493,10 +493,10 @@ public final class CPRiskKit: NSObject {
     ///   - accountId: 业务侧的用户/账号唯一标识
     ///   - scene: 当前业务场景标签（如 "login", "register", "payment"）
     @objc public func bindAccount(_ accountId: String, scene: String? = nil) {
-        stateLock.lock()
-        boundAccountId = accountId
-        boundSceneTag = scene
-        stateLock.unlock()
+        stateLock.withLock {
+            boundAccountId = accountId
+            boundSceneTag = scene
+        }
         #if DEBUG
         Logger.log("account.bind: accountId=\(accountId) scene=\(scene ?? "nil")")
         #endif
@@ -509,13 +509,13 @@ public final class CPRiskKit: NSObject {
     /// **调用方应在用户登出时调用本方法。**
     @objc public func unbindAccount() {
         resetArmorRuntime()
-        stateLock.lock()
-        boundAccountId = nil
-        boundSceneTag = nil
-        currentSessionId = nil
-        previousSignalIds = []
-        previousSignalsDigest = nil
-        stateLock.unlock()
+        stateLock.withLock {
+            boundAccountId = nil
+            boundSceneTag = nil
+            currentSessionId = nil
+            previousSignalIds = []
+            previousSignalsDigest = nil
+        }
         PolicyManager.shared.clearCachedPolicy()
         LocalDeviceClusterDetector.shared.clear()
         Logger.log("account.unbind")
@@ -568,11 +568,11 @@ public final class CPRiskKit: NSObject {
 
     /// 清除远程配置地址和缓存状态。
     @objc public func clearRemoteConfigEndpoint() {
-        stateLock.lock()
-        remoteConfigProvider = nil
-        remoteConfigEndpoint = nil
-        latestRemoteConfig = nil
-        stateLock.unlock()
+        stateLock.withLock {
+            remoteConfigProvider = nil
+            remoteConfigEndpoint = nil
+            latestRemoteConfig = nil
+        }
 
         UserDefaults.standard.removeObject(forKey: Self.remoteConfigEndpointKey)
         Logger.log("remote_config.endpoint cleared")
@@ -637,9 +637,9 @@ public final class CPRiskKit: NSObject {
     /// 若已接入业务侧签名配置中心，可通过该解析器提供同样的参考哈希。
     /// 解析器返回 `nil` 时，SDK 会继续回退到默认 RemoteConfig 逻辑。
     public func setTextSegmentReferenceResolver(_ resolver: (any TextSegmentReferenceResolving)?) {
-        stateLock.lock()
-        textSegmentReferenceResolver = resolver
-        stateLock.unlock()
+        stateLock.withLock {
+            textSegmentReferenceResolver = resolver
+        }
     }
 
     // MARK: - Evaluation
@@ -695,10 +695,9 @@ public final class CPRiskKit: NSObject {
             mutationStrategy: resolveMutationStrategy(from: serverPolicy)
         )
         let serverSignals = RiskSignalProviderRegistry.shared.serverSignals(snapshot: snapshot)
-        stateLock.lock()
-        let acctIdForGraph = boundAccountId
-        let sessIdForGraph = currentSessionId
-        stateLock.unlock()
+        let (acctIdForGraph, sessIdForGraph) = stateLock.withLock {
+            (boundAccountId, currentSessionId)
+        }
 
         let graphNodeDescriptor = GraphFeatureCollector.collect(
             snapshot: snapshot,
@@ -740,9 +739,7 @@ public final class CPRiskKit: NSObject {
 
         // Signal continuity check: detect sudden disappearance of high-risk signals between evaluations.
         let allCurrentSignalIds = Set(extraSignals.map(\.id))
-        stateLock.lock()
-        let prevIds = previousSignalIds
-        stateLock.unlock()
+        let prevIds = stateLock.withLock { previousSignalIds }
         if !prevIds.isEmpty {
             let previousHighRisk = prevIds.intersection(Self.highRiskSignalIds)
             let currentHighRisk = allCurrentSignalIds.intersection(Self.highRiskSignalIds)
@@ -826,11 +823,9 @@ public final class CPRiskKit: NSObject {
         let out = CPRiskReport(context: finalContext, report: scoreReport)
         out.setServerSignals(serverSignals)
         out.setGraphNodeDescriptor(graphNodeDescriptor)
-        stateLock.lock()
-        let acctId = boundAccountId
-        let sessId = currentSessionId
-        let scnTag = boundSceneTag
-        stateLock.unlock()
+        let (acctId, sessId, scnTag) = stateLock.withLock {
+            (boundAccountId, currentSessionId, boundSceneTag)
+        }
         out.setGraphBindings(accountId: acctId, sessionId: sessId, sceneTag: scnTag)
 
         RiskHistoryStore.shared.append(
@@ -856,10 +851,10 @@ public final class CPRiskKit: NSObject {
 
         // Update signal continuity state for next evaluate() call.
         let allVerdictSignalIds = Set(verdict.signals.map(\.id))
-        stateLock.lock()
-        previousSignalIds = allVerdictSignalIds
-        previousSignalsDigest = SignalDigest.computeFullDigest(verdict.signals)
-        stateLock.unlock()
+        stateLock.withLock {
+            previousSignalIds = allVerdictSignalIds
+            previousSignalsDigest = SignalDigest.computeFullDigest(verdict.signals)
+        }
 
         if let challengeBinding = buildChallengeBindingIfNeeded(
             remoteConfig: remoteConfig,
@@ -1024,9 +1019,7 @@ public final class CPRiskKit: NSObject {
             signingKey: signingKey,
             keyId: keyId
         )
-        stateLock.lock()
-        let sceneTag = boundSceneTag
-        stateLock.unlock()
+        let sceneTag = stateLock.withLock { boundSceneTag }
         let context = GrpcReportContext(
             appId: appId,
             deviceId: report.deviceID,
@@ -1050,9 +1043,7 @@ public final class CPRiskKit: NSObject {
             signingKey: signingKey,
             keyId: keyId
         )
-        stateLock.lock()
-        let sceneTag = boundSceneTag
-        stateLock.unlock()
+        let sceneTag = stateLock.withLock { boundSceneTag }
         let context = GrpcReportContext(
             appId: appId,
             deviceId: report.deviceID,
@@ -1201,9 +1192,7 @@ public final class CPRiskKit: NSObject {
     // MARK: - Internal Helpers
 
     internal func debugArmorRuntimeSnapshot() -> ArmorRuntimeDebugSnapshot {
-        stateLock.lock()
-        let snapshot = armorRuntimeSnapshot
-        stateLock.unlock()
+        let snapshot = stateLock.withLock { armorRuntimeSnapshot }
         return ArmorRuntimeDebugSnapshot(
             status: snapshot.status.rawValue,
             reason: snapshot.reason,
@@ -1354,17 +1343,14 @@ public final class CPRiskKit: NSObject {
 
     @discardableResult
     private func ensureArmorRuntimeStarted(trigger: String) -> ArmorRuntimeSnapshot {
-        stateLock.lock()
-        if armorRuntimeSnapshot.status != .inactive {
-            let existing = armorRuntimeSnapshot
-            stateLock.unlock()
-            return existing
+        let existing: ArmorRuntimeSnapshot? = stateLock.withLock {
+            armorRuntimeSnapshot.status != .inactive ? armorRuntimeSnapshot : nil
         }
+        if let existing { return existing }
 
-        let attemptCount = armorRuntimeSnapshot.attemptCount + 1
-        let anchorPresent = Self.hasArmorAnchor()
-        let keyResolution = Self.resolveArmorRootKey()
-        stateLock.unlock()
+        let (attemptCount, anchorPresent, keyResolution) = stateLock.withLock {
+            (armorRuntimeSnapshot.attemptCount + 1, Self.hasArmorAnchor(), Self.resolveArmorRootKey())
+        }
 
         // 在锁外构建 snapshot，避免持 stateLock 期间调用可能阻塞的 cprisk_init_protection
         let snapshot: ArmorRuntimeSnapshot
@@ -1380,35 +1366,31 @@ public final class CPRiskKit: NSObject {
                 attemptCount: attemptCount
             )
         } else if let keyData = keyResolution.keyData {
-            armorInitLock.lock()
-            stateLock.lock()
-            if armorRuntimeSnapshot.status != .inactive {
-                let existing = armorRuntimeSnapshot
-                stateLock.unlock()
-                armorInitLock.unlock()
-                return existing
-            }
-            stateLock.unlock()
-
-            let initCode = keyData.withUnsafeBytes { rawBuffer -> Int32 in
-                guard let baseAddress = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
-                    return -1
+            let earlySnapshot: ArmorRuntimeSnapshot? = armorInitLock.withLock {
+                let alreadyStarted = stateLock.withLock { armorRuntimeSnapshot.status != .inactive }
+                if alreadyStarted {
+                    return stateLock.withLock { armorRuntimeSnapshot }
                 }
-                return Int32(cprisk_init_protection(baseAddress, keyData.count))
-            }
 
-            snapshot = Self.makeArmorRuntimeSnapshot(
-                trigger: trigger,
-                initCode: initCode,
-                keySource: keyResolution.source,
-                debugFallbackUsed: keyResolution.debugFallbackUsed,
-                anchorPresent: anchorPresent,
-                attemptCount: attemptCount
-            )
-            stateLock.lock()
-            armorRuntimeSnapshot = snapshot
-            stateLock.unlock()
-            armorInitLock.unlock()
+                let initCode = keyData.withUnsafeBytes { rawBuffer -> Int32 in
+                    guard let baseAddress = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+                        return -1
+                    }
+                    return Int32(cprisk_init_protection(baseAddress, keyData.count))
+                }
+
+                snapshot = Self.makeArmorRuntimeSnapshot(
+                    trigger: trigger,
+                    initCode: initCode,
+                    keySource: keyResolution.source,
+                    debugFallbackUsed: keyResolution.debugFallbackUsed,
+                    anchorPresent: anchorPresent,
+                    attemptCount: attemptCount
+                )
+                stateLock.withLock { armorRuntimeSnapshot = snapshot }
+                return nil
+            }
+            if let earlySnapshot { return earlySnapshot }
         } else {
             snapshot = ArmorRuntimeSnapshot(
                 status: .unavailable,
@@ -1422,22 +1404,23 @@ public final class CPRiskKit: NSObject {
             )
         }
 
-        stateLock.lock()
-        if armorRuntimeSnapshot.status == .inactive {
-            armorRuntimeSnapshot = snapshot
+        let finalSnapshot: ArmorRuntimeSnapshot = stateLock.withLock {
+            if armorRuntimeSnapshot.status == .inactive {
+                armorRuntimeSnapshot = snapshot
+            }
+            return armorRuntimeSnapshot
         }
-        let finalSnapshot = armorRuntimeSnapshot
-        stateLock.unlock()
 
         Self.logArmorRuntimeSnapshot(finalSnapshot)
         return finalSnapshot
     }
 
     private func resetArmorRuntime() {
-        stateLock.lock()
-        let shouldCleanup = armorRuntimeSnapshot.status != .inactive || armorRuntimeSnapshot.attemptCount > 0
-        armorRuntimeSnapshot = .inactive
-        stateLock.unlock()
+        let shouldCleanup = stateLock.withLock {
+            let cleanup = armorRuntimeSnapshot.status != .inactive || armorRuntimeSnapshot.attemptCount > 0
+            armorRuntimeSnapshot = .inactive
+            return cleanup
+        }
 
         if shouldCleanup {
             cprisk_cleanup_protection()
@@ -1793,10 +1776,7 @@ public final class CPRiskKit: NSObject {
     }
 
     private func currentRemoteConfigProvider() -> RemoteConfigProvider? {
-        stateLock.lock()
-        let provider = remoteConfigProvider
-        let endpoint = remoteConfigEndpoint
-        stateLock.unlock()
+        let (provider, endpoint) = stateLock.withLock { (remoteConfigProvider, remoteConfigEndpoint) }
 
         if let provider {
             return provider
@@ -1808,18 +1788,12 @@ public final class CPRiskKit: NSObject {
             _ = configureRemoteConfigProvider(urlString: persisted)
         }
 
-        stateLock.lock()
-        let refreshed = remoteConfigProvider
-        stateLock.unlock()
-        return refreshed
+        return stateLock.withLock { remoteConfigProvider }
     }
 
     /// 供 TextSegmentIntegrityChecker 等服务端参考哈希校验使用
     internal func currentRemoteConfig() -> RemoteConfig? {
-        stateLock.lock()
-        let cached = latestRemoteConfig
-        let provider = remoteConfigProvider
-        stateLock.unlock()
+        let (cached, provider) = stateLock.withLock { (latestRemoteConfig, remoteConfigProvider) }
 
         if let cached {
             return cached
@@ -1832,11 +1806,7 @@ public final class CPRiskKit: NSObject {
     /// 解析当前 SDK 版本的可信 __TEXT.__text 参考哈希。
     /// 优先走业务方注入的解析器；若未提供或返回 nil，则回退到 RemoteConfig。
     internal func resolveTextSegmentReference(for sdkVersion: String) -> TextSegmentReference? {
-        stateLock.lock()
-        let resolver = textSegmentReferenceResolver
-        let cached = latestRemoteConfig
-        let provider = remoteConfigProvider
-        stateLock.unlock()
+        let (resolver, cached, provider) = stateLock.withLock { (textSegmentReferenceResolver, latestRemoteConfig, remoteConfigProvider) }
 
         if let resolved = resolver?.resolveTextSegmentReference(for: sdkVersion) {
             return resolved
@@ -1876,11 +1846,9 @@ public final class CPRiskKit: NSObject {
         }
 #endif
 
-        stateLock.lock()
-        let sameEndpoint = (remoteConfigEndpoint == url)
-        let existingProvider = remoteConfigProvider
-        let hasCachedConfig = (latestRemoteConfig != nil)
-        stateLock.unlock()
+        let (sameEndpoint, existingProvider, hasCachedConfig) = stateLock.withLock {
+            (remoteConfigEndpoint == url, remoteConfigProvider, latestRemoteConfig != nil)
+        }
 
         if sameEndpoint, let existingProvider {
             existingProvider.configurePinning(hashes: Self.currentPinnedCertificateHashes())
@@ -1895,10 +1863,10 @@ public final class CPRiskKit: NSObject {
             configURL: url,
             pinnedCertificateHashes: Self.currentPinnedCertificateHashes()
         )
-        stateLock.lock()
-        remoteConfigEndpoint = url
-        remoteConfigProvider = provider
-        stateLock.unlock()
+        stateLock.withLock {
+            remoteConfigEndpoint = url
+            remoteConfigProvider = provider
+        }
 
         _ = applyRemoteConfigIfAccepted(provider.currentConfig, source: "provider_init")
         UserDefaults.standard.set(rawURL, forKey: Self.remoteConfigEndpointKey)
@@ -1929,9 +1897,7 @@ public final class CPRiskKit: NSObject {
             Logger.log("remote_config.\(source) warning: \(warning)")
         }
 
-        stateLock.lock()
-        defer { stateLock.unlock() }
-
+        return stateLock.withLock {
         if let currentVersion = latestRemoteConfig?.version {
             if effectiveConfig.version < currentVersion, !Self.localRemoteConfigRollbackAllowed {
                 Logger.log(
@@ -1960,6 +1926,7 @@ public final class CPRiskKit: NSObject {
         )
 
         return true
+        }
     }
 
     private func applyPinnedCertificateHashes(_ hashes: Set<String>) {
@@ -1971,24 +1938,21 @@ public final class CPRiskKit: NSObject {
             provider.reloadCachedConfigTrustState()
             _ = applyRemoteConfigIfAccepted(provider.currentConfig, source: "trust_refresh", validateStrictly: false)
         } else {
-            stateLock.lock()
-            latestRemoteConfig = nil
-            stateLock.unlock()
+            stateLock.withLock { latestRemoteConfig = nil }
         }
         PolicyManager.shared.reloadTrustedCacheState()
     }
 
     /// Throttled cprisk_verify_exception_handler to reduce task_get_exception_ports syscall frequency.
     private static func maybeVerifyExceptionHandler() {
-        verifyThrottleLock.lock()
-        let now = Date().timeIntervalSince1970
-        let shouldVerify = (now - lastExceptionVerifyTime) >= verifyThrottleInterval
+        let shouldVerify = verifyThrottleLock.withLock {
+            let now = Date().timeIntervalSince1970
+            let verify = (now - lastExceptionVerifyTime) >= verifyThrottleInterval
+            if verify { lastExceptionVerifyTime = now }
+            return verify
+        }
         if shouldVerify {
-            lastExceptionVerifyTime = now
-            verifyThrottleLock.unlock()
             cprisk_verify_exception_handler()
-        } else {
-            verifyThrottleLock.unlock()
         }
     }
 
@@ -2192,9 +2156,7 @@ public final class CPRiskKit: NSObject {
     }
 
     private static func currentPinnedCertificateHashes() -> Set<String> {
-        remoteTrustLock.lock()
-        defer { remoteTrustLock.unlock() }
-        return pinnedCertificateHashes
+        return remoteTrustLock.withLock { pinnedCertificateHashes }
     }
 
     private static func releaseHardenedRemoteConfig(_ config: RemoteConfig) -> RemoteConfig {

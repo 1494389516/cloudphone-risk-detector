@@ -4,8 +4,7 @@ import Foundation
 /// 进程内 RX / RW 映射上的 Frida/Gum 字符串特征扫描（节流 + 可关闭）。
 /// 与 `FridaDetector` 的端口/文件/环境检测互补；误报控制依赖较长 marker 与区域/页数预算。
 enum FridaBuiltinMemorySignatureScanner {
-    private static let stateLock = NSLock()
-    private static var lastScanMonotonicNs: UInt64 = 0
+    private static let scanState = Mutex<UInt64>(0)  // lastScanMonotonicNs
 
     #if DEBUG
     /// 仅用于测试：确认在关闭配置时不会进入 `performScan`。
@@ -16,9 +15,7 @@ enum FridaBuiltinMemorySignatureScanner {
     }
 
     static func resetThrottleStateForTests() {
-        stateLock.lock()
-        lastScanMonotonicNs = 0
-        stateLock.unlock()
+        scanState.withLock { $0 = 0 }
     }
     #endif
 
@@ -41,19 +38,21 @@ enum FridaBuiltinMemorySignatureScanner {
         let configuration = Configuration.current()
         guard configuration.enabled else { return nil }
 
-        stateLock.lock()
-        defer { stateLock.unlock() }
-
-        let now = monotonicNanoseconds()
-        if lastScanMonotonicNs != 0 {
-            let delta = now &- lastScanMonotonicNs
-            if delta < configuration.minIntervalNs {
-                return nil
+        // Check throttle under lock, but run the heavy scan outside.
+        let shouldScan = scanState.withLock { lastScanMonotonicNs -> Bool in
+            let now = monotonicNanoseconds()
+            if lastScanMonotonicNs != 0 {
+                let delta = now &- lastScanMonotonicNs
+                if delta < configuration.minIntervalNs {
+                    return false
+                }
             }
+            return true
         }
+        guard shouldScan else { return nil }
 
         let hit = performScan(configuration: configuration)
-        lastScanMonotonicNs = monotonicNanoseconds()
+        scanState.withLock { $0 = monotonicNanoseconds() }
         return hit
 #endif
     }
