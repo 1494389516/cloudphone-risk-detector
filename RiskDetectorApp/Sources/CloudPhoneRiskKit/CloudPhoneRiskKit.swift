@@ -1355,7 +1355,16 @@ public final class CPRiskKit: NSObject {
         }
 
         // 在锁外构建 snapshot，避免持 stateLock 期间调用可能阻塞的 cprisk_init_protection
-        let snapshot: ArmorRuntimeSnapshot
+        var snapshot = ArmorRuntimeSnapshot(
+            status: .unavailable,
+            reason: "uninitialized",
+            initCode: nil,
+            trigger: trigger,
+            rootKeySource: keyResolution.source,
+            debugFallbackUsed: keyResolution.debugFallbackUsed,
+            anchorPresent: anchorPresent,
+            attemptCount: attemptCount
+        )
         if let failureReason = keyResolution.failureReason {
             snapshot = ArmorRuntimeSnapshot(
                 status: .unavailable,
