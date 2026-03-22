@@ -102,7 +102,17 @@ final class AntiTamperingTests: XCTestCase {
         timingProbeMaxNs: UInt64 = 0,
         timingProbeThresholdNs: UInt64 = 0,
         dbiAnomalyCount: UInt64 = 0,
-        timingAnomalyCount: UInt64 = 0
+        timingAnomalyCount: UInt64 = 0,
+        prologueIntegrityAnomalyCount: UInt64 = 0,
+        dyldInjectionAnomalyCount: UInt64 = 0,
+        lastPrologueFailMask: UInt32 = 0,
+        lastDyldInjectionFlags: UInt32 = 0,
+        lastCsopsStatusFlags: UInt32 = 0,
+        lastAmfiProbeBits: UInt32 = 0,
+        lastGetTaskAllowSuspect: Bool = false,
+        denyAttachVerifyAnomalyCount: UInt64 = 0,
+        amfiCsFlagsAnomalyCount: UInt64 = 0,
+        getTaskAllowAnomalyCount: UInt64 = 0
     ) -> CPRiskKit.AntiDebugWatchdogSnapshot {
         CPRiskKit.AntiDebugWatchdogSnapshot(
             supported: supported,
@@ -152,7 +162,17 @@ final class AntiTamperingTests: XCTestCase {
             timingProbeMaxNs: timingProbeMaxNs,
             timingProbeThresholdNs: timingProbeThresholdNs,
             dbiAnomalyCount: dbiAnomalyCount,
-            timingAnomalyCount: timingAnomalyCount
+            timingAnomalyCount: timingAnomalyCount,
+            prologueIntegrityAnomalyCount: prologueIntegrityAnomalyCount,
+            dyldInjectionAnomalyCount: dyldInjectionAnomalyCount,
+            lastPrologueFailMask: lastPrologueFailMask,
+            lastDyldInjectionFlags: lastDyldInjectionFlags,
+            lastCsopsStatusFlags: lastCsopsStatusFlags,
+            lastAmfiProbeBits: lastAmfiProbeBits,
+            lastGetTaskAllowSuspect: lastGetTaskAllowSuspect,
+            denyAttachVerifyAnomalyCount: denyAttachVerifyAnomalyCount,
+            amfiCsFlagsAnomalyCount: amfiCsFlagsAnomalyCount,
+            getTaskAllowAnomalyCount: getTaskAllowAnomalyCount
         )
     }
 

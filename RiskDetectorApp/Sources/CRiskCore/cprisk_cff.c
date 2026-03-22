@@ -37,12 +37,12 @@ static uint32_t cprisk_cff_avalanche32(uint32_t value) {
 
 static uint64_t cprisk_cff_thread_fingerprint(void) {
     pthread_t current = pthread_self();
-    unsigned char bytes[sizeof(current)];
+    unsigned char bytes[sizeof(pthread_t)];
     uint64_t hash = 0xCBF29CE484222325ULL;
     size_t index = 0u;
 
-    memcpy(bytes, &current, sizeof(current));
-    for (index = 0u; index < sizeof(current); ++index) {
+    memcpy(bytes, &current, sizeof(pthread_t));
+    for (index = 0u; index < sizeof(pthread_t); ++index) {
         hash ^= (uint64_t)bytes[index];
         hash *= 0x100000001B3ULL;
     }
@@ -76,6 +76,14 @@ static uint32_t cprisk_cff_affine_multiplier(uint32_t key, uint32_t salt) {
 
 static uint32_t cprisk_cff_affine_addend(uint32_t key, uint32_t salt) {
     return cprisk_cff_avalanche32((key * 0x9E3779B1u) ^ salt ^ 0x94D049BBu);
+}
+
+/*
+ * MBA-equivalent XOR: (a|b) - (a&b) === a ^ b (unsigned wrap).
+ * Selected via seed/salt mix to keep decode/encode symmetric.
+ */
+static uint32_t cprisk_cff_xor_mba_u32(uint32_t a, uint32_t b) {
+    return (a | b) - (a & b);
 }
 
 static uint32_t cprisk_cff_mod_inverse_odd32(uint32_t odd_value) {
@@ -191,7 +199,12 @@ uint32_t cprisk_cff_encode_state_with_style(
         default: {
             const uint32_t mix = cprisk_cff_avalanche32(key ^ salt ^ 0x9E3779B9u);
             const uint32_t shift = (mix & 31u) | 1u;
-            const uint32_t masked = state ^ mix ^ (salt * 0x45D9F3Bu);
+            const uint32_t saltprod = salt * 0x45D9F3Bu;
+            const uint32_t use_mba =
+                (cprisk_cff_avalanche32(key ^ salt ^ 0xEFCAB9A5u) & 1u) != 0u;
+            const uint32_t core =
+                use_mba != 0u ? cprisk_cff_xor_mba_u32(state, mix) : (state ^ mix);
+            const uint32_t masked = core ^ saltprod;
             return cprisk_cff_rotate_left32(masked, shift) + (key * 0x27D4EB2Du);
         }
     }
@@ -225,9 +238,13 @@ uint32_t cprisk_cff_decode_state_with_style(
         default: {
             const uint32_t mix = cprisk_cff_avalanche32(key ^ salt ^ 0x9E3779B9u);
             const uint32_t shift = (mix & 31u) | 1u;
+            const uint32_t saltprod = salt * 0x45D9F3Bu;
+            const uint32_t use_mba =
+                (cprisk_cff_avalanche32(key ^ salt ^ 0xEFCAB9A5u) & 1u) != 0u;
             const uint32_t unshifted =
                 cprisk_cff_rotate_right32(encoded_state - (key * 0x27D4EB2Du), shift);
-            return unshifted ^ mix ^ (salt * 0x45D9F3Bu);
+            const uint32_t core = unshifted ^ saltprod;
+            return use_mba != 0u ? cprisk_cff_xor_mba_u32(core, mix) : (core ^ mix);
         }
     }
 }
@@ -327,8 +344,60 @@ uint32_t cprisk_cff_current_state(cprisk_cff_context_t *context) {
     return context->last_decoded_state;
 }
 
+typedef uint32_t (*cprisk_cff_decode_fn)(
+    uint32_t encoded_state,
+    uint32_t key,
+    uint32_t salt,
+    cprisk_cff_codec_style_t style
+);
+
+uint32_t cprisk_cff_current_state_table(cprisk_cff_context_t *context) {
+    if (context == NULL) {
+        return 0u;
+    }
+
+    static const cprisk_cff_decode_fn k_decode_dispatch[4] = {
+        cprisk_cff_decode_state_with_style,
+        cprisk_cff_decode_state_with_style,
+        cprisk_cff_decode_state_with_style,
+        cprisk_cff_decode_state_with_style,
+    };
+    const uint32_t idx = (uint32_t)context->codec_style & 3u;
+    context->last_decoded_state = k_decode_dispatch[idx](
+        context->encoded_state,
+        context->seed,
+        context->runtime_salt,
+        (cprisk_cff_codec_style_t)context->codec_style
+    );
+    return context->last_decoded_state;
+}
+
+/*
+ * Hash-based + number-theoretic opaque predicates for transitions:
+ * 1) MBA XOR equivalence must hold (always for valid unsigned arithmetic).
+ * 2) Squaring in F_p (p prime) must match uint64 modular reduction.
+ */
+static int cprisk_cff_opaque_transition_ok(uint32_t from_decoded, uint32_t to_plain, uint32_t seed, uint32_t salt) {
+    const uint32_t a = to_plain ^ salt;
+    const uint32_t b = seed ^ from_decoded;
+    if (((a | b) - (a & b)) != (a ^ b)) {
+        return 0;
+    }
+    const uint32_t h = cprisk_cff_avalanche32(seed ^ cprisk_cff_rotate_left32(to_plain, 5u) ^ 0xABADD00Du);
+    const uint32_t p = 65521u;
+    const uint64_t r = (uint64_t)h * (uint64_t)(from_decoded ^ 0x13579BDFu) % (uint64_t)p;
+    const uint64_t sq = (r * r) % (uint64_t)p;
+    const uint64_t sq_chk = ((uint64_t)r * (uint64_t)r) % (uint64_t)p;
+    return sq == sq_chk ? 1 : 0;
+}
+
 void cprisk_cff_set_state(cprisk_cff_context_t *context, uint32_t next_state) {
     if (context == NULL) {
+        return;
+    }
+
+    if (cprisk_cff_opaque_transition_ok(context->last_decoded_state, next_state, context->seed, context->runtime_salt) == 0) {
+        cprisk_cff_poison_default(context);
         return;
     }
 
@@ -364,6 +433,14 @@ int cprisk_cff_should_visit_fake_state(const cprisk_cff_context_t *context, uint
     }
 
     mixed = cprisk_cff_opaque_selector_i(context, decoded_state);
+    {
+        uint32_t h = 2166136261u;
+        h ^= mixed;
+        h *= 16777619u;
+        h ^= decoded_state ^ context->seed;
+        h *= 709607u;
+        mixed ^= cprisk_cff_rotate_left32(h, (uint32_t)(context->codec_style + 3u));
+    }
     modulo = 5u + ((uint32_t)context->codec_style % 3u);
     if (modulo == 0u)
         modulo = 5u;

@@ -398,6 +398,12 @@ void cprisk_text_encrypt_install(const uint8_t loader_key[CPRISK_ARMOR_KEY_SIZE]
     pthread_mutex_unlock(&s_text_mutex);
 }
 
+void cprisk_text_encrypt_service_idle(void) {
+    pthread_mutex_lock(&s_text_mutex);
+    cprisk_text_maybe_reencrypt_idle(mach_absolute_time());
+    pthread_mutex_unlock(&s_text_mutex);
+}
+
 void cprisk_text_encrypt_uninstall(void) {
     pthread_mutex_lock(&s_text_mutex);
     cprisk_text_encrypt_release_locked();
@@ -538,6 +544,10 @@ int cprisk_text_jit_decrypt(void *fault_addr) {
     return 0;
 }
 
+int cprisk_text_on_demand_decrypt(void *fault_addr) {
+    return cprisk_text_jit_decrypt(fault_addr);
+}
+
 #else /* Simulator / non-arm64 Apple targets */
 
 void cprisk_text_encrypt_install(const uint8_t loader_key[CPRISK_ARMOR_KEY_SIZE]) {
@@ -546,9 +556,15 @@ void cprisk_text_encrypt_install(const uint8_t loader_key[CPRISK_ARMOR_KEY_SIZE]
 
 void cprisk_text_encrypt_uninstall(void) {}
 
+void cprisk_text_encrypt_service_idle(void) {}
+
 int cprisk_text_jit_decrypt(void *fault_addr) {
     (void)fault_addr;
     return 0;
+}
+
+int cprisk_text_on_demand_decrypt(void *fault_addr) {
+    return cprisk_text_jit_decrypt(fault_addr);
 }
 
 #endif

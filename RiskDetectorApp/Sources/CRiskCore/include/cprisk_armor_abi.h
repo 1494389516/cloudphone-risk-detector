@@ -34,6 +34,8 @@
 #define CPRISK_ARMOR_SECTION_TEXT_ENCRYPT "__swift5_cgenc"
 #define CPRISK_ARMOR_SECTION_VMP_DISPATCH "__swift5_mdvrt"
 #define CPRISK_ARMOR_SECTION_VMP_BYTECODE "__swift5_mdirt"
+/** Optional 8-byte blob: magic (LE u32) + expected M3 FNV-1a (LE u32) for \c CPRISK_VMP_BC_FLAG_M3_SELFCHK. */
+#define CPRISK_ARMOR_SECTION_VMP_SELF_EXPECT "__swift5_mdvsk"
 
 #define CPRISK_TEXT_ENCRYPT_MAGIC 0x45545043u /* "CPTE" little-endian */
 #define CPRISK_TEXT_ENCRYPT_ABI_VERSION 1u
@@ -60,11 +62,19 @@
 #define CPRISK_ARMOR_ADBG_POLICY_DELAY_RESPONSE 0x00000008u
 #define CPRISK_ARMOR_ADBG_POLICY_ESCALATE_INTEGRITY 0x00000010u
 
-#define CPRISK_ARMOR_WHITEBOX_ABI_VERSION 1u
+/** Runtime frontend / probe API level (see \c cprisk_whitebox_probe_result::abi_version). */
+#define CPRISK_ARMOR_WHITEBOX_ABI_VERSION 2u
 #define CPRISK_ARMOR_WHITEBOX_MAGIC 0x43505742u /* "CPWB" */
 #define CPRISK_ARMOR_WHITEBOX_FLAG_ENGINE_READY 0x00000001u
 #define CPRISK_ARMOR_WHITEBOX_FLAG_SIGNING_PIPELINE 0x00000002u
 #define CPRISK_ARMOR_WHITEBOX_FLAG_ENHANCED_DIFFUSION 0x00000004u
+/** When set, white-box table bytes in \c __swift5_mdbdy are XOR-masked vs ASLR slide; see \c cprisk_armor_whitebox_header::aslr_table_anchor_slide. */
+#define CPRISK_ARMOR_WHITEBOX_FLAG_ASLR_TABLE_BIND 0x00000008u
+
+/** Minimum on-disk white-box meta size (v1 layout: no anchor tail). */
+#define CPRISK_ARMOR_WHITEBOX_HEADER_V1_SIZE 48u
+/** v2 layout: v1 fields + LE \c aslr_table_anchor_slide (mach_vm_address_t-sized; slide value at link/producer time). */
+#define CPRISK_ARMOR_WHITEBOX_HEADER_V2_SIZE 56u
 
 #define CPRISK_ARMOR_CAP_RUNTIME_DERIVE_KEY     0x00000001u
 #define CPRISK_ARMOR_CAP_RUNTIME_SIGN_HELPER    0x00000002u
@@ -72,6 +82,9 @@
 #define CPRISK_ARMOR_CAP_WHITEBOX_FRAMEWORK     0x00000010u
 #define CPRISK_ARMOR_CAP_WHITEBOX_SECTION_LAYOUT 0x00000020u
 #define CPRISK_ARMOR_CAP_VMP_RUNTIME            0x00000040u
+
+/** Optional 32-byte tail after the M2 VPC affine block in \c __swift5_mdirt (see \c cprisk_vm_interpreter.h). */
+#define CPRISK_VMP_INTEGRITY_BLOCK_BYTES 32u
 
 #define CPRISK_WHITEBOX_PROBE_FLAG_COMPILED         0x00000001u
 #define CPRISK_WHITEBOX_PROBE_FLAG_METADATA_PRESENT 0x00000002u
@@ -158,6 +171,15 @@ struct cprisk_armor_whitebox_header {
     uint32_t flags;
     uint32_t payload_size;
     uint8_t  config_digest[CPRISK_ARMOR_HASH_SIZE];
+    /**
+     * v2+ optional tail (present when on-disk size >= CPRISK_ARMOR_WHITEBOX_HEADER_V2_SIZE).
+     * Interpreting masked table bytes T_store uses:
+     *   T_logical[i] = T_store[i] ^ P(i, slide_runtime) ^ P(i, anchor_slide)
+     * where P is derived from cprisk_wbx_slide_term_u64(slide) per 32-byte block (see cprisk_whitebox.c).
+     * When anchor_slide matches the slide used at build time for masking, T_logical matches the
+     * producer's logical tables; digest/HMAC over T_store remains stable.
+     */
+    uint64_t aslr_table_anchor_slide;
 };
 
 struct cprisk_text_encrypt_header {
@@ -198,7 +220,7 @@ _Static_assert(sizeof(struct cprisk_armor_antidebug_header) == 48,
                "cprisk anti-debug header ABI drift");
 _Static_assert(sizeof(struct cprisk_armor_antidebug_entry) == 64,
                "cprisk anti-debug entry ABI drift");
-_Static_assert(sizeof(struct cprisk_armor_whitebox_header) == 48,
+_Static_assert(sizeof(struct cprisk_armor_whitebox_header) == CPRISK_ARMOR_WHITEBOX_HEADER_V2_SIZE,
                "cprisk whitebox header ABI drift");
 _Static_assert(sizeof(struct cprisk_text_encrypt_header) == 16,
                "cprisk text encrypt header ABI drift");

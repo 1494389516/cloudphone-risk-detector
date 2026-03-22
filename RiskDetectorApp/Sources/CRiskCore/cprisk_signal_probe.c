@@ -38,6 +38,7 @@
 #include <mach-o/dyld.h>
 #include <sys/fcntl.h>
 #include <sys/param.h>
+#include <time.h>
 #include "include/cprisk_macho.h"
 
 #define CPRISK_EXCEPTION_DELIVERY_TIMEOUT_NS 10000000ull
@@ -859,6 +860,31 @@ int cprisk_csops_debug_check(void) {
     return (flags & CS_DEBUGGED) ? 1 : 0;
 }
 
+int cprisk_csops_status_flags(uint32_t *flags_out, int *error_out) {
+    uint32_t flags = 0u;
+    pid_t pid = cprisk_getpid_direct();
+
+    if (flags_out != NULL) {
+        *flags_out = 0u;
+    }
+    if (error_out != NULL) {
+        *error_out = 0;
+    }
+
+    long result = cprisk_csops_syscall_i(pid, CS_OPS_STATUS, &flags, sizeof(flags));
+    if (result != 0) {
+        if (error_out != NULL) {
+            *error_out = (int)result;
+        }
+        return -1;
+    }
+
+    if (flags_out != NULL) {
+        *flags_out = flags;
+    }
+    return 0;
+}
+
 /* ── (f) Single-step timing detection ─────────────────────────────── */
 
 static uint64_t cprisk_single_step_workload_i(void) {
@@ -942,6 +968,91 @@ static uint64_t cprisk_add_u64_saturating_i(uint64_t a, uint64_t b) {
     return a + b;
 }
 
+static uint64_t cprisk_cntpct_delta_ns_i(uint64_t t0, uint64_t t1) {
+#if CPRISK_TIMING_CNTPCT_AVAILABLE
+    static uint64_t s_cntfrq = 0u;
+    if (s_cntfrq == 0u) {
+        __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(s_cntfrq));
+    }
+    if (s_cntfrq == 0u || t1 < t0) {
+        return 0u;
+    }
+    const uint64_t dt = t1 - t0;
+    return (dt / s_cntfrq) * 1000000000ull +
+           ((dt % s_cntfrq) * 1000000000ull) / s_cntfrq;
+#else
+    (void)t0;
+    (void)t1;
+    return 0u;
+#endif
+}
+
+static uint64_t cprisk_u64_abs_diff_i(uint64_t a, uint64_t b) {
+    return a > b ? a - b : b - a;
+}
+
+static uint32_t cprisk_clock_crosscheck_i(uint64_t median_ref_ns) {
+#if CPRISK_TIMING_CNTPCT_AVAILABLE
+    static uint64_t s_cntfrq_chk = 0u;
+    if (s_cntfrq_chk == 0u) {
+        __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(s_cntfrq_chk));
+    }
+    if (s_cntfrq_chk == 0u) {
+        return 0u;
+    }
+
+    uint64_t ct0 = 0u;
+    uint64_t ct1 = 0u;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(ct0));
+    const uint64_t ma0 = mach_absolute_time();
+    struct timespec ts0;
+    clock_gettime(CLOCK_MONOTONIC, &ts0);
+    const uint64_t ck0 =
+        (uint64_t)ts0.tv_sec * 1000000000ull + (uint64_t)ts0.tv_nsec;
+
+    for (volatile int spin = 0; spin < 96; spin++) {
+        (void)0;
+    }
+
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(ct1));
+    const uint64_t ma1 = mach_absolute_time();
+    struct timespec ts1;
+    clock_gettime(CLOCK_MONOTONIC, &ts1);
+    const uint64_t ck1 =
+        (uint64_t)ts1.tv_sec * 1000000000ull + (uint64_t)ts1.tv_nsec;
+
+    const uint64_t dc = cprisk_cntpct_delta_ns_i(ct0, ct1);
+    uint64_t dm = 0u;
+    if (ma1 >= ma0) {
+        dm = cprisk_mach_abs_to_ns_i(ma1 - ma0);
+    } else {
+        dm = cprisk_mach_abs_to_ns_i(ma0 - ma1);
+    }
+    const uint64_t dck = cprisk_u64_abs_diff_i(ck0, ck1);
+
+    const uint64_t skew_cm = cprisk_u64_abs_diff_i(dc, dm);
+    const uint64_t skew_mk = cprisk_u64_abs_diff_i(dm, dck);
+
+    uint64_t thresh_ns = 5000000ull;
+    if (median_ref_ns > 2000000ull) {
+        thresh_ns = median_ref_ns / 4u;
+        if (thresh_ns < 4000000ull) {
+            thresh_ns = 4000000ull;
+        }
+        if (thresh_ns > 30000000ull) {
+            thresh_ns = 30000000ull;
+        }
+    }
+
+    if (skew_cm > thresh_ns || skew_mk > thresh_ns) {
+        return CPRISK_TIMING_ANOMALY_CLOCK_SKEW;
+    }
+#else
+    (void)median_ref_ns;
+#endif
+    return 0u;
+}
+
 static void cprisk_sort_u64_samples_i(uint64_t *samples, size_t count) {
     if (!samples || count <= 1u) {
         return;
@@ -1011,6 +1122,8 @@ static uint32_t cprisk_timing_probe_eval_i(
         max_ns > median_threshold_ns) {
         anomaly_flags |= CPRISK_TIMING_ANOMALY_JITTER;
     }
+
+    anomaly_flags |= cprisk_clock_crosscheck_i(median_ns);
 
     if (median_ns_out) {
         *median_ns_out = median_ns;
@@ -1196,6 +1309,15 @@ int cprisk_scan_software_breakpoints_randomized_text(
 int cprisk_probe_exception_delivery_timeout(void) { return 0; }
 int cprisk_detect_tty_debug(void) { return 0; }
 int cprisk_csops_debug_check(void) { return 0; }
+int cprisk_csops_status_flags(uint32_t *flags_out, int *error_out) {
+    if (flags_out != NULL) {
+        *flags_out = 0u;
+    }
+    if (error_out != NULL) {
+        *error_out = 0;
+    }
+    return -1;
+}
 int cprisk_detect_single_stepping(void) { return 0; }
 int cprisk_detect_suspicious_threads(void) { return 0; }
 int cprisk_detect_developer_disk(void) { return 0; }

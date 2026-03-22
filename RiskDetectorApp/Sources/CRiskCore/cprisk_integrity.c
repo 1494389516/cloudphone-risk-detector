@@ -23,6 +23,7 @@
 #include "include/cprisk_macho.h"
 #include "include/cprisk_sha256.h"
 #include "include/cprisk_secure_zero.h"
+#include "include/cprisk_instruction_cache.h"
 
 _Static_assert(CPRISK_SHA256_DIGEST_LENGTH == CPRISK_ARMOR_HASH_SIZE,
                "inline SHA256 digest size must match armor ABI");
@@ -75,6 +76,44 @@ static void cprisk_prepare_deception_material_i(
     const uint8_t *full_anchor_hash,
     const uint8_t *integrity_hash
 );
+
+extern void cprisk_watchdog_note_guard_page_fault(void);
+
+/* Minimal bytecode bootstrap (loader key): single HALT = identity; extend with new opcodes if needed. */
+enum {
+    CPRISK_MV_OP_HALT = 0,
+    CPRISK_MV_OP_XOR_IMM = 1,
+};
+
+static void cprisk_mini_vm_exec_buf(uint8_t buf[32], const uint8_t *code, size_t len) {
+    size_t pc = 0;
+    while (pc < len) {
+        uint8_t op = code[pc++];
+        if (op == CPRISK_MV_OP_HALT)
+            return;
+        if (op == CPRISK_MV_OP_XOR_IMM && pc < len) {
+            uint8_t imm = code[pc++];
+            for (size_t i = 0; i < 32; i++)
+                buf[i] = (uint8_t)(buf[i] ^ imm);
+        } else {
+            return;
+        }
+    }
+}
+
+static void cprisk_loader_key_mini_vm_bootstrap(uint8_t key[32]) {
+    const uint8_t prog[] = { CPRISK_MV_OP_HALT };
+    cprisk_mini_vm_exec_buf(key, prog, sizeof(prog));
+}
+
+static int cprisk_mini_vm_bootstrap_disabled(void) {
+    static int s_cached = -1;
+    if (s_cached >= 0)
+        return s_cached;
+    const char *e = getenv("CPRISK_DISABLE_MINI_VM_BOOTSTRAP");
+    s_cached = (e && (e[0] == '1' || e[0] == 'y' || e[0] == 'Y')) ? 1 : 0;
+    return s_cached;
+}
 
 #ifndef CPRISK_ANTI_DEBUG_HARD_CRASH_ON_DEBUGGER
 #define CPRISK_ANTI_DEBUG_HARD_CRASH_ON_DEBUGGER 0
@@ -345,7 +384,7 @@ static int cprisk_antidebug_patch_site_i(uintptr_t patch_addr, int *out_tamper) 
 
     const uint32_t patched_instr = CPRISK_ADBG_RUNTIME_GATE_BRK_INSTR;
     memcpy((void *)patch_addr, &patched_instr, sizeof(patched_instr));
-    __builtin___clear_cache((char *)patch_addr, (char *)patch_addr + sizeof(patched_instr));
+    cprisk_flush_instruction_cache((void *)patch_addr, sizeof(patched_instr));
 
     if (cprisk_mprotect_direct((void *)page_addr, 0x1000u, restore_prot, NULL) != 0) {
         if (cprisk_mprotect_direct((void *)page_addr, 0x1000u, PROT_READ | PROT_EXEC, NULL) != 0) {
@@ -1113,6 +1152,9 @@ static int cprisk_init_protection_legacy_i(
         string_acc,
         loader_key);
 
+    if (!cprisk_mini_vm_bootstrap_disabled())
+        cprisk_loader_key_mini_vm_bootstrap(loader_key);
+
     if (cprisk_init_data_loader(loader_key, CPRISK_ARMOR_KEY_SIZE) != 0) {
         rc = -6;
         goto cleanup;
@@ -1131,6 +1173,10 @@ static int cprisk_init_protection_legacy_i(
         string_acc,
         cprisk_get_data_integrity_accumulator(),
         s_runtime_material);
+    if (!cprisk_mini_vm_bootstrap_disabled()) {
+        const uint8_t p[] = { CPRISK_MV_OP_HALT };
+        cprisk_mini_vm_exec_buf(s_runtime_material, p, sizeof(p));
+    }
     s_runtime_material_ready = 1;
     rc = 0;
 
@@ -1220,6 +1266,9 @@ static int cprisk_init_protection_whitebox_i(
         goto cleanup;
     }
 
+    if (!cprisk_mini_vm_bootstrap_disabled())
+        cprisk_loader_key_mini_vm_bootstrap(loader_key);
+
     if (cprisk_init_data_loader(loader_key, CPRISK_ARMOR_KEY_SIZE) != 0) {
         rc = -6;
         goto cleanup;
@@ -1252,6 +1301,10 @@ static int cprisk_init_protection_whitebox_i(
         goto cleanup;
     }
 
+    if (!cprisk_mini_vm_bootstrap_disabled()) {
+        const uint8_t p[] = { CPRISK_MV_OP_HALT };
+        cprisk_mini_vm_exec_buf(s_runtime_material, p, sizeof(p));
+    }
     s_runtime_material_ready = 1;
     rc = 0;
 
@@ -1724,6 +1777,13 @@ void cprisk_force_integrity_poison(void) {
         cprisk_prepare_deception_material_i(NULL, NULL, NULL);
         s_integrity_deception_active = 1;
     }
+}
+
+void cprisk_guard_page_fault_notify(void) {
+    s_integrity_poisoned = 1;
+    s_integrity_deception_active = 1;
+    cprisk_prepare_deception_material_i(NULL, NULL, NULL);
+    cprisk_watchdog_note_guard_page_fault();
 }
 
 uint64_t cprisk_get_init_elapsed_ns(void) {

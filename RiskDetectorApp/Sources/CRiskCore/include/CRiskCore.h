@@ -30,6 +30,10 @@ int cprisk_deny_attach_status(int *error_out);
 /// Returns 1 if traced, 0 if not traced or on query failure/simulator.
 int cprisk_is_being_traced(void);
 
+/// Independent sysctl-only P_TRACED probe (duplicate path from `cprisk_is_being_traced`).
+/// Use alongside `cprisk_mach_trace_suspicious` to reduce single-function hook surface.
+int cprisk_is_being_traced_sysctl_only(void);
+
 /// Mach-path trace suspicion helper used to cross-check sysctl/unix results.
 /// Returns 1 when Mach state indicates suspicious trace/hijack characteristics.
 int cprisk_mach_trace_suspicious(void);
@@ -57,6 +61,24 @@ enum {
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DBI_MARKER = 1u << 15,
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TIMING_SIDECHANNEL = 1u << 16,
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACE_CROSSCHECK = 1u << 17,
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACED_PROBE_DIVERGENCE = 1u << 18,
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_FUNCTION_PROLOGUE = 1u << 19,
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DYLD_INJECTION = 1u << 20,
+    /** deny_attach syscall returned success but post-hoc sysctl/Mach consistency failed. */
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DENY_ATTACH_VERIFY = 1u << 21,
+    /** csops code-signing flags snapshot indicates unexpected CS_VALID / CS_HARD / CS_KILL / CS_DEBUGGED mix. */
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_AMFI_CS_FLAGS = 1u << 22,
+    /** task_for_pid(self) unexpectedly succeeded (get-task-allow-class capability). */
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GET_TASK_ALLOW = 1u << 23,
+    /** Guard page (PROT_NONE honeypot) fault — anti-dump / scan attempt. */
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GUARD_PAGE = 1u << 24,
+};
+
+enum {
+    CPRISK_AMFI_PROBE_CS_DEBUGGED = 1u << 0,
+    CPRISK_AMFI_PROBE_CS_VALID_ABSENT = 1u << 1,
+    CPRISK_AMFI_PROBE_CS_HARD_ABSENT = 1u << 2,
+    CPRISK_AMFI_PROBE_CS_KILL_ABSENT = 1u << 3,
 };
 
 typedef struct cprisk_exception_handler_snapshot {
@@ -124,6 +146,16 @@ typedef struct cprisk_anti_debug_watchdog_snapshot {
     uint64_t last_timing_probe_threshold_ns;
     uint64_t dbi_anomaly_count;
     uint64_t timing_anomaly_count;
+    uint64_t prologue_integrity_anomaly_count;
+    uint64_t dyld_injection_anomaly_count;
+    uint32_t last_prologue_fail_mask;
+    uint32_t last_dyld_injection_flags;
+    uint32_t last_csops_status_flags;
+    uint32_t last_amfi_probe_bits;
+    uint32_t last_get_task_allow_suspect;
+    uint64_t deny_attach_verify_anomaly_count;
+    uint64_t amfi_cs_flags_anomaly_count;
+    uint64_t get_task_allow_anomaly_count;
 } cprisk_anti_debug_watchdog_snapshot_t;
 
 typedef struct cprisk_antidebug_plan_snapshot {
@@ -333,6 +365,12 @@ int cprisk_init_string_decryptor(const uint8_t *key, size_t key_len);
 /// Side-effect: updates the string integrity accumulator.
 int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size);
 
+/// Single-slot lazy decrypt cache (first-touch semantics); copies into `buffer` when possible.
+int cprisk_decrypt_string_lazy(uint32_t string_id, char *buffer, size_t buffer_size);
+
+/// Clears resident lazy plaintext (best-effort overwrite).
+void cprisk_string_lazy_scrub_all(void);
+
 /// Return the current string integrity accumulator value.
 uint64_t cprisk_get_string_integrity_accumulator(void);
 
@@ -362,6 +400,14 @@ int cprisk_load_protected_data(void);
 /// Decrypts a specific page on-demand when a bad access exception occurs.
 /// Returns 1 on success (page decrypted), 0 on failure or if not a protected page.
 int cprisk_jit_decrypt_page(void *fault_addr);
+
+/// __TEXT encryption (Pass12): decrypt protected page containing `addr` without taking a fault (use-and-reencrypt timer unchanged).
+int cprisk_text_on_demand_decrypt(void *addr);
+
+/// __TEXT.__text idle re-encrypt: call from a periodic context (e.g. anti-debug watchdog)
+/// so decrypted execute pages are re-wrapped after CPRISK_TEXT_RECRYPT_NS without waiting
+/// for another fault. No-op on simulator / when Pass12 metadata is absent.
+void cprisk_text_encrypt_service_idle(void);
 
 /// Return the current data integrity accumulator value.
 uint64_t cprisk_get_data_integrity_accumulator(void);
@@ -447,6 +493,12 @@ int cprisk_whitebox_available(void);
 
 /// Evaluate one white-box PRF domain against a 32-byte input state.
 /// Returns 0 on success, -1 on validation failure, unknown domain, or null out.
+///
+/// When embedded metadata sets \c CPRISK_ARMOR_WHITEBOX_FLAG_ASLR_TABLE_BIND (v2 header,
+/// 56-byte \c __swift5_mdext), table bytes in \c __swift5_mdbdy are XOR-masked vs Mach
+/// slide; runtime decodes using \c aslr_table_anchor_slide before PRF evaluation.
+/// Disable at runtime: \c CPRISK_WB_ASLR_TABLE_DISABLE=1. Strip decode path at compile
+/// time: \c CPRISK_DISABLE_WHITEBOX_ASLR_TABLE.
 int cprisk_whitebox_evaluate_domain(
     uint32_t domain_id,
     const uint8_t input[32],
@@ -456,6 +508,8 @@ int cprisk_whitebox_evaluate_domain(
 /// Derive a 32-byte effective signing key from the current runtime material and
 /// the caller-provided base key. This is the C-side equivalent of the former
 /// Swift HMAC(runtime_material, base_key_utf8) step.
+/// Optional ASLR bind (iOS device): set env `CPRISK_SIGNING_KEY_ASLR_BIND=1` to XOR
+/// slide-derived entropy into the first 8 bytes of runtime material before HMAC.
 /// Returns 0 on success, -1 on failure.
 int cprisk_derive_effective_signing_key(
     const uint8_t *base_key,
@@ -587,6 +641,9 @@ int cprisk_is_integrity_poisoned(void);
 /// (e.g. when a security-critical mprotect fails).
 void cprisk_force_integrity_poison(void);
 
+/// Guard-page (memory trap) access: deception + integrity poison + watchdog anomaly bit.
+void cprisk_guard_page_fault_notify(void);
+
 /// Returns 1 if any security-critical mprotect call failed (kernel-level
 /// interference or syscall hook), 0 otherwise. Checked by Swift layer
 /// during evaluate() to surface the tamper signal.
@@ -714,6 +771,7 @@ enum {
     CPRISK_TIMING_ANOMALY_MEDIAN = 1u << 0,
     CPRISK_TIMING_ANOMALY_SPIKE = 1u << 1,
     CPRISK_TIMING_ANOMALY_JITTER = 1u << 2,
+    CPRISK_TIMING_ANOMALY_CLOCK_SKEW = 1u << 3,
 };
 
 /// Probe debugger presence via SIGTRAP signal delivery after BRK #0xC0DE.
@@ -751,6 +809,21 @@ int cprisk_detect_tty_debug(void);
 /// Check the CS_DEBUGGED codesign flag via direct csops syscall.
 /// Returns 1 if the process is marked as debugged, 0 otherwise.
 int cprisk_csops_debug_check(void);
+
+/// Read full csops CS_OPS_STATUS flags (0 on simulator / failure). Returns 0 on success.
+int cprisk_csops_status_flags(uint32_t *flags_out, int *error_out);
+
+/// After a successful deny_attach syscall, re-validate sysctl proc state consistency.
+/// Returns non-zero if the post-check looks suspicious (hooks / unstable state).
+int cprisk_deny_attach_effective_verify(int deny_attach_rc, int deny_attach_errno, uint32_t *detail_bits_out);
+
+/// Aggregate AMFI / entitlement-oriented probes for the watchdog snapshot.
+/// Writes cs flags, get-task-allow suspicion (0/1), and anomaly category bits.
+void cprisk_amfi_entitlement_watchdog_probe(
+    uint32_t *cs_flags_out,
+    uint32_t *get_task_allow_suspect_out,
+    uint32_t *amfi_anomaly_bits_out
+);
 
 /// Detect single-stepping by timing ~100 arithmetic instructions.
 /// Returns 1 if execution took suspiciously long (>50ms), 0 otherwise.

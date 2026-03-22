@@ -109,6 +109,8 @@ targets:
           $(inherited) -lCRiskCore
           -Wl,-headerpad,0x4000
           -Wl,-u,_cprisk_vm_entry
+          -Wl,-u,_cprisk_vm_entry_alt1
+          -Wl,-u,_cprisk_vm_entry_alt2
           -Wl,-sectcreate,__DATA,__swift5_types2,$(ARMOR_PLACEHOLDER_DIR)/string_table.bin
           -Wl,-sectcreate,__DATA,__swift5_proto2,$(ARMOR_PLACEHOLDER_DIR)/loader.bin
           -Wl,-sectcreate,__DATA,__swift5_mpenum,$(ARMOR_PLACEHOLDER_DIR)/protected_blob.bin
@@ -144,6 +146,34 @@ targets:
       - target: CloudPhoneRiskAppCore
       - sdk: AppIntents.framework
         weak: true
+    postBuildScripts:
+      - name: Inject VM self-expect (mdvsk)
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)
+          - $(DERIVED_FILE_DIR)/inject_vm_self_expect.stamp
+        script: |
+          unset SDKROOT
+          export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+          TOOLROOT="${SRCROOT}/../cprisk-armor"
+          EXEC="${TARGET_BUILD_DIR}/${EXECUTABLE_PATH}"
+          STAMP_PATH="${SCRIPT_OUTPUT_FILE_1}"
+          mkdir -p "$(dirname "$STAMP_PATH")"
+
+          if [ ! -d "$TOOLROOT" ] || [ ! -f "$EXEC" ]; then
+            /bin/date -u +"%Y-%m-%dT%H:%M:%SZ" > "$STAMP_PATH"
+            exit 0
+          fi
+
+          (cd "$TOOLROOT" && swift build -c release --product cprisk-vm-self-expect >/dev/null) || true
+          BIN="$(cd "$TOOLROOT" && swift build -c release --show-bin-path)"
+          TOOL="${BIN}/cprisk-vm-self-expect"
+          if [ -x "$TOOL" ]; then
+            "$TOOL" --in "$EXEC" || echo "warning: cprisk-vm-self-expect: injection skipped for $EXEC" >&2
+          fi
+
+          /usr/bin/stat -f "%m %z" "$EXEC" > "$STAMP_PATH" || /bin/date -u +"%Y-%m-%dT%H:%M:%SZ" > "$STAMP_PATH"
 
   CloudPhoneRiskKitTests:
     type: bundle.unit-test

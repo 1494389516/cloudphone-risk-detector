@@ -208,39 +208,293 @@ final class VMProtectorTests: XCTestCase {
     }
 
     func testTrampolineEncodingRoundTripSize() throws {
-        let stub = try VMPatchRewriter.buildTrampoline(
-            functionId: 0x0123_4567_89AB_CDEF,
-            functionEntryVMA: 0x1000_0400,
-            vmEntryVMA: 0x1000_0800
+        let fid = UInt64(0x0123_4567_89AB_CDEF)
+        let entry = UInt64(0x1000_0400)
+        let vm = UInt64(0x1000_0800)
+        for tpl in VMTrampolineTemplate.allCases {
+            let stub = try VMPatchRewriter.buildTrampoline(
+                functionId: fid,
+                functionEntryVMA: entry,
+                vmEntryVMA: vm,
+                template: tpl
+            )
+            XCTAssertEqual(stub.count, VMPatchRewriter.trampolineByteLength, "template \(tpl)")
+        }
+    }
+
+    func testTrampolineTemplateSelectionIsDeterministicBySeedAndFunctionId() {
+        let a = VMPatchRewriter.selectTrampolineTemplate(functionId: 0xAAA, buildSeed: 0x111)
+        let b = VMPatchRewriter.selectTrampolineTemplate(functionId: 0xAAA, buildSeed: 0x111)
+        XCTAssertEqual(a, b)
+        XCTAssertTrue(VMTrampolineTemplate.allCases.contains(a))
+        var variants = Set<VMTrampolineTemplate>()
+        for u in UInt64(0)..<256 {
+            variants.insert(VMPatchRewriter.selectTrampolineTemplate(functionId: u, buildSeed: 0x111))
+        }
+        XCTAssertGreaterThanOrEqual(variants.count, 2, "seed mix should surface multiple templates across ids")
+    }
+
+    func testVmEntrySymbolSelectionIsDeterministicAndVaried() {
+        let a = VMPatchRewriter.selectVmEntrySymbolName(functionId: 0xAAA, buildSeed: 0x111)
+        let b = VMPatchRewriter.selectVmEntrySymbolName(functionId: 0xAAA, buildSeed: 0x111)
+        XCTAssertEqual(a, b)
+        var names = Set<String>()
+        for u in UInt64(0)..<512 {
+            names.insert(VMPatchRewriter.selectVmEntrySymbolName(functionId: u, buildSeed: 0x222))
+        }
+        XCTAssertGreaterThanOrEqual(names.count, 2)
+    }
+
+    func testOpcodeWireObfuscationV3MatchesMix() {
+        let table = VMOpcodeTable(seed: 0xC0DE)
+        let emitter = VMBytecodeEmitter()
+        let programs: [(functionId: UInt64, entryVMA: UInt64, tier: VMBytecodeFormat.TierCode, instructions: [VMInstruction])] = [
+            (functionId: 0x22, entryVMA: 0x3000, tier: .full, [VMInstruction(op: .nop), VMInstruction(op: .halt)])
+        ]
+        let encOpts = VMM2EmitOptions(
+            handlerVariantSeed: 0,
+            perEntryVpcEnabled: false,
+            opcodeWireObfuscation: true,
+            opcodeKeystreamMaterial: 0xABCD_EF01_2345_6789
         )
-        XCTAssertEqual(stub.count, VMPatchRewriter.trampolineByteLength)
+        let enc = emitter.emit(programs: programs, opcodeTable: table, options: encOpts)
+        let vEnc = VMBytecodeFormat.readUInt32LE(enc.bytecode, offset: 4)
+        XCTAssertEqual(vEnc, VMBytecodeFormat.bytecodeABIVersionV3)
+        let f = VMBytecodeFormat.readUInt32LE(enc.bytecode, offset: 12)
+        XCTAssertNotEqual(f & VMBytecodeFormat.BytecodeFlags.opcodeWireObfuscation, 0)
+        let hdrTotal = VMBytecodeEmitter.bytecodeHeaderTotalBytes(version: vEnc, flags: f)
+        XCTAssertEqual(hdrTotal, 16 + 8)
+        let root = VMBytecodeFormat.readUInt64LE(enc.bytecode, offset: 16)
+        XCTAssertEqual(root, encOpts.opcodeKeystreamMaterial)
+        let entryBase = hdrTotal
+        let bcOff = Int(VMBytecodeFormat.readUInt32LE(enc.bytecode, offset: entryBase + 20))
+        let raw0 = enc.bytecode[bcOff]
+        let sel = UInt64(0) ^ UInt64(0) ^ (0 & 0xFFFF)
+        let rawWire = table.wireByte(for: .nop, selector: sel)
+        let m = VMBytecodeEmitter.opcodeMixByte(functionId: 0x22, pcIndex: 0, seed: root)
+        XCTAssertEqual(raw0, rawWire ^ UInt8(truncatingIfNeeded: m))
+    }
+
+    func testTrampolineTemplatesAreNotAllIdenticalBytes() throws {
+        let fid = UInt64(0xF00D_BEEF_DEAD_BEEF)
+        let entry = UInt64(0x1_0000_2000)
+        let vm = UInt64(0x1_0000_2800)
+        var sigs = Set<Data>()
+        for tpl in VMTrampolineTemplate.allCases {
+            let stub = try VMPatchRewriter.buildTrampoline(
+                functionId: fid,
+                functionEntryVMA: entry,
+                vmEntryVMA: vm,
+                template: tpl
+            )
+            sigs.insert(stub)
+        }
+        XCTAssertEqual(sigs.count, VMTrampolineTemplate.allCases.count, "each template should yield a distinct encoding")
+    }
+
+    func testDispatchKeystreamObfuscatesClassTableOnDisk() {
+        let table = VMOpcodeTable(seed: 0xC001_D00D)
+        let emitter = VMBytecodeEmitter()
+        let programs: [(functionId: UInt64, entryVMA: UInt64, tier: VMBytecodeFormat.TierCode, instructions: [VMInstruction])] = [
+            (1, 0x1000, .full, [VMInstruction(op: .nop)])
+        ]
+        let plain = emitter.emit(programs: programs, opcodeTable: table, options: VMM2EmitOptions(dispatchTableKeystream: false))
+        let enc = emitter.emit(programs: programs, opcodeTable: table, options: VMM2EmitOptions(dispatchTableKeystream: true))
+        let plainVersion = VMBytecodeFormat.readUInt32LE(plain.dispatch, offset: 4)
+        let encVersion = VMBytecodeFormat.readUInt32LE(enc.dispatch, offset: 4)
+        let plainClassOffset = plainVersion >= VMBytecodeFormat.dispatchABIVersionV2 ? (16 + VMBytecodeFormat.dispatchSeedBytes) : 16
+        let encClassOffset = encVersion >= VMBytecodeFormat.dispatchABIVersionV2 ? (16 + VMBytecodeFormat.dispatchSeedBytes) : 16
+        let slicePlain = plain.dispatch[plainClassOffset..<(plainClassOffset + VMBytecodeFormat.dispatchTableSize)]
+        let sliceEnc = enc.dispatch[encClassOffset..<(encClassOffset + VMBytecodeFormat.dispatchTableSize)]
+        XCTAssertNotEqual(Data(slicePlain), Data(sliceEnc))
+        XCTAssertEqual(encVersion, VMBytecodeFormat.dispatchABIVersionV2)
+        let flags = VMBytecodeFormat.readUInt32LE(enc.dispatch, offset: 12)
+        XCTAssertNotEqual(flags & VMBytecodeFormat.DispatchHeaderFlags.classTableKeystream, 0)
+        let recovered = VMBytecodeEmitter.decryptDispatchClassTable(
+            payload: enc.dispatch,
+            opcodeTableSeed: table.seed,
+            material: 0
+        )
+        XCTAssertEqual(recovered, [UInt8](slicePlain))
+    }
+
+    func testImmediateKeystreamV3EncodesNonPlainImmediates() {
+        let table = VMOpcodeTable(seed: 7)
+        let emitter = VMBytecodeEmitter()
+        let ins = VMInstruction(op: .addLane, immediate: 0x1111_2222_3333_4444)
+        let programs: [(functionId: UInt64, entryVMA: UInt64, tier: VMBytecodeFormat.TierCode, instructions: [VMInstruction])] = [
+            (functionId: 0x99, entryVMA: 0x2000, tier: .partial, instructions: [ins, VMInstruction(op: .halt)])
+        ]
+        let baseOpts = VMM2EmitOptions(handlerVariantSeed: 0, perEntryVpcEnabled: false)
+        let plain = emitter.emit(programs: programs, opcodeTable: table, options: baseOpts)
+        let encOpts = VMM2EmitOptions(
+            handlerVariantSeed: 0,
+            perEntryVpcEnabled: false,
+            immediateKeystream: true,
+            immediateKeystreamMaterial: 0x1234_5678_ABCD_EF00
+        )
+        let enc = emitter.emit(programs: programs, opcodeTable: table, options: encOpts)
+        let vPlain = VMBytecodeFormat.readUInt32LE(plain.bytecode, offset: 4)
+        let vEnc = VMBytecodeFormat.readUInt32LE(enc.bytecode, offset: 4)
+        XCTAssertEqual(vPlain, VMBytecodeFormat.bytecodeABIVersionV1)
+        XCTAssertEqual(vEnc, VMBytecodeFormat.bytecodeABIVersionV3)
+        let fEnc = VMBytecodeFormat.readUInt32LE(enc.bytecode, offset: 12)
+        XCTAssertNotEqual(fEnc & VMBytecodeFormat.BytecodeFlags.immediateKeystream, 0)
+        let hdrTotal = VMBytecodeEmitter.bytecodeHeaderTotalBytes(version: vEnc, flags: fEnc)
+        XCTAssertEqual(hdrTotal, 16 + 8)
+        let root = VMBytecodeFormat.readUInt64LE(enc.bytecode, offset: 16)
+        XCTAssertEqual(root, encOpts.immediateKeystreamMaterial)
+        let entryBase = hdrTotal
+        let bcOff = Int(VMBytecodeFormat.readUInt32LE(enc.bytecode, offset: entryBase + 20))
+        let immOff = bcOff + 1
+        let wEnc = VMBytecodeFormat.readUInt64LE(enc.bytecode, offset: immOff)
+        XCTAssertNotEqual(wEnc, ins.immediate)
+        let dec = VMBytecodeEmitter.decodeWireImmediate(
+            encoded: wEnc,
+            functionId: 0x99,
+            pcIndex: 0,
+            keystreamRoot: root
+        )
+        XCTAssertEqual(dec, ins.immediate)
+    }
+
+    func testVMPolicyParsesDispatchAndImmediateKeystreamFlags() {
+        let yaml = """
+        version: 5
+        hardening:
+          dispatch_table_keystream: true
+          bytecode_immediate_keystream: true
+        functions:
+          full:
+            - _x
+        """
+        let p = VMPolicyConfig.parse(yaml)
+        XCTAssertTrue(p.hardening.dispatchTableKeystream)
+        XCTAssertTrue(p.hardening.bytecodeImmediateKeystream)
+    }
+
+    func testEntryExecutionProfileEncodedAndDeterministicPerSeed() {
+        let table = VMOpcodeTable(seed: 0x3333_4444)
+        let emitter = VMBytecodeEmitter()
+        let programs: [(functionId: UInt64, entryVMA: UInt64, tier: VMBytecodeFormat.TierCode, instructions: [VMInstruction])] = [
+            (functionId: 0x101, entryVMA: 0x2000, tier: .full, instructions: [VMInstruction(op: .rawRegion, immediate: 0xAA55), VMInstruction(op: .halt)])
+        ]
+        let opts = VMM2EmitOptions(handlerVariantSeed: 0x5566_7788, perEntryVpcEnabled: false)
+        let p1 = emitter.emit(programs: programs, opcodeTable: table, options: opts)
+        let p2 = emitter.emit(programs: programs, opcodeTable: table, options: opts)
+        XCTAssertEqual(p1.bytecode, p2.bytecode, "same seed/options should be reproducible")
+
+        let e1 = parsedEntry(in: p1.bytecode, index: 0)
+        let profile = VMBytecodeEmitter.unpackEntryExecutionProfile(e1.reserved)
+        XCTAssertNotNil(profile, "extended execution profile marker should be present")
+        XCTAssertGreaterThanOrEqual(profile?.maxSubcallDepth ?? 0, 2)
+        XCTAssertLessThanOrEqual(profile?.maxSubcallDepth ?? 100, 16)
+    }
+
+    func testEntryExecutionProfileChangesAcrossSeed() {
+        let table = VMOpcodeTable(seed: 77)
+        let emitter = VMBytecodeEmitter()
+        let program: [(functionId: UInt64, entryVMA: UInt64, tier: VMBytecodeFormat.TierCode, instructions: [VMInstruction])] = [
+            (functionId: 0xABCD_EF01, entryVMA: 0x1200, tier: .partial, instructions: [VMInstruction(op: .nop), VMInstruction(op: .halt)])
+        ]
+        let a = emitter.emit(
+            programs: program,
+            opcodeTable: table,
+            options: VMM2EmitOptions(handlerVariantSeed: 0x1111, perEntryVpcEnabled: false)
+        )
+        let b = emitter.emit(
+            programs: program,
+            opcodeTable: table,
+            options: VMM2EmitOptions(handlerVariantSeed: 0x2222, perEntryVpcEnabled: false)
+        )
+        let pa = VMBytecodeEmitter.unpackEntryExecutionProfile(parsedEntry(in: a.bytecode, index: 0).reserved)
+        let pb = VMBytecodeEmitter.unpackEntryExecutionProfile(parsedEntry(in: b.bytecode, index: 0).reserved)
+        XCTAssertNotNil(pa)
+        XCTAssertNotNil(pb)
+        XCTAssertNotEqual(pa, pb, "seed should drive profile polymorphism")
+    }
+
+    func testSubcallDepthAndMixedPredicateProfilesVaryAcrossFunctions() {
+        let table = VMOpcodeTable(seed: 19)
+        let emitter = VMBytecodeEmitter()
+        var programs: [(functionId: UInt64, entryVMA: UInt64, tier: VMBytecodeFormat.TierCode, instructions: [VMInstruction])] = []
+        for i in 0..<12 {
+            programs.append((functionId: UInt64(0x9000 + i), entryVMA: UInt64(0x4000 + i * 0x20), tier: .partial, instructions: [VMInstruction(op: .nop), VMInstruction(op: .halt)]))
+        }
+        let payload = emitter.emit(
+            programs: programs,
+            opcodeTable: table,
+            options: VMM2EmitOptions(handlerVariantSeed: 0xFEED_BEEF, perEntryVpcEnabled: false)
+        )
+        var depths = Set<UInt8>()
+        var mixes = Set<UInt8>()
+        for i in 0..<programs.count {
+            let entry = parsedEntry(in: payload.bytecode, index: i)
+            let profile = VMBytecodeEmitter.unpackEntryExecutionProfile(entry.reserved)
+            XCTAssertNotNil(profile)
+            depths.insert(profile?.maxSubcallDepth ?? 0)
+            mixes.insert(profile?.mixedPredicateProfile ?? 0)
+        }
+        XCTAssertGreaterThan(depths.count, 1, "subcall depth should not be a fixed shallow constant")
+        XCTAssertGreaterThan(mixes.count, 1, "mixed predicate profiles should vary across functions")
+    }
+
+    func testBranchAndCallOpsEncodeIntoRecoverableLogicalClasses() {
+        let table = VMOpcodeTable(seed: 0x1234_5678)
+        let emitter = VMBytecodeEmitter()
+        let condWord = UInt64(0x5400_0020) // B.EQ +1 insn (imm19=1)
+        let program: [(functionId: UInt64, entryVMA: UInt64, tier: VMBytecodeFormat.TierCode, instructions: [VMInstruction])] = [
+            (
+                functionId: 0xB1,
+                entryVMA: 0x3000,
+                tier: .full,
+                instructions: [
+                    VMInstruction(op: .branchRel, immediate: 18),
+                    VMInstruction(op: .call, immediate: UInt64(bitPattern: Int64(-9))),
+                    VMInstruction(op: .branchCond, immediate: condWord),
+                    VMInstruction(op: .halt),
+                ]
+            )
+        ]
+        let payload = emitter.emit(
+            programs: program,
+            opcodeTable: table,
+            options: VMM2EmitOptions(handlerVariantSeed: 0x66, perEntryVpcEnabled: false)
+        )
+        let dispatchTable = dispatchClassTable(from: payload.dispatch)
+        let entry = parsedEntry(in: payload.bytecode, index: 0)
+        let ops: [UInt8] = (0..<4).map { i in
+            let raw = payload.bytecode[entry.bytecodeOffset + i * 9]
+            return dispatchTable[Int(raw)]
+        }
+        XCTAssertEqual(ops, [VMLogicalOp.branchRel.rawValue, VMLogicalOp.call.rawValue, VMLogicalOp.branchCond.rawValue, VMLogicalOp.halt.rawValue])
+        XCTAssertNotNil(VMBytecodeEmitter.unpackEntryExecutionProfile(entry.reserved))
     }
 
     func testLifterRecognizesMovWideAndBranchPatterns() {
         let movz = Data([0x00, 0x00, 0x80, 0xD2]) // MOVZ X0, #0
         let lifter = ARM64Lifter()
         let m = lifter.liftPrologue(bytes: movz, maxInstructions: 8)
-        XCTAssertEqual(m.first?.op, VMLogicalOp.rawRegion)
-        XCTAssertEqual(m.first?.rawCategory, VMRawRegionCategory.movWide)
+        XCTAssertEqual(m.first?.op, VMLogicalOp.movWide)
 
         let cbz = Data([0x00, 0x00, 0x00, 0xB4]) // CBZ X0, +0 (imm14=0)
         let c = lifter.liftPrologue(bytes: cbz, maxInstructions: 8)
-        XCTAssertEqual(c.first?.rawCategory, VMRawRegionCategory.branchTest)
+        XCTAssertEqual(c.first?.op, VMLogicalOp.branchCond)
 
         let bCond = Data([0x00, 0x00, 0x00, 0x54]) // B.EQ +0
         let b = lifter.liftPrologue(bytes: bCond, maxInstructions: 8)
-        XCTAssertEqual(b.first?.rawCategory, VMRawRegionCategory.branchCond)
+        XCTAssertEqual(b.first?.op, VMLogicalOp.branchCond)
     }
 
     func testLifterLoadStoreAndConditionalSelectCategories() {
         let lifter = ARM64Lifter()
         let ldr = Data([0x20, 0x00, 0x40, 0xF9]) // LDR X0, [X1, #0]
         let ld = lifter.liftPrologue(bytes: ldr, maxInstructions: 4)
-        XCTAssertEqual(ld.first?.rawCategory, VMRawRegionCategory.loadStore)
+        XCTAssertEqual(ld.first?.op, VMLogicalOp.loadStore)
 
         let csel = Data([0x20, 0x0C, 0x82, 0x9A]) // CSEL X0, X1, X2, EQ
         let cs = lifter.liftPrologue(bytes: csel, maxInstructions: 4)
-        XCTAssertEqual(cs.first?.rawCategory, VMRawRegionCategory.condSelect)
+        XCTAssertEqual(cs.first?.op, VMLogicalOp.condSelect)
     }
 
     func testLifterFusesAdrpAdd() {
@@ -252,8 +506,26 @@ final class VMProtectorTests: XCTestCase {
         let lifter = ARM64Lifter()
         let p = lifter.liftPrologue(bytes: bytes, maxInstructions: 8)
         XCTAssertEqual(p.count, 2)
-        XCTAssertEqual(p[0].op, .rawRegion)
-        XCTAssertEqual(p[0].rawCategory, .adrAdd)
+        XCTAssertEqual(p[0].op, .adrAdd)
         XCTAssertEqual(p[0].immediate, 0x9100_0000_9000_0000)
+    }
+
+    private func parsedEntry(in bytecode: Data, index: Int) -> (reserved: UInt32, bytecodeOffset: Int, bytecodeLength: Int) {
+        let version = VMBytecodeFormat.readUInt32LE(bytecode, offset: 4)
+        let flags = VMBytecodeFormat.readUInt32LE(bytecode, offset: 12)
+        let headerTotal = VMBytecodeEmitter.bytecodeHeaderTotalBytes(version: version, flags: flags)
+        let stride = VMBytecodeFormat.entryCoreSize
+            + (((flags & VMBytecodeFormat.BytecodeFlags.perEntryVpc) != 0) ? VMBytecodeFormat.vpcAffineBytes : 0)
+        let base = headerTotal + index * stride
+        let reserved = VMBytecodeFormat.readUInt32LE(bytecode, offset: base + 28)
+        let offset = Int(VMBytecodeFormat.readUInt32LE(bytecode, offset: base + 20))
+        let length = Int(VMBytecodeFormat.readUInt32LE(bytecode, offset: base + 24))
+        return (reserved, offset, length)
+    }
+
+    private func dispatchClassTable(from dispatch: Data) -> [UInt8] {
+        let version = VMBytecodeFormat.readUInt32LE(dispatch, offset: 4)
+        let classOffset = version >= VMBytecodeFormat.dispatchABIVersionV2 ? (16 + VMBytecodeFormat.dispatchSeedBytes) : 16
+        return [UInt8](dispatch[classOffset..<(classOffset + VMBytecodeFormat.dispatchTableSize)])
     }
 }

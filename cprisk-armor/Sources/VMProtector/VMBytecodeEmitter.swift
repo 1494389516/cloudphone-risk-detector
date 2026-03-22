@@ -11,6 +11,39 @@ public struct VMSectionPayloads {
     }
 }
 
+/// Encoded in `VMBytecodeFormat.Entry.reserved` (producer hint field).
+/// Layout v1 (when magic byte `0xA5` is present in bits 24...31):
+/// - bits 0...7: low 8 bits of handler variant selector
+/// - bits 8...11: semantic family id (runtime polymorphic-equivalent handlers)
+/// - bits 12...15: mixed-predicate profile id (branchCond path expansion)
+/// - bits 16...19: max subcall depth minus 1 (stored range 0...15)
+/// - bits 20...23: entropy tag (producer-only, runtime optional)
+/// - bits 24...31: marker `0xA5`
+public struct VMEntryExecutionProfile: Equatable, Sendable {
+    public let handlerVariantLow8: UInt8
+    public let semanticFamily: UInt8
+    public let mixedPredicateProfile: UInt8
+    public let maxSubcallDepth: UInt8
+    public let entropyTag: UInt8
+    public let usesExtendedLayout: Bool
+
+    public init(
+        handlerVariantLow8: UInt8,
+        semanticFamily: UInt8,
+        mixedPredicateProfile: UInt8,
+        maxSubcallDepth: UInt8,
+        entropyTag: UInt8,
+        usesExtendedLayout: Bool
+    ) {
+        self.handlerVariantLow8 = handlerVariantLow8
+        self.semanticFamily = semanticFamily
+        self.mixedPredicateProfile = mixedPredicateProfile
+        self.maxSubcallDepth = Swift.max(UInt8(1), maxSubcallDepth)
+        self.entropyTag = entropyTag
+        self.usesExtendedLayout = usesExtendedLayout
+    }
+}
+
 /// M3 optional metadata appended after the 256-byte dispatch class table (CRiskCore reads only the prefix; tail is forward-compatible).
 public struct VMM3EmitOptions: Equatable, Sendable {
     /// Opaque VPC predicate-chain constants for build-time / future runtime consumers.
@@ -18,17 +51,21 @@ public struct VMM3EmitOptions: Equatable, Sendable {
     public var enableDeadHandlers: Bool
     public var enableOpaquePredicateChain: Bool
     public var enableSelfIntegrityCheck: Bool
+    /// When `enableSelfIntegrityCheck` is true, use HMAC-SHA256 (truncated) vs CPSH blob instead of FNV/CPSF.
+    public var enableSelfIntegrityHmac: Bool
 
     public init(
         vpcPredicateConstants: [UInt64] = [],
         enableDeadHandlers: Bool = false,
         enableOpaquePredicateChain: Bool = false,
-        enableSelfIntegrityCheck: Bool = false
+        enableSelfIntegrityCheck: Bool = false,
+        enableSelfIntegrityHmac: Bool = false
     ) {
         self.vpcPredicateConstants = vpcPredicateConstants
         self.enableDeadHandlers = enableDeadHandlers
         self.enableOpaquePredicateChain = enableOpaquePredicateChain
         self.enableSelfIntegrityCheck = enableSelfIntegrityCheck
+        self.enableSelfIntegrityHmac = enableSelfIntegrityHmac
     }
 }
 
@@ -40,17 +77,41 @@ public struct VMM2EmitOptions: Equatable, Sendable {
     /// Emit per-entry VPC affine metadata (runtime reads A/B after each entry when enabled).
     public var perEntryVpcEnabled: Bool
     public var m3: VMM3EmitOptions
+    /// XOR the 256-byte raw→logical class table with a deterministic keystream (dispatch header flag). **Requires matching CRiskCore support when enabled.**
+    public var dispatchTableKeystream: Bool
+    /// Mixed into dispatch keystream seed (`opcodeTable.seed` is always part of the mix).
+    public var dispatchKeystreamMaterial: UInt64
+    /// v3 bytecode: XOR each 8-byte immediate with a per-`functionId`/`pc` mask; appends an 8-byte seed after the header. **Requires matching CRiskCore support when enabled.**
+    public var immediateKeystream: Bool
+    /// Extra entropy for immediate XOR; when zero, derived from `handlerVariantSeed`.
+    public var immediateKeystreamMaterial: UInt64
+    /// v3: XOR each wire opcode byte (per-insn); appends an 8-byte opcode seed after optional immediate seed.
+    public var opcodeWireObfuscation: Bool
+    /// Extra entropy for opcode XOR; when zero, derived from `handlerVariantSeed`.
+    public var opcodeKeystreamMaterial: UInt64
 
     public init(
         opaqueVpcCategoryHigh32: Bool = false,
         handlerVariantSeed: UInt64 = 0,
         perEntryVpcEnabled: Bool = true,
-        m3: VMM3EmitOptions = VMM3EmitOptions()
+        m3: VMM3EmitOptions = VMM3EmitOptions(),
+        dispatchTableKeystream: Bool = false,
+        dispatchKeystreamMaterial: UInt64 = 0,
+        immediateKeystream: Bool = false,
+        immediateKeystreamMaterial: UInt64 = 0,
+        opcodeWireObfuscation: Bool = false,
+        opcodeKeystreamMaterial: UInt64 = 0
     ) {
         self.opaqueVpcCategoryHigh32 = opaqueVpcCategoryHigh32
         self.handlerVariantSeed = handlerVariantSeed
         self.perEntryVpcEnabled = perEntryVpcEnabled
         self.m3 = m3
+        self.dispatchTableKeystream = dispatchTableKeystream
+        self.dispatchKeystreamMaterial = dispatchKeystreamMaterial
+        self.immediateKeystream = immediateKeystream
+        self.immediateKeystreamMaterial = immediateKeystreamMaterial
+        self.opcodeWireObfuscation = opcodeWireObfuscation
+        self.opcodeKeystreamMaterial = opcodeKeystreamMaterial
     }
 }
 
@@ -60,13 +121,17 @@ public enum VMBytecodeFormat {
     public static let dispatchMagic: UInt32 = 0x4456_5043
     /// Bytes `C P V M` on disk (little-endian word 0x4D56_5043).
     public static let bytecodeMagic: UInt32 = 0x4D56_5043
-    public static let dispatchABIVersion: UInt32 = 1
+    public static let dispatchABIVersionV1: UInt32 = 1
+    public static let dispatchABIVersionV2: UInt32 = 2
     public static let bytecodeABIVersionV1: UInt32 = 1
     public static let bytecodeABIVersionV2: UInt32 = 2
+    /// Extended producer format: optional 8-byte immediate keystream seed after the M2 VPC block (or after the core header when M2 fields are absent).
+    public static let bytecodeABIVersionV3: UInt32 = 3
     public static let sectionSegment = ArmorABI.dataSegmentName
     public static let dispatchSection = ArmorABI.Sections.vmpDispatch
     public static let bytecodeSection = ArmorABI.Sections.vmpBytecode
     public static let dispatchTableSize = 256
+    public static let dispatchSeedBytes = 8
     public static let entryCoreSize = 32
     public static let vpcAffineBytes = 16
 
@@ -82,6 +147,12 @@ public enum VMBytecodeFormat {
         public static let m3DeadHandlers: UInt32 = 1 << 3
         /// Runtime M3: interpreter self-integrity check enabled.
         public static let m3SelfIntegrity: UInt32 = 1 << 4
+        /// Runtime M3: HMAC-SHA256 (truncated) self-check vs CPSH blob (requires \c m3SelfIntegrity).
+        public static let m3SelfIntegrityHmac: UInt32 = 1 << 8
+        /// v3: immediates XOR’d with a per-insn mask (see on-disk seed field).
+        public static let immediateKeystream: UInt32 = 1 << 5
+        /// v3: wire opcode bytes XOR’d per insn (see on-disk opcode seed field).
+        public static let opcodeWireObfuscation: UInt32 = 1 << 6
     }
 
     /// Dispatch header `flags` (M2 + M3 producer hints). CRiskCore does not branch on these today; safe to extend.
@@ -90,6 +161,8 @@ public enum VMBytecodeFormat {
         public static let opaqueVpcCategoryHigh32: UInt32 = 1 << 1
         public static let deadHandlerMetadata: UInt32 = 1 << 2
         public static let vpcPredicateChainMetadata: UInt32 = 1 << 3
+        /// 256-byte class table XOR’d with `dispatchKeystreamBytes(seed:)` (seed mixes `opcodeTable.seed` + emit options).
+        public static let classTableKeystream: UInt32 = 1 << 4
     }
 
     /// Little-endian tail after the 256-byte class table (`HV3M`).
@@ -118,14 +191,21 @@ public enum VMBytecodeFormat {
     }
 
     public struct DispatchHeader {
+        public let version: UInt32
         public let tableSize: UInt32
         /// Bit 0: handler duplication pools enabled. Bit 1: opaque VPC category high-32 in immediates.
         public let flags: UInt32
 
+        public init(version: UInt32 = VMBytecodeFormat.dispatchABIVersionV1, tableSize: UInt32, flags: UInt32) {
+            self.version = version
+            self.tableSize = tableSize
+            self.flags = flags
+        }
+
         public func serialize() -> Data {
             var d = Data()
             d.appendUInt32(VMBytecodeFormat.dispatchMagic)
-            d.appendUInt32(VMBytecodeFormat.dispatchABIVersion)
+            d.appendUInt32(version)
             d.appendUInt32(tableSize)
             d.appendUInt32(flags)
             return d
@@ -183,6 +263,8 @@ private extension Data {
 
 /// Encodes VMIR + opcode table into a single section payload.
 public struct VMBytecodeEmitter: Sendable {
+    private static let entryProfileMagic: UInt32 = 0xA5
+
     public init() {}
 
     public func emit(
@@ -197,6 +279,9 @@ public struct VMBytecodeEmitter: Sendable {
 
     private func emitDispatchTable(opcodeTable: VMOpcodeTable, options: VMM2EmitOptions) -> Data {
         var flags: UInt32 = 0
+        let dispatchKsEnabled = options.dispatchTableKeystream
+        let dispatchVersion: UInt32 = dispatchKsEnabled ? VMBytecodeFormat.dispatchABIVersionV2 : VMBytecodeFormat.dispatchABIVersionV1
+        let dispatchSeed = Self.dispatchKeystreamSeed(opcodeTableSeed: opcodeTable.seed, material: options.dispatchKeystreamMaterial)
         if opcodeTable.handlerDuplicationEnabled { flags |= VMBytecodeFormat.DispatchHeaderFlags.handlerDuplicationPools }
         if options.opaqueVpcCategoryHigh32 { flags |= VMBytecodeFormat.DispatchHeaderFlags.opaqueVpcCategoryHigh32 }
         let dead = opcodeTable.deadHandlerInjection
@@ -204,8 +289,23 @@ public struct VMBytecodeEmitter: Sendable {
         let emitM3Tail = (options.m3.enableDeadHandlers && dead != nil) || (options.m3.enableOpaquePredicateChain && !preds.isEmpty)
         if options.m3.enableDeadHandlers, dead != nil { flags |= VMBytecodeFormat.DispatchHeaderFlags.deadHandlerMetadata }
         if options.m3.enableOpaquePredicateChain, !preds.isEmpty { flags |= VMBytecodeFormat.DispatchHeaderFlags.vpcPredicateChainMetadata }
-        var out = VMBytecodeFormat.DispatchHeader(tableSize: UInt32(VMBytecodeFormat.dispatchTableSize), flags: flags).serialize()
-        out.append(contentsOf: opcodeTable.rawToLogicalTable())
+        if dispatchKsEnabled { flags |= VMBytecodeFormat.DispatchHeaderFlags.classTableKeystream }
+        var out = VMBytecodeFormat.DispatchHeader(
+            version: dispatchVersion,
+            tableSize: UInt32(VMBytecodeFormat.dispatchTableSize),
+            flags: flags
+        ).serialize()
+        if dispatchKsEnabled {
+            out.appendUInt64(dispatchSeed)
+        }
+        var classTable = opcodeTable.rawToLogicalTable()
+        if dispatchKsEnabled {
+            let ks = Self.dispatchKeystreamBytes(seed: dispatchSeed)
+            for i in 0..<classTable.count {
+                classTable[i] ^= ks[i]
+            }
+        }
+        out.append(contentsOf: classTable)
         if emitM3Tail {
             out.append(
                 Self.serializeM3DispatchTail(
@@ -241,7 +341,10 @@ public struct VMBytecodeEmitter: Sendable {
 
     /// Parses M3 tail from a full `__swift5_mdvrt` payload (returns nil if no tail).
     public static func parseM3DispatchTail(fromDispatchPayload dispatch: Data) -> (deadBudget: UInt32, deadSeed: UInt64, predicates: [UInt64])? {
-        let prefix = 16 + VMBytecodeFormat.dispatchTableSize
+        guard dispatch.count >= 16 else { return nil }
+        let version = VMBytecodeFormat.readUInt32LE(dispatch, offset: 4)
+        let classOffset = version >= VMBytecodeFormat.dispatchABIVersionV2 ? (16 + VMBytecodeFormat.dispatchSeedBytes) : 16
+        let prefix = classOffset + VMBytecodeFormat.dispatchTableSize
         guard dispatch.count >= prefix + 24 else { return nil }
         let tailStart = prefix
         let magic = VMBytecodeFormat.readUInt32LE(dispatch, offset: tailStart)
@@ -271,21 +374,38 @@ public struct VMBytecodeEmitter: Sendable {
         opcodeTable: VMOpcodeTable,
         options: VMM2EmitOptions
     ) -> Data {
+        let opcodeEnc = options.opcodeWireObfuscation
+        let immKs = options.immediateKeystream
         let useM2 = options.perEntryVpcEnabled || options.handlerVariantSeed != 0
         let perEntryVpc = useM2 && options.perEntryVpcEnabled
-        let bytecodeVersion = useM2 ? VMBytecodeFormat.bytecodeABIVersionV2 : VMBytecodeFormat.bytecodeABIVersionV1
-        let headerSize = 16 + (useM2 ? VMBytecodeFormat.vpcAffineBytes : 0)
+        let bytecodeVersion: UInt32
+        if immKs || opcodeEnc {
+            bytecodeVersion = VMBytecodeFormat.bytecodeABIVersionV3
+        } else if useM2 {
+            bytecodeVersion = VMBytecodeFormat.bytecodeABIVersionV2
+        } else {
+            bytecodeVersion = VMBytecodeFormat.bytecodeABIVersionV1
+        }
+        let headerSize = 16 + (useM2 ? VMBytecodeFormat.vpcAffineBytes : 0) + (immKs ? 8 : 0) + (opcodeEnc ? 8 : 0)
         let entryStride = VMBytecodeFormat.entryCoreSize + (perEntryVpc ? VMBytecodeFormat.vpcAffineBytes : 0)
-        let bodies: [Data] = programs.map { encode(program: $0.instructions, opcodeTable: opcodeTable, options: options) }
+        let bodies: [Data] = programs.map {
+            encode(program: $0.instructions, functionId: $0.functionId, opcodeTable: opcodeTable, options: options)
+        }
         let tableBytes = headerSize + programs.count * entryStride
         var cursor = UInt32(tableBytes)
         var entriesData = Data()
         for (index, program) in programs.enumerated() {
             let body = bodies[index]
             let hv = Self.handlerVariant(functionId: program.functionId, seed: options.handlerVariantSeed)
-            let reserved = Self.packEntryReserved(
+            let affine = Self.deriveVpcAffine(functionId: program.functionId, seed: options.handlerVariantSeed)
+            let execProfile = Self.deriveEntryExecutionProfile(
+                functionId: program.functionId,
+                seed: options.handlerVariantSeed,
                 handlerVariant: hv,
-                vpcA: Self.deriveVpcAffine(functionId: program.functionId, seed: options.handlerVariantSeed).0
+                vpcA: affine.0
+            )
+            let reserved = Self.packEntryReserved(
+                profile: execProfile
             )
             let entry = VMBytecodeFormat.Entry(
                 functionId: program.functionId,
@@ -297,8 +417,7 @@ public struct VMBytecodeEmitter: Sendable {
             )
             entriesData.append(entry.serialize())
             if perEntryVpc {
-                let (a, b) = Self.deriveVpcAffine(functionId: program.functionId, seed: options.handlerVariantSeed)
-                entriesData.append(serializeVpcAffine(a: a, b: b))
+                entriesData.append(serializeVpcAffine(a: affine.0, b: affine.1))
             }
             cursor += UInt32(body.count)
         }
@@ -318,6 +437,15 @@ public struct VMBytecodeEmitter: Sendable {
         }
         if options.m3.enableSelfIntegrityCheck {
             flags |= VMBytecodeFormat.BytecodeFlags.m3SelfIntegrity
+            if options.m3.enableSelfIntegrityHmac {
+                flags |= VMBytecodeFormat.BytecodeFlags.m3SelfIntegrityHmac
+            }
+        }
+        if immKs {
+            flags |= VMBytecodeFormat.BytecodeFlags.immediateKeystream
+        }
+        if opcodeEnc {
+            flags |= VMBytecodeFormat.BytecodeFlags.opcodeWireObfuscation
         }
         var out = VMBytecodeFormat.BytecodeHeader(
             version: bytecodeVersion,
@@ -328,6 +456,12 @@ public struct VMBytecodeEmitter: Sendable {
             let (globalA, globalB) = Self.deriveVpcAffine(functionId: 0x4350564D, seed: options.handlerVariantSeed)
             out.append(serializeVpcAffine(a: globalA, b: globalB))
         }
+        if immKs {
+            out.appendUInt64(Self.immediateKeystreamRoot(options: options))
+        }
+        if opcodeEnc {
+            out.appendUInt64(Self.opcodeKeystreamRoot(options: options))
+        }
         out.append(entriesData)
         for body in bodies {
             out.append(body)
@@ -335,12 +469,28 @@ public struct VMBytecodeEmitter: Sendable {
         return out
     }
 
-    private func encode(program: [VMInstruction], opcodeTable: VMOpcodeTable, options: VMM2EmitOptions) -> Data {
+    private func encode(program: [VMInstruction], functionId: UInt64, opcodeTable: VMOpcodeTable, options: VMM2EmitOptions) -> Data {
+        let opcodeEnc = options.opcodeWireObfuscation
+        let immKs = options.immediateKeystream
+        let immRoot = Self.immediateKeystreamRoot(options: options)
+        let opRoot = Self.opcodeKeystreamRoot(options: options)
         var d = Data()
         for (idx, ins) in program.enumerated() {
             let sel = options.handlerVariantSeed ^ UInt64(idx) ^ (ins.immediate & 0xFFFF)
-            d.append(opcodeTable.wireByte(for: ins.op, selector: sel))
-            var imm = Self.wireImmediate(ins, options: options).littleEndian
+            var rawOp = opcodeTable.wireByte(for: ins.op, selector: sel)
+            if opcodeEnc {
+                rawOp ^= UInt8(truncatingIfNeeded: Self.opcodeMixByte(functionId: functionId, pcIndex: UInt32(idx), seed: opRoot))
+            }
+            d.append(rawOp)
+            var plain = Self.wireImmediate(ins, options: options)
+            if ins.op == .rawRegion, options.opaqueVpcCategoryHigh32 {
+                let bindRoot = immKs ? immRoot : opRoot
+                plain ^= Self.rawRegionOpaqueBindMask(functionId: functionId, pcIndex: UInt32(idx), seed: bindRoot)
+            }
+            if immKs {
+                plain ^= Self.immediateXorMask(functionId: functionId, pcIndex: UInt32(idx), seed: immRoot)
+            }
+            var imm = plain.littleEndian
             Swift.withUnsafeBytes(of: &imm) { d.append(contentsOf: $0) }
         }
         return d
@@ -360,10 +510,58 @@ public struct VMBytecodeEmitter: Sendable {
         return UInt32(truncatingIfNeeded: rng.next())
     }
 
-    private static func packEntryReserved(handlerVariant: UInt32, vpcA: UInt64) -> UInt32 {
-        let hv8 = handlerVariant & 0xFF
-        let tag = UInt32(truncatingIfNeeded: vpcA ^ (vpcA >> 32)) & 0xFFFF_FFFF
-        return hv8 | ((tag & 0x00FF_FFFF) << 8)
+    /// Build producer-side branch/runtime execution profile (deterministic for `(functionId, seed)`).
+    public static func deriveEntryExecutionProfile(
+        functionId: UInt64,
+        seed: UInt64,
+        handlerVariant: UInt32,
+        vpcA: UInt64
+    ) -> VMEntryExecutionProfile {
+        let mixSeed = seed == 0 ? 0x56_4D_50_52_4F_46_49_4C : seed
+        var rng = VMProtectorSplitMix64(seed: functionId ^ mixSeed ^ 0x4558_4350_524F_4631) // "EXCPROF1"
+        /* 0...15 (runtime clamps 0 → 1); expands semantic polymorphism surface for poly16 lanes. */
+        let semanticFamily = UInt8(truncatingIfNeeded: rng.next() % 16)
+        let mixedPredicate = UInt8(truncatingIfNeeded: rng.next() % 8) // 0...7
+        let subcallDepth = UInt8(truncatingIfNeeded: (rng.next() % 8) + 2) // 2...9
+        let entropyTag = UInt8(truncatingIfNeeded: (vpcA ^ (vpcA >> 32) ^ UInt64(rng.next())) & 0xF)
+        return VMEntryExecutionProfile(
+            handlerVariantLow8: UInt8(truncatingIfNeeded: handlerVariant),
+            semanticFamily: semanticFamily,
+            mixedPredicateProfile: mixedPredicate,
+            maxSubcallDepth: subcallDepth,
+            entropyTag: entropyTag,
+            usesExtendedLayout: true
+        )
+    }
+
+    /// Decode `Entry.reserved` produced by this emitter.
+    /// Returns `nil` for legacy layouts that do not contain the `0xA5` marker.
+    public static func unpackEntryExecutionProfile(_ reserved: UInt32) -> VMEntryExecutionProfile? {
+        let marker = (reserved >> 24) & 0xFF
+        guard marker == entryProfileMagic else { return nil }
+        let hv = UInt8(truncatingIfNeeded: reserved & 0xFF)
+        let semantic = UInt8(truncatingIfNeeded: (reserved >> 8) & 0xF)
+        let mixed = UInt8(truncatingIfNeeded: (reserved >> 12) & 0xF)
+        let subDepthEncoded = UInt8(truncatingIfNeeded: (reserved >> 16) & 0xF)
+        let entropyTag = UInt8(truncatingIfNeeded: (reserved >> 20) & 0xF)
+        return VMEntryExecutionProfile(
+            handlerVariantLow8: hv,
+            semanticFamily: semantic,
+            mixedPredicateProfile: mixed,
+            maxSubcallDepth: Swift.max(UInt8(1), subDepthEncoded &+ 1),
+            entropyTag: entropyTag,
+            usesExtendedLayout: true
+        )
+    }
+
+    private static func packEntryReserved(profile: VMEntryExecutionProfile) -> UInt32 {
+        let hv = UInt32(profile.handlerVariantLow8)
+        let semantic = UInt32(profile.semanticFamily & 0xF) << 8
+        let mixed = UInt32(profile.mixedPredicateProfile & 0xF) << 12
+        let subDepth = UInt32((Swift.max(UInt8(1), profile.maxSubcallDepth) &- 1) & 0xF) << 16
+        let entropyTag = UInt32(profile.entropyTag & 0xF) << 20
+        let marker = entryProfileMagic << 24
+        return hv | semantic | mixed | subDepth | entropyTag | marker
     }
 
     private func serializeVpcAffine(a: UInt64, b: UInt64) -> Data {
@@ -386,6 +584,94 @@ public struct VMBytecodeEmitter: Sendable {
             return VMImmediateLayout.packRaw(insnWord: word, category: cat, opaqueHigh32: true)
         }
         return UInt64(word)
+    }
+
+    // MARK: - Optional dispatch / immediate protection (forward-compatible; default off)
+
+    public static func dispatchKeystreamSeed(opcodeTableSeed: UInt64, material: UInt64) -> UInt64 {
+        opcodeTableSeed ^ material ^ 0x4453_5042_4D50_3300 // "DSPMP3\0" domain tag
+    }
+
+    public static func dispatchKeystreamBytes(seed: UInt64) -> [UInt8] {
+        var r = VMProtectorSplitMix64(seed: seed ^ 0x4D44_5654_4B45_5953) // "MDVTKEYS"
+        return (0..<VMBytecodeFormat.dispatchTableSize).map { _ in UInt8(truncatingIfNeeded: r.next()) }
+    }
+
+    /// XOR / XOR⁻¹ (symmetric) for the 256-byte class table using the same seed material as the emitter.
+    public static func xorDispatchClassTableBytes(_ table: [UInt8], opcodeTableSeed: UInt64, material: UInt64) -> [UInt8] {
+        precondition(table.count == VMBytecodeFormat.dispatchTableSize)
+        let seed = dispatchKeystreamSeed(opcodeTableSeed: opcodeTableSeed, material: material)
+        let ks = dispatchKeystreamBytes(seed: seed)
+        return zip(table, ks).map { a, k in a ^ k }
+    }
+
+    /// When the dispatch header has `classTableKeystream`, recover the logical class table (tools / unit tests).
+    public static func decryptDispatchClassTable(payload: Data, opcodeTableSeed: UInt64, material: UInt64) -> [UInt8]? {
+        guard payload.count >= 16 + VMBytecodeFormat.dispatchTableSize else { return nil }
+        let version = VMBytecodeFormat.readUInt32LE(payload, offset: 4)
+        let classOffset = version >= VMBytecodeFormat.dispatchABIVersionV2 ? (16 + VMBytecodeFormat.dispatchSeedBytes) : 16
+        guard payload.count >= classOffset + VMBytecodeFormat.dispatchTableSize else { return nil }
+        let flags = VMBytecodeFormat.readUInt32LE(payload, offset: 12)
+        guard (flags & VMBytecodeFormat.DispatchHeaderFlags.classTableKeystream) != 0 else { return nil }
+        let seed: UInt64
+        if version >= VMBytecodeFormat.dispatchABIVersionV2 {
+            seed = VMBytecodeFormat.readUInt64LE(payload, offset: 16)
+        } else {
+            seed = dispatchKeystreamSeed(opcodeTableSeed: opcodeTableSeed, material: material)
+        }
+        let slice = payload[classOffset..<(classOffset + VMBytecodeFormat.dispatchTableSize)]
+        let ks = dispatchKeystreamBytes(seed: seed)
+        return zip([UInt8](slice), ks).map { $0 ^ $1 }
+    }
+
+    public static func immediateKeystreamRoot(options: VMM2EmitOptions) -> UInt64 {
+        if options.immediateKeystreamMaterial != 0 {
+            return options.immediateKeystreamMaterial
+        }
+        return options.handlerVariantSeed ^ 0x564D_5049_4D4D_5331 // "VMPIMMS1"
+    }
+
+    public static func opcodeKeystreamRoot(options: VMM2EmitOptions) -> UInt64 {
+        if options.opcodeKeystreamMaterial != 0 {
+            return options.opcodeKeystreamMaterial
+        }
+        return options.handlerVariantSeed ^ 0x564D_504F5043324B // "VMPOPC3K"
+    }
+
+    public static func opcodeMixByte(functionId: UInt64, pcIndex: UInt32, seed: UInt64) -> UInt64 {
+        var r = VMProtectorSplitMix64(seed: functionId ^ UInt64(pcIndex) ^ seed ^ 0x4F50434D49583152) // "OPCMIX1R"
+        return r.next()
+    }
+
+    public static func rawRegionOpaqueBindMask(functionId: UInt64, pcIndex: UInt32, seed: UInt64) -> UInt64 {
+        var r = VMProtectorSplitMix64(seed: functionId ^ UInt64(pcIndex) ^ seed ^ 0x5241574C4E4D3130) // "RAWLNM10"
+        return r.next()
+    }
+
+    public static func immediateXorMask(functionId: UInt64, pcIndex: UInt32, seed: UInt64) -> UInt64 {
+        var r = VMProtectorSplitMix64(seed: functionId ^ UInt64(pcIndex) ^ seed ^ 0x49_4D_4D_58_4F_52_31_52) // "IMMXOR1R"
+        return r.next()
+    }
+
+    public static func decodeWireImmediate(encoded: UInt64, functionId: UInt64, pcIndex: UInt32, keystreamRoot: UInt64) -> UInt64 {
+        encoded ^ immediateXorMask(functionId: functionId, pcIndex: pcIndex, seed: keystreamRoot)
+    }
+
+    /// Total bytes before the bytecode entry table (core header + optional M2 VPC block + optional v3 immediate seed).
+    public static func bytecodeHeaderTotalBytes(version: UInt32, flags: UInt32) -> Int {
+        let useM2 = (flags & VMBytecodeFormat.BytecodeFlags.perEntryVpc) != 0
+            || (flags & VMBytecodeFormat.BytecodeFlags.handlerVariantSeed) != 0
+        var n = 16
+        if useM2 { n += VMBytecodeFormat.vpcAffineBytes }
+        if version >= VMBytecodeFormat.bytecodeABIVersionV3,
+           (flags & VMBytecodeFormat.BytecodeFlags.immediateKeystream) != 0 {
+            n += 8
+        }
+        if version >= VMBytecodeFormat.bytecodeABIVersionV3,
+           (flags & VMBytecodeFormat.BytecodeFlags.opcodeWireObfuscation) != 0 {
+            n += 8
+        }
+        return n
     }
 }
 

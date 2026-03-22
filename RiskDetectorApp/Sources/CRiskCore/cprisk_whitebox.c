@@ -1,6 +1,7 @@
 #include "include/CRiskCore.h"
 
 #include <limits.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #ifdef __APPLE__
@@ -37,6 +38,89 @@ enum {
 static const uint8_t s_empty_byte_i = 0;
 static const uint8_t s_zero_state_i[CPRISK_WHITEBOX_STATE_SIZE] = {0};
 static const uint8_t s_overall_tag_label_i[] = "cprisk.whitebox.tag.v1";
+
+/* ASLR term g(slide)=h(slide)^h(0), g(0)=0 — mixed into signing KDF when CPRISK_SIGNING_KEY_ASLR_BIND=1 */
+static uint64_t cprisk_wbx_splitmix64_next_u(uint64_t *state) {
+    *state += 0x9E3779B97F4A7C15ULL;
+    uint64_t z = *state;
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    return z ^ (z >> 31);
+}
+
+static uint64_t cprisk_wbx_slide_term_u64(intptr_t slide) {
+    uint64_t a = (uint64_t)(slide >= 0 ? slide : -slide);
+    uint64_t st_a = a ^ 0x41534C52374D4958ULL;
+    uint64_t st_b = 0ull ^ 0x41534C52374D4958ULL;
+    uint64_t ha = cprisk_wbx_splitmix64_next_u(&st_a);
+    uint64_t hb = cprisk_wbx_splitmix64_next_u(&st_b);
+    return ha ^ hb;
+}
+
+static void cprisk_whitebox_copy_header_from_meta_i(const uint8_t *meta,
+                                                    size_t meta_size,
+                                                    struct cprisk_armor_whitebox_header *out) {
+    if (!out)
+        return;
+    memset(out, 0, sizeof(*out));
+    if (!meta || meta_size == 0)
+        return;
+    const size_t n = meta_size < sizeof(*out) ? meta_size : sizeof(*out);
+    memcpy(out, meta, n);
+}
+
+static void cprisk_whitebox_memxor_block_pad_i(uint64_t slide_term,
+                                             uint32_t domain_id,
+                                             uint32_t block_idx,
+                                             uint8_t out32[32]) {
+    uint8_t msg[28];
+    static const uint8_t lab[12] = {
+        'C', 'P', 'R', 'I', 'S', 'K', '_', 'W', 'B', '1', 'T', 'B'
+    };
+    memcpy(msg, lab, sizeof(lab));
+    memcpy(msg + 12, &slide_term, sizeof(slide_term));
+    memcpy(msg + 20, &domain_id, sizeof(domain_id));
+    memcpy(msg + 24, &block_idx, sizeof(block_idx));
+    cprisk_sha256(msg, sizeof(msg), out32);
+}
+
+static void cprisk_whitebox_xor_tables_aslr_i(uint8_t *buf,
+                                              size_t len,
+                                              intptr_t runtime_slide,
+                                              uint64_t anchor_slide_u64,
+                                              uint32_t domain_id) {
+    const uint64_t tr = cprisk_wbx_slide_term_u64(runtime_slide);
+    const intptr_t anchor_as_int = (intptr_t)anchor_slide_u64;
+    const uint64_t ta = cprisk_wbx_slide_term_u64(anchor_as_int);
+
+    for (size_t base = 0; base < len; base += 32u) {
+        const size_t chunk = (len - base < 32u) ? (len - base) : 32u;
+        const uint32_t blk = (uint32_t)(base / 32u);
+        uint8_t pr[32], pa[32];
+        cprisk_whitebox_memxor_block_pad_i(tr, domain_id, blk, pr);
+        cprisk_whitebox_memxor_block_pad_i(ta, domain_id, blk, pa);
+        for (size_t k = 0; k < chunk; k++)
+            buf[base + k] ^= pr[k] ^ pa[k];
+    }
+}
+
+static int cprisk_whitebox_aslr_table_bind_runtime_enabled_i(
+    const struct cprisk_armor_whitebox_header *header
+) {
+#if defined(CPRISK_DISABLE_WHITEBOX_ASLR_TABLE)
+    (void)header;
+    return 0;
+#else
+    if (!header)
+        return 0;
+    if ((header->flags & CPRISK_ARMOR_WHITEBOX_FLAG_ASLR_TABLE_BIND) == 0u)
+        return 0;
+    const char *eb = getenv("CPRISK_WB_ASLR_TABLE_DISABLE");
+    if (eb && eb[0] == '1' && eb[1] == '\0')
+        return 0;
+    return 1;
+#endif
+}
 
 #pragma pack(push, 1)
 struct cprisk_whitebox_domain_record_i {
@@ -123,7 +207,7 @@ int cprisk_test_set_whitebox_bundle(
     const uint8_t *tag,
     size_t tag_len
 ) {
-    if (!meta || meta_len < sizeof(struct cprisk_armor_whitebox_header) ||
+    if (!meta || meta_len < CPRISK_ARMOR_WHITEBOX_HEADER_V1_SIZE ||
         !code || code_len == 0 ||
         !data || data_len == 0 ||
         !tag || tag_len == 0) {
@@ -269,14 +353,15 @@ static int cprisk_read_whitebox_header_i(
         *present_out = 0;
 
     if (s_test_bundle_i.active) {
-        if (s_test_bundle_i.meta_len < sizeof(struct cprisk_armor_whitebox_header))
+        if (s_test_bundle_i.meta_len < CPRISK_ARMOR_WHITEBOX_HEADER_V1_SIZE)
             return 0;
         if (present_out)
             *present_out = 1;
         if (out_header) {
-            memcpy(out_header,
-                   s_test_bundle_i.meta,
-                   sizeof(struct cprisk_armor_whitebox_header));
+            cprisk_whitebox_copy_header_from_meta_i(
+                s_test_bundle_i.meta,
+                s_test_bundle_i.meta_len,
+                out_header);
         }
         return 0;
     }
@@ -291,25 +376,34 @@ static int cprisk_read_whitebox_header_i(
         CPRISK_ARMOR_SEGMENT_DATA,
         CPRISK_ARMOR_SECTION_WHITEBOX_META,
         &sec_size);
-    if (!sec || sec_size < sizeof(struct cprisk_armor_whitebox_header))
+    if (!sec || sec_size < CPRISK_ARMOR_WHITEBOX_HEADER_V1_SIZE)
         return 0;
 
     if (present_out)
         *present_out = 1;
     if (out_header)
-        memcpy(out_header, sec, sizeof(struct cprisk_armor_whitebox_header));
+        cprisk_whitebox_copy_header_from_meta_i(sec, (size_t)sec_size, out_header);
     return 0;
 }
 
 static int cprisk_whitebox_header_valid_i(
-    const struct cprisk_armor_whitebox_header *header
+    const struct cprisk_armor_whitebox_header *header,
+    size_t meta_size
 ) {
     if (!header)
         return 0;
     if (header->magic != CPRISK_ARMOR_WHITEBOX_MAGIC)
         return 0;
-    if (header->version < CPRISK_ARMOR_WHITEBOX_ABI_VERSION)
+    if (header->version < 1u || header->version > 2u)
         return 0;
+    if (meta_size < CPRISK_ARMOR_WHITEBOX_HEADER_V1_SIZE)
+        return 0;
+    if (header->version >= 2u && meta_size < CPRISK_ARMOR_WHITEBOX_HEADER_V2_SIZE)
+        return 0;
+    if ((header->flags & CPRISK_ARMOR_WHITEBOX_FLAG_ASLR_TABLE_BIND) != 0u) {
+        if (header->version < 2u || meta_size < CPRISK_ARMOR_WHITEBOX_HEADER_V2_SIZE)
+            return 0;
+    }
     return 1;
 }
 
@@ -471,14 +565,15 @@ static int cprisk_whitebox_validate_bundle_i(struct cprisk_whitebox_bundle_i *ou
             &tag_size);
     }
 
-    if (!meta || meta_size < sizeof(struct cprisk_armor_whitebox_header))
+    if (!meta || meta_size < CPRISK_ARMOR_WHITEBOX_HEADER_V1_SIZE)
         return -1;
     if (!code || code_size == 0 || !data || data_size == 0 || !tag)
         return -1;
 
-    const struct cprisk_armor_whitebox_header *header =
-        (const struct cprisk_armor_whitebox_header *)meta;
-    if (!cprisk_whitebox_header_valid_i(header))
+    struct cprisk_armor_whitebox_header header_storage;
+    cprisk_whitebox_copy_header_from_meta_i(meta, (size_t)meta_size, &header_storage);
+    const struct cprisk_armor_whitebox_header *header = &header_storage;
+    if (!cprisk_whitebox_header_valid_i(header, (size_t)meta_size))
         return -1;
 
     const size_t code_len = (size_t)code_size;
@@ -505,7 +600,7 @@ static int cprisk_whitebox_validate_bundle_i(struct cprisk_whitebox_bundle_i *ou
         (const struct cprisk_whitebox_domain_record_i *)data;
     struct cprisk_whitebox_bundle_i bundle_view;
     memset(&bundle_view, 0, sizeof(bundle_view));
-    memcpy(&bundle_view.header, header, sizeof(bundle_view.header));
+    memcpy(&bundle_view.header, &header_storage, sizeof(bundle_view.header));
     bundle_view.code = code;
     bundle_view.code_len = code_len;
     bundle_view.data = data;
@@ -595,7 +690,30 @@ static int cprisk_whitebox_eval_record_i(
     if (!bundle || !record || !input || !out)
         return -1;
 
-    const uint8_t *tables = bundle->code + record->table_offset;
+    const uint8_t *tables_src = bundle->code + record->table_offset;
+    uint8_t *tables_heap = NULL;
+    const uint8_t *tables = tables_src;
+#if !defined(CPRISK_DISABLE_WHITEBOX_ASLR_TABLE)
+    if (cprisk_whitebox_aslr_table_bind_runtime_enabled_i(&bundle->header)) {
+        const size_t tlen = (size_t)record->table_length;
+        if (tlen == 0u || tlen > CPRISK_MAX_SECTION_SIZE)
+            return -1;
+        tables_heap = (uint8_t *)malloc(tlen);
+        if (!tables_heap)
+            return -1;
+        memcpy(tables_heap, tables_src, tlen);
+        const struct mach_header_64 *mh = cprisk_whitebox_hdr_i();
+        const intptr_t rs = mh ? cprisk_compute_slide(mh) : (intptr_t)0;
+        cprisk_whitebox_xor_tables_aslr_i(
+            tables_heap,
+            tlen,
+            rs,
+            bundle->header.aslr_table_anchor_slide,
+            record->domain_id);
+        tables = tables_heap;
+    }
+#endif
+
     uint8_t state[CPRISK_WHITEBOX_STATE_SIZE];
     uint8_t next[CPRISK_WHITEBOX_STATE_SIZE];
     uint8_t scratch[CPRISK_WHITEBOX_STATE_SIZE];
@@ -627,6 +745,10 @@ static int cprisk_whitebox_eval_record_i(
     for (size_t i = 0; i < CPRISK_WHITEBOX_STATE_SIZE; i++)
         out[i] = (uint8_t)(state[i] ^ record->final_mask[i]);
 
+    if (tables_heap) {
+        cprisk_secure_zero(tables_heap, (size_t)record->table_length);
+        free(tables_heap);
+    }
     cprisk_secure_zero(state, sizeof(state));
     cprisk_secure_zero(next, sizeof(next));
     cprisk_secure_zero(scratch, sizeof(scratch));
@@ -800,6 +922,21 @@ int cprisk_derive_effective_signing_key(
     if (cprisk_is_being_traced()) {
         for (size_t pi = 0; pi < CPRISK_ARMOR_HASH_SIZE; pi++)
             runtime_material[pi] ^= 0xA5u;
+    }
+    /* Optional: bind HMAC key material to ASLR slide (offline replay needs same slide + env). */
+    {
+        const char *eb = getenv("CPRISK_SIGNING_KEY_ASLR_BIND");
+        if (eb && eb[0] == '1' && eb[1] == '\0') {
+            const struct mach_header_64 *mh =
+                cprisk_find_own_header((const void *)&cprisk_derive_effective_signing_key);
+            if (mh) {
+                uint64_t term = cprisk_wbx_slide_term_u64(cprisk_compute_slide(mh));
+                uint8_t x[8];
+                memcpy(x, &term, sizeof(x));
+                for (size_t pi = 0; pi < 8; pi++)
+                    runtime_material[pi] ^= x[pi];
+            }
+        }
     }
 #endif
 

@@ -6,7 +6,8 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "MachOKit", targets: ["MachOKit"]),
-        .executable(name: "cprisk-armor", targets: ["cprisk-armor"])
+        .executable(name: "cprisk-armor", targets: ["cprisk-armor"]),
+        .executable(name: "cprisk-vm-self-expect", targets: ["cprisk-vm-self-expect"])
     ],
     targets: [
         .target(name: "MachOKit"),
@@ -23,6 +24,10 @@ let package = Package(
         .target(name: "HeaderEncryptor", dependencies: ["MachOKit"]),
         .target(name: "TextSegmentEncryptor", dependencies: ["MachOKit"]),
         .target(name: "VMProtector", dependencies: ["MachOKit"]),
+        .executableTarget(
+            name: "cprisk-vm-self-expect",
+            dependencies: ["MachOKit"]
+        ),
         .executableTarget(
             name: "cprisk-armor",
             dependencies: [

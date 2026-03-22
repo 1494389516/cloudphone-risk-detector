@@ -18,6 +18,10 @@ functions:
     # VM 解释器核心入口，配合 vmp_policy.yaml protect_vm_interpreter_with_cff: true
     - cprisk_vm_entry
     - _cprisk_vm_entry
+    - cprisk_vm_entry_alt1
+    - _cprisk_vm_entry_alt1
+    - cprisk_vm_entry_alt2
+    - _cprisk_vm_entry_alt2
     - cprisk_vm_execute
     - _cprisk_vm_execute
 

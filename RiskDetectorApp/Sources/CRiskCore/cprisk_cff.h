@@ -76,11 +76,18 @@ uint32_t cprisk_cff_runtime_salt(uint32_t seed, uint32_t runtime_hint);
 void cprisk_cff_init(cprisk_cff_context_t *context, const cprisk_cff_config_t *config);
 void cprisk_cff_init_default(cprisk_cff_context_t *context, uint32_t seed, uint32_t entry_state);
 uint32_t cprisk_cff_current_state(cprisk_cff_context_t *context);
+/** Alternate decode path: function-pointer dispatch by codec style (not the only gate). */
+uint32_t cprisk_cff_current_state_table(cprisk_cff_context_t *context);
 void cprisk_cff_set_state(cprisk_cff_context_t *context, uint32_t next_state);
 void cprisk_cff_set_encoded_state(cprisk_cff_context_t *context, uint32_t encoded_state);
 int cprisk_cff_should_visit_fake_state(const cprisk_cff_context_t *context, uint32_t decoded_state);
 void cprisk_cff_poison_default(cprisk_cff_context_t *context);
 void cprisk_cff_finalize(cprisk_cff_context_t *context);
+
+#define CPRISK_CFF_LOOP_STATE_PEEK(ctx) \
+    ((((ctx)->iteration_budget ^ (ctx)->seed ^ (ctx)->runtime_salt) & 1u) != 0u \
+        ? cprisk_cff_current_state_table(ctx) \
+        : cprisk_cff_current_state(ctx))
 
 #define CPR_CFF_BEGIN(seed, entry) \
     do { \
@@ -89,7 +96,7 @@ void cprisk_cff_finalize(cprisk_cff_context_t *context);
         cprisk_cff_init_default(cpr_cff_ctx, (uint32_t)(seed), (uint32_t)(entry)); \
         while (cpr_cff_ctx->iteration_budget > 0u) { \
             cpr_cff_ctx->iteration_budget--; \
-            const uint32_t cpr_cff_state_ = cprisk_cff_current_state(cpr_cff_ctx); \
+            const uint32_t cpr_cff_state_ = CPRISK_CFF_LOOP_STATE_PEEK(cpr_cff_ctx); \
             switch (cpr_cff_state_) {
 
 #define CPR_CFF_BEGIN_EX(config_value) \
@@ -100,7 +107,7 @@ void cprisk_cff_finalize(cprisk_cff_context_t *context);
         cprisk_cff_init(cpr_cff_ctx, &cpr_cff_config_); \
         while (cpr_cff_ctx->iteration_budget > 0u) { \
             cpr_cff_ctx->iteration_budget--; \
-            const uint32_t cpr_cff_state_ = cprisk_cff_current_state(cpr_cff_ctx); \
+            const uint32_t cpr_cff_state_ = CPRISK_CFF_LOOP_STATE_PEEK(cpr_cff_ctx); \
             switch (cpr_cff_state_) {
 
 #define CPR_CFF_CASE(x) case (x)

@@ -112,7 +112,7 @@ static void cprisk_forward_prev_sigbus(int sig, siginfo_t *info, void *uap) {
 static void cprisk_sigbus_handler_i(int sig, siginfo_t *info, void *uap) {
     struct cprisk_guard_state *state = s_sigbus_guard_state;
     if (state != NULL && info != NULL && cprisk_sigbus_addr_in_guard(state, info->si_addr)) {
-        cprisk_force_integrity_poison();
+        cprisk_guard_page_fault_notify();
     }
 
     cprisk_forward_prev_sigbus(sig, info, uap);

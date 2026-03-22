@@ -45,19 +45,27 @@ public struct VMPolicyHardeningM3: Equatable, Sendable {
     public let interpreterSelfIntegrityCheck: Bool
     /// Tier label for the interpreter CFF advisory (default `.medium`).
     public let interpreterCffTier: VMPInterpreterCffTier
+    /// XOR obfuscate the 256-byte dispatch class table (opt-in; requires CRiskCore decode when enabled).
+    public let dispatchTableKeystream: Bool
+    /// v3 bytecode immediate keystream (opt-in; requires CRiskCore v3 decode when enabled).
+    public let bytecodeImmediateKeystream: Bool
 
     public init(
         protectVmInterpreterWithCff: Bool = false,
         enableDeadHandlerInjection: Bool = false,
         opaqueVpcPredicateChain: Bool = false,
         interpreterSelfIntegrityCheck: Bool = false,
-        interpreterCffTier: VMPInterpreterCffTier = .medium
+        interpreterCffTier: VMPInterpreterCffTier = .medium,
+        dispatchTableKeystream: Bool = false,
+        bytecodeImmediateKeystream: Bool = false
     ) {
         self.protectVmInterpreterWithCff = protectVmInterpreterWithCff
         self.enableDeadHandlerInjection = enableDeadHandlerInjection
         self.opaqueVpcPredicateChain = opaqueVpcPredicateChain
         self.interpreterSelfIntegrityCheck = interpreterSelfIntegrityCheck
         self.interpreterCffTier = interpreterCffTier
+        self.dispatchTableKeystream = dispatchTableKeystream
+        self.bytecodeImmediateKeystream = bytecodeImmediateKeystream
     }
 }
 
@@ -126,6 +134,8 @@ enum VMPolicyParser {
         var vpcPredicateChain = false
         var selfIntegrity = false
         var interpreterCffTier = VMPInterpreterCffTier.medium
+        var dispatchTableKs = false
+        var bytecodeImmKs = false
 
         for rawLine in contents.components(separatedBy: .newlines) {
             let sanitized = stripComment(rawLine).trimmingCharacters(in: .whitespaces)
@@ -171,6 +181,8 @@ enum VMPolicyParser {
                     parseBoolKey(sanitized, key: "enable_dead_handler_injection", into: &deadHandlers)
                     parseBoolKey(sanitized, key: "opaque_vpc_predicate_chain", into: &vpcPredicateChain)
                     parseBoolKey(sanitized, key: "interpreter_self_integrity_check", into: &selfIntegrity)
+                    parseBoolKey(sanitized, key: "dispatch_table_keystream", into: &dispatchTableKs)
+                    parseBoolKey(sanitized, key: "bytecode_immediate_keystream", into: &bytecodeImmKs)
                     parseTierKey(sanitized, into: &interpreterCffTier)
                 default:
                     break
@@ -200,7 +212,9 @@ enum VMPolicyParser {
                 enableDeadHandlerInjection: deadHandlers,
                 opaqueVpcPredicateChain: vpcPredicateChain,
                 interpreterSelfIntegrityCheck: selfIntegrity,
-                interpreterCffTier: interpreterCffTier
+                interpreterCffTier: interpreterCffTier,
+                dispatchTableKeystream: dispatchTableKs,
+                bytecodeImmediateKeystream: bytecodeImmKs
             )
         )
     }
@@ -275,9 +289,6 @@ public final class VMProtectorPass: ArmorPass {
         let symbols = try file.readSymbols()
         let sortedTextAddrs = Self.sortedTextSymbolAddresses(symbols: symbols, textVMStart: textVMStart, textVMEnd: textVMEnd)
 
-        let vmEntrySymbol = symbols.first { $0.name == "_cprisk_vm_entry" }
-        let vmEntryVMA = vmEntrySymbol.map { $0.nlist.n_value }
-
         let targets = Set(policy.full + policy.partial)
         guard !targets.isEmpty else {
             return PassResult(
@@ -308,8 +319,15 @@ public final class VMProtectorPass: ArmorPass {
                 vpcPredicateConstants: m3Predicates,
                 enableDeadHandlers: policy.hardening.enableDeadHandlerInjection,
                 enableOpaquePredicateChain: policy.hardening.opaqueVpcPredicateChain,
-                enableSelfIntegrityCheck: policy.hardening.interpreterSelfIntegrityCheck
-            )
+                enableSelfIntegrityCheck: policy.hardening.interpreterSelfIntegrityCheck,
+                enableSelfIntegrityHmac: policy.hardening.interpreterSelfIntegrityCheck
+            ),
+            dispatchTableKeystream: policy.hardening.dispatchTableKeystream,
+            dispatchKeystreamMaterial: seedNonZero ^ UInt64(truncatingIfNeeded: policy.version & 0xFFFF),
+            immediateKeystream: policy.hardening.bytecodeImmediateKeystream,
+            immediateKeystreamMaterial: seedNonZero ^ 0x1CE0_00DE_F11E_0001,
+            opcodeWireObfuscation: policy.hardening.bytecodeImmediateKeystream,
+            opcodeKeystreamMaterial: seedNonZero ^ 0x0BC0_4D45_4D4D_3258
         )
         let lifter = ARM64Lifter()
         let emitter = VMBytecodeEmitter()
@@ -323,7 +341,8 @@ public final class VMProtectorPass: ArmorPass {
             "full=\(policy.full.count) partial=\(policy.partial.count) never=\(policy.never.count)",
             String(format: "opcode_seed=0x%016llX", opcodeTable.seed),
             "m2: handler_dup=\(policy.antiAnalysis.handlerDuplication) opaque_vpc=\(policy.opaqueVpcEncoding.enabled)",
-            "m3: interpreter_cff=\(policy.hardening.protectVmInterpreterWithCff) tier=\(policy.hardening.interpreterCffTier.rawValue) dead_handlers=\(policy.hardening.enableDeadHandlerInjection) vpc_pred=\(policy.hardening.opaqueVpcPredicateChain) self_integrity=\(policy.hardening.interpreterSelfIntegrityCheck)"
+            "m3: interpreter_cff=\(policy.hardening.protectVmInterpreterWithCff) tier=\(policy.hardening.interpreterCffTier.rawValue) dead_handlers=\(policy.hardening.enableDeadHandlerInjection) vpc_pred=\(policy.hardening.opaqueVpcPredicateChain) self_integrity=\(policy.hardening.interpreterSelfIntegrityCheck)",
+            "emit: dispatch_ks=\(policy.hardening.dispatchTableKeystream) imm_ks_v3=\(policy.hardening.bytecodeImmediateKeystream) opcode_ks_v3=\(policy.hardening.bytecodeImmediateKeystream)"
         ]
         if policy.hardening.protectVmInterpreterWithCff {
             let tier = policy.hardening.interpreterCffTier.rawValue
@@ -378,8 +397,22 @@ public final class VMProtectorPass: ArmorPass {
             items += 1
 
             if tier == .full {
-                guard let vm = vmEntryVMA else {
-                    details.append("[full][no patch] \(symbolName): _cprisk_vm_entry not linked")
+                let wantEntry = VMPatchRewriter.selectVmEntrySymbolName(functionId: fnId, buildSeed: seedNonZero)
+                let vmAddr: UInt64
+                let resolvedEntry: String
+                if let s = symbols.first(where: { $0.name == wantEntry }) {
+                    vmAddr = s.nlist.n_value
+                    resolvedEntry = wantEntry
+                } else if let s = symbols.first(where: { $0.name == "_cprisk_vm_entry" }) {
+                    vmAddr = s.nlist.n_value
+                    resolvedEntry = "_cprisk_vm_entry"
+                    details.append("[full][vm entry fallback] \(symbolName): \(wantEntry) missing → _cprisk_vm_entry")
+                } else {
+                    details.append("[full][no patch] \(symbolName): VM entry symbols not linked")
+                    continue
+                }
+                guard vmAddr != 0 else {
+                    details.append("[full][no patch] \(symbolName): VM entry VMA is zero")
                     continue
                 }
                 guard functionSize >= VMPatchRewriter.trampolineByteLength else {
@@ -387,14 +420,16 @@ public final class VMProtectorPass: ArmorPass {
                     continue
                 }
                 do {
+                    let tpl = VMPatchRewriter.selectTrampolineTemplate(functionId: fnId, buildSeed: seedNonZero)
                     let stub = try VMPatchRewriter.buildTrampoline(
                         functionId: fnId,
                         functionEntryVMA: entryVMA,
-                        vmEntryVMA: vm
+                        vmEntryVMA: vmAddr,
+                        template: tpl
                     )
                     try file.replaceBytes(at: UInt64(entryFileOff), with: stub)
                     bytesModified += stub.count
-                    details.append("[full][patched] \(symbolName) id=0x\(String(fnId, radix: 16)) __text+0x\(String(entryFileOff - textStart, radix: 16))")
+                    details.append("[full][patched] \(symbolName) id=0x\(String(fnId, radix: 16)) vm_entry=\(resolvedEntry) __text+0x\(String(entryFileOff - textStart, radix: 16))")
                 } catch {
                     details.append("[full][no patch] \(symbolName): \(error.localizedDescription)")
                 }

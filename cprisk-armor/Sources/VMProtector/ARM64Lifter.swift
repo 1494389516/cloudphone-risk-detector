@@ -1,57 +1,144 @@
 import Foundation
 
-/// AArch64 → VMIR lifter (build-time). Unrecognized or partially modeled patterns become categorized `rawRegion`.
+/// How far to scan within the provided instruction buffer.
+public enum LiftTermination: Sendable, Equatable {
+    /// Stop after lifting the first `RET` (included) or when `maxInstructions` is reached.
+    case atFirstRet
+    /// Linear sweep until buffer end or `maxInstructions` (does not stop at `RET`).
+    case atBufferEnd
+}
+
+public struct ARMLiftConfig: Sendable, Equatable {
+    public var maxInstructions: Int
+    public var termination: LiftTermination
+
+    public init(maxInstructions: Int = 256, termination: LiftTermination = .atFirstRet) {
+        self.maxInstructions = max(1, maxInstructions)
+        self.termination = termination
+    }
+}
+
+/// AArch64 → VMIR lifter (build-time). Unrecognized patterns become `rawRegion`.
 public struct ARM64Lifter: Sendable {
     public init() {}
 
-    /// Lift up to `maxInstructions` 4-byte instructions from the start of `bytes`.
+    /// Legacy entry: lift until first RET (or max instructions), append `halt` if no RET.
     public func liftPrologue(bytes: Data, maxInstructions: Int = 24) -> [VMInstruction] {
+        lift(bytes: bytes, config: ARMLiftConfig(maxInstructions: maxInstructions, termination: .atFirstRet))
+    }
+
+    /// Lift AArch64 words from `bytes` according to `config`.
+    public func lift(bytes: Data, config: ARMLiftConfig = ARMLiftConfig()) -> [VMInstruction] {
         var out: [VMInstruction] = []
         var offset = 0
-        var count = 0
-        while offset + 4 <= bytes.count, count < maxInstructions {
+        var insnCount = 0
+
+        while offset + 4 <= bytes.count, insnCount < config.maxInstructions {
             let insn = readU32LE(bytes, offset)
 
             if insn == 0xD503_201F {
                 out.append(VMInstruction(op: .nop))
                 offset += 4
-                count += 1
+                insnCount += 1
                 continue
             }
 
             if isRET(insn) {
                 out.append(VMInstruction(op: .ret))
-                break
+                offset += 4
+                insnCount += 1
+                if config.termination == .atFirstRet {
+                    break
+                }
+                continue
             }
 
             if offset + 8 <= bytes.count, let fused = tryFuseAdrpAdd(bytes: bytes, offset: offset) {
                 out.append(
                     VMInstruction(
-                        op: .rawRegion,
-                        immediate: fused,
-                        rawCategory: .adrAdd
+                        op: .adrAdd,
+                        immediate: fused
                     )
                 )
                 offset += 8
-                count += 2
+                insnCount += 2
                 continue
             }
 
-            let category = classifyRaw(insn)
+            if let lifted = liftSingleWord(insn) {
+                out.append(lifted)
+                offset += 4
+                insnCount += 1
+                continue
+            }
+
             out.append(
                 VMInstruction(
                     op: .rawRegion,
                     immediate: UInt64(insn),
-                    rawCategory: category
+                    rawCategory: .unknown
                 )
             )
             offset += 4
-            count += 1
+            insnCount += 1
         }
-        if out.last?.op != .ret {
+
+        if terminationNeedsHalt(last: out.last) {
             out.append(VMInstruction(op: .halt))
         }
         return out
+    }
+
+    private func terminationNeedsHalt(last: VMInstruction?) -> Bool {
+        guard let last else { return true }
+        return last.op != .ret
+    }
+
+    private func liftSingleWord(_ insn: UInt32) -> VMInstruction? {
+        if isBL(insn) {
+            return VMInstruction(op: .call, immediate: Self.vmByteDeltaFromUnconditionalBranch(insn))
+        }
+        if isBUnconditional(insn) {
+            return VMInstruction(op: .branchRel, immediate: Self.vmByteDeltaFromUnconditionalBranch(insn))
+        }
+        if isMoveWide(insn) {
+            return VMInstruction(op: .movWide, immediate: UInt64(insn))
+        }
+        if isEOR64(insn) {
+            return VMInstruction(op: .xorMix, immediate: UInt64(insn))
+        }
+        if isADRP(insn) {
+            return VMInstruction(op: .adrAdd, immediate: UInt64(insn))
+        }
+        if isADDImm64(insn) {
+            return VMInstruction(op: .addLane, immediate: UInt64(insn))
+        }
+        if isCSEL(insn) || isCSETAlias(insn) {
+            return VMInstruction(op: .condSelect, immediate: UInt64(insn))
+        }
+        if isCBZCBNZ(insn) || isBCond(insn) {
+            return VMInstruction(op: .branchCond, immediate: UInt64(insn))
+        }
+        if isLoadStoreBasic(insn) {
+            return VMInstruction(op: .loadStore, immediate: UInt64(insn))
+        }
+        return nil
+    }
+
+    /// AArch64 unconditional `B` / `BL`: signed imm26 counts 32-bit words; VM mirrors one AArch64 word per VM instruction → ×9 bytes.
+    private static func vmByteDeltaFromUnconditionalBranch(_ insn: UInt32) -> UInt64 {
+        let imm26 = insn & 0x03FF_FFFF
+        let sext = Int32(bitPattern: (imm26 << 6) >> 6)
+        let delta = Int64(sext) * 9
+        return UInt64(bitPattern: delta)
+    }
+
+    private func isBL(_ insn: UInt32) -> Bool {
+        (insn & 0xFC00_0000) == 0x9400_0000
+    }
+
+    private func isBUnconditional(_ insn: UInt32) -> Bool {
+        (insn & 0xFC00_0000) == 0x1400_0000
     }
 
     private func readU32LE(_ data: Data, _ offset: Int) -> UInt32 {
@@ -76,40 +163,27 @@ public struct ARM64Lifter: Sendable {
         return UInt64(adrp) | (UInt64(add) << 32)
     }
 
-    // MARK: - Decoders (masks are conservative; overlap falls through to `.other`)
-
-    private func classifyRaw(_ insn: UInt32) -> VMRawRegionCategory {
-        if isMoveWide(insn) { return .movWide }
-        if isADRP(insn) { return .adrAdd }
-        if isADDImm64(insn) { return .adrAdd }
-        if isCSEL(insn) || isCSETAlias(insn) { return .condSelect }
-        if isCBZCBNZ(insn) { return .branchTest }
-        if isBCond(insn) { return .branchCond }
-        if isLoadStoreBasic(insn) { return .loadStore }
-        return .other
-    }
-
-    /// Move wide immediate (64-bit): MOVN/MOVZ/MOVK.
     private func isMoveWide(_ insn: UInt32) -> Bool {
         (insn >> 23) & 0x1FF == 0x1A5
     }
 
-    /// ADRP (page address of 4KB page).
     private func isADRP(_ insn: UInt32) -> Bool {
         (insn & 0x9F00_0000) == 0x9000_0000
     }
 
-    /// ADD Xd, Xn, #imm12 (64-bit add immediate only; SUB uses a different opcode family).
     private func isADDImm64(_ insn: UInt32) -> Bool {
         (insn & 0xFF80_0000) == 0x9100_0000
     }
 
-    /// CSEL / CSINC / CSINV / CSNEG (conditional select family).
+    /// EOR Xd, Xn, Xm (shifted) — 64-bit.
+    private func isEOR64(_ insn: UInt32) -> Bool {
+        (insn & 0xFF20_0000) == 0xCA00_0000
+    }
+
     private func isCSEL(_ insn: UInt32) -> Bool {
         (insn & 0xFF80_0000) == 0x9A80_0000
     }
 
-    /// CSINC Xd, XZR, XZR, invert(cond) — common CSET pattern; also CSINC-based CSET.
     private func isCSETAlias(_ insn: UInt32) -> Bool {
         let masked = insn & 0xFFFE_FC00
         if masked == 0x9A9F_2000 || masked == 0x9A9F_3000 { return true }
@@ -128,7 +202,6 @@ public struct ARM64Lifter: Sendable {
         (insn & 0xFF00_0010) == 0x5400_0000
     }
 
-    /// Basic LDR/STR with unsigned scaled immediate (common leaf forms).
     private func isLoadStoreBasic(_ insn: UInt32) -> Bool {
         let op = (insn >> 22) & 0x3F
         if op == 0x28 || op == 0x29 { return true }

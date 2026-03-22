@@ -1,20 +1,48 @@
 import Foundation
 
 /// Logical VM operations emitted by the ARM64 lifter before wire-byte encoding.
-/// Wire IDs 0–3 are shared with `CRiskCore` `CPRISK_VM_OP_*` (do not reorder).
+///
+/// Wire logical IDs 0–4 match `CRiskCore` `CPRISK_VM_OP_*` core layout; 5+ extend the interpreter ABI (`CPRISK_VM_OP_BRANCH_*`, `CALL`, …).
 public enum VMLogicalOp: UInt8, CaseIterable, Sendable {
     case nop = 0
     case ret = 1
+    /// Unclassified or unknown AArch64 word (passthrough / semantic loss).
     case rawRegion = 2
     case halt = 3
+    /// Byte-lane add into accumulator (matches `CPRISK_VM_OP_ADD`).
+    case addLane = 4
+    /// Unconditional `B` (PC-relative; immediate = signed VM bytecode byte delta, AArch64 imm26×9).
+    case branchRel = 5
+    /// `B.cond` / `CBZ` / `CBNZ` — immediate carries the AArch64 instruction word; runtime evaluates predicate on `acc`.
+    case branchCond = 6
+    /// `BL` — push return PC then branch like `branchRel`.
+    case call = 7
+    case movWide = 8
+    case adrAdd = 9
+    case condSelect = 10
+    case loadStore = 11
+    /// Bitwise-style mixing lane (EOR family and similar; accumulator XOR semantics).
+    case xorMix = 12
+    /// Byte-lane OR into accumulator (polymorphic with ADD/XOR families).
+    case orLane = 13
+    /// Byte-lane AND into accumulator.
+    case andLane = 14
+    /// Rotate 32-byte accumulator left by `(imm & 31)`.
+    case rolAcc = 15
+    /// Nested VM: immediate = callee `function_id` (inter-function bytecode call).
+    case vmCallFunc = 16
+    /// Virtual GPR move / immediate / acc slice (see CRiskCore immediate layout).
+    case vregMov = 17
+    /// Virtual GPR 64-bit ALU between registers.
+    case vregAlu = 18
+    /// Load/store between vreg and 8-byte acc window.
+    case vregMem = 19
 }
 
-/// Classifies a lifted machine instruction that is emitted as `rawRegion` (semantic loss / passthrough).
+/// Classifies a lifted machine instruction when emitted as `rawRegion` (legacy / fallback).
 public enum VMRawRegionCategory: UInt8, Sendable, Equatable {
-    /// Unclassified raw word (legacy behavior).
     case unknown = 0
     case movWide = 1
-    /// ADRP+ADD fused materialization or a single ADRP/ADD contributing to a PC-relative address.
     case adrAdd = 2
     case condSelect = 3
     case branchCond = 4

@@ -83,6 +83,7 @@ final class WhiteBoxProfileTests: XCTestCase {
         let enhancedBundle = ArmorWhiteBox.build(rootKey: rootKey)
 
         let legacyHeader = ArmorABI.WhiteBox.Header(
+            version: 1,
             flags: enhancedBundle.metadata.flags & ~ArmorABI.WhiteBox.enhancedDiffusionFlag,
             payloadSize: enhancedBundle.metadata.payloadSize,
             configDigest: enhancedBundle.metadata.configDigest
