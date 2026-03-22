@@ -922,7 +922,7 @@ public struct RiskDetectionEngine: Sendable {
                     }
                 case .tampered:
                     tamperedCount += 1
-                    softScore += tamperedBase
+                    softScore += max(tamperedBase, weight)
                 case .serverRequired, .unavailable:
                     break
                 }

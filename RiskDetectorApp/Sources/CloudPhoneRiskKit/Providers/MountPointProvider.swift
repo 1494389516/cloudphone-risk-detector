@@ -62,8 +62,8 @@ final class MountPointProvider: RiskSignalProvider {
         var hitVirtualFS: String?
         let mountCount = Int(count)
 
-        for i in 0..<count {
-            let stat = buf[Int(i)]
+        for i in 0..<mountCount {
+            let stat = buf[i]
             let fsType = extractCString(from: stat.f_fstypename)
             let mnton = extractCString(from: stat.f_mntonname)
             let fsLower = fsType.lowercased()

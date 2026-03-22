@@ -37,15 +37,16 @@ public enum SignalCompressor {
         let (crossLayer, extendedByte) = crossLayerBits(signals: signals)
 
         let digest = SecureBuffer(size: 9).use { ptr in
-            ptr.assumingMemoryBound(to: UInt8.self)[0] = layer1
-            ptr.assumingMemoryBound(to: UInt8.self)[1] = layer2
-            ptr.assumingMemoryBound(to: UInt8.self)[2] = layer3
-            ptr.assumingMemoryBound(to: UInt8.self)[3] = layer4
-            ptr.assumingMemoryBound(to: UInt8.self)[4] = UInt8((crossLayer >> 24) & 0xFF)
-            ptr.assumingMemoryBound(to: UInt8.self)[5] = UInt8((crossLayer >> 16) & 0xFF)
-            ptr.assumingMemoryBound(to: UInt8.self)[6] = UInt8((crossLayer >> 8) & 0xFF)
-            ptr.assumingMemoryBound(to: UInt8.self)[7] = UInt8(crossLayer & 0xFF)
-            ptr.assumingMemoryBound(to: UInt8.self)[8] = extendedByte
+            let bytes = ptr.assumingMemoryBound(to: UInt8.self)
+            bytes[0] = layer1
+            bytes[1] = layer2
+            bytes[2] = layer3
+            bytes[3] = layer4
+            bytes[4] = UInt8((crossLayer >> 24) & 0xFF)
+            bytes[5] = UInt8((crossLayer >> 16) & 0xFF)
+            bytes[6] = UInt8((crossLayer >> 8) & 0xFF)
+            bytes[7] = UInt8(crossLayer & 0xFF)
+            bytes[8] = extendedByte
             return Data(bytes: ptr, count: 9)
         }
 
