@@ -73,7 +73,9 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
             return
         }
 
-        guard let payload = try? JSONEncoder().encode(signals) else {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        guard let payload = try? encoder.encode(signals) else {
             Logger.log("server_aggregate.setVerified rejected: encode failed")
             return
         }

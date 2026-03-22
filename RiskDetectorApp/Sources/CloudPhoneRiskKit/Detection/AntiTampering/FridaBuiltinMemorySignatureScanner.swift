@@ -38,7 +38,8 @@ enum FridaBuiltinMemorySignatureScanner {
         let configuration = Configuration.current()
         guard configuration.enabled else { return nil }
 
-        // Check throttle under lock, but run the heavy scan outside.
+        // Check throttle under lock and immediately claim the slot to prevent
+        // concurrent threads from passing the throttle check during the scan.
         let shouldScan = scanState.withLock { lastScanMonotonicNs -> Bool in
             let now = monotonicNanoseconds()
             if lastScanMonotonicNs != 0 {
@@ -47,13 +48,13 @@ enum FridaBuiltinMemorySignatureScanner {
                     return false
                 }
             }
+            // Claim the slot immediately so other threads won't duplicate the scan
+            lastScanMonotonicNs = now
             return true
         }
         guard shouldScan else { return nil }
 
-        let hit = performScan(configuration: configuration)
-        scanState.withLock { $0 = monotonicNanoseconds() }
-        return hit
+        return performScan(configuration: configuration)
 #endif
     }
 
@@ -187,11 +188,16 @@ enum FridaBuiltinMemorySignatureScanner {
         return rows
     }
 
+    private static let timebaseInfo: mach_timebase_info_data_t = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return info
+    }()
+
     private static func monotonicNanoseconds() -> UInt64 {
-        var timebase = mach_timebase_info_data_t()
-        mach_timebase_info(&timebase)
         let ticks = mach_absolute_time()
-        return ticks * UInt64(timebase.numer) / UInt64(timebase.denom)
+        // Divide before multiply to avoid UInt64 overflow on large tick values
+        return ticks / UInt64(timebaseInfo.denom) * UInt64(timebaseInfo.numer)
     }
 
     // MARK: - Configuration (env)

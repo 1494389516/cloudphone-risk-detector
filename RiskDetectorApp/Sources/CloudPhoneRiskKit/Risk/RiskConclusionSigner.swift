@@ -53,7 +53,8 @@ public struct SignedRiskConclusion: Codable, Sendable {
 
     public func verify(deviceKey: SymmetricKey, maxAgeSeconds: TimeInterval = 300) -> Bool {
         let age = Date().timeIntervalSince1970 - timestamp
-        guard age >= 0, age <= maxAgeSeconds else { return false }
+        // Allow small negative age (up to 30s) for minor clock skew between client and server
+        guard age >= -30, age <= maxAgeSeconds else { return false }
 
         guard let signatureData = Data(hexString: signature) else { return false }
 
@@ -194,7 +195,6 @@ private final class KeychainSalt {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]

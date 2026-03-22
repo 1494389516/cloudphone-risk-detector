@@ -161,10 +161,10 @@ struct RuntimeIntegrityValidator: Detector {
             "_fopen",
         ]
 
+        // dlopen(nil) returns a handle to the main program; do NOT dlclose it (POSIX UB)
         guard let handle = dlopen(nil, RTLD_NOW) else {
             return CheckResult(anomalyDetected: false, methods: [])
         }
-        defer { dlclose(handle) }
 
         for symbolName in symbolsToCheck {
             guard let symAddr = dlsym(handle, String(symbolName.dropFirst())) else {
@@ -249,10 +249,10 @@ struct RuntimeIntegrityValidator: Detector {
             ("_open", "libsystem_kernel"),
         ]
 
+        // dlopen(nil) returns a handle to the main program; do NOT dlclose it (POSIX UB)
         guard let handle = dlopen(nil, RTLD_NOW) else {
             return CheckResult(anomalyDetected: false, methods: [])
         }
-        defer { dlclose(handle) }
 
         for (symbol, expectedImage) in symbolChecks {
             guard let symAddr = dlsym(handle, String(symbol.dropFirst())) else {

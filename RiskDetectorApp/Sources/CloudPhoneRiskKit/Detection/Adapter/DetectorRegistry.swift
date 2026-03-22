@@ -291,13 +291,14 @@ public final class DetectorRegistry {
     /// - Parameter type: 检测器类型
     /// - Returns: 检测器实例，如果类型未注册则返回 nil
     public func createDetector(type: DetectorType) -> Detector? {
-        lock.withLock {
-            guard let factory = registry[type] else {
+        let factory: DetectorFactory? = lock.withLock {
+            guard let f = registry[type] else {
                 Logger.log("DetectorRegistry.createDetector: \(type.rawValue) not found")
                 return nil
             }
-            return factory()
+            return f
         }
+        return factory?()
     }
     
     /// 执行指定类型的检测
@@ -423,8 +424,7 @@ public final class DetectorRegistry {
         let settleState: UInt32 = 0x45
         let finishState: UInt32 = 0x46
 
-        var totalScore: Double = 0
-        var allMethods: [String] = []
+        var rawResults: [(DetectorType, DetectorResult)] = []
         var typeIndex = 0
         var currentType: DetectorType?
         var loopBudget = max(24, orderedTypes.count * 5 + 10)
@@ -443,7 +443,14 @@ public final class DetectorRegistry {
         var encodedState = encodeState(entryState)
 
         func finalizeResult() -> GroupDetectionResult {
-            GroupDetectionResult(
+            let deduped = deduplicateByOverlapGroup(rawResults)
+            var totalScore: Double = 0
+            var allMethods: [String] = []
+            for (_, result) in deduped {
+                totalScore += result.score
+                allMethods.append(contentsOf: result.methods)
+            }
+            return GroupDetectionResult(
                 score: totalScore,
                 methods: Array(Set(allMethods)).sorted(),
                 details: "\(group.rawValue)_group"
@@ -472,10 +479,9 @@ public final class DetectorRegistry {
                     currentType = orderedTypes[typeIndex]
                     encodedState = encodeState(executeState)
                 } else if decodedState == executeState {
-                    if let currentType {
-                        let result = detect(type: currentType)
-                        totalScore += result.score
-                        allMethods.append(contentsOf: result.methods)
+                    if let ct = currentType {
+                        let result = detect(type: ct)
+                        rawResults.append((ct, result))
                     }
                     currentType = nil
                     typeIndex += 1
@@ -502,10 +508,9 @@ public final class DetectorRegistry {
                     currentType = orderedTypes[typeIndex]
                     encodedState = encodeState(executeState)
                 case executeState:
-                    if let currentType {
-                        let result = detect(type: currentType)
-                        totalScore += result.score
-                        allMethods.append(contentsOf: result.methods)
+                    if let ct = currentType {
+                        let result = detect(type: ct)
+                        rawResults.append((ct, result))
                     }
                     currentType = nil
                     typeIndex += 1

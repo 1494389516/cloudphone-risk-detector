@@ -154,16 +154,27 @@ final class IMUNoiseSpectrumProvider: RiskSignalProvider {
 
         var realPart = signal
         var imagPart = [Double](repeating: 0, count: n)
-        var splitComplex = DSPDoubleSplitComplex(realp: &realPart, imagp: &imagPart)
-
-        vDSP_fft_zipD(fftSetup, &splitComplex, 1, log2n, FFTDirection(kFFTDirection_Forward))
-
         let halfN = n / 2
-        var magnitudes = [Double](repeating: 0, count: halfN)
-        vDSP_zvmagsD(&splitComplex, 1, &magnitudes, 1, vDSP_Length(halfN))
 
-        var one: Double = 1.0
-        vDSP_vdbconD(magnitudes, 1, &one, &magnitudes, 1, vDSP_Length(halfN), 0)
+        // Use withUnsafeMutableBufferPointer to guarantee pointer lifetime across vDSP calls
+        let magnitudes: [Double] = realPart.withUnsafeMutableBufferPointer { realBuf in
+            imagPart.withUnsafeMutableBufferPointer { imagBuf in
+                var splitComplex = DSPDoubleSplitComplex(
+                    realp: realBuf.baseAddress!,
+                    imagp: imagBuf.baseAddress!
+                )
+
+                vDSP_fft_zipD(fftSetup, &splitComplex, 1, log2n, FFTDirection(kFFTDirection_Forward))
+
+                var mags = [Double](repeating: 0, count: halfN)
+                vDSP_zvmagsD(&splitComplex, 1, &mags, 1, vDSP_Length(halfN))
+
+                var one: Double = 1.0
+                vDSP_vdbconD(mags, 1, &one, &mags, 1, vDSP_Length(halfN), 0)
+
+                return mags
+            }
+        }
 
         return magnitudes
     }

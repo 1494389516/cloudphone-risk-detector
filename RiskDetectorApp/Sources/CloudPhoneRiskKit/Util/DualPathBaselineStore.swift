@@ -41,8 +41,6 @@ public enum DualPathBaselineStore {
     /// 对指定路径列表执行基线采集，使用 SVC 直调 cprisk_lstat_direct。
     /// 仅记录成功 stat 的路径；ENOENT/失败的不入库，校验时视为无基线可对比。
     public static func collectBaseline(paths: [String]) {
-        lock.withLock { hasCollected = true }
-
         let now = Date().timeIntervalSince1970
         var collected: [String: BaselineEntry] = [:]
 
@@ -57,7 +55,11 @@ public enum DualPathBaselineStore {
             )
         }
 
-        lock.withLock { baselineByPath = collected }
+        // Set hasCollected atomically with the data to prevent TOCTOU race
+        lock.withLock {
+            baselineByPath = collected
+            hasCollected = true
+        }
 
         #if DEBUG
         Logger.log("dual_path_baseline: collected \(collected.count) entries for \(paths.count) paths")
