@@ -662,6 +662,8 @@ uint32_t cprisk_get_armor_capabilities(void) {
     if (cprisk_whitebox_validate_bundle_i(&bundle) == 0)
         capabilities |= CPRISK_ARMOR_CAP_WHITEBOX_SECTION_LAYOUT;
 
+    capabilities |= cprisk_vm_query_armor_capability_bits();
+
     cprisk_secure_zero(&bundle.header, sizeof(bundle.header));
     return capabilities;
 }

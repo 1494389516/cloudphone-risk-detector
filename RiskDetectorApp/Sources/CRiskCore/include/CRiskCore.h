@@ -10,6 +10,7 @@
 #include "cprisk_armor_abi.h"
 #include "cprisk_secure_zero.h"
 #include "cprisk_memory_guard.h"
+#include "cprisk_vm_interpreter.h"
 
 #ifdef __cplusplus
 extern "C" {

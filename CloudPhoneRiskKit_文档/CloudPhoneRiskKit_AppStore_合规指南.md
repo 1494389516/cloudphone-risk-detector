@@ -3,7 +3,7 @@
 > 文档类型：技术文档  
 > 适用对象：集成 `CloudPhoneRiskKit` 的 iOS 客户端团队、交付团队、法务/隐私同学  
 > 适用场景：App Store / TestFlight 分发、源码集成、XCFramework 二进制分发  
-> 适用版本：SDK 6.8  
+> 适用版本：SDK 7.0  
 > 当前 SDK 事实基础：`CloudPhoneRiskKit` 以 **静态库 / 源码包** 为主，SDK 当前 privacy manifest 已声明 `Device ID`、`UserDefaults`、`SystemBootTime`，并显式声明 `NSPrivacyTracking = false`
 
 ---
@@ -97,13 +97,15 @@
 
 这类“否定性声明”在成熟 SDK 文档里很重要，因为审核和客户法务最先问的常常不是“你收什么”，而是“你是不是在 tracking”。
 
-### 4.4 6.8 版本升级对合规披露的影响
+### 4.4 7.0 版本升级对合规披露的影响
 
-6.8 这次升级主要新增的是**二进制保护与运行时完整性增强**，包括：
+7.0 这次升级主要新增的是**二进制保护、text 页加密与 VMP 虚拟化增强**，包括：
 
 - Pass 7 runtime gate
 - Pass 10 ImportEncryptor
 - Pass 11 HeaderEncryptor
+- Pass 12 TextSegmentEncryptor
+- Pass 13 VMProtector（含 M2/M3 反分析）
 - 更早期的异常端口抢占
 - 多频 watchdog / timing canary / Frida 行为指纹增强
 
@@ -192,7 +194,7 @@
 
 #### 口径 A：完整版（推荐，全量开启 armor 保护时使用）
 
-适用场景：SDK 全量启用 cprisk-armor 构建期 + 运行时保护（字符串加密、数据段加密、完整性校验、Mach-O header 擦除、JIT 按页解密、Pass 7 anti-debug runtime gate、Pass 8 instruction substitution、Pass 9 CFF 控制流编排、Pass 10 import encryption、Pass 11 header encryption 等），不做任何裁剪。
+适用场景：SDK 全量启用 cprisk-armor 构建期 + 运行时保护（字符串加密、数据段加密、完整性校验、Mach-O header 擦除、JIT 按页解密、Pass 7 anti-debug runtime gate、Pass 8 instruction substitution、Pass 9 CFF 控制流编排、Pass 10 import encryption、Pass 11 header encryption、Pass 12 text page encryption、Pass 13 VMProtector / VM interpreter 等），不做任何裁剪。
 
 ```text
 This app integrates CloudPhoneRiskKit, a fraud-prevention and device-integrity SDK.
@@ -224,7 +226,7 @@ They are not used to profile installed apps for analytics or advertising.
 
 #### 口径 B：精简版（裁剪部分 armor 能力时使用）
 
-适用场景：App Store 构建关闭了 `cprisk_erase_macho_header` 和 `cprisk_jit_decrypt_page`，只保留字符串加密 + 数据段预解密 + 完整性校验 + 符号剥离。
+适用场景：App Store 构建关闭了 `cprisk_erase_macho_header` 和 `cprisk_jit_decrypt_page`，同时不启用 text 页加密与 VM 虚拟化，只保留数据段预解密 + 完整性校验 + 符号剥离 + 轻量 anti-debug 链。
 
 ```text
 This app integrates CloudPhoneRiskKit for device integrity verification and fraud-prevention.
@@ -287,7 +289,7 @@ SDK 文档可以给你分类建议，但最终 `App Privacy` 的责任主体始�
 - **SDK 本地采集但不上报**：重点落在 SDK manifest、权限说明、审核备注，不等同于宿主 App 一定要把所有字段都填进 `App Privacy`
 - **SDK 生成报告且宿主 App 上报**：按照“哪些字段离开设备”来填 `App Privacy`
 - **宿主 App 把字段与账号、手机号、用户中心 ID 绑定**：除了数据类型本身，还要重新评估 `Linked` 是否应为 `true`
-- **6.8 的 runtime gate / import/header 保护**：属于安全实现增强，不单独生成新的隐私披露项
+- **7.0 的 runtime gate / text 加密 / VM 保护**：属于安全实现增强，不单独生成新的隐私披露项
 
 ---
 
@@ -438,8 +440,10 @@ cprisk-armor --input <app_binary> --output <output> --all --key <hex>
 | Pass 9 | ControlFlowOrchestrator（CFF 控制流平坦化） | 是 |
 | Pass 10 | ImportEncryptor（导入表加密） | 是 |
 | Pass 11 | HeaderEncryptor（Header 加密） | 是 |
+| Pass 12 | TextSegmentEncryptor（`__TEXT.__text` 页级加密） | 是 |
+| Pass 13 | VMProtector（关键函数虚拟化） | 是 |
 
-运行时能力全量开启：Mach-O Header 擦除、JIT 按页解密、异常端口保护、watchdog 多维反调试探针（含双 watchdog 互监控、影子栈校验）、Pass 7 anti-debug runtime gate、Pass 10 导入解析恢复、Pass 11 header sanity restore；构建产物侧同时包含 Pass 8 对 `__TEXT.__text` 的保守等长指令替换与 Pass 9 CFF 策略编排。
+运行时能力全量开启：Mach-O Header 擦除、JIT 按页解密、异常端口保护、watchdog 多维反调试探针（含双 watchdog 互监控、影子栈校验）、Pass 7 anti-debug runtime gate、Pass 10 导入解析恢复、Pass 11 header sanity restore、Pass 12 text 页恢复、Pass 13 VM 解释器（handler 变体 / VPC 仿射 / dead handler / opaque predicate chain）；构建产物侧同时包含 Pass 8 对 `__TEXT.__text` 的保守等长指令替换与 Pass 9 CFF 策略编排。
 
 **适用场景**：
 
@@ -470,6 +474,8 @@ cprisk-armor --input <app_binary> --output <output> --pass3 --pass4 --pass5 --pa
 | Pass 9 | ControlFlowOrchestrator（CFF 控制流平坦化） | **否** | 会改写 `__TEXT.__text` 控制流结构；首发提审阶段建议关闭 |
 | Pass 10 | ImportEncryptor（导入表加密） | 是 | 主要影响导入名的静态可见性，不改变业务逻辑路径 |
 | Pass 11 | HeaderEncryptor（Header 加密） | 是 | 运行时会做 sanity fallback，审核风险通常低于直接改写 `__TEXT` |
+| Pass 12 | TextSegmentEncryptor（`__TEXT.__text` 页级加密） | **否** | 会显著增加静态分析复杂度并改变代码页恢复链路；首发提审阶段建议关闭 |
+| Pass 13 | VMProtector（关键函数虚拟化） | **否** | 会把关键函数改写为 VM 跳板 + 自定义字节码，逆向对抗极强，但审核解释成本最高；首发提审阶段建议关闭 |
 
 **适用场景**：
 
@@ -506,8 +512,10 @@ cprisk-armor --input <app_binary> --output <output> --pass3 --pass4 --pass5 --pa
 | Pass 9 ControlFlowOrchestrator | 改写 `__TEXT.__text` 中策略编排函数的控制流结构 | CFF 编排骨架，源码级状态机已在 SDK 内落地 | 中 |
 | Pass 10 ImportEncryptor | 导入符号名从静态明文变成运行时恢复 | 主要影响符号可见性，不影响 App 正常执行路径 | 低 |
 | Pass 11 HeaderEncryptor | 头部关键字段被加密并在运行时恢复 | 若恢复失败有 sanity fallback，不依赖隐藏私有 API | 低至中 |
+| Pass 12 TextSegmentEncryptor | `__TEXT.__text` 页在静态视角下不再直接可读 | 运行时恢复链更复杂，但仍属防篡改/反逆向 | 中 |
+| Pass 13 VMProtector | 高价值函数不再以原生 ARM64 直接暴露 | 运行时需通过 VM 解释器执行，自定义字节码与跳板均提高审核解释门槛 | 中至高 |
 
-**结论**：Pass 1（字符串加密）和 Pass 2（元数据擦除）是最容易影响苹果静态扫描器正常工作的 Pass；Pass 8、Pass 9 直接作用于 `__TEXT.__text`，首发提审阶段建议关闭。AppStore Safe Profile 关闭 Pass 1、Pass 2、Pass 8、Pass 9，保留 Pass 3/4/5/6/7/10/11，既能提供有效保护（完整性校验 + 数据加密 + 结构混淆 + 符号剥离 + anti-debug runtime gate + import/header 保护），又尽量不干扰苹果的审核流程。
+**结论**：Pass 1（字符串加密）和 Pass 2（元数据擦除）是最容易影响苹果静态扫描器正常工作的 Pass；Pass 8、Pass 9、Pass 12、Pass 13 直接作用于 `__TEXT.__text` 或关键函数执行形态，首发提审阶段建议关闭。AppStore Safe Profile 关闭 Pass 1、Pass 2、Pass 8、Pass 9、Pass 12、Pass 13，保留 Pass 3/4/5/6/7/10/11，既能提供有效保护（完整性校验 + 数据加密 + 结构混淆 + 符号剥离 + anti-debug runtime gate + import/header 保护），又尽量不干扰苹果的审核流程。
 
 ### 11.4 渐进开启策略
 
@@ -522,7 +530,7 @@ cprisk-armor --input <app_binary> --output <output> --pass3 --pass4 --pass5 --pa
 
 ### 11.5 运行时能力的合规说明
 
-除了构建时的 11 个 Pass，SDK 的 CRiskCore 运行时还包含以下能力：
+除了构建时的 13 个 Pass，SDK 的 CRiskCore 运行时还包含以下能力：
 
 | 运行时能力 | 实现 | 合规风险 | 建议 |
 |-----------|------|---------|------|
@@ -535,6 +543,8 @@ cprisk-armor --input <app_binary> --output <output> --pass3 --pass4 --pass5 --pa
 | Pass 7 运行时消费 | 读取 `__DATA,__cpr_adbg7` 计划并做 anti-debug gate | 低至中 — 运行时会在关键点插入 gate，但仍明显弱于大规模机器码重写 | 金融 App 可开；普通 App 可随审核历史逐步启用 |
 | Pass 10 导入恢复 | `cprisk_import_resolver.c` | 低 — 主要改变符号恢复方式，不新增数据采集 | 可开 |
 | Pass 11 Header 恢复 | `cprisk_header_restore.c` | 低至中 — 影响镜像头字段恢复，但有 sanity fallback | 金融 App 可开；普通 App 视审核历史启用 |
+| Pass 12 Text 恢复 | `cprisk_text_encrypt.c` | 中 — 代码页恢复链会引入更多审核解释成本，但不改变隐私边界 | 金融 App / 高安全场景优先 |
+| Pass 13 VM 解释器 | `cprisk_vm_interpreter.c` | 中至高 — 高价值函数通过 VM 字节码执行，需要在 Review Notes 中清楚说明其仅用于反篡改与反逆向 | 仅建议在已有审核历史或高安全行业启用 |
 | Pass 9 CFF 运行时 | 源码级 CFF 状态机（CFFDispatcher / CFFStateCodec） | 低 — 纯逻辑层控制流编码，不新增系统调用或数据采集 | 始终开启（SDK 内嵌） |
 
 ### 11.6 合规参考：同类商用 SDK 的保护等级

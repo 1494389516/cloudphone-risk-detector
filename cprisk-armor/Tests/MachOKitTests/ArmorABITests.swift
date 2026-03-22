@@ -177,5 +177,7 @@ final class ArmorABITests: XCTestCase {
         XCTAssertEqual(ArmorABI.Sections.headerBackup, "__swift5_mhsav")
         XCTAssertEqual(ArmorABI.Sections.chainMeta, "__swift5_ptmap")
         XCTAssertEqual(ArmorABI.Sections.textEncryption, "__swift5_cgenc")
+        XCTAssertEqual(ArmorABI.Sections.vmpDispatch, "__swift5_mdvrt")
+        XCTAssertEqual(ArmorABI.Sections.vmpBytecode, "__swift5_mdirt")
     }
 }

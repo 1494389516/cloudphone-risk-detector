@@ -12,6 +12,7 @@ import SymbolStripper
 import ImportEncryptor
 import HeaderEncryptor
 import TextSegmentEncryptor
+import VMProtector
 import Security
 
 // MARK: - CLI Options
@@ -25,6 +26,7 @@ struct CLIOptions {
     var keyHex: String?
     var keyFile: String?
     var cffPolicyPath: String?
+    var vmpPolicyPath: String?
     var buildSeedRaw: String?
     /// Pass 2: `conservative` (default) or `aggressive` Swift metadata scrub.
     var metadataScrubLevelRaw: String?
@@ -51,6 +53,9 @@ func parseArguments() -> CLIOptions {
         case "--cff-policy":
             i += 1
             if i < args.count { options.cffPolicyPath = args[i] }
+        case "--vmp-policy":
+            i += 1
+            if i < args.count { options.vmpPolicyPath = args[i] }
         case "--build-seed":
             i += 1
             if i < args.count { options.buildSeedRaw = args[i] }
@@ -66,6 +71,7 @@ func parseArguments() -> CLIOptions {
         case "--pass10": options.passes.insert(10)
         case "--pass11": options.passes.insert(11)
         case "--pass12": options.passes.insert(12)
+        case "--pass13": options.passes.insert(13)
         case "--all":   options.allPasses = true
         case "--verbose": options.verbose = true
         case "--metadata-scrub-level":
@@ -103,8 +109,10 @@ func printUsage() {
       --pass10          Pass 10: Import Table Encryption
       --pass11          Pass 11: Header Encryption
       --pass12          Pass 12: __TEXT.__text page encryption + metadata
+      --pass13          Pass 13: VMProtector (policy-driven bytecode + entry trampoline)
       --all             Enable all passes
       --cff-policy      Override cff_policy.yaml path for Pass 9
+      --vmp-policy      Override vmp_policy.yaml path for Pass 13 (default: RiskDetectorApp/vmp_policy.yaml search)
       --build-seed      Build randomization seed (u64, decimal or 0x-prefixed hex)
       --metadata-scrub-level conservative|aggressive
                         Pass 2 Swift metadata: conservative (default, string payloads only)
@@ -250,7 +258,7 @@ guard let inputPath = options.inputPath else {
 
 let outputPath = options.outputPath ?? (inputPath + "_armored")
 let verbose = options.verbose
-let enabledPasses: Set<Int> = options.allPasses ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] : options.passes
+let enabledPasses: Set<Int> = options.allPasses ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] : options.passes
 
 if enabledPasses.isEmpty {
     fputs("Warning: No passes enabled. Use --all or --passN flags.\n", stderr)
@@ -326,6 +334,7 @@ do {
         (7, AntiDebugInjectorPass()),
         (9, ControlFlowOrchestratorPass(policyFilePath: options.cffPolicyPath)),
         (10, ImportEncryptorPass()),
+        (13, VMProtectorPass(policyFilePath: options.vmpPolicyPath)),
         (12, TextSegmentEncryptorPass()),
         (6, SymbolStripperPass()),
     ]

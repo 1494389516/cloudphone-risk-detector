@@ -1,0 +1,31 @@
+# Pass 13 — VMProtector policy (cprisk-armor)
+# full: entry patched to call _cprisk_vm_entry with fn id in x0 + bytecode emitted
+# partial: bytecode only (no __text patch)
+# never: excluded (wins over full/partial if duplicated)
+
+version: 1
+anti_analysis:
+  handler_duplication: true
+opaque_vpc_encoding:
+  enabled: true
+# M3: optional build-time hardening (all off by default; safe rollback)
+hardening:
+  protect_vm_interpreter_with_cff: true
+  enable_dead_handler_injection: true
+  opaque_vpc_predicate_chain: true
+  interpreter_self_integrity_check: false
+  interpreter_cff_tier: medium
+functions:
+  full:
+    - RiskDetectionEngine.collectAndAugmentSignals
+    - RiskDetectionEngine.scoreAndForceDecision
+    - RiskDetectionEngine.treeCommitVerdict
+    - DecisionTree.decide
+    - ChallengeSession.markSubmitted
+    - TrustChainManager.deriveSessionKey
+    - TrustChainManager.buildKeyResolver
+  partial: []
+  never:
+    - direct_syscall.cprisk_direct_syscall0
+    - direct_syscall.cprisk_direct_syscall6
+    - cprisk_vm_entry

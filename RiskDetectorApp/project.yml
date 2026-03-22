@@ -108,6 +108,7 @@ targets:
         OTHER_LDFLAGS: >-
           $(inherited) -lCRiskCore
           -Wl,-headerpad,0x4000
+          -Wl,-u,_cprisk_vm_entry
           -Wl,-sectcreate,__DATA,__swift5_types2,$(ARMOR_PLACEHOLDER_DIR)/string_table.bin
           -Wl,-sectcreate,__DATA,__swift5_proto2,$(ARMOR_PLACEHOLDER_DIR)/loader.bin
           -Wl,-sectcreate,__DATA,__swift5_mpenum,$(ARMOR_PLACEHOLDER_DIR)/protected_blob.bin
@@ -124,6 +125,8 @@ targets:
           -Wl,-sectcreate,__DATA,__swift5_mhsav,$(ARMOR_PLACEHOLDER_DIR)/header_backup.bin
           -Wl,-sectcreate,__DATA,__swift5_ptmap,$(ARMOR_PLACEHOLDER_DIR)/chain_meta.bin
           -Wl,-sectcreate,__DATA,__swift5_cgenc,$(ARMOR_PLACEHOLDER_DIR)/text_encrypt.bin
+          -Wl,-sectcreate,__DATA,__swift5_mdvrt,$(ARMOR_PLACEHOLDER_DIR)/vmp_dispatch.bin
+          -Wl,-sectcreate,__DATA,__swift5_mdirt,$(ARMOR_PLACEHOLDER_DIR)/vmp_bytecode.bin
           -Wl,-sectcreate,__DATA,__sw5_builtin2,$(ARMOR_PLACEHOLDER_DIR)/sw5_builtin2.bin
           -Wl,-sectcreate,__DATA,__sw5_capture2,$(ARMOR_PLACEHOLDER_DIR)/sw5_capture2.bin
           -Wl,-sectcreate,__DATA,__sw5_typeref2,$(ARMOR_PLACEHOLDER_DIR)/sw5_typeref2.bin

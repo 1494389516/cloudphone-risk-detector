@@ -22,6 +22,7 @@ let package = Package(
         .target(name: "ImportEncryptor", dependencies: ["MachOKit"]),
         .target(name: "HeaderEncryptor", dependencies: ["MachOKit"]),
         .target(name: "TextSegmentEncryptor", dependencies: ["MachOKit"]),
+        .target(name: "VMProtector", dependencies: ["MachOKit"]),
         .executableTarget(
             name: "cprisk-armor",
             dependencies: [
@@ -37,7 +38,8 @@ let package = Package(
                 "SymbolStripper",
                 "ImportEncryptor",
                 "HeaderEncryptor",
-                "TextSegmentEncryptor"
+                "TextSegmentEncryptor",
+                "VMProtector"
             ]
         ),
         .testTarget(name: "MachOKitTests", dependencies: [
@@ -45,6 +47,7 @@ let package = Package(
             "DataSegmentEncryptor", "IntegrityAnchor", "StructureObfuscator",
             "AntiDebugInjector", "InstructionSubstitution", "ControlFlowOrchestrator", "SymbolStripper", "ImportEncryptor", "HeaderEncryptor",
             "TextSegmentEncryptor",
+            "VMProtector",
         ])
     ]
 )

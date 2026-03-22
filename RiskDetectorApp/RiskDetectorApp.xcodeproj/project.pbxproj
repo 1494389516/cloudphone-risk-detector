@@ -87,6 +87,7 @@
 		3EBDF46DDF95F9BE11EA0D88 /* RiskScorerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFC2834E89630C039617CDC1 /* RiskScorerTests.swift */; };
 		3F9BFC2A55C70DCFFDDC8520 /* AppSigningIdentityDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B120C461DFD6BDC99D8BFA9 /* AppSigningIdentityDetectorTests.swift */; };
 		404B6DB8D677CF73D1D2833D /* ConfigCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95329C3506D3EDE450D0CA5F /* ConfigCache.swift */; };
+		40C5860EC1D7A10F652ACDA7 /* cprisk_vm_interpreter.c in Sources */ = {isa = PBXBuildFile; fileRef = A6C61B085480D381D7B6E03B /* cprisk_vm_interpreter.c */; };
 		4129D5317D1F20D3A0E32E29 /* cprisk_whitebox.c in Sources */ = {isa = PBXBuildFile; fileRef = 89839D2C929635E11BD0B26C /* cprisk_whitebox.c */; };
 		421CB042AF2CBA279AA47525 /* DRMCapabilityProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6098DC6AB32B424339300871 /* DRMCapabilityProvider.swift */; };
 		4307251DFE0E380FA21BA66E /* FridaDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB93C98F8545FE79021AA9E8 /* FridaDetector.swift */; };
@@ -139,6 +140,7 @@
 		7072362D255A34B817E8271D /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 33EE9FDDEBDD1ED69679D6BB /* Network.framework */; };
 		71AF218F3AD83D63156F01B8 /* RiskReportStorageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B63B7BE4D091C2BBD0893E58 /* RiskReportStorageTests.swift */; };
 		71C6B8E2E02702027396A59E /* TouchCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20BFBD7CC2151EDE22E8BF3 /* TouchCapture.swift */; };
+		71D0CB3E43432822EBDF2D7C /* cprisk_vm_interpreter.h in CopyFiles */ = {isa = PBXBuildFile; fileRef = EEA7DC0F51A05F715712A0EE /* cprisk_vm_interpreter.h */; };
 		72069CE92FA2BE7A11633A4D /* cprisk_hardware_key.c in Sources */ = {isa = PBXBuildFile; fileRef = 8B47AFF021F17E9037C1FF07 /* cprisk_hardware_key.c */; };
 		7223EBC099A44CC90EC0B71D /* libCloudPhoneRiskKit.a in Frameworks */ = {isa = PBXBuildFile; fileRef = E66D15874FB490E8F7FEC61A /* libCloudPhoneRiskKit.a */; };
 		73873A19805224091CC89A0B /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B3B1DDEE88FD05961EBC98C5 /* Metal.framework */; };
@@ -361,6 +363,7 @@
 				845D8A027EE89DBC5843A591 /* cprisk_memory_guard.h in CopyFiles */,
 				BF8019CEDDAFC3E3E51B9F6D /* cprisk_secure_zero.h in CopyFiles */,
 				AEFE72B546A45959E756524B /* cprisk_sha256.h in CopyFiles */,
+				71D0CB3E43432822EBDF2D7C /* cprisk_vm_interpreter.h in CopyFiles */,
 				9D32D4A66C956AD84D172803 /* module.modulemap in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -555,6 +558,7 @@
 		A4B412448EA04BD2B3489174 /* RiskDetectorAppApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskDetectorAppApp.swift; sourceTree = "<group>"; };
 		A5287AA6C21DA75EDEB528D1 /* MultiPathConsistencyCrossValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiPathConsistencyCrossValidator.swift; sourceTree = "<group>"; };
 		A57121BB40B65F7D12A70C27 /* cprisk_session_token.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_session_token.c; sourceTree = "<group>"; };
+		A6C61B085480D381D7B6E03B /* cprisk_vm_interpreter.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_vm_interpreter.c; sourceTree = "<group>"; };
 		A75A35C2A68223D09B6945EA /* IntegrityBaselineEnvCheck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntegrityBaselineEnvCheck.swift; sourceTree = "<group>"; };
 		A795412F4B429E96455B7CF3 /* RiskSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskSnapshot.swift; sourceTree = "<group>"; };
 		A7E6D55A68269BCE4E5446E6 /* RiskConclusionSigner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskConclusionSigner.swift; sourceTree = "<group>"; };
@@ -614,6 +618,7 @@
 		E8FD9EDBE87605CDBAF11A76 /* cprisk_signal_probe.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_signal_probe.c; sourceTree = "<group>"; };
 		EB035CDC835B575A26274DE7 /* CFFConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CFFConfig.swift; sourceTree = "<group>"; };
 		EB5BA90A549DAC275697B9AF /* AppSigningIdentityDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSigningIdentityDetector.swift; sourceTree = "<group>"; };
+		EEA7DC0F51A05F715712A0EE /* cprisk_vm_interpreter.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = cprisk_vm_interpreter.h; sourceTree = "<group>"; };
 		EF61C0A1A5E7D89416D6EDF3 /* anti_debug_watchdog.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = anti_debug_watchdog.c; sourceTree = "<group>"; };
 		EFA0BD2A13FDB4554E691EF2 /* ChallengeTriggerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChallengeTriggerTests.swift; sourceTree = "<group>"; };
 		EFC2834E89630C039617CDC1 /* RiskScorerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskScorerTests.swift; sourceTree = "<group>"; };
@@ -938,6 +943,7 @@
 				83AFB3C9B75C937C51C1D441 /* cprisk_memory_guard.h */,
 				8DCEF66BF5EC84D2AE63B3B4 /* cprisk_secure_zero.h */,
 				2EDFBE024C5A1E1DBE25E319 /* cprisk_sha256.h */,
+				EEA7DC0F51A05F715712A0EE /* cprisk_vm_interpreter.h */,
 				4CCF168EF1E28CA37A0D59AA /* CRiskCore.h */,
 			);
 			path = include;
@@ -1195,6 +1201,7 @@
 				3BCAE0226169ED0029336BF8 /* cprisk_string_decrypt.c */,
 				7EDF493F0C5268BA96B9D4EB /* cprisk_text_encrypt.c */,
 				BB4FBACBB5015902987454CF /* cprisk_tls_init.c */,
+				A6C61B085480D381D7B6E03B /* cprisk_vm_interpreter.c */,
 				89839D2C929635E11BD0B26C /* cprisk_whitebox.c */,
 				954C0DFE170A1AA14F3FC453 /* direct_syscall.c */,
 				747AB6E16DF3AA22DBB630A0 /* include */,
@@ -1750,6 +1757,7 @@
 				3DD3D77E67C12E2D2F8BDEC6 /* cprisk_string_decrypt.c in Sources */,
 				6EA1D6096F4347133710FACB /* cprisk_text_encrypt.c in Sources */,
 				EFE8C7AAA15F4ECADE3D6707 /* cprisk_tls_init.c in Sources */,
+				40C5860EC1D7A10F652ACDA7 /* cprisk_vm_interpreter.c in Sources */,
 				4129D5317D1F20D3A0E32E29 /* cprisk_whitebox.c in Sources */,
 				2FF0007AD08478C0AE5D0DA7 /* direct_syscall.c in Sources */,
 			);
@@ -1838,7 +1846,7 @@
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = (
-					"$(inherited) -lCRiskCore -Wl,-headerpad,0x4000 -Wl,-sectcreate,__DATA,__swift5_types2,$(ARMOR_PLACEHOLDER_DIR)/string_table.bin -Wl,-sectcreate,__DATA,__swift5_proto2,$(ARMOR_PLACEHOLDER_DIR)/loader.bin -Wl,-sectcreate,__DATA,__swift5_mpenum,$(ARMOR_PLACEHOLDER_DIR)/protected_blob.bin -Wl,-sectcreate,__DATA,__swift5_aa,$(ARMOR_PLACEHOLDER_DIR)/anchor_a.bin -Wl,-sectcreate,__DATA,__swift5_ab,$(ARMOR_PLACEHOLDER_DIR)/anchor_b.bin -Wl,-sectcreate,__DATA,__swift5_ac,$(ARMOR_PLACEHOLDER_DIR)/anchor_c.bin -Wl,-sectcreate,__DATA,__swift5_ad,$(ARMOR_PLACEHOLDER_DIR)/anchor_d.bin -Wl,-sectcreate,__DATA,__swift5_acfun,$(ARMOR_PLACEHOLDER_DIR)/full_anchor.bin -Wl,-sectcreate,__DATA,__swift5_mdext,$(ARMOR_PLACEHOLDER_DIR)/whitebox_meta.bin -Wl,-sectcreate,__DATA,__swift5_mdbdy,$(ARMOR_PLACEHOLDER_DIR)/whitebox_code.bin -Wl,-sectcreate,__DATA,__swift5_mddsc,$(ARMOR_PLACEHOLDER_DIR)/whitebox_data.bin -Wl,-sectcreate,__DATA,__swift5_mdchk,$(ARMOR_PLACEHOLDER_DIR)/whitebox_tag.bin -Wl,-sectcreate,__DATA,__swift5_dyrel,$(ARMOR_PLACEHOLDER_DIR)/import_table.bin -Wl,-sectcreate,__DATA,__swift5_mhsav,$(ARMOR_PLACEHOLDER_DIR)/header_backup.bin -Wl,-sectcreate,__DATA,__swift5_ptmap,$(ARMOR_PLACEHOLDER_DIR)/chain_meta.bin -Wl,-sectcreate,__DATA,__swift5_cgenc,$(ARMOR_PLACEHOLDER_DIR)/text_encrypt.bin -Wl,-sectcreate,__DATA,__sw5_builtin2,$(ARMOR_PLACEHOLDER_DIR)/sw5_builtin2.bin -Wl,-sectcreate,__DATA,__sw5_capture2,$(ARMOR_PLACEHOLDER_DIR)/sw5_capture2.bin -Wl,-sectcreate,__DATA,__sw5_typeref2,$(ARMOR_PLACEHOLDER_DIR)/sw5_typeref2.bin\n-Wl,-sectcreate,__DATA,__la_resolver2,$(ARMOR_PLACEHOLDER_DIR)/la_resolver2.bin -Wl,-sectcreate,__DATA,__stub_helper2,$(ARMOR_PLACEHOLDER_DIR)/stub_helper2.bin -Wl,-sectcreate,__DATA,__auth_got2,$(ARMOR_PLACEHOLDER_DIR)/auth_got2.bin -Wl,-sectcreate,__DATA,__nl_catlist,$(ARMOR_PLACEHOLDER_DIR)/nl_catlist.bin",
+					"$(inherited) -lCRiskCore -Wl,-headerpad,0x4000 -Wl,-u,_cprisk_vm_entry -Wl,-sectcreate,__DATA,__swift5_types2,$(ARMOR_PLACEHOLDER_DIR)/string_table.bin -Wl,-sectcreate,__DATA,__swift5_proto2,$(ARMOR_PLACEHOLDER_DIR)/loader.bin -Wl,-sectcreate,__DATA,__swift5_mpenum,$(ARMOR_PLACEHOLDER_DIR)/protected_blob.bin -Wl,-sectcreate,__DATA,__swift5_aa,$(ARMOR_PLACEHOLDER_DIR)/anchor_a.bin -Wl,-sectcreate,__DATA,__swift5_ab,$(ARMOR_PLACEHOLDER_DIR)/anchor_b.bin -Wl,-sectcreate,__DATA,__swift5_ac,$(ARMOR_PLACEHOLDER_DIR)/anchor_c.bin -Wl,-sectcreate,__DATA,__swift5_ad,$(ARMOR_PLACEHOLDER_DIR)/anchor_d.bin -Wl,-sectcreate,__DATA,__swift5_acfun,$(ARMOR_PLACEHOLDER_DIR)/full_anchor.bin -Wl,-sectcreate,__DATA,__swift5_mdext,$(ARMOR_PLACEHOLDER_DIR)/whitebox_meta.bin -Wl,-sectcreate,__DATA,__swift5_mdbdy,$(ARMOR_PLACEHOLDER_DIR)/whitebox_code.bin -Wl,-sectcreate,__DATA,__swift5_mddsc,$(ARMOR_PLACEHOLDER_DIR)/whitebox_data.bin -Wl,-sectcreate,__DATA,__swift5_mdchk,$(ARMOR_PLACEHOLDER_DIR)/whitebox_tag.bin -Wl,-sectcreate,__DATA,__swift5_dyrel,$(ARMOR_PLACEHOLDER_DIR)/import_table.bin -Wl,-sectcreate,__DATA,__swift5_mhsav,$(ARMOR_PLACEHOLDER_DIR)/header_backup.bin -Wl,-sectcreate,__DATA,__swift5_ptmap,$(ARMOR_PLACEHOLDER_DIR)/chain_meta.bin -Wl,-sectcreate,__DATA,__swift5_cgenc,$(ARMOR_PLACEHOLDER_DIR)/text_encrypt.bin -Wl,-sectcreate,__DATA,__swift5_mdvrt,$(ARMOR_PLACEHOLDER_DIR)/vmp_dispatch.bin -Wl,-sectcreate,__DATA,__swift5_mdirt,$(ARMOR_PLACEHOLDER_DIR)/vmp_bytecode.bin -Wl,-sectcreate,__DATA,__sw5_builtin2,$(ARMOR_PLACEHOLDER_DIR)/sw5_builtin2.bin -Wl,-sectcreate,__DATA,__sw5_capture2,$(ARMOR_PLACEHOLDER_DIR)/sw5_capture2.bin -Wl,-sectcreate,__DATA,__sw5_typeref2,$(ARMOR_PLACEHOLDER_DIR)/sw5_typeref2.bin\n-Wl,-sectcreate,__DATA,__la_resolver2,$(ARMOR_PLACEHOLDER_DIR)/la_resolver2.bin -Wl,-sectcreate,__DATA,__stub_helper2,$(ARMOR_PLACEHOLDER_DIR)/stub_helper2.bin -Wl,-sectcreate,__DATA,__auth_got2,$(ARMOR_PLACEHOLDER_DIR)/auth_got2.bin -Wl,-sectcreate,__DATA,__nl_catlist,$(ARMOR_PLACEHOLDER_DIR)/nl_catlist.bin",
 					"-ObjC",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.cloudphonerisk.riskdetector;
@@ -2028,7 +2036,7 @@
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = (
-					"$(inherited) -lCRiskCore -Wl,-headerpad,0x4000 -Wl,-sectcreate,__DATA,__swift5_types2,$(ARMOR_PLACEHOLDER_DIR)/string_table.bin -Wl,-sectcreate,__DATA,__swift5_proto2,$(ARMOR_PLACEHOLDER_DIR)/loader.bin -Wl,-sectcreate,__DATA,__swift5_mpenum,$(ARMOR_PLACEHOLDER_DIR)/protected_blob.bin -Wl,-sectcreate,__DATA,__swift5_aa,$(ARMOR_PLACEHOLDER_DIR)/anchor_a.bin -Wl,-sectcreate,__DATA,__swift5_ab,$(ARMOR_PLACEHOLDER_DIR)/anchor_b.bin -Wl,-sectcreate,__DATA,__swift5_ac,$(ARMOR_PLACEHOLDER_DIR)/anchor_c.bin -Wl,-sectcreate,__DATA,__swift5_ad,$(ARMOR_PLACEHOLDER_DIR)/anchor_d.bin -Wl,-sectcreate,__DATA,__swift5_acfun,$(ARMOR_PLACEHOLDER_DIR)/full_anchor.bin -Wl,-sectcreate,__DATA,__swift5_mdext,$(ARMOR_PLACEHOLDER_DIR)/whitebox_meta.bin -Wl,-sectcreate,__DATA,__swift5_mdbdy,$(ARMOR_PLACEHOLDER_DIR)/whitebox_code.bin -Wl,-sectcreate,__DATA,__swift5_mddsc,$(ARMOR_PLACEHOLDER_DIR)/whitebox_data.bin -Wl,-sectcreate,__DATA,__swift5_mdchk,$(ARMOR_PLACEHOLDER_DIR)/whitebox_tag.bin -Wl,-sectcreate,__DATA,__swift5_dyrel,$(ARMOR_PLACEHOLDER_DIR)/import_table.bin -Wl,-sectcreate,__DATA,__swift5_mhsav,$(ARMOR_PLACEHOLDER_DIR)/header_backup.bin -Wl,-sectcreate,__DATA,__swift5_ptmap,$(ARMOR_PLACEHOLDER_DIR)/chain_meta.bin -Wl,-sectcreate,__DATA,__swift5_cgenc,$(ARMOR_PLACEHOLDER_DIR)/text_encrypt.bin -Wl,-sectcreate,__DATA,__sw5_builtin2,$(ARMOR_PLACEHOLDER_DIR)/sw5_builtin2.bin -Wl,-sectcreate,__DATA,__sw5_capture2,$(ARMOR_PLACEHOLDER_DIR)/sw5_capture2.bin -Wl,-sectcreate,__DATA,__sw5_typeref2,$(ARMOR_PLACEHOLDER_DIR)/sw5_typeref2.bin\n-Wl,-sectcreate,__DATA,__la_resolver2,$(ARMOR_PLACEHOLDER_DIR)/la_resolver2.bin -Wl,-sectcreate,__DATA,__stub_helper2,$(ARMOR_PLACEHOLDER_DIR)/stub_helper2.bin -Wl,-sectcreate,__DATA,__auth_got2,$(ARMOR_PLACEHOLDER_DIR)/auth_got2.bin -Wl,-sectcreate,__DATA,__nl_catlist,$(ARMOR_PLACEHOLDER_DIR)/nl_catlist.bin",
+					"$(inherited) -lCRiskCore -Wl,-headerpad,0x4000 -Wl,-u,_cprisk_vm_entry -Wl,-sectcreate,__DATA,__swift5_types2,$(ARMOR_PLACEHOLDER_DIR)/string_table.bin -Wl,-sectcreate,__DATA,__swift5_proto2,$(ARMOR_PLACEHOLDER_DIR)/loader.bin -Wl,-sectcreate,__DATA,__swift5_mpenum,$(ARMOR_PLACEHOLDER_DIR)/protected_blob.bin -Wl,-sectcreate,__DATA,__swift5_aa,$(ARMOR_PLACEHOLDER_DIR)/anchor_a.bin -Wl,-sectcreate,__DATA,__swift5_ab,$(ARMOR_PLACEHOLDER_DIR)/anchor_b.bin -Wl,-sectcreate,__DATA,__swift5_ac,$(ARMOR_PLACEHOLDER_DIR)/anchor_c.bin -Wl,-sectcreate,__DATA,__swift5_ad,$(ARMOR_PLACEHOLDER_DIR)/anchor_d.bin -Wl,-sectcreate,__DATA,__swift5_acfun,$(ARMOR_PLACEHOLDER_DIR)/full_anchor.bin -Wl,-sectcreate,__DATA,__swift5_mdext,$(ARMOR_PLACEHOLDER_DIR)/whitebox_meta.bin -Wl,-sectcreate,__DATA,__swift5_mdbdy,$(ARMOR_PLACEHOLDER_DIR)/whitebox_code.bin -Wl,-sectcreate,__DATA,__swift5_mddsc,$(ARMOR_PLACEHOLDER_DIR)/whitebox_data.bin -Wl,-sectcreate,__DATA,__swift5_mdchk,$(ARMOR_PLACEHOLDER_DIR)/whitebox_tag.bin -Wl,-sectcreate,__DATA,__swift5_dyrel,$(ARMOR_PLACEHOLDER_DIR)/import_table.bin -Wl,-sectcreate,__DATA,__swift5_mhsav,$(ARMOR_PLACEHOLDER_DIR)/header_backup.bin -Wl,-sectcreate,__DATA,__swift5_ptmap,$(ARMOR_PLACEHOLDER_DIR)/chain_meta.bin -Wl,-sectcreate,__DATA,__swift5_cgenc,$(ARMOR_PLACEHOLDER_DIR)/text_encrypt.bin -Wl,-sectcreate,__DATA,__swift5_mdvrt,$(ARMOR_PLACEHOLDER_DIR)/vmp_dispatch.bin -Wl,-sectcreate,__DATA,__swift5_mdirt,$(ARMOR_PLACEHOLDER_DIR)/vmp_bytecode.bin -Wl,-sectcreate,__DATA,__sw5_builtin2,$(ARMOR_PLACEHOLDER_DIR)/sw5_builtin2.bin -Wl,-sectcreate,__DATA,__sw5_capture2,$(ARMOR_PLACEHOLDER_DIR)/sw5_capture2.bin -Wl,-sectcreate,__DATA,__sw5_typeref2,$(ARMOR_PLACEHOLDER_DIR)/sw5_typeref2.bin\n-Wl,-sectcreate,__DATA,__la_resolver2,$(ARMOR_PLACEHOLDER_DIR)/la_resolver2.bin -Wl,-sectcreate,__DATA,__stub_helper2,$(ARMOR_PLACEHOLDER_DIR)/stub_helper2.bin -Wl,-sectcreate,__DATA,__auth_got2,$(ARMOR_PLACEHOLDER_DIR)/auth_got2.bin -Wl,-sectcreate,__DATA,__nl_catlist,$(ARMOR_PLACEHOLDER_DIR)/nl_catlist.bin",
 					"-ObjC",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.cloudphonerisk.riskdetector;

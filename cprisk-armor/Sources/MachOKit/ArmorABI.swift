@@ -43,6 +43,8 @@ public enum ArmorABI {
         public static let headerBackup = "__swift5_mhsav"
         public static let chainMeta = "__swift5_ptmap"
         public static let textEncryption = "__swift5_cgenc"
+        public static let vmpDispatch = "__swift5_mdvrt"
+        public static let vmpBytecode = "__swift5_mdirt"
         /// Pass 5: Swift descriptor pointer-table shuffle mapping (when `__swift5_ptmap` is too small).
         public static let swiftMetadataMap = "__sw5_mdmap"
 
@@ -58,6 +60,7 @@ public enum ArmorABI {
             anchorA, anchorB, anchorC, anchorD, fullAnchorHash,
             whiteboxMeta, whiteboxCode, whiteboxData, whiteboxTag,
             antiDebugPlan, importEncryptedTable, headerBackup, chainMeta, textEncryption,
+            vmpDispatch, vmpBytecode,
             swiftMetadataMap,
         ]
     }
