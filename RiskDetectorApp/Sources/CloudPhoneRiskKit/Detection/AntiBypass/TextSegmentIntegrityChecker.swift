@@ -480,7 +480,6 @@ enum TextSegmentIntegrityChecker {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: account,
-            kSecAttrAccessible as String: keychainAccessible,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]

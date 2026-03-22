@@ -108,8 +108,9 @@ public enum Logger {
     }
 
     /// 自定义日志输出目标
-    private(set) static var destinations: [LogDestination] = []
+    private static var destinations: [LogDestination] = []
     private static let destinationLock = UnfairLock()
+    private static let consoleDestination = ConsoleLogDestination()
 
     /// 审计追踪（环形缓冲区，保留最近 200 条决策日志）
     private static var auditTrail: [AuditEntry] = []
@@ -210,7 +211,7 @@ public enum Logger {
         #if DEBUG
         shouldLog = cfg.isEnabled
         #else
-        shouldLog = cfg.releaseLoggingEnabled && level >= .warn
+        shouldLog = cfg.isEnabled && cfg.releaseLoggingEnabled && level >= .warn
         #endif
 
         guard shouldLog else { return }
@@ -227,7 +228,7 @@ public enum Logger {
 
         // 输出到控制台（DEBUG only）
         #if DEBUG
-        ConsoleLogDestination().write(entry)
+        consoleDestination.write(entry)
         #endif
 
         // 输出到自定义目标（Release 也可用）

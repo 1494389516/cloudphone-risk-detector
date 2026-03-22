@@ -59,21 +59,27 @@ final class DyldImageMonitor: @unchecked Sendable {
     // MARK: - Callback
 
     private func onImageAdded(_ mh: UnsafePointer<mach_header>?, slide: Int) {
-        state.withLock { s in
+        // First: fast path under lock — increment counters and decide if we need name resolution
+        let needsNameResolution = state.withLock { s -> (Bool, UInt64) in
             s.dyldGen &+= 1
             s.addImageCallbackCount &+= 1
 
-            guard s.isStarted else { return }
-            // 注册时 dyld 会为已加载的每个 image 同步回调，前 baselineImageCount 次为基线，不计入 suspiciousAdditions
-            if s.addImageCallbackCount <= s.baselineImageCount { return }
+            guard s.isStarted else { return (false, s.dyldGen) }
+            if s.addImageCallbackCount <= s.baselineImageCount { return (false, s.dyldGen) }
+            return (true, s.dyldGen)
+        }
 
-            let imageName = resolveImageName(for: mh)
-            guard let imageName, !imageName.isEmpty else { return }
+        guard needsNameResolution.0 else { return }
 
-            let lower = imageName.lowercased()
-            let isSuspicious = suspiciousTokens.contains { lower.contains($0) }
-            if isSuspicious {
-                s.suspiciousAdditions.append((name: imageName, gen: s.dyldGen))
+        // Resolve image name OUTSIDE the lock (O(n) iteration over loaded images)
+        let imageName = resolveImageName(for: mh)
+        guard let imageName, !imageName.isEmpty else { return }
+
+        let lower = imageName.lowercased()
+        let isSuspicious = suspiciousTokens.contains { lower.contains($0) }
+        if isSuspicious {
+            state.withLock { s in
+                s.suspiciousAdditions.append((name: imageName, gen: needsNameResolution.1))
             }
         }
     }

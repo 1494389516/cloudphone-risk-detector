@@ -84,7 +84,9 @@ final class DynamicFeatureList: @unchecked Sendable {
             }
         }
 
+        #if DEBUG
         Logger.log("DynamicFeatureList.applyRemoteConfig: libs=+\(additionalSuspiciousLibraries?.count ?? 0) paths=+\(additionalSuspiciousPaths?.count ?? 0) ports=+\(additionalSuspiciousPorts?.count ?? 0)")
+        #endif
     }
 
     /// Reset dynamic additions (keeps hardcoded defaults).

@@ -95,7 +95,9 @@ public struct NetworkSignals: Codable, Sendable {
                 confidence: .weak
             )
         )
+        #if DEBUG
         Logger.log("network: iface=\(signals.interfaceType.value) expensive=\(signals.isExpensive) constrained=\(signals.isConstrained) vpn=\(signals.isVPNActive) proxy=\(signals.proxyEnabled)")
+        #endif
         return signals
     }
 }

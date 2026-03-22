@@ -32,12 +32,13 @@ enum StorageIntegrityGuard {
 
     private static func getOrCreateKey() -> SymmetricKey {
         lock.withLock {
+            // kSecAttrAccessible must NOT be in read queries — it is a write-time
+            // attribute and including it causes lookup failures on some iOS versions.
             let query: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: keychainService,
                 kSecAttrAccount as String: keychainAccount,
                 kSecReturnData as String: true,
-                kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
             ]
 
             var result: AnyObject?

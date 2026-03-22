@@ -96,11 +96,12 @@ enum PayloadCrypto {
     }
 
     private static func readKey() throws -> Data? {
+        // kSecAttrAccessible must NOT be in read queries — it is a write-time
+        // attribute and including it causes lookup failures on some iOS versions.
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keyService,
             kSecAttrAccount as String: keyAccount,
-            kSecAttrAccessible as String: accessible,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]

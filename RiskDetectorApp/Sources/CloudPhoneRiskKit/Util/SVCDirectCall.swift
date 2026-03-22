@@ -590,7 +590,7 @@ enum SVCDirectCall {
 }
 
 struct DualPathValidator {
-    static var timebaseInfo: mach_timebase_info_data_t = {
+    static let timebaseInfo: mach_timebase_info_data_t = {
         var info = mach_timebase_info_data_t()
         mach_timebase_info(&info)
         return info
@@ -600,7 +600,11 @@ struct DualPathValidator {
         let start = mach_absolute_time()
         block()
         let end = mach_absolute_time()
-        return (end - start) * UInt64(timebaseInfo.numer) / UInt64(max(timebaseInfo.denom, 1))
+        // Divide first to avoid UInt64 overflow for large time deltas
+        let elapsed = end - start
+        let denom = UInt64(max(timebaseInfo.denom, 1))
+        let numer = UInt64(timebaseInfo.numer)
+        return elapsed / denom * numer
     }
 
     static var inlineHookDetected: Bool {

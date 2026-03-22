@@ -62,6 +62,12 @@ public final class LocalDeviceClusterDetector: @unchecked Sendable {
 
             cache[k] = entries
 
+            // Evict stale keys to prevent unbounded memory growth
+            if cache.count > 100 {
+                let staleKeys = cache.filter { $0.value.allSatisfy { $0.timestamp <= cutoff } }.map(\.key)
+                for key in staleKeys { cache.removeValue(forKey: key) }
+            }
+
             let distinctHashes = Set(entries.map(\.hwProfileHash))
             if distinctHashes.count >= Self.clusterThreshold {
                 return RiskSignal(

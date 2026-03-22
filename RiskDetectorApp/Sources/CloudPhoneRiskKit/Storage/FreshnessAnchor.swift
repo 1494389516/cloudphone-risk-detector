@@ -30,11 +30,12 @@ final class FreshnessAnchor {
 
     func read() -> FreshnessState? {
         lock.withLock {
+            // kSecAttrAccessible must NOT be in read queries — it is a write-time
+            // attribute and including it causes lookup failures on some iOS versions.
             let query: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: service,
                 kSecAttrAccount as String: account,
-                kSecAttrAccessible as String: accessible,
                 kSecReturnData as String: true,
                 kSecMatchLimit as String: kSecMatchLimitOne,
             ]
