@@ -191,11 +191,12 @@ public final class RiskHistoryStore {
             return LoadedState(events: [], freshness: anchor)
         }
 
-        if state.freshness.sequence > anchor.sequence || state.freshness.latestTimestamp > anchor.latestTimestamp {
-            _ = freshnessAnchor.write(state.freshness)
+        let merged = maxFreshness(anchor, state.freshness)
+        if merged.sequence > anchor.sequence || merged.latestTimestamp > anchor.latestTimestamp {
+            _ = freshnessAnchor.write(merged)
         }
 
-        return LoadedState(events: state.events, freshness: maxFreshness(anchor, state.freshness))
+        return LoadedState(events: state.events, freshness: merged)
     }
 
     private func saveLocked(_ state: LoadedState) {

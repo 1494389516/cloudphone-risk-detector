@@ -197,7 +197,11 @@ final class IMUNoiseSpectrumProvider: RiskSignalProvider {
         let highFreq = Array(spectrum.suffix(spectrum.count / 4))
         guard !highFreq.isEmpty else { return -100 }
         let sorted = highFreq.sorted()
-        return sorted[sorted.count / 2]
+        let mid = sorted.count / 2
+        if sorted.count % 2 == 0 {
+            return (sorted[mid - 1] + sorted[mid]) / 2.0
+        }
+        return sorted[mid]
     }
 }
 #else

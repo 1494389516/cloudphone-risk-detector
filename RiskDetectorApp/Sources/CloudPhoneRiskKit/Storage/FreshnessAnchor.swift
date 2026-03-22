@@ -89,6 +89,9 @@ final class FreshnessAnchor {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
-        SecItemDelete(query as CFDictionary)
+        let status = SecItemDelete(query as CFDictionary)
+        if status != errSecSuccess && status != errSecItemNotFound {
+            Logger.log("FreshnessAnchor: SecItemDelete failed with status \(status)")
+        }
     }
 }
