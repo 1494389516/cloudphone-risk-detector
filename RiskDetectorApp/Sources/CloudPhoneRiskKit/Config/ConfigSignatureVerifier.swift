@@ -31,13 +31,16 @@ public enum ConfigSignatureVerifier {
         }
     }
 
-    /// Configure with raw key data. Returns false if keychain save failed; verify is only valid after true.
+    /// Configure with raw key data. The key is hashed with SHA-256 before storage,
+    /// consistent with the string variant. Returns false if keychain save failed.
     @discardableResult
     public static func configure(serverSigningKeyData: Data) -> Bool {
         lock.withLock {
             var keyData = serverSigningKeyData
             defer { secureZeroData(&keyData) }
-            guard saveKeyToKeychain(keyData) else {
+            let hashed = SHA256.hash(data: keyData)
+            let keyBytes = Data(hashed)
+            guard saveKeyToKeychain(keyBytes) else {
                 Logger.log("ConfigSignatureVerifier.configure(serverSigningKeyData): keychain save failed")
                 return false
             }
@@ -138,9 +141,9 @@ public enum ConfigSignatureVerifier {
             return VerificationResult(isValid: false, reason: "invalid_signature_format")
         }
 
-        // Ed25519 签名长度为 64 字节；若不是，说明不是 Ed25519 签名，回退
+        // Ed25519 签名长度为 64 字节；若不是，拒绝而非回退到 HMAC（防止降级攻击）
         guard signatureData.count == 64 else {
-            return nil
+            return VerificationResult(isValid: false, reason: "ed25519_configured_but_signature_not_64_bytes")
         }
 
         do {

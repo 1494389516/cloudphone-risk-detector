@@ -66,7 +66,7 @@ public final class RemoteConfigProvider: @unchecked Sendable {
         self._configStalenessThreshold = cacheValidityDuration
         self.urlSession = CertificatePinningSessionDelegate.pinnedSession(
             hashes: pinnedCertificateHashes,
-            allowsSystemCA: false
+            allowsSystemCA: pinnedCertificateHashes.isEmpty
         )
 
         if let cached = cache.load(), !cached.isExpired(duration: cacheValidityDuration) {
