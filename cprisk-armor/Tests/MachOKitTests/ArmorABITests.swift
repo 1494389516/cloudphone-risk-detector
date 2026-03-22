@@ -144,25 +144,39 @@ final class ArmorABITests: XCTestCase {
 
     func testWhiteBoxHeaderPayloadSizeExcludesDetachedTagSection() {
         let configDigest = Data(repeating: 0x5A, count: ArmorABI.hashSize)
-        let header = ArmorABI.WhiteBox.Header(
+        let headerV1 = ArmorABI.WhiteBox.Header(
+            version: 1,
             flags: ArmorABI.WhiteBox.engineReadyFlag | ArmorABI.WhiteBox.signingPipelineFlag,
             payloadSize: 0x11223344,
             configDigest: configDigest
         ).serialized()
+        XCTAssertEqual(headerV1.count, 48)
 
-        XCTAssertEqual(header.count, 48)
-        XCTAssertEqual(readLE32(header, at: 0), ArmorABI.WhiteBox.magic)
-        XCTAssertEqual(readLE32(header, at: 4), ArmorABI.WhiteBox.abiVersion)
+        let headerV2 = ArmorABI.WhiteBox.Header(
+            version: 2,
+            flags: ArmorABI.WhiteBox.engineReadyFlag | ArmorABI.WhiteBox.signingPipelineFlag,
+            payloadSize: 0x11223344,
+            configDigest: configDigest,
+            aslrTableAnchorSlide: 0
+        ).serialized()
+        XCTAssertEqual(headerV2.count, 56)
+
+        XCTAssertEqual(readLE32(headerV2, at: 0), ArmorABI.WhiteBox.magic)
+        XCTAssertEqual(readLE32(headerV2, at: 4), 2)
         XCTAssertEqual(
-            readLE32(header, at: 8),
+            readLE32(headerV2, at: 8),
             ArmorABI.WhiteBox.engineReadyFlag | ArmorABI.WhiteBox.signingPipelineFlag
         )
         XCTAssertEqual(
-            readLE32(header, at: 12),
+            readLE32(headerV2, at: 12),
             0x11223344,
             "payload_size is reserved for white-box code+data only; the detached tag is validated separately"
         )
-        XCTAssertEqual(header.subdata(in: 16..<48), configDigest)
+        XCTAssertEqual(headerV2.subdata(in: 16..<48), configDigest)
+        XCTAssertEqual(
+            headerV2.subdata(in: 48..<56).withUnsafeBytes { $0.load(as: UInt64.self) },
+            0
+        )
     }
 
     /// Guardrail: Swift producer `ArmorABI.Sections` must stay aligned with `cprisk_armor_abi.h`

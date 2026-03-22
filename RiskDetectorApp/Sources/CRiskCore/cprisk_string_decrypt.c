@@ -28,6 +28,10 @@ static int      s_dec_ready;
 static uint64_t s_str_acc;
 static uint64_t s_dispatch_seed;
 static uint8_t  s_per_string_key[CPRISK_ARMOR_KEY_SIZE];
+static uint32_t s_lazy_id;
+static char     s_lazy_buf[512];
+static int      s_lazy_len;
+static int      s_lazy_valid;
 
 /* ── internal ──────────────────────────────────────────────────────── */
 
@@ -439,7 +443,7 @@ int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) 
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
     /* Subtle byte-level corruption under debugger; fixed accumulator poison
        ensures downstream key derivation also silently fails. */
-    if (cprisk_is_being_traced()) {
+    if (cprisk_is_being_traced_redundant()) {
         for (uint32_t pi = 0; pi < dlen; pi++)
             buffer[pi] ^= 0x01;
         s_str_acc = 0xDEADBEEFCAFEBABEULL;
@@ -459,7 +463,32 @@ uint64_t cprisk_get_string_integrity_accumulator(void) {
     return s_str_acc;
 }
 
+int cprisk_decrypt_string_lazy(uint32_t string_id, char *buffer, size_t buffer_size) {
+    if (!buffer || buffer_size == 0)
+        return -1;
+    if (s_lazy_valid != 0 && s_lazy_id == string_id && s_lazy_len > 0 && (size_t)s_lazy_len < buffer_size) {
+        memcpy(buffer, s_lazy_buf, (size_t)s_lazy_len + 1u);
+        return s_lazy_len;
+    }
+    int r = cprisk_decrypt_string(string_id, buffer, buffer_size);
+    if (r > 0 && r < (int)sizeof(s_lazy_buf)) {
+        memcpy(s_lazy_buf, buffer, (size_t)r + 1u);
+        s_lazy_id = string_id;
+        s_lazy_len = r;
+        s_lazy_valid = 1;
+    }
+    return r;
+}
+
+void cprisk_string_lazy_scrub_all(void) {
+    cprisk_secure_zero(s_lazy_buf, sizeof(s_lazy_buf));
+    s_lazy_valid = 0;
+    s_lazy_len = 0;
+    s_lazy_id = 0u;
+}
+
 void cprisk_cleanup_string_decryptor(void) {
+    cprisk_string_lazy_scrub_all();
     cprisk_secure_zero(s_dec_key, sizeof(s_dec_key));
     cprisk_secure_zero(s_per_string_key, sizeof(s_per_string_key));
     s_dec_ready = 0;

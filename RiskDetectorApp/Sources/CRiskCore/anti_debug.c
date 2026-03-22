@@ -68,8 +68,9 @@ int cprisk_deny_attach_status(int *error_out) {
 static atomic_uint_fast32_t s_trace_crosscheck_inconsistent = 0u;
 static atomic_uint_fast32_t s_trace_crosscheck_streak = 0u;
 static atomic_uint_fast32_t s_mach_port_baseline = 0u;
+static atomic_uint_fast32_t s_trace_probe_counter = 0u;
 
-static int cprisk_is_being_traced_unix_i(void) {
+int cprisk_is_being_traced_sysctl_only(void) {
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
     int mib[4];
     struct kinfo_proc info;
@@ -185,11 +186,37 @@ int cprisk_trace_crosscheck_inconsistent(void) {
     return atomic_load(&s_trace_crosscheck_inconsistent) != 0u ? 1 : 0;
 }
 
-int cprisk_is_being_traced(void) {
+static int cprisk_trace_probe_fast_i(void) {
+    return cprisk_is_being_traced_sysctl_only() != 0 ? 1 : 0;
+}
+
+static int cprisk_trace_probe_slow_i(void) {
+    int suspicious = 0;
+    if (cprisk_mach_trace_suspicious() != 0) {
+        suspicious = 1;
+    }
+
+    const uint32_t seq = atomic_fetch_add(&s_trace_probe_counter, 1u) + 1u;
+    if ((seq & 3u) == 0u && cprisk_detect_thread_exception_ports() > 0) {
+        suspicious = 1;
+    }
+    /*
+     * Sampled DBI footprint check: if markers are present but sysctl P_TRACED is
+     * clear (common under DBI / JIT layers), slow vs fast probes disagree and
+     * cprisk_trace_crosscheck_inconsistent() surfaces the evasion pattern.
+     */
+    if ((seq & 7u) == 0u && cprisk_detect_dbi_markers() > 0) {
+        suspicious = 1;
+    }
+
+    return suspicious;
+}
+
+static int cprisk_trace_eval_aggregate_i(void) {
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
-    const int unix_traced = cprisk_is_being_traced_unix_i();
-    const int mach_suspicious = cprisk_mach_trace_suspicious();
-    const int inconsistent = (unix_traced != 0) != (mach_suspicious != 0);
+    const int fast_traced = cprisk_trace_probe_fast_i();
+    const int slow_traced = cprisk_trace_probe_slow_i();
+    const int inconsistent = (fast_traced != 0) != (slow_traced != 0);
     uint32_t streak = atomic_load(&s_trace_crosscheck_streak);
 
     atomic_store(&s_trace_crosscheck_inconsistent, inconsistent ? 1u : 0u);
@@ -198,7 +225,7 @@ int cprisk_is_being_traced(void) {
             streak += 1u;
         }
         atomic_store(&s_trace_crosscheck_streak, streak);
-        if (streak >= 2u && mach_suspicious != 0) {
+        if (streak >= 2u && slow_traced != 0) {
             cprisk_force_integrity_poison();
         }
     } else {
@@ -206,9 +233,182 @@ int cprisk_is_being_traced(void) {
         atomic_store(&s_trace_crosscheck_streak, 0u);
     }
 
-    return (unix_traced != 0 || mach_suspicious != 0 || streak >= 2u) ? 1 : 0;
+    return (fast_traced != 0 || slow_traced != 0 || streak >= 2u) ? 1 : 0;
+#else
+    return 0;
+#endif
+}
+
+int cprisk_is_being_traced(void) {
+    return cprisk_trace_eval_aggregate_i();
+}
+
+/*
+ * Redundant export: identical semantics via shared static aggregate to dilute
+ * single-symbol hook value (call-sites can alternate without changing logic).
+ */
+int cprisk_is_being_traced_alt(void) {
+    return cprisk_trace_eval_aggregate_i();
+}
+
+int cprisk_is_being_traced_redundant(void) {
+    const int traced_sys = cprisk_is_being_traced_sysctl_only();
+    const int traced_mach = cprisk_mach_trace_suspicious();
+    if (traced_sys != 0 || traced_mach != 0) {
+        return 1;
+    }
+    return cprisk_is_being_traced_alt();
+}
+
+int cprisk_deny_attach_effective_verify(int deny_attach_rc, int deny_attach_errno, uint32_t *detail_bits_out) {
+    uint32_t detail_bits = 0u;
+    if (detail_bits_out != NULL) {
+        *detail_bits_out = 0u;
+    }
+#if (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+    if (deny_attach_rc != 0) {
+        return 0;
+    }
+
+    struct kinfo_proc a;
+    struct kinfo_proc b;
+    struct kinfo_proc c;
+    struct kinfo_proc libc_shadow;
+    size_t sz_a = sizeof(a);
+    size_t sz_b = sizeof(b);
+    size_t sz_c = sizeof(c);
+    size_t sz_libc = sizeof(libc_shadow);
+    int mib[4];
+    const pid_t self_pid = cprisk_getpid_direct();
+
+    memset(&a, 0, sizeof(a));
+    memset(&b, 0, sizeof(b));
+    memset(&c, 0, sizeof(c));
+    memset(&libc_shadow, 0, sizeof(libc_shadow));
+    mib[0] = CTL_KERN;
+    mib[1] = KERN_PROC;
+    mib[2] = KERN_PROC_PID;
+    mib[3] = (int)self_pid;
+
+    if (cprisk_sysctl_direct(mib, 4, &a, &sz_a, NULL, 0, NULL) != 0) {
+        return 0;
+    }
+    if (cprisk_sysctl_direct(mib, 4, &b, &sz_b, NULL, 0, NULL) != 0) {
+        return 0;
+    }
+    if (cprisk_sysctl_direct(mib, 4, &c, &sz_c, NULL, 0, NULL) == 0) {
+        if (a.kp_proc.p_flag != c.kp_proc.p_flag) {
+            detail_bits |= CPRISK_DENY_ATTACH_VERIFY_FLAG_MISMATCH;
+        }
+        if ((pid_t)c.kp_proc.p_pid != self_pid) {
+            detail_bits |= CPRISK_DENY_ATTACH_VERIFY_SELF_PID_MISMATCH;
+        }
+    }
+    if (sysctl(mib, 4, &libc_shadow, &sz_libc, NULL, 0) == 0) {
+        if ((pid_t)libc_shadow.kp_proc.p_pid != (pid_t)a.kp_proc.p_pid ||
+            ((libc_shadow.kp_proc.p_flag ^ a.kp_proc.p_flag) & (uint32_t)P_TRACED) != 0u) {
+            detail_bits |= CPRISK_DENY_ATTACH_VERIFY_LIBC_DIRECT_DIVERGENCE;
+        }
+    }
+
+    if (a.kp_proc.p_pid != b.kp_proc.p_pid) {
+        detail_bits |= CPRISK_DENY_ATTACH_VERIFY_PID_MISMATCH;
+    }
+    if (a.kp_proc.p_flag != b.kp_proc.p_flag) {
+        detail_bits |= CPRISK_DENY_ATTACH_VERIFY_FLAG_MISMATCH;
+    }
+    if ((pid_t)a.kp_proc.p_pid != self_pid || (pid_t)b.kp_proc.p_pid != self_pid) {
+        detail_bits |= CPRISK_DENY_ATTACH_VERIFY_SELF_PID_MISMATCH;
+    }
+    if (sz_a != sizeof(a) || sz_b != sizeof(b)) {
+        detail_bits |= CPRISK_DENY_ATTACH_VERIFY_SIZE_MISMATCH;
+    }
+    if (((uint32_t)a.kp_proc.p_flag & (uint32_t)P_TRACED) != 0u ||
+        ((uint32_t)b.kp_proc.p_flag & (uint32_t)P_TRACED) != 0u) {
+        detail_bits |= CPRISK_DENY_ATTACH_VERIFY_TRACE_FLAG_SET;
+    }
+    if (deny_attach_errno != 0) {
+        detail_bits |= CPRISK_DENY_ATTACH_VERIFY_LIBC_DIRECT_DIVERGENCE;
+    }
+
+    if (detail_bits_out != NULL) {
+        *detail_bits_out = detail_bits;
+    }
+    return detail_bits != 0u ? 1 : 0;
+#else
+    (void)deny_attach_rc;
+    (void)deny_attach_errno;
+    return 0;
+#endif
+}
+
+void cprisk_amfi_entitlement_watchdog_probe(
+    uint32_t *cs_flags_out,
+    uint32_t *get_task_allow_suspect_out,
+    uint32_t *amfi_anomaly_bits_out
+) {
+    if (cs_flags_out != NULL) {
+        *cs_flags_out = 0u;
+    }
+    if (get_task_allow_suspect_out != NULL) {
+        *get_task_allow_suspect_out = 0u;
+    }
+    if (amfi_anomaly_bits_out != NULL) {
+        *amfi_anomaly_bits_out = 0u;
+    }
+
+#if (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+#ifndef CS_VALID
+#define CS_VALID 0x00000001u
+#endif
+#ifndef CS_HARD
+#define CS_HARD 0x00000100u
+#endif
+#ifndef CS_KILL
+#define CS_KILL 0x00400000u
+#endif
+#ifndef CS_DEBUGGED
+#define CS_DEBUGGED 0x10000000u
+#endif
+
+    uint32_t flags = 0u;
+    int cs_err = 0;
+    if (cprisk_csops_status_flags(&flags, &cs_err) == 0) {
+        if (cs_flags_out != NULL) {
+            *cs_flags_out = flags;
+        }
+        if (amfi_anomaly_bits_out != NULL) {
+            if ((flags & CS_DEBUGGED) != 0u) {
+                *amfi_anomaly_bits_out |= CPRISK_AMFI_PROBE_CS_DEBUGGED;
+            }
+            if (flags != 0u && (flags & CS_VALID) == 0u) {
+                *amfi_anomaly_bits_out |= CPRISK_AMFI_PROBE_CS_VALID_ABSENT;
+            }
+            if (flags != 0u && (flags & CS_HARD) == 0u) {
+                *amfi_anomaly_bits_out |= CPRISK_AMFI_PROBE_CS_HARD_ABSENT;
+            }
+            if (flags != 0u && (flags & CS_KILL) == 0u) {
+                *amfi_anomaly_bits_out |= CPRISK_AMFI_PROBE_CS_KILL_ABSENT;
+            }
+        }
+    }
+
+    mach_port_t tport = MACH_PORT_NULL;
+    const kern_return_t kr = task_for_pid(mach_task_self(), cprisk_getpid_direct(), &tport);
+    if (tport != MACH_PORT_NULL && tport != mach_task_self()) {
+        (void)mach_port_deallocate(mach_task_self(), tport);
+    }
+
+    /*
+     * Without get-task-allow, task_for_pid is expected to fail for third-party apps.
+     * KERN_SUCCESS implies an entitlement-class capability surfaced to user space.
+     */
+    if (kr == KERN_SUCCESS) {
+        if (get_task_allow_suspect_out != NULL) {
+            *get_task_allow_suspect_out = 1u;
+        }
+    }
 #else
     (void)0;
-    return 0;
 #endif
 }

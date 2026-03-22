@@ -60,6 +60,9 @@ public struct VMOpcodeTable: Equatable, Sendable {
     }
 
     /// Runtime dispatch table: raw opcode byte -> logical opcode id. Unassigned bytes are `0xFF` poison slots.
+    ///
+    /// On disk, `VMBytecodeEmitter` may XOR this 256-byte block when `VMM2EmitOptions.dispatchTableKeystream` is enabled
+    /// (see `VMBytecodeFormat.DispatchHeaderFlags.classTableKeystream` + `VMBytecodeEmitter.decryptDispatchClassTable`).
     public func rawToLogicalTable() -> [UInt8] {
         var table = Array(repeating: UInt8(0xFF), count: 256)
         for logical in VMLogicalOp.allCases {

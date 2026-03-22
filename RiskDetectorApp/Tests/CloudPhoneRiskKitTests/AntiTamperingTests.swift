@@ -102,7 +102,18 @@ final class AntiTamperingTests: XCTestCase {
         timingProbeMaxNs: UInt64 = 0,
         timingProbeThresholdNs: UInt64 = 0,
         dbiAnomalyCount: UInt64 = 0,
-        timingAnomalyCount: UInt64 = 0
+        timingAnomalyCount: UInt64 = 0,
+        prologueIntegrityAnomalyCount: UInt64 = 0,
+        dyldInjectionAnomalyCount: UInt64 = 0,
+        lastPrologueFailMask: UInt32 = 0,
+        lastDyldInjectionFlags: UInt32 = 0,
+        lastCsopsStatusFlags: UInt32 = 0,
+        lastAmfiProbeBits: UInt32 = 0,
+        lastGetTaskAllowSuspect: Bool = false,
+        lastDenyAttachVerifyBits: UInt32 = 0,
+        denyAttachVerifyAnomalyCount: UInt64 = 0,
+        amfiCsFlagsAnomalyCount: UInt64 = 0,
+        getTaskAllowAnomalyCount: UInt64 = 0
     ) -> CPRiskKit.AntiDebugWatchdogSnapshot {
         CPRiskKit.AntiDebugWatchdogSnapshot(
             supported: supported,
@@ -152,7 +163,18 @@ final class AntiTamperingTests: XCTestCase {
             timingProbeMaxNs: timingProbeMaxNs,
             timingProbeThresholdNs: timingProbeThresholdNs,
             dbiAnomalyCount: dbiAnomalyCount,
-            timingAnomalyCount: timingAnomalyCount
+            timingAnomalyCount: timingAnomalyCount,
+            prologueIntegrityAnomalyCount: prologueIntegrityAnomalyCount,
+            dyldInjectionAnomalyCount: dyldInjectionAnomalyCount,
+            lastPrologueFailMask: lastPrologueFailMask,
+            lastDyldInjectionFlags: lastDyldInjectionFlags,
+            lastCsopsStatusFlags: lastCsopsStatusFlags,
+            lastAmfiProbeBits: lastAmfiProbeBits,
+            lastGetTaskAllowSuspect: lastGetTaskAllowSuspect,
+            lastDenyAttachVerifyBits: lastDenyAttachVerifyBits,
+            denyAttachVerifyAnomalyCount: denyAttachVerifyAnomalyCount,
+            amfiCsFlagsAnomalyCount: amfiCsFlagsAnomalyCount,
+            getTaskAllowAnomalyCount: getTaskAllowAnomalyCount
         )
     }
 
@@ -448,6 +470,8 @@ final class AntiTamperingTests: XCTestCase {
         let knownMask = UInt32(CPRISK_TIMING_ANOMALY_MEDIAN)
             | UInt32(CPRISK_TIMING_ANOMALY_SPIKE)
             | UInt32(CPRISK_TIMING_ANOMALY_JITTER)
+            | UInt32(CPRISK_TIMING_ANOMALY_CLOCK_SKEW)
+            | UInt32(CPRISK_TIMING_ANOMALY_DUAL_CLOCK_DRIFT)
 
         XCTAssertGreaterThan(thresholdNs, 0)
         XCTAssertGreaterThanOrEqual(maxNs, medianNs)

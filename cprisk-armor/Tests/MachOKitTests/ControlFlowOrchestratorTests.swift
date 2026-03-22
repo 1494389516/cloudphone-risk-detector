@@ -88,7 +88,7 @@ final class ControlFlowOrchestratorTests: XCTestCase {
         XCTAssertTrue(regionPlan.antiDeobfuscationPlan.pass8CFFAwarenessEnabled)
     }
 
-    func testHeavyTierStateEncodingSupportsAffineOrAddRotateXor() {
+    func testHeavyTierStateEncodingSupportsStrongCodecStyles() {
         let policy = FunctionCFFPolicy(
             version: 2,
             heavy: ["DecisionTree.decide"],
@@ -101,7 +101,9 @@ final class ControlFlowOrchestratorTests: XCTestCase {
         let plan = ControlFlowOrchestrator(policy: policy, seedMaterial: 0x2026).buildPlans().first
         XCTAssertNotNil(plan)
         XCTAssertTrue(
-            plan?.stateEncodingPlan.style == .addRotateXor || plan?.stateEncodingPlan.style == .affine,
+            plan?.stateEncodingPlan.style == .feistelSpn ||
+                plan?.stateEncodingPlan.style == .addRotateXor ||
+                plan?.stateEncodingPlan.style == .affine,
             "heavy tier should use a stronger codec style"
         )
     }

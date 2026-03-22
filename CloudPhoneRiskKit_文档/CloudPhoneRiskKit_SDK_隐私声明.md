@@ -85,7 +85,7 @@ SDK 当前自带的 privacy manifest 文件位于：
 
 不会。
 
-7.0 主要新增的是**二进制保护与运行时虚拟化能力**，例如：
+7.0 主要新增并持续强化的是**二进制保护与运行时虚拟化能力**，例如：
 
 - Pass 7 runtime gate
 - Pass 10 ImportEncryptor
@@ -95,6 +95,12 @@ SDK 当前自带的 privacy manifest 文件位于：
 - 更早期的异常端口抢占
 - 多频 watchdog / timing canary / Frida 行为指纹增强
 - VM 解释器的 dead handler、opaque predicate chain、解释器自身 CFF 接线
+- VM 自校验从 FNV 扩展到 HMAC 路径，并引入 `__swift5_mdvsk` self-expect section
+- VM 多入口执行链、双主循环解释器、虚拟寄存器与 VM 内部子调用
+- `__TEXT.__text` 按页按需解密、空闲重加密、guard page anti-dump
+- 单字符串 lazy decrypt 缓存与明文清零
+- 白盒表/元数据的可选 ASLR 绑定解码路径
+- bootstrap 阶段的 mini-VM 保护关键初始化片段
 
 这些能力会增强 SDK 的反调试、反篡改和逆向对抗强度，但**不会新增 privacy manifest 中的 collected data 类型，也不会新增 Required Reason API 类别**。因此从隐私边界上看，7.0 仍然以 `Device ID`、`UserDefaults`、`SystemBootTime` 这三项 manifest 事实为基线。
 
@@ -129,7 +135,9 @@ SDK 可能处理以下环境风险数据：
 - 代码段完整性校验结果
 - App Attest / 硬件信任根相关状态（若启用）
 - 反调试 watchdog 信号（如被调试、exception port 异常、硬件断点、软件断点、`csops` 调试态、异常分发超时、双 watchdog 互监控、影子栈校验）
+- `deny_attach` 生效回溯验证、`task_for_pid` 异常成功、AMFI / entitlement 异常位
 - Frida/Gum/Gadget 模块特征（如已加载 image 名、可疑 Mach-O section 名、只读字符串片段）
+- guard page 命中、按页解密/重加密状态、VM 自校验状态、解释器路径异常
 
 这些字段的共同特点是：
 
@@ -140,7 +148,7 @@ SDK 可能处理以下环境风险数据：
 补充说明：
 
 - `FridaModuleDetector` 主要检查**当前进程已加载模块与只读段内容**，用于识别 Frida/Gum/Gadget 注入痕迹，不读取用户文件内容，也不扩大对外网络发送的数据范围。
-- 新增的 watchdog / software breakpoint / exception timeout 探针，本质上仍属于**运行时完整性状态**，不是新的个人信息类别。
+- 新增的 watchdog / software breakpoint / exception timeout / guard page / deny-attach verify / HMAC self-check 探针，本质上仍属于**运行时完整性状态**，不是新的个人信息类别。
 
 ### 4.3 行为与传感器类
 
@@ -359,7 +367,7 @@ SDK 当前会在本地执行更强的运行时完整性探测，包括：
 - 用于**安全信号采集与风险决策**
 - 用于**识别动态注入、Frida 模块加载与调试篡改**
 
-另外，`cprisk-armor` 的 Pass 7 `AntiDebugInjector`、Pass 8 `InstructionSubstitution`、Pass 9 `ControlFlowOrchestrator`、Pass 10 `ImportEncryptor`、Pass 11 `HeaderEncryptor`、Pass 12 `TextSegmentEncryptor` 与 Pass 13 `VMProtector` 都属于**构建期二进制保护能力**。Pass 7 负责写入 anti-debug metadata ABI 并驱动运行时 gate，Pass 8 负责对 `__TEXT.__text` 中的安全 ARM64 指令子集做 1:1 等长语义等价替换，Pass 9 负责对策略编排的函数执行控制流平坦化，Pass 10/11 分别负责导入表与 header 关键字段的加密/恢复，Pass 12 负责对 text 页执行加密元数据编排，Pass 13 则把部分高价值函数转成 VM 字节码并由解释器执行。它们均不会新增终端用户数据采集，只影响构建产物的代码与元数据形态，因此不改变 SDK 的隐私数据边界。
+另外，`cprisk-armor` 的 Pass 7 `AntiDebugInjector`、Pass 8 `InstructionSubstitution`、Pass 9 `ControlFlowOrchestrator`、Pass 10 `ImportEncryptor`、Pass 11 `HeaderEncryptor`、Pass 12 `TextSegmentEncryptor` 与 Pass 13 `VMProtector` 都属于**构建期二进制保护能力**。Pass 7 负责写入 anti-debug metadata ABI 并驱动运行时 gate，Pass 8 负责对 `__TEXT.__text` 中的安全 ARM64 指令子集做 1:1 等长语义等价替换，Pass 9 负责对策略编排的函数执行控制流平坦化，Pass 10/11 分别负责导入表与 header 关键字段的加密/恢复，Pass 12 负责对 text 页执行加密元数据编排并配合运行时按页解密/空闲重加密，Pass 13 则把部分高价值函数转成 VM 字节码并由解释器执行；当前还配套 `__swift5_mdvsk` 自校验元数据、白盒表 ASLR 绑定、字符串 lazy decrypt 与 bootstrap mini-VM。它们均不会新增终端用户数据采集，只影响构建产物的代码与元数据形态，因此不改变 SDK 的隐私数据边界。
 
 ---
 
@@ -374,6 +382,23 @@ SDK 当前会在本地执行更强的运行时完整性探测，包括：
 5. 静态集成场景下对 app-level privacy manifest 的承接
 
 尤其在当前项目以**静态库 / 源码集成**为主的情况下，接入方不能误以为“SDK 带了 manifest 就自动全部覆盖”。
+
+### 8.1 当前 7.0 版本的额外提醒
+
+从当前 7.0 版本的整体风险结构看，接入方需要区分两件事：
+
+1. **隐私合规**
+2. **App Store 对二进制保护强度的接受度**
+
+就 SDK 隐私边界本身而言，当前 7.0 版本并没有因为 Pass 12 `TextSegmentEncryptor`、Pass 13 `VMProtector`、HMAC 自校验、guard page anti-dump、白盒表 ASLR 绑定或 bootstrap mini-VM 而新增新的 collected data 类型，也没有扩大 Required Reason API 范围。因此：
+
+- 7.0 的主要新增风险**不是隐私类型扩张**
+- 而是宿主 App 是否选择启用更强的二进制保护后，带来额外的审核解释成本
+- 当前项目比早期 7.0 文档所描述的 Full Armor 更进一步，已经落到“按页代码恢复、guard page 反 dump、HMAC self-check、白盒表绑定”这一层，审核备注和交付说明需要比之前写得更明确
+
+也就是说：
+
+> **隐私文档回答的是“收什么、为什么收、谁来披露”；是否适合直接带 Full Armor 版本上架，则应优先参考 `CloudPhoneRiskKit_AppStore_合规指南.md` 中的 7.0 上架风险评估章节。**
 
 ---
 

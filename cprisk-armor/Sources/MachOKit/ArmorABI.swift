@@ -45,6 +45,7 @@ public enum ArmorABI {
         public static let textEncryption = "__swift5_cgenc"
         public static let vmpDispatch = "__swift5_mdvrt"
         public static let vmpBytecode = "__swift5_mdirt"
+        public static let vmpSelfExpect = "__swift5_mdvsk"
         /// Pass 5: Swift descriptor pointer-table shuffle mapping (when `__swift5_ptmap` is too small).
         public static let swiftMetadataMap = "__sw5_mdmap"
 
@@ -60,7 +61,7 @@ public enum ArmorABI {
             anchorA, anchorB, anchorC, anchorD, fullAnchorHash,
             whiteboxMeta, whiteboxCode, whiteboxData, whiteboxTag,
             antiDebugPlan, importEncryptedTable, headerBackup, chainMeta, textEncryption,
-            vmpDispatch, vmpBytecode,
+            vmpDispatch, vmpBytecode, vmpSelfExpect,
             swiftMetadataMap,
         ]
     }
@@ -260,11 +261,12 @@ public enum ArmorABI {
     }
 
     public enum WhiteBox {
-        public static let abiVersion: UInt32 = 1
+        public static let abiVersion: UInt32 = 2
         public static let magic: UInt32 = 0x43505742
         public static let engineReadyFlag: UInt32 = 0x0000_0001
         public static let signingPipelineFlag: UInt32 = 0x0000_0002
         public static let enhancedDiffusionFlag: UInt32 = 0x0000_0004
+        public static let aslrTableBindFlag: UInt32 = 0x0000_0008
         public static let roundCount: UInt32 = 4
         /// Runtime-compatible strengthening target: keep ABI roundCount=4 while
         /// executing two deterministic sub-rounds per round.
@@ -314,6 +316,7 @@ public enum ArmorABI {
 
         /// Packed layout:
         /// { magic, version, flags, payload_size, config_digest[32] }.
+        /// v2 appends `aslr_table_anchor_slide` (LE u64) for optional ASLR-bound table masking.
         /// `payload_size` only covers the white-box payload body (`code + data`).
         /// The detached `tag` section is authenticated independently and must
         /// not be folded into this field, otherwise the runtime validator will
@@ -324,13 +327,15 @@ public enum ArmorABI {
             public let flags: UInt32
             public let payloadSize: UInt32
             public let configDigest: Data
+            public let aslrTableAnchorSlide: UInt64
 
             public init(
                 magic: UInt32 = WhiteBox.magic,
                 version: UInt32 = WhiteBox.abiVersion,
                 flags: UInt32 = 0,
                 payloadSize: UInt32 = 0,
-                configDigest: Data = Data(repeating: 0, count: ArmorABI.hashSize)
+                configDigest: Data = Data(repeating: 0, count: ArmorABI.hashSize),
+                aslrTableAnchorSlide: UInt64 = 0
             ) {
                 precondition(configDigest.count == ArmorABI.hashSize, "configDigest must be 32 bytes")
                 self.magic = magic
@@ -338,6 +343,7 @@ public enum ArmorABI {
                 self.flags = flags
                 self.payloadSize = payloadSize
                 self.configDigest = configDigest
+                self.aslrTableAnchorSlide = aslrTableAnchorSlide
             }
 
             public func serialized() -> Data {
@@ -347,6 +353,9 @@ public enum ArmorABI {
                 data.appendLittleEndian(flags)
                 data.appendLittleEndian(payloadSize)
                 data.append(configDigest)
+                if version >= 2 {
+                    data.appendLittleEndian(aslrTableAnchorSlide)
+                }
                 return data
             }
         }

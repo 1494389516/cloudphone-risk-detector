@@ -5,8 +5,8 @@ private enum AntiTamperingSignalProviderCFF {
     static let signalsConfig = CFFConfig.adaptive(
         functionSeed: 0x63AF_19D2_8C54_B7E1,
         protectionTier: .light,
-        dispatcherStyle: .splitIndirect,
-        codecStyle: .xorRotate
+        dispatcherStyle: .functionPointerTable,
+        codecStyle: .feistelSpn
     )
     /// Non-semantic CFF domain tag to avoid leaking concrete symbol names.
     static let signalsDomainTag = "atsp_core_v1"
@@ -1411,6 +1411,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         let dbiMarkerFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DBI_MARKER)) != 0
         let timingSidechannelFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TIMING_SIDECHANNEL)) != 0
         let traceCrosscheckFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACE_CROSSCHECK)) != 0
+        let guardPageFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GUARD_PAGE)) != 0
 
         var maxScore = 0.0
         var anomalyKinds: [String] = []
@@ -1517,6 +1518,26 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                     state: .tampered,
                     layer: 2,
                     weightHint: 82
+                )
+            )
+        }
+
+        if guardPageFlag {
+            let score = 82.0
+            maxScore = max(maxScore, score)
+            anomalyKinds.append("guard_page")
+            signals.append(
+                RiskSignal(
+                    id: "\(ObfuscatedConstants.detectorIDAntiDebugWatchdog)_guard_page",
+                    category: ObfuscatedConstants.categoryAntiTamper,
+                    score: score,
+                    evidence: [
+                        "signal_probe_anomaly_count": "\(snapshot.signalProbeAnomalyCount)",
+                        "mechanism": "anti_dump_guard_page_sigbus",
+                    ],
+                    state: .tampered,
+                    layer: 2,
+                    weightHint: 88
                 )
             )
         }

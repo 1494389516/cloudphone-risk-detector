@@ -223,6 +223,17 @@ public final class CPRiskKit: NSObject {
         public let timingProbeThresholdNs: UInt64
         public let dbiAnomalyCount: UInt64
         public let timingAnomalyCount: UInt64
+        public let prologueIntegrityAnomalyCount: UInt64
+        public let dyldInjectionAnomalyCount: UInt64
+        public let lastPrologueFailMask: UInt32
+        public let lastDyldInjectionFlags: UInt32
+        public let lastCsopsStatusFlags: UInt32
+        public let lastAmfiProbeBits: UInt32
+        public let lastGetTaskAllowSuspect: Bool
+        public let lastDenyAttachVerifyBits: UInt32
+        public let denyAttachVerifyAnomalyCount: UInt64
+        public let amfiCsFlagsAnomalyCount: UInt64
+        public let getTaskAllowAnomalyCount: UInt64
 
         public var hasAnyAnomaly: Bool {
             anomalyFlags != 0
@@ -1246,7 +1257,18 @@ public final class CPRiskKit: NSObject {
             timingProbeMaxNs: raw.last_timing_probe_max_ns,
             timingProbeThresholdNs: raw.last_timing_probe_threshold_ns,
             dbiAnomalyCount: raw.dbi_anomaly_count,
-            timingAnomalyCount: raw.timing_anomaly_count
+            timingAnomalyCount: raw.timing_anomaly_count,
+            prologueIntegrityAnomalyCount: raw.prologue_integrity_anomaly_count,
+            dyldInjectionAnomalyCount: raw.dyld_injection_anomaly_count,
+            lastPrologueFailMask: raw.last_prologue_fail_mask,
+            lastDyldInjectionFlags: raw.last_dyld_injection_flags,
+            lastCsopsStatusFlags: raw.last_csops_status_flags,
+            lastAmfiProbeBits: raw.last_amfi_probe_bits,
+            lastGetTaskAllowSuspect: raw.last_get_task_allow_suspect != 0,
+            lastDenyAttachVerifyBits: raw.last_deny_attach_verify_bits,
+            denyAttachVerifyAnomalyCount: raw.deny_attach_verify_anomaly_count,
+            amfiCsFlagsAnomalyCount: raw.amfi_cs_flags_anomaly_count,
+            getTaskAllowAnomalyCount: raw.get_task_allow_anomaly_count
         )
     }
 
@@ -1333,7 +1355,16 @@ public final class CPRiskKit: NSObject {
         }
 
         // 在锁外构建 snapshot，避免持 stateLock 期间调用可能阻塞的 cprisk_init_protection
-        let snapshot: ArmorRuntimeSnapshot
+        var snapshot = ArmorRuntimeSnapshot(
+            status: .unavailable,
+            reason: "uninitialized",
+            initCode: nil,
+            trigger: trigger,
+            rootKeySource: keyResolution.source,
+            debugFallbackUsed: keyResolution.debugFallbackUsed,
+            anchorPresent: anchorPresent,
+            attemptCount: attemptCount
+        )
         if let failureReason = keyResolution.failureReason {
             snapshot = ArmorRuntimeSnapshot(
                 status: .unavailable,

@@ -12,12 +12,15 @@ enum CFFDispatcherStyle: String, CaseIterable, Codable, Sendable {
     case ifElseChain
     case dualRail
     case splitIndirect
+    /// C-side style: decode via per-codec function pointer table (`cprisk_cff_current_state_table`).
+    case functionPointerTable
 }
 
 enum CFFStateCodecStyle: String, CaseIterable, Codable, Sendable {
     case xorRotate
     case addRotateXor
     case affine
+    case feistelSpn
 }
 
 enum CFFBuildFlavor: String, Codable, Sendable {
@@ -75,8 +78,8 @@ struct CFFConfig: Sendable, Codable, Equatable {
     static func release(
         functionSeed: UInt64,
         protectionTier: CFFProtectionTier = .heavy,
-        dispatcherStyle: CFFDispatcherStyle = .dualRail,
-        codecStyle: CFFStateCodecStyle = .addRotateXor
+        dispatcherStyle: CFFDispatcherStyle = .functionPointerTable,
+        codecStyle: CFFStateCodecStyle = .feistelSpn
     ) -> CFFConfig {
         CFFConfig(
             functionSeed: functionSeed,

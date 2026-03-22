@@ -26,6 +26,10 @@ static pthread_mutex_t s_probe_mutex = PTHREAD_MUTEX_INITIALIZER;
 static volatile int s_probe_running;
 static int s_probe_started;
 static int s_probe_interval_seconds = 5;
+#if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+#include <stdatomic.h>
+static atomic_uint_fast32_t s_task_for_pid_baseline = ATOMIC_VAR_INIT(UINT32_MAX);
+#endif
 
 /* Patterns that indicate dump or injection tools */
 static const char *s_suspicious_patterns[] = {
@@ -90,6 +94,25 @@ static int cprisk_scan_vm_regions(void) {
     }
     return 0;
 }
+
+#if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+static int cprisk_probe_task_for_pid_escalation(void) {
+    task_extmod_info_data_t extmod;
+    mach_msg_type_number_t cnt = TASK_EXTMOD_INFO_COUNT;
+    memset(&extmod, 0, sizeof(extmod));
+    if (task_info(mach_task_self(), TASK_EXTMOD_INFO, (task_info_t)&extmod, &cnt) != KERN_SUCCESS)
+        return 0;
+    uint32_t cur = (uint32_t)extmod.extmod_statistics.task_for_pid_count;
+    uint32_t base = atomic_load(&s_task_for_pid_baseline);
+    if (base == UINT32_MAX) {
+        atomic_store(&s_task_for_pid_baseline, cur);
+        return 0;
+    }
+    if (cur > base + 1u)
+        return -1;
+    return 0;
+}
+#endif
 
 static void cprisk_probe_sleep_cancelable(int total_seconds) {
     if (total_seconds <= 0)
@@ -158,6 +181,14 @@ static void *cprisk_probe_main(void *arg) {
             s_integrity_deception_active = 1;
             continue;
         }
+
+#if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+        if (cprisk_probe_task_for_pid_escalation() != 0) {
+            cprisk_force_integrity_poison();
+            s_integrity_deception_active = 1;
+            continue;
+        }
+#endif
     }
     return NULL;
 }

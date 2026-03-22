@@ -5,6 +5,10 @@ import XCTest
 final class DetectorRegistryMockTests: XCTestCase {
 
     private var mock: MockDetectorRegistry!
+    
+    private struct NoopDetector: Detector {
+        func detect() throws -> DetectorResult { .empty }
+    }
 
     override func setUp() {
         super.setUp()
@@ -33,7 +37,7 @@ final class DetectorRegistryMockTests: XCTestCase {
     }
 
     func testDetectReturnsDefaultForUnstubbed() {
-        let result = mock.detect(type: .jailbreak)
+        let result = mock.detect(type: .file)
         XCTAssertEqual(result.score, 0)
         XCTAssertEqual(result.methods, ["mock:no_result"])
     }
@@ -41,13 +45,13 @@ final class DetectorRegistryMockTests: XCTestCase {
     func testDetectAllAggregatesEnabledTypes() {
         mock.stubbedResults[.frida] = DetectorResult(score: 40, methods: ["frida"])
         mock.stubbedResults[.debugger] = DetectorResult(score: 30, methods: ["debugger"])
-        mock.stubbedResults[.jailbreak] = DetectorResult(score: 20, methods: ["jailbreak"])
+        mock.stubbedResults[.file] = DetectorResult(score: 20, methods: ["jailbreak"])
 
         let result = mock.detectAll(enabledTypes: [.frida, .debugger])
         XCTAssertEqual(result.totalScore, 70)
-        XCTAssertTrue(result.methods.contains("frida"))
-        XCTAssertTrue(result.methods.contains("debugger"))
-        XCTAssertFalse(result.methods.contains("jailbreak"))
+        XCTAssertTrue(result.allMethods.contains("frida"))
+        XCTAssertTrue(result.allMethods.contains("debugger"))
+        XCTAssertFalse(result.allMethods.contains("jailbreak"))
         XCTAssertEqual(mock.detectAllCalledCount, 1)
     }
 
@@ -75,19 +79,19 @@ final class DetectorRegistryMockTests: XCTestCase {
     // MARK: - Seal Behavior
 
     func testSealPreventsRegistration() {
-        mock.register(type: .frida, factory: { nil })
+        mock.register(type: .frida, factory: { NoopDetector() })
         XCTAssertTrue(mock.registeredTypes.contains(.frida))
 
         mock.seal()
         XCTAssertTrue(mock.isSealed)
         XCTAssertEqual(mock.sealCallCount, 1)
 
-        mock.register(type: .debugger, factory: { nil })
+        mock.register(type: .debugger, factory: { NoopDetector() })
         XCTAssertFalse(mock.registeredTypes.contains(.debugger), "Registration after seal should be no-op")
     }
 
     func testSealPreventsUnregistration() {
-        mock.register(type: .frida, factory: { nil })
+        mock.register(type: .frida, factory: { NoopDetector() })
         mock.seal()
 
         mock.unregister(type: .frida)
@@ -137,9 +141,9 @@ final class DetectorRegistryMockTests: XCTestCase {
         }
 
         mock.stubbedResults[.frida] = DetectorResult(score: 45, methods: ["frida_detected"])
-        mock.stubbedResults[.jailbreak] = DetectorResult(score: 30, methods: ["jailbreak_detected"])
+        mock.stubbedResults[.file] = DetectorResult(score: 30, methods: ["jailbreak_detected"])
 
-        let score = evaluateRisk(registry: mock, types: [.frida, .jailbreak])
+        let score = evaluateRisk(registry: mock, types: [.frida, .file])
         XCTAssertEqual(score, 75)
     }
 }

@@ -13,8 +13,10 @@ hardening:
   protect_vm_interpreter_with_cff: true
   enable_dead_handler_injection: true
   opaque_vpc_predicate_chain: true
-  interpreter_self_integrity_check: false
+  interpreter_self_integrity_check: true
   interpreter_cff_tier: medium
+  dispatch_table_keystream: true
+  bytecode_immediate_keystream: true
 functions:
   full:
     - RiskDetectionEngine.collectAndAugmentSignals
@@ -29,3 +31,5 @@ functions:
     - direct_syscall.cprisk_direct_syscall0
     - direct_syscall.cprisk_direct_syscall6
     - cprisk_vm_entry
+    - cprisk_vm_entry_alt1
+    - cprisk_vm_entry_alt2

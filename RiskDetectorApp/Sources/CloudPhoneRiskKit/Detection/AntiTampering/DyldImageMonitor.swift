@@ -21,7 +21,8 @@ final class DyldImageMonitor: @unchecked Sendable {
         var addImageCallbackCount: UInt32 = 0
         var suspiciousAdditions: [(name: String, gen: UInt64)] = []
     }
-    private let state = Mutex(State())
+    private let stateLock = UnfairLock()
+    private var state = State()
 
     private var suspiciousTokens: [String] {
         DynamicFeatureList.shared.suspiciousLibraries
@@ -35,12 +36,12 @@ final class DyldImageMonitor: @unchecked Sendable {
     #if targetEnvironment(simulator)
         return
     #else
-        let shouldRegister = state.withLock { s -> Bool in
-            guard !s.isStarted else { return false }
-            s.isStarted = true
-            s.baselineImageCount = _dyld_image_count()
-            s.baselineImageHash = computeImageListHash()
-            s.baselineDyldGen = s.dyldGen
+        let shouldRegister = stateLock.withLock { () -> Bool in
+            guard !state.isStarted else { return false }
+            state.isStarted = true
+            state.baselineImageCount = _dyld_image_count()
+            state.baselineImageHash = computeImageListHash()
+            state.baselineDyldGen = state.dyldGen
             return true
         }
         guard shouldRegister else { return }
@@ -50,8 +51,8 @@ final class DyldImageMonitor: @unchecked Sendable {
         }
 
         // dyld 同步为每个已加载 image 调用回调，返回时 dyldGen 已累加完毕
-        state.withLock { s in
-            s.baselineDyldGen = s.dyldGen
+        stateLock.withLock {
+            state.baselineDyldGen = state.dyldGen
         }
     #endif
     }
@@ -60,13 +61,13 @@ final class DyldImageMonitor: @unchecked Sendable {
 
     private func onImageAdded(_ mh: UnsafePointer<mach_header>?, slide: Int) {
         // First: fast path under lock — increment counters and decide if we need name resolution
-        let needsNameResolution = state.withLock { s -> (Bool, UInt64) in
-            s.dyldGen &+= 1
-            s.addImageCallbackCount &+= 1
+        let needsNameResolution = stateLock.withLock { () -> (Bool, UInt64) in
+            state.dyldGen &+= 1
+            state.addImageCallbackCount &+= 1
 
-            guard s.isStarted else { return (false, s.dyldGen) }
-            if s.addImageCallbackCount <= s.baselineImageCount { return (false, s.dyldGen) }
-            return (true, s.dyldGen)
+            guard state.isStarted else { return (false, state.dyldGen) }
+            if state.addImageCallbackCount <= state.baselineImageCount { return (false, state.dyldGen) }
+            return (true, state.dyldGen)
         }
 
         guard needsNameResolution.0 else { return }
@@ -78,8 +79,8 @@ final class DyldImageMonitor: @unchecked Sendable {
         let lower = imageName.lowercased()
         let isSuspicious = suspiciousTokens.contains { lower.contains($0) }
         if isSuspicious {
-            state.withLock { s in
-                s.suspiciousAdditions.append((name: imageName, gen: needsNameResolution.1))
+            stateLock.withLock {
+                state.suspiciousAdditions.append((name: imageName, gen: needsNameResolution.1))
             }
         }
     }
@@ -90,9 +91,9 @@ final class DyldImageMonitor: @unchecked Sendable {
     #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["dyld_monitor:unavailable_simulator"])
     #else
-        let snapshot = state.withLock { s -> (gen: UInt64, baseGen: UInt64, baseCount: UInt32, baseHash: UInt64, additions: [(name: String, gen: UInt64)])? in
-            guard s.isStarted else { return nil }
-            return (s.dyldGen, s.baselineDyldGen, s.baselineImageCount, s.baselineImageHash, s.suspiciousAdditions)
+        let snapshot = stateLock.withLock { () -> (gen: UInt64, baseGen: UInt64, baseCount: UInt32, baseHash: UInt64, additions: [(name: String, gen: UInt64)])? in
+            guard state.isStarted else { return nil }
+            return (state.dyldGen, state.baselineDyldGen, state.baselineImageCount, state.baselineImageHash, state.suspiciousAdditions)
         }
         guard let snapshot else { return DetectorResult(score: 0, methods: ["dyld_monitor:not_started"]) }
 

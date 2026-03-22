@@ -4,6 +4,10 @@
  * Every function is static inline __attribute__((always_inline)) so the
  * compiler is forced to emit code in the caller's text section.  No PLT/GOT
  * entry is generated, which prevents trivial Frida hooks on CC_SHA256.
+ *
+ * Round constants H(0) and K[] are stored XOR-mixed with a deterministic
+ * per-index mask (not the standard FIPS literals on disk) and decoded at
+ * runtime on the stack / in registers only.
  */
 
 #ifndef CPRISK_SHA256_H
@@ -86,26 +90,44 @@ void cprisk_sha256_store_be64(uint8_t *p, uint64_t v) {
     p[7] = (uint8_t)(v);
 }
 
-/* ── SHA-256 round constants (FIPS-180-4 §4.2.2) ──────────────────── */
+/* Deterministic mask — not the standard SHA-256 constants (reduces .rodata fingerprint). */
+static inline __attribute__((always_inline))
+uint32_t cprisk_sha256_const_mask_u32(unsigned idx) {
+    uint64_t s = UINT64_C(0x9E3779B97F4A7C15) + (uint64_t)idx * UINT64_C(0xD6E8FEB866D1F289);
+    s = (s ^ (s >> 30)) * UINT64_C(0xBF58476D1CE4E5B9);
+    s = (s ^ (s >> 27)) * UINT64_C(0x94D049BB133111EB);
+    return (uint32_t)(s ^ (s >> 32));
+}
 
-static const uint32_t cprisk_sha256_K[64] = {
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
-    0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
-    0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
-    0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-    0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
-    0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
-    0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
-    0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
-    0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+/* XOR-mixed K[i] (FIPS §4.2.2) — decode with cprisk_sha256_const_mask_u32(i). */
+static const uint32_t cprisk_sha256_K_enc[64] = {
+    0x1ff61a7eu, 0x8d326f67u, 0xcc9f2631u, 0xd638196au,
+    0xb209bcbcu, 0xa6bc8effu, 0xfa5592e5u, 0xa4c529fbu,
+    0x45255cbcu, 0xf3522a3cu, 0x1eefc9b8u, 0xdf516ab0u,
+    0x86d63f8cu, 0xe0285c37u, 0x8eb2fab6u, 0x420a8c90u,
+    0x12d97705u, 0xdfb3de39u, 0x5ff9d1e7u, 0x9c9d8c1bu,
+    0xd5dbf094u, 0x4455d4e3u, 0x51413ab7u, 0x68c3eae5u,
+    0x814722fcu, 0x4603c5dbu, 0x61bf7829u, 0xf2dfe789u,
+    0x4deb152du, 0x56c1764cu, 0x2b7d34edu, 0xb57fcc20u,
+    0x341d7bb1u, 0x39685938u, 0x5138b0bdu, 0xd27b4fc0u,
+    0x06b53c76u, 0x116dd297u, 0xa8246e6eu, 0xe2f56e11u,
+    0xc0397d7au, 0x9c5792ddu, 0x52df66a2u, 0x2c346823u,
+    0xecebc734u, 0xc3e34e6bu, 0x59cc7d81u, 0x4d52e3edu,
+    0x4a7216f5u, 0xdc1009d6u, 0xa7a40b89u, 0xe49a1484u,
+    0x9034708cu, 0x195d3f5au, 0x2c3d05f7u, 0x07d9692au,
+    0x5304af61u, 0xf8f81383u, 0xa31c4479u, 0x23f83d83u,
+    0x48eae83fu, 0xabc161c8u, 0x8610655du, 0x53269b4eu,
 };
+
+static const uint32_t cprisk_sha256_H0_enc[8] = {
+    0x5d5a6f5eu, 0x05e4f43bu, 0x7436e926u, 0x8088f187u,
+    0xe5aba34au, 0x683f0fd0u, 0xe17af6f6u, 0xb59c6f35u,
+};
+
+static inline __attribute__((always_inline))
+uint32_t cprisk_sha256_K_dec_at(unsigned i) {
+    return cprisk_sha256_K_enc[i] ^ cprisk_sha256_const_mask_u32(i);
+}
 
 /* ── block transform ───────────────────────────────────────────────── */
 
@@ -122,8 +144,9 @@ void cprisk_sha256_transform(uint32_t state[8], const uint8_t block[64]) {
     uint32_t e = state[4], f = state[5], g = state[6], h = state[7];
 
     for (int i = 0; i < 64; i++) {
+        uint32_t Ki = cprisk_sha256_K_dec_at((unsigned)i);
         uint32_t T1 = h + cprisk_sha256_sigma1(e) +
-                       cprisk_sha256_ch(e, f, g) + cprisk_sha256_K[i] + W[i];
+                       cprisk_sha256_ch(e, f, g) + Ki + W[i];
         uint32_t T2 = cprisk_sha256_sigma0(a) + cprisk_sha256_maj(a, b, c);
         h = g; g = f; f = e; e = d + T1;
         d = c; c = b; b = a; a = T1 + T2;
@@ -137,14 +160,8 @@ void cprisk_sha256_transform(uint32_t state[8], const uint8_t block[64]) {
 
 static inline __attribute__((always_inline))
 void cprisk_sha256_init(cprisk_sha256_ctx *ctx) {
-    ctx->state[0] = 0x6a09e667;
-    ctx->state[1] = 0xbb67ae85;
-    ctx->state[2] = 0x3c6ef372;
-    ctx->state[3] = 0xa54ff53a;
-    ctx->state[4] = 0x510e527f;
-    ctx->state[5] = 0x9b05688c;
-    ctx->state[6] = 0x1f83d9ab;
-    ctx->state[7] = 0x5be0cd19;
+    for (unsigned j = 0; j < 8u; j++)
+        ctx->state[j] = cprisk_sha256_H0_enc[j] ^ cprisk_sha256_const_mask_u32(64u + j);
     ctx->count = 0;
     memset(ctx->buffer, 0, 64);
 }

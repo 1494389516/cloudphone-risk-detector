@@ -39,26 +39,39 @@ final class MockDetectorRegistry: DetectorRegistering {
         if let stubbed = stubbedGroupResults[group] {
             return stubbed
         }
-        return GroupDetectionResult(results: [], totalScore: 0, methods: ["mock:no_group_result"])
+        return GroupDetectionResult(score: 0, methods: ["mock:no_group_result"], details: "mock_group")
     }
 
     func detectAll(enabledTypes: Set<DetectorRegistry.DetectorType>) -> ComprehensiveDetectionResult {
         detectAllCalledCount += 1
-        var results: [(DetectorRegistry.DetectorType, DetectorResult)] = []
         var totalScore: Double = 0
         var methods: [String] = []
+        var grouped: [DetectorRegistry.DetectorGroup: [DetectorResult]] = [:]
 
         for type in enabledTypes {
             let result = stubbedResults[type] ?? DetectorResult(score: 0, methods: [])
-            results.append((type, result))
             totalScore += result.score
             methods.append(contentsOf: result.methods)
+            let group = detectorGroup(for: type)
+            grouped[group, default: []].append(result)
+        }
+
+        var groupResults: [DetectorRegistry.DetectorGroup: GroupDetectionResult] = [:]
+        for (group, values) in grouped {
+            let groupScore = values.reduce(0) { $0 + $1.score }
+            let groupMethods = values.flatMap(\.methods)
+            groupResults[group] = GroupDetectionResult(
+                score: groupScore,
+                methods: Array(Set(groupMethods)).sorted(),
+                details: "\(group.rawValue)_group"
+            )
         }
 
         return ComprehensiveDetectionResult(
-            results: results,
             totalScore: min(totalScore, 100),
-            methods: methods
+            groupResults: groupResults,
+            allMethods: Array(Set(methods)).sorted(),
+            summary: "mock_total=\(min(totalScore, 100)) methods=\(methods.count)"
         )
     }
 
@@ -106,5 +119,16 @@ final class MockDetectorRegistry: DetectorRegistering {
         unregisteredTypes.removeAll()
         sealCallCount = 0
         _isSealed = false
+    }
+
+    private func detectorGroup(for type: DetectorRegistry.DetectorType) -> DetectorRegistry.DetectorGroup {
+        switch type {
+        case .file, .dyld, .env, .sysctl, .scheme, .hook:
+            return .jailbreak
+        case .antiTampering, .debugger, .frida, .fridaModule, .dylibInjection:
+            return .antiTamper
+        case .codeSignature, .memoryIntegrity, .runtimeIntegrity:
+            return .integrity
+        }
     }
 }

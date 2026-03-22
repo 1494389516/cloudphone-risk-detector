@@ -51,4 +51,28 @@ final class CFFDispatcherTests: XCTestCase {
         XCTAssertEqual(planA.style, planB.style)
         XCTAssertTrue(planA.style == .switchLoop || planA.style == .ifElseChain)
     }
+
+    func testFunctionPointerTableDispatcherProducesStableStyle() {
+        let config = CFFConfig.debug(
+            functionSeed: 0x2233_4455,
+            protectionTier: .heavy,
+            dispatcherStyle: .functionPointerTable,
+            codecStyle: .feistelSpn
+        )
+        let planA = CFFDispatcher.plan(encodedState: 0x55AA_00FF, salt: 0xA5A5_5A5A, config: config)
+        let planB = CFFDispatcher.plan(encodedState: 0x55AA_00FF, salt: 0xA5A5_5A5A, config: config)
+        XCTAssertEqual(planA.style, planB.style)
+        XCTAssertTrue(planA.style == .switchLoop || planA.style == .ifElseChain)
+    }
 }
+
+#if !DEBUG
+final class CFFReleaseDefaultPolicyTests: XCTestCase {
+    func testReleaseDefaultsUseFunctionPointerTableAndFeistelCodec() {
+        let cfg = CFFConfig.release(functionSeed: 0xA11C_E551_BEE5)
+        XCTAssertEqual(cfg.dispatcherStyle, .functionPointerTable)
+        XCTAssertEqual(cfg.codecStyle, .feistelSpn)
+        XCTAssertEqual(cfg.protectionTier, .heavy)
+    }
+}
+#endif

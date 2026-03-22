@@ -69,9 +69,9 @@ public struct RiskDetectionEngine: Sendable {
 
         if policy.killSwitchEnabled && !Self.localKillSwitchOverride {
             Logger.critical("killSwitch enabled — forcing allow verdict, all risk interception bypassed",
-                           metadata: ["scenario": scenario.rawValue, "policy": policy.name])
+                           metadata: ["scenario": scenario.identifier, "policy": policy.name])
             Logger.audit(action: "kill_switch_activated", details: [
-                "scenario": scenario.rawValue,
+                "scenario": scenario.identifier,
                 "policy": policy.name,
                 "timestamp": ISO8601DateFormatter().string(from: Date()),
             ])
@@ -85,15 +85,15 @@ public struct RiskDetectionEngine: Sendable {
                     id: "kill_switch_active",
                     category: "system",
                     score: 0,
-                    state: .hard(true),
-                    evidence: ["policy": policy.name]
+                    evidence: ["policy": policy.name],
+                    state: .hard(detected: true)
                 )],
                 scenario: scenario
             )
         } else if policy.killSwitchEnabled && Self.localKillSwitchOverride {
             Logger.warn("killSwitch requested by remote config but overridden by local policy")
             Logger.audit(action: "kill_switch_overridden", details: [
-                "scenario": scenario.rawValue,
+                "scenario": scenario.identifier,
             ])
         }
 
@@ -104,8 +104,8 @@ public struct RiskDetectionEngine: Sendable {
         )
         if let preflightVerdict = collected.preflightVerdict {
             Logger.audit(action: "preflight_short_circuit", details: [
-                "level": preflightVerdict.level.rawValue,
-                "action": preflightVerdict.action.rawValue,
+                "level": String(preflightVerdict.level.rawValue),
+                "action": String(preflightVerdict.action.rawValue),
                 "reasons": preflightVerdict.primaryReasons.joined(separator: ","),
             ])
             log("=== Evaluation complete (preflight) ===")
@@ -120,8 +120,8 @@ public struct RiskDetectionEngine: Sendable {
         ) {
             let verdict = fastDecision.verdict
             Logger.audit(action: "fast_digest_short_circuit", details: [
-                "level": verdict.level.rawValue,
-                "action": verdict.action.rawValue,
+                "level": String(verdict.level.rawValue),
+                "action": String(verdict.action.rawValue),
                 "score": String(format: "%.1f", verdict.score),
             ])
             log("=== Evaluation complete (fast digest) ===")

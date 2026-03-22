@@ -167,7 +167,52 @@ final class ArmorIntegrationTests: XCTestCase {
         XCTAssertNotEqual(probe.flags & UInt32(CPRISK_WHITEBOX_PROBE_FLAG_METADATA_VALID), 0)
         XCTAssertNotEqual(probe.flags & UInt32(CPRISK_WHITEBOX_PROBE_FLAG_ENGINE_READY), 0)
         XCTAssertNotEqual(probe.capabilities & UInt32(CPRISK_ARMOR_CAP_WHITEBOX_SECTION_LAYOUT), 0)
-        XCTAssertEqual(probe.metadata_version, UInt32(CPRISK_ARMOR_WHITEBOX_ABI_VERSION))
+        XCTAssertEqual(probe.metadata_version, UInt32(ArmorABI.WhiteBox.abiVersion))
+    }
+
+    /// ASLR 表绑定路径在 slide=0 且 anchor=0 时应为恒等 XOR（与未设置 FLAG 的明文表一致）。
+    func testInjectedWhiteboxBundleAslrTableBindIsIdentityAtSlideZero() {
+        let fixture = WhiteBoxFixtureBuilder.build(rootKey: Data(repeating: 0xC3, count: ArmorABI.keySize))
+        var meta = Data(fixture.metadataSection)
+        XCTAssertEqual(meta.count, 56, "v2 white-box meta includes anchor tail")
+        let flags = meta.subdata(in: 8..<12).withUnsafeBytes { UInt32(littleEndian: $0.load(as: UInt32.self)) }
+        let newFlags = flags | ArmorABI.WhiteBox.aslrTableBindFlag
+        meta.replaceSubrange(8..<12, with: withUnsafeBytes(of: newFlags.littleEndian) { Data($0) })
+
+        let rc = meta.withUnsafeBytes { metaRaw -> Int32 in
+            fixture.whiteboxCode.withUnsafeBytes { codeRaw in
+                fixture.whiteboxData.withUnsafeBytes { dataRaw in
+                    fixture.whiteboxTag.withUnsafeBytes { tagRaw in
+                        cprisk_test_set_whitebox_bundle(
+                            metaRaw.bindMemory(to: UInt8.self).baseAddress,
+                            meta.count,
+                            codeRaw.bindMemory(to: UInt8.self).baseAddress,
+                            fixture.whiteboxCode.count,
+                            dataRaw.bindMemory(to: UInt8.self).baseAddress,
+                            fixture.whiteboxData.count,
+                            tagRaw.bindMemory(to: UInt8.self).baseAddress,
+                            fixture.whiteboxTag.count
+                        )
+                    }
+                }
+            }
+        }
+        XCTAssertEqual(rc, 0)
+
+        let input = Data((0..<ArmorABI.hashSize).map { UInt8(($0 * 3) & 0xFF) })
+        for domain in ArmorABI.WhiteBox.Domain.allCases {
+            let expected = fixture.prf(domain: domain, input: input)
+            var actual = [UInt8](repeating: 0, count: ArmorABI.hashSize)
+            let ev = input.withUnsafeBytes { inputRaw -> Int32 in
+                cprisk_whitebox_evaluate_domain(
+                    domain.rawValue,
+                    inputRaw.bindMemory(to: UInt8.self).baseAddress,
+                    &actual
+                )
+            }
+            XCTAssertEqual(ev, 0, "domain \(domain.rawValue)")
+            XCTAssertEqual(Data(actual), expected, "ASLR bind decode must reduce to plaintext PRF at slide 0")
+        }
     }
 
     func testInjectedWhiteboxBundleRejectsTamperedConfigDigest() {
