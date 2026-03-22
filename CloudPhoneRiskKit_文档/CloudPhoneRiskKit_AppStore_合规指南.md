@@ -99,7 +99,7 @@
 
 ### 4.4 7.0 版本升级对合规披露的影响
 
-7.0 这次升级主要新增的是**二进制保护、text 页加密与 VMP 虚拟化增强**，包括：
+7.0 这次升级主要新增并继续加强的是**二进制保护、text 页加密与 VMP 虚拟化增强**，包括：
 
 - Pass 7 runtime gate
 - Pass 10 ImportEncryptor
@@ -108,6 +108,10 @@
 - Pass 13 VMProtector（含 M2/M3 反分析）
 - 更早期的异常端口抢占
 - 多频 watchdog / timing canary / Frida 行为指纹增强
+- `__TEXT.__text` 的按页按需解密、空闲重加密与 guard page anti-dump
+- VM HMAC self-check、`__swift5_mdvsk` self-expect、双主循环解释器、多入口执行链
+- VM 虚拟寄存器、VM 内部子调用、opcode/immediate 双重加密
+- 白盒表/元数据 ASLR 绑定、bootstrap mini-VM、字符串 lazy decrypt
 
 这些能力会改变**构建产物的代码形态、运行时完整性检查强度和逆向对抗强度**，但**不会新增 privacy manifest 中的数据类别，也不会新增 Required Reason API 类别**。因此，宿主 App 在合规披露上最需要关注的，仍然是：
 
@@ -194,15 +198,17 @@
 
 #### 口径 A：完整版（推荐，全量开启 armor 保护时使用）
 
-适用场景：SDK 全量启用 cprisk-armor 构建期 + 运行时保护（字符串加密、数据段加密、完整性校验、Mach-O header 擦除、JIT 按页解密、Pass 7 anti-debug runtime gate、Pass 8 instruction substitution、Pass 9 CFF 控制流编排、Pass 10 import encryption、Pass 11 header encryption、Pass 12 text page encryption、Pass 13 VMProtector / VM interpreter 等），不做任何裁剪。
+适用场景：SDK 全量启用 cprisk-armor 构建期 + 运行时保护（字符串加密、数据段加密、完整性校验、Mach-O header 擦除、JIT 按页解密、空闲重加密、guard page anti-dump、Pass 7 anti-debug runtime gate、Pass 8 instruction substitution、Pass 9 CFF 控制流编排、Pass 10 import encryption、Pass 11 header encryption、Pass 12 text page encryption、Pass 13 VMProtector / VM interpreter、白盒表 ASLR 绑定、bootstrap mini-VM 等），不做任何裁剪。
 
 ```text
 This app integrates CloudPhoneRiskKit, a fraud-prevention and device-integrity SDK.
 
 The SDK uses runtime integrity verification techniques — including code-section hash
-validation, encrypted string tables, protected data segments, anti-debug watchdog probes,
-compile-time anti-debug injection metadata, conservative equal-length instruction
-substitution, and optional control-flow flattening (CFF) applied at build time — to detect jailbreak, hooking, dynamic
+validation, encrypted string tables with lazy plaintext lifetime control, protected data segments,
+anti-debug watchdog probes, guard-page anti-dump traps, on-demand text-page decryption with idle
+re-encryption, compile-time anti-debug injection metadata, conservative equal-length instruction
+substitution, control-flow flattening (CFF) applied at build time, and a custom VM interpreter with
+integrity-checked bytecode execution — to detect jailbreak, hooking, dynamic
 instrumentation, and cloud-phone/emulator environments. These techniques
 are consistent with banking and financial app security standards (e.g. Promon SHIELD,
 Guardsquare iXGuard) and are used exclusively for fraud prevention and runtime tamper
@@ -443,7 +449,7 @@ cprisk-armor --input <app_binary> --output <output> --all --key <hex>
 | Pass 12 | TextSegmentEncryptor（`__TEXT.__text` 页级加密） | 是 |
 | Pass 13 | VMProtector（关键函数虚拟化） | 是 |
 
-运行时能力全量开启：Mach-O Header 擦除、JIT 按页解密、异常端口保护、watchdog 多维反调试探针（含双 watchdog 互监控、影子栈校验）、Pass 7 anti-debug runtime gate、Pass 10 导入解析恢复、Pass 11 header sanity restore、Pass 12 text 页恢复、Pass 13 VM 解释器（handler 变体 / VPC 仿射 / dead handler / opaque predicate chain）；构建产物侧同时包含 Pass 8 对 `__TEXT.__text` 的保守等长指令替换与 Pass 9 CFF 策略编排。
+运行时能力全量开启：Mach-O Header 擦除、JIT 按页解密、空闲重加密、guard page anti-dump、异常端口保护、watchdog 多维反调试探针（含双 watchdog 互监控、影子栈校验、deny-attach verify、AMFI / entitlement 异常位）、Pass 7 anti-debug runtime gate、Pass 10 导入解析恢复、Pass 11 header sanity restore、Pass 12 text 页恢复、Pass 13 VM 解释器（dispatch/opcode/immediate 双重保护、双主循环解释器、虚拟寄存器、VM 内部子调用、HMAC self-check、dead handler / opaque predicate chain）；构建产物侧同时包含 Pass 8 对 `__TEXT.__text` 的保守等长指令替换与 Pass 9 CFF 策略编排。
 
 **适用场景**：
 
@@ -536,15 +542,17 @@ cprisk-armor --input <app_binary> --output <output> --pass3 --pass4 --pass5 --pa
 |-----------|------|---------|------|
 | Mach-O Header 擦除 | `cprisk_erase_macho_header()` | 中高 — 阻碍内存 dump，但只影响运行时，不影响提审时静态分析 | 金融 App 可开；普通 App 谨慎 |
 | JIT 按页解密 | `cprisk_jit_decrypt_page()` | 中 — `mprotect` 切换读写权限，不违反 W^X（不会同时可写可执行） | 可开，iOS 本身允许 `mprotect` |
+| 空闲重加密 / guard page | `cprisk_text_encrypt_service_idle()` / `cprisk_guard_page_fault_notify()` | 中至高 — 明显属于高对抗 anti-dump 设计，需在 Review Notes 中解释其仅用于运行时完整性保护 | 金融 App / 高安全行业优先 |
 | 异常端口保护 | `cprisk_register_exception_handler()` | 中 — 抢占 EXC_BREAKPOINT 处理权 | 可开，但可能影响苹果 crash reporting |
 | 完整性重校验 | `cprisk_recheck_integrity()` | 低 — 标准反篡改手段 | 始终开启 |
 | Anti-Debug | `cprisk_deny_attach()` | 低 — `ptrace(PT_DENY_ATTACH)` 是公开 API | 始终开启 |
-| 反调试 Watchdog | `cprisk_start_anti_debug_watchdog()` | 低 — 周期性重调 `ptrace`、exception port、SIGTRAP、csops、硬件断点、软件断点、异常分发超时、双 watchdog 互监控、影子栈校验等，异常转 RiskSignal | 始终开启 |
+| 反调试 Watchdog | `cprisk_start_anti_debug_watchdog()` | 低至中 — 周期性重调 `ptrace`、exception port、SIGTRAP、csops、硬件断点、软件断点、异常分发超时、双 watchdog 互监控、影子栈校验、deny-attach verify、AMFI / entitlement 异常位等，异常转 RiskSignal | 始终开启 |
 | Pass 7 运行时消费 | 读取 `__DATA,__cpr_adbg7` 计划并做 anti-debug gate | 低至中 — 运行时会在关键点插入 gate，但仍明显弱于大规模机器码重写 | 金融 App 可开；普通 App 可随审核历史逐步启用 |
 | Pass 10 导入恢复 | `cprisk_import_resolver.c` | 低 — 主要改变符号恢复方式，不新增数据采集 | 可开 |
 | Pass 11 Header 恢复 | `cprisk_header_restore.c` | 低至中 — 影响镜像头字段恢复，但有 sanity fallback | 金融 App 可开；普通 App 视审核历史启用 |
 | Pass 12 Text 恢复 | `cprisk_text_encrypt.c` | 中 — 代码页恢复链会引入更多审核解释成本，但不改变隐私边界 | 金融 App / 高安全场景优先 |
-| Pass 13 VM 解释器 | `cprisk_vm_interpreter.c` | 中至高 — 高价值函数通过 VM 字节码执行，需要在 Review Notes 中清楚说明其仅用于反篡改与反逆向 | 仅建议在已有审核历史或高安全行业启用 |
+| Pass 13 VM 解释器 | `cprisk_vm_interpreter.c` | 高 — 高价值函数通过 VM 字节码执行，当前还包含多入口、多解释循环、HMAC self-check 与虚拟寄存器，需要在 Review Notes 中清楚说明其仅用于反篡改与反逆向 | 仅建议在已有审核历史或高安全行业启用 |
+| 白盒表 ASLR 绑定 | `cprisk_whitebox.c` | 中 — 主要影响密钥/白盒内部求值路径，对隐私无直接新增，但会提高 reviewer 对“运行时自恢复/自解释”的敏感度 | 高安全场景优先 |
 | Pass 9 CFF 运行时 | 源码级 CFF 状态机（CFFDispatcher / CFFStateCodec） | 低 — 纯逻辑层控制流编码，不新增系统调用或数据采集 | 始终开启（SDK 内嵌） |
 
 ### 11.6 合规参考：同类商用 SDK 的保护等级
@@ -562,7 +570,98 @@ cprisk-armor 在控制流混淆、反重打包、截屏防护、安全键盘等�
 
 ---
 
-## 12. 常见误区
+## 12. 当前 7.0 上架风险评估
+
+这一节回答一个最实际的问题：**基于当前仓库状态，7.0 版本如果直接按 Full Armor 提审，审核风险到底有多大。**
+
+### 12.1 先结论
+
+当前 7.0 版本的风险结构可以概括为：
+
+| 维度 | 当前判断 | 说明 |
+|------|----------|------|
+| **隐私合规风险** | 低到中 | SDK manifest 当前只覆盖 `Device ID`、`UserDefaults`、`SystemBootTime`，且 `NSPrivacyTracking = false`；只要宿主 App 正确承接 app-level manifest、权限说明与 App Privacy，隐私本身不是最大阻塞项 |
+| **二进制审核风险** | 中到高 | Pass 12 `TextSegmentEncryptor` 与 Pass 13 `VMProtector` 已经进入“改变代码可见形态与执行形态”的级别，会显著提高 reviewer 的解释成本 |
+| **金融 / 高安全行业适配度** | 高 | 若业务场景本身就是反欺诈、账户安全、支付保护，这些机制较容易被接受 |
+| **普通消费类 App 首发适配度** | 一般 | 若是工具、电商、内容、社交等普通消费类 App，首次提审不建议直接使用 Full Armor |
+
+**建议性结论**：
+
+1. **如果是金融、支付、企业安全、高风险账户防护场景**，可考虑带强 Review Notes 试 Full Armor，但仍建议优先评估是否先关闭 Pass 12/13。
+2. **如果是普通 App、首发、没有审核历史**，不建议直接拿当前 Full Armor 版本提审。
+3. **首发更稳妥的选择** 是使用前文的 `AppStore Safe` Profile，并把 `Pass 12/13` 继续保持关闭。
+
+### 12.2 为什么当前主要风险不在隐私
+
+从隐私与合规文档角度看，当前 7.0 版本已经具备以下基础条件：
+
+- SDK 当前明确声明 `NSPrivacyTracking = false`
+- 没有 `NSPrivacyTrackingDomains`
+- Required Reason API 范围收敛在 `UserDefaults` 与 `SystemBootTime`
+- SDK 级文档已经把“本地处理”和“宿主 App 是否上报”区分开
+
+这意味着：
+
+- 风险信号、行为摘要、设备状态是否被认定为“已收集并上传”，主要取决于**宿主 App 的接入方式**
+- 只要宿主 App 正确补齐 `PrivacyInfo.xcprivacy`、`Info.plist` 权限说明、App Store Connect 中的 `App Privacy` 标签，**隐私本身通常可控**
+
+因此，当前 7.0 的主要不确定性不在 manifest，而在 reviewer 对**保护强度是否“明显超过普通 App 常见做法”**的判断。
+
+### 12.3 当前最敏感的审核点
+
+从当前实现看，最需要谨慎面对 reviewer 的是以下五类机制：
+
+| 风险点 | 当前状态 | 为什么敏感 |
+|--------|----------|------------|
+| **Pass 13 VMProtector** | 已上线，且含 M2/M3 + HMAC self-check + 双主循环解释器 | 高价值函数已不再以原生 ARM64 直接暴露，而是通过 VM 跳板 + 自定义字节码执行；当前解释器路径更复杂，更容易被理解为“隐藏核心逻辑” |
+| **Pass 12 TextSegmentEncryptor** | 已上线，且带空闲重加密 / guard page | `__TEXT.__text` 页级加密会让静态代码可见性明显下降，解释成本高于 import/header 级别保护 |
+| **runtime anti-debug 组合** | 已上线 | 异常端口、watchdog、runtime gate、timing canary、Frida 指纹等叠加后，整体观感会偏“高对抗” |
+| **解释器自身加固** | 已上线 | 解释器纳入 CFF 接线、dead handler、opaque predicate chain、HMAC self-check 后，已不再只是“普通防护逻辑”，而是明显具备反分析特征 |
+| **白盒表 ASLR 绑定 / mini-VM bootstrap** | 已上线 | 这类机制虽然不新增隐私采集，但会让 reviewer 更关注“是否存在运行时自恢复、自解释、自隐藏逻辑” |
+
+要注意的是：
+
+- 这些点**不等于违规**
+- 但它们会提高 reviewer 的不确定性
+- 尤其在**普通 App 首发**场景下，更容易被要求解释
+
+### 12.4 当前版本的适用建议
+
+| 场景 | 直接使用 Full Armor 7.0 | 建议 |
+|------|-------------------------|------|
+| 金融 / 银行 / 支付 | 可考虑 | 建议准备完整 Review Notes，并做好被问询的准备；必要时优先灰度启用更激进的 guard page / 白盒表绑定 |
+| 企业安全 / 账号高价值风控 | 可考虑 | 若业务定位明确，强保护通常更容易自洽 |
+| 游戏反作弊 / 灰产对抗 | 视业务而定 | 若存在账户价值与攻击收益，可论证必要性 |
+| 普通工具 / 内容 / 电商 / 社交首发 | 不建议 | 优先使用 `AppStore Safe`，关闭 Pass 12/13 |
+| 已有多次稳定过审历史的老 App | 可逐步尝试 | 适合采用分阶段增配策略 |
+
+### 12.5 首发提审推荐策略
+
+如果目标是“**先稳过审，再逐步加固**”，推荐按下面节奏推进：
+
+1. **首发版本**：使用 `AppStore Safe`，保持 `Pass 12/13` 关闭。
+2. **拿到第一次通过记录后**：根据业务场景评估是否先启用 `Pass 8/9`。
+3. **确认审核历史稳定后**：再评估 `Pass 12`。
+4. **仅在高安全行业或已有充分审核历史时**：再启用 `Pass 13 VMProtector`。
+
+对当前 7.0 来说，最保守也最稳妥的建议是：
+
+> **首发不直接启用 Pass 12/13；把 VMP 与按页 text 恢复链作为第二阶段加固能力，而不是第一版即全量上线。**
+
+### 12.6 提审前检查清单
+
+若宿主 App 决定提审，建议在交付前逐项确认：
+
+- 宿主 App 自己的 `PrivacyInfo.xcprivacy` 已承接 SDK 的 `Device ID` / `UserDefaults` / `SystemBootTime`
+- 宿主 App 的 `App Privacy` 已根据“是否上传风险报告”做真实填写
+- `NSMotionUsageDescription`、`NSFaceIDUsageDescription`、`LSApplicationQueriesSchemes` 等权限说明已按实际启用能力补齐
+- Review Notes 已明确说明：这些能力仅用于 fraud prevention / runtime integrity / anti-tamper，不用于隐藏私有 API 或规避审核
+- 已在真实 `iphoneos` Archive / TestFlight 路径上验证运行正常，而不是只在模拟器或本地 Release 构建验证
+- 若是首发版本，已确认是否需要关闭 `Pass 12/13`
+
+---
+
+## 13. 常见误区
 
 ### 误区 4：壳加固后苹果一定会拒审
 
@@ -591,7 +690,7 @@ Promon SHIELD、Guardsquare iXGuard、Appdome ONEShield 等商用安全 SDK 的�
 
 ---
 
-## 13. 对外沟通时推荐怎么说
+## 14. 对外沟通时推荐怎么说
 
 如果你把这份指南发给客户，最适合的一句话是：
 
@@ -601,7 +700,7 @@ Promon SHIELD、Guardsquare iXGuard、Appdome ONEShield 等商用安全 SDK 的�
 
 ---
 
-## 14. 相关配套文档
+## 15. 相关配套文档
 
 建议与本指南一起放在 `CloudPhoneRiskKit_文档/` 目录中交付：
 
