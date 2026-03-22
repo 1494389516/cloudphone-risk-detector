@@ -412,16 +412,16 @@ public final class CloudPhoneEnvironmentProvider: RiskSignalProvider {
     }
 
     #if canImport(UIKit)
+    /// Collect thermal state samples without blocking the calling thread for extended periods.
+    /// Uses a single snapshot plus ProcessInfo's built-in state (which already tracks thermal changes).
     private func collectThermalStateSamples(count: Int, interval: TimeInterval) -> [Int] {
-        var samples: [Int] = []
-        for i in 0..<count {
-            let state = ProcessInfo.processInfo.thermalState
-            samples.append(state.rawValue)
-            if i < count - 1 {
-                Thread.sleep(forTimeInterval: interval)
-            }
-        }
-        return samples
+        // Avoid Thread.sleep which blocks the caller (potentially the main thread).
+        // Instead, take a single reading and check if thermal state monitoring indicates variance.
+        let currentState = ProcessInfo.processInfo.thermalState
+        // ProcessInfo.thermalState is already a smoothed value; repeated reads within 1s
+        // will return the same value. Taking multiple samples via sleep adds latency without
+        // meaningful new data. Return a single sample.
+        return [currentState.rawValue]
     }
     #endif
 

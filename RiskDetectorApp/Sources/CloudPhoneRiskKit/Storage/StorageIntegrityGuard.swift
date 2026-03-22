@@ -5,7 +5,7 @@ import CryptoKit
 enum StorageIntegrityGuard {
     private static let keychainService = "CloudPhoneRiskKit.StorageHMAC"
     private static let keychainAccount = "hmac_key_v1"
-    private static let lock = UnfairLock()
+    private static let lock = NSLock()  // NSLock: Keychain I/O inside lock
 
     static func sign(_ data: Data, purpose: String) -> Data {
         let key = getOrCreateKey()

@@ -226,7 +226,7 @@ public final class PolicyManager: @unchecked Sendable {
         }
     }
 
-    private let lock = UnfairLock()
+    private let lock = NSLock()  // NSLock: file I/O inside lock
     private var cachedPolicy: ServerRiskPolicy?
     private let cacheKey = "com.cloudphone.riskkit.policy.v3"
     private let hmacCacheKey = "com.cloudphone.riskkit.policy.v3_hmac"

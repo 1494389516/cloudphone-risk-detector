@@ -1323,16 +1323,14 @@ public final class CPRiskKit: NSObject {
 
     @discardableResult
     private func ensureArmorRuntimeStarted(trigger: String) -> ArmorRuntimeSnapshot {
-        let (earlyReturn, attemptCount, anchorPresent, keyResolution): (ArmorRuntimeSnapshot?, Int, Bool, ArmorRootKeyResolution) = stateLock.withLock {
-            if armorRuntimeSnapshot.status != .inactive {
-                return (armorRuntimeSnapshot, 0, false, Self.resolveArmorRootKey())
-            }
-            let count = armorRuntimeSnapshot.attemptCount + 1
-            let anchor = Self.hasArmorAnchor()
-            let key = Self.resolveArmorRootKey()
-            return (nil, count, anchor, key)
+        let existing: ArmorRuntimeSnapshot? = stateLock.withLock {
+            armorRuntimeSnapshot.status != .inactive ? armorRuntimeSnapshot : nil
         }
-        if let earlyReturn { return earlyReturn }
+        if let existing { return existing }
+
+        let (attemptCount, anchorPresent, keyResolution) = stateLock.withLock {
+            (armorRuntimeSnapshot.attemptCount + 1, Self.hasArmorAnchor(), Self.resolveArmorRootKey())
+        }
 
         // 在锁外构建 snapshot，避免持 stateLock 期间调用可能阻塞的 cprisk_init_protection
         let snapshot: ArmorRuntimeSnapshot
@@ -1348,11 +1346,10 @@ public final class CPRiskKit: NSObject {
                 attemptCount: attemptCount
             )
         } else if let keyData = keyResolution.keyData {
-            armorInitLock.withLock {
+            let earlySnapshot: ArmorRuntimeSnapshot? = armorInitLock.withLock {
                 let alreadyStarted = stateLock.withLock { armorRuntimeSnapshot.status != .inactive }
                 if alreadyStarted {
-                    snapshot = stateLock.withLock { armorRuntimeSnapshot }
-                    return
+                    return stateLock.withLock { armorRuntimeSnapshot }
                 }
 
                 let initCode = keyData.withUnsafeBytes { rawBuffer -> Int32 in
@@ -1371,7 +1368,9 @@ public final class CPRiskKit: NSObject {
                     attemptCount: attemptCount
                 )
                 stateLock.withLock { armorRuntimeSnapshot = snapshot }
+                return nil
             }
+            if let earlySnapshot { return earlySnapshot }
         } else {
             snapshot = ArmorRuntimeSnapshot(
                 status: .unavailable,

@@ -13,7 +13,7 @@ final class SecureFileStore: @unchecked Sendable {
 
     static let shared = SecureFileStore()
 
-    private let lock = UnfairLock()
+    private let lock = NSLock()  // NSLock: file I/O inside lock
     private let baseDirectory: URL
 
     init(subdirectory: String = "CloudPhoneRiskKit/secure_store") {

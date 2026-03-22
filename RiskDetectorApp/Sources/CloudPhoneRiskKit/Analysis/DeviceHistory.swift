@@ -169,7 +169,7 @@ public final class DeviceHistory {
     }
   }
 
-  private let lock = UnfairLock()
+  private let lock = NSLock()  // NSLock: file I/O and Keychain inside lock
   private let fileManager = FileManager.default
   private let storeURL: URL
   private let hmacURL: URL

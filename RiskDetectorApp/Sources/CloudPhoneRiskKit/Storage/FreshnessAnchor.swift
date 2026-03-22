@@ -22,7 +22,7 @@ final class FreshnessAnchor {
     private let service = "CloudPhoneRiskKit.FreshnessAnchor"
     private let account: String
     private let accessible = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-    private let lock = UnfairLock()
+    private let lock = NSLock()  // NSLock: Keychain I/O inside lock
 
     init(account: String) {
         self.account = account

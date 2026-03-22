@@ -51,8 +51,13 @@ public protocol LogDestination: Sendable {
 
 /// 默认控制台输出
 struct ConsoleLogDestination: LogDestination {
+    private static let dateFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        return f
+    }()
+
     func write(_ entry: LogEntry) {
-        let ts = ISO8601DateFormatter().string(from: entry.timestamp)
+        let ts = Self.dateFormatter.string(from: entry.timestamp)
         var line = "[\(ts)] [\(entry.level.label)] [CloudPhoneRiskKit] \(entry.message)"
         if !entry.metadata.isEmpty {
             let meta = entry.metadata.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: " ")
@@ -70,17 +75,37 @@ public struct AuditEntry: Sendable {
 }
 
 public enum Logger {
+    // MARK: - Thread-safe configuration
+
+    private struct Config {
+        var isEnabled: Bool
+        var releaseLoggingEnabled: Bool
+        var minimumLevel: LogLevel
+    }
+
+    private static let configLock = UnfairLock()
 #if DEBUG
-    public static var isEnabled = true
+    private static var _config = Config(isEnabled: true, releaseLoggingEnabled: false, minimumLevel: .debug)
 #else
-    public static var isEnabled = false
+    private static var _config = Config(isEnabled: false, releaseLoggingEnabled: false, minimumLevel: .debug)
 #endif
 
+    public static var isEnabled: Bool {
+        get { configLock.withLock { _config.isEnabled } }
+        set { configLock.withLock { _config.isEnabled = newValue } }
+    }
+
     /// Release 下是否保留 warn 及以上级别日志
-    public static var releaseLoggingEnabled = false
+    public static var releaseLoggingEnabled: Bool {
+        get { configLock.withLock { _config.releaseLoggingEnabled } }
+        set { configLock.withLock { _config.releaseLoggingEnabled = newValue } }
+    }
 
     /// 最低日志级别
-    public static var minimumLevel: LogLevel = .debug
+    public static var minimumLevel: LogLevel {
+        get { configLock.withLock { _config.minimumLevel } }
+        set { configLock.withLock { _config.minimumLevel = newValue } }
+    }
 
     /// 自定义日志输出目标
     private(set) static var destinations: [LogDestination] = []
@@ -177,13 +202,15 @@ public enum Logger {
 
     private static func emit(level: LogLevel, message: String, metadata: [String: String] = [:],
                              file: String = #fileID, function: String = #function, line: UInt = #line) {
-        guard level >= minimumLevel else { return }
+        // Snapshot config atomically to avoid multiple lock acquisitions per log call
+        let cfg = configLock.withLock { _config }
+        guard level >= cfg.minimumLevel else { return }
 
         let shouldLog: Bool
         #if DEBUG
-        shouldLog = isEnabled
+        shouldLog = cfg.isEnabled
         #else
-        shouldLog = releaseLoggingEnabled && level >= .warn
+        shouldLog = cfg.releaseLoggingEnabled && level >= .warn
         #endif
 
         guard shouldLog else { return }

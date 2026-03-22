@@ -55,7 +55,7 @@ public enum AppAttestSigner {
     private static let keychainService = "CloudPhoneRiskKit.AppAttest"
     private static let keychainAccount = "attestation_key_id"
     private static let attestationChallenge = Data("CloudPhoneRiskKit.AppAttest.KeyAttest.v1".utf8)
-    private static let lock = UnfairLock()
+    private static let lock = NSLock()  // NSLock: Keychain I/O inside lock
 
     private static func getOrCreateKeyId() async throws -> String {
         if let existing = loadKeyId() {

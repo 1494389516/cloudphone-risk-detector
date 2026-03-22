@@ -82,14 +82,15 @@ struct RuntimeIntegrityValidator: Detector {
         var anomalies: [String] = []
 
         // Each entry: (selector name, expected class name)
-        let expectations: [(String, String)] = [
-            ("fileExistsAtPath:", "NSFileManager"),
-            ("contentsOfDirectoryAtPath:error:", "NSFileManager"),
-            ("canOpenURL:", "UIApplication"),
-            ("dataWithContentsOfFile:", "NSData"),
+        // (selectorName, expectedClassName, isClassMethod)
+        let expectations: [(String, String, Bool)] = [
+            ("fileExistsAtPath:", "NSFileManager", false),
+            ("contentsOfDirectoryAtPath:error:", "NSFileManager", false),
+            ("canOpenURL:", "UIApplication", false),
+            ("dataWithContentsOfFile:", "NSData", true),  // class method, not instance method
         ]
 
-        for (selectorName, expectedClassName) in expectations {
+        for (selectorName, expectedClassName, isClassMethod) in expectations {
             let sel = sel_getUid(selectorName)
 
             guard let expectedClass = NSClassFromString(expectedClassName) else {
@@ -98,8 +99,13 @@ struct RuntimeIntegrityValidator: Detector {
                 continue
             }
 
+            // For class methods, check on the metaclass
+            let targetClass: AnyClass = isClassMethod ? object_getClass(expectedClass)! : expectedClass
+
             // Check that the class responds to the selector
-            let responds = class_respondsToSelector(expectedClass, sel)
+            let responds = isClassMethod
+                ? class_respondsToSelector(object_getClass(expectedClass), sel)
+                : class_respondsToSelector(expectedClass, sel)
             if !responds {
                 anomalies.append("runtime_integrity:selector_unresolved:\(selectorName)")
                 continue
@@ -107,7 +113,10 @@ struct RuntimeIntegrityValidator: Detector {
 
             // Cross-validate: get the Method and verify its IMP is not nil
             // and that the implementation class matches expectations
-            if let method = class_getInstanceMethod(expectedClass, sel) {
+            let method = isClassMethod
+                ? class_getClassMethod(expectedClass, sel)
+                : class_getInstanceMethod(expectedClass, sel)
+            if let method {
                 let imp = method_getImplementation(method)
                 if imp == nil {
                     anomalies.append("runtime_integrity:selector_nil_imp:\(selectorName)")

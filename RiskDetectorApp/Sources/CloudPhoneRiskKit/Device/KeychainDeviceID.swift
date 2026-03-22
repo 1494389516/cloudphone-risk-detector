@@ -24,7 +24,7 @@ final class KeychainDeviceID {
     static let shared = KeychainDeviceID()
     private init() {}
 
-    private let lock = UnfairLock()
+    private let lock = NSLock()  // NSLock: Keychain I/O inside lock
     private let service = "CloudPhoneRiskKit"
     private let account = "device_id"
     /// SDK 4.4 Phase 6: 设备绑定，兼容无密码设备；避免 kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly

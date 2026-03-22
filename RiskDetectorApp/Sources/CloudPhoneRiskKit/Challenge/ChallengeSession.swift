@@ -109,47 +109,47 @@ public final class ChallengeSession: @unchecked Sendable {
     @discardableResult
     public func transition(to target: ChallengeSessionState) -> Bool {
         lock.withLock {
-        let salt = ChallengeSessionCFF.salt(
-            state: _state,
-            currentChallengeId: _currentChallengeId,
-            executionStatus: _executionStatus,
-            submittedCount: _submittedChallengeIds.count,
-            extraStrings: [target.rawValue]
-        )
-        let seed: UInt32 = 0x1D4F29B7
-        let entryState: UInt32 = 0x11
-        let validateState: UInt32 = 0x12
-        let rejectState: UInt32 = 0x13
-        let commitState: UInt32 = 0x14
+            let salt = ChallengeSessionCFF.salt(
+                state: _state,
+                currentChallengeId: _currentChallengeId,
+                executionStatus: _executionStatus,
+                submittedCount: _submittedChallengeIds.count,
+                extraStrings: [target.rawValue]
+            )
+            let seed: UInt32 = 0x1D4F29B7
+            let entryState: UInt32 = 0x11
+            let validateState: UInt32 = 0x12
+            let rejectState: UInt32 = 0x13
+            let commitState: UInt32 = 0x14
 
-        var sink = CFFReturnSink<Bool>()
-        var encodedState = CFFStateCodec.encode(entryState, seed: seed, salt: salt)
+            var sink = CFFReturnSink<Bool>()
+            var encodedState = CFFStateCodec.encode(entryState, seed: seed, salt: salt)
 
-        while !sink.isResolved {
-            let decodedState = CFFStateCodec.decode(encodedState, seed: seed, salt: salt)
+            while !sink.isResolved {
+                let decodedState = CFFStateCodec.decode(encodedState, seed: seed, salt: salt)
 
-            if decodedState == entryState {
-                encodedState = CFFStateCodec.encode(validateState, seed: seed, salt: salt)
-            } else if decodedState == validateState {
-                let allowed = Self.validTransitions[_state]?.contains(target) ?? false
-                encodedState = CFFStateCodec.encode(allowed ? commitState : rejectState, seed: seed, salt: salt)
-            } else if decodedState == rejectState {
-                #if DEBUG
-                Logger.log("ChallengeSession.transition rejected: \(_state.rawValue) -> \(target.rawValue)")
-                #endif
-                sink.store(false)
-            } else if decodedState == commitState {
-                _state = target
-                #if DEBUG
-                Logger.log("ChallengeSession.transition: \(target.rawValue)")
-                #endif
-                sink.store(true)
-            } else {
-                sink.store(false)
+                if decodedState == entryState {
+                    encodedState = CFFStateCodec.encode(validateState, seed: seed, salt: salt)
+                } else if decodedState == validateState {
+                    let allowed = Self.validTransitions[_state]?.contains(target) ?? false
+                    encodedState = CFFStateCodec.encode(allowed ? commitState : rejectState, seed: seed, salt: salt)
+                } else if decodedState == rejectState {
+                    #if DEBUG
+                    Logger.log("ChallengeSession.transition rejected: \(_state.rawValue) -> \(target.rawValue)")
+                    #endif
+                    sink.store(false)
+                } else if decodedState == commitState {
+                    _state = target
+                    #if DEBUG
+                    Logger.log("ChallengeSession.transition: \(target.rawValue)")
+                    #endif
+                    sink.store(true)
+                } else {
+                    sink.store(false)
+                }
             }
-        }
 
-        return sink.resolve(or: false)
+            return sink.resolve(or: false)
         }
     }
 

@@ -38,19 +38,22 @@ enum FridaBuiltinMemorySignatureScanner {
         let configuration = Configuration.current()
         guard configuration.enabled else { return nil }
 
-        return scanState.withLock { lastScanMonotonicNs in
+        // Check throttle under lock, but run the heavy scan outside.
+        let shouldScan = scanState.withLock { lastScanMonotonicNs -> Bool in
             let now = monotonicNanoseconds()
             if lastScanMonotonicNs != 0 {
                 let delta = now &- lastScanMonotonicNs
                 if delta < configuration.minIntervalNs {
-                    return nil
+                    return false
                 }
             }
-
-            let hit = performScan(configuration: configuration)
-            lastScanMonotonicNs = monotonicNanoseconds()
-            return hit
+            return true
         }
+        guard shouldScan else { return nil }
+
+        let hit = performScan(configuration: configuration)
+        scanState.withLock { $0 = monotonicNanoseconds() }
+        return hit
 #endif
     }
 

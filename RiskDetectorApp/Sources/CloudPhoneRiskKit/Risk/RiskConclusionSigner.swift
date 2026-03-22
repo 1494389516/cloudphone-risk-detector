@@ -158,7 +158,7 @@ private final class KeychainSalt {
     private let service = "CloudPhoneRiskKit"
     private let account = "device_key_salt"
     private let saltLength = 32
-    private let lock = UnfairLock()
+    private let lock = NSLock()  // NSLock: Keychain I/O inside lock
 
     func getOrCreate() -> String {
         getOrCreateWithPersistedFlag().0
