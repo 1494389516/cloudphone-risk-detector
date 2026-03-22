@@ -449,8 +449,12 @@ public final class CloudPhoneEnvironmentProvider: RiskSignalProvider {
         let actualCount = size / MemoryLayout<kinfo_proc>.stride
         for i in 0..<actualCount {
             var info = procList[i]
-            let name = withUnsafePointer(to: &info.kp_proc.p_comm) { ptr -> String in
-                String(cString: UnsafeRawPointer(ptr).assumingMemoryBound(to: CChar.self))
+            var processComm = info.kp_proc.p_comm
+            let commCapacity = MemoryLayout.size(ofValue: processComm)
+            let name = withUnsafePointer(to: &processComm) { ptr in
+                ptr.withMemoryRebound(to: CChar.self, capacity: commCapacity) {
+                    String(cString: $0)
+                }
             }
             let lower = name.lowercased()
             for pattern in patterns {

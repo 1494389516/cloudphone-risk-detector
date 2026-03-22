@@ -127,10 +127,26 @@ static cprisk_anti_debug_watchdog_snapshot_t s_watchdog_snapshot = {
     .last_csops_status_flags = 0u,
     .last_amfi_probe_bits = 0u,
     .last_get_task_allow_suspect = 0u,
+    .last_deny_attach_verify_bits = 0u,
     .deny_attach_verify_anomaly_count = 0u,
     .amfi_cs_flags_anomaly_count = 0u,
     .get_task_allow_anomaly_count = 0u,
 };
+
+static inline uint32_t cprisk_wd_amfi_flags_from_probe_bits_i(uint32_t amfi_probe_bits) {
+    uint32_t flags = 0u;
+    if ((amfi_probe_bits & CPRISK_AMFI_PROBE_CS_DEBUGGED) != 0u ||
+        (amfi_probe_bits & CPRISK_AMFI_PROBE_CS_VALID_ABSENT) != 0u ||
+        (amfi_probe_bits & CPRISK_AMFI_PROBE_CS_HARD_ABSENT) != 0u ||
+        (amfi_probe_bits & CPRISK_AMFI_PROBE_CS_KILL_ABSENT) != 0u) {
+        flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_AMFI_CS_FLAGS;
+    }
+    return flags;
+}
+
+static inline int cprisk_wd_csops_debug_probe_inline_i(void) {
+    return cprisk_csops_debug_check();
+}
 
 static uint64_t cprisk_monotonic_time_ns(void) {
     static uint64_t s_cntfrq = 0u;
@@ -428,6 +444,7 @@ static void cprisk_watchdog_reset_locked(void) {
     s_watchdog_snapshot.last_csops_status_flags = 0u;
     s_watchdog_snapshot.last_amfi_probe_bits = 0u;
     s_watchdog_snapshot.last_get_task_allow_suspect = 0u;
+    s_watchdog_snapshot.last_deny_attach_verify_bits = 0u;
     s_watchdog_snapshot.deny_attach_verify_anomaly_count = 0u;
     s_watchdog_snapshot.amfi_cs_flags_anomaly_count = 0u;
     s_watchdog_snapshot.get_task_allow_anomaly_count = 0u;
@@ -593,6 +610,7 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
     int deny_errno = 0;
     int deny_result = 0;
     int deny_verify_suspicious = 0;
+    uint32_t deny_verify_bits = 0u;
     uint32_t csops_flags_snapshot = 0u;
     uint32_t amfi_probe_bits = 0u;
     uint32_t get_task_allow_suspect = 0u;
@@ -648,6 +666,10 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
     cff_config.release_build = (uint8_t)CPRISK_CFF_RELEASE_BUILD;
     cff_config.enable_fake_states = (uint8_t)CPRISK_CFF_ENABLE_FAKE_STATE;
     cff_config.codec_style = (uint8_t)CPRISK_CFF_CODEC_STYLE_AUTO;
+    /* Prefer real per-codec handler table dispatch (not only direct decode). */
+    cff_config.dispatch_style = (uint8_t)CPRISK_CFF_DISPATCH_FN_TABLE;
+    cff_config.mba_layers = 0u; /* auto-select 2..5 layers */
+    cff_config.symex_guard_budget = CPRISK_CFF_RELEASE_BUILD ? 3u : 0u;
     cff_config.default_action = CPRISK_CFF_RELEASE_BUILD
         ? CPRISK_CFF_DEFAULT_POISON
         : CPRISK_CFF_DEFAULT_FAIL_CLOSED;
@@ -657,7 +679,7 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
             deny_result = cprisk_deny_attach_status(&deny_errno);
             traced_sys = cprisk_is_being_traced_sysctl_only();
             traced_mach = cprisk_mach_trace_suspicious();
-            traced = cprisk_is_being_traced();
+            traced = cprisk_is_being_traced_redundant();
             trace_crosscheck = cprisk_trace_crosscheck_inconsistent();
             cprisk_amfi_entitlement_watchdog_probe(
                 &csops_flags_snapshot,
@@ -667,7 +689,7 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
             deny_verify_suspicious = cprisk_deny_attach_effective_verify(
                 deny_result,
                 deny_errno,
-                NULL
+                &deny_verify_bits
             );
             if (deny_result != 0) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DENY_ATTACH;
@@ -676,10 +698,7 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DENY_ATTACH_VERIFY;
                 cprisk_force_integrity_poison();
             }
-            if ((amfi_probe_bits & CPRISK_AMFI_PROBE_CS_DEBUGGED) != 0u ||
-                (amfi_probe_bits & CPRISK_AMFI_PROBE_CS_VALID_ABSENT) != 0u) {
-                anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_AMFI_CS_FLAGS;
-            }
+            anomaly_flags |= cprisk_wd_amfi_flags_from_probe_bits_i(amfi_probe_bits);
             if (get_task_allow_suspect != 0u) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GET_TASK_ALLOW;
             }
@@ -734,7 +753,7 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
                 software_bp = cprisk_watchdog_scan_software_breakpoints_i();
                 software_bp_strong = software_bp >= CPRISK_WATCHDOG_SOFTWARE_BP_STRONG_THRESHOLD;
                 hw_bp = cprisk_detect_hardware_breakpoints();
-                csops_dbg = cprisk_csops_debug_check();
+                csops_dbg = cprisk_wd_csops_debug_probe_inline_i();
                 suspicious_threads = cprisk_detect_suspicious_threads();
                 single_step = cprisk_detect_single_stepping();
                 timing_anomaly_flags = cprisk_get_last_timing_anomaly_flags();
@@ -816,6 +835,18 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
         }
 
         CPR_CFF_CASE(0x15u): {
+            const uint32_t high_risk_flags =
+                (CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACED |
+                 CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_PORT |
+                 CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACED_PROBE_DIVERGENCE |
+                 CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DENY_ATTACH_VERIFY |
+                 CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_AMFI_CS_FLAGS |
+                 CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GET_TASK_ALLOW |
+                 CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DYLD_INJECTION |
+                 CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_WATCHDOG_PEER_STALL);
+            if ((anomaly_flags & high_risk_flags) != 0u) {
+                cprisk_cff_trigger_symbolic_explosion(cpr_cff_ctx, anomaly_flags & high_risk_flags);
+            }
             if ((anomaly_flags & (CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SIGNAL_PROBE |
                                   CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SOFTWARE_BP |
                                   CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_HARDWARE_BP |
@@ -902,6 +933,7 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
             s_watchdog_snapshot.last_csops_status_flags = csops_flags_snapshot;
             s_watchdog_snapshot.last_amfi_probe_bits = amfi_probe_bits;
             s_watchdog_snapshot.last_get_task_allow_suspect = get_task_allow_suspect;
+            s_watchdog_snapshot.last_deny_attach_verify_bits = deny_verify_bits;
             if (deny_verify_suspicious != 0) {
                 s_watchdog_snapshot.deny_attach_verify_anomaly_count += 1u;
             }

@@ -147,6 +147,10 @@ enum {
     CPRISK_VM_OP_VREG_ALU = 18u,
     /** Load 8 acc bytes into vreg or store vreg into acc (minimal load/store). */
     CPRISK_VM_OP_VREG_MEM = 19u,
+    /** Byte-lane subtract (wrapping uint8) — AArch64 SUB surrogate. */
+    CPRISK_VM_OP_SUB_LANE = 20u,
+    /** Byte-lane multiply mod 256 — AArch64 MADD-as-MUL surrogate. */
+    CPRISK_VM_OP_MUL_LANE = 21u,
     CPRISK_VM_OP_POISON = 0xFFu
 };
 

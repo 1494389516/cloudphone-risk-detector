@@ -466,7 +466,28 @@ public struct VMBytecodeEmitter: Sendable {
         for body in bodies {
             out.append(body)
         }
+        /* Producer-only chunk manifest: documents per-entry bytecode placement (offset/length); CRiskCore ignores. */
+        out.append(Self.serializeProducerChunkManifest(programs: programs))
         return out
+    }
+
+    /// Little-endian magic `'CPVX'` (on-disk bytes `43 50 56 58`) — optional trailer after bytecode bodies.
+    public static let producerChunkManifestMagic: UInt32 = 0x5856_5043
+    public static let producerChunkManifestVersion: UInt32 = 1
+
+    /// Redundant indirection metadata: stable substitute when Mach-O `__TEXT` scatter is unsafe.
+    public static func serializeProducerChunkManifest(
+        programs: [(functionId: UInt64, entryVMA: UInt64, tier: VMBytecodeFormat.TierCode, instructions: [VMInstruction])]
+    ) -> Data {
+        var d = Data()
+        d.appendUInt32(producerChunkManifestMagic)
+        d.appendUInt32(producerChunkManifestVersion)
+        d.appendUInt32(UInt32(programs.count))
+        for p in programs {
+            d.appendUInt64(p.functionId)
+            d.appendUInt32(UInt32(p.instructions.count))
+        }
+        return d
     }
 
     private func encode(program: [VMInstruction], functionId: UInt64, opcodeTable: VMOpcodeTable, options: VMM2EmitOptions) -> Data {

@@ -1032,6 +1032,7 @@ static uint32_t cprisk_clock_crosscheck_i(uint64_t median_ref_ns) {
 
     const uint64_t skew_cm = cprisk_u64_abs_diff_i(dc, dm);
     const uint64_t skew_mk = cprisk_u64_abs_diff_i(dm, dck);
+    const uint64_t skew_ck = cprisk_u64_abs_diff_i(dc, dck);
 
     uint64_t thresh_ns = 5000000ull;
     if (median_ref_ns > 2000000ull) {
@@ -1044,7 +1045,7 @@ static uint32_t cprisk_clock_crosscheck_i(uint64_t median_ref_ns) {
         }
     }
 
-    if (skew_cm > thresh_ns || skew_mk > thresh_ns) {
+    if (skew_cm > thresh_ns || skew_mk > thresh_ns || skew_ck > thresh_ns) {
         return CPRISK_TIMING_ANOMALY_CLOCK_SKEW;
     }
 #else

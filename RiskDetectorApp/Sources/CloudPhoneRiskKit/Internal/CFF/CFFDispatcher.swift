@@ -31,6 +31,15 @@ internal enum CFFDispatcher {
             resolvedStyle = selector == 0 && config.allowConnectorStates ? .switchLoop : .ifElseChain
         case .dualRail:
             resolvedStyle = prefersPrimary ? .switchLoop : .ifElseChain
+        case .functionPointerTable:
+            let table: [CFFDispatcherStyle] = [.switchLoop, .ifElseChain, .switchLoop, .ifElseChain]
+            let seed32 = UInt32(truncatingIfNeeded: config.functionSeed)
+            let ix = Int(CFFOpaquePredicates.boundedSelector(
+                encodedState ^ seed32,
+                salt: salt,
+                modulo: UInt32(table.count)
+            ))
+            resolvedStyle = table[ix]
         case .splitIndirect:
             resolvedStyle = splitIndirectStyle(
                 encodedState: encodedState,

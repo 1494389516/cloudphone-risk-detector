@@ -12,6 +12,8 @@ enum CFFDispatcherStyle: String, CaseIterable, Codable, Sendable {
     case ifElseChain
     case dualRail
     case splitIndirect
+    /// C-side style: decode via per-codec function pointer table (`cprisk_cff_current_state_table`).
+    case functionPointerTable
 }
 
 enum CFFStateCodecStyle: String, CaseIterable, Codable, Sendable {

@@ -110,6 +110,7 @@ final class AntiTamperingTests: XCTestCase {
         lastCsopsStatusFlags: UInt32 = 0,
         lastAmfiProbeBits: UInt32 = 0,
         lastGetTaskAllowSuspect: Bool = false,
+        lastDenyAttachVerifyBits: UInt32 = 0,
         denyAttachVerifyAnomalyCount: UInt64 = 0,
         amfiCsFlagsAnomalyCount: UInt64 = 0,
         getTaskAllowAnomalyCount: UInt64 = 0
@@ -170,6 +171,7 @@ final class AntiTamperingTests: XCTestCase {
             lastCsopsStatusFlags: lastCsopsStatusFlags,
             lastAmfiProbeBits: lastAmfiProbeBits,
             lastGetTaskAllowSuspect: lastGetTaskAllowSuspect,
+            lastDenyAttachVerifyBits: lastDenyAttachVerifyBits,
             denyAttachVerifyAnomalyCount: denyAttachVerifyAnomalyCount,
             amfiCsFlagsAnomalyCount: amfiCsFlagsAnomalyCount,
             getTaskAllowAnomalyCount: getTaskAllowAnomalyCount

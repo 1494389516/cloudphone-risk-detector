@@ -833,7 +833,7 @@ int cprisk_whitebox_evaluate_domain(
 ) {
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
     /* Entry trace check: deterministic but incorrect PRF output */
-    if (cprisk_is_being_traced()) {
+    if (cprisk_is_being_traced_redundant()) {
         const uint8_t *src = input ? input : s_zero_state_i;
         cprisk_sha256_ctx pctx;
         cprisk_sha256_init(&pctx);
@@ -889,7 +889,7 @@ int cprisk_whitebox_evaluate_domain(
 
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
     /* Exit trace check: debugger may attach mid-evaluation */
-    if (rc == 0 && cprisk_is_being_traced()) {
+    if (rc == 0 && cprisk_is_being_traced_redundant()) {
         const uint8_t *src = input ? input : s_zero_state_i;
         cprisk_sha256_ctx pctx;
         cprisk_sha256_init(&pctx);
@@ -919,7 +919,7 @@ int cprisk_derive_effective_signing_key(
 
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
     /* Corrupt runtime material under debugger so derived key is silently wrong */
-    if (cprisk_is_being_traced()) {
+    if (cprisk_is_being_traced_redundant()) {
         for (size_t pi = 0; pi < CPRISK_ARMOR_HASH_SIZE; pi++)
             runtime_material[pi] ^= 0xA5u;
     }
@@ -1009,7 +1009,7 @@ int cprisk_sign_with_derived_key(
 
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
     /* Flip select key bytes under debugger — signature silently invalid */
-    if (cprisk_is_being_traced()) {
+    if (cprisk_is_being_traced_redundant()) {
         derived_key[0]  ^= 0xFFu;
         derived_key[7]  ^= 0xFFu;
         derived_key[15] ^= 0xFFu;

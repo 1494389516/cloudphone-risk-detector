@@ -230,6 +230,7 @@ public final class CPRiskKit: NSObject {
         public let lastCsopsStatusFlags: UInt32
         public let lastAmfiProbeBits: UInt32
         public let lastGetTaskAllowSuspect: Bool
+        public let lastDenyAttachVerifyBits: UInt32
         public let denyAttachVerifyAnomalyCount: UInt64
         public let amfiCsFlagsAnomalyCount: UInt64
         public let getTaskAllowAnomalyCount: UInt64
@@ -1264,6 +1265,7 @@ public final class CPRiskKit: NSObject {
             lastCsopsStatusFlags: raw.last_csops_status_flags,
             lastAmfiProbeBits: raw.last_amfi_probe_bits,
             lastGetTaskAllowSuspect: raw.last_get_task_allow_suspect != 0,
+            lastDenyAttachVerifyBits: raw.last_deny_attach_verify_bits,
             denyAttachVerifyAnomalyCount: raw.deny_attach_verify_anomaly_count,
             amfiCsFlagsAnomalyCount: raw.amfi_cs_flags_anomaly_count,
             getTaskAllowAnomalyCount: raw.get_task_allow_anomaly_count

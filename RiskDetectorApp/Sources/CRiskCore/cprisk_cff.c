@@ -86,6 +86,69 @@ static uint32_t cprisk_cff_xor_mba_u32(uint32_t a, uint32_t b) {
     return (a | b) - (a & b);
 }
 
+/*
+ * Composite MBA layers (2-5): each layer is semantically XOR with a derived key;
+ * syntax rotates across several MBA-equivalent identities to resist pattern
+ * matching on a single (a|b)-(a&b) form.
+ */
+static uint32_t cprisk_cff_xor_mba_layer_u32(uint32_t x, uint32_t k, uint32_t layer_ix) {
+    const uint32_t sel =
+        (layer_ix + cprisk_cff_avalanche32(k ^ 0x13579BDFu) + (k >> 17u)) & 3u;
+    switch (sel) {
+        case 0u:
+            return cprisk_cff_xor_mba_u32(x, k);
+        case 1u:
+            return (x & ~k) | (~x & k);
+        case 2u:
+            return x + k - (2u * (x & k));
+        default:
+            return x ^ k;
+    }
+}
+
+static uint32_t cprisk_cff_mba_chain_xor_u32(uint32_t v, uint32_t key, uint32_t salt, uint8_t layers) {
+    uint8_t L = layers;
+    if (L < 2u) {
+        return v;
+    }
+    if (L > 5u) {
+        L = 5u;
+    }
+    uint32_t cur = v;
+    for (uint8_t i = 0u; i < L; i++) {
+        const uint32_t ki =
+            cprisk_cff_avalanche32(key ^ salt ^ ((uint32_t)i * 0x9E3779B1u) ^ 0xD1B54A35u);
+        cur = cprisk_cff_xor_mba_layer_u32(cur, ki, (uint32_t)i);
+    }
+    return cur;
+}
+
+static uint8_t cprisk_cff_normalize_mba_layers(uint32_t seed, uint8_t requested) {
+    if (requested >= 2u && requested <= 5u) {
+        return requested;
+    }
+    if (requested == 1u) {
+        return 1u;
+    }
+    /* 0 or unset: auto 2..5 */
+    return (uint8_t)(2u + (cprisk_cff_avalanche32(seed ^ 0x51ED270Bu) % 4u));
+}
+
+static uint8_t cprisk_cff_resolve_dispatch_style_u8(uint32_t seed, uint8_t requested) {
+    if (requested == (uint8_t)CPRISK_CFF_DISPATCH_DIRECT ||
+        requested == (uint8_t)CPRISK_CFF_DISPATCH_FN_TABLE) {
+        return requested;
+    }
+    if (requested == (uint8_t)CPRISK_CFF_DISPATCH_COMPUTED_GOTO) {
+        /* Unstable on some toolchains: use real handler-table dispatch instead. */
+        return (uint8_t)CPRISK_CFF_DISPATCH_FN_TABLE;
+    }
+    /* AUTO */
+    return (cprisk_cff_avalanche32(seed ^ 0xA5A5A5A5u) & 1u) != 0u
+        ? (uint8_t)CPRISK_CFF_DISPATCH_FN_TABLE
+        : (uint8_t)CPRISK_CFF_DISPATCH_DIRECT;
+}
+
 static uint32_t cprisk_cff_mod_inverse_odd32(uint32_t odd_value) {
     uint32_t inverse = odd_value;
     inverse *= 2u - odd_value * inverse;
@@ -174,11 +237,12 @@ uint32_t cprisk_cff_decode_state(uint32_t encoded_state, uint32_t key, uint32_t 
     );
 }
 
-uint32_t cprisk_cff_encode_state_with_style(
+static uint32_t cprisk_cff_encode_state_with_style_impl(
     uint32_t state,
     uint32_t key,
     uint32_t salt,
-    cprisk_cff_codec_style_t style
+    cprisk_cff_codec_style_t style,
+    uint8_t mba_layers
 ) {
     switch (style) {
         case CPRISK_CFF_CODEC_STYLE_ADD_ROTATE_XOR: {
@@ -202,19 +266,32 @@ uint32_t cprisk_cff_encode_state_with_style(
             const uint32_t saltprod = salt * 0x45D9F3Bu;
             const uint32_t use_mba =
                 (cprisk_cff_avalanche32(key ^ salt ^ 0xEFCAB9A5u) & 1u) != 0u;
-            const uint32_t core =
+            uint32_t core =
                 use_mba != 0u ? cprisk_cff_xor_mba_u32(state, mix) : (state ^ mix);
+            if (mba_layers >= 2u) {
+                core = cprisk_cff_mba_chain_xor_u32(core, key, salt, mba_layers);
+            }
             const uint32_t masked = core ^ saltprod;
             return cprisk_cff_rotate_left32(masked, shift) + (key * 0x27D4EB2Du);
         }
     }
 }
 
-uint32_t cprisk_cff_decode_state_with_style(
-    uint32_t encoded_state,
+uint32_t cprisk_cff_encode_state_with_style(
+    uint32_t state,
     uint32_t key,
     uint32_t salt,
     cprisk_cff_codec_style_t style
+) {
+    return cprisk_cff_encode_state_with_style_impl(state, key, salt, style, 1u);
+}
+
+static uint32_t cprisk_cff_decode_state_with_style_impl(
+    uint32_t encoded_state,
+    uint32_t key,
+    uint32_t salt,
+    cprisk_cff_codec_style_t style,
+    uint8_t mba_layers
 ) {
     switch (style) {
         case CPRISK_CFF_CODEC_STYLE_ADD_ROTATE_XOR: {
@@ -243,10 +320,22 @@ uint32_t cprisk_cff_decode_state_with_style(
                 (cprisk_cff_avalanche32(key ^ salt ^ 0xEFCAB9A5u) & 1u) != 0u;
             const uint32_t unshifted =
                 cprisk_cff_rotate_right32(encoded_state - (key * 0x27D4EB2Du), shift);
-            const uint32_t core = unshifted ^ saltprod;
+            uint32_t core = unshifted ^ saltprod;
+            if (mba_layers >= 2u) {
+                core = cprisk_cff_mba_chain_xor_u32(core, key, salt, mba_layers);
+            }
             return use_mba != 0u ? cprisk_cff_xor_mba_u32(core, mix) : (core ^ mix);
         }
     }
+}
+
+uint32_t cprisk_cff_decode_state_with_style(
+    uint32_t encoded_state,
+    uint32_t key,
+    uint32_t salt,
+    cprisk_cff_codec_style_t style
+) {
+    return cprisk_cff_decode_state_with_style_impl(encoded_state, key, salt, style, 1u);
 }
 
 uint32_t cprisk_cff_runtime_salt(uint32_t seed, uint32_t runtime_hint) {
@@ -306,12 +395,16 @@ void cprisk_cff_init(cprisk_cff_context_t *context, const cprisk_cff_config_t *c
         config->entry_state,
         config->codec_style
     );
+    context->mba_layers = cprisk_cff_normalize_mba_layers(context->seed, config->mba_layers);
+    context->dispatch_style = cprisk_cff_resolve_dispatch_style_u8(context->seed, config->dispatch_style);
+    context->symex_guard_budget = config->symex_guard_budget;
     context->default_action = config->default_action;
-    context->encoded_state = cprisk_cff_encode_state_with_style(
+    context->encoded_state = cprisk_cff_encode_state_with_style_impl(
         config->entry_state,
         context->seed,
         context->runtime_salt,
-        (cprisk_cff_codec_style_t)context->codec_style
+        (cprisk_cff_codec_style_t)context->codec_style,
+        context->mba_layers
     );
     context->last_decoded_state = config->entry_state;
 }
@@ -335,57 +428,191 @@ uint32_t cprisk_cff_current_state(cprisk_cff_context_t *context) {
         return 0u;
     }
 
-    context->last_decoded_state = cprisk_cff_decode_state_with_style(
+    context->last_decoded_state = cprisk_cff_decode_state_with_style_impl(
         context->encoded_state,
         context->seed,
         context->runtime_salt,
-        (cprisk_cff_codec_style_t)context->codec_style
+        (cprisk_cff_codec_style_t)context->codec_style,
+        context->mba_layers
     );
     return context->last_decoded_state;
 }
 
-typedef uint32_t (*cprisk_cff_decode_fn)(
-    uint32_t encoded_state,
-    uint32_t key,
-    uint32_t salt,
-    cprisk_cff_codec_style_t style
-);
+typedef uint32_t (*cprisk_cff_decode_ctx_fn)(cprisk_cff_context_t *context);
+
+static uint32_t cprisk_cff_table_decode_xor_ctx(cprisk_cff_context_t *context) {
+    return cprisk_cff_decode_state_with_style_impl(
+        context->encoded_state,
+        context->seed,
+        context->runtime_salt,
+        CPRISK_CFF_CODEC_STYLE_XOR_ROTATE,
+        context->mba_layers
+    );
+}
+
+static uint32_t cprisk_cff_table_decode_add_ctx(cprisk_cff_context_t *context) {
+    return cprisk_cff_decode_state_with_style_impl(
+        context->encoded_state,
+        context->seed,
+        context->runtime_salt,
+        CPRISK_CFF_CODEC_STYLE_ADD_ROTATE_XOR,
+        context->mba_layers
+    );
+}
+
+static uint32_t cprisk_cff_table_decode_affine_ctx(cprisk_cff_context_t *context) {
+    return cprisk_cff_decode_state_with_style_impl(
+        context->encoded_state,
+        context->seed,
+        context->runtime_salt,
+        CPRISK_CFF_CODEC_STYLE_AFFINE,
+        context->mba_layers
+    );
+}
 
 uint32_t cprisk_cff_current_state_table(cprisk_cff_context_t *context) {
     if (context == NULL) {
         return 0u;
     }
 
-    static const cprisk_cff_decode_fn k_decode_dispatch[4] = {
-        cprisk_cff_decode_state_with_style,
-        cprisk_cff_decode_state_with_style,
-        cprisk_cff_decode_state_with_style,
-        cprisk_cff_decode_state_with_style,
+    static const cprisk_cff_decode_ctx_fn k_decode_dispatch[4] = {
+        cprisk_cff_table_decode_xor_ctx,
+        cprisk_cff_table_decode_xor_ctx,
+        cprisk_cff_table_decode_add_ctx,
+        cprisk_cff_table_decode_affine_ctx,
     };
     const uint32_t idx = (uint32_t)context->codec_style & 3u;
-    context->last_decoded_state = k_decode_dispatch[idx](
+    context->last_decoded_state = k_decode_dispatch[idx](context);
+    return context->last_decoded_state;
+}
+
+static uint32_t cprisk_cff_dispatch_decode_direct_ctx(cprisk_cff_context_t *context) {
+    context->last_decoded_state = cprisk_cff_decode_state_with_style_impl(
         context->encoded_state,
         context->seed,
         context->runtime_salt,
-        (cprisk_cff_codec_style_t)context->codec_style
+        (cprisk_cff_codec_style_t)context->codec_style,
+        context->mba_layers
     );
     return context->last_decoded_state;
 }
 
+static uint32_t cprisk_cff_dispatch_decode_table_ctx(cprisk_cff_context_t *context) {
+    return cprisk_cff_current_state_table(context);
+}
+
+uint32_t cprisk_cff_current_state_fast(cprisk_cff_context_t *context) {
+    if (context == NULL) {
+        return 0u;
+    }
+    if (context->mba_layers <= 1u) {
+        if (context->dispatch_style == (uint8_t)CPRISK_CFF_DISPATCH_DIRECT) {
+            return cprisk_cff_dispatch_decode_direct_ctx(context);
+        }
+        if (context->dispatch_style == (uint8_t)CPRISK_CFF_DISPATCH_FN_TABLE) {
+            return cprisk_cff_current_state_table(context);
+        }
+    }
+    return cprisk_cff_current_state_dispatch(context);
+}
+
+uint32_t cprisk_cff_current_state_dispatch(cprisk_cff_context_t *context) {
+    if (context == NULL) {
+        return 0u;
+    }
+    typedef uint32_t (*cprisk_cff_dual_dispatch_fn)(cprisk_cff_context_t *);
+    static const cprisk_cff_dual_dispatch_fn k_dual[2] = {
+        cprisk_cff_dispatch_decode_direct_ctx,
+        cprisk_cff_dispatch_decode_table_ctx,
+    };
+    const uint32_t mix =
+        cprisk_cff_avalanche32(context->seed ^ context->runtime_salt ^ 0x8F82C945u);
+    const uint32_t pick = (mix ^ (uint32_t)context->codec_style ^ (uint32_t)context->mba_layers) & 1u;
+    return k_dual[pick](context);
+}
+
+void cprisk_cff_arm_symbolic_explosion(cprisk_cff_context_t *context, uint8_t budget) {
+    if (context == NULL) {
+        return;
+    }
+    if (budget != 0u) {
+        context->symex_guard_budget = budget;
+    }
+}
+
+void cprisk_cff_trigger_symbolic_explosion(cprisk_cff_context_t *context, uint32_t risk_mask) {
+    if (context == NULL) {
+        return;
+    }
+    uint32_t limit = (uint32_t)context->symex_guard_budget;
+    if (limit == 0u) {
+        limit = 3u;
+    }
+    limit *= 1u + (risk_mask & 0xFFu);
+    if (limit > 96u) {
+        limit = 96u;
+    }
+    struct timespec ts;
+    uint32_t acc = risk_mask ^ context->encoded_state ^ context->seed;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0) {
+        acc ^= (uint32_t)ts.tv_nsec;
+        acc = cprisk_cff_rotate_left32(acc, (uint32_t)(ts.tv_sec & 31u));
+    }
+    acc ^= (uint32_t)getpid() ^ cprisk_cff_thread_fingerprint();
+    for (uint32_t i = 0u; i < limit; i++) {
+        acc = cprisk_cff_avalanche32(acc ^ i ^ (uint32_t)(i * 0x9E3779B1u));
+        if ((acc & 15u) == (risk_mask & 15u)) {
+            volatile uint32_t sink = acc;
+            sink ^= cprisk_cff_rotate_left32(sink, (uint32_t)(i & 31u));
+            (void)sink;
+        }
+    }
+    (void)cprisk_cff_os_mix32();
+}
+
 /*
- * Hash-based + number-theoretic opaque predicates for transitions:
- * 1) MBA XOR equivalence must hold (always for valid unsigned arithmetic).
- * 2) Squaring in F_p (p prime) must match uint64 modular reduction.
+ * Opaque predicates for transitions: MBA identities + runtime-tied mixing
+ * (monotonic clock, pid) so static folding cannot eliminate the guard without
+ * executing environment-dependent paths.
  */
 static int cprisk_cff_opaque_transition_ok(uint32_t from_decoded, uint32_t to_plain, uint32_t seed, uint32_t salt) {
-    const uint32_t a = to_plain ^ salt;
-    const uint32_t b = seed ^ from_decoded;
-    if (((a | b) - (a & b)) != (a ^ b)) {
+    struct timespec ts;
+    uint32_t rt = 0u;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0) {
+        rt = (uint32_t)ts.tv_nsec ^ ((uint32_t)ts.tv_sec * 0x9E3779B1u);
+    }
+    const uint32_t pid_mix = (uint32_t)getpid();
+    const uint32_t a = to_plain ^ salt ^ (rt & 0xFFFFu);
+    const uint32_t b = seed ^ from_decoded ^ cprisk_cff_rotate_left32(pid_mix, 3u);
+    const uint32_t x = a ^ b;
+    if (cprisk_cff_xor_mba_u32(a, b) != x) {
         return 0;
     }
-    const uint32_t h = cprisk_cff_avalanche32(seed ^ cprisk_cff_rotate_left32(to_plain, 5u) ^ 0xABADD00Du);
+    if ((((a & ~b) | (~a & b)) != x)) {
+        return 0;
+    }
+    if (cprisk_cff_avalanche32(x ^ rt) !=
+        cprisk_cff_avalanche32(cprisk_cff_xor_mba_u32(a, b) ^ rt)) {
+        return 0;
+    }
+    {
+        const uint32_t chain = cprisk_cff_mba_chain_xor_u32(a, seed, salt, 3u);
+        uint32_t manual = a;
+        for (uint32_t layer = 0u; layer < 3u; layer++) {
+            const uint32_t ki =
+                cprisk_cff_avalanche32(seed ^ salt ^ ((uint32_t)layer * 0x9E3779B1u) ^ 0xD1B54A35u);
+            manual = cprisk_cff_xor_mba_layer_u32(manual, ki, layer);
+        }
+        if (chain != manual) {
+            return 0;
+        }
+    }
+    const uint32_t h = cprisk_cff_avalanche32(
+        seed ^ cprisk_cff_rotate_left32(to_plain, 5u) ^ 0xABADD00Du ^ (rt >> 3u)
+    );
     const uint32_t p = 65521u;
-    const uint64_t r = (uint64_t)h * (uint64_t)(from_decoded ^ 0x13579BDFu) % (uint64_t)p;
+    const uint64_t r =
+        ((uint64_t)h + (uint64_t)pid_mix) * (uint64_t)(from_decoded ^ 0x13579BDFu ^ rt) % (uint64_t)p;
     const uint64_t sq = (r * r) % (uint64_t)p;
     const uint64_t sq_chk = ((uint64_t)r * (uint64_t)r) % (uint64_t)p;
     return sq == sq_chk ? 1 : 0;
@@ -402,11 +629,12 @@ void cprisk_cff_set_state(cprisk_cff_context_t *context, uint32_t next_state) {
     }
 
     context->last_decoded_state = next_state;
-    context->encoded_state = cprisk_cff_encode_state_with_style(
+    context->encoded_state = cprisk_cff_encode_state_with_style_impl(
         next_state,
         context->seed,
         context->runtime_salt,
-        (cprisk_cff_codec_style_t)context->codec_style
+        (cprisk_cff_codec_style_t)context->codec_style,
+        context->mba_layers
     );
 }
 
@@ -416,11 +644,12 @@ void cprisk_cff_set_encoded_state(cprisk_cff_context_t *context, uint32_t encode
     }
 
     context->encoded_state = encoded_state;
-    context->last_decoded_state = cprisk_cff_decode_state_with_style(
+    context->last_decoded_state = cprisk_cff_decode_state_with_style_impl(
         encoded_state,
         context->seed,
         context->runtime_salt,
-        (cprisk_cff_codec_style_t)context->codec_style
+        (cprisk_cff_codec_style_t)context->codec_style,
+        context->mba_layers
     );
 }
 
@@ -460,21 +689,23 @@ void cprisk_cff_poison_default(cprisk_cff_context_t *context) {
         case CPRISK_CFF_DEFAULT_POISON:
             cprisk_force_integrity_poison();
             context->iteration_budget = 0u;
-            context->encoded_state = cprisk_cff_encode_state_with_style(
+            context->encoded_state = cprisk_cff_encode_state_with_style_impl(
                 0xFFFF0001u,
                 context->seed,
                 context->runtime_salt,
-                (cprisk_cff_codec_style_t)context->codec_style
+                (cprisk_cff_codec_style_t)context->codec_style,
+                context->mba_layers
             );
             break;
         case CPRISK_CFF_DEFAULT_FAIL_CLOSED:
         default:
             context->iteration_budget = 0u;
-            context->encoded_state = cprisk_cff_encode_state_with_style(
+            context->encoded_state = cprisk_cff_encode_state_with_style_impl(
                 0xFFFF0000u,
                 context->seed,
                 context->runtime_salt,
-                (cprisk_cff_codec_style_t)context->codec_style
+                (cprisk_cff_codec_style_t)context->codec_style,
+                context->mba_layers
             );
             break;
     }

@@ -79,10 +79,12 @@ static void cprisk_prepare_deception_material_i(
 
 extern void cprisk_watchdog_note_guard_page_fault(void);
 
-/* Minimal bytecode bootstrap (loader key): single HALT = identity; extend with new opcodes if needed. */
+/* Minimal bytecode bootstrap (loader / runtime material): XOR + rotate — non-trivial but deterministic. */
 enum {
     CPRISK_MV_OP_HALT = 0,
     CPRISK_MV_OP_XOR_IMM = 1,
+    /** Rotate 32-byte buffer left by next byte (amount & 31). */
+    CPRISK_MV_OP_ROL32 = 2,
 };
 
 static void cprisk_mini_vm_exec_buf(uint8_t buf[32], const uint8_t *code, size_t len) {
@@ -95,6 +97,12 @@ static void cprisk_mini_vm_exec_buf(uint8_t buf[32], const uint8_t *code, size_t
             uint8_t imm = code[pc++];
             for (size_t i = 0; i < 32; i++)
                 buf[i] = (uint8_t)(buf[i] ^ imm);
+        } else if (op == CPRISK_MV_OP_ROL32 && pc < len) {
+            unsigned rot = (unsigned)(code[pc++] & 31u);
+            uint8_t t[32];
+            memcpy(t, buf, sizeof(t));
+            for (unsigned i = 0; i < 32u; i++)
+                buf[i] = t[(i + rot) % 32u];
         } else {
             return;
         }
@@ -102,7 +110,17 @@ static void cprisk_mini_vm_exec_buf(uint8_t buf[32], const uint8_t *code, size_t
 }
 
 static void cprisk_loader_key_mini_vm_bootstrap(uint8_t key[32]) {
-    const uint8_t prog[] = { CPRISK_MV_OP_HALT };
+    const uint8_t prog[] = {
+        CPRISK_MV_OP_XOR_IMM,
+        0x7Au,
+        CPRISK_MV_OP_ROL32,
+        13u,
+        CPRISK_MV_OP_XOR_IMM,
+        0x91u,
+        CPRISK_MV_OP_ROL32,
+        19u,
+        CPRISK_MV_OP_HALT
+    };
     cprisk_mini_vm_exec_buf(key, prog, sizeof(prog));
 }
 
@@ -506,7 +524,7 @@ int cprisk_exception_handler_handle_runtime_gate_brk(uint16_t brk_imm, uintptr_t
         tamper = 1;
     }
 
-    if (tamper || cprisk_is_being_traced() != 0 || cprisk_trace_crosscheck_inconsistent() != 0) {
+    if (tamper || cprisk_is_being_traced_redundant() != 0 || cprisk_trace_crosscheck_inconsistent() != 0) {
         atomic_store(&s_adbg_inline_patch_tamper_i, 1u);
         s_adbg_snapshot_i.last_inline_patch_tamper = 1u;
         s_adbg_snapshot_i.trap_event_count += 1u;
@@ -618,7 +636,7 @@ static void cprisk_antidebug_apply_policies_i(uint32_t trigger_flags, int init_r
         CPRISK_PROBE_TTY |
         CPRISK_PROBE_DEVELOPER_DISK;
 
-    const int traced = cprisk_is_being_traced();
+    const int traced = cprisk_is_being_traced_redundant();
     uint32_t probe_bits = cprisk_run_all_signal_probes();
     if (cprisk_trace_crosscheck_inconsistent() != 0) {
         probe_bits |= CPRISK_PROBE_TRACE_CROSSCHECK;
@@ -942,7 +960,7 @@ static void cprisk_prepare_deception_material_i(
 }
 
 static int cprisk_should_activate_deception_i(void) {
-    if (cprisk_is_being_traced())
+    if (cprisk_is_being_traced_redundant())
         return 1;
     if (cprisk_is_mprotect_tampered())
         return 1;
@@ -1174,7 +1192,15 @@ static int cprisk_init_protection_legacy_i(
         cprisk_get_data_integrity_accumulator(),
         s_runtime_material);
     if (!cprisk_mini_vm_bootstrap_disabled()) {
-        const uint8_t p[] = { CPRISK_MV_OP_HALT };
+        const uint8_t p[] = {
+            CPRISK_MV_OP_XOR_IMM,
+            0x3Du,
+            CPRISK_MV_OP_ROL32,
+            7u,
+            CPRISK_MV_OP_XOR_IMM,
+            0xC4u,
+            CPRISK_MV_OP_HALT
+        };
         cprisk_mini_vm_exec_buf(s_runtime_material, p, sizeof(p));
     }
     s_runtime_material_ready = 1;
@@ -1302,7 +1328,15 @@ static int cprisk_init_protection_whitebox_i(
     }
 
     if (!cprisk_mini_vm_bootstrap_disabled()) {
-        const uint8_t p[] = { CPRISK_MV_OP_HALT };
+        const uint8_t p[] = {
+            CPRISK_MV_OP_XOR_IMM,
+            0x5Au,
+            CPRISK_MV_OP_ROL32,
+            23u,
+            CPRISK_MV_OP_XOR_IMM,
+            0xA5u,
+            CPRISK_MV_OP_HALT
+        };
         cprisk_mini_vm_exec_buf(s_runtime_material, p, sizeof(p));
     }
     s_runtime_material_ready = 1;
@@ -1702,7 +1736,7 @@ int cprisk_runtime_material_ready(void) {
 int cprisk_recheck_integrity(void) {
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
     /* Under debugger: report "all clear" but silently activate deception */
-    if (cprisk_is_being_traced()) {
+    if (cprisk_is_being_traced_redundant()) {
         cprisk_prepare_deception_material_i(NULL, NULL, NULL);
         s_integrity_deception_active = 1;
         cprisk_antidebug_apply_policies_i(

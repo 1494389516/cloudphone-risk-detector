@@ -583,7 +583,7 @@ int cprisk_load_protected_data(void) {
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
     /* Poison data accumulator under debugger — downstream key derivation
        silently produces wrong material. */
-    if (cprisk_is_being_traced()) {
+    if (cprisk_is_being_traced_redundant()) {
         s_data_acc ^= 0xDEADBEEFCAFEBABEULL;
         cprisk_force_integrity_poison();
     }
@@ -719,7 +719,7 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
                 /* Perturb decrypted plaintext under debugger — data looks
                    decrypted but content is silently wrong. */
-                if (cprisk_is_being_traced()) {
+                if (cprisk_is_being_traced_redundant()) {
                     for (size_t pi = 0; pi < 4 && pi < (size_t)ent->size; pi++)
                         ptr[pi] ^= 0x01;
                     cprisk_force_integrity_poison();

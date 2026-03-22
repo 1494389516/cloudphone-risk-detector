@@ -7,6 +7,8 @@
 
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
+#include <time.h>
+#include <unistd.h>
 #endif
 
 #define CPRISK_VM_MAX_STEPS 65536u
@@ -187,6 +189,15 @@ static uint8_t cprisk_vm_add_equiv_i(uint8_t lhs, uint8_t rhs, uint32_t style) {
     default:
         return (uint8_t)((L + R) & 0xFFu);
     }
+}
+
+/** lane_family: 0 = ADD polymorphic, 1 = SUB (wrapping), 2 = MUL mod 256. */
+static uint8_t cprisk_vm_lane_combine_i(uint8_t lhs, uint8_t rhs, uint32_t style, uint32_t lane_family) {
+    if (lane_family == 1u)
+        return (uint8_t)(lhs - rhs);
+    if (lane_family == 2u)
+        return (uint8_t)(lhs * rhs);
+    return cprisk_vm_add_equiv_i(lhs, rhs, style);
 }
 
 static uint8_t cprisk_vm_xor_equiv_i(uint8_t lhs, uint8_t rhs, uint32_t style) {
@@ -386,13 +397,14 @@ static int cprisk_vm_enc_pc_advance_i(uint64_t *enc_pc, uint64_t vpc_a, cprisk_v
     return 1;
 }
 
-static void cprisk_vm_add_apply_i(uint8_t acc[32],
-                                  uint64_t imm,
-                                  uint32_t steps,
-                                  uint32_t variant,
-                                  uint32_t semantic_family,
-                                  uint64_t func_id,
-                                  uint32_t pc) {
+static void cprisk_vm_lane_family_apply_i(uint8_t acc[32],
+                                          uint64_t imm,
+                                          uint32_t steps,
+                                          uint32_t variant,
+                                          uint32_t semantic_family,
+                                          uint64_t func_id,
+                                          uint32_t pc,
+                                          uint32_t lane_family) {
     uint8_t lanes[8];
     uint8_t idxs[8];
     uint8_t snapshot[8];
@@ -407,7 +419,7 @@ static void cprisk_vm_add_apply_i(uint8_t acc[32],
     case 0u:
         for (uint32_t i = 0; i < 8u; i++) {
             uint32_t style = semantic_family + i;
-            acc[idxs[i]] = cprisk_vm_add_equiv_i(acc[idxs[i]], lanes[i], style);
+            acc[idxs[i]] = cprisk_vm_lane_combine_i(acc[idxs[i]], lanes[i], style, lane_family);
         }
         break;
     case 1u:
@@ -416,7 +428,7 @@ static void cprisk_vm_add_apply_i(uint8_t acc[32],
         for (int i = 7; i >= 0; i--) {
             uint32_t u = (uint32_t)i;
             uint32_t style = variant + semantic_family + u;
-            acc[idxs[u]] = cprisk_vm_add_equiv_i(snapshot[u], lanes[u], style);
+            acc[idxs[u]] = cprisk_vm_lane_combine_i(snapshot[u], lanes[u], style, lane_family);
         }
         break;
     case 2u:
@@ -424,19 +436,19 @@ static void cprisk_vm_add_apply_i(uint8_t acc[32],
             uint32_t i = (t * 5u + variant + semantic_family) & 7u;
             uint32_t style = variant ^ semantic_family ^ i;
             uint8_t cur = acc[idxs[i]];
-            acc[idxs[i]] = cprisk_vm_add_equiv_i(cur, lanes[i], style);
+            acc[idxs[i]] = cprisk_vm_lane_combine_i(cur, lanes[i], style, lane_family);
         }
         break;
     case 3u:
         for (uint32_t i = 0; i < 8u; i++) {
             uint32_t style = (i * 5u) ^ (uint32_t)(pc & 0x1Fu);
-            acc[idxs[i]] = cprisk_vm_add_equiv_i(acc[idxs[i]], lanes[i], style);
+            acc[idxs[i]] = cprisk_vm_lane_combine_i(acc[idxs[i]], lanes[i], style, lane_family);
         }
         break;
     case 4u:
         for (uint32_t i = 0; i < 8u; i++) {
             uint32_t style = semantic_family + (i ^ 3u);
-            acc[idxs[i]] = cprisk_vm_add_equiv_i(acc[idxs[i]], lanes[i], style);
+            acc[idxs[i]] = cprisk_vm_lane_combine_i(acc[idxs[i]], lanes[i], style, lane_family);
         }
         break;
     case 5u:
@@ -444,7 +456,7 @@ static void cprisk_vm_add_apply_i(uint8_t acc[32],
             snapshot[i] = acc[idxs[i]];
         for (uint32_t u = 0; u < 8u; u++) {
             uint32_t style = (uint32_t)steps + u * 3u;
-            acc[idxs[u]] = cprisk_vm_add_equiv_i(snapshot[u], lanes[u], style);
+            acc[idxs[u]] = cprisk_vm_lane_combine_i(snapshot[u], lanes[u], style, lane_family);
         }
         break;
     case 6u:
@@ -452,24 +464,24 @@ static void cprisk_vm_add_apply_i(uint8_t acc[32],
             uint32_t i = (t * 3u + variant * 2u) & 7u;
             uint32_t style = semantic_family + i * 5u;
             uint8_t cur = acc[idxs[i]];
-            acc[idxs[i]] = cprisk_vm_add_equiv_i(cur, lanes[i], style);
+            acc[idxs[i]] = cprisk_vm_lane_combine_i(cur, lanes[i], style, lane_family);
         }
         break;
     case 7u:
         for (int i = 0; i < 8; i += 2) {
             uint32_t style = (uint32_t)i + variant;
-            acc[idxs[(uint32_t)i]] = cprisk_vm_add_equiv_i(acc[idxs[(uint32_t)i]], lanes[(uint32_t)i], style);
+            acc[idxs[(uint32_t)i]] = cprisk_vm_lane_combine_i(acc[idxs[(uint32_t)i]], lanes[(uint32_t)i], style, lane_family);
         }
         for (int i = 1; i < 8; i += 2) {
             uint32_t style = (uint32_t)i + semantic_family;
-            acc[idxs[(uint32_t)i]] = cprisk_vm_add_equiv_i(acc[idxs[(uint32_t)i]], lanes[(uint32_t)i], style);
+            acc[idxs[(uint32_t)i]] = cprisk_vm_lane_combine_i(acc[idxs[(uint32_t)i]], lanes[(uint32_t)i], style, lane_family);
         }
         break;
     case 8u:
         for (uint32_t i = 0; i < 8u; i++) {
             uint32_t j = (7u - i);
             uint32_t style = variant + j * 13u;
-            acc[idxs[j]] = cprisk_vm_add_equiv_i(acc[idxs[j]], lanes[j], style);
+            acc[idxs[j]] = cprisk_vm_lane_combine_i(acc[idxs[j]], lanes[j], style, lane_family);
         }
         break;
     case 9u:
@@ -477,7 +489,7 @@ static void cprisk_vm_add_apply_i(uint8_t acc[32],
             uint32_t i = (t * 11u + (uint32_t)(func_id & 7u)) & 7u;
             uint32_t style = (uint32_t)func_id + t + semantic_family;
             uint8_t cur = acc[idxs[i]];
-            acc[idxs[i]] = cprisk_vm_add_equiv_i(cur, lanes[i], style);
+            acc[idxs[i]] = cprisk_vm_lane_combine_i(cur, lanes[i], style, lane_family);
         }
         break;
     case 10u:
@@ -486,7 +498,7 @@ static void cprisk_vm_add_apply_i(uint8_t acc[32],
         for (uint32_t u = 0; u < 8u; u++) {
             uint32_t k = (u ^ 3u) & 7u;
             uint32_t style = variant ^ u ^ k;
-            acc[idxs[k]] = cprisk_vm_add_equiv_i(snapshot[k], lanes[k], style);
+            acc[idxs[k]] = cprisk_vm_lane_combine_i(snapshot[k], lanes[k], style, lane_family);
         }
         break;
     case 11u:
@@ -494,13 +506,13 @@ static void cprisk_vm_add_apply_i(uint8_t acc[32],
             uint32_t i = (t ^ (semantic_family & 7u)) & 7u;
             uint32_t style = (uint32_t)(func_id >> 8) ^ t;
             uint8_t cur = acc[idxs[i]];
-            acc[idxs[i]] = cprisk_vm_add_equiv_i(cur, lanes[i], style);
+            acc[idxs[i]] = cprisk_vm_lane_combine_i(cur, lanes[i], style, lane_family);
         }
         break;
     case 12u:
         for (uint32_t i = 0; i < 8u; i++) {
             uint32_t style = pc + i * 7u;
-            acc[idxs[i]] = cprisk_vm_add_equiv_i(acc[idxs[i]], lanes[i], style);
+            acc[idxs[i]] = cprisk_vm_lane_combine_i(acc[idxs[i]], lanes[i], style, lane_family);
         }
         break;
     case 13u:
@@ -508,7 +520,7 @@ static void cprisk_vm_add_apply_i(uint8_t acc[32],
             uint32_t i = (t * 2u + 3u) & 7u;
             uint32_t style = variant + t + (uint32_t)(pc & 5u);
             uint8_t cur = acc[idxs[i]];
-            acc[idxs[i]] = cprisk_vm_add_equiv_i(cur, lanes[i], style);
+            acc[idxs[i]] = cprisk_vm_lane_combine_i(cur, lanes[i], style, lane_family);
         }
         break;
     case 14u:
@@ -517,7 +529,7 @@ static void cprisk_vm_add_apply_i(uint8_t acc[32],
         for (int i = 7; i >= 0; i--) {
             uint32_t u = (uint32_t)i;
             uint32_t style = (semantic_family * 3u) + u ^ variant;
-            acc[idxs[u]] = cprisk_vm_add_equiv_i(snapshot[u], lanes[u], style);
+            acc[idxs[u]] = cprisk_vm_lane_combine_i(snapshot[u], lanes[u], style, lane_family);
         }
         break;
     default:
@@ -525,10 +537,40 @@ static void cprisk_vm_add_apply_i(uint8_t acc[32],
             uint32_t i = (t + variant) & 7u;
             uint32_t style = semantic_family + (uint32_t)(func_id & 0xFFu) + t;
             uint8_t cur = acc[idxs[i]];
-            acc[idxs[i]] = cprisk_vm_add_equiv_i(cur, lanes[i], style);
+            acc[idxs[i]] = cprisk_vm_lane_combine_i(cur, lanes[i], style, lane_family);
         }
         break;
     }
+}
+
+static void cprisk_vm_add_apply_i(uint8_t acc[32],
+                                  uint64_t imm,
+                                  uint32_t steps,
+                                  uint32_t variant,
+                                  uint32_t semantic_family,
+                                  uint64_t func_id,
+                                  uint32_t pc) {
+    cprisk_vm_lane_family_apply_i(acc, imm, steps, variant, semantic_family, func_id, pc, 0u);
+}
+
+static void cprisk_vm_sub_apply_i(uint8_t acc[32],
+                                  uint64_t imm,
+                                  uint32_t steps,
+                                  uint32_t variant,
+                                  uint32_t semantic_family,
+                                  uint64_t func_id,
+                                  uint32_t pc) {
+    cprisk_vm_lane_family_apply_i(acc, imm, steps, variant, semantic_family, func_id, pc, 1u);
+}
+
+static void cprisk_vm_mul_apply_i(uint8_t acc[32],
+                                  uint64_t imm,
+                                  uint32_t steps,
+                                  uint32_t variant,
+                                  uint32_t semantic_family,
+                                  uint64_t func_id,
+                                  uint32_t pc) {
+    cprisk_vm_lane_family_apply_i(acc, imm, steps, variant, semantic_family, func_id, pc, 2u);
 }
 
 static void cprisk_vm_bitwise_lane_or_i(uint8_t acc[32],
@@ -1342,11 +1384,24 @@ static void cprisk_vm_interp_loop_a(cprisk_vm_interp_frame_t *fr)
         }
 
         if (fr->vm_anti_symbolic_heavy) {
-            volatile uint64_t sym_acc = ((uint64_t)fr->steps ^ imm) * 0xD6E8FEB783278F6BULL;
+            uint64_t rt_mix = 0u;
+#if defined(__APPLE__)
+            struct timespec sym_ts;
+            if (clock_gettime(CLOCK_MONOTONIC, &sym_ts) == 0) {
+                rt_mix = (uint64_t)sym_ts.tv_nsec ^ ((uint64_t)sym_ts.tv_sec * 0x9E3779B97F4A7C15ULL);
+            }
+#endif
+            volatile uint64_t sym_acc =
+                (((uint64_t)fr->steps ^ imm) * 0xD6E8FEB783278F6BULL) ^ rt_mix;
             sym_acc ^= (uint64_t)fr->func_id ^ (fr->func_id >> 33);
-            for (uint32_t si = 0u; si < 3u; si++) {
+#if defined(__APPLE__)
+            sym_acc ^= (uint64_t)getpid() * 0x100000001B3ULL;
+#endif
+            const uint32_t cap = 3u + (uint32_t)((rt_mix ^ sym_acc ^ (uint64_t)fr->steps) & 7u);
+            for (uint32_t si = 0u; si < cap; si++) {
                 sym_acc ^= sym_acc >> 17;
                 sym_acc *= 0xFF51AFD7ED558CCDULL;
+                sym_acc ^= (uint64_t)(si * 0x9E3779B1u) + (rt_mix & 0xFFFFFFFFu);
                 if (((sym_acc >> 40) & 0xFFFFu) == 0xA5A5u) {
                     const uint32_t lane = (si * 7u) & 31u;
                     fr->acc[lane] ^= (uint8_t)(sym_acc & 0xFFu);
@@ -1425,6 +1480,22 @@ static void cprisk_vm_interp_loop_a(cprisk_vm_interp_frame_t *fr)
 
         if (logical == CPRISK_VM_OP_ADD) {
             cprisk_vm_add_apply_i(fr->acc, imm, (uint32_t)fr->steps, hvar, fr->semantic_family, fr->func_id, pc);
+            if (!cprisk_vm_enc_pc_advance_i(&fr->encoded_pc, fr->vpc_a, fr->out))
+                goto vm_leave_a;
+            fr->steps += 1u;
+            continue;
+        }
+
+        if (logical == CPRISK_VM_OP_SUB_LANE) {
+            cprisk_vm_sub_apply_i(fr->acc, imm, (uint32_t)fr->steps, hvar, fr->semantic_family, fr->func_id, pc);
+            if (!cprisk_vm_enc_pc_advance_i(&fr->encoded_pc, fr->vpc_a, fr->out))
+                goto vm_leave_a;
+            fr->steps += 1u;
+            continue;
+        }
+
+        if (logical == CPRISK_VM_OP_MUL_LANE) {
+            cprisk_vm_mul_apply_i(fr->acc, imm, (uint32_t)fr->steps, hvar, fr->semantic_family, fr->func_id, pc);
             if (!cprisk_vm_enc_pc_advance_i(&fr->encoded_pc, fr->vpc_a, fr->out))
                 goto vm_leave_a;
             fr->steps += 1u;
@@ -1782,6 +1853,17 @@ static void cprisk_vm_interp_loop_b(cprisk_vm_interp_frame_t *fr)
             }
         }
 
+        /*
+         * Loop B: alternate fetch/decode path — load immediate first, then opcode (semantically identical;
+         * differs from loop A micro-order for static analysis / symbolic tooling).
+         */
+        volatile uint64_t loop_b_fetch_tag = fr->encoded_pc ^ (fr->steps * 0x5F3759DFu);
+        (void)loop_b_fetch_tag;
+        uint64_t imm = cprisk_read_le_u64_i(fr->code + pc + 1u);
+        if (fr->enc_imm != 0u) {
+            const uint32_t pc_index_imm = pc / CPRISK_VM_INSN_WIDTH;
+            imm ^= cprisk_vmp_imm_mask_u64_i(fr->func_id, pc_index_imm, fr->imm_seed_root);
+        }
         const uint8_t op_raw = fr->code[pc];
         uint8_t op = op_raw;
         if (fr->enc_op != 0u) {
@@ -1791,11 +1873,6 @@ static void cprisk_vm_interp_loop_b(cprisk_vm_interp_frame_t *fr)
         fr->out->last_opcode = (uint32_t)op;
         const uint8_t logical = fr->dispatch_plain[(size_t)op & 0xFFu];
         fr->out->last_dispatch_class = (uint32_t)logical;
-        uint64_t imm = cprisk_read_le_u64_i(fr->code + pc + 1u);
-        if (fr->enc_imm != 0u) {
-            const uint32_t pc_index = pc / CPRISK_VM_INSN_WIDTH;
-            imm ^= cprisk_vmp_imm_mask_u64_i(fr->func_id, pc_index, fr->imm_seed_root);
-        }
         const uint32_t hvar =
             cprisk_vm_handler_variant_i(fr->bh->reserved, fr->func_id, fr->steps, (uint32_t)op, imm)
             ^ ((fr->semantic_family & 0x3u) << 1u);
@@ -1812,11 +1889,24 @@ static void cprisk_vm_interp_loop_b(cprisk_vm_interp_frame_t *fr)
         }
 
         if (fr->vm_anti_symbolic_heavy) {
-            volatile uint64_t sym_acc = ((uint64_t)fr->steps ^ imm) * 0xD6E8FEB783278F6BULL;
+            uint64_t rt_mix = 0u;
+#if defined(__APPLE__)
+            struct timespec sym_ts;
+            if (clock_gettime(CLOCK_MONOTONIC, &sym_ts) == 0) {
+                rt_mix = (uint64_t)sym_ts.tv_nsec ^ ((uint64_t)sym_ts.tv_sec * 0x9E3779B97F4A7C15ULL);
+            }
+#endif
+            volatile uint64_t sym_acc =
+                (((uint64_t)fr->steps ^ imm) * 0xD6E8FEB783278F6BULL) ^ rt_mix;
             sym_acc ^= (uint64_t)fr->func_id ^ (fr->func_id >> 33);
-            for (uint32_t si = 0u; si < 3u; si++) {
+#if defined(__APPLE__)
+            sym_acc ^= (uint64_t)getpid() * 0x100000001B3ULL;
+#endif
+            const uint32_t cap = 3u + (uint32_t)((rt_mix ^ sym_acc ^ (uint64_t)fr->steps) & 7u);
+            for (uint32_t si = 0u; si < cap; si++) {
                 sym_acc ^= sym_acc >> 17;
                 sym_acc *= 0xFF51AFD7ED558CCDULL;
+                sym_acc ^= (uint64_t)(si * 0x9E3779B1u) + (rt_mix & 0xFFFFFFFFu);
                 if (((sym_acc >> 40) & 0xFFFFu) == 0xA5A5u) {
                     const uint32_t lane = (si * 7u) & 31u;
                     fr->acc[lane] ^= (uint8_t)(sym_acc & 0xFFu);
@@ -1913,6 +2003,28 @@ static void cprisk_vm_interp_loop_b(cprisk_vm_interp_frame_t *fr)
             {
 
                     cprisk_vm_add_apply_i(fr->acc, imm, (uint32_t)fr->steps, hvar, fr->semantic_family, fr->func_id, pc);
+                    if (!cprisk_vm_enc_pc_advance_i(&fr->encoded_pc, fr->vpc_a, fr->out))
+                        goto vm_leave_b;
+                    fr->steps += 1u;
+                    continue;
+
+            }
+
+        case CPRISK_VM_OP_SUB_LANE:
+            {
+
+                    cprisk_vm_sub_apply_i(fr->acc, imm, (uint32_t)fr->steps, hvar, fr->semantic_family, fr->func_id, pc);
+                    if (!cprisk_vm_enc_pc_advance_i(&fr->encoded_pc, fr->vpc_a, fr->out))
+                        goto vm_leave_b;
+                    fr->steps += 1u;
+                    continue;
+
+            }
+
+        case CPRISK_VM_OP_MUL_LANE:
+            {
+
+                    cprisk_vm_mul_apply_i(fr->acc, imm, (uint32_t)fr->steps, hvar, fr->semantic_family, fr->func_id, pc);
                     if (!cprisk_vm_enc_pc_advance_i(&fr->encoded_pc, fr->vpc_a, fr->out))
                         goto vm_leave_b;
                     fr->steps += 1u;

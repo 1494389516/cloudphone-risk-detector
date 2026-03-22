@@ -104,23 +104,53 @@ public struct ARM64Lifter: Sendable {
         if isMoveWide(insn) {
             return VMInstruction(op: .movWide, immediate: UInt64(insn))
         }
-        if isEOR64(insn) {
-            return VMInstruction(op: .xorMix, immediate: UInt64(insn))
+        if isMOVRegisterAlias(insn) {
+            return VMInstruction(op: .movWide, immediate: UInt64(insn))
         }
         if isADRP(insn) {
             return VMInstruction(op: .adrAdd, immediate: UInt64(insn))
         }
+        if isADR(insn) {
+            return VMInstruction(op: .adrAdd, immediate: UInt64(insn))
+        }
+        if let logImm = classifyLogicalImm64(insn) {
+            return VMInstruction(op: logImm, immediate: UInt64(insn))
+        }
+        if isCompareLike(insn) {
+            return VMInstruction(op: .branchCond, immediate: UInt64(insn))
+        }
         if isADDImm64(insn) {
             return VMInstruction(op: .addLane, immediate: UInt64(insn))
+        }
+        if isSUBImm64(insn) {
+            return VMInstruction(op: .subLane, immediate: UInt64(insn))
+        }
+        if let addSub = classifyAddSubShiftedReg64(insn) {
+            return VMInstruction(op: addSub, immediate: UInt64(insn))
+        }
+        if isMADD64AsMul(insn) {
+            return VMInstruction(op: .mulLane, immediate: UInt64(insn))
+        }
+        if let bitwise = classifyBitwiseLogical64(insn) {
+            return VMInstruction(op: bitwise, immediate: UInt64(insn))
+        }
+        if isShiftByRegister64(insn) {
+            return VMInstruction(op: .rolAcc, immediate: UInt64(insn))
         }
         if isCSEL(insn) || isCSETAlias(insn) {
             return VMInstruction(op: .condSelect, immediate: UInt64(insn))
         }
-        if isCBZCBNZ(insn) || isBCond(insn) {
+        if isCBZCBNZ(insn) || isBCond(insn) || isTBZTBNZ(insn) {
             return VMInstruction(op: .branchCond, immediate: UInt64(insn))
         }
         if isLoadStoreBasic(insn) {
             return VMInstruction(op: .loadStore, immediate: UInt64(insn))
+        }
+        if isBLR(insn) || isBR(insn) {
+            return VMInstruction(op: .rawRegion, immediate: UInt64(insn), rawCategory: .branchTest)
+        }
+        if isMADD64(insn) {
+            return VMInstruction(op: .mulLane, immediate: UInt64(insn))
         }
         return nil
     }
@@ -171,13 +201,99 @@ public struct ARM64Lifter: Sendable {
         (insn & 0x9F00_0000) == 0x9000_0000
     }
 
+    /// PC-relative ADR (page-off); same VM surrogate bucket as ADRP / fused ADRP+ADD.
+    private func isADR(_ insn: UInt32) -> Bool {
+        (insn & 0x9F00_0000) == 0x1000_0000
+    }
+
+    /// Logical (immediate) 64-bit — bitmask immediates routed to bitwise VMIR lanes.
+    private func classifyLogicalImm64(_ insn: UInt32) -> VMLogicalOp? {
+        let masked = insn & 0xFF80_0000
+        if masked == 0x9200_0000 { return .andLane }
+        if masked == 0xB200_0000 { return .orLane }
+        if masked == 0xD200_0000 { return .xorMix }
+        return nil
+    }
+
+    private func isBLR(_ insn: UInt32) -> Bool {
+        (insn & 0xFFFF_FC1F) == 0xD63F_0000
+    }
+
+    private func isBR(_ insn: UInt32) -> Bool {
+        (insn & 0xFFFF_FC1F) == 0xD61F_0000
+    }
+
+    /// Full MADD (not only Xm=XZR mul idiom).
+    private func isMADD64(_ insn: UInt32) -> Bool {
+        (insn & 0xFF80_0000) == 0x9B00_0000
+    }
+
     private func isADDImm64(_ insn: UInt32) -> Bool {
         (insn & 0xFF80_0000) == 0x9100_0000
     }
 
-    /// EOR Xd, Xn, Xm (shifted) — 64-bit.
-    private func isEOR64(_ insn: UInt32) -> Bool {
-        (insn & 0xFF20_0000) == 0xCA00_0000
+    private func isSUBImm64(_ insn: UInt32) -> Bool {
+        (insn & 0xFF80_0000) == 0xD100_0000
+    }
+
+    /// 64-bit ADD/SUB (register, shifted) — map SUB family to `subLane`.
+    private func classifyAddSubShiftedReg64(_ insn: UInt32) -> VMLogicalOp? {
+        guard (insn & 0x8000_0000) != 0 else { return nil }
+        let top = insn & 0xFF20_0000
+        if top == 0x8B00_0000 || top == 0xAB00_0000 { return .addLane }
+        if top == 0xCB00_0000 || top == 0xEB00_0000 { return .subLane }
+        return nil
+    }
+
+    /// MADD Xd, Xn, Xm, XZR — multiply idiom.
+    private func isMADD64AsMul(_ insn: UInt32) -> Bool {
+        (insn & 0xFF80_0000) == 0x9B00_0000 && ((insn >> 10) & 31) == 31
+    }
+
+    /// ORR Xd, XZR, Xm alias of MOV Xd, Xm (shift == LSL #0).
+    private func isMOVRegisterAlias(_ insn: UInt32) -> Bool {
+        guard (insn & 0xFF20_0000) == 0xAA00_0000 else { return false }
+        let rn = (insn >> 5) & 31
+        let shift = (insn >> 22) & 0x3
+        let imm6 = (insn >> 10) & 0x3F
+        return rn == 31 && shift == 0 && imm6 == 0
+    }
+
+    /// 64-bit logical shifted-register forms mapped to VM bit-lane families.
+    private func classifyBitwiseLogical64(_ insn: UInt32) -> VMLogicalOp? {
+        guard (insn & 0x8000_0000) != 0 else { return nil }
+        let top = insn & 0xFF20_0000
+        switch top {
+        case 0x8A00_0000, 0xEA00_0000: // AND / ANDS
+            return .andLane
+        case 0xAA00_0000, 0xAA20_0000: // ORR / ORN (MOV alias handled earlier)
+            return .orLane
+        case 0xCA00_0000: // EOR
+            return .xorMix
+        default:
+            return nil
+        }
+    }
+
+    /// LSLV/LSRV/ASRV 64-bit (register shifts).
+    private func isShiftByRegister64(_ insn: UInt32) -> Bool {
+        guard (insn & 0x8000_0000) != 0 else { return false }
+        let masked = insn & 0xFFE0_FC00
+        return masked == 0x9AC0_2000
+            || masked == 0x9AC0_2400
+            || masked == 0x9AC0_2800
+    }
+
+    /// CMP/CMN/TST aliases (SUBS/ADDS/ANDS with Rd==XZR).
+    private func isCompareLike(_ insn: UInt32) -> Bool {
+        let rd = insn & 31
+        guard rd == 31 else { return false }
+        if (insn & 0xFF80_001F) == 0xF100_001F { return true } // CMP (imm)
+        if (insn & 0xFF80_001F) == 0xB100_001F { return true } // CMN (imm)
+        if (insn & 0xFF20_001F) == 0xEB00_001F { return true } // CMP (shifted reg)
+        if (insn & 0xFF20_001F) == 0xAB00_001F { return true } // CMN (shifted reg)
+        if (insn & 0xFF20_001F) == 0xEA00_001F { return true } // TST (shifted reg)
+        return false
     }
 
     private func isCSEL(_ insn: UInt32) -> Bool {
@@ -202,13 +318,20 @@ public struct ARM64Lifter: Sendable {
         (insn & 0xFF00_0010) == 0x5400_0000
     }
 
+    private func isTBZTBNZ(_ insn: UInt32) -> Bool {
+        (insn & 0x7E00_0000) == 0x3600_0000
+    }
+
     private func isLoadStoreBasic(_ insn: UInt32) -> Bool {
         let op = (insn >> 22) & 0x3F
-        if op == 0x28 || op == 0x29 { return true }
+        if op == 0x28 || op == 0x29 || op == 0x2A || op == 0x2C { return true }
         let top = insn & 0xFFC0_0000
         if top == 0xF940_0000 || top == 0xF900_0000 { return true }
         if top == 0xB940_0000 || top == 0xB900_0000 { return true }
+        if top == 0xF840_0000 || top == 0xF800_0000 { return true }
+        if top == 0xB840_0000 || top == 0xB800_0000 { return true }
         if (insn & 0x3B00_0000) == 0x3900_0000 { return true }
+        if (insn & 0x3B00_0000) == 0x3800_0000 { return true }
         return false
     }
 }

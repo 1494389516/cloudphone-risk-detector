@@ -34,6 +34,8 @@
 #define CPRISK_ARMOR_SECTION_TEXT_ENCRYPT "__swift5_cgenc"
 #define CPRISK_ARMOR_SECTION_VMP_DISPATCH "__swift5_mdvrt"
 #define CPRISK_ARMOR_SECTION_VMP_BYTECODE "__swift5_mdirt"
+/* Optional dispatch split shard (second-half class table material; runtime reassembles when present). */
+#define CPRISK_ARMOR_SECTION_VMP_DISPATCH_SHARD "__swift5_mdvsh"
 /** Optional 8-byte blob: magic (LE u32) + expected M3 FNV-1a (LE u32) for \c CPRISK_VMP_BC_FLAG_M3_SELFCHK. */
 #define CPRISK_ARMOR_SECTION_VMP_SELF_EXPECT "__swift5_mdvsk"
 

@@ -443,7 +443,7 @@ int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) 
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
     /* Subtle byte-level corruption under debugger; fixed accumulator poison
        ensures downstream key derivation also silently fails. */
-    if (cprisk_is_being_traced()) {
+    if (cprisk_is_being_traced_redundant()) {
         for (uint32_t pi = 0; pi < dlen; pi++)
             buffer[pi] ^= 0x01;
         s_str_acc = 0xDEADBEEFCAFEBABEULL;

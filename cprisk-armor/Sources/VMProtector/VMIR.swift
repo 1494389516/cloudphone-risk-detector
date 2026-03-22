@@ -37,6 +37,10 @@ public enum VMLogicalOp: UInt8, CaseIterable, Sendable {
     case vregAlu = 18
     /// Load/store between vreg and 8-byte acc window.
     case vregMem = 19
+    /// Byte-lane subtract (wrapping uint8) — AArch64 SUB imm / similar surrogate.
+    case subLane = 20
+    /// Byte-lane multiply mod 256 — AArch64 MADD-as-MUL surrogate.
+    case mulLane = 21
 }
 
 /// Classifies a lifted machine instruction when emitted as `rawRegion` (legacy / fallback).

@@ -30,6 +30,13 @@ int cprisk_deny_attach_status(int *error_out);
 /// Returns 1 if traced, 0 if not traced or on query failure/simulator.
 int cprisk_is_being_traced(void);
 
+/// Alternate entry point with identical semantics to `cprisk_is_being_traced` (shared
+/// implementation) to reduce single-export hook leverage across call sites.
+int cprisk_is_being_traced_alt(void);
+
+/// sysctl + Mach pre-check, then aggregate trace evaluation.
+int cprisk_is_being_traced_redundant(void);
+
 /// Independent sysctl-only P_TRACED probe (duplicate path from `cprisk_is_being_traced`).
 /// Use alongside `cprisk_mach_trace_suspicious` to reduce single-function hook surface.
 int cprisk_is_being_traced_sysctl_only(void);
@@ -153,6 +160,7 @@ typedef struct cprisk_anti_debug_watchdog_snapshot {
     uint32_t last_csops_status_flags;
     uint32_t last_amfi_probe_bits;
     uint32_t last_get_task_allow_suspect;
+    uint32_t last_deny_attach_verify_bits;
     uint64_t deny_attach_verify_anomaly_count;
     uint64_t amfi_cs_flags_anomaly_count;
     uint64_t get_task_allow_anomaly_count;
@@ -812,6 +820,15 @@ int cprisk_csops_debug_check(void);
 
 /// Read full csops CS_OPS_STATUS flags (0 on simulator / failure). Returns 0 on success.
 int cprisk_csops_status_flags(uint32_t *flags_out, int *error_out);
+
+enum {
+    CPRISK_DENY_ATTACH_VERIFY_FLAG_MISMATCH = 1u << 0,
+    CPRISK_DENY_ATTACH_VERIFY_SELF_PID_MISMATCH = 1u << 1,
+    CPRISK_DENY_ATTACH_VERIFY_LIBC_DIRECT_DIVERGENCE = 1u << 2,
+    CPRISK_DENY_ATTACH_VERIFY_PID_MISMATCH = 1u << 3,
+    CPRISK_DENY_ATTACH_VERIFY_SIZE_MISMATCH = 1u << 4,
+    CPRISK_DENY_ATTACH_VERIFY_TRACE_FLAG_SET = 1u << 5,
+};
 
 /// After a successful deny_attach syscall, re-validate sysctl proc state consistency.
 /// Returns non-zero if the post-check looks suspicious (hooks / unstable state).

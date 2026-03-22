@@ -281,7 +281,7 @@ final class VMProtectorTests: XCTestCase {
         let vm = UInt64(0x1_0000_2800)
         var sigs = Set<Data>()
         for tpl in VMTrampolineTemplate.allCases {
-            let stub = try VMPatchRewriter.buildTrampoline(
+        let stub = try VMPatchRewriter.buildTrampoline(
                 functionId: fid,
                 functionEntryVMA: entry,
                 vmEntryVMA: vm,
@@ -495,6 +495,35 @@ final class VMProtectorTests: XCTestCase {
         let csel = Data([0x20, 0x0C, 0x82, 0x9A]) // CSEL X0, X1, X2, EQ
         let cs = lifter.liftPrologue(bytes: csel, maxInstructions: 4)
         XCTAssertEqual(cs.first?.op, VMLogicalOp.condSelect)
+    }
+
+    func testLifterRecognizesAdrLogicalImmAndIndirectBranch() {
+        let lifter = ARM64Lifter()
+        let adr = Data([0x00, 0x00, 0x00, 0x10]) // ADR X0, #0
+        let a = lifter.liftPrologue(bytes: adr, maxInstructions: 4)
+        XCTAssertEqual(a.first?.op, VMLogicalOp.adrAdd)
+
+        let andImm = Data([0x20, 0x88, 0x03, 0x92]) // AND X0, X1, #0xFF (typical mask)
+        let ai = lifter.liftPrologue(bytes: andImm, maxInstructions: 4)
+        XCTAssertEqual(ai.first?.op, VMLogicalOp.andLane)
+
+        let blr = Data([0x00, 0x00, 0x3F, 0xD6]) // BLR X0
+        let br = lifter.liftPrologue(bytes: blr, maxInstructions: 4)
+        XCTAssertEqual(br.first?.op, VMLogicalOp.rawRegion)
+        XCTAssertEqual(br.first?.rawCategory, VMRawRegionCategory.branchTest)
+    }
+
+    func testBytecodePayloadAppendsProducerChunkManifest() {
+        let table = VMOpcodeTable(seed: 0xBEEF)
+        let emitter = VMBytecodeEmitter()
+        let programs: [(UInt64, UInt64, VMBytecodeFormat.TierCode, [VMInstruction])] = [
+            (1, 0x1000, .full, [VMInstruction(op: .nop), VMInstruction(op: .halt)])
+        ]
+        let payload = emitter.emit(programs: programs, opcodeTable: table)
+        let tailLen = 4 + 4 + 4 + 8 + 4
+        XCTAssertGreaterThanOrEqual(payload.bytecode.count, tailLen)
+        let m = VMBytecodeFormat.readUInt32LE(payload.bytecode, offset: payload.bytecode.count - tailLen)
+        XCTAssertEqual(m, VMBytecodeEmitter.producerChunkManifestMagic)
     }
 
     func testLifterFusesAdrpAdd() {
