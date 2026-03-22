@@ -235,6 +235,9 @@ static int cprisk_watchdog_dyld_name_suspicious_i(const char *path, uint32_t *fl
         {"rocketbootstrap", 1u << 9},
         {"dopamine", 1u << 10},
         {"ellekit", 1u << 11},
+        {"qbdi", 1u << 12},
+        {"libqbdi", 1u << 13},
+        {"qbdipreload", 1u << 14},
     };
 
     for (size_t i = 0u; i < sizeof(k_patterns) / sizeof(k_patterns[0]); i++) {
@@ -665,10 +668,17 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
     cff_config.iteration_budget = 24u;
     cff_config.release_build = (uint8_t)CPRISK_CFF_RELEASE_BUILD;
     cff_config.enable_fake_states = (uint8_t)CPRISK_CFF_ENABLE_FAKE_STATE;
-    cff_config.codec_style = (uint8_t)CPRISK_CFF_CODEC_STYLE_AUTO;
+    /*
+     * Prefer the non-linear Feistel+S-box codec on the watchdog hot path so
+     * state I/O is no longer dominated by linear XOR-MBA identities that
+     * GAMBA-style algebraic simplifiers are designed to collapse. Keep
+     * mba_layers pinned high to retain the dual-dispatch decode path instead
+     * of the mba_layers <= 1 shortcut.
+     */
+    cff_config.codec_style = (uint8_t)CPRISK_CFF_CODEC_STYLE_FEISTEL_SPN;
     /* Prefer real per-codec handler table dispatch (not only direct decode). */
     cff_config.dispatch_style = (uint8_t)CPRISK_CFF_DISPATCH_FN_TABLE;
-    cff_config.mba_layers = 0u; /* auto-select 2..5 layers */
+    cff_config.mba_layers = 5u;
     cff_config.symex_guard_budget = CPRISK_CFF_RELEASE_BUILD ? 3u : 0u;
     cff_config.default_action = CPRISK_CFF_RELEASE_BUILD
         ? CPRISK_CFF_DEFAULT_POISON

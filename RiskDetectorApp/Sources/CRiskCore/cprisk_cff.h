@@ -49,6 +49,12 @@ typedef enum cprisk_cff_codec_style {
     CPRISK_CFF_CODEC_STYLE_XOR_ROTATE = 1,
     CPRISK_CFF_CODEC_STYLE_ADD_ROTATE_XOR = 2,
     CPRISK_CFF_CODEC_STYLE_AFFINE = 3,
+    /**
+     * Feistel + byte S-box (SPN-like round function): lookup-heavy, non-linear,
+     * not a pure GF(2) XOR chain — materially harder for GAMBA/algebraic MBA
+     * simplifiers than layered XOR-MBA identities on the same semantic XOR.
+     */
+    CPRISK_CFF_CODEC_STYLE_FEISTEL_SPN = 4,
 } cprisk_cff_codec_style_t;
 
 typedef enum cprisk_cff_dispatch_style {
@@ -99,7 +105,11 @@ uint32_t cprisk_cff_runtime_salt(uint32_t seed, uint32_t runtime_hint);
 void cprisk_cff_init(cprisk_cff_context_t *context, const cprisk_cff_config_t *config);
 void cprisk_cff_init_default(cprisk_cff_context_t *context, uint32_t seed, uint32_t entry_state);
 uint32_t cprisk_cff_current_state(cprisk_cff_context_t *context);
-/** Hot path: decode + update last_decoded_state (same semantics as current_state). */
+/**
+ * CFF loop PEEK hot path: returns the last decoded plain state without running
+ * full codec/MBA decode. Kept in sync by cprisk_cff_set_state / set_encoded /
+ * init / poison; use cprisk_cff_current_state() when a fresh decode is required.
+ */
 uint32_t cprisk_cff_current_state_fast(cprisk_cff_context_t *context);
 uint32_t cprisk_cff_current_state_dispatch(cprisk_cff_context_t *context);
 /** Alternate decode path: function-pointer dispatch by codec style (not the only gate). */

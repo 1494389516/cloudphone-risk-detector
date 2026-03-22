@@ -945,6 +945,35 @@ int cprisk_derive_effective_signing_key(
                        cprisk_nonnull_bytes_i(base_key),
                        base_key_len,
                        out_key);
+
+    /* Request-level hardening: when a fresh binding material exists (nonce /
+     * challenge / canonical request input), re-key the derived key with a
+     * short-lived mix so signatures are less reusable across requests. */
+    {
+        uint32_t request_mix = 0u;
+        if (cprisk_get_request_binding_mix(&request_mix) == 0) {
+            uint8_t bind_material[16];
+            const uint32_t lane0 = request_mix;
+            const uint32_t lane1 = (request_mix << 13u) | (request_mix >> 19u);
+            const uint32_t lane2 = request_mix ^ 0xA24BAED5u;
+            const uint32_t lane3 = lane1 ^ 0x6C8E9CF5u;
+            memcpy(bind_material + 0, &lane0, sizeof(lane0));
+            memcpy(bind_material + 4, &lane1, sizeof(lane1));
+            memcpy(bind_material + 8, &lane2, sizeof(lane2));
+            memcpy(bind_material + 12, &lane3, sizeof(lane3));
+
+            uint8_t rebound_key[CPRISK_ARMOR_HASH_SIZE];
+            cprisk_hmac_sha256(out_key,
+                               CPRISK_ARMOR_HASH_SIZE,
+                               bind_material,
+                               sizeof(bind_material),
+                               rebound_key);
+            memcpy(out_key, rebound_key, CPRISK_ARMOR_HASH_SIZE);
+            cprisk_secure_zero(rebound_key, sizeof(rebound_key));
+            cprisk_secure_zero(bind_material, sizeof(bind_material));
+        }
+    }
+
     cprisk_secure_zero(runtime_material, sizeof(runtime_material));
     return 0;
 }

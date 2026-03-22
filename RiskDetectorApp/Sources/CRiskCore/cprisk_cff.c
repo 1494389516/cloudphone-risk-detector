@@ -159,17 +159,88 @@ static uint32_t cprisk_cff_mod_inverse_odd32(uint32_t odd_value) {
     return inverse;
 }
 
+/*
+ * AES SubBytes table: explicit byte substitution breaks pure bit-vector linearity;
+ * GAMBA-style algebraic MBA simplification targets short XOR/ADD chains — wide
+ * table lookups do not collapse to a compact linear form over GF(2) like XOR-MBA.
+ */
+static const uint8_t cprisk_cff_spn_sbox[256] = {
+    0x63u, 0x7cu, 0x77u, 0x7bu, 0xf2u, 0x6bu, 0x6fu, 0xc5u, 0x30u, 0x01u, 0x67u, 0x2bu, 0xfeu, 0xd7u, 0xabu, 0x76u,
+    0xcau, 0x82u, 0xc9u, 0x7du, 0xfau, 0x59u, 0x47u, 0xf0u, 0xadu, 0xd4u, 0xa2u, 0xafu, 0x9cu, 0xa4u, 0x72u, 0xc0u,
+    0xb7u, 0xfdu, 0x93u, 0x26u, 0x36u, 0x3fu, 0xf7u, 0xccu, 0x34u, 0xa5u, 0xe5u, 0xf1u, 0x71u, 0xd8u, 0x31u, 0x15u,
+    0x04u, 0xc7u, 0x23u, 0xc3u, 0x18u, 0x96u, 0x05u, 0x9au, 0x07u, 0x12u, 0x80u, 0xe2u, 0xebu, 0x27u, 0xb2u, 0x75u,
+    0x09u, 0x83u, 0x2cu, 0x1au, 0x1bu, 0x6eu, 0x5au, 0xa0u, 0x52u, 0x3bu, 0xd6u, 0xb3u, 0x29u, 0xe3u, 0x2fu, 0x84u,
+    0x53u, 0xd1u, 0x00u, 0xedu, 0x20u, 0xfcu, 0xb1u, 0x5bu, 0x6au, 0xcbu, 0xbeu, 0x39u, 0x4au, 0x4cu, 0x58u, 0xcfu,
+    0xd0u, 0xefu, 0xaau, 0xfbu, 0x43u, 0x4du, 0x33u, 0x85u, 0x45u, 0xf9u, 0x02u, 0x7fu, 0x50u, 0x3cu, 0x9fu, 0xa8u,
+    0x51u, 0xa3u, 0x40u, 0x8fu, 0x92u, 0x9du, 0x38u, 0xf5u, 0xbcu, 0xb6u, 0xdau, 0x21u, 0x10u, 0xffu, 0xf3u, 0xd2u,
+    0xcdu, 0x0cu, 0x13u, 0xecu, 0x5fu, 0x97u, 0x44u, 0x17u, 0xc4u, 0xa7u, 0x7eu, 0x3du, 0x64u, 0x5du, 0x19u, 0x73u,
+    0x60u, 0x81u, 0x4fu, 0xdcu, 0x22u, 0x2au, 0x90u, 0x88u, 0x46u, 0xeeu, 0xb8u, 0x14u, 0xdeu, 0x5eu, 0x0bu, 0xdbu,
+    0xe0u, 0x32u, 0x3au, 0x0au, 0x49u, 0x06u, 0x24u, 0x5cu, 0xc2u, 0xd3u, 0xacu, 0x62u, 0x91u, 0x95u, 0xe4u, 0x79u,
+    0xe7u, 0xc8u, 0x37u, 0x6du, 0x8du, 0xd5u, 0x4eu, 0xa9u, 0x6cu, 0x56u, 0xf4u, 0xeau, 0x65u, 0x7au, 0xaeu, 0x08u,
+    0xbau, 0x78u, 0x25u, 0x2eu, 0x1cu, 0xa6u, 0xb4u, 0xc6u, 0xe8u, 0xddu, 0x74u, 0x1fu, 0x4bu, 0xbdu, 0x8bu, 0x8au,
+    0x70u, 0x3eu, 0xb5u, 0x66u, 0x48u, 0x03u, 0xf6u, 0x0eu, 0x61u, 0x35u, 0x57u, 0xb9u, 0x86u, 0xc1u, 0x1du, 0x9eu,
+    0xe1u, 0xf8u, 0x98u, 0x11u, 0x69u, 0xd9u, 0x8eu, 0x94u, 0x9bu, 0x1eu, 0x87u, 0xe9u, 0xceu, 0x55u, 0x28u, 0xdfu,
+    0x8cu, 0xa1u, 0x89u, 0x0du, 0xbfu, 0xe6u, 0x42u, 0x68u, 0x41u, 0x99u, 0x2du, 0x0fu, 0xb0u, 0x54u, 0xbbu, 0x16u,
+};
+
+#define CPRISK_CFF_FEISTEL_ROUNDS 8u
+
+static uint16_t cprisk_cff_feistel_F(uint16_t r, uint32_t k, uint32_t salt, uint32_t round) {
+    uint32_t rk = cprisk_cff_avalanche32(k ^ salt ^ (round * 0x9E3779B9u) ^ 0xDEADBEEFu);
+    uint8_t b0 = (uint8_t)(r & 0xFFu);
+    uint8_t b1 = (uint8_t)((r >> 8) & 0xFFu);
+    uint32_t piece = (uint32_t)cprisk_cff_spn_sbox[b0 ^ (uint8_t)(rk & 0xFFu)] ^
+        ((uint32_t)cprisk_cff_spn_sbox[b1 ^ (uint8_t)((rk >> 8) & 0xFFu)] << 8u);
+    piece ^= rk ^ (rk >> 16);
+    piece = cprisk_cff_avalanche32(piece);
+    return (uint16_t)((piece ^ (piece >> 16)) & 0xFFFFu);
+}
+
+static uint32_t cprisk_cff_feistel32_encode_core(uint32_t state, uint32_t key, uint32_t salt) {
+    uint32_t v = state ^ cprisk_cff_avalanche32(key ^ salt ^ 0xF1055A1u);
+    uint16_t l = (uint16_t)(v >> 16);
+    uint16_t r = (uint16_t)(v & 0xFFFFu);
+    for (uint32_t rnd = 0u; rnd < CPRISK_CFF_FEISTEL_ROUNDS; rnd++) {
+        const uint16_t nl = r;
+        const uint16_t nr = (uint16_t)(l ^ cprisk_cff_feistel_F(r, key, salt, rnd));
+        l = nl;
+        r = nr;
+    }
+    const uint32_t mid = ((uint32_t)l << 16) | (uint32_t)r;
+    return mid ^ cprisk_cff_avalanche32(key ^ salt ^ 0xACC0DECu);
+}
+
+static uint32_t cprisk_cff_feistel32_decode_core(uint32_t encoded_state, uint32_t key, uint32_t salt) {
+    uint32_t mid = encoded_state ^ cprisk_cff_avalanche32(key ^ salt ^ 0xACC0DECu);
+    uint16_t l = (uint16_t)(mid >> 16);
+    uint16_t r = (uint16_t)(mid & 0xFFFFu);
+    uint32_t rnd = CPRISK_CFF_FEISTEL_ROUNDS;
+    while (rnd > 0u) {
+        rnd--;
+        const uint16_t pr = l;
+        const uint16_t pl = (uint16_t)(r ^ cprisk_cff_feistel_F(l, key, salt, rnd));
+        l = pl;
+        r = pr;
+    }
+    const uint32_t v = ((uint32_t)l << 16) | (uint32_t)r;
+    return v ^ cprisk_cff_avalanche32(key ^ salt ^ 0xF1055A1u);
+}
+
 static cprisk_cff_codec_style_t cprisk_cff_resolve_style(uint32_t seed, uint32_t entry_state, uint8_t requested_style) {
     const cprisk_cff_codec_style_t requested = (cprisk_cff_codec_style_t)requested_style;
     if (requested == CPRISK_CFF_CODEC_STYLE_XOR_ROTATE ||
         requested == CPRISK_CFF_CODEC_STYLE_ADD_ROTATE_XOR ||
-        requested == CPRISK_CFF_CODEC_STYLE_AFFINE) {
+        requested == CPRISK_CFF_CODEC_STYLE_AFFINE ||
+        requested == CPRISK_CFF_CODEC_STYLE_FEISTEL_SPN) {
         return requested;
     }
 
-    const uint32_t selector =
-        cprisk_cff_avalanche32(seed ^ cprisk_cff_rotate_left32(entry_state, 11u) ^ 0x13579BDFu) % 3u;
-    switch (selector) {
+    /* AUTO: strongly bias toward Feistel+S-box (non-linear) vs. XOR-MBA-heavy styles. */
+    const uint32_t h = cprisk_cff_avalanche32(seed ^ cprisk_cff_rotate_left32(entry_state, 11u) ^ 0x13579BDFu);
+    if ((h & 3u) != 0u) {
+        return CPRISK_CFF_CODEC_STYLE_FEISTEL_SPN;
+    }
+    switch (h % 3u) {
         case 0u:
             return CPRISK_CFF_CODEC_STYLE_XOR_ROTATE;
         case 1u:
@@ -224,7 +295,7 @@ uint32_t cprisk_cff_encode_state(uint32_t state, uint32_t key, uint32_t salt) {
         state,
         key,
         salt,
-        CPRISK_CFF_CODEC_STYLE_XOR_ROTATE
+        CPRISK_CFF_CODEC_STYLE_FEISTEL_SPN
     );
 }
 
@@ -233,7 +304,7 @@ uint32_t cprisk_cff_decode_state(uint32_t encoded_state, uint32_t key, uint32_t 
         encoded_state,
         key,
         salt,
-        CPRISK_CFF_CODEC_STYLE_XOR_ROTATE
+        CPRISK_CFF_CODEC_STYLE_FEISTEL_SPN
     );
 }
 
@@ -245,6 +316,9 @@ static uint32_t cprisk_cff_encode_state_with_style_impl(
     uint8_t mba_layers
 ) {
     switch (style) {
+        case CPRISK_CFF_CODEC_STYLE_FEISTEL_SPN:
+        case CPRISK_CFF_CODEC_STYLE_AUTO:
+            return cprisk_cff_feistel32_encode_core(state, key, salt);
         case CPRISK_CFF_CODEC_STYLE_ADD_ROTATE_XOR: {
             const uint32_t addend = cprisk_cff_avalanche32(key + salt + 0x7F4A7C15u);
             const uint32_t shift = (((key >> 3u) ^ salt) & 31u) | 1u;
@@ -259,7 +333,6 @@ static uint32_t cprisk_cff_encode_state_with_style_impl(
             return (masked * multiplier + addend) ^ cprisk_cff_rotate_left32(key, (salt & 31u) | 1u);
         }
         case CPRISK_CFF_CODEC_STYLE_XOR_ROTATE:
-        case CPRISK_CFF_CODEC_STYLE_AUTO:
         default: {
             const uint32_t mix = cprisk_cff_avalanche32(key ^ salt ^ 0x9E3779B9u);
             const uint32_t shift = (mix & 31u) | 1u;
@@ -294,6 +367,9 @@ static uint32_t cprisk_cff_decode_state_with_style_impl(
     uint8_t mba_layers
 ) {
     switch (style) {
+        case CPRISK_CFF_CODEC_STYLE_FEISTEL_SPN:
+        case CPRISK_CFF_CODEC_STYLE_AUTO:
+            return cprisk_cff_feistel32_decode_core(encoded_state, key, salt);
         case CPRISK_CFF_CODEC_STYLE_ADD_ROTATE_XOR: {
             const uint32_t addend = cprisk_cff_avalanche32(key + salt + 0x7F4A7C15u);
             const uint32_t shift = (((key >> 3u) ^ salt) & 31u) | 1u;
@@ -311,7 +387,6 @@ static uint32_t cprisk_cff_decode_state_with_style_impl(
             return unscaled ^ mask;
         }
         case CPRISK_CFF_CODEC_STYLE_XOR_ROTATE:
-        case CPRISK_CFF_CODEC_STYLE_AUTO:
         default: {
             const uint32_t mix = cprisk_cff_avalanche32(key ^ salt ^ 0x9E3779B9u);
             const uint32_t shift = (mix & 31u) | 1u;
@@ -438,51 +513,23 @@ uint32_t cprisk_cff_current_state(cprisk_cff_context_t *context) {
     return context->last_decoded_state;
 }
 
-typedef uint32_t (*cprisk_cff_decode_ctx_fn)(cprisk_cff_context_t *context);
-
-static uint32_t cprisk_cff_table_decode_xor_ctx(cprisk_cff_context_t *context) {
-    return cprisk_cff_decode_state_with_style_impl(
-        context->encoded_state,
-        context->seed,
-        context->runtime_salt,
-        CPRISK_CFF_CODEC_STYLE_XOR_ROTATE,
-        context->mba_layers
-    );
-}
-
-static uint32_t cprisk_cff_table_decode_add_ctx(cprisk_cff_context_t *context) {
-    return cprisk_cff_decode_state_with_style_impl(
-        context->encoded_state,
-        context->seed,
-        context->runtime_salt,
-        CPRISK_CFF_CODEC_STYLE_ADD_ROTATE_XOR,
-        context->mba_layers
-    );
-}
-
-static uint32_t cprisk_cff_table_decode_affine_ctx(cprisk_cff_context_t *context) {
-    return cprisk_cff_decode_state_with_style_impl(
-        context->encoded_state,
-        context->seed,
-        context->runtime_salt,
-        CPRISK_CFF_CODEC_STYLE_AFFINE,
-        context->mba_layers
-    );
-}
-
 uint32_t cprisk_cff_current_state_table(cprisk_cff_context_t *context) {
     if (context == NULL) {
         return 0u;
     }
 
-    static const cprisk_cff_decode_ctx_fn k_decode_dispatch[4] = {
-        cprisk_cff_table_decode_xor_ctx,
-        cprisk_cff_table_decode_xor_ctx,
-        cprisk_cff_table_decode_add_ctx,
-        cprisk_cff_table_decode_affine_ctx,
-    };
-    const uint32_t idx = (uint32_t)context->codec_style & 3u;
-    context->last_decoded_state = k_decode_dispatch[idx](context);
+    /*
+     * Alternate decode path: single resolved codec_style (AUTO is always
+     * normalized at init). Avoids masking style to 2 bits, which mis-routed
+     * newer styles (e.g. Feistel) to XOR.
+     */
+    context->last_decoded_state = cprisk_cff_decode_state_with_style_impl(
+        context->encoded_state,
+        context->seed,
+        context->runtime_salt,
+        (cprisk_cff_codec_style_t)context->codec_style,
+        context->mba_layers
+    );
     return context->last_decoded_state;
 }
 

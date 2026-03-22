@@ -35,7 +35,9 @@
 #include <mach/mach.h>
 #include <mach/arm/thread_status.h>
 #include <mach/mach_time.h>
+#include <mach/mach_vm.h>
 #include <mach-o/dyld.h>
+#include <crt_externs.h>
 #include <sys/fcntl.h>
 #include <sys/param.h>
 #include <time.h>
@@ -198,9 +200,19 @@ static uint32_t cprisk_detect_dbi_env_markers_i(int *hit_count_out) {
         "VALGRIND_LAUNCHER",
         "VALGRIND_LIB",
         "VALGRIND_OPTS",
+        /* QBDI / QuarkslaB DBI (desktop + some embedded runners expose these). */
+        "QBDI_PRELOAD",
+        "QBDI_LOG",
+        "QBDI_LIB",
+        "QBDI_MAX_INST_COUNT",
+        "QBDI_APPEND",
+        "QBDI_FRIDA",
+        "QBDI_STOCK_FILE_REMOVE",
     };
     static const char *const tokenized_env_keys[] = {
         "DYLD_INSERT_LIBRARIES",
+        "DYLD_LIBRARY_PATH",
+        "LD_PRELOAD",
     };
     static const char *const dbi_tokens[] = {
         "pinvm",
@@ -214,6 +226,12 @@ static uint32_t cprisk_detect_dbi_env_markers_i(int *hit_count_out) {
         "memcheck",
         "helgrind",
         "drmemory",
+        /* QBDI */
+        "qbdi",
+        "libqbdi",
+        "qbdipreload",
+        "/qbdi/",
+        "quarkslab",
     };
 
     int hit_count = 0;
@@ -245,6 +263,69 @@ static uint32_t cprisk_detect_dbi_env_markers_i(int *hit_count_out) {
     return flags;
 }
 
+/*
+ * Bounded scan of the entire environ table for DBI/QBDI substring markers.
+ * Catches renamed or custom env vars that strict-key checks miss.
+ */
+static uint32_t cprisk_detect_dbi_environ_scan_i(int *hit_count_out) {
+    static const char *const scan_tokens[] = {
+        "pinvm",
+        "pincrt",
+        "/pin/",
+        "dynamorio",
+        "libdynamorio",
+        "drrun",
+        "valgrind",
+        "vgpreload",
+        "memcheck",
+        "helgrind",
+        "drmemory",
+        "qbdi",
+        "libqbdi",
+        "qbdipreload",
+        "/qbdi/",
+        "quarkslab",
+    };
+
+    int hit_count = 0;
+    uint32_t flags = 0u;
+
+    char ***penv = _NSGetEnviron();
+    if (!penv || *penv == NULL) {
+        if (hit_count_out) {
+            *hit_count_out = 0;
+        }
+        return 0u;
+    }
+
+    for (char **e = *penv; *e != NULL; e++) {
+        const char *line = *e;
+        if (!line || line[0] == '\0') {
+            continue;
+        }
+        size_t walk = 0u;
+        while (line[walk] != '\0' && walk < 4096u) {
+            walk++;
+        }
+        if (walk >= 4096u) {
+            continue;
+        }
+        if (cprisk_contains_any_token_i(
+                line,
+                scan_tokens,
+                sizeof(scan_tokens) / sizeof(scan_tokens[0]))) {
+            flags |= CPRISK_DBI_MARKER_ENVIRON_SCAN;
+            hit_count++;
+            break;
+        }
+    }
+
+    if (hit_count_out) {
+        *hit_count_out = hit_count;
+    }
+    return flags;
+}
+
 static uint32_t cprisk_detect_dbi_image_markers_i(int *hit_count_out) {
     static const char *const image_tokens[] = {
         "pinvm",
@@ -257,6 +338,10 @@ static uint32_t cprisk_detect_dbi_image_markers_i(int *hit_count_out) {
         "memcheck",
         "helgrind",
         "drmemory",
+        "qbdi",
+        "libqbdi",
+        "qbdipreload",
+        "/qbdi/",
     };
 
     uint32_t flags = 0u;
@@ -292,6 +377,8 @@ static uint32_t cprisk_detect_dbi_thread_markers_i(int *hit_count_out) {
         "pinvm",
         "pin-worker",
         "pin-tool",
+        "qbdi",
+        "qbdipreload",
     };
 
     uint32_t flags = 0u;
@@ -333,6 +420,51 @@ static uint32_t cprisk_detect_dbi_thread_markers_i(int *hit_count_out) {
     return flags;
 }
 
+static uint32_t cprisk_detect_dbi_execmem_i(int *hit_count_out) {
+    uint32_t flags = 0u;
+    int hit_count = 0;
+    mach_vm_address_t addr = MACH_VM_MIN_ADDRESS;
+
+    while (1) {
+        mach_vm_size_t region_size = 0u;
+        uint32_t depth = 0u;
+        vm_region_submap_info_data_64_t info;
+        mach_msg_type_number_t info_count = VM_REGION_SUBMAP_INFO_COUNT_64;
+        kern_return_t kr = mach_vm_region_recurse(
+            mach_task_self(),
+            &addr,
+            &region_size,
+            &depth,
+            (vm_region_recurse_info_t)&info,
+            &info_count
+        );
+        if (kr != KERN_SUCCESS) {
+            break;
+        }
+        if (info.is_submap) {
+            depth += 1u;
+            continue;
+        }
+        if ((info.protection & VM_PROT_EXECUTE) != 0 &&
+            (info.protection & VM_PROT_WRITE) != 0) {
+            flags |= CPRISK_DBI_MARKER_EXEC_WRITE;
+            hit_count++;
+            if (hit_count >= 4) {
+                break;
+            }
+        }
+        if (region_size == 0u || addr > UINT64_MAX - region_size) {
+            break;
+        }
+        addr += region_size;
+    }
+
+    if (hit_count_out) {
+        *hit_count_out = hit_count;
+    }
+    return flags;
+}
+
 static uint64_t cprisk_mul_u64_saturating_i(uint64_t a, uint64_t b) {
     if (a == 0u || b == 0u) {
         return 0u;
@@ -347,13 +479,18 @@ int cprisk_detect_dbi_markers(void) {
     int env_hits = 0;
     int image_hits = 0;
     int thread_hits = 0;
+    int environ_scan_hits = 0;
+    int execmem_hits = 0;
 
     uint32_t marker_flags = 0u;
     marker_flags |= cprisk_detect_dbi_env_markers_i(&env_hits);
+    marker_flags |= cprisk_detect_dbi_environ_scan_i(&environ_scan_hits);
     marker_flags |= cprisk_detect_dbi_image_markers_i(&image_hits);
     marker_flags |= cprisk_detect_dbi_thread_markers_i(&thread_hits);
+    marker_flags |= cprisk_detect_dbi_execmem_i(&execmem_hits);
 
-    const int total_hits = env_hits + image_hits + thread_hits;
+    const int total_hits =
+        env_hits + environ_scan_hits + image_hits + thread_hits + execmem_hits;
     atomic_store(&s_dbi_last_marker_flags, marker_flags);
     atomic_store(&s_dbi_last_hit_count, total_hits > 0 ? (uint32_t)total_hits : 0u);
     return total_hits;
@@ -1054,6 +1191,41 @@ static uint32_t cprisk_clock_crosscheck_i(uint64_t median_ref_ns) {
     return 0u;
 }
 
+/*
+ * Compare elapsed time for the fixed arithmetic workload as seen by CNTPCT_EL0
+ * vs mach_absolute_time. Pure virtualization / DBI time hooks may desynchronize
+ * the two (complements CPRISK_TIMING_ANOMALY_CLOCK_SKEW short-spin check).
+ */
+static uint32_t cprisk_dual_clock_workload_skew_i(void) {
+#if CPRISK_TIMING_CNTPCT_AVAILABLE
+    uint64_t c0 = 0u;
+    uint64_t c1 = 0u;
+    const uint64_t m0 = mach_absolute_time();
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(c0));
+    (void)cprisk_single_step_workload_i();
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(c1));
+    const uint64_t m1 = mach_absolute_time();
+
+    const uint64_t d_cnt_ns = cprisk_cntpct_delta_ns_i(c0, c1);
+    uint64_t d_mach_ns = 0u;
+    if (m1 >= m0) {
+        d_mach_ns = cprisk_mach_abs_to_ns_i(m1 - m0);
+    } else {
+        d_mach_ns = cprisk_mach_abs_to_ns_i(m0 - m1);
+    }
+
+    const uint64_t dmax = d_cnt_ns > d_mach_ns ? d_cnt_ns : d_mach_ns;
+    if (dmax < 8000u) {
+        return 0u;
+    }
+    const uint64_t skew_ns = cprisk_u64_abs_diff_i(d_cnt_ns, d_mach_ns);
+    if (skew_ns > dmax / 4u) {
+        return CPRISK_TIMING_ANOMALY_DUAL_CLOCK_DRIFT;
+    }
+#endif
+    return 0u;
+}
+
 static void cprisk_sort_u64_samples_i(uint64_t *samples, size_t count) {
     if (!samples || count <= 1u) {
         return;
@@ -1125,6 +1297,7 @@ static uint32_t cprisk_timing_probe_eval_i(
     }
 
     anomaly_flags |= cprisk_clock_crosscheck_i(median_ns);
+    anomaly_flags |= cprisk_dual_clock_workload_skew_i();
 
     if (median_ns_out) {
         *median_ns_out = median_ns;

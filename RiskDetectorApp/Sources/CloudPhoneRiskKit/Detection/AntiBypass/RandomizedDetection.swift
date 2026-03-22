@@ -7,8 +7,8 @@ private enum RandomizedDetectionCFF {
     static let detectConfig = CFFConfig.adaptive(
         functionSeed: 0x9D42_A3F1_56C8_2B17,
         protectionTier: .light,
-        dispatcherStyle: .splitIndirect,
-        codecStyle: .xorRotate
+        dispatcherStyle: .functionPointerTable,
+        codecStyle: .feistelSpn
     )
 
     static func salt(config: RandomizedDetection.Config, selectedCount: Int, totalChecks: Int) -> UInt32 {

@@ -94,15 +94,15 @@ public final class DetectorRegistry {
         static let detectTypeConfig = CFFConfig.adaptive(
             functionSeed: 0xA37C_19E4_5B62_D08F,
             protectionTier: .light,
-            dispatcherStyle: .splitIndirect,
-            codecStyle: .xorRotate
+            dispatcherStyle: .functionPointerTable,
+            codecStyle: .feistelSpn
         )
 
         static let detectGroupConfig = CFFConfig.adaptive(
             functionSeed: 0x5CE1_8A20_7F39_B4D1,
             protectionTier: .light,
-            dispatcherStyle: .splitIndirect,
-            codecStyle: .xorRotate
+            dispatcherStyle: .functionPointerTable,
+            codecStyle: .feistelSpn
         )
 
         static func salt(for type: DetectorType) -> UInt32 {

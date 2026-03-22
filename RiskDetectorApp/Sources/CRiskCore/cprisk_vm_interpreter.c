@@ -3,6 +3,7 @@
 #include "include/cprisk_sha256.h"
 #include "include/cprisk_secure_zero.h"
 
+#include <stdatomic.h>
 #include <string.h>
 
 #if defined(__APPLE__)
@@ -46,7 +47,8 @@ static int cprisk_vmp_bytecode_has_m2_i(const cprisk_vmp_bytecode_header_t *bh) 
     if (!bh)
         return 0;
     return (bh->reserved & CPRISK_VMP_BC_FLAG_PER_ENTRY_VPC) != 0u
-        || (bh->reserved & CPRISK_VMP_BC_FLAG_HANDLER_VARIANT_SEED) != 0u;
+        || (bh->reserved & CPRISK_VMP_BC_FLAG_HANDLER_VARIANT_SEED) != 0u
+        || (bh->reserved & CPRISK_VMP_BC_FLAG_VPC_NONLINEAR) != 0u;
 }
 
 static size_t cprisk_vmp_bytecode_header_total_bytes_i(const cprisk_vmp_bytecode_header_t *bh) {
@@ -85,6 +87,256 @@ static void cprisk_vmp_read_vpc_affine_i(const uint8_t *b_sec,
     *out_b = cprisk_read_le_u64_i(b_sec + CPRISK_VMP_BYTECODE_HEADER_CORE_BYTES + 8u);
 }
 
+static int cprisk_vmp_vpc_is_nonlinear_i(const cprisk_vmp_bytecode_header_t *bh) {
+    return bh != NULL && (bh->reserved & CPRISK_VMP_BC_FLAG_VPC_NONLINEAR) != 0u;
+}
+
+static uint32_t cprisk_vm_session_mix_i(void);
+
+static uint32_t cprisk_vmp_rotl32_i(uint32_t x, uint32_t n) {
+    n &= 31u;
+    return n == 0u ? x : ((x << n) | (x >> (32u - n)));
+}
+
+static uint32_t cprisk_vmp_rotr32_i(uint32_t x, uint32_t n) {
+    n &= 31u;
+    return n == 0u ? x : ((x >> n) | (x << (32u - n)));
+}
+
+static uint32_t cprisk_vmp_avalanche32_i(uint32_t x) {
+    x ^= x >> 16u;
+    x *= 0x7FEB352Du;
+    x ^= x >> 15u;
+    x *= 0x846CA68Bu;
+    x ^= x >> 16u;
+    return x;
+}
+
+static const uint8_t cprisk_vmp_vpc_sbox_i[16] = {
+    0xCu, 0x5u, 0x6u, 0xBu, 0x9u, 0x0u, 0xAu, 0xDu,
+    0x3u, 0xEu, 0xFu, 0x8u, 0x4u, 0x7u, 0x1u, 0x2u,
+};
+
+static uint16_t cprisk_vmp_vpc_sub16_i(uint16_t value) {
+    uint16_t out = 0u;
+    for (uint32_t nib = 0u; nib < 4u; nib++) {
+        const uint16_t idx = (uint16_t)((value >> (nib * 4u)) & 0xFu);
+        out |= (uint16_t)cprisk_vmp_vpc_sbox_i[idx] << (nib * 4u);
+    }
+    return out;
+}
+
+#define CPRISK_VMP_VPC_FEISTEL_ROUNDS 8u
+
+static uint32_t cprisk_vmp_vpc_key32_i(uint64_t a, uint64_t b) {
+    return cprisk_vmp_avalanche32_i(
+        (uint32_t)a ^
+        (uint32_t)(a >> 32u) ^
+        cprisk_vmp_rotl32_i((uint32_t)b, 7u) ^
+        (uint32_t)(b >> 32u) ^
+        0x564D5043u
+    );
+}
+
+static uint32_t cprisk_vmp_vpc_salt32_i(uint64_t a, uint64_t b) {
+    return cprisk_vmp_avalanche32_i(
+        (uint32_t)b ^
+        (uint32_t)(b >> 32u) ^
+        cprisk_vmp_rotl32_i((uint32_t)a, 11u) ^
+        (uint32_t)(a >> 32u) ^
+        0x4D345650u
+    );
+}
+
+static uint16_t cprisk_vmp_vpc_feistel_F_i(uint16_t r, uint32_t key, uint32_t salt, uint32_t round) {
+    uint32_t rk = cprisk_vmp_avalanche32_i(key ^ salt ^ (round * 0x9E3779B9u) ^ 0xDEADBEEFu);
+    uint16_t piece = (uint16_t)(r ^ (uint16_t)rk ^ (uint16_t)(rk >> 16u));
+    piece = cprisk_vmp_vpc_sub16_i(piece);
+    piece ^= (uint16_t)cprisk_vmp_rotr32_i(rk, (round & 7u) + 1u);
+    return (uint16_t)cprisk_vmp_avalanche32_i((uint32_t)piece ^ rk ^ 0xA5C31F27u);
+}
+
+static uint32_t cprisk_vmp_vpc_feistel32_encode_i(uint32_t state, uint32_t key, uint32_t salt) {
+    uint32_t v = state ^ cprisk_vmp_avalanche32_i(key ^ salt ^ 0xF1055A1u);
+    uint16_t l = (uint16_t)(v >> 16);
+    uint16_t r = (uint16_t)(v & 0xFFFFu);
+    for (uint32_t round = 0u; round < CPRISK_VMP_VPC_FEISTEL_ROUNDS; round++) {
+        const uint16_t nl = r;
+        const uint16_t nr = (uint16_t)(l ^ cprisk_vmp_vpc_feistel_F_i(r, key, salt, round));
+        l = nl;
+        r = nr;
+    }
+    return (((uint32_t)l << 16) | (uint32_t)r)
+        ^ cprisk_vmp_avalanche32_i(key ^ salt ^ 0xACC0DECu);
+}
+
+static uint32_t cprisk_vmp_vpc_feistel32_decode_i(uint32_t encoded_state, uint32_t key, uint32_t salt) {
+    uint32_t mid = encoded_state ^ cprisk_vmp_avalanche32_i(key ^ salt ^ 0xACC0DECu);
+    uint16_t l = (uint16_t)(mid >> 16);
+    uint16_t r = (uint16_t)(mid & 0xFFFFu);
+    for (uint32_t round = CPRISK_VMP_VPC_FEISTEL_ROUNDS; round > 0u; round--) {
+        const uint32_t idx = round - 1u;
+        const uint16_t pr = l;
+        const uint16_t pl = (uint16_t)(r ^ cprisk_vmp_vpc_feistel_F_i(l, key, salt, idx));
+        l = pl;
+        r = pr;
+    }
+    return (((uint32_t)l << 16) | (uint32_t)r)
+        ^ cprisk_vmp_avalanche32_i(key ^ salt ^ 0xF1055A1u);
+}
+
+static uint32_t cprisk_vmp_vpc_tag32_i(uint32_t encoded_pc32, uint32_t key, uint32_t salt) {
+    return cprisk_vmp_avalanche32_i(
+        encoded_pc32 ^
+        cprisk_vmp_rotl32_i(key, 5u) ^
+        cprisk_vmp_rotr32_i(salt, 3u) ^
+        0xD00DFEEDu
+    );
+}
+
+static uint64_t cprisk_vmp_nonlinear_encode_pc_i(uint32_t pc, uint64_t a, uint64_t b) {
+    const uint32_t session = cprisk_vm_session_mix_i();
+    const uint32_t key = cprisk_vmp_vpc_key32_i(a, b) ^ session;
+    const uint32_t salt = cprisk_vmp_vpc_salt32_i(a, b) ^ cprisk_vmp_rotl32_i(session, 9u);
+    const uint32_t enc32 = cprisk_vmp_vpc_feistel32_encode_i(pc, key, salt);
+    const uint32_t tag32 = cprisk_vmp_vpc_tag32_i(enc32, key, salt);
+    return ((uint64_t)tag32 << 32u) | (uint64_t)enc32;
+}
+
+static int cprisk_vmp_nonlinear_decode_pc_i(uint64_t encoded_pc,
+                                            uint64_t a,
+                                            uint64_t b,
+                                            uint32_t *out_pc) {
+    if (!out_pc) {
+        return 0;
+    }
+    const uint32_t session = cprisk_vm_session_mix_i();
+    const uint32_t key = cprisk_vmp_vpc_key32_i(a, b) ^ session;
+    const uint32_t salt = cprisk_vmp_vpc_salt32_i(a, b) ^ cprisk_vmp_rotl32_i(session, 9u);
+    const uint32_t enc32 = (uint32_t)encoded_pc;
+    const uint32_t tag32 = (uint32_t)(encoded_pc >> 32u);
+    if (tag32 != cprisk_vmp_vpc_tag32_i(enc32, key, salt)) {
+        return 0;
+    }
+    *out_pc = cprisk_vmp_vpc_feistel32_decode_i(enc32, key, salt);
+    return 1;
+}
+
+static int cprisk_vm_encode_pc_i(const cprisk_vmp_bytecode_header_t *bh,
+                                 uint32_t pc,
+                                 uint64_t vpc_a,
+                                 uint64_t vpc_b,
+                                 uint64_t *out_enc,
+                                 cprisk_vm_run_result_t *out) {
+    if (!out_enc) {
+        return 0;
+    }
+    if (cprisk_vmp_vpc_is_nonlinear_i(bh)) {
+        *out_enc = cprisk_vmp_nonlinear_encode_pc_i(pc, vpc_a, vpc_b);
+        return 1;
+    }
+    uint64_t scaled = 0u;
+    if (__builtin_mul_overflow((uint64_t)pc, vpc_a, &scaled) ||
+        __builtin_add_overflow(scaled, vpc_b, &scaled)) {
+        if (out) {
+            out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
+            out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
+        }
+        return 0;
+    }
+    *out_enc = scaled;
+    return 1;
+}
+
+static int cprisk_vm_decode_pc_i(const cprisk_vmp_bytecode_header_t *bh,
+                                 uint64_t encoded_pc,
+                                 uint64_t vpc_a,
+                                 uint64_t vpc_b,
+                                 uint32_t *out_pc,
+                                 cprisk_vm_run_result_t *out) {
+    if (!out_pc) {
+        return 0;
+    }
+    if (cprisk_vmp_vpc_is_nonlinear_i(bh)) {
+        if (!cprisk_vmp_nonlinear_decode_pc_i(encoded_pc, vpc_a, vpc_b, out_pc)) {
+            if (out) {
+                out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
+                out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
+            }
+            return 0;
+        }
+        return 1;
+    }
+    if (encoded_pc < vpc_b) {
+        if (out) {
+            out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
+            out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
+        }
+        return 0;
+    }
+    const uint64_t numer = encoded_pc - vpc_b;
+    if (vpc_a == 0u || numer % vpc_a != 0u) {
+        if (out) {
+            out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
+            out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
+        }
+        return 0;
+    }
+    const uint64_t pc64 = numer / vpc_a;
+    if (pc64 > (uint64_t)UINT32_MAX) {
+        if (out) {
+            out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
+            out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
+        }
+        return 0;
+    }
+    *out_pc = (uint32_t)pc64;
+    return 1;
+}
+
+static atomic_uint_fast32_t s_vm_session_mix_i = 0;
+
+static uint32_t cprisk_vm_session_mix_i(void) {
+    uint32_t cached = (uint32_t)atomic_load(&s_vm_session_mix_i);
+    if (cached != 0u) {
+        return cached;
+    }
+
+    uint32_t mix = 0xA5C31F27u;
+#if defined(__APPLE__)
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) == 0) {
+        mix ^= (uint32_t)now.tv_nsec;
+        mix ^= (uint32_t)now.tv_sec * 0x9E3779B9u;
+    }
+    mix ^= (uint32_t)getpid() * 0x45D9F3Bu;
+#endif
+
+    uint8_t session_key[CPRISK_ARMOR_KEY_SIZE];
+    if (cprisk_get_session_key(session_key) == 0) {
+        mix ^= cprisk_read_le_u32_i(session_key);
+        mix ^= cprisk_read_le_u32_i(session_key + 12u);
+        mix ^= cprisk_read_le_u32_i(session_key + 24u);
+        cprisk_secure_zero(session_key, sizeof(session_key));
+    }
+
+    if (cprisk_runtime_material_ready() != 0) {
+        uint8_t runtime_material[CPRISK_ARMOR_KEY_SIZE];
+        if (cprisk_get_runtime_material(runtime_material) == 0) {
+            mix ^= cprisk_read_le_u32_i(runtime_material + 4u);
+            mix ^= cprisk_read_le_u32_i(runtime_material + 20u);
+            cprisk_secure_zero(runtime_material, sizeof(runtime_material));
+        }
+    }
+
+    mix = cprisk_vmp_avalanche32_i(mix ^ 0x6D2B79F5u);
+    if (mix == 0u) {
+        mix = 0x6D2B79F5u;
+    }
+    atomic_store(&s_vm_session_mix_i, mix);
+    return mix;
+}
+
 static uint32_t cprisk_vm_handler_variant_i(uint32_t hdr_reserved,
                                           uint64_t func_id,
                                           uint64_t steps,
@@ -95,11 +347,12 @@ static uint32_t cprisk_vm_handler_variant_i(uint32_t hdr_reserved,
     mix ^= (uint32_t)op * 0x9E3779B9u;
     if ((hdr_reserved & CPRISK_VMP_BC_FLAG_HANDLER_VARIANT_SEED) != 0u)
         mix ^= (hdr_reserved >> 8) & 3u;
+    mix ^= cprisk_vm_session_mix_i();
     return mix & 3u;
 }
 
-/** 16-way semantic lane selector (seed/pc/func/handler — all reachable switch arms). */
-static uint32_t cprisk_vm_lane_poly16_i(uint32_t pc,
+/** 32-way semantic lane selector (seed/pc/func/handler — all reachable switch arms). */
+static uint32_t cprisk_vm_lane_poly32_i(uint32_t pc,
                                        uint64_t func_id,
                                        uint64_t steps,
                                        uint32_t hvar,
@@ -108,7 +361,25 @@ static uint32_t cprisk_vm_lane_poly16_i(uint32_t pc,
     x ^= (uint32_t)steps ^ (uint32_t)(steps >> 32u);
     x ^= hvar * 0x9E37u;
     x ^= (semantic_family & 0xFu) * 0xC2B2u;
-    return x % 16u;
+    x ^= cprisk_vm_session_mix_i() ^ (cprisk_vm_session_mix_i() >> 11);
+    return x % 32u;
+}
+
+/** Extra no-op staging (semantic identity) before poly 16–31 paths — harder trace slicing vs poly 0–15. */
+static void cprisk_vm_lane_poly_staging_i(uint8_t acc[32],
+                                           uint32_t steps,
+                                           uint32_t poly,
+                                           uint32_t semantic_family,
+                                           uint64_t func_id) {
+    volatile uint32_t tag = cprisk_vmp_avalanche32_i(
+        poly ^ semantic_family ^ (uint32_t)steps ^ (uint32_t)func_id ^ 0xFAC3E7A2u
+    );
+    for (uint32_t z = 0u; z < 12u; z++) {
+        uint32_t ix = (z * 5u + (tag & 7u) + semantic_family + (uint32_t)(func_id & 7u)) & 31u;
+        volatile uint8_t vv = acc[ix];
+        uint8_t id = (uint8_t)(vv ^ (uint8_t)(((uint32_t)vv * 2u - (uint32_t)vv - (uint32_t)vv) & 0xFFu));
+        acc[ix] = id;
+    }
 }
 
 static int cprisk_vm_entry_profile_decode_i(uint32_t entry_reserved,
@@ -255,7 +526,10 @@ static void cprisk_vm_raw_region_apply_i(uint8_t acc[32],
         idxs[i] = (uint8_t)((i + base) & 31u);
     }
 
-    const uint32_t poly = cprisk_vm_lane_poly16_i(pc, func_id, steps, variant, semantic_family);
+    uint32_t poly = cprisk_vm_lane_poly32_i(pc, func_id, steps, variant, semantic_family);
+    if (poly >= 16u)
+        cprisk_vm_lane_poly_staging_i(acc, steps, poly, semantic_family, func_id);
+    poly &= 15u;
     switch (poly) {
     case 0u:
         for (uint32_t i = 0; i < 8u; i++) {
@@ -384,17 +658,30 @@ static void cprisk_vm_raw_region_apply_i(uint8_t acc[32],
     }
 }
 
-static int cprisk_vm_enc_pc_advance_i(uint64_t *enc_pc, uint64_t vpc_a, cprisk_vm_run_result_t *out) {
-    uint64_t delta;
-    if (__builtin_mul_overflow(CPRISK_VM_INSN_WIDTH, vpc_a, &delta) ||
-        __builtin_add_overflow(*enc_pc, delta, enc_pc)) {
+static int cprisk_vm_enc_pc_advance_ctx_i(const cprisk_vmp_bytecode_header_t *bh,
+                                          uint64_t *enc_pc,
+                                          uint64_t vpc_a,
+                                          uint64_t vpc_b,
+                                          cprisk_vm_run_result_t *out) {
+    uint32_t pc = 0u;
+    if (!enc_pc || !cprisk_vm_decode_pc_i(bh, *enc_pc, vpc_a, vpc_b, &pc, out)) {
+        return 0;
+    }
+    if ((uint64_t)pc + CPRISK_VM_INSN_WIDTH > (uint64_t)UINT32_MAX) {
         if (out) {
             out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
             out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
         }
         return 0;
     }
-    return 1;
+    return cprisk_vm_encode_pc_i(
+        bh,
+        pc + CPRISK_VM_INSN_WIDTH,
+        vpc_a,
+        vpc_b,
+        enc_pc,
+        out
+    );
 }
 
 static void cprisk_vm_lane_family_apply_i(uint8_t acc[32],
@@ -414,7 +701,10 @@ static void cprisk_vm_lane_family_apply_i(uint8_t acc[32],
         idxs[i] = (uint8_t)((i + base) & 31u);
     }
 
-    const uint32_t poly = cprisk_vm_lane_poly16_i(pc, func_id, steps, variant, semantic_family);
+    uint32_t poly = cprisk_vm_lane_poly32_i(pc, func_id, steps, variant, semantic_family);
+    if (poly >= 16u)
+        cprisk_vm_lane_poly_staging_i(acc, steps, poly, semantic_family, func_id);
+    poly &= 15u;
     switch (poly) {
     case 0u:
         for (uint32_t i = 0; i < 8u; i++) {
@@ -796,13 +1086,14 @@ static int cprisk_vm_branch_cond_mixed_eval_i(uint32_t insn,
     return 1;
 }
 
-static int cprisk_vm_set_branch_target_i(uint64_t *enc_pc,
-                                         uint64_t vpc_a,
-                                         uint64_t vpc_b,
-                                         uint32_t blen,
-                                         uint32_t pc,
-                                         int64_t delta_bytes,
-                                         cprisk_vm_run_result_t *out) {
+static int cprisk_vm_set_branch_target_ctx_i(const cprisk_vmp_bytecode_header_t *bh,
+                                             uint64_t *enc_pc,
+                                             uint64_t vpc_a,
+                                             uint64_t vpc_b,
+                                             uint32_t blen,
+                                             uint32_t pc,
+                                             int64_t delta_bytes,
+                                             cprisk_vm_run_result_t *out) {
     if (!enc_pc)
         return 0;
     if (delta_bytes % (int64_t)CPRISK_VM_INSN_WIDTH != 0) {
@@ -821,19 +1112,15 @@ static int cprisk_vm_set_branch_target_i(uint64_t *enc_pc,
         }
         return 0;
     }
-    uint64_t scaled = 0u;
     uint64_t target_u = (uint64_t)target;
-    if (__builtin_mul_overflow(target_u, vpc_a, &scaled) ||
-        __builtin_add_overflow(scaled, vpc_b, &scaled)) {
-        if (out) {
-            out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
-            out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
-        }
-        return 0;
-    }
-    *enc_pc = scaled;
-    return 1;
+    return cprisk_vm_encode_pc_i(bh, (uint32_t)target_u, vpc_a, vpc_b, enc_pc, out);
 }
+
+#define cprisk_vm_enc_pc_advance_i(enc_pc, vpc_a, out) \
+    cprisk_vm_enc_pc_advance_ctx_i(fr->bh, enc_pc, vpc_a, fr->vpc_b, out)
+
+#define cprisk_vm_set_branch_target_i(enc_pc, vpc_a, vpc_b, blen, pc, delta_bytes, out) \
+    cprisk_vm_set_branch_target_ctx_i(fr->bh, enc_pc, vpc_a, vpc_b, blen, pc, delta_bytes, out)
 
 static int cprisk_vmp_headers_ok_i(const uint8_t *d_s,
                                    unsigned long d_sz,
@@ -934,35 +1221,78 @@ static uint32_t cprisk_vm_m3_fnv1a_bytes_i(const volatile uint8_t *p, size_t n) 
  */
 __attribute__((noinline)) static void cprisk_vm_m3_dead_bait_xor_i(uint8_t acc[32], uint32_t seed, uint32_t lane) {
     uint32_t x = (seed * 0x9E3779B9u) ^ (lane * 0x85EBCA6Bu);
-    for (unsigned i = 0; i < 32u; i++)
+    uint8_t scratch[32];
+    for (unsigned i = 0; i < 32u; i++) {
+        x = cprisk_vmp_avalanche32_i(x ^ (uint32_t)i ^ 0xA53C1F27u);
+        scratch[(i * 5u) & 31u] = (uint8_t)(acc[i] ^ (uint8_t)x);
         acc[i] ^= (uint8_t)(x >> (i & 7u));
+        acc[i] ^= scratch[(i * 5u) & 31u];
+    }
 }
 
 __attribute__((noinline)) static void cprisk_vm_m3_dead_bait_add_i(uint8_t acc[32], uint32_t seed, uint32_t lane) {
     uint32_t x = seed + lane * 0x27d4eb2du;
-    for (unsigned i = 0; i < 32u; i++)
-        acc[i] = (uint8_t)(acc[i] + (uint8_t)(x + i));
+    uint8_t scratch[16];
+    for (unsigned i = 0; i < 32u; i++) {
+        x = cprisk_vmp_avalanche32_i(x + i * 0x9E3779B9u);
+        scratch[i & 15u] ^= (uint8_t)(x >> ((i & 3u) * 8u));
+        acc[i] = (uint8_t)(acc[i] + (uint8_t)(x + i) + scratch[i & 15u]);
+    }
 }
 
 __attribute__((noinline)) static void cprisk_vm_m3_dead_bait_roll_i(uint8_t acc[32], uint32_t seed) {
     unsigned rot = (unsigned)(seed & 31u);
     uint8_t t[32];
     memcpy(t, acc, sizeof(t));
-    for (unsigned i = 0; i < 32u; i++)
-        acc[i] = t[(i + rot) & 31u];
+    for (unsigned i = 0; i < 32u; i++) {
+        const uint8_t lhs = t[(i + rot) & 31u];
+        const uint8_t rhs = t[(i * 7u + rot) & 31u];
+        acc[i] = (uint8_t)(lhs ^ cprisk_vm_add_byte_bitwise_i(rhs, (uint8_t)(seed + i)));
+    }
+}
+
+__attribute__((noinline)) static void cprisk_vm_m3_dead_heavy_shadow_i(uint8_t acc[32], uint32_t seed) {
+    uint8_t save[32];
+    memcpy(save, acc, sizeof(save));
+    uint64_t lane[4];
+    memcpy(lane, acc, sizeof(lane));
+    for (unsigned j = 0; j < 4u; j++)
+        lane[j] ^= (uint64_t)(seed + j * 0x9E3779B9u) * UINT64_C(0xD6E8FEB783278F6B);
+    for (unsigned r = 0; r < 4u; r++) {
+        for (unsigned i = 0; i < 32u; i++) {
+            uint32_t ix = (i + r * 7u + (seed & 0xFFu)) & 31u;
+            acc[ix] ^= (uint8_t)((lane[(i / 8u) & 3u] >> ((i % 8u) * 8u)) & 0xFFu);
+        }
+        lane[0] ^= lane[3] ^ ((uint64_t)seed << (17u + (r & 3u)));
+        lane[1] = (lane[1] << 13) | (lane[1] >> 51);
+        lane[2] ^= (uint64_t)acc[(seed + r * 3u) & 31u] * UINT64_C(0x100000001B3);
+    }
+    memcpy(acc, save, sizeof(save));
 }
 
 static void cprisk_vm_m3_dead_dispatch_i(uint8_t acc[32], uint32_t hdr_reserved, uint32_t opkind) {
     uint32_t dseed = (hdr_reserved >> 16) & 0xFFu;
-    switch (opkind % 3u) {
+    switch (opkind % 6u) {
     case 0u:
         cprisk_vm_m3_dead_bait_xor_i(acc, dseed, opkind);
         break;
     case 1u:
         cprisk_vm_m3_dead_bait_add_i(acc, dseed, opkind);
         break;
-    default:
+    case 2u:
         cprisk_vm_m3_dead_bait_roll_i(acc, dseed);
+        break;
+    case 3u:
+        cprisk_vm_m3_dead_bait_xor_i(acc, dseed ^ 0x55u, opkind + 0x11u);
+        cprisk_vm_m3_dead_bait_roll_i(acc, dseed ^ 0xA5u);
+        break;
+    case 4u:
+        cprisk_vm_m3_dead_bait_add_i(acc, dseed ^ 0x3Cu, opkind + 0x29u);
+        cprisk_vm_m3_dead_bait_xor_i(acc, dseed ^ 0xC3u, opkind + 0x41u);
+        break;
+    default:
+        cprisk_vm_m3_dead_heavy_shadow_i(acc, dseed ^ (opkind * 0x27D4EB2Du));
+        cprisk_vm_m3_dead_bait_roll_i(acc, dseed ^ 0x5Au);
         break;
     }
 }
@@ -1080,11 +1410,27 @@ static uint32_t cprisk_vm_m3_self_expect_hmac_resolve_i(const struct mach_header
 }
 
 static void cprisk_vm_selfchk_hmac_key_i(const uint8_t runtime_mat[32], uint8_t key_out[32]) {
-    uint8_t buf[32 + 20];
-    memcpy(buf, runtime_mat, 32);
-    memcpy(buf + 32, "CPRISK_VM_M3_HMAC", (size_t)17);
-    buf[32 + 17] = 0;
-    cprisk_sha256(buf, 32u + 18u, key_out);
+    /*
+     * KDF: SHA256( runtime_mat || decode(label) || session_bind_8 )
+     * Label bytes are XOR-mixed at rest (no plaintext "CPRISK..." in .text/.rodata).
+     * session_bind_8 = first 8 bytes of session key when active, else zeros (matches
+     * link-time CPSH injection with zero session).
+     */
+    static const uint8_t cprisk_vm_selfchk_lbl_enc[18] = {
+        0x19u, 0x0au, 0x08u, 0x13u, 0x09u, 0x11u, 0x05u, 0x0cu, 0x17u, 0x05u, 0x17u, 0x69u,
+        0x05u, 0x12u, 0x17u, 0x1bu, 0x19u, 0x5au,
+    };
+    uint8_t buf[64];
+    memset(buf, 0, sizeof(buf));
+    memcpy(buf, runtime_mat, 32u);
+    for (size_t i = 0; i < sizeof(cprisk_vm_selfchk_lbl_enc); i++)
+        buf[32u + i] = cprisk_vm_selfchk_lbl_enc[i] ^ 0x5Au;
+    uint8_t sk[32];
+    memset(sk, 0, sizeof(sk));
+    if (cprisk_get_session_key(sk) == 0)
+        memcpy(buf + 50u, sk, 8u);
+    cprisk_secure_zero(sk, sizeof(sk));
+    cprisk_sha256(buf, 32u + 18u + 8u, key_out);
     cprisk_secure_zero(buf, sizeof(buf));
 }
 
@@ -1228,11 +1574,60 @@ typedef struct {
     uint32_t m3_opaque;
     uint32_t m3_dead;
     int vm_anti_symbolic_heavy;
+    uint32_t session_mix;
 
     uint8_t acc[32];
+    uint8_t trace_scratch[64];
+    uint64_t trace_shadow[4];
 
     uint64_t steps;
 } cprisk_vm_interp_frame_t;
+
+static void cprisk_vm_trace_sidefx_i(cprisk_vm_interp_frame_t *fr,
+                                     uint32_t logical,
+                                     uint64_t imm,
+                                     uint32_t pc,
+                                     uint32_t hvar) {
+    if (!fr) {
+        return;
+    }
+
+    uint64_t state =
+        fr->func_id ^
+        imm ^
+        ((uint64_t)logical << 40u) ^
+        ((uint64_t)pc << 12u) ^
+        fr->steps ^
+        (uint64_t)fr->session_mix;
+    const uint32_t base = (pc + hvar + (uint32_t)fr->steps) & 31u;
+    const uint32_t vreg_idx = (logical ^ hvar ^ fr->session_mix) & 7u;
+    uint8_t snapshot[8];
+    for (uint32_t i = 0u; i < 8u; i++) {
+        snapshot[i] = fr->acc[(base + i) & 31u];
+    }
+    const uint64_t vreg_orig = fr->vregs[vreg_idx];
+
+    for (uint32_t i = 0u; i < 8u; i++) {
+        state = cprisk_splitmix64_next_i(&state);
+        const uint32_t lane = (base + ((i * 5u + hvar) & 7u)) & 31u;
+        fr->acc[lane] = cprisk_vm_xor_equiv_i(
+            snapshot[i],
+            (uint8_t)state,
+            fr->session_mix + logical + hvar + i
+        );
+        fr->trace_scratch[(pc + logical + i) & 63u] ^=
+            (uint8_t)(state >> ((i & 7u) * 8u));
+    }
+
+    fr->vregs[vreg_idx] = vreg_orig ^ state ^ ((uint64_t)logical << 48u);
+    fr->trace_shadow[(logical + hvar) & 3u] ^=
+        fr->vregs[vreg_idx] + ((uint64_t)pc << 17u) + fr->steps;
+
+    for (uint32_t i = 0u; i < 8u; i++) {
+        fr->acc[(base + i) & 31u] = snapshot[i];
+    }
+    fr->vregs[vreg_idx] = vreg_orig;
+}
 
 static void cprisk_vm_interp_finish_run_i(cprisk_vm_interp_frame_t *fr) {
     memcpy(fr->out->acc, fr->acc, sizeof(fr->acc));
@@ -1291,24 +1686,10 @@ static void cprisk_vm_interp_loop_a(cprisk_vm_interp_frame_t *fr)
             }
         }
 
-        if (fr->encoded_pc < fr->vpc_b) {
-            fr->out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
-            fr->out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
+        uint32_t pc = 0u;
+        if (!cprisk_vm_decode_pc_i(fr->bh, fr->encoded_pc, fr->vpc_a, fr->vpc_b, &pc, fr->out)) {
             break;
         }
-        const uint64_t numer = fr->encoded_pc - fr->vpc_b;
-        if (numer % fr->vpc_a != 0u) {
-            fr->out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
-            fr->out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
-            break;
-        }
-        const uint64_t pc64 = numer / fr->vpc_a;
-        if (pc64 > (uint64_t)UINT32_MAX) {
-            fr->out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
-            fr->out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
-            break;
-        }
-        const uint32_t pc = (uint32_t)pc64;
         if ((uint64_t)pc + CPRISK_VM_INSN_WIDTH > (uint64_t)fr->blen) {
             fr->out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
             fr->out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
@@ -1381,6 +1762,10 @@ static void cprisk_vm_interp_loop_a(cprisk_vm_interp_frame_t *fr)
                     cprisk_vm_m3_dead_dispatch_i(fr->acc, fr->bh->reserved, (uint32_t)op + 0x50u);
                 continue;
             }
+        }
+
+        if (fr->m3_dead != 0u || fr->vm_anti_symbolic_heavy) {
+            cprisk_vm_trace_sidefx_i(fr, (uint32_t)logical, imm, pc, hvar);
         }
 
         if (fr->vm_anti_symbolic_heavy) {
@@ -1548,8 +1933,7 @@ static void cprisk_vm_interp_loop_a(cprisk_vm_interp_frame_t *fr)
             }
             uint64_t ret_pc = (uint64_t)pc + CPRISK_VM_INSN_WIDTH;
             uint64_t ret_enc = 0u;
-            if (__builtin_mul_overflow(ret_pc, fr->vpc_a, &ret_enc)
-                || __builtin_add_overflow(ret_enc, fr->vpc_b, &ret_enc)) {
+            if (!cprisk_vm_encode_pc_i(fr->bh, (uint32_t)ret_pc, fr->vpc_a, fr->vpc_b, &ret_enc, fr->out)) {
                 fr->out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
                 fr->out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
                 goto vm_leave_a;
@@ -1629,8 +2013,7 @@ static void cprisk_vm_interp_loop_a(cprisk_vm_interp_frame_t *fr)
             uint64_t callee_id = imm;
             uint64_t ret_pc = (uint64_t)pc + CPRISK_VM_INSN_WIDTH;
             uint64_t ret_enc = 0u;
-            if (__builtin_mul_overflow(ret_pc, fr->vpc_a, &ret_enc)
-                || __builtin_add_overflow(ret_enc, fr->vpc_b, &ret_enc)) {
+            if (!cprisk_vm_encode_pc_i(fr->bh, (uint32_t)ret_pc, fr->vpc_a, fr->vpc_b, &ret_enc, fr->out)) {
                 fr->out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
                 fr->out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
                 goto vm_leave_a;
@@ -1676,7 +2059,8 @@ static void cprisk_vm_interp_loop_a(cprisk_vm_interp_frame_t *fr)
             }
             fr->code = fr->b_sec + callee_ent->bytecode_offset;
             fr->blen = callee_ent->bytecode_length;
-            fr->encoded_pc = fr->vpc_b;
+            if (!cprisk_vm_encode_pc_i(fr->bh, 0u, fr->vpc_a, fr->vpc_b, &fr->encoded_pc, fr->out))
+                goto vm_leave_a;
             uint32_t sf = 1u, mp = 0u, msd = 4u;
             if (!cprisk_vm_entry_profile_decode_i(
                     callee_ent->reserved,
@@ -1790,24 +2174,10 @@ static void cprisk_vm_interp_loop_b(cprisk_vm_interp_frame_t *fr)
             }
         }
 
-        if (fr->encoded_pc < fr->vpc_b) {
-            fr->out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
-            fr->out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
+        uint32_t pc = 0u;
+        if (!cprisk_vm_decode_pc_i(fr->bh, fr->encoded_pc, fr->vpc_a, fr->vpc_b, &pc, fr->out)) {
             break;
         }
-        const uint64_t numer = fr->encoded_pc - fr->vpc_b;
-        if (numer % fr->vpc_a != 0u) {
-            fr->out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
-            fr->out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
-            break;
-        }
-        const uint64_t pc64 = numer / fr->vpc_a;
-        if (pc64 > (uint64_t)UINT32_MAX) {
-            fr->out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
-            fr->out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
-            break;
-        }
-        const uint32_t pc = (uint32_t)pc64;
         if ((uint64_t)pc + CPRISK_VM_INSN_WIDTH > (uint64_t)fr->blen) {
             fr->out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
             fr->out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
@@ -1886,6 +2256,10 @@ static void cprisk_vm_interp_loop_b(cprisk_vm_interp_frame_t *fr)
                     cprisk_vm_m3_dead_dispatch_i(fr->acc, fr->bh->reserved, (uint32_t)op + 0x50u);
                 continue;
             }
+        }
+
+        if (fr->m3_dead != 0u || fr->vm_anti_symbolic_heavy) {
+            cprisk_vm_trace_sidefx_i(fr, (uint32_t)logical, imm, pc, hvar);
         }
 
         if (fr->vm_anti_symbolic_heavy) {
@@ -2086,8 +2460,7 @@ static void cprisk_vm_interp_loop_b(cprisk_vm_interp_frame_t *fr)
                     }
                     uint64_t ret_pc = (uint64_t)pc + CPRISK_VM_INSN_WIDTH;
                     uint64_t ret_enc = 0u;
-                    if (__builtin_mul_overflow(ret_pc, fr->vpc_a, &ret_enc)
-                        || __builtin_add_overflow(ret_enc, fr->vpc_b, &ret_enc)) {
+                    if (!cprisk_vm_encode_pc_i(fr->bh, (uint32_t)ret_pc, fr->vpc_a, fr->vpc_b, &ret_enc, fr->out)) {
                         fr->out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
                         fr->out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
                         goto vm_leave_b;
@@ -2191,8 +2564,7 @@ static void cprisk_vm_interp_loop_b(cprisk_vm_interp_frame_t *fr)
                     uint64_t callee_id = imm;
                     uint64_t ret_pc = (uint64_t)pc + CPRISK_VM_INSN_WIDTH;
                     uint64_t ret_enc = 0u;
-                    if (__builtin_mul_overflow(ret_pc, fr->vpc_a, &ret_enc)
-                        || __builtin_add_overflow(ret_enc, fr->vpc_b, &ret_enc)) {
+                    if (!cprisk_vm_encode_pc_i(fr->bh, (uint32_t)ret_pc, fr->vpc_a, fr->vpc_b, &ret_enc, fr->out)) {
                         fr->out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
                         fr->out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
                         goto vm_leave_b;
@@ -2238,7 +2610,8 @@ static void cprisk_vm_interp_loop_b(cprisk_vm_interp_frame_t *fr)
                     }
                     fr->code = fr->b_sec + callee_ent->bytecode_offset;
                     fr->blen = callee_ent->bytecode_length;
-                    fr->encoded_pc = fr->vpc_b;
+                    if (!cprisk_vm_encode_pc_i(fr->bh, 0u, fr->vpc_a, fr->vpc_b, &fr->encoded_pc, fr->out))
+                        goto vm_leave_b;
                     uint32_t sf = 1u, mp = 0u, msd = 4u;
                     if (!cprisk_vm_entry_profile_decode_i(
                             callee_ent->reserved,
@@ -2362,7 +2735,11 @@ static void cprisk_vm_run_program_i(const struct mach_header_64 *hdr,
 
     const uint8_t *code = b_sec + selected->bytecode_offset;
     uint32_t blen = selected->bytecode_length;
-    uint64_t encoded_pc = vpc_b;
+    uint64_t encoded_pc = 0u;
+    if (!cprisk_vm_encode_pc_i(bh, 0u, vpc_a, vpc_b, &encoded_pc, out)) {
+        cprisk_vm_wb_finalize_i(out, acc);
+        return;
+    }
     uint32_t semantic_family = 1u;
     uint32_t mixed_predicate_profile = 0u;
     uint32_t max_subcall_depth = 4u;
@@ -2492,6 +2869,7 @@ static void cprisk_vm_run_program_i(const struct mach_header_64 *hdr,
     fr.m3_opaque = m3_opaque;
     fr.m3_dead = m3_dead;
     fr.vm_anti_symbolic_heavy = vm_anti_symbolic_heavy;
+    fr.session_mix = cprisk_vm_session_mix_i();
     memcpy(fr.acc, acc, sizeof(fr.acc));
     fr.steps = 0u;
 

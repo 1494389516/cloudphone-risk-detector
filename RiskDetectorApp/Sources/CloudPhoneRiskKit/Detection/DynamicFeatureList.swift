@@ -11,15 +11,16 @@ final class DynamicFeatureList: @unchecked Sendable {
         var additionalPaths: [String] = []
         var additionalPorts: [Int] = []
     }
-    private let state = Mutex(State())
+    private let stateLock = UnfairLock()
+    private var state = State()
 
     // MARK: - Suspicious library tokens (used by SDKIntegrityChecker, DyldImageMonitor)
 
     private static var defaultSuspiciousLibraries: [String] { ObfuscatedConstants.suspiciousLibraryTokensForDyld }
 
     var suspiciousLibraries: [String] {
-        state.withLock { s in
-            Self.defaultSuspiciousLibraries + s.additionalLibraries
+        stateLock.withLock {
+            Self.defaultSuspiciousLibraries + state.additionalLibraries
         }
     }
 
@@ -37,8 +38,8 @@ final class DynamicFeatureList: @unchecked Sendable {
     }
 
     var suspiciousPaths: [String] {
-        state.withLock { s in
-            Self.defaultSuspiciousPaths + s.additionalPaths
+        stateLock.withLock {
+            Self.defaultSuspiciousPaths + state.additionalPaths
         }
     }
 
@@ -49,8 +50,8 @@ final class DynamicFeatureList: @unchecked Sendable {
     ]
 
     var suspiciousPorts: [Int] {
-        state.withLock { s in
-            Self.defaultSuspiciousPorts + s.additionalPorts
+        stateLock.withLock {
+            Self.defaultSuspiciousPorts + state.additionalPorts
         }
     }
 
@@ -63,23 +64,23 @@ final class DynamicFeatureList: @unchecked Sendable {
         additionalSuspiciousPaths: [String]?,
         additionalSuspiciousPorts: [Int]?
     ) {
-        state.withLock { s in
+        stateLock.withLock {
             if let libs = additionalSuspiciousLibraries {
                 let lowered = Set(libs.map { $0.lowercased() })
-                for token in lowered where !s.additionalLibraries.contains(token) {
-                    s.additionalLibraries.append(token)
+                for token in lowered where !state.additionalLibraries.contains(token) {
+                    state.additionalLibraries.append(token)
                 }
             }
             if let paths = additionalSuspiciousPaths {
                 let unique = Set(paths)
-                for path in unique where !s.additionalPaths.contains(path) {
-                    s.additionalPaths.append(path)
+                for path in unique where !state.additionalPaths.contains(path) {
+                    state.additionalPaths.append(path)
                 }
             }
             if let ports = additionalSuspiciousPorts {
                 let unique = Set(ports)
-                for port in unique where !s.additionalPorts.contains(port) {
-                    s.additionalPorts.append(port)
+                for port in unique where !state.additionalPorts.contains(port) {
+                    state.additionalPorts.append(port)
                 }
             }
         }
@@ -89,10 +90,10 @@ final class DynamicFeatureList: @unchecked Sendable {
 
     /// Reset dynamic additions (keeps hardcoded defaults).
     func resetDynamic() {
-        state.withLock { s in
-            s.additionalLibraries.removeAll()
-            s.additionalPaths.removeAll()
-            s.additionalPorts.removeAll()
+        stateLock.withLock {
+            state.additionalLibraries.removeAll()
+            state.additionalPaths.removeAll()
+            state.additionalPorts.removeAll()
         }
     }
 

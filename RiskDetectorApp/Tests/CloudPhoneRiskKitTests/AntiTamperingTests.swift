@@ -470,6 +470,8 @@ final class AntiTamperingTests: XCTestCase {
         let knownMask = UInt32(CPRISK_TIMING_ANOMALY_MEDIAN)
             | UInt32(CPRISK_TIMING_ANOMALY_SPIKE)
             | UInt32(CPRISK_TIMING_ANOMALY_JITTER)
+            | UInt32(CPRISK_TIMING_ANOMALY_CLOCK_SKEW)
+            | UInt32(CPRISK_TIMING_ANOMALY_DUAL_CLOCK_DRIFT)
 
         XCTAssertGreaterThan(thresholdNs, 0)
         XCTAssertGreaterThanOrEqual(maxNs, medianNs)

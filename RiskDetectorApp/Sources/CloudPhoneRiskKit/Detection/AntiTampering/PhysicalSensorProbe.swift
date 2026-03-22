@@ -36,7 +36,8 @@ struct PhysicalSensorProbe: Detector {
         var cachedTimestamp: TimeInterval = 0
         var isPrewarming = false
     }
-    private static let cacheState = Mutex(CacheState())
+    private static let cacheStateLock = UnfairLock()
+    private static var cacheState = CacheState()
 
     /// 后台异步预热，在 CPRiskKit.start() 时调用，不阻塞主流程
     static func prewarm(forceRefresh: Bool = false) {
@@ -64,34 +65,34 @@ struct PhysicalSensorProbe: Detector {
     }
 
     private static func beginPrewarmIfNeeded(now: TimeInterval, forceRefresh: Bool) -> Bool {
-        cacheState.withLock { s in
-            if s.isPrewarming { return false }
+        cacheStateLock.withLock {
+            if cacheState.isPrewarming { return false }
             if !forceRefresh,
-               let _ = s.cachedResult,
-               (now - s.cachedTimestamp) < cacheTTLSeconds {
+               let _ = cacheState.cachedResult,
+               (now - cacheState.cachedTimestamp) < cacheTTLSeconds {
                 return false
             }
 
-            s.isPrewarming = true
+            cacheState.isPrewarming = true
             return true
         }
     }
 
     private static func finishPrewarm() {
-        cacheState.withLock { $0.isPrewarming = false }
+        cacheStateLock.withLock { cacheState.isPrewarming = false }
     }
 
     private static func storeCache(_ result: DetectorResult, at timestamp: TimeInterval) {
-        cacheState.withLock { s in
-            s.cachedResult = result
-            s.cachedTimestamp = timestamp
+        cacheStateLock.withLock {
+            cacheState.cachedResult = result
+            cacheState.cachedTimestamp = timestamp
         }
     }
 
     private static func cachedSnapshot(now: TimeInterval) -> (result: DetectorResult, age: TimeInterval)? {
-        cacheState.withLock { s in
-            guard let result = s.cachedResult, s.cachedTimestamp > 0 else { return nil }
-            return (result, now - s.cachedTimestamp)
+        cacheStateLock.withLock {
+            guard let result = cacheState.cachedResult, cacheState.cachedTimestamp > 0 else { return nil }
+            return (result, now - cacheState.cachedTimestamp)
         }
     }
 

@@ -5,8 +5,8 @@ private enum ChallengeTriggerCFF {
     static let shouldTriggerConfig = CFFConfig.adaptive(
         functionSeed: 0xB5E2_71CA_4D3F_8096,
         protectionTier: .light,
-        dispatcherStyle: .splitIndirect,
-        codecStyle: .xorRotate
+        dispatcherStyle: .functionPointerTable,
+        codecStyle: .feistelSpn
     )
 
     static func salt(

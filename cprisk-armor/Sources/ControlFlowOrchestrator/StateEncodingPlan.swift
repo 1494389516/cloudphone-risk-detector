@@ -4,6 +4,7 @@ public enum StateEncodingStyle: String, CaseIterable, Codable, Sendable {
     case xorRotate
     case addRotateXor
     case affine
+    case feistelSpn
 }
 
 public enum UnexpectedStateBehavior: String, Codable, Sendable {
@@ -41,11 +42,11 @@ public struct StateEncodingPlan: Codable, Equatable, Sendable {
 
         switch tier {
         case .heavy:
-            style = (seed & 1) == 0 ? .addRotateXor : .affine
+            style = (seed & 3) != 0 ? .feistelSpn : ((seed & 1) == 0 ? .addRotateXor : .affine)
             releaseFakeStateCount = options.enableFakeStateReleaseOnly ? 2 : 0
             unexpectedStateBehavior = options.enableDefaultPoisonForHeavy ? .poison : .failClosed
         case .regionOnly:
-            style = (seed & 2) == 0 ? .addRotateXor : .affine
+            style = (seed & 3) != 0 ? .feistelSpn : ((seed & 2) == 0 ? .addRotateXor : .affine)
             releaseFakeStateCount = options.enableFakeStateReleaseOnly ? 1 : 0
             unexpectedStateBehavior = .failClosed
         case .medium:

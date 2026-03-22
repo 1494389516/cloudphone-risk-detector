@@ -46,6 +46,8 @@ extern "C" {
 #define CPRISK_VMP_BC_FLAG_ANTI_SYMBOLIC_HEAVY 0x00000080u
 /** M3: when combined with \c CPRISK_VMP_BC_FLAG_M3_SELFCHK, verify HMAC-SHA256 (truncated) vs \c __swift5_mdvsk CPSH blob instead of FNV. */
 #define CPRISK_VMP_BC_FLAG_M3_SELFCHK_HMAC 0x00000100u
+/** M4: interpret the 16-byte VPC metadata block as non-linear Feistel/SPN material instead of plain affine A/B. */
+#define CPRISK_VMP_BC_FLAG_VPC_NONLINEAR 0x00000400u
 
 /** Dispatch header flags (`cprisk_vmp_dispatch_header_t::flags`). */
 #define CPRISK_VMP_DH_FLAG_HANDLER_DUPLICATION 0x00000001u

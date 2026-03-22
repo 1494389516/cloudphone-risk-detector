@@ -74,7 +74,8 @@ public struct VMM2EmitOptions: Equatable, Sendable {
     /// When true, pack `VMRawRegionCategory` into the high 32 bits of `rawRegion` immediates (changes accumulator mix vs plain insn word).
     public var opaqueVpcCategoryHigh32: Bool
     public var handlerVariantSeed: UInt64
-    /// Emit per-entry VPC affine metadata (runtime reads A/B after each entry when enabled).
+    /// Emit per-entry VPC metadata (runtime reads two UInt64 words after each entry when enabled).
+    /// Current runtime interprets the pair as non-linear VPC codec material when the corresponding flag is set.
     public var perEntryVpcEnabled: Bool
     public var m3: VMM3EmitOptions
     /// XOR the 256-byte raw→logical class table with a deterministic keystream (dispatch header flag). **Requires matching CRiskCore support when enabled.**
@@ -89,6 +90,8 @@ public struct VMM2EmitOptions: Equatable, Sendable {
     public var opcodeWireObfuscation: Bool
     /// Extra entropy for opcode XOR; when zero, derived from `handlerVariantSeed`.
     public var opcodeKeystreamMaterial: UInt64
+    /// When true, set `BytecodeFlags.nonLinearVpc` and use the same 16-byte VPC slot as non-linear codec material (CRiskCore `CPRISK_VMP_BC_FLAG_VPC_NONLINEAR`).
+    public var vpcNonlinearEncoding: Bool
 
     public init(
         opaqueVpcCategoryHigh32: Bool = false,
@@ -100,7 +103,8 @@ public struct VMM2EmitOptions: Equatable, Sendable {
         immediateKeystream: Bool = false,
         immediateKeystreamMaterial: UInt64 = 0,
         opcodeWireObfuscation: Bool = false,
-        opcodeKeystreamMaterial: UInt64 = 0
+        opcodeKeystreamMaterial: UInt64 = 0,
+        vpcNonlinearEncoding: Bool = true
     ) {
         self.opaqueVpcCategoryHigh32 = opaqueVpcCategoryHigh32
         self.handlerVariantSeed = handlerVariantSeed
@@ -112,6 +116,7 @@ public struct VMM2EmitOptions: Equatable, Sendable {
         self.immediateKeystreamMaterial = immediateKeystreamMaterial
         self.opcodeWireObfuscation = opcodeWireObfuscation
         self.opcodeKeystreamMaterial = opcodeKeystreamMaterial
+        self.vpcNonlinearEncoding = vpcNonlinearEncoding
     }
 }
 
@@ -149,6 +154,8 @@ public enum VMBytecodeFormat {
         public static let m3SelfIntegrity: UInt32 = 1 << 4
         /// Runtime M3: HMAC-SHA256 (truncated) self-check vs CPSH blob (requires \c m3SelfIntegrity).
         public static let m3SelfIntegrityHmac: UInt32 = 1 << 8
+        /// Runtime: interpret the 16-byte VPC metadata block as non-linear Feistel/SPN material.
+        public static let nonLinearVpc: UInt32 = 1 << 10
         /// v3: immediates XOR’d with a per-insn mask (see on-disk seed field).
         public static let immediateKeystream: UInt32 = 1 << 5
         /// v3: wire opcode bytes XOR’d per insn (see on-disk opcode seed field).
@@ -376,7 +383,7 @@ public struct VMBytecodeEmitter: Sendable {
     ) -> Data {
         let opcodeEnc = options.opcodeWireObfuscation
         let immKs = options.immediateKeystream
-        let useM2 = options.perEntryVpcEnabled || options.handlerVariantSeed != 0
+        let useM2 = options.perEntryVpcEnabled || options.handlerVariantSeed != 0 || options.vpcNonlinearEncoding
         let perEntryVpc = useM2 && options.perEntryVpcEnabled
         let bytecodeVersion: UInt32
         if immKs || opcodeEnc {
@@ -428,6 +435,9 @@ public struct VMBytecodeEmitter: Sendable {
         }
         if perEntryVpc {
             flags |= VMBytecodeFormat.BytecodeFlags.perEntryVpc
+        }
+        if options.vpcNonlinearEncoding {
+            flags |= VMBytecodeFormat.BytecodeFlags.nonLinearVpc
         }
         if options.m3.enableOpaquePredicateChain {
             flags |= VMBytecodeFormat.BytecodeFlags.m3OpaqueChain
@@ -517,7 +527,8 @@ public struct VMBytecodeEmitter: Sendable {
         return d
     }
 
-    /// Affine VPC parameters for M2: `vpc' = (vpc * A + B) mod 2^64` with **A odd** (build-time metadata).
+    /// Stable 16-byte VPC metadata pair for M2/M4. Legacy consumers may treat it as affine A/B;
+    /// current runtime uses the same pair as non-linear VPC codec material when `nonLinearVpc` is set.
     public static func deriveVpcAffine(functionId: UInt64, seed: UInt64) -> (UInt64, UInt64) {
         var rng = VMProtectorSplitMix64(seed: functionId ^ seed ^ 0x564D_5043_5632_4D32) // "VMPV2M2"
         var a = rng.next() | 1
@@ -682,6 +693,7 @@ public struct VMBytecodeEmitter: Sendable {
     public static func bytecodeHeaderTotalBytes(version: UInt32, flags: UInt32) -> Int {
         let useM2 = (flags & VMBytecodeFormat.BytecodeFlags.perEntryVpc) != 0
             || (flags & VMBytecodeFormat.BytecodeFlags.handlerVariantSeed) != 0
+            || (flags & VMBytecodeFormat.BytecodeFlags.nonLinearVpc) != 0
         var n = 16
         if useM2 { n += VMBytecodeFormat.vpcAffineBytes }
         if version >= VMBytecodeFormat.bytecodeABIVersionV3,

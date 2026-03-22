@@ -773,6 +773,10 @@ enum {
     CPRISK_DBI_MARKER_ENV = 1u << 0,
     CPRISK_DBI_MARKER_IMAGE = 1u << 1,
     CPRISK_DBI_MARKER_THREAD = 1u << 2,
+    /** Full-process environ scan matched a DBI/QBDI substring (supplements named-key checks). */
+    CPRISK_DBI_MARKER_ENVIRON_SCAN = 1u << 3,
+    /** Current task exposes writable+executable code regions typical of DBI/JIT code caches. */
+    CPRISK_DBI_MARKER_EXEC_WRITE = 1u << 4,
 };
 
 enum {
@@ -780,6 +784,8 @@ enum {
     CPRISK_TIMING_ANOMALY_SPIKE = 1u << 1,
     CPRISK_TIMING_ANOMALY_JITTER = 1u << 2,
     CPRISK_TIMING_ANOMALY_CLOCK_SKEW = 1u << 3,
+    /** CNTPCT_EL0 delta vs mach_absolute_time delta around the same workload disagree (DBI / time virtualization). */
+    CPRISK_TIMING_ANOMALY_DUAL_CLOCK_DRIFT = 1u << 4,
 };
 
 /// Probe debugger presence via SIGTRAP signal delivery after BRK #0xC0DE.
@@ -854,7 +860,8 @@ int cprisk_detect_suspicious_threads(void);
 /// Returns 1 if any developer tool path is accessible, 0 otherwise.
 int cprisk_detect_developer_disk(void);
 
-/// Detect DBI footprints (Pin/DynamoRIO/Valgrind) via env/image/thread markers.
+/// Detect DBI footprints (Pin/DynamoRIO/Valgrind/QBDI) via env/image/thread markers
+/// plus a bounded full-environ substring scan.
 /// Returns the number of matched markers in the current process view.
 int cprisk_detect_dbi_markers(void);
 

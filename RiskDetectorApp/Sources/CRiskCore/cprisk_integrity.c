@@ -79,12 +79,10 @@ static void cprisk_prepare_deception_material_i(
 
 extern void cprisk_watchdog_note_guard_page_fault(void);
 
-/* Minimal bytecode bootstrap (loader / runtime material): XOR + rotate — non-trivial but deterministic. */
+/* Minimal bytecode bootstrap (loader key): single HALT = identity; extend with new opcodes if needed. */
 enum {
     CPRISK_MV_OP_HALT = 0,
     CPRISK_MV_OP_XOR_IMM = 1,
-    /** Rotate 32-byte buffer left by next byte (amount & 31). */
-    CPRISK_MV_OP_ROL32 = 2,
 };
 
 static void cprisk_mini_vm_exec_buf(uint8_t buf[32], const uint8_t *code, size_t len) {
@@ -97,12 +95,6 @@ static void cprisk_mini_vm_exec_buf(uint8_t buf[32], const uint8_t *code, size_t
             uint8_t imm = code[pc++];
             for (size_t i = 0; i < 32; i++)
                 buf[i] = (uint8_t)(buf[i] ^ imm);
-        } else if (op == CPRISK_MV_OP_ROL32 && pc < len) {
-            unsigned rot = (unsigned)(code[pc++] & 31u);
-            uint8_t t[32];
-            memcpy(t, buf, sizeof(t));
-            for (unsigned i = 0; i < 32u; i++)
-                buf[i] = t[(i + rot) % 32u];
         } else {
             return;
         }
@@ -110,17 +102,7 @@ static void cprisk_mini_vm_exec_buf(uint8_t buf[32], const uint8_t *code, size_t
 }
 
 static void cprisk_loader_key_mini_vm_bootstrap(uint8_t key[32]) {
-    const uint8_t prog[] = {
-        CPRISK_MV_OP_XOR_IMM,
-        0x7Au,
-        CPRISK_MV_OP_ROL32,
-        13u,
-        CPRISK_MV_OP_XOR_IMM,
-        0x91u,
-        CPRISK_MV_OP_ROL32,
-        19u,
-        CPRISK_MV_OP_HALT
-    };
+    const uint8_t prog[] = { CPRISK_MV_OP_HALT };
     cprisk_mini_vm_exec_buf(key, prog, sizeof(prog));
 }
 
@@ -1192,15 +1174,7 @@ static int cprisk_init_protection_legacy_i(
         cprisk_get_data_integrity_accumulator(),
         s_runtime_material);
     if (!cprisk_mini_vm_bootstrap_disabled()) {
-        const uint8_t p[] = {
-            CPRISK_MV_OP_XOR_IMM,
-            0x3Du,
-            CPRISK_MV_OP_ROL32,
-            7u,
-            CPRISK_MV_OP_XOR_IMM,
-            0xC4u,
-            CPRISK_MV_OP_HALT
-        };
+        const uint8_t p[] = { CPRISK_MV_OP_HALT };
         cprisk_mini_vm_exec_buf(s_runtime_material, p, sizeof(p));
     }
     s_runtime_material_ready = 1;
@@ -1328,15 +1302,7 @@ static int cprisk_init_protection_whitebox_i(
     }
 
     if (!cprisk_mini_vm_bootstrap_disabled()) {
-        const uint8_t p[] = {
-            CPRISK_MV_OP_XOR_IMM,
-            0x5Au,
-            CPRISK_MV_OP_ROL32,
-            23u,
-            CPRISK_MV_OP_XOR_IMM,
-            0xA5u,
-            CPRISK_MV_OP_HALT
-        };
+        const uint8_t p[] = { CPRISK_MV_OP_HALT };
         cprisk_mini_vm_exec_buf(s_runtime_material, p, sizeof(p));
     }
     s_runtime_material_ready = 1;

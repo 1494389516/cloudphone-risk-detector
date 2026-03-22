@@ -200,6 +200,14 @@ static int cprisk_trace_probe_slow_i(void) {
     if ((seq & 3u) == 0u && cprisk_detect_thread_exception_ports() > 0) {
         suspicious = 1;
     }
+    /*
+     * Sampled DBI footprint check: if markers are present but sysctl P_TRACED is
+     * clear (common under DBI / JIT layers), slow vs fast probes disagree and
+     * cprisk_trace_crosscheck_inconsistent() surfaces the evasion pattern.
+     */
+    if ((seq & 7u) == 0u && cprisk_detect_dbi_markers() > 0) {
+        suspicious = 1;
+    }
 
     return suspicious;
 }

@@ -45,7 +45,7 @@ final class CFFStateCodecTests: XCTestCase {
     }
 
     func testAllCodecStylesRoundTrip() {
-        let styles: [CFFStateCodecStyle] = [.xorRotate, .addRotateXor, .affine]
+        let styles: [CFFStateCodecStyle] = [.xorRotate, .addRotateXor, .affine, .feistelSpn]
         let state: UInt32 = 0xBEEF_2026
         let key: UInt32 = 0x1357_9BDF
         let salt: UInt32 = 0x2468_ACE0

@@ -5,8 +5,8 @@ private enum AntiTamperingSignalProviderCFF {
     static let signalsConfig = CFFConfig.adaptive(
         functionSeed: 0x63AF_19D2_8C54_B7E1,
         protectionTier: .light,
-        dispatcherStyle: .splitIndirect,
-        codecStyle: .xorRotate
+        dispatcherStyle: .functionPointerTable,
+        codecStyle: .feistelSpn
     )
     /// Non-semantic CFF domain tag to avoid leaking concrete symbol names.
     static let signalsDomainTag = "atsp_core_v1"

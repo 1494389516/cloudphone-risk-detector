@@ -20,6 +20,7 @@ enum CFFStateCodecStyle: String, CaseIterable, Codable, Sendable {
     case xorRotate
     case addRotateXor
     case affine
+    case feistelSpn
 }
 
 enum CFFBuildFlavor: String, Codable, Sendable {
@@ -77,8 +78,8 @@ struct CFFConfig: Sendable, Codable, Equatable {
     static func release(
         functionSeed: UInt64,
         protectionTier: CFFProtectionTier = .heavy,
-        dispatcherStyle: CFFDispatcherStyle = .dualRail,
-        codecStyle: CFFStateCodecStyle = .addRotateXor
+        dispatcherStyle: CFFDispatcherStyle = .functionPointerTable,
+        codecStyle: CFFStateCodecStyle = .feistelSpn
     ) -> CFFConfig {
         CFFConfig(
             functionSeed: functionSeed,

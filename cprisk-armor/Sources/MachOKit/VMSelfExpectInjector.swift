@@ -20,17 +20,20 @@ public enum VMSelfExpectInjector {
         public let fileOffset: UInt64
     }
 
-    /// Derives the 32-byte HMAC key the same way as `cprisk_vm_selfchk_hmac_key_i` (SHA-256 over material||ASCII||NUL).
+    /// Derives the 32-byte HMAC key the same way as `cprisk_vm_selfchk_hmac_key_i` (SHA-256 over material || XOR-mixed label || 8-byte session bind; bind is zero at link/inject time).
     public static func deriveSelfCheckHmacKey(runtimeMaterial32: Data) -> SymmetricKey {
         precondition(runtimeMaterial32.count == 32)
-        var payload = Data(count: 50)
+        var payload = Data(count: 58)
         payload.replaceSubrange(0..<32, with: runtimeMaterial32)
-        let label = "CPRISK_VM_M3_HMAC"
-        let labelBytes = [UInt8](label.utf8)
-        for i in 0..<17 {
-            payload[32 + i] = i < labelBytes.count ? labelBytes[i] : 0
+        let enc: [UInt8] = [
+            0x19, 0x0a, 0x08, 0x13, 0x09, 0x11, 0x05, 0x0c, 0x17, 0x05, 0x17, 0x69,
+            0x05, 0x12, 0x17, 0x1b, 0x19, 0x5a,
+        ]
+        precondition(enc.count == 18)
+        for i in 0..<18 {
+            payload[32 + i] = enc[i] ^ 0x5A
         }
-        payload[49] = 0
+        /* bytes 50...57 session bind — zero for injected CPSH unless matching live session material */
         let digest = SHA256.hash(data: payload)
         return SymmetricKey(data: Data(digest))
     }

@@ -191,8 +191,44 @@ final class VMProtectorTests: XCTestCase {
         }
         XCTAssertNotEqual(flags & VMBytecodeFormat.BytecodeFlags.perEntryVpc, 0)
         XCTAssertNotEqual(flags & VMBytecodeFormat.BytecodeFlags.handlerVariantSeed, 0)
+        XCTAssertNotEqual(flags & VMBytecodeFormat.BytecodeFlags.nonLinearVpc, 0)
         let a = VMBytecodeEmitter.deriveVpcAffine(functionId: 1, seed: 0xABCD).0
         XCTAssertEqual(a & 1, 1)
+    }
+
+    func testHandlerSeedOnlyCanDisableNonLinearVpcWhenOptedOut() {
+        let table = VMOpcodeTable(seed: 123)
+        let emitter = VMBytecodeEmitter()
+        let programs: [(functionId: UInt64, entryVMA: UInt64, tier: VMBytecodeFormat.TierCode, instructions: [VMInstruction])] = [
+            (1, 0x1000, .partial, [VMInstruction(op: .nop), VMInstruction(op: .halt)])
+        ]
+        let payloads = emitter.emit(
+            programs: programs,
+            opcodeTable: table,
+            options: VMM2EmitOptions(handlerVariantSeed: 0x44, perEntryVpcEnabled: false, vpcNonlinearEncoding: false)
+        )
+        let flags = payloads.bytecode.withUnsafeBytes { buf in
+            buf.load(fromByteOffset: 12, as: UInt32.self)
+        }
+        XCTAssertNotEqual(flags & VMBytecodeFormat.BytecodeFlags.handlerVariantSeed, 0)
+        XCTAssertEqual(flags & VMBytecodeFormat.BytecodeFlags.nonLinearVpc, 0)
+    }
+
+    func testVpcNonlinearEncodingOptInSetsFlag() {
+        let table = VMOpcodeTable(seed: 123)
+        let emitter = VMBytecodeEmitter()
+        let programs: [(functionId: UInt64, entryVMA: UInt64, tier: VMBytecodeFormat.TierCode, instructions: [VMInstruction])] = [
+            (1, 0x1000, .partial, [VMInstruction(op: .nop), VMInstruction(op: .halt)])
+        ]
+        let payloads = emitter.emit(
+            programs: programs,
+            opcodeTable: table,
+            options: VMM2EmitOptions(handlerVariantSeed: 0x44, perEntryVpcEnabled: false, vpcNonlinearEncoding: true)
+        )
+        let flags = payloads.bytecode.withUnsafeBytes { buf in
+            buf.load(fromByteOffset: 12, as: UInt32.self)
+        }
+        XCTAssertNotEqual(flags & VMBytecodeFormat.BytecodeFlags.nonLinearVpc, 0)
     }
 
     func testOpaqueVpcEncodingChangesRawImmediateHighBits() {
@@ -263,8 +299,8 @@ final class VMProtectorTests: XCTestCase {
         let f = VMBytecodeFormat.readUInt32LE(enc.bytecode, offset: 12)
         XCTAssertNotEqual(f & VMBytecodeFormat.BytecodeFlags.opcodeWireObfuscation, 0)
         let hdrTotal = VMBytecodeEmitter.bytecodeHeaderTotalBytes(version: vEnc, flags: f)
-        XCTAssertEqual(hdrTotal, 16 + 8)
-        let root = VMBytecodeFormat.readUInt64LE(enc.bytecode, offset: 16)
+        XCTAssertEqual(hdrTotal, 16 + VMBytecodeFormat.vpcAffineBytes + 8)
+        let root = VMBytecodeFormat.readUInt64LE(enc.bytecode, offset: hdrTotal - 8)
         XCTAssertEqual(root, encOpts.opcodeKeystreamMaterial)
         let entryBase = hdrTotal
         let bcOff = Int(VMBytecodeFormat.readUInt32LE(enc.bytecode, offset: entryBase + 20))
@@ -336,13 +372,13 @@ final class VMProtectorTests: XCTestCase {
         let enc = emitter.emit(programs: programs, opcodeTable: table, options: encOpts)
         let vPlain = VMBytecodeFormat.readUInt32LE(plain.bytecode, offset: 4)
         let vEnc = VMBytecodeFormat.readUInt32LE(enc.bytecode, offset: 4)
-        XCTAssertEqual(vPlain, VMBytecodeFormat.bytecodeABIVersionV1)
+        XCTAssertEqual(vPlain, VMBytecodeFormat.bytecodeABIVersionV2)
         XCTAssertEqual(vEnc, VMBytecodeFormat.bytecodeABIVersionV3)
         let fEnc = VMBytecodeFormat.readUInt32LE(enc.bytecode, offset: 12)
         XCTAssertNotEqual(fEnc & VMBytecodeFormat.BytecodeFlags.immediateKeystream, 0)
         let hdrTotal = VMBytecodeEmitter.bytecodeHeaderTotalBytes(version: vEnc, flags: fEnc)
-        XCTAssertEqual(hdrTotal, 16 + 8)
-        let root = VMBytecodeFormat.readUInt64LE(enc.bytecode, offset: 16)
+        XCTAssertEqual(hdrTotal, 16 + VMBytecodeFormat.vpcAffineBytes + 8)
+        let root = VMBytecodeFormat.readUInt64LE(enc.bytecode, offset: hdrTotal - 8)
         XCTAssertEqual(root, encOpts.immediateKeystreamMaterial)
         let entryBase = hdrTotal
         let bcOff = Int(VMBytecodeFormat.readUInt32LE(enc.bytecode, offset: entryBase + 20))
