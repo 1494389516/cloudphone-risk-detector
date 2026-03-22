@@ -104,7 +104,7 @@ private final class NetworkPathSnapshot {
     static let shared = NetworkPathSnapshot()
     private let monitor = NWPathMonitor()
     private let queue = DispatchQueue(label: "CloudPhoneRiskKit.NetworkPathMonitor")
-    private let lock = NSLock()
+    private let lock = UnfairLock()
     private var latest: NWPath?
     private var started = false
 
@@ -112,9 +112,7 @@ private final class NetworkPathSnapshot {
 
     func snapshot() -> (interfaceType: String, isExpensive: Bool, isConstrained: Bool) {
         startIfNeeded()
-        lock.lock()
-        let path = latest
-        lock.unlock()
+        let path = lock.withLock { latest }
         guard let path else {
             return ("unknown", false, false)
         }
@@ -130,16 +128,17 @@ private final class NetworkPathSnapshot {
     }
 
     private func startIfNeeded() {
-        lock.lock()
-        let shouldStart = !started
-        if shouldStart { started = true }
-        lock.unlock()
+        let shouldStart = lock.withLock {
+            let s = !started
+            if s { started = true }
+            return s
+        }
         guard shouldStart else { return }
         monitor.pathUpdateHandler = { [weak self] path in
             guard let self else { return }
-            self.lock.lock()
-            self.latest = path
-            self.lock.unlock()
+            self.lock.withLock {
+                self.latest = path
+            }
         }
         monitor.start(queue: queue)
     }

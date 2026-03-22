@@ -8,7 +8,7 @@ enum PayloadCrypto {
     private static let keyService = "CloudPhoneRiskKit"
     private static let keyAccount = "aes_gcm_key_v1"
     private static let accessible = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-    private static let lock = NSLock()
+    private static let lock = UnfairLock()
 
     /// 加密载荷的 magic 标识字节，用于区分密文与明文，防止静默降级
     static let encryptedMagic: UInt8 = 0xAE
@@ -72,28 +72,27 @@ enum PayloadCrypto {
     }
 
     private static func symmetricKey() throws -> SymmetricKey {
-        lock.lock()
-        defer { lock.unlock() }
-
-        if var keyData = try readKey() {
-            let key = SymmetricKey(data: keyData)
-            secureZeroData(&keyData)
-            return key
+        try lock.withLock {
+            if var keyData = try readKey() {
+                let key = SymmetricKey(data: keyData)
+                secureZeroData(&keyData)
+                return key
+            }
+            var secureData: Data?
+            _ = SecureBuffer(size: 32).use { ptr in
+                let status = SecRandomCopyBytes(kSecRandomDefault, 32, ptr)
+                guard status == errSecSuccess else { return }
+                secureData = Data(UnsafeRawBufferPointer(start: ptr, count: 32))
+            }
+            guard var data = secureData else {
+                throw NSError(domain: "CloudPhoneRiskKit", code: 3, userInfo: [NSLocalizedDescriptionKey: "SecRandomCopyBytes failed"])
+            }
+            defer { secureZeroData(&data) }
+            if let existing = try saveKey(data) {
+                return SymmetricKey(data: existing)
+            }
+            return SymmetricKey(data: data)
         }
-        var secureData: Data?
-        _ = SecureBuffer(size: 32).use { ptr in
-            let status = SecRandomCopyBytes(kSecRandomDefault, 32, ptr)
-            guard status == errSecSuccess else { return }
-            secureData = Data(UnsafeRawBufferPointer(start: ptr, count: 32))
-        }
-        guard var data = secureData else {
-            throw NSError(domain: "CloudPhoneRiskKit", code: 3, userInfo: [NSLocalizedDescriptionKey: "SecRandomCopyBytes failed"])
-        }
-        defer { secureZeroData(&data) }
-        if let existing = try saveKey(data) {
-            return SymmetricKey(data: existing)
-        }
-        return SymmetricKey(data: data)
     }
 
     private static func readKey() throws -> Data? {

@@ -87,9 +87,7 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         self.maxDiskEntries = maxDiskEntries
         self.fileStore = SecureFileStore.shared
         self.memoryCache = nil
-        ConfigCache.globalLock.lock()
-        self.memoryCache = loadLatestFromDisk()
-        ConfigCache.globalLock.unlock()
+        self.memoryCache = ConfigCache.globalLock.withLock { loadLatestFromDisk() }
     }
 
     public static func instance(withNamespace namespace: String) -> ConfigCache {
@@ -101,114 +99,108 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
     }
 
     public func load() -> CachedConfig? {
-        ConfigCache.globalLock.lock()
-        defer { ConfigCache.globalLock.unlock() }
+        ConfigCache.globalLock.withLock {
+            #if DEBUG
+            let isUsable = { [self] (e: CacheEntry, s: String) in self.isUsableDebugEntry(e, source: s) }
+            #else
+            let isUsable = { [self] (e: CacheEntry, s: String) in self.isUsableTrustedEntry(e, source: s) }
+            #endif
+            if let memoryCache, isUsable(memoryCache, "memory_cache") {
+                return CachedConfig(
+                    config: memoryCache.config,
+                    cachedAt: memoryCache.cachedAt,
+                    isVerifiedByServer: memoryCache.isVerifiedByServer,
+                    contentHash: memoryCache.contentHash
+                )
+            }
+            memoryCache = nil
 
-        #if DEBUG
-        let isUsable = { [self] (e: CacheEntry, s: String) in self.isUsableDebugEntry(e, source: s) }
-        #else
-        let isUsable = { [self] (e: CacheEntry, s: String) in self.isUsableTrustedEntry(e, source: s) }
-        #endif
-        if let memoryCache, isUsable(memoryCache, "memory_cache") {
-            return CachedConfig(
-                config: memoryCache.config,
-                cachedAt: memoryCache.cachedAt,
-                isVerifiedByServer: memoryCache.isVerifiedByServer,
-                contentHash: memoryCache.contentHash
-            )
+            if let latest = loadLatestFromDisk() {
+                memoryCache = latest
+                return CachedConfig(
+                    config: latest.config,
+                    cachedAt: latest.cachedAt,
+                    isVerifiedByServer: latest.isVerifiedByServer,
+                    contentHash: latest.contentHash
+                )
+            }
+
+            return nil
         }
-        memoryCache = nil
-
-        if let latest = loadLatestFromDisk() {
-            memoryCache = latest
-            return CachedConfig(
-                config: latest.config,
-                cachedAt: latest.cachedAt,
-                isVerifiedByServer: latest.isVerifiedByServer,
-                contentHash: latest.contentHash
-            )
-        }
-
-        return nil
     }
 
     public func save(_ config: RemoteConfig, verifiedByServer: Bool = false) {
-        ConfigCache.globalLock.lock()
-        defer { ConfigCache.globalLock.unlock() }
+        ConfigCache.globalLock.withLock {
+            let entry = CacheEntry(
+                config: config,
+                cachedAt: Date().timeIntervalSince1970,
+                isVerifiedByServer: verifiedByServer
+            )
+            memoryCache = entry
 
-        let entry = CacheEntry(
-            config: config,
-            cachedAt: Date().timeIntervalSince1970,
-            isVerifiedByServer: verifiedByServer
-        )
-        memoryCache = entry
+            guard persistToDisk else { return }
 
-        guard persistToDisk else { return }
+            var entries = loadAllDiskEntries()
+            entries.removeAll { $0.config.version == config.version }
+            entries.append(entry)
+            entries = entries.sorted { $0.config.version > $1.config.version }
 
-        var entries = loadAllDiskEntries()
-        entries.removeAll { $0.config.version == config.version }
-        entries.append(entry)
-        entries = entries.sorted { $0.config.version > $1.config.version }
+            if entries.count > maxDiskEntries {
+                entries = Array(entries.prefix(maxDiskEntries))
+            }
 
-        if entries.count > maxDiskEntries {
-            entries = Array(entries.prefix(maxDiskEntries))
+            saveDiskEntries(entries)
+            if let vData = "\(config.version)".data(using: .utf8) {
+                fileStore.write(key: versionKey, data: vData)
+            }
+            fileStore.remove(key: rollbackVersionKey)
         }
-
-        saveDiskEntries(entries)
-        if let vData = "\(config.version)".data(using: .utf8) {
-            fileStore.write(key: versionKey, data: vData)
-        }
-        fileStore.remove(key: rollbackVersionKey)
     }
 
     public func clear() {
-        ConfigCache.globalLock.lock()
-        defer { ConfigCache.globalLock.unlock() }
-
-        memoryCache = nil
-        guard persistToDisk else { return }
-        fileStore.remove(key: diskKey)
-        fileStore.remove(key: hmacDiskKey)
-        fileStore.remove(key: versionKey)
-        fileStore.remove(key: rollbackVersionKey)
+        ConfigCache.globalLock.withLock {
+            memoryCache = nil
+            guard persistToDisk else { return }
+            fileStore.remove(key: diskKey)
+            fileStore.remove(key: hmacDiskKey)
+            fileStore.remove(key: versionKey)
+            fileStore.remove(key: rollbackVersionKey)
+        }
     }
 
     public func cacheSize() -> Int {
-        ConfigCache.globalLock.lock()
-        defer { ConfigCache.globalLock.unlock() }
-
-        guard persistToDisk,
-              let data = fileStore.read(key: diskKey) else {
-            return 0
+        ConfigCache.globalLock.withLock {
+            guard persistToDisk,
+                  let data = fileStore.read(key: diskKey) else {
+                return 0
+            }
+            return data.count
         }
-        return data.count
     }
 
     public func cacheStats() -> CacheStats {
-        ConfigCache.globalLock.lock()
-        defer { ConfigCache.globalLock.unlock() }
-
-        return CacheStats(
-            hasMemoryCache: memoryCache != nil,
-            diskSizeBytes: cacheSizeUnlocked(),
-            diskEntryCount: loadAllDiskEntries().count
-        )
+        ConfigCache.globalLock.withLock {
+            CacheStats(
+                hasMemoryCache: memoryCache != nil,
+                diskSizeBytes: cacheSizeUnlocked(),
+                diskEntryCount: loadAllDiskEntries().count
+            )
+        }
     }
 
     public func rollback(to version: Int) -> RemoteConfig? {
 #if DEBUG
-        ConfigCache.globalLock.lock()
-        defer { ConfigCache.globalLock.unlock() }
+        ConfigCache.globalLock.withLock {
+            guard let target = loadAllDiskEntries().first(where: { $0.config.version == version }) else {
+                return nil
+            }
 
-        guard let target = loadAllDiskEntries().first(where: { $0.config.version == version }) else {
-            return nil
+            memoryCache = target
+            if persistToDisk, let data = "\(version)".data(using: .utf8) {
+                fileStore.write(key: rollbackVersionKey, data: data)
+            }
+            return target.config
         }
-
-        memoryCache = target
-        if persistToDisk, let data = "\(version)".data(using: .utf8) {
-            fileStore.write(key: rollbackVersionKey, data: data)
-        }
-        return target.config
 #else
         Logger.log("ConfigCache.rollback rejected: not allowed in release build")
         return nil
@@ -216,25 +208,24 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
     }
 
     public func availableVersions() -> [Int] {
-        ConfigCache.globalLock.lock()
-        defer { ConfigCache.globalLock.unlock() }
-        return loadAllDiskEntries().map { $0.config.version }.sorted(by: >)
+        ConfigCache.globalLock.withLock {
+            loadAllDiskEntries().map { $0.config.version }.sorted(by: >)
+        }
     }
 
     public func versionHistory() -> [VersionHistoryEntry] {
-        ConfigCache.globalLock.lock()
-        defer { ConfigCache.globalLock.unlock() }
-
-        return loadAllDiskEntries()
-            .sorted { $0.cachedAt > $1.cachedAt }
-            .map {
-                VersionHistoryEntry(
-                    version: $0.config.version,
-                    timestamp: $0.cachedAt,
-                    environment: $0.config.environment,
-                    description: $0.config.description
-                )
-            }
+        ConfigCache.globalLock.withLock {
+            loadAllDiskEntries()
+                .sorted { $0.cachedAt > $1.cachedAt }
+                .map {
+                    VersionHistoryEntry(
+                        version: $0.config.version,
+                        timestamp: $0.cachedAt,
+                        environment: $0.config.environment,
+                        description: $0.config.description
+                    )
+                }
+        }
     }
 
     public func migrate(from legacyData: Data, using migrator: (Data) throws -> RemoteConfig) throws {
@@ -243,12 +234,11 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
     }
 
     public func exportCache() -> Data? {
-        ConfigCache.globalLock.lock()
-        defer { ConfigCache.globalLock.unlock() }
-
-        let entries = loadAllDiskEntries()
-        let payload = CacheExport(exportedAt: Date().timeIntervalSince1970, entries: entries)
-        return try? JSONEncoder().encode(payload)
+        ConfigCache.globalLock.withLock {
+            let entries = loadAllDiskEntries()
+            let payload = CacheExport(exportedAt: Date().timeIntervalSince1970, entries: entries)
+            return try? JSONEncoder().encode(payload)
+        }
     }
 
     public func importCache(from data: Data) throws {

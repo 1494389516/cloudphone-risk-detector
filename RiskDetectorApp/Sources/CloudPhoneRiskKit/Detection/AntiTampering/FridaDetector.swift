@@ -6,19 +6,14 @@ struct FridaDetector: Detector {
     let knownPorts: [Int] = [27042, 27043, 23946]
     let knownServerPaths: [String] = ObfuscatedConstants.fridaServerPaths
     private let protocolProbeTimeoutMs: Int32 = 120
-    private static let memSigLock = NSLock()
-    private static var memorySignatureHooks: [() -> String?] = []
+    private static let hookState = Mutex<[() -> String?]>([])
 
     static func registerMemorySignatureHook(_ hook: @escaping () -> String?) {
-        memSigLock.lock()
-        memorySignatureHooks.append(hook)
-        memSigLock.unlock()
+        hookState.withLock { $0.append(hook) }
     }
 
     static func clearMemorySignatureHooks() {
-        memSigLock.lock()
-        memorySignatureHooks.removeAll()
-        memSigLock.unlock()
+        hookState.withLock { $0.removeAll() }
     }
 
     func detect() throws -> DetectorResult {
@@ -297,9 +292,7 @@ struct FridaDetector: Detector {
 
     private func detectMemorySignatureHit() -> String? {
         if hookMemorySignatureScanEnabled {
-            Self.memSigLock.lock()
-            let hooks = Self.memorySignatureHooks
-            Self.memSigLock.unlock()
+            let hooks = Self.hookState.withLock { $0 }
             for hook in hooks {
                 guard let hit = hook()?.trimmingCharacters(in: .whitespacesAndNewlines),
                       !hit.isEmpty else {

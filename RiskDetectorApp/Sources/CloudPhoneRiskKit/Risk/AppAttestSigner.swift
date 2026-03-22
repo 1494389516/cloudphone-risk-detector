@@ -55,7 +55,7 @@ public enum AppAttestSigner {
     private static let keychainService = "CloudPhoneRiskKit.AppAttest"
     private static let keychainAccount = "attestation_key_id"
     private static let attestationChallenge = Data("CloudPhoneRiskKit.AppAttest.KeyAttest.v1".utf8)
-    private static let lock = NSLock()
+    private static let lock = UnfairLock()
 
     private static func getOrCreateKeyId() async throws -> String {
         if let existing = loadKeyId() {
@@ -71,43 +71,43 @@ public enum AppAttestSigner {
     }
 
     private static func loadKeyId() -> String? {
-        lock.lock()
-        defer { lock.unlock() }
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess, let data = item as? Data, let str = String(data: data, encoding: .utf8) else {
-            return nil
+        lock.withLock {
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: keychainService,
+                kSecAttrAccount as String: keychainAccount,
+                kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+                kSecReturnData as String: true,
+                kSecMatchLimit as String: kSecMatchLimitOne,
+            ]
+            var item: CFTypeRef?
+            let status = SecItemCopyMatching(query as CFDictionary, &item)
+            guard status == errSecSuccess, let data = item as? Data, let str = String(data: data, encoding: .utf8) else {
+                return nil
+            }
+            return str
         }
-        return str
     }
 
     /// Add-only save: returns nil on success, or the existing keyId if another caller won the race.
     @discardableResult
     private static func saveKeyId(_ keyId: String) -> String? {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let data = keyId.data(using: .utf8) else { return nil }
-        let addQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            kSecValueData as String: data,
-        ]
-        let status = SecItemAdd(addQuery as CFDictionary, nil)
-        if status == errSecSuccess { return nil }
-        if status == errSecDuplicateItem, let existing = loadKeyIdLocked() {
-            return existing
+        lock.withLock {
+            guard let data = keyId.data(using: .utf8) else { return nil }
+            let addQuery: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: keychainService,
+                kSecAttrAccount as String: keychainAccount,
+                kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+                kSecValueData as String: data,
+            ]
+            let status = SecItemAdd(addQuery as CFDictionary, nil)
+            if status == errSecSuccess { return nil }
+            if status == errSecDuplicateItem, let existing = loadKeyIdLocked() {
+                return existing
+            }
+            return nil
         }
-        return nil
     }
 
     /// Read keyId while the caller already holds `lock`.

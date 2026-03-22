@@ -12,14 +12,16 @@ import MachO
 final class DyldImageMonitor: @unchecked Sendable {
     static let shared = DyldImageMonitor()
 
-    private let lock = NSLock()
-    private var dyldGen: UInt64 = 0
-    private var baselineImageCount: UInt32 = 0
-    private var baselineImageHash: UInt64 = 0
-    private var baselineDyldGen: UInt64 = 0
-    private var isStarted = false
-    private var addImageCallbackCount: UInt32 = 0
-    private var suspiciousAdditions: [(name: String, gen: UInt64)] = []
+    private struct State {
+        var dyldGen: UInt64 = 0
+        var baselineImageCount: UInt32 = 0
+        var baselineImageHash: UInt64 = 0
+        var baselineDyldGen: UInt64 = 0
+        var isStarted = false
+        var addImageCallbackCount: UInt32 = 0
+        var suspiciousAdditions: [(name: String, gen: UInt64)] = []
+    }
+    private let state = Mutex(State())
 
     private var suspiciousTokens: [String] {
         DynamicFeatureList.shared.suspiciousLibraries
@@ -33,45 +35,46 @@ final class DyldImageMonitor: @unchecked Sendable {
     #if targetEnvironment(simulator)
         return
     #else
-        lock.lock()
-        guard !isStarted else { lock.unlock(); return }
-        isStarted = true
-
-        baselineImageCount = _dyld_image_count()
-        baselineImageHash = computeImageListHash()
-        baselineDyldGen = dyldGen
-        lock.unlock()
+        let shouldRegister = state.withLock { s -> Bool in
+            guard !s.isStarted else { return false }
+            s.isStarted = true
+            s.baselineImageCount = _dyld_image_count()
+            s.baselineImageHash = computeImageListHash()
+            s.baselineDyldGen = s.dyldGen
+            return true
+        }
+        guard shouldRegister else { return }
 
         _dyld_register_func_for_add_image { mh, slide in
             DyldImageMonitor.shared.onImageAdded(mh, slide: slide)
         }
 
         // dyld 同步为每个已加载 image 调用回调，返回时 dyldGen 已累加完毕
-        lock.lock()
-        baselineDyldGen = dyldGen
-        lock.unlock()
+        state.withLock { s in
+            s.baselineDyldGen = s.dyldGen
+        }
     #endif
     }
 
     // MARK: - Callback
 
     private func onImageAdded(_ mh: UnsafePointer<mach_header>?, slide: Int) {
-        lock.lock()
-        defer { lock.unlock() }
-        dyldGen &+= 1
-        addImageCallbackCount &+= 1
+        state.withLock { s in
+            s.dyldGen &+= 1
+            s.addImageCallbackCount &+= 1
 
-        guard isStarted else { return }
-        // 注册时 dyld 会为已加载的每个 image 同步回调，前 baselineImageCount 次为基线，不计入 suspiciousAdditions
-        if addImageCallbackCount <= baselineImageCount { return }
+            guard s.isStarted else { return }
+            // 注册时 dyld 会为已加载的每个 image 同步回调，前 baselineImageCount 次为基线，不计入 suspiciousAdditions
+            if s.addImageCallbackCount <= s.baselineImageCount { return }
 
-        let imageName = resolveImageName(for: mh)
-        guard let imageName, !imageName.isEmpty else { return }
+            let imageName = resolveImageName(for: mh)
+            guard let imageName, !imageName.isEmpty else { return }
 
-        let lower = imageName.lowercased()
-        let isSuspicious = suspiciousTokens.contains { lower.contains($0) }
-        if isSuspicious {
-            suspiciousAdditions.append((name: imageName, gen: dyldGen))
+            let lower = imageName.lowercased()
+            let isSuspicious = suspiciousTokens.contains { lower.contains($0) }
+            if isSuspicious {
+                s.suspiciousAdditions.append((name: imageName, gen: s.dyldGen))
+            }
         }
     }
 
@@ -81,31 +84,24 @@ final class DyldImageMonitor: @unchecked Sendable {
     #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["dyld_monitor:unavailable_simulator"])
     #else
-        lock.lock()
-        guard isStarted else {
-            lock.unlock()
-            return DetectorResult(score: 0, methods: ["dyld_monitor:not_started"])
+        let snapshot = state.withLock { s -> (gen: UInt64, baseGen: UInt64, baseCount: UInt32, baseHash: UInt64, additions: [(name: String, gen: UInt64)])? in
+            guard s.isStarted else { return nil }
+            return (s.dyldGen, s.baselineDyldGen, s.baselineImageCount, s.baselineImageHash, s.suspiciousAdditions)
         }
-
-        let currentGen = dyldGen
-        let baseGen = baselineDyldGen
-        let baseCount = baselineImageCount
-        let baseHash = baselineImageHash
-        let additions = suspiciousAdditions
-        lock.unlock()
+        guard let snapshot else { return DetectorResult(score: 0, methods: ["dyld_monitor:not_started"]) }
 
         var score: Double = 0
         var methods: [String] = []
 
         // 1. Suspicious libraries loaded after baseline
-        for entry in additions {
+        for entry in snapshot.additions {
             score += 70
             methods.append("dyld_monitor:suspicious_load:\(entry.name):gen=\(entry.gen)")
         }
 
         // 2. Generation jump: images added since baseline beyond visible suspicious set
-        let genDelta = currentGen - baseGen
-        let visibleNewCount = UInt64(additions.count)
+        let genDelta = snapshot.gen - snapshot.baseGen
+        let visibleNewCount = UInt64(snapshot.additions.count)
         if genDelta > visibleNewCount &+ 2 {
             score += 50
             methods.append(
@@ -115,16 +111,16 @@ final class DyldImageMonitor: @unchecked Sendable {
 
         // 3. Image count decreased (unloaded to hide)
         let currentCount = _dyld_image_count()
-        if currentCount < baseCount {
+        if currentCount < snapshot.baseCount {
             score += 40
             methods.append(
-                "dyld_monitor:count_decrease:baseline=\(baseCount):current=\(currentCount)"
+                "dyld_monitor:count_decrease:baseline=\(snapshot.baseCount):current=\(currentCount)"
             )
         }
 
         // 4. Image list hash divergence without any gen change recorded (deep tampering)
         let currentHash = computeImageListHash()
-        if currentHash != baseHash && genDelta == 0 {
+        if currentHash != snapshot.baseHash && genDelta == 0 {
             score += 50
             methods.append("dyld_monitor:hash_divergence_silent")
         }

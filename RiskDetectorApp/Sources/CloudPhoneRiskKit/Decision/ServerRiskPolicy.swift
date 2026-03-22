@@ -226,7 +226,7 @@ public final class PolicyManager: @unchecked Sendable {
         }
     }
 
-    private let lock = NSLock()
+    private let lock = UnfairLock()
     private var cachedPolicy: ServerRiskPolicy?
     private let cacheKey = "com.cloudphone.riskkit.policy.v3"
     private let hmacCacheKey = "com.cloudphone.riskkit.policy.v3_hmac"
@@ -250,33 +250,31 @@ public final class PolicyManager: @unchecked Sendable {
     }
 
     public func configurePinning(hashes: Set<String>) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !hashes.isEmpty else {
-            Logger.log("PolicyManager.configurePinning: empty hashes provided — all TLS connections would fail")
-            #if DEBUG
-            Logger.log("⚠️ PolicyManager.configurePinning: [DEBUG] falling back to system CA with empty hashes")
+        lock.withLock {
+            guard !hashes.isEmpty else {
+                Logger.log("PolicyManager.configurePinning: empty hashes provided — all TLS connections would fail")
+                #if DEBUG
+                Logger.log("⚠️ PolicyManager.configurePinning: [DEBUG] falling back to system CA with empty hashes")
+                urlSession.invalidateAndCancel()
+                urlSession = CertificatePinningSessionDelegate.pinnedSession(
+                    hashes: [],
+                    allowsSystemCA: true
+                )
+                #else
+                Logger.log("PolicyManager.configurePinning: refusing to configure pinning with empty hashes in Release — retaining previous session")
+                #endif
+                return
+            }
             urlSession.invalidateAndCancel()
             urlSession = CertificatePinningSessionDelegate.pinnedSession(
-                hashes: [],
-                allowsSystemCA: true
+                hashes: hashes,
+                allowsSystemCA: false
             )
-            #else
-            Logger.log("PolicyManager.configurePinning: refusing to configure pinning with empty hashes in Release — retaining previous session")
-            #endif
-            return
         }
-        urlSession.invalidateAndCancel()
-        urlSession = CertificatePinningSessionDelegate.pinnedSession(
-            hashes: hashes,
-            allowsSystemCA: false
-        )
     }
 
     public var activePolicy: ServerRiskPolicy? {
-        lock.lock()
-        defer { lock.unlock() }
-        return cachedPolicy
+        lock.withLock { cachedPolicy }
     }
 
     public func update(policy: ServerRiskPolicy) {
@@ -285,27 +283,23 @@ public final class PolicyManager: @unchecked Sendable {
 
     public func reloadTrustedCacheState() {
         let restored = loadFromCache()
-        lock.lock()
-        cachedPolicy = restored
-        lock.unlock()
+        lock.withLock { cachedPolicy = restored }
     }
 
     public func clear() {
-        lock.lock()
-        cachedPolicy = nil
-        fileStore.remove(key: cacheKey)
-        fileStore.remove(key: hmacCacheKey)
-        fileStore.remove(key: verifiedKey)
-        lock.unlock()
+        lock.withLock {
+            cachedPolicy = nil
+            fileStore.remove(key: cacheKey)
+            fileStore.remove(key: hmacCacheKey)
+            fileStore.remove(key: verifiedKey)
+        }
     }
 
     /// 仅清空内存中的策略缓存（challengeSalt、mutation.seed、blocklist 等敏感数据），
     /// 不删除持久化存储。用于登出等场景，缩短敏感数据在内存中的驻留时间。
     /// **调用方应在用户登出时调用本方法或 `clear()`。**
     public func clearCachedPolicy() {
-        lock.lock()
-        cachedPolicy = nil
-        lock.unlock()
+        lock.withLock { cachedPolicy = nil }
     }
 
     @discardableResult
@@ -341,16 +335,14 @@ public final class PolicyManager: @unchecked Sendable {
     }
 
     private func currentURLSession() -> URLSession {
-        lock.lock()
-        defer { lock.unlock() }
-        return urlSession
+        lock.withLock { urlSession }
     }
 
     private func update(policy: ServerRiskPolicy, verifiedByServer: Bool) {
-        lock.lock()
-        cachedPolicy = policy
-        persist(policy: policy, verifiedByServer: verifiedByServer)
-        lock.unlock()
+        lock.withLock {
+            cachedPolicy = policy
+            persist(policy: policy, verifiedByServer: verifiedByServer)
+        }
     }
 
     private func persist(policy: ServerRiskPolicy, verifiedByServer: Bool) {

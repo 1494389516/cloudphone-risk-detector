@@ -116,7 +116,7 @@ struct AppSigningIdentityDetector: Detector {
     }
 
     private static let baselineStorageKey = "com.cloudphone.riskkit.app_signing_identity.baseline.v1"
-    private static let baselineLock = NSLock()
+    private static let baselineLock = UnfairLock()
 
     private let userDefaults: UserDefaults
 
@@ -417,25 +417,23 @@ struct AppSigningIdentityDetector: Detector {
     }
 
     private func loadBaseline() -> IdentityBaseline? {
-        Self.baselineLock.lock()
-        defer { Self.baselineLock.unlock() }
+        Self.baselineLock.withLock {
+            guard let data = userDefaults.data(forKey: Self.baselineStorageKey) else {
+                return nil
+            }
 
-        guard let data = userDefaults.data(forKey: Self.baselineStorageKey) else {
-            return nil
+            return try? JSONDecoder().decode(IdentityBaseline.self, from: data)
         }
-
-        return try? JSONDecoder().decode(IdentityBaseline.self, from: data)
     }
 
     private func saveBaseline(_ baseline: IdentityBaseline) {
-        Self.baselineLock.lock()
-        defer { Self.baselineLock.unlock() }
+        Self.baselineLock.withLock {
+            guard let data = try? JSONEncoder().encode(baseline) else {
+                return
+            }
 
-        guard let data = try? JSONEncoder().encode(baseline) else {
-            return
+            userDefaults.set(data, forKey: Self.baselineStorageKey)
         }
-
-        userDefaults.set(data, forKey: Self.baselineStorageKey)
     }
 
     private static var isDebugBuild: Bool {

@@ -51,7 +51,7 @@ enum DynamicSymbolResolver {
         let discriminator: UInt
     }
 
-    private static let lock = NSLock()
+    private static let lock = UnfairLock()
     private static var cache: [SymbolID: SignedEntry] = [:]
 
     private static let recipes: [SymbolID: SymbolRecipe] = [
@@ -207,12 +207,7 @@ enum DynamicSymbolResolver {
     }
 
     private static func resolveSignedEntry(for symbolID: SymbolID) -> SignedEntry? {
-        lock.lock()
-        if let cached = cache[symbolID] {
-            lock.unlock()
-            return cached
-        }
-        lock.unlock()
+        if let cached = lock.withLock({ cache[symbolID] }) { return cached }
 
         guard let recipe = recipes[symbolID] else {
             return nil
@@ -238,23 +233,19 @@ enum DynamicSymbolResolver {
         }
         let created = SignedEntry(signedPointer: signed, discriminator: discriminator)
 
-        lock.lock()
-        let existing = cache[symbolID]
-        if existing == nil {
-            cache[symbolID] = created
+        return lock.withLock {
+            let existing = cache[symbolID]
+            if existing == nil {
+                cache[symbolID] = created
+            }
+            return cache[symbolID]
         }
-        let finalEntry = cache[symbolID]
-        lock.unlock()
-
-        return finalEntry
     }
 
     private static func authenticate(_ entry: SignedEntry, for symbolID: SymbolID) -> UnsafeMutableRawPointer? {
         guard let authed = cprisk_pac_auth_function_pointer(entry.signedPointer, entry.discriminator) else {
             cprisk_force_integrity_poison()
-            lock.lock()
-            cache.removeValue(forKey: symbolID)
-            lock.unlock()
+            lock.withLock { cache.removeValue(forKey: symbolID) }
             return nil
         }
         return authed
@@ -291,7 +282,7 @@ enum LibcPrologueGuard {
         "access", "sysctlbyname", "sysctl", "dladdr", "backtrace"
     ]
 
-    private static let lock = NSLock()
+    private static let lock = UnfairLock()
     private static var lastScannedResult: Bool?
     private static var lastScannedTimestamp: CFTimeInterval?
     private static let rescanProbabilityPercent = 50
@@ -300,18 +291,15 @@ enum LibcPrologueGuard {
 
     /// 供 DualPathValidator 在检测到 tampered 时调用，清除缓存以强制下次完整扫描
     static func invalidateCache() {
-        lock.lock()
-        lastScannedResult = nil
-        lastScannedTimestamp = nil
-        lock.unlock()
+        lock.withLock {
+            lastScannedResult = nil
+            lastScannedTimestamp = nil
+        }
     }
 
     static func checkAllCritical() -> Bool {
         let now = CFAbsoluteTimeGetCurrent()
-        lock.lock()
-        let cached = lastScannedResult
-        let lastTs = lastScannedTimestamp
-        lock.unlock()
+        let (cached, lastTs) = lock.withLock { (lastScannedResult, lastScannedTimestamp) }
 
         let timeDecayForced = lastTs.map { now - $0 > rescanIntervalSeconds } ?? true
         let shouldRescan = timeDecayForced
@@ -320,10 +308,10 @@ enum LibcPrologueGuard {
 
         if shouldRescan {
             let result = performFullScan()
-            lock.lock()
-            lastScannedResult = result
-            lastScannedTimestamp = now
-            lock.unlock()
+            lock.withLock {
+                lastScannedResult = result
+                lastScannedTimestamp = now
+            }
             return result
         }
         return cached ?? false
@@ -621,7 +609,7 @@ struct DualPathValidator {
 
     // MARK: - getpid SVC 动态基线（DBI 过慢检测）
 
-    private static let baselineLock = NSLock()
+    private static let baselineLock = UnfairLock()
     private static var cachedGetpidBaseline: UInt64 = 0
     private static var baselineTimestamp: CFTimeInterval = 0
     private static let baselineCacheDuration: CFTimeInterval = 5.0
@@ -630,20 +618,17 @@ struct DualPathValidator {
 
     static var getpidBaseline: UInt64 {
         let now = CFAbsoluteTimeGetCurrent()
-        baselineLock.lock()
-        let cached = cachedGetpidBaseline
-        let ts = baselineTimestamp
-        baselineLock.unlock()
+        let (cached, ts) = baselineLock.withLock { (cachedGetpidBaseline, baselineTimestamp) }
 
         if cached > 0 && (now - ts) < baselineCacheDuration {
             return cached
         }
         let baseline = measure { _ = cprisk_getpid_direct() }
         let value = max(baseline, 1)
-        baselineLock.lock()
-        cachedGetpidBaseline = value
-        baselineTimestamp = now
-        baselineLock.unlock()
+        baselineLock.withLock {
+            cachedGetpidBaseline = value
+            baselineTimestamp = now
+        }
         return value
     }
 

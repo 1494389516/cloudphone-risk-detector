@@ -31,10 +31,12 @@ struct PhysicalSensorProbe: Detector {
     private static let cacheTTLSeconds: TimeInterval = 60.0
 
     private static let prewarmQueue = DispatchQueue(label: "PhysicalSensorProbe.prewarm", qos: .utility)
-    private static let cacheLock = NSLock()
-    private static var cachedResult: DetectorResult?
-    private static var cachedTimestamp: TimeInterval = 0
-    private static var isPrewarming = false
+    private struct CacheState {
+        var cachedResult: DetectorResult?
+        var cachedTimestamp: TimeInterval = 0
+        var isPrewarming = false
+    }
+    private static let cacheState = Mutex(CacheState())
 
     /// 后台异步预热，在 CPRiskKit.start() 时调用，不阻塞主流程
     static func prewarm(forceRefresh: Bool = false) {
@@ -62,39 +64,35 @@ struct PhysicalSensorProbe: Detector {
     }
 
     private static func beginPrewarmIfNeeded(now: TimeInterval, forceRefresh: Bool) -> Bool {
-        cacheLock.lock()
-        defer { cacheLock.unlock() }
+        cacheState.withLock { s in
+            if s.isPrewarming { return false }
+            if !forceRefresh,
+               let _ = s.cachedResult,
+               (now - s.cachedTimestamp) < cacheTTLSeconds {
+                return false
+            }
 
-        if isPrewarming { return false }
-        if !forceRefresh,
-           let _ = cachedResult,
-           (now - cachedTimestamp) < cacheTTLSeconds {
-            return false
+            s.isPrewarming = true
+            return true
         }
-
-        isPrewarming = true
-        return true
     }
 
     private static func finishPrewarm() {
-        cacheLock.lock()
-        isPrewarming = false
-        cacheLock.unlock()
+        cacheState.withLock { $0.isPrewarming = false }
     }
 
     private static func storeCache(_ result: DetectorResult, at timestamp: TimeInterval) {
-        cacheLock.lock()
-        cachedResult = result
-        cachedTimestamp = timestamp
-        cacheLock.unlock()
+        cacheState.withLock { s in
+            s.cachedResult = result
+            s.cachedTimestamp = timestamp
+        }
     }
 
     private static func cachedSnapshot(now: TimeInterval) -> (result: DetectorResult, age: TimeInterval)? {
-        cacheLock.lock()
-        defer { cacheLock.unlock() }
-
-        guard let result = cachedResult, cachedTimestamp > 0 else { return nil }
-        return (result, now - cachedTimestamp)
+        cacheState.withLock { s in
+            guard let result = s.cachedResult, s.cachedTimestamp > 0 else { return nil }
+            return (result, now - s.cachedTimestamp)
+        }
     }
 
     func detect() throws -> DetectorResult {
@@ -192,30 +190,30 @@ struct PhysicalSensorProbe: Detector {
         var rotationSamples: [CMRotationRate] = []
         var magneticSamples: [CMMagneticField] = []
         var collectError: Error?
-        let lock = NSLock()
+        let lock = UnfairLock()
 
         motionManager.deviceMotionUpdateInterval = Self.deviceMotionInterval
         motionManager.startDeviceMotionUpdates(
             using: .xMagneticNorthZVertical,
             to: queue
         ) { motion, error in
-            lock.lock()
-            defer { lock.unlock() }
-            if let err = error {
-                collectError = err
-                motionManager.stopDeviceMotionUpdates()
-                semaphore.signal()
-                return
-            }
-            guard let m = motion else { return }
-            gravitySamples.append(m.gravity)
-            userAccelSamples.append(m.userAcceleration)
-            rotationSamples.append(m.rotationRate)
-            magneticSamples.append(m.magneticField.field)
+            lock.withLock {
+                if let err = error {
+                    collectError = err
+                    motionManager.stopDeviceMotionUpdates()
+                    semaphore.signal()
+                    return
+                }
+                guard let m = motion else { return }
+                gravitySamples.append(m.gravity)
+                userAccelSamples.append(m.userAcceleration)
+                rotationSamples.append(m.rotationRate)
+                magneticSamples.append(m.magneticField.field)
 
-            if gravitySamples.count >= Self.deviceMotionSampleCount {
-                motionManager.stopDeviceMotionUpdates()
-                semaphore.signal()
+                if gravitySamples.count >= Self.deviceMotionSampleCount {
+                    motionManager.stopDeviceMotionUpdates()
+                    semaphore.signal()
+                }
             }
         }
 
@@ -227,13 +225,9 @@ struct PhysicalSensorProbe: Detector {
             return (score, methods)
         }
 
-        lock.lock()
-        let err = collectError
-        let gSamples = gravitySamples
-        let uSamples = userAccelSamples
-        let rSamples = rotationSamples
-        let mSamples = magneticSamples
-        lock.unlock()
+        let (err, gSamples, uSamples, rSamples, mSamples) = lock.withLock {
+            (collectError, gravitySamples, userAccelSamples, rotationSamples, magneticSamples)
+        }
         if let err = err {
             score += 12
             methods.append("physical_sensor:motion_error:\(err.localizedDescription)")
@@ -315,22 +309,22 @@ struct PhysicalSensorProbe: Detector {
         let semaphore = DispatchSemaphore(value: 0)
         let altimeter = CMAltimeter()
         var altitudeReadings: [Double] = []
-        let lock = NSLock()
+        let lock = UnfairLock()
         let baroQueue = OperationQueue()
         baroQueue.qualityOfService = .userInitiated
         baroQueue.maxConcurrentOperationCount = 1
 
         // 使用后台队列回调，避免主线程调用时 semaphore.wait 导致死锁
         altimeter.startRelativeAltitudeUpdates(to: baroQueue) { data, error in
-            lock.lock()
-            defer { lock.unlock() }
-            if error != nil {
-                altimeter.stopRelativeAltitudeUpdates()
-                semaphore.signal()
-                return
+            lock.withLock {
+                if error != nil {
+                    altimeter.stopRelativeAltitudeUpdates()
+                    semaphore.signal()
+                    return
+                }
+                guard let d = data else { return }
+                altitudeReadings.append(d.relativeAltitude.doubleValue)
             }
-            guard let d = data else { return }
-            altitudeReadings.append(d.relativeAltitude.doubleValue)
         }
 
         // 使用全局队列，避免主线程调用 checkBarometer 时 asyncAfter 无法执行导致死锁
@@ -342,9 +336,7 @@ struct PhysicalSensorProbe: Detector {
         let timeout = DispatchTime.now() + Self.barometerSampleSeconds + 0.5
         _ = semaphore.wait(timeout: timeout)
 
-        lock.lock()
-        let readings = altitudeReadings
-        lock.unlock()
+        let readings = lock.withLock { altitudeReadings }
 
         if readings.count < 2 {
             score += 8

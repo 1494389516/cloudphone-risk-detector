@@ -40,7 +40,7 @@ public final class LocalEnvelopeReplayStore: NonceReplayProtecting, @unchecked S
     }
 
     private let defaults = UserDefaults.standard
-    private let lock = NSLock()
+    private let lock = UnfairLock()
     private let key = "cloudphone_envelope_replay_v2"
     private let hmacKey = "cloudphone_envelope_replay_v2_hmac"
     private let hmacPurpose = "envelope_replay"
@@ -51,34 +51,31 @@ public final class LocalEnvelopeReplayStore: NonceReplayProtecting, @unchecked S
     private var failClosed = false
 
     private init() {
-        lock.lock()
-        defer { lock.unlock() }
-        loadLocked()
+        lock.withLock { loadLocked() }
     }
 
     public func consumeIfNew(sessionToken: String, nonce: String, expiresAtMillis: Int64) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
+        lock.withLock {
+            guard !failClosed else {
+                Logger.log("LocalEnvelopeReplayStore: fail-closed active, rejecting nonce consumption")
+                return false
+            }
 
-        guard !failClosed else {
-            Logger.log("LocalEnvelopeReplayStore: fail-closed active, rejecting nonce consumption")
-            return false
+            pruneExpiredLocked(nowMillis: nowMillis())
+
+            let key = replayKey(sessionToken: sessionToken, nonce: nonce)
+            if storage[key] != nil {
+                return false
+            }
+
+            storage[key] = expiresAtMillis
+            trimToLimitLocked()
+            guard persistLocked() else {
+                storage.removeValue(forKey: key)
+                return false
+            }
+            return true
         }
-
-        pruneExpiredLocked(nowMillis: nowMillis())
-
-        let key = replayKey(sessionToken: sessionToken, nonce: nonce)
-        if storage[key] != nil {
-            return false
-        }
-
-        storage[key] = expiresAtMillis
-        trimToLimitLocked()
-        guard persistLocked() else {
-            storage.removeValue(forKey: key)
-            return false
-        }
-        return true
     }
 
     private func loadLocked() {

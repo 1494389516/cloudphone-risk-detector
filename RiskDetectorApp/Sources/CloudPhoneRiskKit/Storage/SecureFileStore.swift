@@ -13,7 +13,7 @@ final class SecureFileStore: @unchecked Sendable {
 
     static let shared = SecureFileStore()
 
-    private let lock = NSLock()
+    private let lock = UnfairLock()
     private let baseDirectory: URL
 
     init(subdirectory: String = "CloudPhoneRiskKit/secure_store") {
@@ -28,57 +28,57 @@ final class SecureFileStore: @unchecked Sendable {
 
     /// Read raw data for a given key. Returns `nil` if file does not exist or read fails.
     func read(key: String) -> Data? {
-        lock.lock()
-        defer { lock.unlock() }
-        let url = fileURL(for: key)
-        return try? Data(contentsOf: url)
+        lock.withLock {
+            let url = fileURL(for: key)
+            return try? Data(contentsOf: url)
+        }
     }
 
     /// Write raw data for a given key with NSFileProtectionComplete.
     @discardableResult
     func write(key: String, data: Data) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        do {
-            try ensureDirectory()
-            let url = fileURL(for: key)
-            try data.write(to: url, options: [.atomic])
-            try FileManager.default.setAttributes(
-                [.protectionKey: FileProtectionType.complete],
-                ofItemAtPath: url.path
-            )
-            return true
-        } catch {
-            Logger.log("SecureFileStore.write(\(key)) failed: \(error.localizedDescription)")
-            return false
+        lock.withLock {
+            do {
+                try ensureDirectory()
+                let url = fileURL(for: key)
+                try data.write(to: url, options: [.atomic])
+                try FileManager.default.setAttributes(
+                    [.protectionKey: FileProtectionType.complete],
+                    ofItemAtPath: url.path
+                )
+                return true
+            } catch {
+                Logger.log("SecureFileStore.write(\(key)) failed: \(error.localizedDescription)")
+                return false
+            }
         }
     }
 
     /// Remove data for a given key.
     func remove(key: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        let url = fileURL(for: key)
-        try? FileManager.default.removeItem(at: url)
+        lock.withLock {
+            let url = fileURL(for: key)
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 
     /// Check if data exists for a given key.
     func exists(key: String) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return FileManager.default.fileExists(atPath: fileURL(for: key).path)
+        lock.withLock {
+            FileManager.default.fileExists(atPath: fileURL(for: key).path)
+        }
     }
 
     /// Return on-disk size in bytes for a given key (0 if not found).
     func size(key: String) -> Int {
-        lock.lock()
-        defer { lock.unlock() }
-        let url = fileURL(for: key)
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let size = attrs[.size] as? Int else {
-            return 0
+        lock.withLock {
+            let url = fileURL(for: key)
+            guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+                  let size = attrs[.size] as? Int else {
+                return 0
+            }
+            return size
         }
-        return size
     }
 
     // MARK: - Private

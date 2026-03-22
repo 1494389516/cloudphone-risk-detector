@@ -84,11 +84,11 @@ public enum Logger {
 
     /// 自定义日志输出目标
     private(set) static var destinations: [LogDestination] = []
-    private static let destinationLock = NSLock()
+    private static let destinationLock = UnfairLock()
 
     /// 审计追踪（环形缓冲区，保留最近 200 条决策日志）
     private static var auditTrail: [AuditEntry] = []
-    private static let auditLock = NSLock()
+    private static let auditLock = UnfairLock()
     private static let maxAuditEntries = 200
 
     // MARK: - 基础日志（兼容原有接口）
@@ -129,44 +129,36 @@ public enum Logger {
     /// 记录决策审计条目（评估原因、分数计算、阈值匹配等）
     public static func audit(action: String, details: [String: String] = [:]) {
         let entry = AuditEntry(timestamp: Date(), action: action, details: details)
-        auditLock.lock()
-        auditTrail.append(entry)
-        if auditTrail.count > maxAuditEntries {
-            auditTrail.removeFirst(auditTrail.count - maxAuditEntries)
+        auditLock.withLock {
+            auditTrail.append(entry)
+            if auditTrail.count > maxAuditEntries {
+                auditTrail.removeFirst(auditTrail.count - maxAuditEntries)
+            }
         }
-        auditLock.unlock()
 
         emit(level: .info, message: "AUDIT: \(action)", metadata: details)
     }
 
     /// 获取审计追踪快照
     public static func auditSnapshot() -> [AuditEntry] {
-        auditLock.lock()
-        defer { auditLock.unlock() }
-        return auditTrail
+        auditLock.withLock { auditTrail }
     }
 
     /// 清除审计追踪
     public static func clearAuditTrail() {
-        auditLock.lock()
-        auditTrail.removeAll()
-        auditLock.unlock()
+        auditLock.withLock { auditTrail.removeAll() }
     }
 
     // MARK: - 目标管理
 
     /// 添加自定义日志输出目标
     public static func addDestination(_ destination: LogDestination) {
-        destinationLock.lock()
-        destinations.append(destination)
-        destinationLock.unlock()
+        destinationLock.withLock { destinations.append(destination) }
     }
 
     /// 移除所有自定义日志输出目标
     public static func removeAllDestinations() {
-        destinationLock.lock()
-        destinations.removeAll()
-        destinationLock.unlock()
+        destinationLock.withLock { destinations.removeAll() }
     }
 
     // MARK: - 评估性能度量
@@ -212,9 +204,7 @@ public enum Logger {
         #endif
 
         // 输出到自定义目标（Release 也可用）
-        destinationLock.lock()
-        let dests = destinations
-        destinationLock.unlock()
+        let dests = destinationLock.withLock { destinations }
         for dest in dests {
             dest.write(entry)
         }

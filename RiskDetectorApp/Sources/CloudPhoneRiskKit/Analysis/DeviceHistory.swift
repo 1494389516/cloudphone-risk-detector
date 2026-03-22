@@ -169,7 +169,7 @@ public final class DeviceHistory {
     }
   }
 
-  private let lock = NSLock()
+  private let lock = UnfairLock()
   private let fileManager = FileManager.default
   private let storeURL: URL
   private let hmacURL: URL
@@ -256,15 +256,14 @@ public final class DeviceHistory {
 
   /// 添加新的检测快照
   public func addSnapshot(_ snapshot: DeviceDetectionSnapshot) {
-    lock.lock()
-    defer { lock.unlock() }
+    lock.withLock {
+      cachedSnapshots.append(snapshot)
+      isDirty = true
 
-    cachedSnapshots.append(snapshot)
-    isDirty = true
-
-    // 限制内存中的快照数量
-    if cachedSnapshots.count > maxSnapshots {
-      cachedSnapshots = Array(cachedSnapshots.suffix(maxSnapshots))
+      // 限制内存中的快照数量
+      if cachedSnapshots.count > maxSnapshots {
+        cachedSnapshots = Array(cachedSnapshots.suffix(maxSnapshots))
+      }
     }
 
     // 异步持久化
@@ -283,252 +282,240 @@ public final class DeviceHistory {
 
   /// 查询所有快照
   public func getAllSnapshots() -> [DeviceDetectionSnapshot] {
-    lock.lock()
-    defer { lock.unlock() }
-    return cleanAndReturnLocked()
+    lock.withLock {
+      cleanAndReturnLocked()
+    }
   }
 
   /// 查询指定时间范围内的快照
   public func getSnapshots(from startTime: TimeInterval, to endTime: TimeInterval)
     -> [DeviceDetectionSnapshot]
   {
-    lock.lock()
-    defer { lock.unlock() }
-
-    let cleaned = cleanAndReturnLocked()
-    return cleaned.filter { $0.timestamp >= startTime && $0.timestamp <= endTime }
+    lock.withLock {
+      let cleaned = cleanAndReturnLocked()
+      return cleaned.filter { $0.timestamp >= startTime && $0.timestamp <= endTime }
+    }
   }
 
   /// 查询最近的 N 个快照
   public func getRecentSnapshots(count: Int) -> [DeviceDetectionSnapshot] {
-    lock.lock()
-    defer { lock.unlock() }
-
-    let cleaned = cleanAndReturnLocked()
-    let recentCount = min(count, cleaned.count)
-    return Array(cleaned.suffix(recentCount))
+    lock.withLock {
+      let cleaned = cleanAndReturnLocked()
+      let recentCount = min(count, cleaned.count)
+      return Array(cleaned.suffix(recentCount))
+    }
   }
 
   /// 查询指定设备 ID 的快照
   public func getSnapshots(for deviceID: String) -> [DeviceDetectionSnapshot] {
-    lock.lock()
-    defer { lock.unlock() }
-
-    let cleaned = cleanAndReturnLocked()
-    return cleaned.filter { $0.deviceID == deviceID }
+    lock.withLock {
+      let cleaned = cleanAndReturnLocked()
+      return cleaned.filter { $0.deviceID == deviceID }
+    }
   }
 
   /// 查询首次越狱时间
   public func getFirstJailbreakTime(for deviceID: String? = nil) -> TimeInterval? {
-    lock.lock()
-    defer { lock.unlock() }
+    lock.withLock {
+      let cleaned = cleanAndReturnLocked()
+      let filtered = deviceID != nil ? cleaned.filter { $0.deviceID == deviceID } : cleaned
 
-    let cleaned = cleanAndReturnLocked()
-    let filtered = deviceID != nil ? cleaned.filter { $0.deviceID == deviceID } : cleaned
-
-    let jailbrokenSnapshots = filtered.filter { $0.jailbreakStatus.isJailbroken }
-    return jailbrokenSnapshots.map { $0.timestamp }.min()
+      let jailbrokenSnapshots = filtered.filter { $0.jailbreakStatus.isJailbroken }
+      return jailbrokenSnapshots.map { $0.timestamp }.min()
+    }
   }
 
   /// 查询最近 N 天内的越狱次数
   public func getJailbreakCount(days: Int = 7, for deviceID: String? = nil) -> Int {
-    lock.lock()
-    defer { lock.unlock() }
+    lock.withLock {
+      let now = Date().timeIntervalSince1970
+      let startTime = now - TimeInterval(days * 24 * 3600)
 
-    let now = Date().timeIntervalSince1970
-    let startTime = now - TimeInterval(days * 24 * 3600)
+      let cleaned = cleanAndReturnLocked()
+      let filtered = deviceID != nil ? cleaned.filter { $0.deviceID == deviceID } : cleaned
 
-    let cleaned = cleanAndReturnLocked()
-    let filtered = deviceID != nil ? cleaned.filter { $0.deviceID == deviceID } : cleaned
-
-    return filtered.filter { $0.timestamp >= startTime && $0.jailbreakStatus.isJailbroken }.count
+      return filtered.filter { $0.timestamp >= startTime && $0.jailbreakStatus.isJailbroken }.count
+    }
   }
 
   /// 查询首次出现时间（设备年龄）
   public func getFirstSeenTime(for deviceID: String) -> TimeInterval? {
-    lock.lock()
-    defer { lock.unlock() }
-
-    let cleaned = cleanAndReturnLocked()
-    let deviceSnapshots = cleaned.filter { $0.deviceID == deviceID }
-    return deviceSnapshots.map { $0.timestamp }.min()
+    lock.withLock {
+      let cleaned = cleanAndReturnLocked()
+      let deviceSnapshots = cleaned.filter { $0.deviceID == deviceID }
+      return deviceSnapshots.map { $0.timestamp }.min()
+    }
   }
 
   /// 获取总检测次数
   public func getTotalDetectionCount(for deviceID: String) -> Int {
-    lock.lock()
-    defer { lock.unlock() }
-
-    let cleaned = cleanAndReturnLocked()
-    return cleaned.filter { $0.deviceID == deviceID }.count
+    lock.withLock {
+      let cleaned = cleanAndReturnLocked()
+      return cleaned.filter { $0.deviceID == deviceID }.count
+    }
   }
 
   /// 获取 VPN 使用频率（最近 N 天）
   public func getVPNUsageFrequency(days: Int = 7, for deviceID: String? = nil) -> Double {
-    lock.lock()
-    defer { lock.unlock() }
+    lock.withLock {
+      let now = Date().timeIntervalSince1970
+      let startTime = now - TimeInterval(days * 24 * 3600)
 
-    let now = Date().timeIntervalSince1970
-    let startTime = now - TimeInterval(days * 24 * 3600)
+      let cleaned = cleanAndReturnLocked()
+      let filtered = deviceID != nil ? cleaned.filter { $0.deviceID == deviceID } : cleaned
+      let recentSnapshots = filtered.filter { $0.timestamp >= startTime }
 
-    let cleaned = cleanAndReturnLocked()
-    let filtered = deviceID != nil ? cleaned.filter { $0.deviceID == deviceID } : cleaned
-    let recentSnapshots = filtered.filter { $0.timestamp >= startTime }
+      guard !recentSnapshots.isEmpty else { return 0 }
 
-    guard !recentSnapshots.isEmpty else { return 0 }
-
-    let vpnCount = recentSnapshots.filter { $0.isVPNActive }.count
-    return Double(vpnCount) / Double(recentSnapshots.count)
+      let vpnCount = recentSnapshots.filter { $0.isVPNActive }.count
+      return Double(vpnCount) / Double(recentSnapshots.count)
+    }
   }
 
   /// 获取风险分数历史
   public func getRiskScoreHistory(days: Int = 30, for deviceID: String? = nil) -> [(
     timestamp: TimeInterval, score: Double
   )] {
-    lock.lock()
-    defer { lock.unlock() }
+    lock.withLock {
+      let now = Date().timeIntervalSince1970
+      let startTime = now - TimeInterval(days * 24 * 3600)
 
-    let now = Date().timeIntervalSince1970
-    let startTime = now - TimeInterval(days * 24 * 3600)
+      let cleaned = cleanAndReturnLocked()
+      let filtered = deviceID != nil ? cleaned.filter { $0.deviceID == deviceID } : cleaned
+      let recentSnapshots = filtered.filter { $0.timestamp >= startTime }
 
-    let cleaned = cleanAndReturnLocked()
-    let filtered = deviceID != nil ? cleaned.filter { $0.deviceID == deviceID } : cleaned
-    let recentSnapshots = filtered.filter { $0.timestamp >= startTime }
-
-    return
-      recentSnapshots
-      .sorted { $0.timestamp < $1.timestamp }
-      .map { (timestamp: $0.timestamp, score: $0.riskScore) }
+      return
+        recentSnapshots
+        .sorted { $0.timestamp < $1.timestamp }
+        .map { (timestamp: $0.timestamp, score: $0.riskScore) }
+    }
   }
 
   // MARK: - 数据清理
 
   /// 执行数据清理，移除过期快照
   public func cleanup() {
-    lock.lock()
-    defer { lock.unlock() }
+    lock.withLock {
+      let before = cachedSnapshots.count
+      _ = cleanAndReturnLocked()
+      let after = cachedSnapshots.count
 
-    let before = cachedSnapshots.count
-    _ = cleanAndReturnLocked()
-    let after = cachedSnapshots.count
-
-    if before != after {
-      isDirty = true
-      persistIfDirtyLocked()
+      if before != after {
+        isDirty = true
+        persistIfDirtyLocked()
+      }
     }
   }
 
   /// 清空所有历史数据
   public func clearAll() {
-    lock.lock()
-    defer { lock.unlock() }
-
-    cachedSnapshots.removeAll()
-    cachedFreshness = .zero
-    isDirty = true
-    persistToDiskLocked(resetAnchor: true)
+    lock.withLock {
+      cachedSnapshots.removeAll()
+      cachedFreshness = .zero
+      isDirty = true
+      persistToDiskLocked(resetAnchor: true)
+    }
   }
 
   // MARK: - 持久化
 
   private func loadFromDisk() {
-    lock.lock()
-    defer { lock.unlock() }
-
-    let anchor = freshnessAnchor.read() ?? .zero
-    guard fileManager.fileExists(atPath: storeURL.path) else {
-      cachedSnapshots = []
-      cachedFreshness = anchor
-      isDirty = false
-      return
-    }
-
-    let data: Data
-    do {
-      data = try Data(contentsOf: storeURL)
-    } catch {
-      Logger.log("DeviceHistory: failed to read store file - \(error.localizedDescription)")
-      cachedSnapshots = []
-      cachedFreshness = anchor
-      return
-    }
-
-    guard let signature = (try? Data(contentsOf: hmacURL)),
-      StorageIntegrityGuard.verify(data, signature: signature, purpose: hmacPurpose)
-    else {
-      clearPersistedFilesLocked(resetAnchor: false)
-      cachedSnapshots = []
-      cachedFreshness = anchor
-      return
-    }
-
-    let decryptedData: Data
-    #if DEBUG
-      if let dec = try? PayloadCrypto.decrypt(data) {
-        decryptedData = dec
-      } else {
-        decryptedData = data
+    lock.withLock {
+      let anchor = freshnessAnchor.read() ?? .zero
+      guard fileManager.fileExists(atPath: storeURL.path) else {
+        cachedSnapshots = []
+        cachedFreshness = anchor
+        isDirty = false
+        return
       }
-    #else
-      guard let dec = try? PayloadCrypto.decrypt(data) else {
-        Logger.log("DeviceHistory: decrypt failed, clearing corrupted data in release build")
+
+      let data: Data
+      do {
+        data = try Data(contentsOf: storeURL)
+      } catch {
+        Logger.log("DeviceHistory: failed to read store file - \(error.localizedDescription)")
+        cachedSnapshots = []
+        cachedFreshness = anchor
+        return
+      }
+
+      guard let signature = (try? Data(contentsOf: hmacURL)),
+        StorageIntegrityGuard.verify(data, signature: signature, purpose: hmacPurpose)
+      else {
         clearPersistedFilesLocked(resetAnchor: false)
         cachedSnapshots = []
         cachedFreshness = anchor
         return
       }
-      decryptedData = dec
-    #endif
 
-    let decodedSnapshots: [DeviceDetectionSnapshot]
-    let diskFreshness: FreshnessState
-    if let envelope = try? JSONDecoder().decode(StoredEnvelope.self, from: decryptedData) {
-      decodedSnapshots = envelope.snapshots
-      diskFreshness = FreshnessState(
-        latestTimestamp: envelope.latestTimestamp,
-        sequence: envelope.sequence
-      )
-    } else if let legacy = try? JSONDecoder().decode(
-      [DeviceDetectionSnapshot].self, from: decryptedData)
-    {
-      decodedSnapshots = legacy
-      diskFreshness = FreshnessState(
-        latestTimestamp: legacy.map(\.timestamp).max() ?? 0,
-        sequence: 0
-      )
-    } else {
-      cachedSnapshots = []
-      cachedFreshness = anchor
-      return
-    }
+      let decryptedData: Data
+      #if DEBUG
+        if let dec = try? PayloadCrypto.decrypt(data) {
+          decryptedData = dec
+        } else {
+          decryptedData = data
+        }
+      #else
+        guard let dec = try? PayloadCrypto.decrypt(data) else {
+          Logger.log("DeviceHistory: decrypt failed, clearing corrupted data in release build")
+          clearPersistedFilesLocked(resetAnchor: false)
+          cachedSnapshots = []
+          cachedFreshness = anchor
+          return
+        }
+        decryptedData = dec
+      #endif
 
-    if diskFreshness.sequence < anchor.sequence
-      || diskFreshness.latestTimestamp < anchor.latestTimestamp
-    {
-      Logger.log("DeviceHistory: freshness rollback detected")
-      clearPersistedFilesLocked(resetAnchor: false)
-      cachedSnapshots = []
-      cachedFreshness = anchor
-      isDirty = false
-      return
-    }
+      let decodedSnapshots: [DeviceDetectionSnapshot]
+      let diskFreshness: FreshnessState
+      if let envelope = try? JSONDecoder().decode(StoredEnvelope.self, from: decryptedData) {
+        decodedSnapshots = envelope.snapshots
+        diskFreshness = FreshnessState(
+          latestTimestamp: envelope.latestTimestamp,
+          sequence: envelope.sequence
+        )
+      } else if let legacy = try? JSONDecoder().decode(
+        [DeviceDetectionSnapshot].self, from: decryptedData)
+      {
+        decodedSnapshots = legacy
+        diskFreshness = FreshnessState(
+          latestTimestamp: legacy.map(\.timestamp).max() ?? 0,
+          sequence: 0
+        )
+      } else {
+        cachedSnapshots = []
+        cachedFreshness = anchor
+        return
+      }
 
-    let cleaned = pruneSnapshotsLocked(decodedSnapshots)
-    cachedSnapshots = cleaned.snapshots
-    cachedFreshness = maxFreshness(anchor, diskFreshness)
-    isDirty = cleaned.didPrune
+      if diskFreshness.sequence < anchor.sequence
+        || diskFreshness.latestTimestamp < anchor.latestTimestamp
+      {
+        Logger.log("DeviceHistory: freshness rollback detected")
+        clearPersistedFilesLocked(resetAnchor: false)
+        cachedSnapshots = []
+        cachedFreshness = anchor
+        isDirty = false
+        return
+      }
 
-    if diskFreshness.sequence > anchor.sequence
-      || diskFreshness.latestTimestamp > anchor.latestTimestamp
-    {
-      _ = freshnessAnchor.write(diskFreshness)
+      let cleaned = pruneSnapshotsLocked(decodedSnapshots)
+      cachedSnapshots = cleaned.snapshots
+      cachedFreshness = maxFreshness(anchor, diskFreshness)
+      isDirty = cleaned.didPrune
+
+      if diskFreshness.sequence > anchor.sequence
+        || diskFreshness.latestTimestamp > anchor.latestTimestamp
+      {
+        _ = freshnessAnchor.write(diskFreshness)
+      }
     }
   }
 
   private func persistIfDirty() {
-    lock.lock()
-    defer { lock.unlock() }
-    persistIfDirtyLocked()
+    lock.withLock {
+      persistIfDirtyLocked()
+    }
   }
 
   /// Must be called with `lock` already held.
@@ -598,9 +585,9 @@ public final class DeviceHistory {
   // MARK: - 辅助方法
 
   private func cleanAndReturn() -> [DeviceDetectionSnapshot] {
-    lock.lock()
-    defer { lock.unlock() }
-    return cleanAndReturnLocked()
+    lock.withLock {
+      cleanAndReturnLocked()
+    }
   }
 
   private func cleanAndReturnLocked() -> [DeviceDetectionSnapshot] {

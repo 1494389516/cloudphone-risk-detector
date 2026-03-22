@@ -188,7 +188,7 @@ public struct BehaviorBaseline: Codable, Sendable {
 /// 负责从历史数据构建和更新行为基线
 public final class BehaviorBaselineBuilder {
     private let history: DeviceHistory
-    private let lock = NSLock()
+    private let lock = UnfairLock()
 
     /// 缓存已计算的基线
     private var cachedBaselines: [String: BehaviorBaseline] = [:]
@@ -207,9 +207,9 @@ public final class BehaviorBaselineBuilder {
 
     /// 获取设备的行为基线，如果不存在或过期则重新构建
     public func getBaseline(for deviceID: String, forceRebuild: Bool = false) -> BehaviorBaseline {
-        lock.lock()
-        defer { lock.unlock() }
-        return getBaselineLocked(for: deviceID, forceRebuild: forceRebuild)
+        lock.withLock {
+            getBaselineLocked(for: deviceID, forceRebuild: forceRebuild)
+        }
     }
 
     /// Must be called with `lock` already held.
@@ -233,32 +233,30 @@ public final class BehaviorBaselineBuilder {
 
     /// 增量更新基线
     public func updateBaseline(for deviceID: String, with newBehavior: BehaviorSignals) {
-        lock.lock()
-        defer { lock.unlock() }
+        lock.withLock {
+            // 获取当前基线（复用已持有的锁，避免递归锁死）
+            let currentBaseline = getBaselineLocked(for: deviceID)
 
-        // 获取当前基线（复用已持有的锁，避免递归锁死）
-        let currentBaseline = getBaselineLocked(for: deviceID)
+            // 如果基线为空，直接重建
+            guard currentBaseline.sampleCount >= minSampleCount else {
+                cachedBaselines[deviceID] = buildBaseline(for: deviceID)
+                return
+            }
 
-        // 如果基线为空，直接重建
-        guard currentBaseline.sampleCount >= minSampleCount else {
-            cachedBaselines[deviceID] = buildBaseline(for: deviceID)
-            return
+            // 获取历史数据用于重新计算
+            let rebuiltBaseline = buildBaseline(for: deviceID)
+            cachedBaselines[deviceID] = rebuiltBaseline
         }
-
-        // 获取历史数据用于重新计算
-        let rebuiltBaseline = buildBaseline(for: deviceID)
-        cachedBaselines[deviceID] = rebuiltBaseline
     }
 
     /// 清除缓存的基线
     public func clearCache(for deviceID: String? = nil) {
-        lock.lock()
-        defer { lock.unlock() }
-
-        if let deviceID = deviceID {
-            cachedBaselines.removeValue(forKey: deviceID)
-        } else {
-            cachedBaselines.removeAll()
+        lock.withLock {
+            if let deviceID = deviceID {
+                cachedBaselines.removeValue(forKey: deviceID)
+            } else {
+                cachedBaselines.removeAll()
+            }
         }
     }
 
