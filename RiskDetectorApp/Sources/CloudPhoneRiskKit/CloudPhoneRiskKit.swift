@@ -1143,6 +1143,9 @@ public final class CPRiskKit: NSObject {
 
     /// 异步生成报告（避免在主线程做重活）。
     /// completion 始终回到主线程。
+    ///
+    /// - Note: 建议迁移到 async/await 版本 `evaluateAsync()` 或 `RiskEvaluationActor.shared.evaluate()`。
+    @available(*, deprecated, message: "Use async/await evaluateAsync() or RiskEvaluationActor.shared.evaluate() instead")
     @objc(evaluateAsyncWithCompletion:)
     public func evaluateAsync(completion: @escaping (CPRiskReport) -> Void) {
         evaluateAsync(config: .default, scenario: .default, completion: completion)
@@ -1150,6 +1153,9 @@ public final class CPRiskKit: NSObject {
 
     /// 异步生成报告（保持 1.0 API）。
     /// completion 始终回到主线程。
+    ///
+    /// - Note: 建议迁移到 async/await 版本。
+    @available(*, deprecated, message: "Use async/await evaluateAsync(config:) instead")
     @objc(evaluateAsyncWithConfig:completion:)
     public func evaluateAsync(config: CPRiskConfig, completion: @escaping (CPRiskReport) -> Void) {
         evaluateAsync(config: config, scenario: config.defaultScenario, completion: completion)
@@ -1165,6 +1171,9 @@ public final class CPRiskKit: NSObject {
     }
 
     /// 异步场景化评估（带配置）。
+    ///
+    /// - Note: 建议迁移到 async/await 版本。
+    @available(*, deprecated, message: "Use async/await evaluateAsync(config:scenario:) instead")
     public func evaluateAsync(
         config: CPRiskConfig,
         scenario: RiskScenario,
@@ -1303,6 +1312,7 @@ public final class CPRiskKit: NSObject {
         }
 
         RiskSignalProviderRegistry.shared.register(AntiTamperingSignalProvider.shared)
+        RiskSignalProviderRegistry.shared.register(CloudPhoneEnvironmentProvider.shared)
     }
 
     private func runCapabilityProbe(remoteConfig: RemoteConfig?) -> CapabilityProbeRuntimeResult {

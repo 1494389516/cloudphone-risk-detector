@@ -36,6 +36,7 @@ public final class DetectorRegistry {
         case dylibInjection
         case codeSignature
         case memoryIntegrity
+        case runtimeIntegrity
 
         public var rawValue: String {
             switch self {
@@ -52,6 +53,7 @@ public final class DetectorRegistry {
             case .dylibInjection: return "dylib_injection"
             case .codeSignature: return "code_signature"
             case .memoryIntegrity: return "memory_integrity"
+            case .runtimeIntegrity: return "runtime_integrity"
             }
         }
 
@@ -198,6 +200,10 @@ public final class DetectorRegistry {
             minOS: 14.0,
             signalOverlapGroup: "memory"
         ),
+        .runtimeIntegrity: DetectorManifest(
+            minOS: 14.0,
+            signalOverlapGroup: "runtime_integrity"
+        ),
     ]
     
     // MARK: - 线程安全与封印
@@ -230,13 +236,14 @@ public final class DetectorRegistry {
         .dylibInjection: { DylibInjectionDetector() },
         .codeSignature: { CodeSignatureValidator() },
         .memoryIntegrity: { MemoryIntegrityChecker() },
+        .runtimeIntegrity: { RuntimeIntegrityValidator() },
     ]
     
     /// 检测器分组映射
     private let groupMapping: [DetectorGroup: Set<DetectorType>] = [
         .jailbreak: [.file, .dyld, .env, .sysctl, .scheme, .hook],
         .antiTamper: [.antiTampering, .debugger, .frida, .fridaModule, .dylibInjection],
-        .integrity: [.codeSignature, .memoryIntegrity]
+        .integrity: [.codeSignature, .memoryIntegrity, .runtimeIntegrity]
     ]
     
     // MARK: - 公开 API
@@ -690,7 +697,8 @@ extension JailbreakConfig {
         types.insert(.dylibInjection)
         types.insert(.codeSignature)
         types.insert(.memoryIntegrity)
-        
+        types.insert(.runtimeIntegrity)
+
         return types
     }
     

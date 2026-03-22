@@ -31,6 +31,10 @@ public struct RiskDetectionEngine: Sendable {
     /// 是否启用日志
     public let enableLogging: Bool
 
+    /// 本地 killSwitch 覆盖开关 — 设为 true 时即使远程配置启用 killSwitch 也继续正常评估。
+    /// 用于防止远程配置被劫持后一键关闭所有防护。
+    public static var localKillSwitchOverride: Bool = false
+
     /// 自定义信号提供者
     private let customProviders: [String: @Sendable (RiskContext) -> [RiskSignal]]
 
@@ -63,17 +67,34 @@ public struct RiskDetectionEngine: Sendable {
         log("Scenario: \(scenario.rawValue)")
         log("Policy: \(policy.name)")
 
-        if policy.killSwitchEnabled {
-            log("⚠️ killSwitch enabled — forcing allow verdict, all risk interception bypassed")
+        if policy.killSwitchEnabled && !Self.localKillSwitchOverride {
+            Logger.critical("killSwitch enabled — forcing allow verdict, all risk interception bypassed",
+                           metadata: ["scenario": scenario.rawValue, "policy": policy.name])
+            Logger.audit(action: "kill_switch_activated", details: [
+                "scenario": scenario.rawValue,
+                "policy": policy.name,
+                "timestamp": ISO8601DateFormatter().string(from: Date()),
+            ])
             return RiskVerdict(
                 score: 0,
                 internalLevel: .low,
                 internalAction: .allow,
                 confidence: 1.0,
                 primaryReasons: ["kill_switch_active"],
-                signals: [],
+                signals: [RiskSignal(
+                    id: "kill_switch_active",
+                    category: "system",
+                    score: 0,
+                    state: .hard(true),
+                    evidence: ["policy": policy.name]
+                )],
                 scenario: scenario
             )
+        } else if policy.killSwitchEnabled && Self.localKillSwitchOverride {
+            Logger.warn("killSwitch requested by remote config but overridden by local policy")
+            Logger.audit(action: "kill_switch_overridden", details: [
+                "scenario": scenario.rawValue,
+            ])
         }
 
         let collected = collectAndAugmentSignals(
@@ -82,7 +103,12 @@ public struct RiskDetectionEngine: Sendable {
             extraSignals: extraSignals
         )
         if let preflightVerdict = collected.preflightVerdict {
-            log("=== Evaluation complete ===")
+            Logger.audit(action: "preflight_short_circuit", details: [
+                "level": preflightVerdict.level.rawValue,
+                "action": preflightVerdict.action.rawValue,
+                "reasons": preflightVerdict.primaryReasons.joined(separator: ","),
+            ])
+            log("=== Evaluation complete (preflight) ===")
             log("Verdict - level: \(preflightVerdict.level.rawValue), action: \(preflightVerdict.action.rawValue), confidence: \(preflightVerdict.confidence)")
             return preflightVerdict
         }
@@ -93,7 +119,12 @@ public struct RiskDetectionEngine: Sendable {
             scenario: scenario
         ) {
             let verdict = fastDecision.verdict
-            log("=== Evaluation complete ===")
+            Logger.audit(action: "fast_digest_short_circuit", details: [
+                "level": verdict.level.rawValue,
+                "action": verdict.action.rawValue,
+                "score": String(format: "%.1f", verdict.score),
+            ])
+            log("=== Evaluation complete (fast digest) ===")
             log("Verdict - level: \(verdict.level.rawValue), action: \(verdict.action.rawValue), confidence: \(verdict.confidence)")
             return verdict
         }
