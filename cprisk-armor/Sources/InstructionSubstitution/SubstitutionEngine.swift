@@ -233,6 +233,9 @@ public final class SubstitutionEngine {
         var textContent = try textSection.readContent(from: file.data)
         let scanBytes = textContent.count - (textContent.count % 4)
         let dataInCodeRanges = loadDataInCodeRanges(from: file, textSection: textSection)
+        guard textSection.offset <= UInt64(Int.max) else {
+            throw MachOError.invalidData("Text section offset \(textSection.offset) exceeds addressable range")
+        }
         let textBaseFileOffset = Int(textSection.offset)
 
         var rng = SplitMix64(seed: configuration.seed)

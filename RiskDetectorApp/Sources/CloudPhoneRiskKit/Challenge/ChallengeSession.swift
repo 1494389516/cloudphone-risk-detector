@@ -439,12 +439,23 @@ extension ChallengeSession {
         let expected = HMAC<SHA256>.authenticationCode(for: inputData, using: key)
         let expectedHex = Data(expected).map { String(format: "%02x", $0) }.joined()
 
-        guard hmacHex.lowercased() == expectedHex.lowercased() else {
+        guard timingSafeCompare(hmacHex.lowercased(), expectedHex.lowercased()) else {
             Logger.log("ChallengeSession.verifyResult: HMAC mismatch for challengeId=\(result.challengeId)")
             return makeMismatchSignal(challengeId: result.challengeId, reason: "hmac_mismatch")
         }
 
         return nil
+    }
+
+    private func timingSafeCompare(_ lhs: String, _ rhs: String) -> Bool {
+        let lhsBytes = Array(lhs.utf8)
+        let rhsBytes = Array(rhs.utf8)
+        guard lhsBytes.count == rhsBytes.count else { return false }
+        var result: UInt8 = 0
+        for i in 0..<lhsBytes.count {
+            result |= lhsBytes[i] ^ rhsBytes[i]
+        }
+        return result == 0
     }
 
     private func makeMismatchSignal(challengeId: String, reason: String) -> RiskSignal {

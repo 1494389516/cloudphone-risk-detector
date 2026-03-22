@@ -307,7 +307,7 @@ public final class MetadataScrubberPass: ArmorPass {
             var end = position
             while end < content.count && content[end] != 0 { end += 1 }
 
-            if end > position,
+            if end > position, end <= content.count,
                let methodName = String(data: content.subdata(in: position..<end), encoding: .utf8)
             {
                 total += 1

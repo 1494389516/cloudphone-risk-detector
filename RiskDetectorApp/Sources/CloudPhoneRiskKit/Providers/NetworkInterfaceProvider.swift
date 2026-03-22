@@ -69,7 +69,10 @@ final class NetworkInterfaceProvider: RiskSignalProvider {
                name == "en0",
                let data = current.pointee.ifa_data
             {
-                en0MTU = data.load(fromByteOffset: 8, as: UInt32.self)
+                // struct if_data is at least 120 bytes on Darwin; validate offset 8 + sizeof(UInt32) is within bounds
+                let minIfDataSize = 12  // offset 8 + 4 bytes for UInt32
+                let ifDataPtr = UnsafeRawBufferPointer(start: data, count: minIfDataSize)
+                en0MTU = ifDataPtr.load(fromByteOffset: 8, as: UInt32.self)
             }
 
             cursor = current.pointee.ifa_next

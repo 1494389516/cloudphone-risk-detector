@@ -55,7 +55,7 @@ struct CodeSignatureValidator: Detector {
         guard ncmds <= 4096 else { return false }
 
         for _ in 0..<ncmds {
-            guard commandPointer < loadCommandsEnd else { break }
+            guard commandPointer + MemoryLayout<load_command>.size <= loadCommandsEnd else { break }
             let command = commandPointer.assumingMemoryBound(to: load_command.self).pointee
             let cmdSize = Int(command.cmdsize)
             guard cmdSize >= MemoryLayout<load_command>.size, cmdSize <= 0x100000 else { break }
