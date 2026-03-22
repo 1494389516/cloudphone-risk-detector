@@ -19,7 +19,7 @@ enum IntegrityBaselineEnvCheck {
         let reason: String?
     }
 
-    private static let suspiciousImagePatterns = ["frida", "substrate", "libhooker", "ellekit", "substitute"]
+    private static var suspiciousImagePatterns: [String] { ObfuscatedConstants.suspiciousImagePatternsBaseline }
 
     /// 检查当前环境是否适合建立完整性基线
     /// - Returns: 若 isSuspicious 为 true，则不应建基线

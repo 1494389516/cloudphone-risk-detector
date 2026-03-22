@@ -62,6 +62,9 @@ public final class DataSegmentEncryptorPass: ArmorPass {
         var totalBytesEncrypted = 0
         var details = [String]()
 
+        var parentKey = loaderKey
+        let defaultChainDepth: UInt32 = 1
+
         for section in targetSections {
             let plaintext = try section.readContent(from: file.data)
             let contentHash = sha256(plaintext)
@@ -70,15 +73,22 @@ public final class DataSegmentEncryptorPass: ArmorPass {
                 section: section.sectionName
             )
             let nonce = try generateNonce()
+            let sectionIndex = UInt32(entries.count + 1)
+            let sectionKey = deriveChainedKey(
+                parentKey: parentKey,
+                sectionIndex: sectionIndex,
+                nonce: nonce,
+                depth: defaultChainDepth
+            )
             let encrypted = xor(
                 plaintext,
-                makeKeystream(key: loaderKey, keyID: keyID, nonce: nonce, length: plaintext.count)
+                makeKeystream(key: sectionKey, keyID: keyID, nonce: nonce, length: plaintext.count)
             )
             try file.replaceBytes(at: UInt64(section.offset), with: encrypted)
 
             var hmacMessage = nonce
             hmacMessage.append(encrypted)
-            let hmacTag = ArmorABI.hmacSHA256(key: loaderKey, message: hmacMessage)
+            let hmacTag = ArmorABI.hmacSHA256(key: sectionKey, message: hmacMessage)
 
             entries.append(ArmorABI.Loader.Entry(
                 segmentName: section.segmentName,
@@ -88,9 +98,12 @@ public final class DataSegmentEncryptorPass: ArmorPass {
                 size: section.size,
                 contentHash: contentHash,
                 nonce: nonce,
-                hmacTag: hmacTag
+                hmacTag: hmacTag,
+                sectionIndex: sectionIndex,
+                chainedKeyDepth: defaultChainDepth
             ))
 
+            parentKey = sectionKey
             totalBytesEncrypted += plaintext.count
             details.append(
                 "Encrypted \(section.segmentName).\(section.sectionName) (\(plaintext.count) bytes)"
@@ -235,6 +248,34 @@ private func xor(_ lhs: Data, _ rhs: Data) -> Data {
 
 private func sha256(_ data: Data) -> Data {
     Data(SHA256.hash(data: data))
+}
+
+private func deriveChainedKey(
+    parentKey: Data,
+    sectionIndex: UInt32,
+    nonce: Data,
+    depth: UInt32
+) -> Data {
+    precondition(parentKey.count == ArmorABI.keySize, "parentKey must be 32 bytes")
+    precondition(nonce.count == ArmorABI.nonceSize, "nonce must be 8 bytes")
+
+    var material = Data()
+    appendUInt32(sectionIndex, to: &material)
+    material.append(nonce)
+
+    var derived = ArmorABI.hmacSHA256(key: parentKey, message: material)
+    if depth > 1 {
+        for d in 1..<depth {
+            derived = ArmorABI.hmacSHA256(
+                key: derived,
+                message: Data("cprisk.chained.v1.".utf8)
+            )
+            var depthMaterial = derived
+            depthMaterial.append(UInt8(d))
+            derived = ArmorABI.hmacSHA256(key: depthMaterial, message: depthMaterial)
+        }
+    }
+    return derived
 }
 
 private func appendUInt32(_ value: UInt32, to data: inout Data) {

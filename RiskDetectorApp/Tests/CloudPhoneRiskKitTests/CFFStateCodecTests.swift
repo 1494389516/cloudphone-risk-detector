@@ -43,4 +43,17 @@ final class CFFStateCodecTests: XCTestCase {
         XCTAssertNotEqual(base, changedSeed, "changing seed should perturb encoded state")
         XCTAssertNotEqual(base, changedSalt, "changing salt should perturb encoded state")
     }
+
+    func testAllCodecStylesRoundTrip() {
+        let styles: [CFFStateCodecStyle] = [.xorRotate, .addRotateXor, .affine]
+        let state: UInt32 = 0xBEEF_2026
+        let key: UInt32 = 0x1357_9BDF
+        let salt: UInt32 = 0x2468_ACE0
+
+        for style in styles {
+            let encoded = CFFStateCodec.encode(state: state, key: key, salt: salt, style: style)
+            let decoded = CFFStateCodec.decode(state: encoded, key: key, salt: salt, style: style)
+            XCTAssertEqual(decoded, state, "codec style \(style.rawValue) must round-trip")
+        }
+    }
 }

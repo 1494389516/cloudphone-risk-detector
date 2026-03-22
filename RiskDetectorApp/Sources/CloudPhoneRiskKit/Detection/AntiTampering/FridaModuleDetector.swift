@@ -9,44 +9,18 @@ import MachO
 /// - suspicious Mach-O section names
 /// - string fragments found in loaded `__cstring` / `__const` sections
 struct FridaModuleDetector: Detector {
-    let moduleMarkers: [String] = [
-        "frida",
-        "frida-agent",
-        "frida-gadget",
-        "frida-server",
-        "gadget",
-        "libgum",
-        "gum-core",
-        "fridagum",
-        "gum-js-loop",
-        "gumjs",
-    ]
+    let moduleMarkers: [String] = ObfuscatedConstants.fridaModuleMarkers
 
-    let suspiciousSectionMarkers: [String] = [
-        "__frida",
-        "__frida_gadget",
-        "__frida_data",
-        "__gum",
-        "__gumjs",
-    ]
+    let suspiciousSectionMarkers: [String] = ObfuscatedConstants.fridaSectionMarkers
 
-    let suspiciousStringMarkers: [String] = [
-        "frida:rpc",
-        "frida-agent",
-        "frida-gadget",
-        "gum-js-loop",
-        "gum-interceptor",
-        "gum-core",
-        "gumstalker",
-        "linjector",
-    ]
+    let suspiciousStringMarkers: [String] = ObfuscatedConstants.fridaStringMarkers
 
     private let scannedSectionNames: Set<String> = ["__cstring", "__const"]
     private let maxStringScanBytes = 64 * 1024
 
     func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)
-        return DetectorResult(score: 0, methods: ["frida_module:unavailable_simulator"])
+        return DetectorResult(score: 0, methods: [ObfuscatedConstants.methodFridaModuleUnavailableSimulator])
 #else
         var imageHits: [String] = []
         var sectionHits: [String] = []
@@ -80,7 +54,7 @@ struct FridaModuleDetector: Detector {
         for imageName in imageNames {
             let normalized = imageName.lowercased()
             for marker in moduleMarkers where normalized.contains(marker) {
-                hits.insert("frida_module:image:\(marker)")
+                hits.insert("\(ObfuscatedConstants.methodPrefixFridaModuleImage)\(marker)")
             }
         }
 
@@ -93,7 +67,7 @@ struct FridaModuleDetector: Detector {
         for sectionName in sectionNames {
             let normalized = sectionName.lowercased()
             for marker in suspiciousSectionMarkers where normalized.contains(marker) {
-                hits.insert("frida_module:section:\(marker)")
+                hits.insert("\(ObfuscatedConstants.methodPrefixFridaModuleSection)\(marker)")
             }
         }
 
@@ -106,7 +80,7 @@ struct FridaModuleDetector: Detector {
         for blob in blobs {
             let normalized = blob.lowercased()
             for marker in suspiciousStringMarkers where normalized.contains(marker) {
-                hits.insert("frida_module:string:\(marker)")
+                hits.insert("\(ObfuscatedConstants.methodPrefixFridaModuleString)\(marker)")
             }
         }
 
@@ -136,17 +110,17 @@ struct FridaModuleDetector: Detector {
         guard result.score > 0 else { return [] }
 
         var signals: [RiskSignal] = []
-        let imageMethods = result.methods.filter { $0.hasPrefix("frida_module:image:") }
-        let sectionMethods = result.methods.filter { $0.hasPrefix("frida_module:section:") }
-        let stringMethods = result.methods.filter { $0.hasPrefix("frida_module:string:") }
+        let imageMethods = result.methods.filter { $0.hasPrefix(ObfuscatedConstants.methodPrefixFridaModuleImage) }
+        let sectionMethods = result.methods.filter { $0.hasPrefix(ObfuscatedConstants.methodPrefixFridaModuleSection) }
+        let stringMethods = result.methods.filter { $0.hasPrefix(ObfuscatedConstants.methodPrefixFridaModuleString) }
 
         signals.append(RiskSignal(
             id: SignalID.fridaModuleDetected,
-            category: "anti_tamper",
+            category: ObfuscatedConstants.categoryAntiTamper,
             score: min(result.score, 28),
             evidence: [
                 "methods": result.methods.joined(separator: ","),
-                "detector": "FridaModuleDetector",
+                "detector": ObfuscatedConstants.detectorNameFridaModuleDetector,
             ],
             state: .tampered,
             layer: 2,
@@ -156,7 +130,7 @@ struct FridaModuleDetector: Detector {
         if !imageMethods.isEmpty {
             signals.append(RiskSignal(
                 id: SignalID.fridaModuleImage,
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: min(Double(imageMethods.count) * 8, 16),
                 evidence: ["detail": imageMethods.joined(separator: ",")],
                 state: .tampered,
@@ -168,7 +142,7 @@ struct FridaModuleDetector: Detector {
         if !sectionMethods.isEmpty {
             signals.append(RiskSignal(
                 id: SignalID.fridaModuleSection,
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: min(Double(sectionMethods.count) * 6, 12),
                 evidence: ["detail": sectionMethods.joined(separator: ",")],
                 state: .tampered,
@@ -180,7 +154,7 @@ struct FridaModuleDetector: Detector {
         if !stringMethods.isEmpty {
             signals.append(RiskSignal(
                 id: SignalID.fridaModuleString,
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: min(Double(stringMethods.count) * 8, 16),
                 evidence: ["detail": stringMethods.joined(separator: ",")],
                 state: .tampered,

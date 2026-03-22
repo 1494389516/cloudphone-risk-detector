@@ -6,10 +6,10 @@ import Foundation
 /// 统一管理所有 RiskSignal 的 ID，避免字符串散落各处导致拼写错误和维护困难
 public enum SignalID {
     // Jailbreak
-    static let jailbreak = "jailbreak"
+    static let jailbreak = ObfuscatedConstants.signalJailbreak
 
     // Network
-    static let vpnActive = "vpn_active"
+    static let vpnActive = ObfuscatedConstants.requiredSignalVpnActive
     static let proxyEnabled = "proxy_enabled"
     static let networkInterfaceAnomaly = "network_interface_anomaly"
 
@@ -45,7 +45,7 @@ public enum SignalID {
     static let hardwareInconsistency = "hardware_inconsistency"
     static let sensorEntropy = "sensor_entropy"
     static let touchEntropy = "touch_entropy"
-    static let hookDetected = "hook_detected"
+    static let hookDetected = ObfuscatedConstants.signalHookDetected
     static let blocklistHit = "blocklist_hit"
 
     /// Display Mux (SDK 5.2)
@@ -66,30 +66,45 @@ public enum SignalID {
     static let imuNoiseInsufficient = "imu_noise_insufficient"
 
     // Anti-debug watchdog
-    static let antiDebugWatchdogAnomaly = "anti_debug_watchdog_anomaly"
-    static let antiDebugWatchdogTraced = "anti_debug_watchdog_traced"
-    static let antiDebugWatchdogDenyAttachFailed = "anti_debug_watchdog_deny_attach_failed"
-    static let antiDebugWatchdogExceptionPort = "anti_debug_watchdog_exception_port"
-    static let antiDebugWatchdogExceptionQuery = "anti_debug_watchdog_exception_query"
+    static let antiDebugWatchdogAnomaly = ObfuscatedConstants.signalAntiDebugWatchdogAnomaly
+    static let antiDebugWatchdogTraced = ObfuscatedConstants.signalAntiDebugWatchdogTraced
+    static let antiDebugWatchdogDenyAttachFailed = ObfuscatedConstants.signalAntiDebugWatchdogDenyAttachFailed
+    static let antiDebugWatchdogExceptionPort = ObfuscatedConstants.signalAntiDebugWatchdogExceptionPort
+    static let antiDebugWatchdogExceptionQuery = ObfuscatedConstants.signalAntiDebugWatchdogExceptionQuery
     static let softwareBreakpointDetected = "software_breakpoint_detected"
     static let exceptionDeliveryTimeout = "exception_delivery_timeout"
 
     // Frida module
-    static let fridaModuleDetected = "frida_module_detected"
-    static let fridaModuleImage = "frida_module_image"
-    static let fridaModuleSection = "frida_module_section"
-    static let fridaModuleString = "frida_module_string"
+    static let fridaModuleDetected = ObfuscatedConstants.signalFridaModuleDetected
+    static let fridaModuleImage = ObfuscatedConstants.signalFridaModuleImage
+    static let fridaModuleSection = ObfuscatedConstants.signalFridaModuleSection
+    static let fridaModuleString = ObfuscatedConstants.signalFridaModuleString
 
     // RWX / JIT (Stalker-like)
     static let stalkerJitRWX = "stalker_jit_rwx"
     static let rwxJitCoexistence = "rwx_jit_coexistence"
+
+    // Multi-path consistency / vm_remap / PAC / task-port / dtrace-kdebug / LLDB JIT / dyld shared cache
+    static let multiPathCrossInconsistency = "multipath_cross_inconsistency"
+    static let vmRemapSharedAnonymous = ObfuscatedConstants.signalVMRemapSharedAnonymous
+    static let vmRemapImageAlias = ObfuscatedConstants.signalVMRemapImageAlias
+    static let pacDisabled = "pac_disabled"
+    static let pacPointerInvalid = "pac_pointer_invalid"
+    static let taskPortExceptionHijack = ObfuscatedConstants.signalTaskPortExceptionHijack
+    static let taskPortRightsAnomaly = ObfuscatedConstants.signalTaskPortRightsAnomaly
+    static let dtraceKdebugActivity = "dtrace_kdebug_activity"
+    static let lldbJitSmallRWX = "lldb_jit_small_rwx"
+    static let dyldSharedCacheIntegrity = "dyld_shared_cache_integrity"
+    static let dyldSharedCacheUUIDMismatch = "dyld_shared_cache_uuid_mismatch"
+    static let dyldSharedCacheSlideMismatch = "dyld_shared_cache_slide_mismatch"
+    static let dyldSharedCacheSymbolMismatch = "dyld_shared_cache_symbol_mismatch"
 }
 
 // MARK: - Signal Categories
 
 /// 统一管理所有 RiskSignal 的 category
 public enum SignalCategory {
-    static let jailbreak = "jailbreak"
+    static let jailbreak = ObfuscatedConstants.signalJailbreak
     static let network = "network"
     static let behavior = "behavior"
     static let time = "time"

@@ -3,9 +3,9 @@ import Foundation
 
 struct MultiPathFileDetector: Detector {
     enum DetectionMethod: String, CaseIterable {
-        case fileManager
-        case access
-        case fopen
+        case coreAccess = "core_access"
+        case coreStat = "core_stat"
+        case coreFopen = "core_fopen"
     }
 
     struct MultiPathResult {
@@ -35,7 +35,7 @@ struct MultiPathFileDetector: Detector {
             }
             if result.isHooked {
                 score += 30
-                methods.append("multipart_hook:\(path):\(result.hookMethods.joined(separator: ","))")
+                methods.append("\(ObfuscatedConstants.methodPrefixMultipartHook)\(path):\(result.hookMethods.joined(separator: ","))")
             }
         }
 
@@ -49,9 +49,16 @@ struct MultiPathFileDetector: Detector {
 
     private func checkPathWithAllMethods(_ path: String) -> MultiPathResult {
         var methodResults: [DetectionMethod: Bool] = [:]
-        methodResults[.fileManager] = FileManager.default.fileExists(atPath: path)
-        methodResults[.access] = access(path, F_OK) == 0
-        methodResults[.fopen] = checkViaFopen(path)
+        let standardSnapshot = SVCDirectCall.standardPathProbeSnapshot(path)
+        if let accessExists = standardSnapshot.access {
+            methodResults[.coreAccess] = accessExists
+        }
+        if let statExists = standardSnapshot.stat {
+            methodResults[.coreStat] = statExists
+        }
+        if let fopenExists = standardSnapshot.fopen {
+            methodResults[.coreFopen] = fopenExists
+        }
 
         let trueCount = methodResults.values.filter { $0 }.count
         let falseCount = methodResults.count - trueCount
@@ -73,12 +80,6 @@ struct MultiPathFileDetector: Detector {
             isHooked: !hookMethods.isEmpty,
             hookMethods: hookMethods
         )
-    }
-
-    private func checkViaFopen(_ path: String) -> Bool {
-        guard let fp = fopen(path, "r") else { return false }
-        fclose(fp)
-        return true
     }
 
     private func performDirectoryTraversalConsistencyCheck() -> Bool {

@@ -3,15 +3,7 @@ import Darwin
 import Foundation
 
 struct DebuggerDetector: Detector {
-    let debuggerParentNeedles: [String] = [
-        "lldb",
-        "debugserver",
-        "gdb",
-        "xcode",
-        "frida",
-        "hopper",
-        "ida",
-    ]
+    let debuggerParentNeedles: [String] = ObfuscatedConstants.debuggerParentNeedles
 
     let debuggerEnvKeys: [String] = [
         "DYLD_INSERT_LIBRARIES",
@@ -68,7 +60,7 @@ struct DebuggerDetector: Detector {
                     watchdogSnapshot.softwareBreakpointAnomalyCount > 0 ||
                     (watchdogSnapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SOFTWARE_BP)) != 0 {
             score += 10
-            methods.append("debugger:software_breakpoint:watchdog")
+            methods.append("debugger:software_breakpoint:\(ObfuscatedConstants.keywordWatchdog)")
         }
 
         if cprisk_probe_debugger_via_signal() != 0 {

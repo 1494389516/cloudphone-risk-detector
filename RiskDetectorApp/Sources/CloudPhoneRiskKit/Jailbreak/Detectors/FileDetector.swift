@@ -70,7 +70,7 @@ struct FileDetector: Detector {
                 Logger.log("jailbreak.file.hit: \(item.path) (+\(item.score))")
             }
 
-            if exists.fileManagerMismatch, fileExistsMismatchCount < 3 {
+            if exists.pathProbeMismatch, fileExistsMismatchCount < 3 {
                 fileExistsMismatchCount += 1
                 suspiciousPathScore += 8
                 methods.append("hook:fileExists_mismatch:\(item.path)")
@@ -188,7 +188,7 @@ struct FileDetector: Detector {
 
     private struct ExistenceResult {
         var exists: Bool
-        var fileManagerMismatch: Bool
+        var pathProbeMismatch: Bool
         var lowLevelPrimitiveMismatch: Bool
         var bypassed: Bool
         var traced: Bool
@@ -199,14 +199,13 @@ struct FileDetector: Detector {
     }
 
     private func existsAnyWay(_ path: String) -> ExistenceResult {
-        let fm = FileManager.default.fileExists(atPath: path)
+        let standardSnapshot = SVCDirectCall.standardPathProbeSnapshot(path)
         let low = DualPathValidator.validateFileStat(path: path)
-
-        // If high-level API says NO but low-level says YES, a common bypass is hooking NSFileManager.
-        let mismatch = (!fm && low.exists)
+        let standardValues = standardSnapshot.availableValues
+        let mismatch = standardValues.contains(true) && standardValues.contains(false)
         return ExistenceResult(
-            exists: fm || low.exists,
-            fileManagerMismatch: mismatch,
+            exists: standardSnapshot.existsAny || low.exists,
+            pathProbeMismatch: mismatch,
             lowLevelPrimitiveMismatch: low.tampered,
             bypassed: low.bypassed,
             traced: low.traced
@@ -262,18 +261,35 @@ struct FileDetector: Detector {
 #else
         // Rootless jailbreaks often have /private/preboot/<UUID>/jb
         let root = "/private/preboot"
-        guard FileManager.default.fileExists(atPath: root) else { return false }
-        guard let children = try? FileManager.default.contentsOfDirectory(atPath: root) else { return false }
-        // Cap to avoid expensive scans.
-        for name in children.prefix(10) {
+        guard DualPathValidator.validateFileStat(path: root).exists else { return false }
+        guard let dir = opendir(root) else { return false }
+        defer { closedir(dir) }
+
+        var scanned = 0
+        while scanned < 10, let entry = readdir(dir) {
+            var nameBuf = entry.pointee.d_name
+            let name = withUnsafePointer(to: &nameBuf.0) { ptr in
+                let len = strnlen(ptr, Int(MAXPATHLEN))
+                return (String(data: Data(bytes: ptr, count: len), encoding: .utf8) ?? "")
+            }
+            guard name != "." && name != ".." else { continue }
+
             let candidate = "\(root)/\(name)/jb"
-            var isDir: ObjCBool = false
-            if FileManager.default.fileExists(atPath: candidate, isDirectory: &isDir), isDir.boolValue {
+            if isDirectoryPath(candidate) {
                 return true
             }
+            scanned += 1
         }
         return false
 #endif
+    }
+
+    private func isDirectoryPath(_ path: String) -> Bool {
+        path.withCString { cPath in
+            var sb = stat()
+            guard cprisk_stat_direct(cPath, &sb, nil) == 0 else { return false }
+            return (sb.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR)
+        }
     }
 }
 

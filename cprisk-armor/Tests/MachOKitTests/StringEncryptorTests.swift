@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 import MachOKit
-import StringEncryptor
+@testable import StringEncryptor
 import XCTest
 
 final class StringEncryptorTests: XCTestCase {
@@ -36,6 +36,18 @@ final class StringEncryptorTests: XCTestCase {
         XCTAssertEqual(StringClassifier.classify("Cydia"), .mustEncrypt)
         XCTAssertEqual(StringClassifier.classify("HTTP_PROXY"), .mustEncrypt)
         XCTAssertEqual(StringClassifier.classify("SVC_CALL"), .mustEncrypt)
+    }
+
+    func testClassifySignalIDsAreMustEncrypt() {
+        XCTAssertEqual(StringClassifier.classify("anti_tampering:p_traced"), .mustEncrypt)
+        XCTAssertEqual(StringClassifier.classify("task_port:task_for_pid_unexpected_success"), .mustEncrypt)
+        XCTAssertEqual(StringClassifier.classify("vm_remap:shared_anon_exec:"), .mustEncrypt)
+        XCTAssertEqual(StringClassifier.classify("dyld_shared_cache:symbol_mismatch:"), .mustEncrypt)
+    }
+
+    func testClassifyCJKBusinessStringsAreMustEncrypt() {
+        XCTAssertEqual(StringClassifier.classify("检测到高风险行为模式"), .mustEncrypt)
+        XCTAssertEqual(StringClassifier.classify("越狱设备禁止支付"), .mustEncrypt)
     }
 
     // MARK: - 字符串分类：shouldEncrypt
@@ -159,6 +171,7 @@ final class StringEncryptorTests: XCTestCase {
         _ = try pass.execute(on: file, config: config)
 
         let stringKey = Self.deriveStringKey(rootKey: encryptionKey)
+        let dispatchSeed = deriveKeystreamDispatchSeed(key: stringKey)
 
         let section = try XCTUnwrap(
             try file.section(segment: "__DATA", section: ArmorABI.StringTable.sectionName)
@@ -179,7 +192,13 @@ final class StringEncryptorTests: XCTestCase {
             let encrypted = content.subdata(
                 in: (dataBase + dataOffset)..<(dataBase + dataOffset + dataLength)
             )
-            let keystream = Self.makeKeystream(key: stringKey, stringID: stringID, nonce: nonce, length: dataLength)
+            let keystream = buildKeystreamForRecord(
+                key: stringKey,
+                stringID: stringID,
+                nonce: nonce,
+                length: dataLength,
+                dispatchSeed: dispatchSeed
+            )
             let decrypted = Data(zip(encrypted, keystream).map(^))
             let decryptedString = String(data: decrypted, encoding: .utf8)
             XCTAssertNotNil(decryptedString, "Failed to decode entry \(i)")
@@ -194,6 +213,22 @@ final class StringEncryptorTests: XCTestCase {
                 )
             }
         }
+    }
+
+    func testKeystreamVariantSelectionIsDeterministicAndDiverse() {
+        let key = Data(repeating: 0x42, count: 32)
+        let dispatchSeed = deriveKeystreamDispatchSeed(key: key)
+        let nonce = Data([0x10, 0x22, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE])
+
+        let a = selectKeystreamVariant(stringID: 7, nonce: nonce, dispatchSeed: dispatchSeed)
+        let b = selectKeystreamVariant(stringID: 7, nonce: nonce, dispatchSeed: dispatchSeed)
+        XCTAssertEqual(a, b, "same seed+stringID+nonce must map to a stable variant")
+
+        var variants = Set<StringKeystreamVariant>()
+        for sid in UInt32(1)...UInt32(64) {
+            variants.insert(selectKeystreamVariant(stringID: sid, nonce: nonce, dispatchSeed: dispatchSeed))
+        }
+        XCTAssertGreaterThanOrEqual(variants.count, 3, "variant selector should spread calls across multiple paths")
     }
 
     // MARK: - 零填充验证
@@ -227,6 +262,107 @@ final class StringEncryptorTests: XCTestCase {
                     "Expected zero at offset \(byteIdx) for string '\(entry.value)'"
                 )
             }
+        }
+    }
+
+    func testSwiftLiteralSectionsAcrossSegmentsAreEncryptedAndZeroFilled() throws {
+        let fixture = Self.makeFixtureWithSwiftLiteralSections()
+        let url = Self.temporaryURL(named: "swift_literal_sections")
+        try fixture.data.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let file = try MachOFile(url: url)
+
+        for target in fixture.targets {
+            let section = try XCTUnwrap(
+                try file.section(segment: target.segmentName, section: target.sectionName)
+            )
+            let content = try section.readContent(from: file.data)
+            XCTAssertNotNil(content.range(of: Data(target.value.utf8)))
+        }
+
+        let pass = StringEncryptorPass()
+        let config = PassConfig(encryptionKey: Data(repeating: 0x42, count: 32))
+        let result = try pass.execute(on: file, config: config)
+
+        XCTAssertEqual(result.itemsProcessed, fixture.targets.count + 1) // + bootstrap
+
+        for target in fixture.targets {
+            let section = try XCTUnwrap(
+                try file.section(segment: target.segmentName, section: target.sectionName)
+            )
+            let content = try section.readContent(from: file.data)
+            XCTAssertNil(
+                content.range(of: Data(target.value.utf8)),
+                "Expected literal '\(target.value)' to be removed from \(target.segmentName).\(target.sectionName)"
+            )
+
+            for offset in target.fileOffset..<(target.fileOffset + target.value.utf8.count) {
+                XCTAssertEqual(file.data[offset], 0, "Expected zero fill at file offset \(offset)")
+            }
+        }
+    }
+
+    func testDataSectionUsesConservativeSensitiveOnlyEncryption() throws {
+        let fixture = Self.makeFixtureWithDataSectionLiterals()
+        let url = Self.temporaryURL(named: "data_section_literals")
+        try fixture.data.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let file = try MachOFile(url: url)
+        let pass = StringEncryptorPass()
+        let config = PassConfig(encryptionKey: Data(repeating: 0x42, count: 32))
+        let result = try pass.execute(on: file, config: config)
+
+        // bootstrap + 1 sensitive __data literal
+        XCTAssertEqual(result.itemsProcessed, 2)
+
+        for target in fixture.encryptedTargets {
+            let section = try XCTUnwrap(
+                try file.section(segment: target.segmentName, section: target.sectionName)
+            )
+            let content = try section.readContent(from: file.data)
+            XCTAssertNil(content.range(of: Data(target.value.utf8)))
+
+            for offset in target.fileOffset..<(target.fileOffset + target.value.utf8.count) {
+                XCTAssertEqual(file.data[offset], 0, "Expected zero fill at file offset \(offset)")
+            }
+        }
+
+        for target in fixture.preservedTargets {
+            let section = try XCTUnwrap(
+                try file.section(segment: target.segmentName, section: target.sectionName)
+            )
+            let content = try section.readContent(from: file.data)
+            XCTAssertNotNil(
+                content.range(of: Data(target.value.utf8)),
+                "Expected non-sensitive __data literal '\(target.value)' to remain unchanged"
+            )
+        }
+    }
+
+    func testDataSectionEnhancedScannersCoverUTF16LengthPrefixedAndBoundedRuns() throws {
+        let fixture = Self.makeFixtureWithEnhancedDataSectionLiterals()
+        let url = Self.temporaryURL(named: "data_section_enhanced_literals")
+        try fixture.data.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let file = try MachOFile(url: url)
+        let pass = StringEncryptorPass()
+        let config = PassConfig(encryptionKey: Data(repeating: 0x42, count: 32))
+        let result = try pass.execute(on: file, config: config)
+
+        XCTAssertEqual(result.itemsProcessed, fixture.encryptedTargets.count + 1) // + bootstrap
+
+        for target in fixture.encryptedTargets {
+            for offset in target.fileOffset..<(target.fileOffset + target.rawBytes.count) {
+                XCTAssertEqual(file.data[offset], 0, "Expected zero fill for \(target.label) at file offset \(offset)")
+            }
+        }
+
+        for target in fixture.preservedTargets {
+            let currentBytes = file.data.subdata(in: target.fileOffset..<(target.fileOffset + target.rawBytes.count))
+            XCTAssertEqual(currentBytes, target.rawBytes, "Expected non-sensitive \(target.label) to remain unchanged")
         }
     }
 
@@ -277,27 +413,6 @@ final class StringEncryptorTests: XCTestCase {
             domain: .pass1StringKey,
             input: Data(repeating: 0, count: ArmorABI.hashSize)
         )
-    }
-
-    private static func makeKeystream(key: Data, stringID: UInt32, nonce: Data = Data(), length: Int) -> Data {
-        var seed = Data()
-        seed.append(key)
-        var sid = stringID.littleEndian
-        withUnsafeBytes(of: &sid) { seed.append(contentsOf: $0) }
-        seed.append(nonce)
-
-        var block = Data(SHA256.hash(data: seed))
-        var output = Data()
-        output.reserveCapacity(length)
-
-        while output.count < length {
-            let remaining = length - output.count
-            output.append(block.prefix(remaining))
-            if output.count < length {
-                block = Data(SHA256.hash(data: block))
-            }
-        }
-        return output
     }
 
     private static func temporaryURL(named name: String) -> URL {
@@ -415,6 +530,546 @@ final class StringEncryptorTests: XCTestCase {
         }
         return data
     }
+
+    private static func makeFixtureWithSwiftLiteralSections() -> SwiftLiteralFixture {
+        let cstringLiteral = "/usr/bin/bash"
+        let textConstLiteral = "frida_swift_const"
+        let dataConstSwiftLiteral = "cloudphone_data_swift"
+
+        let cstringData = Data(cstringLiteral.utf8) + Data([0])
+        let textConstData = Data(textConstLiteral.utf8) + Data([0])
+        let textConstSwiftTData = Data("safe_text_literal".utf8) + Data([0]) // shouldEncrypt
+        let dataConstData = Data([0x10, 0x20, 0x30, 0x40, 0xAA, 0xBB, 0xCC, 0xDD])
+        let dataConstSwiftTData = Data(dataConstSwiftLiteral.utf8) + Data([0])
+
+        let cstringOffset = 1024
+        let textConstOffset = 1152
+        let textConstSwiftTOffset = 1280
+        let dataConstOffset = 2048
+        let dataConstSwiftTOffset = 2112
+        let fileSize = 2304
+
+        var data = Data()
+
+        // mach_header_64 (32 bytes)
+        data.appendLE(UInt32(0xFEEDFACF))
+        data.appendLE(UInt32(0x0100000C))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0x00000006))
+        data.appendLE(UInt32(2))
+        data.appendLE(UInt32(544)) // __TEXT(312) + __DATA(232)
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+
+        // __TEXT segment_command_64 + 3 sections = 312 bytes
+        data.appendLE(UInt32(0x19))
+        data.appendLE(UInt32(312))
+        data.appendFixedCString("__TEXT", length: 16)
+        data.appendLE(UInt64(0x1000))
+        data.appendLE(UInt64(2048))
+        data.appendLE(UInt64(0))
+        data.appendLE(UInt64(2048))
+        data.appendLE(UInt32(5))
+        data.appendLE(UInt32(5))
+        data.appendLE(UInt32(3))
+        data.appendLE(UInt32(0))
+
+        // __TEXT.__cstring
+        data.appendFixedCString("__cstring", length: 16)
+        data.appendFixedCString("__TEXT", length: 16)
+        data.appendLE(UInt64(0x1000 + UInt64(cstringOffset)))
+        data.appendLE(UInt64(cstringData.count))
+        data.appendLE(UInt32(cstringOffset))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0x02))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+
+        // __TEXT.__const
+        data.appendFixedCString("__const", length: 16)
+        data.appendFixedCString("__TEXT", length: 16)
+        data.appendLE(UInt64(0x1000 + UInt64(textConstOffset)))
+        data.appendLE(UInt64(textConstData.count))
+        data.appendLE(UInt32(textConstOffset))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+
+        // __TEXT.__constg_swiftt
+        data.appendFixedCString("__constg_swiftt", length: 16)
+        data.appendFixedCString("__TEXT", length: 16)
+        data.appendLE(UInt64(0x1000 + UInt64(textConstSwiftTOffset)))
+        data.appendLE(UInt64(textConstSwiftTData.count))
+        data.appendLE(UInt32(textConstSwiftTOffset))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+
+        // __DATA segment_command_64 + 2 sections = 232 bytes
+        data.appendLE(UInt32(0x19))
+        data.appendLE(UInt32(232))
+        data.appendFixedCString("__DATA", length: 16)
+        data.appendLE(UInt64(0x3000))
+        data.appendLE(UInt64(256))
+        data.appendLE(UInt64(dataConstOffset))
+        data.appendLE(UInt64(256))
+        data.appendLE(UInt32(3))
+        data.appendLE(UInt32(3))
+        data.appendLE(UInt32(2))
+        data.appendLE(UInt32(0))
+
+        // __DATA.__const
+        data.appendFixedCString("__const", length: 16)
+        data.appendFixedCString("__DATA", length: 16)
+        data.appendLE(UInt64(0x3000))
+        data.appendLE(UInt64(dataConstData.count))
+        data.appendLE(UInt32(dataConstOffset))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+
+        // __DATA.__constg_swiftt (跨 segment 覆盖)
+        data.appendFixedCString("__constg_swiftt", length: 16)
+        data.appendFixedCString("__DATA", length: 16)
+        data.appendLE(UInt64(0x3000 + UInt64(dataConstSwiftTOffset - dataConstOffset)))
+        data.appendLE(UInt64(dataConstSwiftTData.count))
+        data.appendLE(UInt32(dataConstSwiftTOffset))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+
+        precondition(data.count == 576, "header + commands layout mismatch")
+
+        if data.count < cstringOffset {
+            data.append(Data(count: cstringOffset - data.count))
+        }
+        data.append(cstringData)
+
+        if data.count < textConstOffset {
+            data.append(Data(count: textConstOffset - data.count))
+        }
+        data.append(textConstData)
+
+        if data.count < textConstSwiftTOffset {
+            data.append(Data(count: textConstSwiftTOffset - data.count))
+        }
+        data.append(textConstSwiftTData)
+
+        if data.count < dataConstOffset {
+            data.append(Data(count: dataConstOffset - data.count))
+        }
+        data.append(dataConstData)
+
+        if data.count < dataConstSwiftTOffset {
+            data.append(Data(count: dataConstSwiftTOffset - data.count))
+        }
+        data.append(dataConstSwiftTData)
+
+        if data.count < fileSize {
+            data.append(Data(count: fileSize - data.count))
+        }
+
+        return SwiftLiteralFixture(
+            data: data,
+            targets: [
+                SwiftLiteralTarget(
+                    segmentName: "__TEXT",
+                    sectionName: "__cstring",
+                    value: cstringLiteral,
+                    fileOffset: cstringOffset
+                ),
+                SwiftLiteralTarget(
+                    segmentName: "__TEXT",
+                    sectionName: "__const",
+                    value: textConstLiteral,
+                    fileOffset: textConstOffset
+                ),
+                SwiftLiteralTarget(
+                    segmentName: "__TEXT",
+                    sectionName: "__constg_swiftt",
+                    value: "safe_text_literal",
+                    fileOffset: textConstSwiftTOffset
+                ),
+                SwiftLiteralTarget(
+                    segmentName: "__DATA",
+                    sectionName: "__constg_swiftt",
+                    value: dataConstSwiftLiteral,
+                    fileOffset: dataConstSwiftTOffset
+                ),
+            ]
+        )
+    }
+
+    private static func makeFixtureWithDataSectionLiterals() -> ConservativeDataFixture {
+        let textLiteral = "x"
+        let dataSensitiveLiteral = "frida_debug_hook"
+        let dataBenignLiteral = "status_ok_ascii"
+
+        let cstringData = Data(textLiteral.utf8) + Data([0])
+        let dataSectionContent = Data(dataSensitiveLiteral.utf8) + Data([0])
+            + Data(dataBenignLiteral.utf8) + Data([0])
+
+        let cstringOffset = 1024
+        let dataSectionOffset = 2048
+        let fileSize = 2304
+
+        var data = Data()
+
+        // mach_header_64 (32 bytes)
+        data.appendLE(UInt32(0xFEEDFACF))
+        data.appendLE(UInt32(0x0100000C))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0x00000006))
+        data.appendLE(UInt32(2))
+        data.appendLE(UInt32(384)) // __TEXT(232) + __DATA(152)
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+
+        // __TEXT segment_command_64 + 2 sections = 232 bytes
+        data.appendLE(UInt32(0x19))
+        data.appendLE(UInt32(232))
+        data.appendFixedCString("__TEXT", length: 16)
+        data.appendLE(UInt64(0x1000))
+        data.appendLE(UInt64(2048))
+        data.appendLE(UInt64(0))
+        data.appendLE(UInt64(2048))
+        data.appendLE(UInt32(5))
+        data.appendLE(UInt32(5))
+        data.appendLE(UInt32(2))
+        data.appendLE(UInt32(0))
+
+        // __TEXT.__text
+        data.appendFixedCString("__text", length: 16)
+        data.appendFixedCString("__TEXT", length: 16)
+        data.appendLE(UInt64(0x1400))
+        data.appendLE(UInt64(64))
+        data.appendLE(UInt32(960))
+        data.appendLE(UInt32(2))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0x80000400))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+
+        // __TEXT.__cstring
+        data.appendFixedCString("__cstring", length: 16)
+        data.appendFixedCString("__TEXT", length: 16)
+        data.appendLE(UInt64(0x1000 + UInt64(cstringOffset)))
+        data.appendLE(UInt64(cstringData.count))
+        data.appendLE(UInt32(cstringOffset))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0x02))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+
+        // __DATA segment_command_64 + 1 section = 152 bytes
+        data.appendLE(UInt32(0x19))
+        data.appendLE(UInt32(152))
+        data.appendFixedCString("__DATA", length: 16)
+        data.appendLE(UInt64(0x3000))
+        data.appendLE(UInt64(256))
+        data.appendLE(UInt64(dataSectionOffset))
+        data.appendLE(UInt64(256))
+        data.appendLE(UInt32(3))
+        data.appendLE(UInt32(3))
+        data.appendLE(UInt32(1))
+        data.appendLE(UInt32(0))
+
+        // __DATA.__data
+        data.appendFixedCString("__data", length: 16)
+        data.appendFixedCString("__DATA", length: 16)
+        data.appendLE(UInt64(0x3000))
+        data.appendLE(UInt64(dataSectionContent.count))
+        data.appendLE(UInt32(dataSectionOffset))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+
+        precondition(data.count == 416, "header + commands layout mismatch")
+
+        if data.count < cstringOffset {
+            data.append(Data(count: cstringOffset - data.count))
+        }
+        data.append(cstringData)
+
+        if data.count < dataSectionOffset {
+            data.append(Data(count: dataSectionOffset - data.count))
+        }
+        data.append(dataSectionContent)
+
+        if data.count < fileSize {
+            data.append(Data(count: fileSize - data.count))
+        }
+
+        let sensitiveOffset = dataSectionOffset
+        let benignOffset = dataSectionOffset + dataSensitiveLiteral.utf8.count + 1
+
+        return ConservativeDataFixture(
+            data: data,
+            encryptedTargets: [
+                SwiftLiteralTarget(
+                    segmentName: "__DATA",
+                    sectionName: "__data",
+                    value: dataSensitiveLiteral,
+                    fileOffset: sensitiveOffset
+                ),
+            ],
+            preservedTargets: [
+                SwiftLiteralTarget(
+                    segmentName: "__DATA",
+                    sectionName: "__data",
+                    value: dataBenignLiteral,
+                    fileOffset: benignOffset
+                ),
+            ]
+        )
+    }
+
+    private static func makeFixtureWithEnhancedDataSectionLiterals() -> EnhancedDataFixture {
+        let textLiteral = "x"
+        let utf16Sensitive = "frida_utf16_probe"
+        let len8Sensitive = "jailbreak_len8"
+        let len16Sensitive = "ptrace_len16_tag"
+        let boundedSensitive = "tamper_nonterm_run"
+        let boundedBenign = "status_ok_ascii"
+
+        let cstringData = Data(textLiteral.utf8) + Data([0])
+
+        var dataSectionContent = Data()
+        let utf16SensitiveOffsetInSection = dataSectionContent.count
+        dataSectionContent.append(utf16LEBytes(utf16Sensitive))
+        dataSectionContent.append(contentsOf: [0, 0]) // UTF-16LE null terminator
+
+        let len8StartInSection = dataSectionContent.count
+        let len8Bytes = Data(len8Sensitive.utf8)
+        dataSectionContent.append(UInt8(len8Bytes.count))
+        dataSectionContent.append(len8Bytes)
+        dataSectionContent.append(0xFD) // framed boundary
+
+        let len16StartInSection = dataSectionContent.count
+        let len16Bytes = Data(len16Sensitive.utf8)
+        var len16LE = UInt16(len16Bytes.count).littleEndian
+        withUnsafeBytes(of: &len16LE) { dataSectionContent.append(contentsOf: $0) }
+        dataSectionContent.append(len16Bytes)
+        dataSectionContent.append(0xFC) // framed boundary
+
+        let boundedSensitiveStartInSection = dataSectionContent.count
+        let boundedSensitiveBytes = Data(boundedSensitive.utf8)
+        dataSectionContent.append(0xFF)
+        dataSectionContent.append(boundedSensitiveBytes)
+        dataSectionContent.append(0xFE)
+
+        let boundedBenignStartInSection = dataSectionContent.count
+        let boundedBenignBytes = Data(boundedBenign.utf8)
+        dataSectionContent.append(0xFF)
+        dataSectionContent.append(boundedBenignBytes)
+        dataSectionContent.append(0xFE)
+
+        let cstringOffset = 1024
+        let dataSectionOffset = 2048
+        let fileSize = 2560
+
+        var data = Data()
+
+        // mach_header_64 (32 bytes)
+        data.appendLE(UInt32(0xFEEDFACF))
+        data.appendLE(UInt32(0x0100000C))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0x00000006))
+        data.appendLE(UInt32(2))
+        data.appendLE(UInt32(384)) // __TEXT(232) + __DATA(152)
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+
+        // __TEXT segment_command_64 + 2 sections = 232 bytes
+        data.appendLE(UInt32(0x19))
+        data.appendLE(UInt32(232))
+        data.appendFixedCString("__TEXT", length: 16)
+        data.appendLE(UInt64(0x1000))
+        data.appendLE(UInt64(2048))
+        data.appendLE(UInt64(0))
+        data.appendLE(UInt64(2048))
+        data.appendLE(UInt32(5))
+        data.appendLE(UInt32(5))
+        data.appendLE(UInt32(2))
+        data.appendLE(UInt32(0))
+
+        // __TEXT.__text
+        data.appendFixedCString("__text", length: 16)
+        data.appendFixedCString("__TEXT", length: 16)
+        data.appendLE(UInt64(0x1400))
+        data.appendLE(UInt64(64))
+        data.appendLE(UInt32(960))
+        data.appendLE(UInt32(2))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0x80000400))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+
+        // __TEXT.__cstring
+        data.appendFixedCString("__cstring", length: 16)
+        data.appendFixedCString("__TEXT", length: 16)
+        data.appendLE(UInt64(0x1000 + UInt64(cstringOffset)))
+        data.appendLE(UInt64(cstringData.count))
+        data.appendLE(UInt32(cstringOffset))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0x02))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+
+        // __DATA segment_command_64 + 1 section = 152 bytes
+        data.appendLE(UInt32(0x19))
+        data.appendLE(UInt32(152))
+        data.appendFixedCString("__DATA", length: 16)
+        data.appendLE(UInt64(0x3000))
+        data.appendLE(UInt64(512))
+        data.appendLE(UInt64(dataSectionOffset))
+        data.appendLE(UInt64(512))
+        data.appendLE(UInt32(3))
+        data.appendLE(UInt32(3))
+        data.appendLE(UInt32(1))
+        data.appendLE(UInt32(0))
+
+        // __DATA.__data
+        data.appendFixedCString("__data", length: 16)
+        data.appendFixedCString("__DATA", length: 16)
+        data.appendLE(UInt64(0x3000))
+        data.appendLE(UInt64(dataSectionContent.count))
+        data.appendLE(UInt32(dataSectionOffset))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+        data.appendLE(UInt32(0))
+
+        precondition(data.count == 416, "header + commands layout mismatch")
+
+        if data.count < cstringOffset {
+            data.append(Data(count: cstringOffset - data.count))
+        }
+        data.append(cstringData)
+
+        if data.count < dataSectionOffset {
+            data.append(Data(count: dataSectionOffset - data.count))
+        }
+        data.append(dataSectionContent)
+
+        if data.count < fileSize {
+            data.append(Data(count: fileSize - data.count))
+        }
+
+        let utf16FileOffset = dataSectionOffset + utf16SensitiveOffsetInSection
+        let len8PayloadFileOffset = dataSectionOffset + len8StartInSection + 1
+        let len16PayloadFileOffset = dataSectionOffset + len16StartInSection + 2
+        let boundedSensitiveFileOffset = dataSectionOffset + boundedSensitiveStartInSection + 1
+        let boundedBenignFileOffset = dataSectionOffset + boundedBenignStartInSection + 1
+
+        return EnhancedDataFixture(
+            data: data,
+            encryptedTargets: [
+                BinaryLiteralTarget(
+                    label: "utf16-sensitive",
+                    rawBytes: utf16LEBytes(utf16Sensitive),
+                    fileOffset: utf16FileOffset
+                ),
+                BinaryLiteralTarget(
+                    label: "len8-sensitive",
+                    rawBytes: len8Bytes,
+                    fileOffset: len8PayloadFileOffset
+                ),
+                BinaryLiteralTarget(
+                    label: "len16-sensitive",
+                    rawBytes: len16Bytes,
+                    fileOffset: len16PayloadFileOffset
+                ),
+                BinaryLiteralTarget(
+                    label: "bounded-sensitive",
+                    rawBytes: boundedSensitiveBytes,
+                    fileOffset: boundedSensitiveFileOffset
+                ),
+            ],
+            preservedTargets: [
+                BinaryLiteralTarget(
+                    label: "bounded-benign",
+                    rawBytes: boundedBenignBytes,
+                    fileOffset: boundedBenignFileOffset
+                ),
+            ]
+        )
+    }
+
+    private static func utf16LEBytes(_ value: String) -> Data {
+        var encoded = Data()
+        for unit in value.utf16 {
+            var littleEndian = unit.littleEndian
+            withUnsafeBytes(of: &littleEndian) { encoded.append(contentsOf: $0) }
+        }
+        return encoded
+    }
+}
+
+private struct SwiftLiteralFixture {
+    let data: Data
+    let targets: [SwiftLiteralTarget]
+}
+
+private struct ConservativeDataFixture {
+    let data: Data
+    let encryptedTargets: [SwiftLiteralTarget]
+    let preservedTargets: [SwiftLiteralTarget]
+}
+
+private struct EnhancedDataFixture {
+    let data: Data
+    let encryptedTargets: [BinaryLiteralTarget]
+    let preservedTargets: [BinaryLiteralTarget]
+}
+
+private struct BinaryLiteralTarget {
+    let label: String
+    let rawBytes: Data
+    let fileOffset: Int
+}
+
+private struct SwiftLiteralTarget {
+    let segmentName: String
+    let sectionName: String
+    let value: String
+    let fileOffset: Int
 }
 
 // MARK: - Data Helpers

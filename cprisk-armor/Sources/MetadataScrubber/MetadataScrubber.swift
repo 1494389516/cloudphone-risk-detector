@@ -23,9 +23,31 @@ public final class MetadataScrubberPass: ArmorPass {
         "observeValue", "setValue:forKey", "valueForKey",
     ]
 
+    /// Deterministic RNG for scrub bytes (ties to ``PassConfig.randomSeed`` / ``PassConfig.buildSeed``).
+    private struct SeededSplitMix64 {
+        private var state: UInt64
+
+        init(seed: UInt64) {
+            self.state = seed == 0 ? 0xDEAD_BEEF_CAFE_0001 : seed
+        }
+
+        mutating func nextUInt64() -> UInt64 {
+            state &+= 0x9E3779B97F4A7C15
+            var z = state
+            z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
+            z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+            return z ^ (z >> 31)
+        }
+    }
+
+    private var rng = SeededSplitMix64(seed: 1)
+
     public init() {}
 
     public func execute(on file: MachOFile, config: PassConfig) throws -> PassResult {
+        let seed = config.randomSeed ?? config.buildSeed
+        rng = SeededSplitMix64(seed: seed == 0 ? 0xC0DEDA57FBADC0FE : seed)
+
         var itemsProcessed = 0
         var bytesModified = 0
         var details = [String]()
@@ -42,11 +64,13 @@ public final class MetadataScrubberPass: ArmorPass {
             details.append("Reflection strings scrubbed: \(reflBytes) bytes")
         }
 
-        let extraBytes = try scrubAdditionalMetadataSections(in: file)
-        if extraBytes > 0 {
-            itemsProcessed += 1
-            bytesModified += extraBytes
-            details.append("Additional metadata sections scrubbed: \(extraBytes) bytes")
+        let extra = try scrubSwiftMetadataExtraSections(in: file, level: config.swiftMetadataScrubLevel)
+        if extra.bytes > 0 {
+            itemsProcessed += extra.items
+            bytesModified += extra.bytes
+            if let line = extra.detailLine {
+                details.append(line)
+            }
         }
 
         let methResult = try scrubObjCMethodNames(in: file)
@@ -85,7 +109,7 @@ public final class MetadataScrubberPass: ArmorPass {
             let nameLength = entry.name.utf8.count
             guard nameLength > 0 else { continue }
 
-            try file.replaceBytes(at: entry.nameOffset, with: Self.randomHexBytes(count: nameLength))
+            try file.replaceBytes(at: entry.nameOffset, with: randomHexBytes(count: nameLength))
             obfuscated += 1
             bytes += nameLength
         }
@@ -107,21 +131,91 @@ public final class MetadataScrubberPass: ArmorPass {
         let size = Int(section.size)
         guard size > 0 else { return 0 }
 
-        try file.replaceBytes(at: UInt64(section.offset), with: Self.randomBytes(count: size))
+        try file.replaceBytes(at: UInt64(section.offset), with: randomBytes(count: size))
         return size
     }
 
-    // MARK: - B2. Additional Metadata Section Scrubbing
+    // MARK: - B2. Swift metadata sections (__swift5_proto / __swift5_fieldmd / …)
 
-    /// Randomize content of additional Swift metadata sections that may leak type/field names.
-    /// These sections (__swift5_fieldmd, __swift5_builtin, __swift5_capture, __swift5_assocty,
-    /// __swift5_proto, __swift5_protos, __swift5_typeref) contain descriptors / mangled-name
-    /// strings with embedded type and protocol references. Rather than parsing each complex
-    /// descriptor format, we overwrite the full section content with random bytes — safe because
-    /// the SDK binary is re-signed after armoring and these sections are not required for correct
-    /// execution of our own code. NOTE: __swift5_types (relative-pointer table) is intentionally
-    /// excluded here; it is required at runtime and is verified by testSwiftTypesRelativePointersUntouched.
-    private func scrubAdditionalMetadataSections(in file: MachOFile) throws -> Int {
+    /// Extra Swift metadata sections (everything in ``ArmorABI.MetadataSections.additionalScrubSections``).
+    ///
+    /// **Conservative (default):** Walk embedded C strings and replace only payloads that look like
+    /// Swift mangled symbols (`$s…`, `_T…`) or match the same business-keyword rules as `__const`
+    /// scrubbing. Descriptor records and relative-pointer fields stay byte-stable so the Swift runtime
+    /// and dyld keep a consistent view; IDA/Swift plugins lose readable names tied to those strings.
+    ///
+    /// **Aggressive:** Overwrite each section in full with random bytes. This breaks the linear layout
+    /// tools use to follow name/typeref chains, but can break reflection, some dynamic casts, or future
+    /// runtime uses of these blobs — only enable when you accept that risk.
+    private func scrubSwiftMetadataExtraSections(
+        in file: MachOFile,
+        level: SwiftMetadataScrubLevel
+    ) throws -> (items: Int, bytes: Int, detailLine: String?) {
+        switch level {
+        case .conservative:
+            let (strings, bytes) = try scrubSwiftMetadataSectionsConservative(in: file)
+            guard bytes > 0 else { return (0, 0, nil) }
+            let line =
+                "Swift metadata sections (conservative, string payloads): \(strings) strings, \(bytes) bytes"
+            return (strings, bytes, line)
+        case .aggressive:
+            let bytes = try scrubAdditionalMetadataSectionsAggressive(in: file)
+            guard bytes > 0 else { return (0, 0, nil) }
+            let line = "Swift metadata sections (aggressive, full overwrite): \(bytes) bytes"
+            return (1, bytes, line)
+        }
+    }
+
+    /// Conservative: string payloads only (see ``scrubSwiftMetadataExtraSections``).
+    private func scrubSwiftMetadataSectionsConservative(in file: MachOFile) throws -> (strings: Int, bytes: Int) {
+        var strings = 0
+        var bytes = 0
+
+        for sectionName in ArmorABI.MetadataSections.additionalScrubSections {
+            for segName in ["__TEXT", "__DATA"] {
+                guard let section = try file.section(segment: segName, section: sectionName) else {
+                    continue
+                }
+                let r = try scrubSectionCStringPayloads(section, in: file) { utf8 in
+                    Self.shouldScrubSwiftMetadataCString(utf8)
+                }
+                strings += r.strings
+                bytes += r.bytes
+            }
+        }
+
+        return (strings, bytes)
+    }
+
+    /// True for Swift 5 (`$s…`) / legacy (`_T…`) mangling prefixes and module keyword matches.
+    private static func shouldScrubSwiftMetadataCString(_ utf8: String) -> Bool {
+        if looksLikeSwiftSymbolMangling(utf8) { return true }
+        if shouldScrubConstString(utf8) { return true }
+        let lower = utf8.lowercased()
+        if constSectionScrubKeywords.contains(where: { lower.contains($0.lowercased()) }) { return true }
+        if utf8.count > riskSubstringMinLength, lower.contains("risk") { return true }
+        return false
+    }
+
+    /// Swift mangled type/symbol text as emitted in metadata (Swift 5 and legacy).
+    private static func looksLikeSwiftSymbolMangling(_ s: String) -> Bool {
+        if s.hasPrefix("$s") || s.hasPrefix("_$s") { return true }
+        if s.hasPrefix("_T") { return true }
+        return false
+    }
+
+    /// When UTF-8 decode fails, detect mangling via raw bytes so we still scrub `$s` / `_T` blobs.
+    private static func rawLooksLikeSwiftManglingPrefix(_ slice: Data) -> Bool {
+        let b = Array(slice)
+        guard b.count >= 2 else { return false }
+        if b[0] == 0x24 && b[1] == 0x73 { return true }
+        if b.count >= 3, b[0] == 0x5F, b[1] == 0x24, b[2] == 0x73 { return true }
+        if b[0] == 0x5F && b[1] == 0x54 { return true }
+        return false
+    }
+
+    /// Aggressive: full section overwrite (legacy behavior).
+    private func scrubAdditionalMetadataSectionsAggressive(in file: MachOFile) throws -> Int {
         var totalBytes = 0
 
         for sectionName in ArmorABI.MetadataSections.additionalScrubSections {
@@ -133,12 +227,61 @@ public final class MetadataScrubberPass: ArmorPass {
                 let size = Int(section.size)
                 guard size > 0 else { continue }
 
-                try file.replaceBytes(at: UInt64(section.offset), with: Self.randomBytes(count: size))
+                try file.replaceBytes(at: UInt64(section.offset), with: randomBytes(count: size))
                 totalBytes += size
             }
         }
 
         return totalBytes
+    }
+
+    /// Scan a section as a bag of null-terminated C strings; scrub selected strings in place.
+    private func scrubSectionCStringPayloads(
+        _ section: Section,
+        in file: MachOFile,
+        shouldScrubUTF8: (String) -> Bool
+    ) throws -> (strings: Int, bytes: Int) {
+        let content = try section.readContent(from: file.data)
+        guard !content.isEmpty else { return (0, 0) }
+
+        let sectionFileOffset = UInt64(section.offset)
+        var strings = 0
+        var bytes = 0
+        var position = 0
+
+        while position < content.count {
+            var end = position
+            while end < content.count && content[end] != 0 { end += 1 }
+
+            let length = end - position
+            if length > 0 {
+                let slice = content.subdata(in: position..<end)
+                let str = String(data: slice, encoding: .utf8)
+                    ?? String(data: slice, encoding: .isoLatin1)
+                    ?? ""
+
+                let scrub: Bool
+                if !str.isEmpty {
+                    scrub = shouldScrubUTF8(str)
+                } else {
+                    scrub = Self.rawSliceContainsScrubKeyword(slice, length: length)
+                        || Self.rawLooksLikeSwiftManglingPrefix(slice)
+                }
+
+                if scrub {
+                    try file.replaceBytes(
+                        at: sectionFileOffset + UInt64(position),
+                        with: randomHexBytes(count: length)
+                    )
+                    strings += 1
+                    bytes += length
+                }
+            }
+
+            position = end + 1
+        }
+
+        return (strings, bytes)
     }
 
     // MARK: - C. ObjC Method Name Obfuscation
@@ -172,7 +315,7 @@ public final class MetadataScrubberPass: ArmorPass {
                     let length = end - position
                     try file.replaceBytes(
                         at: sectionFileOffset + UInt64(position),
-                        with: Self.randomHexBytes(count: length)
+                        with: randomHexBytes(count: length)
                     )
                     obfuscated += 1
                     bytes += length
@@ -298,9 +441,9 @@ public final class MetadataScrubberPass: ArmorPass {
                 continue
             }
             let r = try scrubConstSection(section, in: file)
-            total    += r.total
+            total += r.total
             scrubbed += r.scrubbed
-            bytes    += r.bytes
+            bytes += r.bytes
         }
 
         return (total, scrubbed, bytes)
@@ -350,7 +493,7 @@ public final class MetadataScrubberPass: ArmorPass {
                 if shouldScrub {
                     try file.replaceBytes(
                         at: sectionFileOffset + UInt64(position),
-                        with: Self.randomHexBytes(count: length)
+                        with: randomHexBytes(count: length)
                     )
                     scrubbed += 1
                     bytes += length
@@ -368,11 +511,11 @@ public final class MetadataScrubberPass: ArmorPass {
 
     private static let hexTable: [UInt8] = Array("0123456789abcdef".utf8)
 
-    private static func randomHexBytes(count: Int) -> Data {
-        Data((0..<count).map { _ in hexTable[Int.random(in: 0..<16)] })
+    private func randomHexBytes(count: Int) -> Data {
+        Data((0..<count).map { _ in Self.hexTable[Int(rng.nextUInt64() % 16)] })
     }
 
-    private static func randomBytes(count: Int) -> Data {
-        Data((0..<count).map { _ in UInt8.random(in: 0...255) })
+    private func randomBytes(count: Int) -> Data {
+        Data((0..<count).map { _ in UInt8(truncatingIfNeeded: rng.nextUInt64()) })
     }
 }

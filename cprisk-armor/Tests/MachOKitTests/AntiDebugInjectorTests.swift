@@ -1,9 +1,55 @@
 import Foundation
 import MachOKit
-import AntiDebugInjector
+@testable import AntiDebugInjector
 import XCTest
 
 final class AntiDebugInjectorTests: XCTestCase {
+    func testObjCData2MangledSymbolsAreScrubbedWithEqualLengthReplacement() {
+        let leaked = "_$s17CloudPhoneRiskKit19ProbeCheckerC4runyyF"
+        let safe = "_debugProbeEntry"
+
+        var payload = ArmorABI.AntiDebug.Header(
+            flags: ArmorABI.AntiDebug.flagHasSymbolTargets,
+            seed: 0x1111,
+            textBaseAddress: 0x1800,
+            probeImmediate: 0xA7D0_0001,
+            entryCount: 2
+        ).serialized()
+        payload.append(ArmorABI.AntiDebug.Entry(
+            identifierHash: 0x11,
+            patchSiteVMOffset: 0x20,
+            patchSiteFileOffset: 0x30,
+            policyBits: ArmorABI.AntiDebug.policyRuntimeGate,
+            scatterSlot: 0,
+            targetName: leaked
+        ).serialized())
+        payload.append(ArmorABI.AntiDebug.Entry(
+            identifierHash: 0x22,
+            patchSiteVMOffset: 0x40,
+            patchSiteFileOffset: 0x50,
+            policyBits: ArmorABI.AntiDebug.policyRuntimeGate,
+            scatterSlot: 1,
+            targetName: safe
+        ).serialized())
+
+        let before = Self.parseEntries(from: payload, entryCount: 2)
+        let leakedTruncatedLength = before[0].targetName.utf8.count
+        XCTAssertTrue(before[0].targetName.hasPrefix("_$s17CloudPhoneRiskKit"))
+        XCTAssertEqual(before[1].targetName, safe)
+
+        let report = ObjCData2MangledSymbolScrubber.sanitize(payload: &payload, buildSeedHint: 0x55AA)
+        XCTAssertTrue(report.parsed)
+        XCTAssertEqual(report.scrubbedTargetNames, 1)
+        XCTAssertEqual(report.remappedIdentifierHashes, 2)
+
+        let after = Self.parseEntries(from: payload, entryCount: 2)
+        XCTAssertEqual(after[0].targetName.utf8.count, leakedTruncatedLength)
+        XCTAssertFalse(after[0].targetName.hasPrefix("_$s17CloudPhoneRiskKit"))
+        XCTAssertEqual(after[1].targetName, safe)
+        XCTAssertNotEqual(after[0].identifierHash, 0x11)
+        XCTAssertNotEqual(after[1].identifierHash, 0x22)
+    }
+
     func testPassCreatesMetadataSectionWithValidABI() throws {
         let url = try Self.writeFixture(named: "adbg7_valid_abi")
         defer { try? FileManager.default.removeItem(at: url) }
@@ -43,6 +89,11 @@ final class AntiDebugInjectorTests: XCTestCase {
 
         let entries = Self.parseEntries(from: payload, entryCount: Int(header.entryCount))
         XCTAssertEqual(entries.count, result.itemsProcessed)
+        let mappingSalt = ObjCData2MangledSymbolScrubber.buildMappingSalt(
+            headerSeed: header.seed,
+            buildSeedHint: 0x1234_5678,
+            entryCount: entries.count
+        )
 
         let knownTargets = Set([
             "_debugProbeEntry",
@@ -57,7 +108,18 @@ final class AntiDebugInjectorTests: XCTestCase {
 
         for (index, entry) in entries.enumerated() {
             XCTAssertTrue(knownTargets.contains(entry.targetName), "unexpected target: \(entry.targetName)")
-            XCTAssertEqual(entry.identifierHash, Self.fnv1a64(entry.targetName))
+            XCTAssertEqual(
+                entry.identifierHash,
+                ObjCData2MangledSymbolScrubber.remappedIdentifierHash(
+                    mappingSalt: mappingSalt,
+                    entryIndex: index,
+                    patchSiteVMOffset: entry.patchSiteVMOffset,
+                    patchSiteFileOffset: entry.patchSiteFileOffset,
+                    policyBits: entry.policyBits,
+                    scatterSlot: entry.scatterSlot,
+                    entryFlags: entry.entryFlags
+                )
+            )
             XCTAssertEqual(entry.scatterSlot, UInt32(index))
             XCTAssertNotEqual(entry.policyBits & ArmorABI.AntiDebug.policyRuntimeGate, 0)
             XCTAssertGreaterThanOrEqual(entry.patchSiteVMOffset, textSectionVMOffset)
@@ -113,6 +175,84 @@ final class AntiDebugInjectorTests: XCTestCase {
         XCTAssertNotEqual(payloadA, payloadC, "different seeds should scatter/select differently")
     }
 
+    func testStandaloneObjCData2ScrubberPassCleansExistingSection() throws {
+        let url = try Self.writeFixture(named: "adbg_scrub_existing")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let file = try MachOFile(url: url)
+
+        var payload = ArmorABI.AntiDebug.Header(
+            flags: ArmorABI.AntiDebug.flagHasSymbolTargets,
+            seed: 0x8888_0001,
+            textBaseAddress: 0x1800,
+            probeImmediate: 0xA7D0_0001,
+            entryCount: 2
+        ).serialized()
+        payload.append(ArmorABI.AntiDebug.Entry(
+            identifierHash: 0x1111,
+            patchSiteVMOffset: 0x20,
+            patchSiteFileOffset: 0x30,
+            policyBits: ArmorABI.AntiDebug.policyRuntimeGate,
+            scatterSlot: 0,
+            entryFlags: ArmorABI.AntiDebug.entryFlagInlinePatchReserved,
+            targetName: "_$s17CloudPhoneRiskKit19ProbeCheckerC4runyyF"
+        ).serialized())
+        payload.append(ArmorABI.AntiDebug.Entry(
+            identifierHash: 0x2222,
+            patchSiteVMOffset: 0x40,
+            patchSiteFileOffset: 0x50,
+            policyBits: ArmorABI.AntiDebug.policyRuntimeGate | ArmorABI.AntiDebug.policyDelayResponse,
+            scatterSlot: 1,
+            entryFlags: ArmorABI.AntiDebug.entryFlagSyntheticTarget,
+            targetName: "_debugProbeEntry"
+        ).serialized())
+
+        _ = try file.addOrUpdateSection(
+            segment: "__DATA",
+            section: ArmorABI.AntiDebug.sectionName,
+            content: payload,
+            align: 3,
+            flags: 0
+        )
+
+        let result = try ObjCData2ScrubberPass().execute(
+            on: file,
+            config: PassConfig(randomSeed: 0x7777)
+        )
+        XCTAssertEqual(result.itemsProcessed, 2)
+        XCTAssertGreaterThan(result.bytesModified, 0)
+
+        let section = try XCTUnwrap(
+            try file.section(segment: "__DATA", section: ArmorABI.AntiDebug.sectionName)
+        )
+        let scrubbedPayload = try section.readContent(from: file.data)
+        let header = Self.parseHeader(from: scrubbedPayload)
+        let entries = Self.parseEntries(from: scrubbedPayload, entryCount: Int(header.entryCount))
+        XCTAssertEqual(entries.count, 2)
+        XCTAssertFalse(entries[0].targetName.hasPrefix("_$s17CloudPhoneRiskKit"))
+        XCTAssertEqual(entries[1].targetName, "_debugProbeEntry")
+
+        let mappingSalt = ObjCData2MangledSymbolScrubber.buildMappingSalt(
+            headerSeed: header.seed,
+            buildSeedHint: 0x7777,
+            entryCount: entries.count
+        )
+        for (index, entry) in entries.enumerated() {
+            let expectedHash = ObjCData2MangledSymbolScrubber.remappedIdentifierHash(
+                mappingSalt: mappingSalt,
+                entryIndex: index,
+                patchSiteVMOffset: entry.patchSiteVMOffset,
+                patchSiteFileOffset: entry.patchSiteFileOffset,
+                policyBits: entry.policyBits,
+                scatterSlot: entry.scatterSlot,
+                entryFlags: entry.entryFlags
+            )
+            XCTAssertEqual(entry.identifierHash, expectedHash)
+        }
+
+        XCTAssertNoThrow(try file.validateStructure())
+    }
+
     private static func parseHeader(from data: Data) -> AntiDebugHeaderView {
         AntiDebugHeaderView(
             magic: readLE32(data, at: 0),
@@ -149,15 +289,6 @@ final class AntiDebugInjectorTests: XCTestCase {
         }
 
         return entries
-    }
-
-    private static func fnv1a64(_ string: String) -> UInt64 {
-        var hash: UInt64 = 0xCBF29CE484222325
-        for byte in string.utf8 {
-            hash ^= UInt64(byte)
-            hash &*= 0x00000100000001B3
-        }
-        return hash
     }
 
     private static func readLE32(_ data: Data, at offset: Int) -> UInt32 {

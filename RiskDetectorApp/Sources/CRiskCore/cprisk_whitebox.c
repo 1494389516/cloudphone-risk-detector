@@ -9,12 +9,20 @@
 
 #include "include/cprisk_macho.h"
 
-#define CPRISK_WHITEBOX_DOMAIN_COUNT 5u
+/* CPRISK_WHITEBOX_DOMAIN_COUNT is defined in cprisk_armor_abi.h (via CRiskCore.h).
+ * Do NOT redefine it here to avoid macro redefinition conflict. */
+/* CPRISK_WHITEBOX_DOMAIN_DEVICE_BOUND through HEADER_ENCRYPTION (6-9) are also
+ * defined in cprisk_armor_abi.h and available as macros. */
+
 #define CPRISK_WHITEBOX_STATE_SIZE 32u
 #define CPRISK_WHITEBOX_ROUND_COUNT 4u
+#define CPRISK_WHITEBOX_EFFECTIVE_ROUND_TARGET 8u
 #define CPRISK_WHITEBOX_TABLE_WIDTH 256u
 #define CPRISK_WHITEBOX_TABLE_STRIDE (CPRISK_WHITEBOX_STATE_SIZE * CPRISK_WHITEBOX_TABLE_WIDTH)
 #define CPRISK_WHITEBOX_DOMAIN_TABLE_BYTES (CPRISK_WHITEBOX_ROUND_COUNT * CPRISK_WHITEBOX_TABLE_STRIDE)
+
+_Static_assert(CPRISK_WHITEBOX_ROUND_COUNT * 2u == CPRISK_WHITEBOX_EFFECTIVE_ROUND_TARGET,
+               "effective whitebox rounds must remain 2x ABI rounds");
 
 enum {
     CPRISK_WHITEBOX_DOMAIN_ANCHOR_TAG = 1u,
@@ -22,6 +30,8 @@ enum {
     CPRISK_WHITEBOX_DOMAIN_ANCHOR_ACCUMULATOR_SEED = 3u,
     CPRISK_WHITEBOX_DOMAIN_LOADER_KEY = 4u,
     CPRISK_WHITEBOX_DOMAIN_RUNTIME_MATERIAL = 5u
+    /* Domains 6-9 are defined as macros in cprisk_armor_abi.h
+     * to avoid macro / enum conflicts with the preprocessor. */
 };
 
 static const uint8_t s_empty_byte_i = 0;
@@ -184,6 +194,62 @@ static uint8_t cprisk_rotl8_i(uint8_t value, unsigned int shift) {
     if (shift == 0U)
         return value;
     return (uint8_t)((value << shift) | (value >> (8U - shift)));
+}
+
+static void cprisk_whitebox_first_mix_layer_i(
+    const uint8_t *round_tables,
+    const uint8_t *round_constants,
+    const uint8_t state[CPRISK_WHITEBOX_STATE_SIZE],
+    size_t round,
+    uint8_t out[CPRISK_WHITEBOX_STATE_SIZE]
+) {
+    for (size_t i = 0; i < CPRISK_WHITEBOX_STATE_SIZE; i++) {
+        const uint8_t *table = round_tables + i * CPRISK_WHITEBOX_TABLE_WIDTH;
+        const uint8_t table_value = table[state[i]];
+        const uint8_t mixed = (uint8_t)(table_value ^
+                                        state[(i + 1u) % CPRISK_WHITEBOX_STATE_SIZE] ^
+                                        round_constants[i]);
+        out[i] = cprisk_rotl8_i(
+            mixed,
+            (unsigned int)(((i + round) % 7u) + 1u));
+    }
+}
+
+static void cprisk_whitebox_strong_mix_layer_i(
+    const uint8_t in[CPRISK_WHITEBOX_STATE_SIZE],
+    const uint8_t *round_constants,
+    uint8_t out[CPRISK_WHITEBOX_STATE_SIZE]
+) {
+    for (size_t i = 0; i < CPRISK_WHITEBOX_STATE_SIZE; i++) {
+        const uint8_t rc = round_constants[(i * 7u + 3u) % CPRISK_WHITEBOX_STATE_SIZE];
+        const uint8_t lane0 = in[i];
+        const uint8_t lane1 = cprisk_rotl8_i(in[(i + 7u) % CPRISK_WHITEBOX_STATE_SIZE], 1u);
+        const uint8_t lane2 = cprisk_rotl8_i(in[(i + 13u) % CPRISK_WHITEBOX_STATE_SIZE], 3u);
+        const uint8_t lane3 = cprisk_rotl8_i(in[(i + 23u) % CPRISK_WHITEBOX_STATE_SIZE], 5u);
+        out[i] = (uint8_t)(lane0 ^ lane1 ^ lane2 ^ lane3 ^ rc);
+    }
+}
+
+static void cprisk_whitebox_second_mix_layer_i(
+    const uint8_t *round_tables,
+    const uint8_t *round_constants,
+    const uint8_t state[CPRISK_WHITEBOX_STATE_SIZE],
+    size_t round,
+    uint8_t out[CPRISK_WHITEBOX_STATE_SIZE]
+) {
+    for (size_t i = 0; i < CPRISK_WHITEBOX_STATE_SIZE; i++) {
+        const uint8_t *table = round_tables + i * CPRISK_WHITEBOX_TABLE_WIDTH;
+        const uint8_t table_value = table[state[i]];
+        const uint8_t mixed = (uint8_t)(
+            table_value ^
+            state[(i + 5u) % CPRISK_WHITEBOX_STATE_SIZE] ^
+            round_constants[(i + 13u) % CPRISK_WHITEBOX_STATE_SIZE]
+        );
+        out[i] = cprisk_rotl8_i(
+            mixed,
+            (unsigned int)(((i * 3u + round + 1u) % 7u) + 1u)
+        );
+    }
 }
 
 static int cprisk_ct_mem_diff_i(const uint8_t *lhs, const uint8_t *rhs, size_t len) {
@@ -480,7 +546,7 @@ static int cprisk_whitebox_validate_bundle_i(struct cprisk_whitebox_bundle_i *ou
     for (size_t i = 0; i < record_count; i++) {
         const struct cprisk_whitebox_domain_record_i *record = &records[i];
         if (record->domain_id < CPRISK_WHITEBOX_DOMAIN_ANCHOR_TAG ||
-            record->domain_id > CPRISK_WHITEBOX_DOMAIN_RUNTIME_MATERIAL)
+            record->domain_id > CPRISK_WHITEBOX_DOMAIN_HEADER_ENCRYPTION)
             return -1;
         if (record->round_count != CPRISK_WHITEBOX_ROUND_COUNT)
             return -1;
@@ -532,6 +598,9 @@ static int cprisk_whitebox_eval_record_i(
     const uint8_t *tables = bundle->code + record->table_offset;
     uint8_t state[CPRISK_WHITEBOX_STATE_SIZE];
     uint8_t next[CPRISK_WHITEBOX_STATE_SIZE];
+    uint8_t scratch[CPRISK_WHITEBOX_STATE_SIZE];
+    const int enhanced_diffusion =
+        (bundle->header.flags & CPRISK_ARMOR_WHITEBOX_FLAG_ENHANCED_DIFFUSION) != 0u;
     memcpy(state, input, sizeof(state));
 
     for (size_t round = 0; round < CPRISK_WHITEBOX_ROUND_COUNT; round++) {
@@ -539,15 +608,16 @@ static int cprisk_whitebox_eval_record_i(
         const uint8_t *round_constants =
             record->round_constants + round * CPRISK_WHITEBOX_STATE_SIZE;
 
-        for (size_t i = 0; i < CPRISK_WHITEBOX_STATE_SIZE; i++) {
-            const uint8_t *table = round_tables + i * CPRISK_WHITEBOX_TABLE_WIDTH;
-            const uint8_t table_value = table[state[i]];
-            const uint8_t mixed = (uint8_t)(table_value ^
-                                            state[(i + 1u) % CPRISK_WHITEBOX_STATE_SIZE] ^
-                                            round_constants[i]);
-            next[i] = cprisk_rotl8_i(
-                mixed,
-                (unsigned int)(((i + round) % 7u) + 1u));
+        cprisk_whitebox_first_mix_layer_i(round_tables, round_constants, state, round, next);
+        if (enhanced_diffusion) {
+            cprisk_whitebox_strong_mix_layer_i(next, round_constants, scratch);
+            cprisk_whitebox_second_mix_layer_i(
+                round_tables,
+                round_constants,
+                scratch,
+                round,
+                next
+            );
         }
 
         for (size_t i = 0; i < CPRISK_WHITEBOX_STATE_SIZE; i++)
@@ -559,6 +629,7 @@ static int cprisk_whitebox_eval_record_i(
 
     cprisk_secure_zero(state, sizeof(state));
     cprisk_secure_zero(next, sizeof(next));
+    cprisk_secure_zero(scratch, sizeof(scratch));
     return 0;
 }
 
@@ -590,6 +661,8 @@ uint32_t cprisk_get_armor_capabilities(void) {
 
     if (cprisk_whitebox_validate_bundle_i(&bundle) == 0)
         capabilities |= CPRISK_ARMOR_CAP_WHITEBOX_SECTION_LAYOUT;
+
+    capabilities |= cprisk_vm_query_armor_capability_bits();
 
     cprisk_secure_zero(&bundle.header, sizeof(bundle.header));
     return capabilities;

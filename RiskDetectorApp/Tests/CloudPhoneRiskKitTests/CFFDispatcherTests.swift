@@ -38,4 +38,17 @@ final class CFFDispatcherTests: XCTestCase {
 
         XCTAssertEqual(values, Set<UInt32>([0, 1, 2, 3]))
     }
+
+    func testSplitIndirectDispatcherProducesStableStyle() {
+        let config = CFFConfig.debug(
+            functionSeed: 0x1234_5678,
+            protectionTier: .heavy,
+            dispatcherStyle: .splitIndirect,
+            codecStyle: .xorRotate
+        )
+        let planA = CFFDispatcher.plan(encodedState: 0x77AA_22CC, salt: 0x9ABC_DEF0, config: config)
+        let planB = CFFDispatcher.plan(encodedState: 0x77AA_22CC, salt: 0x9ABC_DEF0, config: config)
+        XCTAssertEqual(planA.style, planB.style)
+        XCTAssertTrue(planA.style == .switchLoop || planA.style == .ifElseChain)
+    }
 }

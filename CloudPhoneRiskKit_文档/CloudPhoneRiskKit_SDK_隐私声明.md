@@ -1,6 +1,7 @@
 # CloudPhoneRiskKit SDK 隐私声明
 
 > 文档定位：`CloudPhoneRiskKit` 的 SDK 级隐私声明  
+> 适用版本：SDK 7.0  
 > 适用对象：SDK 接入方、法务/隐私团队、客户安全评审  
 > 适用范围：iOS / iPadOS 端集成 `CloudPhoneRiskKit` 的场景  
 > 说明：本文描述的是 **SDK 自身的处理边界**，不替代宿主 App 的隐私政策、App Privacy 标签或 App Review Information
@@ -80,6 +81,23 @@ SDK 当前自带的 privacy manifest 文件位于：
 - SDK **显式声明空的 `NSPrivacyTrackingDomains`**
 - SDK **不以广告追踪为目的**使用所采集数据
 
+### 3.4 7.0 版本升级是否改变隐私声明范围
+
+不会。
+
+7.0 主要新增的是**二进制保护与运行时虚拟化能力**，例如：
+
+- Pass 7 runtime gate
+- Pass 10 ImportEncryptor
+- Pass 11 HeaderEncryptor
+- Pass 12 TextSegmentEncryptor
+- Pass 13 VMProtector
+- 更早期的异常端口抢占
+- 多频 watchdog / timing canary / Frida 行为指纹增强
+- VM 解释器的 dead handler、opaque predicate chain、解释器自身 CFF 接线
+
+这些能力会增强 SDK 的反调试、反篡改和逆向对抗强度，但**不会新增 privacy manifest 中的 collected data 类型，也不会新增 Required Reason API 类别**。因此从隐私边界上看，7.0 仍然以 `Device ID`、`UserDefaults`、`SystemBootTime` 这三项 manifest 事实为基线。
+
 ---
 
 ## 4. SDK 可能处理的数据类型
@@ -110,7 +128,7 @@ SDK 可能处理以下环境风险数据：
 - 设备/系统环境一致性信号
 - 代码段完整性校验结果
 - App Attest / 硬件信任根相关状态（若启用）
-- 反调试 watchdog 信号（如被调试、exception port 异常、硬件断点、软件断点、`csops` 调试态、异常分发超时）
+- 反调试 watchdog 信号（如被调试、exception port 异常、硬件断点、软件断点、`csops` 调试态、异常分发超时、双 watchdog 互监控、影子栈校验）
 - Frida/Gum/Gadget 模块特征（如已加载 image 名、可疑 Mach-O section 名、只读字符串片段）
 
 这些字段的共同特点是：
@@ -243,6 +261,14 @@ SDK 可以在设备侧本地完成：
 
 > SDK 是否“上传数据”不是一个只看 SDK 就能单独回答的问题，必须结合宿主 App 的调用方式来判断。
 
+### 5.3 一个最容易误判的点
+
+很多客户会把“SDK 在本地看到了什么”与“宿主 App 实际对外发送了什么”混为一谈。更稳妥的理解方式是：
+
+- SDK 本地为了做风控而读取、计算、比对某些信号，并不等于这些信号一定会离开设备
+- 只有当宿主 App 选择上报 `CPRiskReport`、`ReportEnvelope`、`GrpcReportPayload` 或自定义抽取其中字段时，相关数据才进入宿主 App 的对外披露范围
+- 7.0 的 runtime gate / text 加密 / VMP 保护只增强代码保护，不会单独增加新的用户数据出境路径
+
 ---
 
 ## 6. 可选能力与隐私边界
@@ -279,7 +305,7 @@ SDK 可以在设备侧本地完成：
 
 SDK 当前会在本地执行更强的运行时完整性探测，包括：
 
-- 反调试 watchdog 周期性探针
+- 反调试 watchdog 周期性探针（含双 watchdog 互监控、影子栈校验）
 - Frida/Gum/Gadget 模块名、section 名、字符串片段匹配
 - 检测顺序稳定随机化（按设备与策略种子改变 detector 执行顺序）
 
@@ -303,6 +329,16 @@ SDK 当前会在本地执行更强的运行时完整性探测，包括：
 - 宿主 App 的隐私声明不能只写“纯本地处理”
 - 宿主 App 需要对网络交互和服务端数据使用负责
 
+### 6.5 权限与隐私边界不要混写
+
+接入方在对外文档里，最好把下面三件事分开写：
+
+1. **privacy manifest 事实**：当前 SDK 自声明的是 `Device ID`、`UserDefaults`、`SystemBootTime`
+2. **系统权限说明**：例如 `NSMotionUsageDescription`、`NSFaceIDUsageDescription`
+3. **App Privacy / 隐私政策**：取决于宿主 App 是否把风险报告、行为摘要、环境信号上传到服务端
+
+这样能避免客户把“需要权限说明”误解成“SDK manifest 已经声明了这类 collected data”，也能避免把安全实现细节误写成隐私采集范围。
+
 ---
 
 ## 7. SDK 不做的事情
@@ -323,7 +359,7 @@ SDK 当前会在本地执行更强的运行时完整性探测，包括：
 - 用于**安全信号采集与风险决策**
 - 用于**识别动态注入、Frida 模块加载与调试篡改**
 
-另外，`cprisk-armor` 新增的 Pass 7 `AntiDebugInjector` 与 Pass 8 `InstructionSubstitution` 都属于**构建期二进制保护能力**。Pass 7 负责写入 anti-debug metadata ABI，Pass 8 负责对 `__TEXT.__text` 中的安全 ARM64 指令子集做 1:1 等长语义等价替换。二者都不会新增终端用户数据采集，只影响构建产物的代码与元数据形态，因此不改变 SDK 的隐私数据边界。
+另外，`cprisk-armor` 的 Pass 7 `AntiDebugInjector`、Pass 8 `InstructionSubstitution`、Pass 9 `ControlFlowOrchestrator`、Pass 10 `ImportEncryptor`、Pass 11 `HeaderEncryptor`、Pass 12 `TextSegmentEncryptor` 与 Pass 13 `VMProtector` 都属于**构建期二进制保护能力**。Pass 7 负责写入 anti-debug metadata ABI 并驱动运行时 gate，Pass 8 负责对 `__TEXT.__text` 中的安全 ARM64 指令子集做 1:1 等长语义等价替换，Pass 9 负责对策略编排的函数执行控制流平坦化，Pass 10/11 分别负责导入表与 header 关键字段的加密/恢复，Pass 12 负责对 text 页执行加密元数据编排，Pass 13 则把部分高价值函数转成 VM 字节码并由解释器执行。它们均不会新增终端用户数据采集，只影响构建产物的代码与元数据形态，因此不改变 SDK 的隐私数据边界。
 
 ---
 

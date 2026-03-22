@@ -14,6 +14,20 @@ package struct ArmorWhiteBoxBundle {
     package let whiteboxData: Data
     package let whiteboxTag: Data
 
+    package init(
+        domains: [DomainRecord],
+        metadata: ArmorABI.WhiteBox.Header,
+        whiteboxCode: Data,
+        whiteboxData: Data,
+        whiteboxTag: Data
+    ) {
+        self.domains = domains
+        self.metadata = metadata
+        self.whiteboxCode = whiteboxCode
+        self.whiteboxData = whiteboxData
+        self.whiteboxTag = whiteboxTag
+    }
+
     package var metadataSection: Data {
         metadata.serialized()
     }
@@ -30,16 +44,26 @@ package struct ArmorWhiteBoxBundle {
         let finalMask = record.descriptor.finalMask
         let roundConstants = record.descriptor.roundConstants
         let tables = record.tables
+        let enhancedDiffusionEnabled =
+            (metadata.flags & ArmorABI.WhiteBox.enhancedDiffusionFlag) != 0
 
         var state = Array(input)
         for round in 0..<Int(ArmorABI.WhiteBox.roundCount) {
-            var next = [UInt8](repeating: 0, count: ArmorABI.WhiteBox.stateSize)
-            for i in 0..<ArmorABI.WhiteBox.stateSize {
-                let tableBase = (round * ArmorABI.WhiteBox.stateSize * ArmorABI.WhiteBox.tableValueCount)
-                    + (i * ArmorABI.WhiteBox.tableValueCount)
-                let tableValue = tables[tableBase + Int(state[i])]
-                let mixed = tableValue ^ state[(i + 1) % ArmorABI.WhiteBox.stateSize] ^ roundConstants[(round * ArmorABI.WhiteBox.stateSize) + i]
-                next[i] = ArmorWhiteBox.rotl8(mixed, by: ((i + round) % 7) + 1)
+            var next = firstMixLayer(
+                state: state,
+                round: round,
+                tables: tables,
+                roundConstants: roundConstants
+            )
+
+            if enhancedDiffusionEnabled {
+                next = strongByteMixLayer(next, round: round, roundConstants: roundConstants)
+                next = secondMixLayer(
+                    state: next,
+                    round: round,
+                    tables: tables,
+                    roundConstants: roundConstants
+                )
             }
 
             var permuted = [UInt8](repeating: 0, count: ArmorABI.WhiteBox.stateSize)
@@ -50,6 +74,62 @@ package struct ArmorWhiteBoxBundle {
         }
 
         return Data((0..<ArmorABI.WhiteBox.stateSize).map { state[$0] ^ finalMask[$0] })
+    }
+
+    private func firstMixLayer(
+        state: [UInt8],
+        round: Int,
+        tables: Data,
+        roundConstants: Data
+    ) -> [UInt8] {
+        var next = [UInt8](repeating: 0, count: ArmorABI.WhiteBox.stateSize)
+        for i in 0..<ArmorABI.WhiteBox.stateSize {
+            let tableBase = (round * ArmorABI.WhiteBox.stateSize * ArmorABI.WhiteBox.tableValueCount)
+                + (i * ArmorABI.WhiteBox.tableValueCount)
+            let tableValue = tables[tableBase + Int(state[i])]
+            let mixed = tableValue
+                ^ state[(i + 1) % ArmorABI.WhiteBox.stateSize]
+                ^ roundConstants[(round * ArmorABI.WhiteBox.stateSize) + i]
+            next[i] = ArmorWhiteBox.rotl8(mixed, by: ((i + round) % 7) + 1)
+        }
+        return next
+    }
+
+    private func secondMixLayer(
+        state: [UInt8],
+        round: Int,
+        tables: Data,
+        roundConstants: Data
+    ) -> [UInt8] {
+        var next = [UInt8](repeating: 0, count: ArmorABI.WhiteBox.stateSize)
+        for i in 0..<ArmorABI.WhiteBox.stateSize {
+            let tableBase = (round * ArmorABI.WhiteBox.stateSize * ArmorABI.WhiteBox.tableValueCount)
+                + (i * ArmorABI.WhiteBox.tableValueCount)
+            let tableValue = tables[tableBase + Int(state[i])]
+            let mixed = tableValue
+                ^ state[(i + 5) % ArmorABI.WhiteBox.stateSize]
+                ^ roundConstants[(round * ArmorABI.WhiteBox.stateSize) + ((i + 13) % ArmorABI.WhiteBox.stateSize)]
+            next[i] = ArmorWhiteBox.rotl8(mixed, by: ((i * 3 + round + 1) % 7) + 1)
+        }
+        return next
+    }
+
+    /// A deterministic MDS-like byte diffusion layer with local + distant taps.
+    private func strongByteMixLayer(
+        _ state: [UInt8],
+        round: Int,
+        roundConstants: Data
+    ) -> [UInt8] {
+        var mixed = [UInt8](repeating: 0, count: ArmorABI.WhiteBox.stateSize)
+        for i in 0..<ArmorABI.WhiteBox.stateSize {
+            let rc = roundConstants[(round * ArmorABI.WhiteBox.stateSize) + ((i * 7 + 3) % ArmorABI.WhiteBox.stateSize)]
+            let lane0 = state[i]
+            let lane1 = ArmorWhiteBox.rotl8(state[(i + 7) % ArmorABI.WhiteBox.stateSize], by: 1)
+            let lane2 = ArmorWhiteBox.rotl8(state[(i + 13) % ArmorABI.WhiteBox.stateSize], by: 3)
+            let lane3 = ArmorWhiteBox.rotl8(state[(i + 23) % ArmorABI.WhiteBox.stateSize], by: 5)
+            mixed[i] = lane0 ^ lane1 ^ lane2 ^ lane3 ^ rc
+        }
+        return mixed
     }
 
     private func record(for domain: ArmorABI.WhiteBox.Domain) -> DomainRecord {
@@ -108,7 +188,9 @@ package enum ArmorWhiteBox {
         let configDigest = sha256(configMaterial)
 
         let metadata = ArmorABI.WhiteBox.Header(
-            flags: ArmorABI.WhiteBox.engineReadyFlag | ArmorABI.WhiteBox.signingPipelineFlag,
+            flags: ArmorABI.WhiteBox.engineReadyFlag
+                | ArmorABI.WhiteBox.signingPipelineFlag
+                | ArmorABI.WhiteBox.enhancedDiffusionFlag,
             // payloadSize covers the executable white-box payload only. The tag is
             // authenticated separately via configDigest / whiteboxTag.
             payloadSize: numericCast(codeSection.count + dataSection.count),

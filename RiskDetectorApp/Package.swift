@@ -71,7 +71,11 @@ let package = Package(
         .target(
             name: "CRiskCore",
             dependencies: [],
-            publicHeadersPath: "include"
+            publicHeadersPath: "include",
+            linkerSettings: [
+                .linkedFramework("Security", .when(platforms: [.iOS, .macOS])),
+                .linkedFramework("IOKit", .when(platforms: [.macOS])),
+            ]
         ),
         .target(
             name: "CloudPhoneRiskKit",

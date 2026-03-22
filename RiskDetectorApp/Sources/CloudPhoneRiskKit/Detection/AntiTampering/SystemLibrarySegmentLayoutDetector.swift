@@ -86,7 +86,7 @@ struct SystemLibrarySegmentLayoutDetector: Detector {
         if !wxSystem.isEmpty {
             signals.append(RiskSignal(
                 id: "system_library_wx_mapping",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: 85,
                 evidence: ["detail": wxSystem.map(Self.snapshotSummary).joined(separator: ";")],
                 state: .tampered,
@@ -99,7 +99,7 @@ struct SystemLibrarySegmentLayoutDetector: Detector {
         if !anonymousExecSystem.isEmpty {
             signals.append(RiskSignal(
                 id: "system_library_anonymous_exec_region",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: 82,
                 evidence: ["detail": anonymousExecSystem.map(Self.snapshotSummary).joined(separator: ";")],
                 state: .tampered,
@@ -114,7 +114,7 @@ struct SystemLibrarySegmentLayoutDetector: Detector {
         if !driftSystem.isEmpty {
             signals.append(RiskSignal(
                 id: "system_library_segment_count_drift",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: min(Double(driftSystem.count) * 18, 45),
                 evidence: ["detail": driftSystem.map(Self.snapshotSummary).joined(separator: ";")],
                 state: .soft(confidence: 0.72),
@@ -132,7 +132,7 @@ struct SystemLibrarySegmentLayoutDetector: Detector {
             let hasCritical = appAnomalies.contains(where: Self.hasCriticalPermissionAnomaly)
             signals.append(RiskSignal(
                 id: "app_image_segment_layout_anomaly",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: hasCritical ? 70 : 35,
                 evidence: ["detail": appAnomalies.map(Self.snapshotSummary).joined(separator: ";")],
                 state: hasCritical ? .tampered : .soft(confidence: 0.7),

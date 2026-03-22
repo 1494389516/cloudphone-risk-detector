@@ -43,7 +43,6 @@ struct IsaSwizzleDetector: Detector {
 
         // Check well-known singletons
         let checks: [(AnyObject, String)] = [
-            (FileManager.default, "NSFileManager"),
             (ProcessInfo.processInfo, "NSProcessInfo"),
             (Bundle.main, "NSBundle"),
             (NotificationCenter.default, "NSNotificationCenter"),
@@ -83,7 +82,6 @@ struct IsaSwizzleDetector: Detector {
 
         // Check critical methods for forwarding hijack
         let methodsToCheck: [(String, String)] = [
-            ("NSFileManager", "fileExistsAtPath:"),
             ("NSProcessInfo", "environment"),
             ("NSBundle", "bundlePath"),
             ("NSBundle", "executablePath"),
@@ -115,7 +113,6 @@ struct IsaSwizzleDetector: Detector {
         // Expected method count ranges (approximate for iOS 14+)
         // These are loose ranges; the actual check is for extreme outliers
         let classChecks: [(String, ClosedRange<UInt32>)] = [
-            ("NSFileManager", 50...500),
             ("NSProcessInfo", 20...200),
             ("NSBundle", 50...400),
         ]
@@ -149,7 +146,7 @@ extension IsaSwizzleDetector {
         if !isaMethods.isEmpty {
             signals.append(RiskSignal(
                 id: "isa_swizzle_detected",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: min(Double(isaMethods.count) * 15, 30),
                 evidence: ["detail": isaMethods.joined(separator: ",")],
                 state: .tampered,
@@ -162,7 +159,7 @@ extension IsaSwizzleDetector {
         if !forwardMethods.isEmpty {
             signals.append(RiskSignal(
                 id: "msg_forward_hijack",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: min(Double(forwardMethods.count) * 15, 25),
                 evidence: ["detail": forwardMethods.joined(separator: ",")],
                 state: .tampered,
@@ -175,7 +172,7 @@ extension IsaSwizzleDetector {
         if !countMethods.isEmpty {
             signals.append(RiskSignal(
                 id: "method_count_anomaly",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: min(Double(countMethods.count) * 8, 15),
                 evidence: ["detail": countMethods.joined(separator: ",")],
                 state: .soft(confidence: 0.5),

@@ -18,36 +18,38 @@ struct SysctlDetector: Detector {
 #else
         var score: Double = 0
         var methods: [String] = []
+        let hookPrefix = "\(ObfuscatedConstants.keywordHook):"
+        let logPrefix = "\(ObfuscatedConstants.keywordJailbreak).sysctl.hit: "
 
         // [4.4.7] ExpectedBaseline: 低版本上空进程列表视为被 Hook
         if let processList = readProcessList() {
             let infos = processList.infos
             score += 20
             methods.append("sysctl:process_list_access")
-            Logger.log("jailbreak.sysctl.hit: process_list_access (+20)")
+            Logger.log("\(logPrefix)process_list_access (+20)")
 
             if infos.isEmpty && ExpectedBaseline.emptyProcessListIsSuspicious {
                 score += 20
-                methods.append("hook:empty_process_list_suspicious")
-                Logger.log("jailbreak.sysctl.hit: empty_process_list_suspicious (+20)")
+                methods.append("\(hookPrefix)empty_process_list_suspicious")
+                Logger.log("\(logPrefix)empty_process_list_suspicious (+20)")
             }
 
             if processList.tampered {
                 score += 18
-                methods.append("hook:sysctl_process_list_mismatch")
-                Logger.log("jailbreak.sysctl.hit: process_list_mismatch (+18)")
+                methods.append("\(hookPrefix)sysctl_process_list_mismatch")
+                Logger.log("\(logPrefix)process_list_mismatch (+18)")
             }
 
             if processList.traced {
                 score += 25
                 methods.append("dbi_stalker_traced:process_list")
-                Logger.log("jailbreak.sysctl.hit: dbi_stalker_traced process_list (+25)")
+                Logger.log("\(logPrefix)dbi_stalker_traced process_list (+25)")
             }
 
             if infos.count > 400 {
                 score += 10
                 methods.append("sysctl:process_count:\(infos.count)")
-                Logger.log("jailbreak.sysctl.hit: process_count=\(infos.count) (+10)")
+                Logger.log("\(logPrefix)process_count=\(infos.count) (+10)")
             }
 
             let suspicious = suspiciousProcessesFound(infos: infos)
@@ -56,39 +58,39 @@ struct SysctlDetector: Detector {
                 for name in suspicious.prefix(3) {
                     methods.append("proc:\(name)")
                 }
-                Logger.log("jailbreak.sysctl.hit: suspicious_processes=\(suspicious.joined(separator: ",")) (+22)")
+                Logger.log("\(logPrefix)suspicious_processes=\(suspicious.joined(separator: ",")) (+22)")
             }
         } else if ExpectedBaseline.emptyProcessListIsSuspicious {
             // [4.4.7] 无法读取进程列表（nil）在低版本上视为被 Hook
             score += 20
-            methods.append("hook:empty_process_list_suspicious")
-            Logger.log("jailbreak.sysctl.hit: empty_process_list_suspicious (nil) (+20)")
+            methods.append("\(hookPrefix)empty_process_list_suspicious")
+            Logger.log("\(logPrefix)empty_process_list_suspicious (nil) (+20)")
         }
 
         let parentLookup = parentProcessName()
         if parentLookup.tampered {
             score += 12
-            methods.append("hook:sysctl_parent_lookup_mismatch")
-            Logger.log("jailbreak.sysctl.hit: parent_lookup_mismatch (+12)")
+            methods.append("\(hookPrefix)sysctl_parent_lookup_mismatch")
+            Logger.log("\(logPrefix)parent_lookup_mismatch (+12)")
         }
 
         if let parent = parentLookup.name, isSuspiciousParent(parent) {
             score += 20
             methods.append("parent:\(parent)")
-            Logger.log("jailbreak.sysctl.hit: parent_process=\(parent) (+20)")
+            Logger.log("\(logPrefix)parent_process=\(parent) (+20)")
         }
 
         let debugger = debuggerStatus()
         if debugger.tampered {
             score += 12
-            methods.append("hook:sysctl_pid_flags_mismatch")
-            Logger.log("jailbreak.sysctl.hit: pid_flags_mismatch (+12)")
+            methods.append("\(hookPrefix)sysctl_pid_flags_mismatch")
+            Logger.log("\(logPrefix)pid_flags_mismatch (+12)")
         }
 
         if debugger.attached {
             score += 10
             methods.append("sysctl:debugger_attached")
-            Logger.log("jailbreak.sysctl.hit: debugger_attached (+10)")
+            Logger.log("\(logPrefix)debugger_attached (+10)")
         }
 
         let criticalSysctlKeys = ["hw.machine", "hw.model", "kern.osversion"]
@@ -97,17 +99,17 @@ struct SysctlDetector: Detector {
             if tampered {
                 score += 25
                 methods.append("sysctl_dual_path_mismatch:\(key)")
-                Logger.log("jailbreak.sysctl.hit: dual_path_mismatch key=\(key) (+25)")
+                Logger.log("\(logPrefix)dual_path_mismatch key=\(key) (+25)")
             }
             if bypassed {
                 score += 20
-                methods.append("sysctl_short_circuit_hook:\(key)")
-                Logger.log("jailbreak.sysctl.hit: short_circuit hook key=\(key) (+20)")
+                methods.append("sysctl_short_circuit_\(ObfuscatedConstants.keywordHook):\(key)")
+                Logger.log("\(logPrefix)short_circuit \(ObfuscatedConstants.keywordHook) key=\(key) (+20)")
             }
             if traced {
                 score += 25
                 methods.append("dbi_stalker_traced:\(key)")
-                Logger.log("jailbreak.sysctl.hit: dbi_stalker_traced key=\(key) (+25)")
+                Logger.log("\(logPrefix)dbi_stalker_traced key=\(key) (+25)")
             }
         }
 

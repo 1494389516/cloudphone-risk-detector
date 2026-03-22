@@ -6,7 +6,7 @@ private enum AntiTamperingDetectorCFF {
     static let detectConfig = CFFConfig.adaptive(
         functionSeed: 0x7EA1_42D0_9B53_6C2F,
         protectionTier: .light,
-        dispatcherStyle: .dualRail,
+        dispatcherStyle: .splitIndirect,
         codecStyle: .xorRotate
     )
 
@@ -23,7 +23,7 @@ private enum AntiTamperingDetectorCFF {
                     Date().timeIntervalSince1970.bitPattern,
                 ],
                 strings: [
-                    "AntiTamperingDetector.detect",
+                    "atd_core_v1",
                     suspiciousNeedles.prefix(3).joined(separator: "|"),
                     debugEnvironmentKeys.prefix(3).joined(separator: "|"),
                 ],
@@ -36,10 +36,10 @@ private enum AntiTamperingDetectorCFF {
 struct AntiTamperingDetector: Detector {
 
     let suspiciousParentNeedles: [String] = [
-        "lldb",
+        ObfuscatedConstants.keywordLldb,
         "gdb",
         "debugserver",
-        "frida",
+        ObfuscatedConstants.keywordFrida,
         "hopper",
         "ida",
         "cycript",
@@ -59,6 +59,7 @@ struct AntiTamperingDetector: Detector {
 #else
         var score: Double = 0
         var methods: [String] = []
+        let antiTamperingPrefix = ObfuscatedConstants.detectorIDAntiTampering
         let cffConfig = AntiTamperingDetectorCFF.detectConfig
         let salt = AntiTamperingDetectorCFF.salt(
             suspiciousNeedles: suspiciousParentNeedles,
@@ -75,7 +76,7 @@ struct AntiTamperingDetector: Detector {
         let settleState: UInt32 = 0x28
         let finishState: UInt32 = 0x29
 
-        let cffKey = CFFStateCodec.deriveSeed(function: "AntiTamperingDetector.detect", config: cffConfig)
+        let cffKey = CFFStateCodec.deriveSeed(function: "atd_core_v1", config: cffConfig)
         let effectiveSalt = cffConfig.enableRuntimeSalt ? salt : salt ^ 0x13579BDF
 
         func encodeState(_ rawState: UInt32) -> UInt32 {
@@ -111,25 +112,25 @@ struct AntiTamperingDetector: Detector {
                 } else if decodedState == tracedState {
                     if isTraced() {
                         score += 30
-                        methods.append("anti_tampering:p_traced")
+                        methods.append("\(antiTamperingPrefix):p_traced")
                     }
                     encodedState = encodeState(parentState)
                 } else if decodedState == parentState {
                     if hasSuspiciousParent() {
                         score += 20
-                        methods.append("anti_tampering:suspicious_parent")
+                        methods.append("\(antiTamperingPrefix):suspicious_parent")
                     }
                     encodedState = encodeState(envState)
                 } else if decodedState == envState {
                     if hasDebugEnvironment() {
                         score += 15
-                        methods.append("anti_tampering:debug_env")
+                        methods.append("\(antiTamperingPrefix):debug_env")
                     }
                     encodedState = encodeState(timingState)
                 } else if decodedState == timingState {
                     if hasTimingAnomaly() {
                         score += 12
-                        methods.append("anti_tampering:timing")
+                        methods.append("\(antiTamperingPrefix):timing")
                     }
                     encodedState = encodeState(ptraceState)
                 } else if decodedState == ptraceState {
@@ -154,25 +155,25 @@ struct AntiTamperingDetector: Detector {
                 case tracedState:
                     if isTraced() {
                         score += 30
-                        methods.append("anti_tampering:p_traced")
+                        methods.append("\(antiTamperingPrefix):p_traced")
                     }
                     encodedState = encodeState(parentState)
                 case parentState:
                     if hasSuspiciousParent() {
                         score += 20
-                        methods.append("anti_tampering:suspicious_parent")
+                        methods.append("\(antiTamperingPrefix):suspicious_parent")
                     }
                     encodedState = encodeState(envState)
                 case envState:
                     if hasDebugEnvironment() {
                         score += 15
-                        methods.append("anti_tampering:debug_env")
+                        methods.append("\(antiTamperingPrefix):debug_env")
                     }
                     encodedState = encodeState(timingState)
                 case timingState:
                     if hasTimingAnomaly() {
                         score += 12
-                        methods.append("anti_tampering:timing")
+                        methods.append("\(antiTamperingPrefix):timing")
                     }
                     encodedState = encodeState(ptraceState)
                 case ptraceState:
@@ -224,9 +225,9 @@ struct AntiTamperingDetector: Detector {
         let result = cprisk_deny_attach_status(&rawErrno)
         if result != 0 {
             if rawErrno == ENOTSUP || rawErrno == EPERM {
-                return (25, ["ptrace:debugger_already_attached"])
+                    return (25, ["dbg_attach:already_attached"])
             }
-            return (5, ["ptrace:direct_syscall_errno:\(rawErrno)"])
+                return (5, ["dbg_attach:direct_syscall_errno:\(rawErrno)"])
         }
         return (0, [])
         #endif

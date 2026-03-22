@@ -48,7 +48,7 @@ struct FridaThreadDetector: Detector {
             )
         }
 
-        let suspiciousNames = ["gum-js-loop", "gmain", "gdbus", "frida", "gum-js", "v8:"]
+        let suspiciousNames = ObfuscatedConstants.fridaThreadNameMarkers
 
         for i in 0..<Int(threadCount) {
             let thread = threads[i]
@@ -65,7 +65,7 @@ struct FridaThreadDetector: Detector {
                 // 启发式：假定 index 0 为主线程，其他为非主线程
                 if i > 0 && thInfo.suspend_count > 0 {
                     score += 20
-                    methods.append("thread_anomaly_suspension:\(thInfo.suspend_count)")
+                    methods.append("\(ObfuscatedConstants.signalThreadAnomaly)_suspension:\(thInfo.suspend_count)")
                 }
             }
 
@@ -92,7 +92,7 @@ struct FridaThreadDetector: Detector {
                     let port = ports[j]
                     if port != MACH_PORT_NULL && port != mach_port_t(bitPattern: -1) {
                         score += 30
-                        methods.append("frida_exception_port:thread_mask_\(masks[j])")
+                        methods.append("\(ObfuscatedConstants.methodPrefixFridaExceptionThreadMask)\(masks[j])")
                         break
                     }
                 }
@@ -109,7 +109,7 @@ struct FridaThreadDetector: Detector {
             for marker in suspiciousNames {
                 if threadName.contains(marker) {
                     score += 15
-                    methods.append("frida_thread:\(marker)")
+                    methods.append("\(ObfuscatedConstants.methodPrefixFridaThreadName)\(marker)")
                     break
                 }
             }
@@ -118,7 +118,7 @@ struct FridaThreadDetector: Detector {
         // 线程数量异常：典型 iOS 应用约 5–15 个线程，Frida 会额外增加 2–5 个
         if threadCount > 25 {
             score += 8
-            methods.append("frida_thread:count_anomaly:\(threadCount)")
+            methods.append("\(ObfuscatedConstants.methodPrefixFridaThreadName)count_anomaly:\(threadCount)")
         }
 
         return (min(score, 40), methods)
@@ -157,7 +157,7 @@ struct FridaThreadDetector: Detector {
             let port = ports[i]
             if port != MACH_PORT_NULL && port != mach_port_t(bitPattern: -1) {
                 score += 20
-                methods.append("frida_exception_port:mask_\(masks[i])")
+                methods.append("\(ObfuscatedConstants.methodPrefixFridaExceptionMask)\(masks[i])")
                 break
             }
         }
@@ -175,11 +175,13 @@ extension FridaThreadDetector {
 
         var signals: [RiskSignal] = []
 
-        let threadMethods = result.methods.filter { $0.hasPrefix("frida_thread") || $0.hasPrefix("thread_anomaly") }
+        let threadMethods = result.methods.filter {
+            $0.hasPrefix(ObfuscatedConstants.detectorIDFridaThread) || $0.hasPrefix(ObfuscatedConstants.signalThreadAnomaly)
+        }
         if !threadMethods.isEmpty {
             signals.append(RiskSignal(
-                id: "thread_anomaly",
-                category: "anti_tamper",
+                id: ObfuscatedConstants.signalThreadAnomaly,
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: min(Double(threadMethods.count) * 10, 30),
                 evidence: [
                     "methods": threadMethods.joined(separator: ","),
@@ -191,11 +193,11 @@ extension FridaThreadDetector {
             ))
         }
 
-        let exceptionMethods = result.methods.filter { $0.hasPrefix("frida_exception") }
+        let exceptionMethods = result.methods.filter { $0.hasPrefix(ObfuscatedConstants.methodPrefixFridaException) }
         if !exceptionMethods.isEmpty {
             signals.append(RiskSignal(
-                id: "frida_exception_port",
-                category: "anti_tamper",
+                id: ObfuscatedConstants.signalFridaExceptionPort,
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: 20,
                 evidence: ["detail": exceptionMethods.joined(separator: ",")],
                 state: .tampered,

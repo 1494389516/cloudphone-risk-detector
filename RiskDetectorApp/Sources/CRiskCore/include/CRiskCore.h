@@ -10,16 +10,17 @@
 #include "cprisk_armor_abi.h"
 #include "cprisk_secure_zero.h"
 #include "cprisk_memory_guard.h"
+#include "cprisk_vm_interpreter.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/// Call ptrace(PT_DENY_ATTACH) to deny debugger attachment.
+/// Issue a direct deny-attach syscall to block debugger attachment.
 /// Safe to call multiple times.
 void cprisk_deny_attach(void);
 
-/// Call ptrace(PT_DENY_ATTACH) via direct syscall and surface raw errno.
+/// Issue deny-attach via direct syscall and surface raw errno.
 /// Returns 0 on success, -1 on syscall error. When error_out is non-null,
 /// it receives the raw BSD errno produced by the syscall path.
 int cprisk_deny_attach_status(int *error_out);
@@ -28,6 +29,13 @@ int cprisk_deny_attach_status(int *error_out);
 /// Uses sysctl KERN_PROC_PID to read P_TRACED from kinfo_proc.
 /// Returns 1 if traced, 0 if not traced or on query failure/simulator.
 int cprisk_is_being_traced(void);
+
+/// Mach-path trace suspicion helper used to cross-check sysctl/unix results.
+/// Returns 1 when Mach state indicates suspicious trace/hijack characteristics.
+int cprisk_mach_trace_suspicious(void);
+
+/// Returns non-zero when unix/sysctl path and Mach path disagree.
+int cprisk_trace_crosscheck_inconsistent(void);
 
 enum {
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_NONE = 0u,
@@ -44,6 +52,11 @@ enum {
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DEVELOPER_DISK   = 1u << 10,
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SOFTWARE_BP      = 1u << 11,
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_DELIVERY_TIMEOUT = 1u << 12,
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_WATCHDOG_PEER_STALL = 1u << 13,
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SHADOW_STACK = 1u << 14,
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DBI_MARKER = 1u << 15,
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TIMING_SIDECHANNEL = 1u << 16,
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACE_CROSSCHECK = 1u << 17,
 };
 
 typedef struct cprisk_exception_handler_snapshot {
@@ -53,6 +66,8 @@ typedef struct cprisk_exception_handler_snapshot {
     uint32_t last_query_succeeded;
     uint32_t last_reclaim_attempted;
     uint32_t last_hijack_detected;
+    uint32_t early_phase_captured;
+    uint32_t last_race_detected;
     int32_t last_query_kern_return;
     int32_t last_register_kern_return;
     uint64_t verify_count;
@@ -97,7 +112,39 @@ typedef struct cprisk_anti_debug_watchdog_snapshot {
     uint64_t csops_anomaly_count;
     uint64_t suspicious_thread_anomaly_count;
     uint64_t exception_delivery_timeout_anomaly_count;
+    uint64_t peer_watchdog_anomaly_count;
+    uint64_t shadow_stack_anomaly_count;
+    uint32_t last_peer_watchdog_stalled;
+    uint32_t last_shadow_stack_mismatch;
+    uint32_t last_dbi_detected;
+    uint32_t last_dbi_marker_flags;
+    uint32_t last_timing_anomaly_flags;
+    uint64_t last_timing_probe_median_ns;
+    uint64_t last_timing_probe_max_ns;
+    uint64_t last_timing_probe_threshold_ns;
+    uint64_t dbi_anomaly_count;
+    uint64_t timing_anomaly_count;
 } cprisk_anti_debug_watchdog_snapshot_t;
+
+typedef struct cprisk_antidebug_plan_snapshot {
+    uint32_t section_present;
+    uint32_t section_valid;
+    uint32_t parse_error;
+    uint32_t entry_count;
+    uint32_t policy_union_bits;
+    uint32_t last_applied_policy_bits;
+    uint32_t last_probe_bits;
+    uint32_t last_gate_closed;
+    uint32_t last_soft_fail_mode;
+    uint64_t last_delay_ns;
+    uint64_t consume_count;
+    uint64_t escalation_count;
+    uint64_t trap_event_count;
+    uint64_t inline_patch_count;
+    uint64_t inline_patch_failure_count;
+    uint32_t inline_patch_armed;
+    uint32_t last_inline_patch_tamper;
+} cprisk_antidebug_plan_snapshot_t;
 
 /// Invoke sysctlbyname via direct BSD syscall on arm64 Apple targets.
 /// Returns 0 on success, -1 on error. When error_out is non-null, it receives
@@ -131,6 +178,21 @@ int cprisk_stat_direct(const char *path, struct stat *sb, int *error_out);
 int cprisk_lstat_direct(const char *path, struct stat *sb, int *error_out);
 int cprisk_access_direct(const char *path, int amode, int *error_out);
 
+enum {
+    CPRISK_PATH_PROBE_ACCESS = 1u << 0,
+    CPRISK_PATH_PROBE_STAT = 1u << 1,
+    CPRISK_PATH_PROBE_FOPEN = 1u << 2,
+};
+
+typedef struct cprisk_path_probe_snapshot {
+    uint32_t available_mask;
+    uint32_t exists_mask;
+} cprisk_path_probe_snapshot_t;
+
+/// Probe path existence in C layer using access/stat/fopen.
+/// Returns 0 on success, -1 on invalid input.
+int cprisk_probe_path_snapshot(const char *path, cprisk_path_probe_snapshot_t *out_snapshot);
+
 /// Return the current process ID via direct syscall (SYS_getpid).
 /// Never fails; uses cprisk_direct_syscall0 for minimal overhead.
 pid_t cprisk_getpid_direct(void);
@@ -163,13 +225,61 @@ int cprisk_socket_direct(int domain, int type, int protocol, int *error_out);
 /// Returns 0 on success, -1 on error.
 int cprisk_connect_direct(int sockfd, const struct sockaddr *addr, socklen_t addrlen, int *error_out);
 
+/// Sign an unauthenticated function pointer for later indirect calls.
+/// On arm64e this applies pointer authentication; on other architectures it is
+/// a no-op pass-through and simply returns ptr.
+void *cprisk_pac_sign_function_pointer(const void *ptr, uintptr_t discriminator);
+
+/// Authenticate a previously signed function pointer before invocation.
+/// Returns NULL when authentication fails (arm64e), otherwise returns an
+/// authenticated callable pointer.
+void *cprisk_pac_auth_function_pointer(const void *ptr, uintptr_t discriminator);
+
+/// Returns 1 when arm64e PAC runtime support is compiled in, 0 otherwise.
+int cprisk_pac_is_arm64e_supported(void);
+
+enum {
+    CPRISK_PAC_CFI_FLAG_NONE = 0u,
+    CPRISK_PAC_CFI_FLAG_UNAVAILABLE = 1u << 0,
+    CPRISK_PAC_CFI_FLAG_SIGN_FAILED = 1u << 1,
+    CPRISK_PAC_CFI_FLAG_AUTH_FAILED = 1u << 2,
+    CPRISK_PAC_CFI_FLAG_WEAK_BINDING = 1u << 3,
+    CPRISK_PAC_CFI_FLAG_SELFTEST_FAILED = 1u << 4,
+    CPRISK_PAC_CFI_FLAG_CALLBACK_VALIDATION_FAILED = 1u << 5,
+};
+
+/// Validate PAC/CFI binding by signing + authenticating a function pointer with
+/// the supplied discriminator.
+/// Returns 0 when validation succeeds (or PAC is unavailable), 1 on validation
+/// failure, -1 on invalid input.
+int cprisk_pac_validate_indirect_call_target(const void *func_ptr, uintptr_t discriminator);
+
+/// Run a PAC self-test on an internal function pointer + call path.
+/// Returns 0 on success (or PAC unavailable), 1 when validation fails.
+int cprisk_pac_self_test(uintptr_t discriminator);
+
+/// Validate a built-in core callback target used by the integrity pipeline.
+/// Returns 0 when callback binding is valid (or PAC unavailable), 1 otherwise.
+int cprisk_pac_validate_core_callbacks(void);
+
+/// Return last PAC/CFI status flags (CPRISK_PAC_CFI_FLAG_*).
+uint32_t cprisk_get_last_pac_cfi_flags(void);
+
 /// Fill a buffer with random bytes via direct syscall (SYS_getentropy).
 /// Returns 0 on success, -1 on error. buflen must be <= 256.
 int cprisk_getentropy_direct(void *buf, size_t buflen, int *error_out);
 
+/// Change virtual-memory protection via direct syscall (SYS_mprotect).
+/// Returns 0 on success, -1 on error.
+int cprisk_mprotect_direct(void *addr, size_t len, int prot, int *error_out);
+
 /// Register EXC_BREAKPOINT handler to preempt Frida/debugger from hijacking exception ports.
 /// Call from CPRiskKit.start() after cprisk_deny_attach.
 void cprisk_register_exception_handler(void);
+
+/// Capture early-phase exception port ownership fingerprint.
+/// Intended for __DATA,__thread_init callback after first registration.
+void cprisk_capture_early_exception_ports(void);
 
 /// Verify current EXC_BREAKPOINT handler is still ours; re-register if hijacked.
 /// Call periodically (e.g. in evaluate() or a background check).
@@ -194,9 +304,22 @@ int cprisk_get_anti_debug_watchdog_snapshot(
     cprisk_anti_debug_watchdog_snapshot_t *out_snapshot
 );
 
+/// Copy the latest anti-debug plan parser/policy snapshot into out_snapshot.
+/// Returns 0 on success, -1 when out_snapshot is NULL.
+int cprisk_get_antidebug_plan_snapshot(
+    cprisk_antidebug_plan_snapshot_t *out_snapshot
+);
+
 /// Finds the current image's Mach-O header in memory, makes it writable,
 /// and zeroes out the magic number and key load commands to thwart memory dumping.
 void cprisk_erase_macho_header(void);
+
+/// Restore encrypted mach_header_64 fields from the __DATA.__swift5_mhsav
+/// backup section.  Supports both legacy fixed marker and per-binary
+/// camouflaged reserved values.
+/// Returns 0 on success, 1 if no restoration needed/already restored, -1 on error.
+/// Safe to call repeatedly; runtime uses constructor + once + retry semantics.
+int cprisk_restore_macho_header(void);
 
 /* ── cprisk-armor Runtime Support (ABI v1) ─────────────────────────── */
 
@@ -215,6 +338,15 @@ uint64_t cprisk_get_string_integrity_accumulator(void);
 
 /// Securely wipe decryption key and accumulator state.
 void cprisk_cleanup_string_decryptor(void);
+
+/// Test-only helper: select the distributed decrypt micro-path using
+/// the same deterministic selector as runtime dispatch.
+/// Returns a value in [0, 3].
+uint32_t cprisk_test_select_string_decrypt_path(
+    uint32_t string_id,
+    const uint8_t nonce[CPRISK_ARMOR_NONCE_SIZE],
+    uint64_t seed
+);
 
 /// Initialize the data segment loader with a 32-byte key.
 /// Returns 0 on success, -1 on failure.
@@ -280,6 +412,19 @@ int cprisk_get_runtime_material(uint8_t out_material[32]);
 /// init and is currently available to helper pipelines, 0 otherwise.
 /// Unlike cprisk_get_runtime_material(), this does not expose any bytes.
 int cprisk_runtime_material_ready(void);
+
+/* ── Import Table Encryption Resolver ──────────────────────────────── */
+
+/// Resolve a symbol from the encrypted import table by index.
+/// Reads __DATA.__swift5_dyrel, verifies HMAC-SHA256 integrity, decrypts
+/// the symbol name via SHA256-based keystream, and resolves it via dlsym.
+///
+/// symbol_index: zero-based index into the encrypted import table.
+/// out_addr: receives the resolved symbol address on success.
+///
+/// Returns 0 on success (symbol resolved), -1 on failure
+/// (not found, tampered HMAC, bounds error, or dlsym failure).
+int cprisk_resolve_import(uint32_t symbol_index, void **out_addr);
 
 /* ── White-box Frontend / Signing Helpers ─────────────────────────── */
 
@@ -361,7 +506,68 @@ int cprisk_verify_with_derived_key(
     const char *expected_hex
 );
 
+/* ── Hybrid Key Derivation (Three-Layer KDF) ───────────────────────── */
+
+/* Initialize the three-layer Hybrid KDF from the root key.
+ * Layer 2: deviceKey     = HMAC(rootKey, deviceSalt)
+ * Layer 3: effectiveRoot  = HMAC(deviceKey, sessionToken)
+ * Populates internal state consumed by white-box domains 6-9.
+ * Call after cprisk_init_protection() or as part of its flow.
+ * Returns 0 on success, -1 on invalid input. */
+int cprisk_init_hybrid_kdf(const uint8_t *root_key);
+
+/* Derive the Layer-2 device key from the root key.
+ * deviceKey = HMAC(rootKey, deviceSalt)
+ * Salt is sourced from IOKit/Keychain when available; static fallback otherwise.
+ * Returns 0 on success, -1 on invalid input. */
+int cprisk_derive_device_key(const uint8_t *root_key,
+                             uint8_t out_device_key[CPRISK_ARMOR_KEY_SIZE]);
+
+/* Retrieve the stored device key (Layer-2).
+ * Returns 0 on success (key copied to out_key), -1 if not ready. */
+int cprisk_get_device_key(uint8_t out_key[CPRISK_ARMOR_KEY_SIZE]);
+
+/* Retrieve the effective root key (Layer-3 effectiveRoot).
+ * This is the key used for white-box domains 6-9 derivations.
+ * Returns 0 on success (key copied to out_key), -1 if not ready. */
+int cprisk_get_effective_root(uint8_t out_key[CPRISK_ARMOR_KEY_SIZE]);
+
+/* Returns 1 when a real (non-fallback) hardware salt is in use, 0 otherwise. */
+int cprisk_is_device_bound(void);
+
+/* ── Session Token Management ─────────────────────────────────────── */
+
+/* Install a session token for Layer-3 key derivation.
+ * Accepted formats:
+ *   - legacy: 32-byte raw token
+ *   - signed: [32-byte token_data][32-byte HMAC(token_data)]
+ * Returns 0 on success, -1 on invalid token or HMAC mismatch. */
+int cprisk_set_session_token(const uint8_t *token, size_t token_len);
+
+/* Retrieve the session key (Layer-3) for composing effectiveRoot.
+ * Returns 0 on success (session key copied to out_key), -1 if no
+ * valid session token is active. */
+int cprisk_get_session_key(uint8_t out_key[CPRISK_ARMOR_KEY_SIZE]);
+
+/* Returns 1 if a valid, non-expired session token is installed, 0 otherwise. */
+int cprisk_has_session_token(void);
+
+/* Wipe the installed session token from memory. */
+void cprisk_clear_session_token(void);
+
 /* ── Anti-Dump Memory Protection ───────────────────────────────────── */
+
+/* Start the anti-dump active defense probe thread.
+ * Polls every `interval_seconds` (minimum 1; 0 uses the default of 5).
+ * Scans VM regions for shared/RWX mappings and checks dylibs for injection
+ * frameworks (Frida, Cycript, etc.). On detection, activates deception mode.
+ * Thread runs detached; safe to call multiple times (idempotent).
+ * Returns 0 on success, -1 on thread creation failure. */
+int cprisk_start_anti_dump_probe(int interval_seconds);
+
+/* Request the anti-dump probe thread to stop.
+ * Safe to call even if the thread was never started. */
+void cprisk_stop_anti_dump_probe(void);
 
 /* ── Runtime Integrity Re-check ────────────────────────────────────── */
 
@@ -385,6 +591,18 @@ void cprisk_force_integrity_poison(void);
 /// interference or syscall hook), 0 otherwise. Checked by Swift layer
 /// during evaluate() to surface the tamper signal.
 int cprisk_is_mprotect_tampered(void);
+
+/// Returns how many direct mprotect syscall attempts failed.
+uint32_t cprisk_get_mprotect_direct_failure_count(void);
+
+/// Returns how many times libc mprotect fallback succeeded after direct failure.
+uint32_t cprisk_get_mprotect_fallback_success_count(void);
+
+/* ── Per-Section Chained Key Derivation ─────────────────────────── */
+
+/// Returns 1 if chained per-section keys are active (v3 entries were processed),
+/// 0 if running in legacy v2 mode with the global loader key.
+int cprisk_get_chain_status(void);
 
 /// Return wall-clock nanoseconds spent in cprisk_init_protection().
 uint64_t cprisk_get_init_elapsed_ns(void);
@@ -423,12 +641,44 @@ void cprisk_test_clear_whitebox_bundle(void);
 /// cprisk_whitebox_evaluate_domain(), used to verify poison/fail-closed behavior.
 void cprisk_test_set_whitebox_recompute_mismatch(int enabled);
 
+/// Test-only: inject an anti-debug plan payload for parser/policy verification.
+/// The runtime copies and owns the plan bytes until cprisk_test_clear_antidebug_plan().
+/// Returns 0 on success, -1 on invalid input or allocation failure.
+int cprisk_test_set_antidebug_plan(
+    const uint8_t *plan,
+    size_t plan_len
+);
+
+/// Test-only: clear the injected anti-debug plan payload.
+void cprisk_test_clear_antidebug_plan(void);
+
 /* ── Image address check (dladdr-free) ───────────────────────────────── */
 
 /// Returns 1 if addr is within any loaded image's segment, 0 otherwise.
 /// Uses task_info + dyld_all_image_infos; does not call dladdr or _dyld_*.
 /// Resistant to dladdr hook used to hide anonymous memory (e.g. Frida Stalker JIT).
 int cprisk_addr_in_any_image(const void *addr);
+
+/* ── Frida / Gum runtime hints (dyld image paths, dlsym, proc table) ─ */
+
+enum {
+    CPRISK_FRIDA_RT_IMAGE = 1u << 0,
+    CPRISK_FRIDA_RT_DLSYM = 1u << 1,
+    CPRISK_FRIDA_RT_PROC = 1u << 2,
+};
+
+typedef struct cprisk_frida_runtime_snapshot {
+    uint32_t supported;
+    uint32_t flags;
+    uint32_t image_hit_count;
+    uint32_t dlsym_hit_count;
+    uint32_t proc_hit_count;
+} cprisk_frida_runtime_snapshot_t;
+
+/// Populate runtime Frida/Gum hints. On simulator, `supported` is 0.
+/// Returns 0 on success, -1 when `out` is NULL.
+int cprisk_frida_runtime_snapshot(cprisk_frida_runtime_snapshot_t *out);
+#define CPRISK_FRIDA_RUNTIME_SNAPSHOT_DECLARED 1
 
 /* ── Signal Probe Bitmask ──────────────────────────────────────────── */
 
@@ -442,11 +692,28 @@ enum {
     CPRISK_PROBE_SUSPICIOUS_THREAD = 1u << 6,
     CPRISK_PROBE_DEVELOPER_DISK    = 1u << 7,
     CPRISK_PROBE_EXCEPTION_DELIVERY_TIMEOUT = 1u << 8,
+    CPRISK_PROBE_DBI_MARKER        = 1u << 9,
+    CPRISK_PROBE_TIMING_ANOMALY    = 1u << 10,
+    CPRISK_PROBE_THREAD_EXCEPTION_PORT = 1u << 11,
+    CPRISK_PROBE_TRACE_CROSSCHECK  = 1u << 12,
 };
 
 enum {
     CPRISK_BRK_IMM_SIGNAL_PROBE = 0xC0DEu,
     CPRISK_BRK_IMM_EXCEPTION_DELIVERY_PROBE = 0xC0DFu,
+    CPRISK_BRK_IMM_RUNTIME_GATE = 0xC0E0u,
+};
+
+enum {
+    CPRISK_DBI_MARKER_ENV = 1u << 0,
+    CPRISK_DBI_MARKER_IMAGE = 1u << 1,
+    CPRISK_DBI_MARKER_THREAD = 1u << 2,
+};
+
+enum {
+    CPRISK_TIMING_ANOMALY_MEDIAN = 1u << 0,
+    CPRISK_TIMING_ANOMALY_SPIKE = 1u << 1,
+    CPRISK_TIMING_ANOMALY_JITTER = 1u << 2,
 };
 
 /// Probe debugger presence via SIGTRAP signal delivery after BRK #0xC0DE.
@@ -457,9 +724,21 @@ int cprisk_probe_debugger_via_signal(void);
 /// Returns the number of enabled HW breakpoint/watchpoint slots found.
 int cprisk_detect_hardware_breakpoints(void);
 
+/// Detect threads that have per-thread EXC_BREAKPOINT/EXC_BAD_ACCESS ports
+/// different from the task-level handler (indicative of debugger hijack).
+/// Returns the number of mismatched threads found.
+int cprisk_detect_thread_exception_ports(void);
+
 /// Scan a memory region for software BRK instructions (excluding our own).
 /// Returns the number of foreign BRK instructions found.
 int cprisk_scan_software_breakpoints(const void *func_ptr, size_t size);
+
+/// Randomly sample executable __TEXT sections for software BRK instructions.
+/// Returns the number of foreign BRK instructions found.
+int cprisk_scan_software_breakpoints_randomized_text(
+    size_t sample_windows,
+    size_t window_size
+);
 
 /// Trigger a reserved breakpoint handled by our Mach exception port and flag
 /// suspicious delivery latency or fallback signal delivery.
@@ -485,8 +764,29 @@ int cprisk_detect_suspicious_threads(void);
 /// Returns 1 if any developer tool path is accessible, 0 otherwise.
 int cprisk_detect_developer_disk(void);
 
+/// Detect DBI footprints (Pin/DynamoRIO/Valgrind) via env/image/thread markers.
+/// Returns the number of matched markers in the current process view.
+int cprisk_detect_dbi_markers(void);
+
+/// Return DBI marker category bits (CPRISK_DBI_MARKER_*).
+uint32_t cprisk_get_last_dbi_marker_flags(void);
+
+/// Return the last DBI marker hit count.
+int cprisk_get_last_dbi_marker_hit_count(void);
+
+/// Return timing anomaly category bits (CPRISK_TIMING_ANOMALY_*).
+uint32_t cprisk_get_last_timing_anomaly_flags(void);
+
+/// Return the latest timing probe median/max/threshold in nanoseconds.
+uint64_t cprisk_get_last_timing_probe_median_ns(void);
+uint64_t cprisk_get_last_timing_probe_max_ns(void);
+uint64_t cprisk_get_last_timing_probe_threshold_ns(void);
+
 /// Run all signal probes and return a bitmask of CPRISK_PROBE_* flags.
 uint32_t cprisk_run_all_signal_probes(void);
+
+/// Returns 1 when CNTPCT_EL0 hardware monotonic clock path is available.
+int cprisk_is_cntpct_clock_available(void);
 
 #ifdef __cplusplus
 }

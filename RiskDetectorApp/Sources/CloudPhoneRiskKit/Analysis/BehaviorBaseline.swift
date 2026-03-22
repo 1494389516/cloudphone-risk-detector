@@ -65,7 +65,7 @@ public struct StatisticalFeatures: Codable, Sendable {
         let sum = values.reduce(0, +)
         let mean = sum / count
 
-        let variance = values.map { pow($0 - mean, 2) }.reduce(0, +) / Double(max(values.count - 1, 1))
+        let variance = values.map { pow($0 - mean, 2) }.reduce(0, +) / Double(Swift.max(values.count - 1, 1))
         let stdDev = sqrt(variance)
 
         let min = sorted.first ?? 0

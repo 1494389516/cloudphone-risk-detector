@@ -2,23 +2,24 @@ version: 2
 functions:
   # 高强度平坦化：关键决策/挑战/信任链/watchdog 核心路径
   heavy:
-    - RiskDetectionEngine.collectAndAugmentSignals
     - RiskDetectionEngine.fastDigestShortCircuit
-    - RiskDetectionEngine.scoreAndForceDecision
-    - RiskDetectionEngine.treeCommitVerdict
-    - DecisionTree.decide
+    - ChallengeSession.transition
+    - ChallengeSession.advance
+    - TrustChainManager.buildKeyResolver
+    - anti_debug_watchdog.cprisk_watchdog_run_iteration
+
+  # 中等：整函数二进制改写预算介于 light/heavy 之间（Pass9 默认更宽的扫描窗口）
+  medium:
     - ConditionNode.evaluate
     - ConditionExpression.evaluate
     - ScoreActionNode.evaluate
-    - ChallengeSession.transition
-    - ChallengeSession.advance
-    - ChallengeSession.bindChallenge
-    - ChallengeSession.markSubmitted
-    - TrustChainManager.evaluateTrustLevel
-    - TrustChainManager.deriveSessionKey
-    - TrustChainManager.buildKeyResolver
     - TrustChainManager.shouldRefreshAttestation
-    - anti_debug_watchdog.cprisk_watchdog_run_iteration
+    - ChallengeSession.markSubmitted
+    # VM 解释器核心入口，配合 vmp_policy.yaml protect_vm_interpreter_with_cff: true
+    - cprisk_vm_entry
+    - _cprisk_vm_entry
+    - cprisk_vm_execute
+    - _cprisk_vm_execute
 
   # 轻量平坦化：高频检测流程，强调低开销与异构分发
   light:
@@ -33,6 +34,14 @@ functions:
   never:
     - direct_syscall.cprisk_direct_syscall0
     - direct_syscall.cprisk_direct_syscall6
+    # Delegated to Pass13 VMProtector full tier.
+    - RiskDetectionEngine.collectAndAugmentSignals
+    - RiskDetectionEngine.scoreAndForceDecision
+    - RiskDetectionEngine.treeCommitVerdict
+    - DecisionTree.decide
+    - ChallengeSession.markSubmitted
+    - TrustChainManager.deriveSessionKey
+    - TrustChainManager.buildKeyResolver
     - RiskDetectorApp.App
     - CloudPhoneRiskKitTests
 

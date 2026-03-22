@@ -11,11 +11,13 @@ enum CFFDispatcherStyle: String, CaseIterable, Codable, Sendable {
     case switchLoop
     case ifElseChain
     case dualRail
+    case splitIndirect
 }
 
 enum CFFStateCodecStyle: String, CaseIterable, Codable, Sendable {
     case xorRotate
     case addRotateXor
+    case affine
 }
 
 enum CFFBuildFlavor: String, Codable, Sendable {

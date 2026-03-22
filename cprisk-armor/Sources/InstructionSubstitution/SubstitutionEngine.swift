@@ -7,6 +7,12 @@ public enum InstructionSubstitutionGroup: String, CaseIterable, Hashable {
     case groupC
     case groupD
     case groupE
+    case groupF
+    case groupG
+    case groupH
+    case groupI
+    case groupJ
+    case groupK
 
     var summaryLabel: String {
         switch self {
@@ -15,6 +21,12 @@ public enum InstructionSubstitutionGroup: String, CaseIterable, Hashable {
         case .groupC: return "Group C"
         case .groupD: return "Group D"
         case .groupE: return "Group E"
+        case .groupF: return "Group F"
+        case .groupG: return "Group G"
+        case .groupH: return "Group H"
+        case .groupI: return "Group I"
+        case .groupJ: return "Group J"
+        case .groupK: return "Group K"
         }
     }
 
@@ -29,7 +41,19 @@ public enum InstructionSubstitutionGroup: String, CaseIterable, Hashable {
         case .groupD:
             return "NOP / XZR no-effect"
         case .groupE:
-            return "MOVZ / ORR logical immediate"
+            return "MOVZ / ORR logical immediate (const-unfold)"
+        case .groupF:
+            return "CSEL/CSINC compare-select patterns"
+        case .groupG:
+            return "CBZ/CBNZ/B.cond compare-and-branch"
+        case .groupH:
+            return "ADD/SUB/EOR/BIC shifted register"
+        case .groupI:
+            return "MADD/MSUB/MUL multiply-accumulate"
+        case .groupJ:
+            return "LDR literal / ADRP+ADD"
+        case .groupK:
+            return "8-byte branch veneers (SUBS + B.cond)"
         }
     }
 }
@@ -56,15 +80,66 @@ public struct AppliedInstructionSubstitution: Equatable {
     }
 }
 
+public struct AppliedOpaquePredicateInjection: Equatable {
+    public let fileOffset: UInt64
+    public let originalRawValue: UInt32
+    public let replacementRawValue: UInt32
+    public let description: String
+
+    public init(
+        fileOffset: UInt64,
+        originalRawValue: UInt32,
+        replacementRawValue: UInt32,
+        description: String
+    ) {
+        self.fileOffset = fileOffset
+        self.originalRawValue = originalRawValue
+        self.replacementRawValue = replacementRawValue
+        self.description = description
+    }
+}
+
+public struct AppliedDeadCodeIsland: Equatable {
+    public let branchFileOffset: UInt64
+    public let deadInstructionFileOffset: UInt64
+    public let originalBranchRawValue: UInt32
+    public let originalDeadRawValue: UInt32
+    public let replacementBranchRawValue: UInt32
+    public let replacementDeadRawValue: UInt32
+    public let description: String
+
+    public init(
+        branchFileOffset: UInt64,
+        deadInstructionFileOffset: UInt64,
+        originalBranchRawValue: UInt32,
+        originalDeadRawValue: UInt32,
+        replacementBranchRawValue: UInt32,
+        replacementDeadRawValue: UInt32,
+        description: String
+    ) {
+        self.branchFileOffset = branchFileOffset
+        self.deadInstructionFileOffset = deadInstructionFileOffset
+        self.originalBranchRawValue = originalBranchRawValue
+        self.originalDeadRawValue = originalDeadRawValue
+        self.replacementBranchRawValue = replacementBranchRawValue
+        self.replacementDeadRawValue = replacementDeadRawValue
+        self.description = description
+    }
+}
+
 public struct SubstitutionEngineReport {
     public let scannedInstructionCount: Int
     public let eligibleCandidateCount: Int
     public let appliedCount: Int
     public let bytesModified: Int
     public let replacementRate: Double
+    public let opaquePredicateRate: Double
+    public let deadCodeIslandRate: Double
     public let skippedDataInCodeRangeCount: Int
     public let appliedGroupCounts: [InstructionSubstitutionGroup: Int]
     public let appliedSubstitutions: [AppliedInstructionSubstitution]
+    public let injectedOpaquePredicates: [AppliedOpaquePredicateInjection]
+    public let injectedDeadCodeIslands: [AppliedDeadCodeIsland]
 
     public init(
         scannedInstructionCount: Int,
@@ -72,28 +147,45 @@ public struct SubstitutionEngineReport {
         appliedCount: Int,
         bytesModified: Int,
         replacementRate: Double,
+        opaquePredicateRate: Double,
+        deadCodeIslandRate: Double,
         skippedDataInCodeRangeCount: Int,
         appliedGroupCounts: [InstructionSubstitutionGroup: Int],
-        appliedSubstitutions: [AppliedInstructionSubstitution]
+        appliedSubstitutions: [AppliedInstructionSubstitution],
+        injectedOpaquePredicates: [AppliedOpaquePredicateInjection],
+        injectedDeadCodeIslands: [AppliedDeadCodeIsland]
     ) {
         self.scannedInstructionCount = scannedInstructionCount
         self.eligibleCandidateCount = eligibleCandidateCount
         self.appliedCount = appliedCount
         self.bytesModified = bytesModified
         self.replacementRate = replacementRate
+        self.opaquePredicateRate = opaquePredicateRate
+        self.deadCodeIslandRate = deadCodeIslandRate
         self.skippedDataInCodeRangeCount = skippedDataInCodeRangeCount
         self.appliedGroupCounts = appliedGroupCounts
         self.appliedSubstitutions = appliedSubstitutions
+        self.injectedOpaquePredicates = injectedOpaquePredicates
+        self.injectedDeadCodeIslands = injectedDeadCodeIslands
     }
 }
 
 public final class SubstitutionEngine {
     public struct Configuration {
         public let replacementRate: Double
+        public let opaquePredicateRate: Double
+        public let deadCodeIslandRate: Double
         public let seed: UInt64
 
-        public init(replacementRate: Double = 0.40, seed: UInt64) {
+        public init(
+            replacementRate: Double = 0.40,
+            opaquePredicateRate: Double = 0.15,
+            deadCodeIslandRate: Double = 0.08,
+            seed: UInt64
+        ) {
             self.replacementRate = min(max(replacementRate, 0), 1)
+            self.opaquePredicateRate = min(max(opaquePredicateRate, 0), 1)
+            self.deadCodeIslandRate = min(max(deadCodeIslandRate, 0), 1)
             self.seed = seed == 0 ? 1 : seed
         }
     }
@@ -128,22 +220,49 @@ public final class SubstitutionEngine {
                 appliedCount: 0,
                 bytesModified: 0,
                 replacementRate: configuration.replacementRate,
+                opaquePredicateRate: configuration.opaquePredicateRate,
+                deadCodeIslandRate: configuration.deadCodeIslandRate,
                 skippedDataInCodeRangeCount: 0,
                 appliedGroupCounts: [:],
-                appliedSubstitutions: []
+                appliedSubstitutions: [],
+                injectedOpaquePredicates: [],
+                injectedDeadCodeIslands: []
             )
         }
 
-        let textContent = try textSection.readContent(from: file.data)
+        var textContent = try textSection.readContent(from: file.data)
         let scanBytes = textContent.count - (textContent.count % 4)
         let dataInCodeRanges = loadDataInCodeRanges(from: file, textSection: textSection)
-        var candidates = [Candidate]()
-        candidates.reserveCapacity(scanBytes / 8)
-
         guard textSection.offset <= UInt64(Int.max) else {
             throw MachOError.invalidData("Text section offset \(textSection.offset) exceeds addressable range")
         }
         let textBaseFileOffset = Int(textSection.offset)
+
+        var rng = SplitMix64(seed: configuration.seed)
+        var veneerSubstitutions = [AppliedInstructionSubstitution]()
+        var veneerBytes = 0
+        var veneerMutated = Set<UInt64>()
+        let veneerOutcome = try applyCompareBranchVeneers(
+            to: file,
+            textBaseFileOffset: textBaseFileOffset,
+            scanBytes: scanBytes,
+            dataInCodeRanges: dataInCodeRanges,
+            configuration: configuration,
+            rng: &rng
+        )
+        veneerSubstitutions = veneerOutcome.substitutions
+        veneerBytes = veneerOutcome.bytesModified
+        veneerMutated = veneerOutcome.mutatedOffsets
+        if veneerBytes > 0 {
+            textContent = try textSection.readContent(from: file.data)
+        }
+
+        var candidates = [Candidate]()
+        var noEffectCandidates = [NoEffectCandidate]()
+        candidates.reserveCapacity(scanBytes / 8)
+        noEffectCandidates.reserveCapacity(scanBytes / 12)
+
+        let textEndFileOffset = textBaseFileOffset + scanBytes
         for byteOffset in stride(from: 0, to: scanBytes, by: 4) {
             let fileOffset = textBaseFileOffset + byteOffset
             if isMarkedAsData(fileOffset: fileOffset, ranges: dataInCodeRanges) {
@@ -160,6 +279,13 @@ public final class SubstitutionEngine {
                 continue
             }
 
+            if case .noEffect = decoded.kind {
+                noEffectCandidates.append(NoEffectCandidate(
+                    fileOffset: UInt64(fileOffset),
+                    originalRawValue: rawValue
+                ))
+            }
+
             candidates.append(Candidate(
                 fileOffset: UInt64(fileOffset),
                 originalRawValue: rawValue,
@@ -173,34 +299,39 @@ public final class SubstitutionEngine {
             candidateCount: candidates.count,
             replacementRate: configuration.replacementRate
         )
-        guard targetCount > 0 else {
-            return SubstitutionEngineReport(
-                scannedInstructionCount: scanBytes / 4,
-                eligibleCandidateCount: candidates.count,
-                appliedCount: 0,
-                bytesModified: 0,
-                replacementRate: configuration.replacementRate,
-                skippedDataInCodeRangeCount: dataInCodeRanges.count,
-                appliedGroupCounts: [:],
-                appliedSubstitutions: []
-            )
+
+        let selected: [Candidate]
+        if targetCount > 0 {
+            candidates.shuffle(using: &rng)
+            selected = Array(candidates.prefix(targetCount)).sorted { lhs, rhs in
+                lhs.fileOffset < rhs.fileOffset
+            }
+        } else {
+            selected = []
         }
 
-        var rng = SplitMix64(seed: configuration.seed)
-        candidates.shuffle(using: &rng)
-
-        let selected = Array(candidates.prefix(targetCount)).sorted { lhs, rhs in
-            lhs.fileOffset < rhs.fileOffset
-        }
+        let selectedForMain = selected.filter { !veneerMutated.contains($0.fileOffset) }
 
         var appliedGroupCounts = [InstructionSubstitutionGroup: Int]()
-        var appliedSubstitutions = [AppliedInstructionSubstitution]()
-        appliedSubstitutions.reserveCapacity(selected.count)
+        if !veneerSubstitutions.isEmpty {
+            appliedGroupCounts[.groupK] = veneerSubstitutions.count
+        }
+        var appliedSubstitutions = veneerSubstitutions
+        appliedSubstitutions.reserveCapacity(veneerSubstitutions.count + selectedForMain.count)
+        var injectedOpaquePredicates = [AppliedOpaquePredicateInjection]()
+        var injectedDeadCodeIslands = [AppliedDeadCodeIsland]()
+        var mutatedOffsets = veneerMutated
+        mutatedOffsets.reserveCapacity(veneerMutated.count + selectedForMain.count * 3)
+        var bytesModified = veneerBytes
 
-        for candidate in selected {
+        for candidate in selectedForMain {
             let optionIndex = Int(rng.next() % UInt64(candidate.replacementOptions.count))
             let chosen = candidate.replacementOptions[optionIndex]
-            try file.replaceBytes(at: candidate.fileOffset, with: ARM64Codec.data(for: chosen.rawValue))
+            if chosen.rawValue != candidate.originalRawValue {
+                try file.replaceBytes(at: candidate.fileOffset, with: ARM64Codec.data(for: chosen.rawValue))
+                bytesModified += 4
+            }
+            mutatedOffsets.insert(candidate.fileOffset)
 
             appliedGroupCounts[candidate.group, default: 0] += 1
             appliedSubstitutions.append(AppliedInstructionSubstitution(
@@ -212,15 +343,123 @@ public final class SubstitutionEngine {
             ))
         }
 
+        // Dead-code islands: [CBZ XZR, +8] [dead op]. Branch always skips dead op.
+        let remainingNoEffect = noEffectCandidates
+            .filter { !mutatedOffsets.contains($0.fileOffset) }
+            .sorted { $0.fileOffset < $1.fileOffset }
+        var islandCandidates = [DeadCodeIslandCandidate]()
+        islandCandidates.reserveCapacity(remainingNoEffect.count / 2)
+
+        if remainingNoEffect.count >= 2 {
+            for index in 0..<(remainingNoEffect.count - 1) {
+                let branchSlot = remainingNoEffect[index]
+                let deadSlot = remainingNoEffect[index + 1]
+                guard deadSlot.fileOffset == branchSlot.fileOffset + 4 else { continue }
+                let branchTarget = Int(branchSlot.fileOffset) + 8
+                guard branchTarget < textEndFileOffset else { continue }
+                guard !isMarkedAsData(fileOffset: branchTarget, ranges: dataInCodeRanges) else { continue }
+                islandCandidates.append(DeadCodeIslandCandidate(branchSlot: branchSlot, deadSlot: deadSlot))
+            }
+        }
+
+        let islandTarget = desiredReplacementCount(
+            candidateCount: islandCandidates.count,
+            replacementRate: configuration.deadCodeIslandRate
+        )
+        if islandTarget > 0 {
+            islandCandidates.shuffle(using: &rng)
+            var usedIslandOffsets = Set<UInt64>()
+            let branchReplacement = encodeCompareAndBranchZero(
+                branchIfZero: true,
+                immediateWords: 2
+            )
+
+            for candidate in islandCandidates {
+                guard injectedDeadCodeIslands.count < islandTarget else { break }
+                let branchOffset = candidate.branchSlot.fileOffset
+                let deadOffset = candidate.deadSlot.fileOffset
+                guard !mutatedOffsets.contains(branchOffset),
+                      !mutatedOffsets.contains(deadOffset),
+                      !usedIslandOffsets.contains(branchOffset),
+                      !usedIslandOffsets.contains(deadOffset) else {
+                    continue
+                }
+
+                let deadReplacement = chooseDeadInstructionRawValue(
+                    avoiding: candidate.deadSlot.originalRawValue,
+                    using: &rng
+                )
+
+                if branchReplacement != candidate.branchSlot.originalRawValue {
+                    try file.replaceBytes(at: branchOffset, with: ARM64Codec.data(for: branchReplacement))
+                    bytesModified += 4
+                }
+                if deadReplacement != candidate.deadSlot.originalRawValue {
+                    try file.replaceBytes(at: deadOffset, with: ARM64Codec.data(for: deadReplacement))
+                    bytesModified += 4
+                }
+
+                mutatedOffsets.insert(branchOffset)
+                mutatedOffsets.insert(deadOffset)
+                usedIslandOffsets.insert(branchOffset)
+                usedIslandOffsets.insert(deadOffset)
+                injectedDeadCodeIslands.append(AppliedDeadCodeIsland(
+                    branchFileOffset: branchOffset,
+                    deadInstructionFileOffset: deadOffset,
+                    originalBranchRawValue: candidate.branchSlot.originalRawValue,
+                    originalDeadRawValue: candidate.deadSlot.originalRawValue,
+                    replacementBranchRawValue: branchReplacement,
+                    replacementDeadRawValue: deadReplacement,
+                    description: "CBZ XZR, +8 island gate + unreachable dead op"
+                ))
+            }
+        }
+
+        // Opaque predicate injection: CBNZ XZR, +4 (branch target equals fallthrough).
+        let opaqueEligible = noEffectCandidates
+            .filter { !mutatedOffsets.contains($0.fileOffset) }
+        let opaqueTarget = desiredReplacementCount(
+            candidateCount: opaqueEligible.count,
+            replacementRate: configuration.opaquePredicateRate
+        )
+        if opaqueTarget > 0 {
+            var shuffledOpaque = opaqueEligible
+            shuffledOpaque.shuffle(using: &rng)
+            let opaqueReplacement = encodeCompareAndBranchZero(
+                branchIfZero: false,
+                immediateWords: 1
+            )
+
+            for candidate in shuffledOpaque.prefix(opaqueTarget) {
+                if opaqueReplacement != candidate.originalRawValue {
+                    try file.replaceBytes(at: candidate.fileOffset, with: ARM64Codec.data(for: opaqueReplacement))
+                    bytesModified += 4
+                }
+                mutatedOffsets.insert(candidate.fileOffset)
+                injectedOpaquePredicates.append(AppliedOpaquePredicateInjection(
+                    fileOffset: candidate.fileOffset,
+                    originalRawValue: candidate.originalRawValue,
+                    replacementRawValue: opaqueReplacement,
+                    description: "CBNZ XZR, +4 opaque predicate (same-target edge)"
+                ))
+            }
+        }
+
         return SubstitutionEngineReport(
             scannedInstructionCount: scanBytes / 4,
             eligibleCandidateCount: candidates.count,
-            appliedCount: appliedSubstitutions.count,
-            bytesModified: appliedSubstitutions.count * 4,
+            appliedCount: appliedSubstitutions.count
+                + injectedOpaquePredicates.count
+                + injectedDeadCodeIslands.count,
+            bytesModified: bytesModified,
             replacementRate: configuration.replacementRate,
+            opaquePredicateRate: configuration.opaquePredicateRate,
+            deadCodeIslandRate: configuration.deadCodeIslandRate,
             skippedDataInCodeRangeCount: dataInCodeRanges.count,
             appliedGroupCounts: appliedGroupCounts,
-            appliedSubstitutions: appliedSubstitutions
+            appliedSubstitutions: appliedSubstitutions,
+            injectedOpaquePredicates: injectedOpaquePredicates,
+            injectedDeadCodeIslands: injectedDeadCodeIslands
         )
     }
 
@@ -259,6 +498,18 @@ public final class SubstitutionEngine {
                         width: copy.width
                     ),
                     description: ARM64RegisterCopyForm.orrSelf.description
+                ),
+                ReplacementOption(
+                    rawValue: ARM64Codec.encodeLogicalShiftedRegister(
+                        destination: copy.destinationRegister,
+                        source1: copy.sourceRegister,
+                        source2: ARM64RegisterWidth.zeroRegisterIndex,
+                        shiftType: 0,
+                        shiftAmount: 0,
+                        opc: 2,
+                        width: copy.width
+                    ),
+                    description: "EOR with XZR (arith-equivalent copy)"
                 ),
             ]
 
@@ -327,6 +578,18 @@ public final class SubstitutionEngine {
                     ),
                     description: ARM64NoEffectForm.discardViaOrrSelf.description
                 ),
+                ReplacementOption(
+                    rawValue: ARM64Codec.encodeLogicalShiftedRegister(
+                        destination: ARM64RegisterWidth.zeroRegisterIndex,
+                        source1: source,
+                        source2: ARM64RegisterWidth.zeroRegisterIndex,
+                        shiftType: 0,
+                        shiftAmount: 0,
+                        opc: 2,
+                        width: width
+                    ),
+                    description: "discard via EOR with XZR"
+                ),
             ])
 
             options = orderedUniqueOptions(excluding: decoded.rawValue, options: candidates)
@@ -345,18 +608,160 @@ public final class SubstitutionEngine {
                 description: ARM64ImmediateLoadForm.movzZeroShift.description
             )]
 
-            if let orrRawValue = ARM64Codec.encodeORRLogicalImmediate(
+            let orrVariants = ARM64Codec.encodeORRLogicalImmediateVariants(
                 destinationRegister: load.destinationRegister,
                 immediate: load.immediate,
                 width: load.width
-            ) {
+            )
+            if !orrVariants.isEmpty {
+                for (idx, variantRawValue) in orrVariants.enumerated() {
+                    candidates.append(ReplacementOption(
+                        rawValue: variantRawValue,
+                        description: idx == 0
+                            ? ARM64ImmediateLoadForm
+                                .orrLogicalImmediate(ARM64BitmaskImmediateEncoding(n: 0, immr: 0, imms: 0))
+                                .description
+                            : "ORR logical immediate alt#\(idx + 1)"
+                    ))
+                }
+            }
+
+            options = orderedUniqueOptions(excluding: decoded.rawValue, options: candidates)
+
+        case .conditionalBranch:
+            // CSEL/CSINC patterns are flag/data-flow sensitive; CBZ/CBNZ are classified as `compareBranch`.
+            options = []
+
+        case .compareBranch:
+            // CBZ/CBNZ/B.cond single-word polymorphism is unsafe without context; 8-byte SUBS + B.cond veneers
+            // are applied separately in `applyCompareBranchVeneers` (Group K).
+            options = []
+
+        case .logicalShifted(let ls):
+            var candidates = [ReplacementOption]()
+
+            let isEquivalentCopyCandidate =
+                ls.sourceRegister2 == ARM64RegisterWidth.zeroRegisterIndex
+                && ls.shiftType == 0
+                && ls.shiftAmount == 0
+
+            if isEquivalentCopyCandidate {
+                candidates.append(contentsOf: [
+                    ReplacementOption(
+                        rawValue: ARM64Codec.encodeAddShiftedRegister(
+                            destination: ls.destinationRegister,
+                            source1: ls.sourceRegister1,
+                            source2: ls.sourceRegister2,
+                            shiftType: ls.shiftType,
+                            shiftAmount: ls.shiftAmount,
+                            width: ls.width
+                        ),
+                        description: "ADD shifted zero (arith-equivalent)"
+                    ),
+                    ReplacementOption(
+                        rawValue: ARM64Codec.encodeSubShiftedRegister(
+                            destination: ls.destinationRegister,
+                            source1: ls.sourceRegister1,
+                            source2: ls.sourceRegister2,
+                            shiftType: ls.shiftType,
+                            shiftAmount: ls.shiftAmount,
+                            width: ls.width
+                        ),
+                        description: "SUB shifted zero (arith-equivalent)"
+                    ),
+                    ReplacementOption(
+                        rawValue: ARM64Codec.encodeLogicalShiftedRegister(
+                            destination: ls.destinationRegister,
+                            source1: ls.sourceRegister1,
+                            source2: ls.sourceRegister2,
+                            shiftType: ls.shiftType,
+                            shiftAmount: ls.shiftAmount,
+                            opc: 2,
+                            width: ls.width
+                        ),
+                        description: "EOR shifted zero (arith-equivalent)"
+                    ),
+                    ReplacementOption(
+                        rawValue: ARM64Codec.encodeLogicalShiftedRegister(
+                            destination: ls.destinationRegister,
+                            source1: ls.sourceRegister1,
+                            source2: ls.sourceRegister2,
+                            shiftType: ls.shiftType,
+                            shiftAmount: ls.shiftAmount,
+                            opc: 3,
+                            width: ls.width
+                        ),
+                        description: "BIC shifted zero (arith-equivalent)"
+                    ),
+                ])
+            }
+
+            options = orderedUniqueOptions(excluding: decoded.rawValue, options: candidates)
+
+        case .multiplyAccumulate(let ma):
+            var candidates = [ReplacementOption]()
+
+            switch ma.form {
+            case .madd:
+                if ma.accumulator == ARM64RegisterWidth.zeroRegisterIndex {
+                    candidates.append(ReplacementOption(
+                        rawValue: ARM64Codec.encodeMSUB(
+                            destination: ma.destinationRegister,
+                            multiplicand: ma.multiplicand,
+                            multiplier: ma.multiplier,
+                            accumulator: ma.accumulator
+                        ),
+                        description: "MSUB with XZR acc (arith-equivalent MUL)"
+                    ))
+                    candidates.append(ReplacementOption(
+                        rawValue: ARM64Codec.encodeMADD(
+                            destination: ma.destinationRegister,
+                            multiplicand: ma.multiplicand,
+                            multiplier: ma.multiplier,
+                            accumulator: ARM64RegisterWidth.zeroRegisterIndex
+                        ),
+                        description: ARM64MultiplyAccumulateForm.mul.description
+                    ))
+                }
+            case .msub:
+                if ma.accumulator == ARM64RegisterWidth.zeroRegisterIndex {
+                    candidates.append(ReplacementOption(
+                        rawValue: ARM64Codec.encodeMADD(
+                            destination: ma.destinationRegister,
+                            multiplicand: ma.multiplicand,
+                            multiplier: ma.multiplier,
+                            accumulator: ma.accumulator
+                        ),
+                        description: "MADD with XZR acc (arith-equivalent MUL)"
+                    ))
+                }
+            case .mul:
+                // MUL -> MADD with XZR accumulator
                 candidates.append(ReplacementOption(
-                    rawValue: orrRawValue,
-                    description: ARM64ImmediateLoadForm
-                        .orrLogicalImmediate(ARM64BitmaskImmediateEncoding(n: 0, immr: 0, imms: 0))
-                        .description
+                    rawValue: ARM64Codec.encodeMADD(
+                        destination: ma.destinationRegister,
+                        multiplicand: ma.multiplicand,
+                        multiplier: ma.multiplier,
+                        accumulator: ARM64RegisterWidth.zeroRegisterIndex
+                    ),
+                    description: ARM64MultiplyAccumulateForm.madd.description
                 ))
             }
+
+            options = orderedUniqueOptions(excluding: decoded.rawValue, options: candidates)
+
+        case .loadLiteral(let ll):
+            var candidates = [ReplacementOption]()
+
+            // LDR literal can be kept but represented differently
+            candidates.append(ReplacementOption(
+                rawValue: ARM64Codec.encodeLoadLiteral(
+                    destinationRegister: ll.destinationRegister,
+                    immediate: ll.immediate,
+                    width: ll.width
+                ),
+                description: ARM64LoadLiteralForm.ldrLiteral.description
+            ))
 
             options = orderedUniqueOptions(excluding: decoded.rawValue, options: candidates)
         }
@@ -372,6 +777,16 @@ public final class SubstitutionEngine {
             return noEffect.form.description
         case .immediateLoad(let load):
             return load.form.description
+        case .conditionalBranch(let cb):
+            return cb.form.description
+        case .compareBranch(let cb):
+            return cb.form.description
+        case .logicalShifted(let ls):
+            return ls.form.description
+        case .multiplyAccumulate(let ma):
+            return ma.form.description
+        case .loadLiteral(let ll):
+            return ll.form.description
         }
     }
 
@@ -390,6 +805,16 @@ public final class SubstitutionEngine {
             return .groupD
         case .immediateLoad:
             return .groupE
+        case .conditionalBranch:
+            return .groupF
+        case .compareBranch:
+            return .groupG
+        case .logicalShifted:
+            return .groupH
+        case .multiplyAccumulate:
+            return .groupI
+        case .loadLiteral:
+            return .groupJ
         }
     }
 
@@ -415,6 +840,144 @@ public final class SubstitutionEngine {
 
         let scaled = Int(Double(candidateCount) * replacementRate)
         return min(candidateCount, max(1, scaled))
+    }
+
+    /// 8-byte template: `SUBS XZR/WZR, Rt, Rt` + `B.EQ/B.NE +4` replaces `CBZ/CBNZ, +8` + `NOP` + `NOP`
+    /// with identical control-flow semantics (flags from SUBS match the zero / non-zero test).
+    private func applyCompareBranchVeneers(
+        to file: MachOFile,
+        textBaseFileOffset: Int,
+        scanBytes: Int,
+        dataInCodeRanges: [DataInCodeRange],
+        configuration: Configuration,
+        rng: inout SplitMix64
+    ) throws -> (substitutions: [AppliedInstructionSubstitution], bytesModified: Int, mutatedOffsets: Set<UInt64>) {
+        var pool = [UInt64]()
+        let textEnd = textBaseFileOffset + scanBytes
+        for byteOffset in stride(from: 0, to: scanBytes - 8, by: 4) {
+            let i0 = textBaseFileOffset + byteOffset
+            let i1 = i0 + 4
+            let i2 = i0 + 8
+            if i2 >= textEnd { continue }
+            if isMarkedAsData(fileOffset: i0, ranges: dataInCodeRanges) { continue }
+            if isMarkedAsData(fileOffset: i1, ranges: dataInCodeRanges) { continue }
+            if isMarkedAsData(fileOffset: i2, ranges: dataInCodeRanges) { continue }
+
+            guard let head = try? file.data.readUInt32LE(at: i0),
+                  let tail = try? file.data.readUInt32LE(at: i1),
+                  let tail2 = try? file.data.readUInt32LE(at: i2) else { continue }
+
+            guard let decoded = ARM64Codec.decode(head),
+                  case .compareBranch(let cb) = decoded.kind else { continue }
+            guard cb.immediate == 8 else { continue }
+            guard tail == ARM64Codec.nopRawValue, tail2 == ARM64Codec.nopRawValue else { continue }
+
+            switch cb.form {
+            case .cbz, .cbnz:
+                pool.append(UInt64(i0))
+            default:
+                continue
+            }
+        }
+
+        let target = desiredReplacementCount(candidateCount: pool.count, replacementRate: configuration.replacementRate)
+        guard target > 0, !pool.isEmpty else {
+            return ([], 0, [])
+        }
+
+        pool.shuffle(using: &rng)
+        let chosen = Array(pool.prefix(target)).sorted()
+
+        var substitutions = [AppliedInstructionSubstitution]()
+        var mutated = Set<UInt64>()
+        var bytes = 0
+        var occupied = Set<Int>()
+
+        for fileOffsetU in chosen {
+            let i0 = Int(fileOffsetU)
+            let range = stride(from: i0, to: i0 + 8, by: 4)
+            if range.contains(where: { occupied.contains($0) }) {
+                continue
+            }
+
+            guard let head = try? file.data.readUInt32LE(at: i0) else { continue }
+            guard let decoded = ARM64Codec.decode(head),
+                  case .compareBranch(let cb) = decoded.kind else { continue }
+            guard cb.immediate == 8 else { continue }
+
+            let width: ARM64RegisterWidth = ((head >> 31) & 1) == 1 ? .x64 : .w32
+            let cond: UInt32
+            switch cb.form {
+            case .cbz:
+                cond = 0 // EQ / matches CBZ zero test
+            case .cbnz:
+                cond = 1 // NE / matches CBNZ non-zero test
+            default:
+                continue
+            }
+
+            let subs = ARM64Codec.encodeSUBSShiftedRegister(
+                destination: ARM64RegisterWidth.zeroRegisterIndex,
+                source1: cb.register,
+                source2: cb.register,
+                width: width
+            )
+            let bcond = ARM64Codec.encodeBCond(conditionCode: cond, immediateBytes: 4)
+
+            try file.replaceBytes(at: UInt64(i0), with: ARM64Codec.data(for: subs))
+            try file.replaceBytes(at: UInt64(i0 + 4), with: ARM64Codec.data(for: bcond))
+
+            bytes += 8
+            for o in range {
+                occupied.insert(o)
+                mutated.insert(UInt64(o))
+            }
+
+            substitutions.append(AppliedInstructionSubstitution(
+                fileOffset: UInt64(i0),
+                originalRawValue: head,
+                replacementRawValue: subs,
+                group: .groupK,
+                description: "compare-branch + NOP x2 -> SUBS + B.cond veneer (second insn at +0x4)"
+            ))
+        }
+
+        return (substitutions, bytes, mutated)
+    }
+
+    private func encodeCompareAndBranchZero(branchIfZero: Bool, immediateWords: Int) -> UInt32 {
+        let clamped = max(min(immediateWords, 0x3FFFF), 0)
+        let base: UInt32 = branchIfZero ? 0xB400_0000 : 0xB500_0000
+        let imm19 = UInt32(clamped) & 0x7FFFF
+        return base
+            | (imm19 << 5)
+            | ARM64RegisterWidth.zeroRegisterIndex
+    }
+
+    private func chooseDeadInstructionRawValue<R: RandomNumberGenerator>(
+        avoiding originalRawValue: UInt32,
+        using rng: inout R
+    ) -> UInt32 {
+        let options = [
+            ARM64Codec.encodeMoveAlias(
+                destinationRegister: ARM64RegisterWidth.zeroRegisterIndex,
+                sourceRegister: ARM64RegisterWidth.zeroRegisterIndex,
+                width: .x64
+            ),
+            ARM64Codec.encodeAndSelf(
+                destinationRegister: ARM64RegisterWidth.zeroRegisterIndex,
+                sourceRegister: ARM64RegisterWidth.zeroRegisterIndex,
+                width: .x64
+            ),
+            ARM64Codec.encodeNOP(),
+        ]
+        var seen = Set<UInt32>()
+        let uniqueOptions = options.filter { seen.insert($0).inserted }
+        guard !uniqueOptions.isEmpty else { return ARM64Codec.encodeNOP() }
+        let filtered = uniqueOptions.filter { $0 != originalRawValue }
+        let pool = filtered.isEmpty ? uniqueOptions : filtered
+        let index = Int(rng.next() % UInt64(pool.count))
+        return pool[index]
     }
 
     private func loadDataInCodeRanges(from file: MachOFile, textSection: Section) -> [DataInCodeRange] {
@@ -498,6 +1061,16 @@ private struct Candidate {
     let group: InstructionSubstitutionGroup
     let sourceDescription: String
     let replacementOptions: [ReplacementOption]
+}
+
+private struct NoEffectCandidate {
+    let fileOffset: UInt64
+    let originalRawValue: UInt32
+}
+
+private struct DeadCodeIslandCandidate {
+    let branchSlot: NoEffectCandidate
+    let deadSlot: NoEffectCandidate
 }
 
 private struct ReplacementOption {

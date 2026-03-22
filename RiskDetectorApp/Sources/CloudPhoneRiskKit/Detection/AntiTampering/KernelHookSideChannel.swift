@@ -202,7 +202,7 @@ extension KernelHookSideChannel {
         if !timingMethods.isEmpty {
             signals.append(RiskSignal(
                 id: "kernel_hook_timing_anomaly",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: min(Double(timingMethods.count) * 20, 45),
                 evidence: [
                     "detail": timingMethods.joined(separator: ","),
@@ -219,7 +219,7 @@ extension KernelHookSideChannel {
         if !inodeMethods.isEmpty {
             signals.append(RiskSignal(
                 id: "kernel_hook_inode_mismatch",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: 70,
                 evidence: ["detail": inodeMethods.joined(separator: ",")],
                 state: .tampered,
@@ -232,7 +232,7 @@ extension KernelHookSideChannel {
         if !desyncMethods.isEmpty {
             signals.append(RiskSignal(
                 id: "kernel_hook_time_desync",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: 50,
                 evidence: ["detail": desyncMethods.joined(separator: ",")],
                 state: .soft(confidence: 0.7),
@@ -245,7 +245,7 @@ extension KernelHookSideChannel {
         if !entropyMethods.isEmpty {
             signals.append(RiskSignal(
                 id: "kernel_hook_pid_unstable",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: 80,
                 evidence: ["detail": entropyMethods.joined(separator: ",")],
                 state: .tampered,
@@ -258,7 +258,7 @@ extension KernelHookSideChannel {
         if !amplifiedMethods.isEmpty {
             signals.append(RiskSignal(
                 id: "kernel_hook_stalker_amplified",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: 25,
                 evidence: [
                     "detail": amplifiedMethods.joined(separator: ","),

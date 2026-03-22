@@ -13,6 +13,8 @@ public enum SignalCompressor {
 
     /// 映射表版本，服务端需用同一版本解码
     public static let mappingVersion = "1.1"
+    private static let signalTamperingDetectedID = StringDeobfuscator.base64Decode("dGFtcGVyaW5nX2RldGVjdGVk")
+    private static let signalJailbreakDeviceID = "\(ObfuscatedConstants.signalJailbreak)_device"
 
     /// 压缩结果：9 字节固定长度摘要（1.1：byte8 扩展跨层 + 行为熵迁移）
     public struct CompressResult: Sendable {
@@ -75,24 +77,24 @@ public enum SignalCompressor {
         var bits: UInt8 = 0
         let ids = Set(signals.map(\.id))
 
-        if ids.contains("hook_detected") || ids.contains("tampering_detected") { bits |= 0x01 }
+        if ids.contains(ObfuscatedConstants.signalHookDetected) || ids.contains(Self.signalTamperingDetectedID) { bits |= 0x01 }
         if ids.contains("cross_layer_inconsistency") { bits |= 0x02 }
-        if ids.contains("jailbreak") || ids.contains("jailbreak_device") { bits |= 0x04 }
-        if ids.contains("frida_detected")
-            || ids.contains("frida_js_engine_heap")
-            || ids.contains("frida_unix_socket")
-            || ids.contains("frida_module_detected")
-            || ids.contains("frida_module_image")
-            || ids.contains("frida_module_section")
-            || ids.contains("frida_module_string") {
+        if ids.contains(ObfuscatedConstants.signalJailbreak) || ids.contains(Self.signalJailbreakDeviceID) { bits |= 0x04 }
+        if ids.contains(ObfuscatedConstants.signalFridaDetected)
+            || ids.contains(ObfuscatedConstants.signalFridaJSEngineHeap)
+            || ids.contains(ObfuscatedConstants.signalFridaUnixSocket)
+            || ids.contains(ObfuscatedConstants.signalFridaModuleDetected)
+            || ids.contains(ObfuscatedConstants.signalFridaModuleImage)
+            || ids.contains(ObfuscatedConstants.signalFridaModuleSection)
+            || ids.contains(ObfuscatedConstants.signalFridaModuleString) {
             bits |= 0x08
         }
         if ids.contains("plt_integrity_tampered") || ids.contains("text_segment_tampered")
             || ids.contains("text_segment_baseline_rejected_suspicious_env")
             || ids.contains("text_segment_baseline_cleared_suspicious_env") { bits |= 0x10 }
         if ids.contains("sdk_binary_replaced") || ids.contains("sdk_code_signature_missing") { bits |= 0x20 }
-        if ids.contains("dyld_interpose_detected") || ids.contains("libc_inline_hook_detected") { bits |= 0x40 }
-        if ids.contains("multipath_hook_detected") || ids.contains("objc_method_swizzled") || ids.contains("isa_swizzle_detected") { bits |= 0x80 }
+        if ids.contains("dyld_interpose_detected") || ids.contains(ObfuscatedConstants.signalLibcInlineHookDetected) { bits |= 0x40 }
+        if ids.contains(ObfuscatedConstants.signalMultipathHookDetected) || ids.contains("objc_method_swizzled") || ids.contains("isa_swizzle_detected") { bits |= 0x80 }
 
         return bits
     }
@@ -125,7 +127,7 @@ public enum SignalCompressor {
         if ids.contains("blocklist_hit") { bits |= 0x08 }
         if ids.contains("risk_tags") || ids.contains("graph_community_risk") { bits |= 0x10 }
         if ids.contains("graph_hw_profile_cluster") || ids.contains("graph_dense_subgraph") || ids.contains("local_device_cluster") { bits |= 0x20 }
-        if ids.contains("vpn_active") || ids.contains("proxy_enabled") { bits |= 0x40 }
+        if ids.contains(ObfuscatedConstants.requiredSignalVpnActive) || ids.contains("proxy_enabled") { bits |= 0x40 }
         if ids.contains("provider_tamper_attempt") || ids.contains("provider_instance_replaced") { bits |= 0x80 }
 
         return bits
@@ -197,13 +199,13 @@ public struct SignalToBitMapping {
 
     /// Layer2 位定义（8-bit）
     public static let layer2BitNames: [Int: String] = [
-        0: "hook_tampering",
+        0: "\(ObfuscatedConstants.keywordHook)_\(ObfuscatedConstants.keywordTamper)ing",
         1: "cross_layer_inconsistency",
-        2: "jailbreak",
-        3: "frida",
+        2: ObfuscatedConstants.keywordJailbreak,
+        3: ObfuscatedConstants.keywordFrida,
         4: "plt_text_tampered",
         5: "sdk_integrity",
-        6: "dyld_libc_hook",
+        6: "dyld_libc_\(ObfuscatedConstants.keywordHook)",
         7: "multipath_objc_isa",
     ]
 

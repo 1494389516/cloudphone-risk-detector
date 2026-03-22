@@ -123,7 +123,7 @@ public enum CallStackUnwinder {
         guard isMalicious, let id = signalId else { return nil }
         return RiskSignal(
             id: id,
-            category: "anti_tamper",
+            category: ObfuscatedConstants.categoryAntiTamper,
             score: 0,
             evidence: [
                 "detail": "call_stack_return_address_outside_trusted_regions",

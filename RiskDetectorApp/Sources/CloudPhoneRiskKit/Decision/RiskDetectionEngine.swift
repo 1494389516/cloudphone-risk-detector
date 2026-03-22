@@ -515,7 +515,7 @@ public struct RiskDetectionEngine: Sendable {
     private func makeCallStackSignal(id: String) -> RiskSignal {
         RiskSignal(
             id: id,
-            category: "anti_tamper",
+            category: ObfuscatedConstants.categoryAntiTamper,
             score: 0,
             evidence: [
                 "detail": "call_stack_return_address_outside_trusted_regions",
@@ -541,7 +541,7 @@ public struct RiskDetectionEngine: Sendable {
         scoreHint: Double? = nil
     ) -> UInt64 {
         let antiTamperIDs = signals
-            .filter { $0.category == "anti_tamper" || $0.state == .tampered }
+            .filter { $0.category == ObfuscatedConstants.categoryAntiTamper || $0.state == .tampered }
             .map(\.id)
             .sorted()
             .prefix(4)
@@ -567,7 +567,7 @@ public struct RiskDetectionEngine: Sendable {
 
     private func antiTamperingDigest(from signals: [RiskSignal]) -> UInt64 {
         let summary = signals
-            .filter { $0.category == "anti_tamper" || $0.state == .tampered }
+            .filter { $0.category == ObfuscatedConstants.categoryAntiTamper || $0.state == .tampered }
             .sorted { lhs, rhs in
                 if lhs.id == rhs.id {
                     return (lhs.layer ?? -1) < (rhs.layer ?? -1)
@@ -629,7 +629,7 @@ public struct RiskDetectionEngine: Sendable {
     ) -> RiskVerdict {
         let poisonSignal = RiskSignal(
             id: "engine_region_poison",
-            category: "anti_tamper",
+            category: ObfuscatedConstants.categoryAntiTamper,
             score: 0,
             evidence: [
                 "phase": phase,
@@ -666,8 +666,8 @@ public struct RiskDetectionEngine: Sendable {
             let jbScore = context.jailbreak.confidence * 100
             signals.append(
                 RiskSignal(
-                    id: "jailbreak",
-                    category: "jailbreak",
+                    id: ObfuscatedConstants.signalJailbreak,
+                    category: ObfuscatedConstants.categoryJailbreak,
                     score: jbScore,
                     evidence: [
                         "is_jailbroken": "\(context.jailbreak.isJailbroken)",
@@ -683,7 +683,7 @@ public struct RiskDetectionEngine: Sendable {
             if context.network.isVPNActive {
                 signals.append(
                     RiskSignal(
-                        id: "vpn_active",
+                        id: ObfuscatedConstants.requiredSignalVpnActive,
                         category: "network",
                         score: 10,
                         evidence: ["type": "VPN"]
@@ -951,11 +951,11 @@ public struct RiskDetectionEngine: Sendable {
         )
     }
 
-    private static let criticalSignalMinWeights: [String: Double] = [
+    private static var criticalSignalMinWeights: [String: Double] { [
         "vphone_hardware": 50,
         "gpu_virtual": 50,
-        "hook_detected": 40,
-        "jailbreak": 30,
+        ObfuscatedConstants.signalHookDetected: 40,
+        ObfuscatedConstants.signalJailbreak: 30,
         "blocklist_hit": 50,
         "cross_layer_inconsistency": 40,
         "sdk_binary_replaced": 50,
@@ -964,7 +964,7 @@ public struct RiskDetectionEngine: Sendable {
         "frida_js_engine_heap": 30,
         "dyld_interpose_detected": 40,
         "rop_chain_detected": 90,
-    ]
+    ] }
 
     private func signalWeight(
         for signal: RiskSignal,
@@ -1305,7 +1305,7 @@ public struct RiskDetectionEngine: Sendable {
         return [
             RiskSignal(
                 id: "cross_layer_inconsistency",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: 0,
                 evidence: [
                     "reasons": reasons.joined(separator: ","),
@@ -1455,7 +1455,7 @@ private extension RiskDetectionEngine {
         "sensor_entropy": 60,
         "touch_entropy": 50,
         "timing_anomaly": 45,
-        "vpn_active": 30,
+        ObfuscatedConstants.requiredSignalVpnActive: 30,
         "proxy_enabled": 25,
         "datacenter_ip": 55,
         "ip_device_agg": 70,

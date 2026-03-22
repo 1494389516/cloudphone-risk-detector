@@ -10,12 +10,7 @@ final class DynamicFeatureList: @unchecked Sendable {
 
     // MARK: - Suspicious library tokens (used by SDKIntegrityChecker, DyldImageMonitor)
 
-    private static let defaultSuspiciousLibraries: [String] = [
-        "frida", "gadget", "gum", "substrate", "libsubstrate",
-        "substitute", "libsubstitute", "cycript", "libcycript",
-        "libhooker", "ellekit", "sslkill", "tweakinject",
-        "shadow", "dopamine"
-    ]
+    private static var defaultSuspiciousLibraries: [String] { ObfuscatedConstants.suspiciousLibraryTokensForDyld }
 
     private var _additionalLibraries: [String] = []
 
@@ -27,13 +22,16 @@ final class DynamicFeatureList: @unchecked Sendable {
 
     // MARK: - Suspicious file paths (used by FridaSocketDetector)
 
-    private static let defaultSuspiciousPaths: [String] = [
-        "/tmp/frida-",
-        "/tmp/.frida-",
-        "/tmp/linjector",
-        "/private/tmp/frida-",
-        "/private/tmp/.frida-",
-    ]
+    private static var defaultSuspiciousPaths: [String] {
+        let f = ObfuscatedConstants.keywordFrida
+        return [
+            "/tmp/\(f)-",
+            "/tmp/.\(f)-",
+            "/tmp/linjector",
+            "/private/tmp/\(f)-",
+            "/private/tmp/.\(f)-",
+        ]
+    }
 
     private var _additionalPaths: [String] = []
 

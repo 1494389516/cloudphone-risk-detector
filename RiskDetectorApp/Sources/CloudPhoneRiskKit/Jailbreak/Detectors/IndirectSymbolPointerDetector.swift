@@ -24,16 +24,7 @@ struct IndirectSymbolPointerDetector: Detector {
         ("objc_msgSend", 14),
     ]
 
-    let suspiciousImageTokens: [String] = [
-        "frida",
-        "gadget",
-        "substrate",
-        "substitute",
-        "libhooker",
-        "ellekit",
-        "tweak",
-        "hook",
-    ]
+    let suspiciousImageTokens: [String] = ObfuscatedConstants.hookSuspiciousImageTokensCore
 
     func detect() throws -> DetectorResult {
         var score: Double = 0
@@ -154,7 +145,7 @@ struct IndirectSymbolPointerDetector: Detector {
 
                 score += s
                 methods.append("indirect_ptr:\(name)")
-                Logger.log("jailbreak.fishhook.hit: \(name) ptr=0x\(String(target, radix: 16)) (+\(s))")
+                Logger.log("\(ObfuscatedConstants.keywordJailbreak).fis\(ObfuscatedConstants.keywordHook).hit: \(name) ptr=0x\(String(target, radix: 16)) (+\(s))")
             }
         }
 

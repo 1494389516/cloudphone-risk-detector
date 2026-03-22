@@ -26,6 +26,8 @@ _Static_assert(CPRISK_SHA256_DIGEST_LENGTH == CPRISK_ARMOR_HASH_SIZE,
 static uint8_t  s_dec_key[CPRISK_ARMOR_KEY_SIZE];
 static int      s_dec_ready;
 static uint64_t s_str_acc;
+static uint64_t s_dispatch_seed;
+static uint8_t  s_per_string_key[CPRISK_ARMOR_KEY_SIZE];
 
 /* ── internal ──────────────────────────────────────────────────────── */
 
@@ -34,55 +36,289 @@ static inline uint64_t cprisk_rotl64(uint64_t x, int k) {
     return k == 0 ? x : ((x << k) | (x >> (64 - k)));
 }
 
+static inline uint64_t cprisk_fnv_mix_byte(uint64_t hash, uint8_t byte) {
+    hash ^= (uint64_t)byte;
+    hash *= 0x00000100000001B3ULL;
+    return hash;
+}
+
+static uint64_t cprisk_avalanche64(uint64_t value) {
+    uint64_t v = value;
+    v ^= v >> 33;
+    v *= 0xFF51AFD7ED558CCDULL;
+    v ^= v >> 33;
+    v *= 0xC4CEB9FE1A85EC53ULL;
+    v ^= v >> 33;
+    return v == 0 ? 1 : v;
+}
+
+static uint64_t cprisk_derive_dispatch_seed(const uint8_t *key, size_t key_len) {
+    uint64_t hash = 0xCBF29CE484222325ULL;
+    for (size_t i = 0; i < key_len; i++) {
+        hash = cprisk_fnv_mix_byte(hash, key[i]);
+    }
+    return cprisk_avalanche64(hash);
+}
+
+static uint32_t cprisk_select_keystream_variant(uint32_t sid,
+                                                const uint8_t *nonce,
+                                                size_t nonce_len,
+                                                uint64_t dispatch_seed) {
+    uint64_t hash = dispatch_seed == 0 ? 0xCBF29CE484222325ULL : dispatch_seed;
+    hash = cprisk_fnv_mix_byte(hash, (uint8_t)(sid));
+    hash = cprisk_fnv_mix_byte(hash, (uint8_t)(sid >> 8));
+    hash = cprisk_fnv_mix_byte(hash, (uint8_t)(sid >> 16));
+    hash = cprisk_fnv_mix_byte(hash, (uint8_t)(sid >> 24));
+
+    for (size_t i = 0; i < nonce_len; i++) {
+        hash = cprisk_fnv_mix_byte(hash, nonce[i]);
+    }
+
+    return (uint32_t)(cprisk_avalanche64(hash) & 0x3u);
+}
+
 static const struct mach_header_64 *cprisk_own_hdr(void) {
     return cprisk_find_own_header((const void *)cprisk_own_hdr);
 }
 
-static void cprisk_keystream(const uint8_t *key, uint32_t sid,
-                             const uint8_t *nonce, size_t nonce_len,
-                             uint8_t *out, size_t len) {
-    if (nonce_len > CPRISK_ARMOR_NONCE_SIZE)
-        return;
-    /* seed = key[32] || sid_le[4] || nonce[nonce_len] */
+static void cprisk_keystream_path_a(const uint8_t *key, uint32_t sid,
+                                    const uint8_t *nonce, size_t nonce_len,
+                                    uint8_t *out, size_t len) {
+    uint8_t seed[CPRISK_ARMOR_KEY_SIZE + 4 + CPRISK_ARMOR_NONCE_SIZE];
     size_t seed_len = CPRISK_ARMOR_KEY_SIZE + 4 + nonce_len;
-    uint8_t seed_buf[CPRISK_ARMOR_KEY_SIZE + 4 + CPRISK_ARMOR_NONCE_SIZE];
-    uint8_t *seed = seed_buf;
-    uint8_t *seed_alloc = NULL;
-
-    if (seed_len > sizeof(seed_buf)) {
-        seed_alloc = (uint8_t *)malloc(seed_len);
-        if (!seed_alloc) return;
-        seed = seed_alloc;
-    }
-
     memcpy(seed, key, CPRISK_ARMOR_KEY_SIZE);
     seed[32] = (uint8_t)(sid);
     seed[33] = (uint8_t)(sid >> 8);
     seed[34] = (uint8_t)(sid >> 16);
     seed[35] = (uint8_t)(sid >> 24);
-    if (nonce_len > 0)
+    if (nonce_len > 0) {
         memcpy(seed + 36, nonce, nonce_len);
+    }
 
     uint8_t blk[CPRISK_SHA256_DIGEST_LENGTH];
     cprisk_sha256(seed, seed_len, blk);
-    cprisk_secure_zero(seed, seed_len);
-    if (seed_alloc) free(seed_alloc);
 
     size_t off = 0;
     while (off < len) {
         size_t chunk = len - off;
-        if (chunk > CPRISK_SHA256_DIGEST_LENGTH)
+        if (chunk > CPRISK_SHA256_DIGEST_LENGTH) {
             chunk = CPRISK_SHA256_DIGEST_LENGTH;
+        }
         memcpy(out + off, blk, chunk);
         off += chunk;
         if (off < len) {
             uint8_t prev[CPRISK_SHA256_DIGEST_LENGTH];
-            memcpy(prev, blk, CPRISK_SHA256_DIGEST_LENGTH);
-            cprisk_sha256(prev, CPRISK_SHA256_DIGEST_LENGTH, blk);
+            memcpy(prev, blk, sizeof(prev));
+            cprisk_sha256(prev, sizeof(prev), blk);
             cprisk_secure_zero(prev, sizeof(prev));
         }
     }
+
+    cprisk_secure_zero(seed, sizeof(seed));
     cprisk_secure_zero(blk, sizeof(blk));
+}
+
+static void cprisk_keystream_path_b(const uint8_t *key, uint32_t sid,
+                                    const uint8_t *nonce, size_t nonce_len,
+                                    uint8_t *out, size_t len) {
+    uint8_t seed[CPRISK_ARMOR_NONCE_SIZE + 4 + CPRISK_ARMOR_KEY_SIZE];
+    size_t seed_len = nonce_len + 4 + CPRISK_ARMOR_KEY_SIZE;
+    if (nonce_len > 0) {
+        memcpy(seed, nonce, nonce_len);
+    }
+    seed[nonce_len + 0] = (uint8_t)(sid >> 24);
+    seed[nonce_len + 1] = (uint8_t)(sid >> 16);
+    seed[nonce_len + 2] = (uint8_t)(sid >> 8);
+    seed[nonce_len + 3] = (uint8_t)(sid);
+    memcpy(seed + nonce_len + 4, key, CPRISK_ARMOR_KEY_SIZE);
+
+    uint8_t blk[CPRISK_SHA256_DIGEST_LENGTH];
+    cprisk_sha256(seed, seed_len, blk);
+
+    uint32_t counter = 0;
+    size_t off = 0;
+    while (off < len) {
+        size_t chunk = len - off;
+        if (chunk > CPRISK_SHA256_DIGEST_LENGTH) {
+            chunk = CPRISK_SHA256_DIGEST_LENGTH;
+        }
+        memcpy(out + off, blk, chunk);
+        off += chunk;
+        if (off < len) {
+            uint8_t round[CPRISK_SHA256_DIGEST_LENGTH + 4 + CPRISK_ARMOR_NONCE_SIZE];
+            memcpy(round, blk, CPRISK_SHA256_DIGEST_LENGTH);
+            round[32] = (uint8_t)(counter);
+            round[33] = (uint8_t)(counter >> 8);
+            round[34] = (uint8_t)(counter >> 16);
+            round[35] = (uint8_t)(counter >> 24);
+            if (nonce_len > 0) {
+                memcpy(round + 36, nonce, nonce_len);
+            }
+            cprisk_sha256(round, 36 + nonce_len, blk);
+            cprisk_secure_zero(round, sizeof(round));
+            counter++;
+        }
+    }
+
+    cprisk_secure_zero(seed, sizeof(seed));
+    cprisk_secure_zero(blk, sizeof(blk));
+}
+
+static void cprisk_keystream_path_c(const uint8_t *key, uint32_t sid,
+                                    const uint8_t *nonce, size_t nonce_len,
+                                    uint8_t *out, size_t len) {
+    uint8_t seed_msg[4 + CPRISK_ARMOR_NONCE_SIZE + 4];
+    size_t msg_len = 4 + nonce_len + 4;
+    seed_msg[0] = (uint8_t)(sid);
+    seed_msg[1] = (uint8_t)(sid >> 8);
+    seed_msg[2] = (uint8_t)(sid >> 16);
+    seed_msg[3] = (uint8_t)(sid >> 24);
+    if (nonce_len > 0) {
+        memcpy(seed_msg + 4, nonce, nonce_len);
+    }
+    seed_msg[4 + nonce_len + 0] = 0x43;
+    seed_msg[4 + nonce_len + 1] = 0x50;
+    seed_msg[4 + nonce_len + 2] = 0x52;
+    seed_msg[4 + nonce_len + 3] = 0x49;
+
+    uint8_t blk[CPRISK_SHA256_DIGEST_LENGTH];
+    cprisk_hmac_sha256(key, CPRISK_ARMOR_KEY_SIZE, seed_msg, msg_len, blk);
+
+    uint32_t counter = 1;
+    size_t off = 0;
+    while (off < len) {
+        size_t chunk = len - off;
+        if (chunk > CPRISK_SHA256_DIGEST_LENGTH) {
+            chunk = CPRISK_SHA256_DIGEST_LENGTH;
+        }
+        memcpy(out + off, blk, chunk);
+        off += chunk;
+        if (off < len) {
+            uint8_t round[4 + CPRISK_SHA256_DIGEST_LENGTH + 4];
+            round[0] = (uint8_t)(counter >> 24);
+            round[1] = (uint8_t)(counter >> 16);
+            round[2] = (uint8_t)(counter >> 8);
+            round[3] = (uint8_t)(counter);
+            memcpy(round + 4, blk, CPRISK_SHA256_DIGEST_LENGTH);
+            round[36] = (uint8_t)(sid);
+            round[37] = (uint8_t)(sid >> 8);
+            round[38] = (uint8_t)(sid >> 16);
+            round[39] = (uint8_t)(sid >> 24);
+            cprisk_sha256(round, sizeof(round), blk);
+            cprisk_secure_zero(round, sizeof(round));
+            counter++;
+        }
+    }
+
+    cprisk_secure_zero(seed_msg, sizeof(seed_msg));
+    cprisk_secure_zero(blk, sizeof(blk));
+}
+
+static void cprisk_keystream_path_d(const uint8_t *key, uint32_t sid,
+                                    const uint8_t *nonce, size_t nonce_len,
+                                    uint8_t *out, size_t len) {
+    uint8_t seed[CPRISK_ARMOR_KEY_SIZE + 4 + CPRISK_ARMOR_NONCE_SIZE];
+    for (size_t i = 0; i < CPRISK_ARMOR_KEY_SIZE; i++) {
+        seed[i] = key[i] ^ 0x5A;
+    }
+    seed[32] = (uint8_t)(sid);
+    seed[33] = (uint8_t)(sid >> 8);
+    seed[34] = (uint8_t)(sid >> 16);
+    seed[35] = (uint8_t)(sid >> 24);
+    for (size_t i = 0; i < nonce_len; i++) {
+        seed[36 + i] = nonce[nonce_len - 1 - i];
+    }
+
+    uint8_t blk[CPRISK_SHA256_DIGEST_LENGTH];
+    cprisk_sha256(seed, CPRISK_ARMOR_KEY_SIZE + 4 + nonce_len, blk);
+
+    uint32_t counter = 0;
+    size_t off = 0;
+    while (off < len) {
+        size_t chunk = len - off;
+        if (chunk > CPRISK_SHA256_DIGEST_LENGTH) {
+            chunk = CPRISK_SHA256_DIGEST_LENGTH;
+        }
+        memcpy(out + off, blk, chunk);
+        off += chunk;
+        if (off < len) {
+            uint8_t lane = key[counter % CPRISK_ARMOR_KEY_SIZE];
+            uint8_t round[CPRISK_SHA256_DIGEST_LENGTH + 4];
+            for (size_t i = 0; i < CPRISK_SHA256_DIGEST_LENGTH; i++) {
+                round[i] = (uint8_t)(blk[i] ^ lane);
+            }
+            round[32] = (uint8_t)(counter);
+            round[33] = (uint8_t)(counter >> 8);
+            round[34] = (uint8_t)(counter >> 16);
+            round[35] = (uint8_t)(counter >> 24);
+            cprisk_sha256(round, sizeof(round), blk);
+            cprisk_secure_zero(round, sizeof(round));
+            counter++;
+        }
+    }
+
+    cprisk_secure_zero(seed, sizeof(seed));
+    cprisk_secure_zero(blk, sizeof(blk));
+}
+
+static void cprisk_keystream_dispatch_level2(uint32_t variant,
+                                             const uint8_t *key, uint32_t sid,
+                                             const uint8_t *nonce, size_t nonce_len,
+                                             uint8_t *out, size_t len) {
+    switch (variant) {
+    case 0:
+        cprisk_keystream_path_a(key, sid, nonce, nonce_len, out, len);
+        break;
+    case 1:
+        cprisk_keystream_path_b(key, sid, nonce, nonce_len, out, len);
+        break;
+    case 2:
+        cprisk_keystream_path_c(key, sid, nonce, nonce_len, out, len);
+        break;
+    default:
+        cprisk_keystream_path_d(key, sid, nonce, nonce_len, out, len);
+        break;
+    }
+}
+
+static void cprisk_keystream_dispatch_level1(const uint8_t *key, uint32_t sid,
+                                             const uint8_t *nonce, size_t nonce_len,
+                                             uint8_t *out, size_t len,
+                                             uint64_t dispatch_seed) {
+    uint32_t variant = cprisk_select_keystream_variant(sid, nonce, nonce_len, dispatch_seed);
+    if ((variant & 1u) == 0u) {
+        cprisk_keystream_dispatch_level2(variant, key, sid, nonce, nonce_len, out, len);
+    } else {
+        cprisk_keystream_dispatch_level2(variant ^ 0u, key, sid, nonce, nonce_len, out, len);
+    }
+}
+
+static void cprisk_keystream_distributed(const uint8_t *key, uint32_t sid,
+                                         const uint8_t *nonce, size_t nonce_len,
+                                         uint8_t *out, size_t len,
+                                         uint64_t dispatch_seed) {
+    if (!key || !out || nonce_len > CPRISK_ARMOR_NONCE_SIZE || len == 0) {
+        return;
+    }
+    cprisk_keystream_dispatch_level1(key, sid, nonce, nonce_len, out, len, dispatch_seed);
+}
+
+/* ── per-string key derivation ─────────────────────────────────────── */
+
+static void cprisk_derive_per_string_key(
+    uint32_t string_id,
+    const uint8_t *nonce
+) {
+    uint8_t material[4 + CPRISK_ARMOR_NONCE_SIZE];
+    material[0] = (uint8_t)(string_id);
+    material[1] = (uint8_t)(string_id >> 8);
+    material[2] = (uint8_t)(string_id >> 16);
+    material[3] = (uint8_t)(string_id >> 24);
+    memcpy(material + 4, nonce, CPRISK_ARMOR_NONCE_SIZE);
+
+    cprisk_hmac_sha256(s_dec_key, CPRISK_ARMOR_KEY_SIZE,
+                       material, sizeof(material), s_per_string_key);
+    cprisk_secure_zero(material, sizeof(material));
 }
 
 /* ── public API ────────────────────────────────────────────────────── */
@@ -91,6 +327,7 @@ int cprisk_init_string_decryptor(const uint8_t *key, size_t key_len) {
     if (!key || key_len != CPRISK_ARMOR_KEY_SIZE)
         return -1;
     memcpy(s_dec_key, key, CPRISK_ARMOR_KEY_SIZE);
+    s_dispatch_seed = cprisk_derive_dispatch_seed(key, key_len);
     s_dec_ready = 1;
     s_str_acc = 0;
     return 0;
@@ -184,8 +421,10 @@ int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) 
     if (!ks)
         return -1;
     memset(ks, 0, dlen);
-    cprisk_keystream(s_dec_key, string_id,
-                     ent->nonce, CPRISK_ARMOR_NONCE_SIZE, ks, dlen);
+    cprisk_derive_per_string_key(string_id, ent->nonce);
+    cprisk_keystream_distributed(s_per_string_key, string_id,
+                                 ent->nonce, CPRISK_ARMOR_NONCE_SIZE, ks, dlen,
+                                 s_dispatch_seed);
 
     for (uint32_t i = 0; i < dlen; i++)
         buffer[i] = (char)(enc[i] ^ ks[i]);
@@ -222,6 +461,24 @@ uint64_t cprisk_get_string_integrity_accumulator(void) {
 
 void cprisk_cleanup_string_decryptor(void) {
     cprisk_secure_zero(s_dec_key, sizeof(s_dec_key));
+    cprisk_secure_zero(s_per_string_key, sizeof(s_per_string_key));
     s_dec_ready = 0;
     s_str_acc = 0;
+    s_dispatch_seed = 0;
+}
+
+uint32_t cprisk_test_select_string_decrypt_path(
+    uint32_t string_id,
+    const uint8_t nonce[CPRISK_ARMOR_NONCE_SIZE],
+    uint64_t seed
+) {
+    if (!nonce) {
+        return 0;
+    }
+    return cprisk_select_keystream_variant(
+        string_id,
+        nonce,
+        CPRISK_ARMOR_NONCE_SIZE,
+        seed
+    );
 }

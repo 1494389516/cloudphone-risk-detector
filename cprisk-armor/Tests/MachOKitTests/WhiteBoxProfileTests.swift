@@ -37,7 +37,9 @@ final class WhiteBoxProfileTests: XCTestCase {
                        ArmorABI.WhiteBox.Domain.allCases.count * ArmorABI.WhiteBox.Descriptor.serializedSize)
         XCTAssertEqual(bundle.whiteboxTag.count, ArmorABI.hashSize)
 
-        let expectedFlags = ArmorABI.WhiteBox.engineReadyFlag | ArmorABI.WhiteBox.signingPipelineFlag
+        let expectedFlags = ArmorABI.WhiteBox.engineReadyFlag
+            | ArmorABI.WhiteBox.signingPipelineFlag
+            | ArmorABI.WhiteBox.enhancedDiffusionFlag
         XCTAssertEqual(bundle.metadata.flags, expectedFlags)
         XCTAssertEqual(bundle.metadata.payloadSize,
                        UInt32(bundle.whiteboxCode.count + bundle.whiteboxData.count),
@@ -64,5 +66,44 @@ final class WhiteBoxProfileTests: XCTestCase {
             XCTAssertEqual(Int(record.descriptor.tableLength), 4 * 32 * 256)
             expectedOffset += 4 * 32 * 256
         }
+    }
+
+    func testWhiteBoxBundleEnablesEnhancedDiffusionFlag() {
+        let bundle = ArmorWhiteBox.build(rootKey: Data(repeating: 0x55, count: ArmorABI.keySize))
+        XCTAssertNotEqual(
+            bundle.metadata.flags & ArmorABI.WhiteBox.enhancedDiffusionFlag,
+            0,
+            "new bundles should advertise enhanced diffusion path"
+        )
+    }
+
+    func testLegacyCompatibilityPathRemainsDeterministic() {
+        let rootKey = Data(repeating: 0x19, count: ArmorABI.keySize)
+        let input = Data((0..<ArmorABI.hashSize).map { UInt8(($0 * 11) & 0xFF) })
+        let enhancedBundle = ArmorWhiteBox.build(rootKey: rootKey)
+
+        let legacyHeader = ArmorABI.WhiteBox.Header(
+            flags: enhancedBundle.metadata.flags & ~ArmorABI.WhiteBox.enhancedDiffusionFlag,
+            payloadSize: enhancedBundle.metadata.payloadSize,
+            configDigest: enhancedBundle.metadata.configDigest
+        )
+        let legacyBundle = ArmorWhiteBoxBundle(
+            domains: enhancedBundle.domains,
+            metadata: legacyHeader,
+            whiteboxCode: enhancedBundle.whiteboxCode,
+            whiteboxData: enhancedBundle.whiteboxData,
+            whiteboxTag: enhancedBundle.whiteboxTag
+        )
+
+        let legacyOutA = legacyBundle.prf(domain: ArmorABI.WhiteBox.Domain.runtimeMaterial, input: input)
+        let legacyOutB = legacyBundle.prf(domain: ArmorABI.WhiteBox.Domain.runtimeMaterial, input: input)
+        let enhancedOut = enhancedBundle.prf(domain: ArmorABI.WhiteBox.Domain.runtimeMaterial, input: input)
+
+        XCTAssertEqual(legacyOutA, legacyOutB, "legacy path must remain deterministic")
+        XCTAssertNotEqual(
+            enhancedOut,
+            legacyOutA,
+            "enhanced diffusion should materially change PRF output relative to legacy path"
+        )
     }
 }

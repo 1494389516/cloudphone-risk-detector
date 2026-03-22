@@ -139,10 +139,10 @@ public final class JailbreakEngineV2 {
         
         // 只执行快速检测项
         let quickDetectors: [(String, Detector)] = [
-            ("anti_tamper", AntiTamperingDetector()),
-            ("debugger", DebuggerDetector()),
-            ("frida", FridaDetector()),
-            ("dylib_injection", DylibInjectionDetector()),
+            (ObfuscatedConstants.categoryAntiTamper, AntiTamperingDetector()),
+            (ObfuscatedConstants.detectorIDDebugger, DebuggerDetector()),
+            (ObfuscatedConstants.keywordFrida, FridaDetector()),
+            (ObfuscatedConstants.detectorIDDylibInjection, DylibInjectionDetector()),
         ]
         
         for (category, detector) in quickDetectors {

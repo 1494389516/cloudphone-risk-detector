@@ -1,5 +1,6 @@
 import Foundation
 import MachOKit
+import HeaderEncryptor
 import XCTest
 
 final class ArmorFixtureTests: XCTestCase {
@@ -63,6 +64,33 @@ final class ArmorFixtureTests: XCTestCase {
                 return XCTFail("unexpected error: \(error)")
             }
         }
+    }
+
+    func testHeaderEncryptorUsesCamouflagedReservedAndBackupSection() throws {
+        let fixtureURL = try Self.writeFixture(named: "header_encrypt")
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+
+        let file = try MachOFile(url: fixtureURL)
+        let originalReserved = try file.readUInt32(at: 28)
+
+        let config = PassConfig(encryptionKey: Data("header-camo-key".utf8))
+        let result = try HeaderEncryptorPass().execute(on: file, config: config)
+
+        let camouflagedReserved = try file.readUInt32(at: 28)
+        XCTAssertNotEqual(camouflagedReserved, originalReserved)
+        XCTAssertNotEqual(camouflagedReserved, HeaderEncryptorPass.legacyHeaderMagic)
+
+        let backupSection = try XCTUnwrap(
+            try file.section(segment: "__DATA", section: ArmorABI.Sections.headerBackup)
+        )
+        XCTAssertEqual(Int(backupSection.size), HeaderEncryptorPass.backupSectionSize)
+
+        let backupPayload = try backupSection.readContent(from: file.data)
+        XCTAssertEqual(backupPayload.count, HeaderEncryptorPass.backupSectionSize)
+        XCTAssertEqual(result.bytesModified, HeaderEncryptorPass.backupSectionSize + 4)
+        XCTAssertTrue(result.details.contains { $0.contains("camouflaged reserved") })
+
+        XCTAssertNoThrow(try file.validateStructure())
     }
 
     private static func writeFixture(named name: String) throws -> URL {

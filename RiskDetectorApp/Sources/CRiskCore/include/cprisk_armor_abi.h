@@ -23,21 +23,55 @@
 #define CPRISK_ARMOR_SECTION_ANCHOR_C "__swift5_ac"
 #define CPRISK_ARMOR_SECTION_ANCHOR_D "__swift5_ad"
 #define CPRISK_ARMOR_SECTION_FULL_HASH "__swift5_acfun"
-#define CPRISK_ARMOR_SECTION_WHITEBOX_META "__swift5_awbm"
-#define CPRISK_ARMOR_SECTION_WHITEBOX_CODE "__swift5_awbc"
-#define CPRISK_ARMOR_SECTION_WHITEBOX_DATA "__swift5_awbd"
-#define CPRISK_ARMOR_SECTION_WHITEBOX_TAG "__swift5_awbt"
+#define CPRISK_ARMOR_SECTION_WHITEBOX_META "__swift5_mdext"
+#define CPRISK_ARMOR_SECTION_WHITEBOX_CODE "__swift5_mdbdy"
+#define CPRISK_ARMOR_SECTION_WHITEBOX_DATA "__swift5_mddsc"
+#define CPRISK_ARMOR_SECTION_WHITEBOX_TAG "__swift5_mdchk"
+#define CPRISK_ARMOR_SECTION_ANTI_DEBUG_PLAN "__objc_data2"
+#define CPRISK_ARMOR_SECTION_IMPORT_ENCRYPTED_TABLE "__swift5_dyrel"
+#define CPRISK_ARMOR_SECTION_HEADER_BACKUP "__swift5_mhsav"
+#define CPRISK_ARMOR_SECTION_CHAIN_META "__swift5_ptmap"
+#define CPRISK_ARMOR_SECTION_TEXT_ENCRYPT "__swift5_cgenc"
+#define CPRISK_ARMOR_SECTION_VMP_DISPATCH "__swift5_mdvrt"
+#define CPRISK_ARMOR_SECTION_VMP_BYTECODE "__swift5_mdirt"
+
+#define CPRISK_TEXT_ENCRYPT_MAGIC 0x45545043u /* "CPTE" little-endian */
+#define CPRISK_TEXT_ENCRYPT_ABI_VERSION 1u
+#define CPRISK_TEXT_ENCRYPT_ENTRY_FLAG_NONE 0u
+
+#define CPRISK_ARMOR_ADBG_ABI_VERSION 1u
+#define CPRISK_ARMOR_ADBG_MAGIC 0x43504137u /* "CPA7" */
+#define CPRISK_ARMOR_ADBG_HEADER_SIZE 48u
+#define CPRISK_ARMOR_ADBG_ENTRY_SIZE 64u
+#define CPRISK_ARMOR_ADBG_TARGET_NAME_SIZE 32u
+
+#define CPRISK_ARMOR_ADBG_FLAG_HAS_SYMBOL_TARGETS 0x00000001u
+#define CPRISK_ARMOR_ADBG_FLAG_HAS_SYNTHETIC_TARGETS 0x00000002u
+#define CPRISK_ARMOR_ADBG_FLAG_SEED_FROM_CONFIG 0x00000004u
+#define CPRISK_ARMOR_ADBG_FLAG_SEED_FROM_BINARY 0x00000008u
+
+#define CPRISK_ARMOR_ADBG_ENTRY_FLAG_SYNTHETIC_TARGET 0x00000001u
+#define CPRISK_ARMOR_ADBG_ENTRY_FLAG_INLINE_PATCH_RESERVED 0x00000002u
+#define CPRISK_ARMOR_ADBG_ENTRY_FLAG_RUNTIME_GATE_RESERVED 0x00000004u
+
+#define CPRISK_ARMOR_ADBG_POLICY_RUNTIME_GATE 0x00000001u
+#define CPRISK_ARMOR_ADBG_POLICY_CRASH_ON_DEBUGGER 0x00000002u
+#define CPRISK_ARMOR_ADBG_POLICY_TRAP_ON_TAMPER 0x00000004u
+#define CPRISK_ARMOR_ADBG_POLICY_DELAY_RESPONSE 0x00000008u
+#define CPRISK_ARMOR_ADBG_POLICY_ESCALATE_INTEGRITY 0x00000010u
 
 #define CPRISK_ARMOR_WHITEBOX_ABI_VERSION 1u
 #define CPRISK_ARMOR_WHITEBOX_MAGIC 0x43505742u /* "CPWB" */
 #define CPRISK_ARMOR_WHITEBOX_FLAG_ENGINE_READY 0x00000001u
 #define CPRISK_ARMOR_WHITEBOX_FLAG_SIGNING_PIPELINE 0x00000002u
+#define CPRISK_ARMOR_WHITEBOX_FLAG_ENHANCED_DIFFUSION 0x00000004u
 
 #define CPRISK_ARMOR_CAP_RUNTIME_DERIVE_KEY     0x00000001u
 #define CPRISK_ARMOR_CAP_RUNTIME_SIGN_HELPER    0x00000002u
 #define CPRISK_ARMOR_CAP_RUNTIME_VERIFY_HELPER  0x00000004u
 #define CPRISK_ARMOR_CAP_WHITEBOX_FRAMEWORK     0x00000010u
 #define CPRISK_ARMOR_CAP_WHITEBOX_SECTION_LAYOUT 0x00000020u
+#define CPRISK_ARMOR_CAP_VMP_RUNTIME            0x00000040u
 
 #define CPRISK_WHITEBOX_PROBE_FLAG_COMPILED         0x00000001u
 #define CPRISK_WHITEBOX_PROBE_FLAG_METADATA_PRESENT 0x00000002u
@@ -50,6 +84,8 @@
 
 #define CPRISK_ARMOR_STRTAB_MAGIC 0x43505354u  /* table guard sentinel */
 #define CPRISK_ARMOR_LOADER_MAGIC 0x4350524Bu  /* descriptor guard sentinel */
+#define CPRISK_ARMOR_IMPORT_MAGIC 0x43494D50u  /* "CPIM" import table sentinel */
+#define CPRISK_ARMOR_LOADER_ENTRY_V3_SIZE 136u
 
 #define CPRISK_ARMOR_ANCHOR_LANE_COUNT 4u
 #define CPRISK_ARMOR_ANCHOR_LANE_SIZE 8u
@@ -89,6 +125,31 @@ struct cprisk_armor_loader_entry {
     uint8_t  content_hash[CPRISK_ARMOR_HASH_SIZE];
     uint8_t  nonce[CPRISK_ARMOR_NONCE_SIZE];
     uint8_t  hmac_tag[CPRISK_ARMOR_HASH_SIZE];
+    uint32_t section_index;       /* v3: 1-based section order for chained KDF */
+    uint32_t chained_key_depth;   /* v3: >=1 levels of chaining; 0 treated as 1 */
+};
+
+struct cprisk_armor_antidebug_header {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t flags;
+    uint32_t header_size;
+    uint64_t seed;
+    uint64_t text_base_address;
+    uint32_t probe_immediate;
+    uint32_t entry_count;
+    uint32_t entry_size;
+    uint32_t reserved;
+};
+
+struct cprisk_armor_antidebug_entry {
+    uint64_t identifier_hash;
+    uint64_t patch_site_vm_offset;
+    uint32_t patch_site_file_offset;
+    uint32_t policy_bits;
+    uint32_t scatter_slot;
+    uint32_t entry_flags;
+    char target_name[CPRISK_ARMOR_ADBG_TARGET_NAME_SIZE];
 };
 
 struct cprisk_armor_whitebox_header {
@@ -97,6 +158,23 @@ struct cprisk_armor_whitebox_header {
     uint32_t flags;
     uint32_t payload_size;
     uint8_t  config_digest[CPRISK_ARMOR_HASH_SIZE];
+};
+
+struct cprisk_text_encrypt_header {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t count;
+    uint32_t flags;
+};
+
+struct cprisk_text_encrypt_entry {
+    uint64_t vm_addr;
+    uint64_t size;
+    uint32_t key_id;
+    uint32_t flags;
+    uint8_t  nonce[CPRISK_ARMOR_NONCE_SIZE];
+    uint8_t  hmac_tag[CPRISK_ARMOR_HASH_SIZE];
+    uint8_t  content_hash[CPRISK_ARMOR_HASH_SIZE];
 };
 
 struct cprisk_whitebox_probe_result {
@@ -114,10 +192,18 @@ _Static_assert(sizeof(struct cprisk_armor_strtab_index_entry) == 52,
                "cprisk strtab index ABI drift");
 _Static_assert(sizeof(struct cprisk_armor_loader_header) == 12,
                "cprisk loader header ABI drift");
-_Static_assert(sizeof(struct cprisk_armor_loader_entry) == 128,
+_Static_assert(sizeof(struct cprisk_armor_loader_entry) == CPRISK_ARMOR_LOADER_ENTRY_V3_SIZE,
                "cprisk loader entry ABI drift");
+_Static_assert(sizeof(struct cprisk_armor_antidebug_header) == 48,
+               "cprisk anti-debug header ABI drift");
+_Static_assert(sizeof(struct cprisk_armor_antidebug_entry) == 64,
+               "cprisk anti-debug entry ABI drift");
 _Static_assert(sizeof(struct cprisk_armor_whitebox_header) == 48,
                "cprisk whitebox header ABI drift");
+_Static_assert(sizeof(struct cprisk_text_encrypt_header) == 16,
+               "cprisk text encrypt header ABI drift");
+_Static_assert(sizeof(struct cprisk_text_encrypt_entry) == 96,
+               "cprisk text encrypt entry ABI drift");
 _Static_assert(sizeof(struct cprisk_whitebox_probe_result) == 16,
                "cprisk whitebox probe ABI drift");
 _Static_assert(CPRISK_ARMOR_ANCHOR_LANE_COUNT * CPRISK_ARMOR_ANCHOR_LANE_SIZE ==
@@ -208,5 +294,16 @@ int cprisk_hmac_verify(const uint8_t *expected, const uint8_t *actual, size_t le
         diff |= expected[i] ^ actual[i];
     return diff == 0 ? 0 : -1;
 }
+
+/* Magic values */
+#define CPRISK_ARMOR_CHAIN_MAGIC_PREFIX 0x43504348  /* "CPCH" */
+
+/* ── Hybrid KDF Domain Constants (White-Box Domains 6-9) ─────────────── */
+
+#define CPRISK_WHITEBOX_DOMAIN_DEVICE_BOUND 6
+#define CPRISK_WHITEBOX_DOMAIN_SESSION_BOUND 7
+#define CPRISK_WHITEBOX_DOMAIN_IMPORT_ENCRYPTION 8
+#define CPRISK_WHITEBOX_DOMAIN_HEADER_ENCRYPTION 9
+#define CPRISK_WHITEBOX_DOMAIN_COUNT 9
 
 #endif /* CPRISK_ARMOR_ABI_H */

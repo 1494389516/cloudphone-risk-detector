@@ -36,10 +36,10 @@ public struct RuntimeDependencyPlan: Codable, Equatable, Sendable {
             notes = [
                 "region flattening can bias state selection from challenge/trust context"
             ]
-        case .light:
+        case .light, .medium:
             dependencies = enabled ? [.integritySignals, .processEntropy] : []
             notes = [
-                "light tier keeps runtime inputs shallow to limit codegen churn"
+                "light/medium tier keeps runtime inputs shallow to limit codegen churn"
             ]
         case .never:
             dependencies = []

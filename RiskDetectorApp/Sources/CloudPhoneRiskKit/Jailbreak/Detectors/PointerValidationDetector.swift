@@ -31,16 +31,7 @@ struct PointerValidationDetector: Detector {
         .init(symbol: "objc_getClass", expectedPathPrefixes: ["/usr/lib/libobjc.", "/usr/lib/system/"], score: 8),
     ]
 
-    let suspiciousImageTokens: [String] = [
-        "frida",
-        "gadget",
-        "substrate",
-        "substitute",
-        "libhooker",
-        "ellekit",
-        "tweak",
-        "hook",
-    ]
+    let suspiciousImageTokens: [String] = ObfuscatedConstants.hookSuspiciousImageTokensCore
 
     func detect() throws -> DetectorResult {
         var score: Double = 0
@@ -54,7 +45,7 @@ struct PointerValidationDetector: Detector {
             if isSuspiciousImagePath(imagePath) {
                 score += check.score
                 methods.append("ptr_suspicious:\(check.symbol)")
-                Logger.log("jailbreak.ptr.hit: \(check.symbol) suspicious_image=\(imagePath) (+\(check.score))")
+                Logger.log("\(ObfuscatedConstants.keywordJailbreak).ptr.hit: \(check.symbol) suspicious_image=\(imagePath) (+\(check.score))")
                 continue
             }
 
@@ -62,7 +53,7 @@ struct PointerValidationDetector: Detector {
             if !isPathOK {
                 score += check.score
                 methods.append("ptr_path:\(check.symbol)")
-                Logger.log("jailbreak.ptr.hit: \(check.symbol) unexpected_image=\(imagePath) (+\(check.score))")
+                Logger.log("\(ObfuscatedConstants.keywordJailbreak).ptr.hit: \(check.symbol) unexpected_image=\(imagePath) (+\(check.score))")
                 continue
             }
 
@@ -71,7 +62,7 @@ struct PointerValidationDetector: Detector {
                 if p < range.lowerBound || p >= range.upperBound {
                     score += check.score
                     methods.append("ptr_range:\(check.symbol)")
-                    Logger.log("jailbreak.ptr.hit: \(check.symbol) out_of_text image=\(imagePath) (+\(check.score))")
+                    Logger.log("\(ObfuscatedConstants.keywordJailbreak).ptr.hit: \(check.symbol) out_of_text image=\(imagePath) (+\(check.score))")
                 }
             }
         }

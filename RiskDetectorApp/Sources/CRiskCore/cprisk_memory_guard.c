@@ -10,15 +10,24 @@
  */
 
 #include "include/cprisk_memory_guard.h"
+#include "include/CRiskCore.h"
 
 #include <stdint.h>
 #include <string.h>
+#include <signal.h>
+#include <pthread.h>
+#include <sys/mman.h>
 #include <mach/mach.h>
 
 #ifndef CPRISK_PAGE_MASK
 #define CPRISK_PAGE_MASK (~(uintptr_t)0xFFF)
 #endif
 #define CPRISK_PAGE_SIZE_4K 0x1000u
+
+static pthread_mutex_t s_sigbus_guard_mutex = PTHREAD_MUTEX_INITIALIZER;
+static struct sigaction s_prev_sigbus_action;
+static int s_sigbus_guard_installed = 0;
+static struct cprisk_guard_state *s_sigbus_guard_state = NULL;
 
 static int page_span(void *ptr, size_t len,
                      vm_address_t *page_out, vm_size_t *span_out) {
@@ -29,6 +38,132 @@ static int page_span(void *ptr, size_t len,
     *page_out = (vm_address_t)start;
     *span_out = (vm_size_t)(end - start);
     return 0;
+}
+
+static void cprisk_best_effort_madv_free(void *region, size_t len) {
+    vm_address_t page = 0;
+    vm_size_t span = 0;
+    if (!region || len == 0)
+        return;
+    if (page_span(region, len, &page, &span) != 0 || span == 0)
+        return;
+
+    int advised = -1;
+#if defined(MADV_FREE_REUSABLE)
+    advised = madvise((void *)(uintptr_t)page, (size_t)span, MADV_FREE_REUSABLE);
+#endif
+#if defined(MADV_FREE)
+    if (advised != 0)
+        advised = madvise((void *)(uintptr_t)page, (size_t)span, MADV_FREE);
+#endif
+#if defined(MADV_DONTNEED)
+    if (advised != 0)
+        (void)madvise((void *)(uintptr_t)page, (size_t)span, MADV_DONTNEED);
+#else
+    (void)advised;
+#endif
+}
+
+static int cprisk_sigbus_addr_in_guard(const struct cprisk_guard_state *state, const void *addr) {
+    if (!state || !addr)
+        return 0;
+
+    uintptr_t target = (uintptr_t)addr;
+    uint32_t limit = state->trap_count;
+    if (limit > CPRISK_GUARD_MAX_TRAPS)
+        limit = CPRISK_GUARD_MAX_TRAPS;
+
+    for (uint32_t i = 0; i < limit; i++) {
+        const void *trap_addr = state->traps[i].addr;
+        size_t trap_size = state->traps[i].size;
+        if (!trap_addr || trap_size == 0)
+            continue;
+        const uintptr_t start = (uintptr_t)trap_addr;
+        const uintptr_t end = start + trap_size;
+        if (target >= start && target < end)
+            return 1;
+    }
+    return 0;
+}
+
+static void cprisk_forward_prev_sigbus(int sig, siginfo_t *info, void *uap) {
+    if ((s_prev_sigbus_action.sa_flags & SA_SIGINFO) != 0) {
+        void (*prev_sigaction)(int, siginfo_t *, void *) = s_prev_sigbus_action.sa_sigaction;
+        if (prev_sigaction != NULL &&
+            prev_sigaction != (void (*)(int, siginfo_t *, void *))SIG_IGN &&
+            prev_sigaction != (void (*)(int, siginfo_t *, void *))SIG_DFL) {
+            prev_sigaction(sig, info, uap);
+            return;
+        }
+    } else {
+        if (s_prev_sigbus_action.sa_handler == SIG_IGN)
+            return;
+        if (s_prev_sigbus_action.sa_handler != NULL &&
+            s_prev_sigbus_action.sa_handler != SIG_DFL) {
+            s_prev_sigbus_action.sa_handler(sig);
+            return;
+        }
+    }
+
+    signal(SIGBUS, SIG_DFL);
+    raise(SIGBUS);
+}
+
+static void cprisk_sigbus_handler_i(int sig, siginfo_t *info, void *uap) {
+    struct cprisk_guard_state *state = s_sigbus_guard_state;
+    if (state != NULL && info != NULL && cprisk_sigbus_addr_in_guard(state, info->si_addr)) {
+        cprisk_force_integrity_poison();
+    }
+
+    cprisk_forward_prev_sigbus(sig, info, uap);
+}
+
+int cprisk_install_sigbus_guard(struct cprisk_guard_state *state) {
+    if (!state)
+        return -1;
+
+    pthread_mutex_lock(&s_sigbus_guard_mutex);
+    if (s_sigbus_guard_installed) {
+        s_sigbus_guard_state = state;
+        state->poison_mode_enabled = 1u;
+        pthread_mutex_unlock(&s_sigbus_guard_mutex);
+        return 0;
+    }
+
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sigemptyset(&sa.sa_mask);
+    sa.sa_sigaction = cprisk_sigbus_handler_i;
+    sa.sa_flags = SA_SIGINFO | SA_NODEFER;
+
+    if (sigaction(SIGBUS, &sa, &s_prev_sigbus_action) != 0) {
+        pthread_mutex_unlock(&s_sigbus_guard_mutex);
+        return -1;
+    }
+
+    s_sigbus_guard_installed = 1;
+    s_sigbus_guard_state = state;
+    state->poison_mode_enabled = 1u;
+    pthread_mutex_unlock(&s_sigbus_guard_mutex);
+    return 0;
+}
+
+void cprisk_remove_sigbus_guard(struct cprisk_guard_state *state) {
+    pthread_mutex_lock(&s_sigbus_guard_mutex);
+    if (!s_sigbus_guard_installed) {
+        pthread_mutex_unlock(&s_sigbus_guard_mutex);
+        return;
+    }
+
+    if (state != NULL && state != s_sigbus_guard_state) {
+        pthread_mutex_unlock(&s_sigbus_guard_mutex);
+        return;
+    }
+
+    (void)sigaction(SIGBUS, &s_prev_sigbus_action, NULL);
+    s_sigbus_guard_installed = 0;
+    s_sigbus_guard_state = NULL;
+    pthread_mutex_unlock(&s_sigbus_guard_mutex);
 }
 
 int cprisk_protect_decrypted_pages(void *region, size_t len) {
@@ -46,7 +181,11 @@ int cprisk_protect_decrypted_pages(void *region, size_t len) {
         span,
         FALSE,
         VM_PROT_READ);
-    return (kr == KERN_SUCCESS) ? 0 : -1;
+    if (kr != KERN_SUCCESS)
+        return -1;
+
+    cprisk_best_effort_madv_free(region, len);
+    return 0;
 }
 
 int cprisk_verify_page_protection(void *region, size_t len) {
@@ -158,6 +297,11 @@ int cprisk_install_memory_trap(void *region, size_t len,
      * Setting pages_protected=1 unconditionally masks this silent failure and
      * misleads any caller that inspects state->pages_protected. */
     state->pages_protected = (planted > 0) ? 1 : 0;
+    if (planted > 0) {
+        if (cprisk_install_sigbus_guard(state) != 0)
+            state->poison_mode_enabled = 0u;
+        cprisk_best_effort_madv_free(region, len);
+    }
     return planted;
 }
 
@@ -176,5 +320,6 @@ void cprisk_remove_memory_trap(struct cprisk_guard_state *state) {
                 (vm_size_t)state->traps[i].size);
         }
     }
+    cprisk_remove_sigbus_guard(state);
     memset(state, 0, sizeof(*state));
 }

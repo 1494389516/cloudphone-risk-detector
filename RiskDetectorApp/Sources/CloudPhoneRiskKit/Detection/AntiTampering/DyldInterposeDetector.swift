@@ -131,7 +131,7 @@ struct DyldInterposeDetector: Detector {
         if !interposeMethods.isEmpty {
             signals.append(RiskSignal(
                 id: "dyld_interpose_detected",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: min(Double(interposeMethods.count) * 20, 30),
                 evidence: ["detail": interposeMethods.joined(separator: ",")],
                 state: .tampered,
@@ -144,7 +144,7 @@ struct DyldInterposeDetector: Detector {
         if !envMethods.isEmpty {
             signals.append(RiskSignal(
                 id: "dyld_env_abuse",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: min(Double(envMethods.count) * 12, 25),
                 evidence: ["vars": envMethods.joined(separator: ",")],
                 state: .tampered,
@@ -157,7 +157,7 @@ struct DyldInterposeDetector: Detector {
         if !countMethods.isEmpty {
             signals.append(RiskSignal(
                 id: "dyld_image_overload",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: 10,
                 evidence: ["detail": countMethods.joined(separator: ",")],
                 state: .soft(confidence: 0.5),

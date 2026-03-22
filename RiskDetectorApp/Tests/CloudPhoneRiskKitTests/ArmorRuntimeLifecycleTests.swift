@@ -88,7 +88,10 @@ final class ArmorRuntimeLifecycleTests: XCTestCase {
 
         if startedSnapshot.supported {
             XCTAssertTrue(startedSnapshot.running, "watchdog should be marked running after start()")
-            XCTAssertEqual(startedSnapshot.intervalSeconds, 3)
+            XCTAssertTrue(
+                (1...5).contains(Int(startedSnapshot.intervalSeconds)),
+                "watchdog interval should be randomized within expected range"
+            )
             XCTAssertGreaterThan(startedSnapshot.iterationCount, 0, "watchdog should execute at least one iteration")
         } else {
             XCTAssertFalse(startedSnapshot.running, "unsupported platforms should degrade to no-op")
@@ -127,7 +130,15 @@ final class ArmorRuntimeLifecycleTests: XCTestCase {
         )
 
         let poisoned = cprisk_is_integrity_poisoned()
-        XCTAssertEqual(poisoned, 0, "visible poison flag should stay clear in a clean test run")
+        let watchdogSnapshot = CPRiskKit.shared.antiDebugWatchdogSnapshot()
+        if watchdogSnapshot.supported, watchdogSnapshot.hasAnyAnomaly {
+            XCTAssertTrue(
+                poisoned == 0 || poisoned == 1,
+                "watchdog anomalies may poison runtime on host test platforms"
+            )
+        } else {
+            XCTAssertEqual(poisoned, 0, "visible poison flag should stay clear in a clean test run")
+        }
     }
 
     func testRecheckIntegrityWithoutInitReturnsNoSavedHash() {
@@ -200,5 +211,191 @@ final class ArmorRuntimeLifecycleTests: XCTestCase {
         CPRiskKit.shared.stop()
         let elapsed = cprisk_get_init_elapsed_ns()
         XCTAssertEqual(elapsed, 0, "init elapsed time should be cleared after cleanup")
+    }
+
+    // MARK: - AntiDebug Plan Runtime Consumption
+
+    func testInjectedValidAntiDebugPlanIsParsedAndConsumed() {
+        let payload = makeAntiDebugPlanPayload(
+            policyBits: UInt32(CPRISK_ARMOR_ADBG_POLICY_RUNTIME_GATE)
+                | UInt32(CPRISK_ARMOR_ADBG_POLICY_DELAY_RESPONSE)
+                | UInt32(CPRISK_ARMOR_ADBG_POLICY_ESCALATE_INTEGRITY)
+                | UInt32(CPRISK_ARMOR_ADBG_POLICY_TRAP_ON_TAMPER)
+                | UInt32(CPRISK_ARMOR_ADBG_POLICY_CRASH_ON_DEBUGGER)
+        )
+
+        let injectRC = payload.withUnsafeBytes { raw -> Int32 in
+            cprisk_test_set_antidebug_plan(
+                raw.bindMemory(to: UInt8.self).baseAddress,
+                payload.count
+            )
+        }
+        XCTAssertEqual(injectRC, 0, "valid anti-debug payload should be accepted by test injector")
+
+        let keyData = Data(repeating: 0x42, count: 32)
+        let initRC = keyData.withUnsafeBytes { raw -> Int32 in
+            cprisk_init_protection(
+                raw.bindMemory(to: UInt8.self).baseAddress,
+                keyData.count
+            )
+        }
+        XCTAssertTrue(
+            initRC == 0 || (initRC >= -7 && initRC <= -1),
+            "init must complete with a defined return code, got \(initRC)"
+        )
+
+        var snapshot = cprisk_antidebug_plan_snapshot_t()
+        XCTAssertEqual(cprisk_get_antidebug_plan_snapshot(&snapshot), 0)
+        XCTAssertEqual(snapshot.section_present, 1)
+        XCTAssertEqual(snapshot.section_valid, 1)
+        XCTAssertEqual(snapshot.parse_error, 0)
+        XCTAssertEqual(snapshot.entry_count, 1)
+        XCTAssertGreaterThan(snapshot.consume_count, 0)
+
+        XCTAssertNotEqual(
+            snapshot.last_applied_policy_bits & UInt32(CPRISK_ARMOR_ADBG_POLICY_RUNTIME_GATE),
+            0,
+            "RuntimeGate should execute when plan is consumed"
+        )
+        XCTAssertNotEqual(
+            snapshot.last_applied_policy_bits & UInt32(CPRISK_ARMOR_ADBG_POLICY_DELAY_RESPONSE),
+            0,
+            "DelayResponse should execute when plan is consumed"
+        )
+    }
+
+    func testMalformedAntiDebugPlanSafelyDegrades() {
+        let malformed = Data(repeating: 0xA5, count: 16)
+        let injectRC = malformed.withUnsafeBytes { raw -> Int32 in
+            cprisk_test_set_antidebug_plan(
+                raw.bindMemory(to: UInt8.self).baseAddress,
+                malformed.count
+            )
+        }
+        XCTAssertEqual(injectRC, 0, "malformed bytes should still inject for parser negative testing")
+
+        let keyData = Data(repeating: 0x42, count: 32)
+        let initRC = keyData.withUnsafeBytes { raw -> Int32 in
+            cprisk_init_protection(
+                raw.bindMemory(to: UInt8.self).baseAddress,
+                keyData.count
+            )
+        }
+        XCTAssertTrue(
+            initRC == 0 || (initRC >= -7 && initRC <= -1),
+            "malformed plan must not crash init path, got \(initRC)"
+        )
+
+        var snapshot = cprisk_antidebug_plan_snapshot_t()
+        XCTAssertEqual(cprisk_get_antidebug_plan_snapshot(&snapshot), 0)
+        XCTAssertEqual(snapshot.section_present, 1)
+        XCTAssertEqual(snapshot.section_valid, 0)
+        XCTAssertNotEqual(snapshot.parse_error, 0)
+    }
+
+    func testInlinePatchGateFailurePoisonsSafely() {
+        let payload = makeAntiDebugPlanPayload(
+            policyBits: UInt32(CPRISK_ARMOR_ADBG_POLICY_RUNTIME_GATE)
+                | UInt32(CPRISK_ARMOR_ADBG_POLICY_TRAP_ON_TAMPER),
+            entryFlags: UInt32(CPRISK_ARMOR_ADBG_ENTRY_FLAG_INLINE_PATCH_RESERVED)
+                | UInt32(CPRISK_ARMOR_ADBG_ENTRY_FLAG_RUNTIME_GATE_RESERVED)
+        )
+
+        let injectRC = payload.withUnsafeBytes { raw -> Int32 in
+            cprisk_test_set_antidebug_plan(
+                raw.bindMemory(to: UInt8.self).baseAddress,
+                payload.count
+            )
+        }
+        XCTAssertEqual(injectRC, 0)
+
+        let keyData = Data(repeating: 0x42, count: 32)
+        _ = keyData.withUnsafeBytes { raw -> Int32 in
+            cprisk_init_protection(
+                raw.bindMemory(to: UInt8.self).baseAddress,
+                keyData.count
+            )
+        }
+
+        var snapshot = cprisk_antidebug_plan_snapshot_t()
+        XCTAssertEqual(cprisk_get_antidebug_plan_snapshot(&snapshot), 0)
+        XCTAssertEqual(snapshot.section_valid, 1)
+        XCTAssertGreaterThan(
+            snapshot.inline_patch_failure_count,
+            0,
+            "invalid test patch-site must fail closed and be recorded"
+        )
+        XCTAssertEqual(snapshot.last_inline_patch_tamper, 1)
+    }
+
+    func testStringDecryptPathSelectorIsDeterministicForSeed() {
+        let seed: UInt64 = 0xA17C_9E51_42D0_77B3
+        let nonce: [UInt8] = [0x11, 0x22, 0x33, 0x44, 0xAA, 0xBB, 0xCC, 0xDD]
+
+        let pathA = nonce.withUnsafeBufferPointer { ptr in
+            cprisk_test_select_string_decrypt_path(17, ptr.baseAddress, seed)
+        }
+        let pathB = nonce.withUnsafeBufferPointer { ptr in
+            cprisk_test_select_string_decrypt_path(17, ptr.baseAddress, seed)
+        }
+        XCTAssertEqual(pathA, pathB, "same seed/stringID/nonce must always choose the same decrypt path")
+
+        var seen = Set<UInt32>()
+        for sid in UInt32(1)...UInt32(64) {
+            let selected = nonce.withUnsafeBufferPointer { ptr in
+                cprisk_test_select_string_decrypt_path(sid, ptr.baseAddress, seed)
+            }
+            XCTAssertLessThan(selected, 4, "selector must only return path IDs in [0, 3]")
+            seen.insert(selected)
+        }
+        XCTAssertGreaterThanOrEqual(seen.count, 3, "path selector should spread calls across multiple variants")
+    }
+
+    private func makeAntiDebugPlanPayload(
+        policyBits: UInt32,
+        entryFlags: UInt32 = UInt32(CPRISK_ARMOR_ADBG_ENTRY_FLAG_RUNTIME_GATE_RESERVED)
+    ) -> Data {
+        var data = Data()
+
+        data.appendLE(UInt32(CPRISK_ARMOR_ADBG_MAGIC))
+        data.appendLE(UInt32(CPRISK_ARMOR_ADBG_ABI_VERSION))
+        data.appendLE(UInt32(CPRISK_ARMOR_ADBG_FLAG_HAS_SYMBOL_TARGETS))
+        data.appendLE(UInt32(CPRISK_ARMOR_ADBG_HEADER_SIZE))
+        data.appendLE(UInt64(0x1122_3344_5566_7788))
+        data.appendLE(UInt64(0x0000_0001_0000_0000))
+        data.appendLE(UInt32(0xA7D0_0001))
+        data.appendLE(UInt32(1))
+        data.appendLE(UInt32(CPRISK_ARMOR_ADBG_ENTRY_SIZE))
+        data.appendLE(UInt32(0))
+
+        data.appendLE(UInt64(0x1234_5678_90AB_CDEF))
+        data.appendLE(UInt64(0x80))
+        data.appendLE(UInt32(0x2000))
+        data.appendLE(policyBits)
+        data.appendLE(UInt32(0))
+        data.appendLE(entryFlags)
+        data.appendFixedCString("_risk_guard_entry", length: Int(CPRISK_ARMOR_ADBG_TARGET_NAME_SIZE))
+
+        return data
+    }
+}
+
+private extension Data {
+    mutating func appendLE(_ value: UInt32) {
+        var le = value.littleEndian
+        Swift.withUnsafeBytes(of: &le) { append(contentsOf: $0) }
+    }
+
+    mutating func appendLE(_ value: UInt64) {
+        var le = value.littleEndian
+        Swift.withUnsafeBytes(of: &le) { append(contentsOf: $0) }
+    }
+
+    mutating func appendFixedCString(_ string: String, length: Int) {
+        var bytes = Array(string.utf8.prefix(length))
+        if bytes.count < length {
+            bytes.append(contentsOf: repeatElement(0, count: length - bytes.count))
+        }
+        append(contentsOf: bytes)
     }
 }

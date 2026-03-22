@@ -42,6 +42,7 @@ final class InstructionSubstitutionTests: XCTestCase {
                     Self.subZero(rd: 5, rn: 6),
                     Self.andSelf(rd: 5, rn: 6),
                     Self.orrSelf(rd: 5, rn: 6),
+                    Self.eorWithZero(rd: 5, rn: 6),
                 ]
             ),
             (
@@ -60,9 +61,10 @@ final class InstructionSubstitutionTests: XCTestCase {
                 [
                     // ADD/SUB with dest=31 would write SP, not XZR — excluded.
                     // MOV-alias and ORR-self both encode identically for XZR,
-                    // so only two distinct replacements remain.
+                    // plus the EOR-with-zero discard form.
                     Self.orrZero,
                     Self.andZero,
+                    Self.eorZero,
                 ]
             ),
         ]
@@ -140,6 +142,79 @@ final class InstructionSubstitutionTests: XCTestCase {
 
         XCTAssertEqual(outputA, outputB, "same seed must produce the same substitutions")
         XCTAssertNotEqual(outputA, outputC, "different seed should alter at least one substitution choice")
+    }
+
+    func testUnsafeControlFlowRewritesAreRejected() {
+        let engine = SubstitutionEngine()
+        let conditionalBranch: UInt32 = 0xB4000040 // CBZ X0, +8
+        var rng = SplitMix64(seed: 0x1234)
+        XCTAssertNil(
+            engine.substitute(for: conditionalBranch, ratio: 1.0, using: &rng),
+            "control-flow rewrites that change branch semantics must be rejected"
+        )
+    }
+
+    func testLogicalShiftedRequiresZeroOperandForEquivalentRewrite() {
+        let engine = SubstitutionEngine()
+        let unsafeAddShifted: UInt32 = 0x8B090108 // ADD X8, X8, X9, LSL #0 (non-zero source2)
+        var rng = SplitMix64(seed: 0xABCD)
+        XCTAssertNil(
+            engine.substitute(for: unsafeAddShifted, ratio: 1.0, using: &rng),
+            "non-equivalent shifted arithmetic should not be rewritten"
+        )
+    }
+
+    func testLogicalImmediateProvidesConstantUnfoldVariants() {
+        let variants = ARM64Codec.encodeORRLogicalImmediateVariants(
+            destinationRegister: 3,
+            immediate: 0x00FF,
+            width: .x64
+        )
+        XCTAssertFalse(variants.isEmpty, "encodable constants should produce ORR unfold variants")
+        XCTAssertEqual(Set(variants).count, variants.count, "variants should be deduplicated")
+    }
+
+    func testEngineInjectsOpaquePredicatesAndDeadCodeIslands() throws {
+        let inputURL = try Self.writeFixture(
+            named: "subst_pass_injection",
+            textInstructions: Self.denseNoEffectInstructions
+        )
+        defer { try? FileManager.default.removeItem(at: inputURL) }
+
+        let file = try MachOFile(url: inputURL)
+        let engine = SubstitutionEngine()
+        let report = try engine.apply(
+            to: file,
+            configuration: SubstitutionEngine.Configuration(
+                replacementRate: 0,
+                opaquePredicateRate: 1.0,
+                deadCodeIslandRate: 1.0,
+                seed: 0xD00D_BAAD
+            )
+        )
+
+        XCTAssertGreaterThan(report.bytesModified, 0, "injection mode should modify bytes")
+        XCTAssertGreaterThan(report.injectedOpaquePredicates.count, 0, "opaque predicates should be injected")
+        XCTAssertGreaterThan(report.injectedDeadCodeIslands.count, 0, "dead-code islands should be injected")
+    }
+
+    func testPassReportsOpaquePredicateAndDeadCodeStatistics() throws {
+        let inputURL = try Self.writeFixture(
+            named: "subst_pass_stats",
+            textInstructions: Self.denseNoEffectInstructions
+        )
+        defer { try? FileManager.default.removeItem(at: inputURL) }
+
+        let file = try MachOFile(url: inputURL)
+        let pass = InstructionSubstitutionPass(
+            replacementRate: 0,
+            opaquePredicateRate: 1.0,
+            deadCodeIslandRate: 1.0
+        )
+        let result = try pass.execute(on: file, config: PassConfig(randomSeed: 0xABCD_1234))
+        XCTAssertGreaterThan(result.bytesModified, 0)
+        XCTAssertTrue(result.details.contains(where: { $0.contains("Opaque predicates injected") }))
+        XCTAssertTrue(result.details.contains(where: { $0.contains("Dead-code islands injected") }))
     }
 
     func testPassMutatesTextButPreservesMachOStructure() throws {
@@ -326,6 +401,7 @@ final class InstructionSubstitutionTests: XCTestCase {
     private static let addZeroToXzr: UInt32 = 0x910003FF
     private static let subZeroToXzr: UInt32 = 0xD10003FF
     private static let andZero: UInt32 = 0x8A1F03FF
+    private static let eorZero: UInt32 = 0xCA1F03FF
 
     private static func movAlias(rd: UInt32, rm: UInt32) -> UInt32 {
         0xAA0003E0 | (rm << 16) | rd
@@ -345,6 +421,18 @@ final class InstructionSubstitutionTests: XCTestCase {
 
     private static func orrSelf(rd: UInt32, rn: UInt32) -> UInt32 {
         0xAA000000 | (rn << 16) | (rn << 5) | rd
+    }
+
+    private static func eorWithZero(rd: UInt32, rn: UInt32) -> UInt32 {
+        ARM64Codec.encodeLogicalShiftedRegister(
+            destination: rd,
+            source1: rn,
+            source2: ARM64RegisterWidth.zeroRegisterIndex,
+            shiftType: 0,
+            shiftAmount: 0,
+            opc: 2,
+            width: .x64
+        )
     }
 
     private static func movz(rd: UInt32, imm16: UInt32) -> UInt32 {
@@ -387,6 +475,13 @@ final class InstructionSubstitutionTests: XCTestCase {
         movAlias(rd: 16, rm: 17),
         addZero(rd: 18, rn: 19),
         movz(rd: 20, imm16: 0x003F),
+    ]
+
+    private static let denseNoEffectInstructions: [UInt32] = [
+        nop, nop, nop, nop,
+        nop, nop, nop, nop,
+        nop, nop, nop, nop,
+        nop, nop, nop, nop,
     ]
 
     private static let nonReplaceableInstructionIndices = [7, 8, 9, 10, 11, 12]

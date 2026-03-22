@@ -95,7 +95,31 @@ final class MetadataScrubberTests: XCTestCase {
         )
         XCTAssertNotEqual(modifiedCapture, originalCapture)
 
-        XCTAssertTrue(result.details.contains { $0.contains("Additional metadata sections scrubbed:") })
+        XCTAssertTrue(result.details.contains { $0.contains("Swift metadata sections (conservative, string payloads):") })
+    }
+
+    func testAdditionalMetadataSectionsAggressiveFullOverwrite() throws {
+        let (file, url) = try Self.loadFixture(named: "extra_aggr", useExtendedFixture: true)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let fieldmd = try XCTUnwrap(
+            try file.section(segment: "__TEXT", section: "__swift5_fieldmd")
+        )
+        let originalFieldmd = file.data.subdata(
+            in: Int(fieldmd.offset)..<(Int(fieldmd.offset) + Int(fieldmd.size))
+        )
+
+        let pass = MetadataScrubberPass()
+        let result = try pass.execute(
+            on: file,
+            config: PassConfig(swiftMetadataScrubLevel: .aggressive)
+        )
+
+        let modifiedFieldmd = file.data.subdata(
+            in: Int(fieldmd.offset)..<(Int(fieldmd.offset) + Int(fieldmd.size))
+        )
+        XCTAssertNotEqual(modifiedFieldmd, originalFieldmd)
+        XCTAssertTrue(result.details.contains { $0.contains("Swift metadata sections (aggressive, full overwrite):") })
     }
 
     // MARK: - C. ObjC Method Name Obfuscation (aggressive mode)

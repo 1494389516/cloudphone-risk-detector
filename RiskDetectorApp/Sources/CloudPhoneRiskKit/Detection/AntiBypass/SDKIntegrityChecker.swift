@@ -120,7 +120,7 @@ struct PLTIntegrityGuard {
         "access",
         "dlsym",
         "getenv",
-        "ptrace",
+        ObfuscatedConstants.denyAttachToken,
         "_dyld_image_count",
         "_dyld_get_image_name",
         "_dyld_get_image_header",

@@ -35,7 +35,9 @@ final class ArmorABITests: XCTestCase {
             size: 0x0102030405060708,
             contentHash: hash,
             nonce: nonce,
-            hmacTag: hmac
+            hmacTag: hmac,
+            sectionIndex: 1,
+            chainedKeyDepth: 1
         ).serialized()
 
         XCTAssertEqual(entry.count, ArmorABI.Loader.entrySize)
@@ -48,6 +50,8 @@ final class ArmorABITests: XCTestCase {
         XCTAssertEqual(entry.subdata(in: 56..<88), hash)
         XCTAssertEqual(entry.subdata(in: 88..<96), nonce)
         XCTAssertEqual(entry.subdata(in: 96..<128), hmac)
+        XCTAssertEqual(readLE32(entry, at: 128), 1)
+        XCTAssertEqual(readLE32(entry, at: 132), 1)
     }
 
     func testIntegrityHelpersMatchRuntimeContract() {
@@ -159,5 +163,21 @@ final class ArmorABITests: XCTestCase {
             "payload_size is reserved for white-box code+data only; the detached tag is validated separately"
         )
         XCTAssertEqual(header.subdata(in: 16..<48), configDigest)
+    }
+
+    /// Guardrail: Swift producer `ArmorABI.Sections` must stay aligned with `cprisk_armor_abi.h`
+    /// (`RiskDetectorApp/Sources/CRiskCore/include/cprisk_armor_abi.h`) for link-time `-sectcreate`
+    /// and runtime lookup.
+    func testDisguisedCustomSectionNamesMatchCRiskABIHeader() {
+        XCTAssertEqual(ArmorABI.Sections.whiteboxMeta, "__swift5_mdext")
+        XCTAssertEqual(ArmorABI.Sections.whiteboxCode, "__swift5_mdbdy")
+        XCTAssertEqual(ArmorABI.Sections.whiteboxData, "__swift5_mddsc")
+        XCTAssertEqual(ArmorABI.Sections.whiteboxTag, "__swift5_mdchk")
+        XCTAssertEqual(ArmorABI.Sections.importEncryptedTable, "__swift5_dyrel")
+        XCTAssertEqual(ArmorABI.Sections.headerBackup, "__swift5_mhsav")
+        XCTAssertEqual(ArmorABI.Sections.chainMeta, "__swift5_ptmap")
+        XCTAssertEqual(ArmorABI.Sections.textEncryption, "__swift5_cgenc")
+        XCTAssertEqual(ArmorABI.Sections.vmpDispatch, "__swift5_mdvrt")
+        XCTAssertEqual(ArmorABI.Sections.vmpBytecode, "__swift5_mdirt")
     }
 }

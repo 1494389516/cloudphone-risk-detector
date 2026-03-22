@@ -15,6 +15,12 @@ RiskDetectorApp/.build/
 RiskDetectorApp/.swiftpm/
 RiskDetectorApp/.derivedData/
 
+# Build artifacts & DerivedData（建议放在桌面，不放在项目内）
+.artifacts/
+.deriveddata-ida/
+RiskDetectorApp/.deriveddata-build/
+RiskDetectorApp/.deriveddata-cursor/
+
 # Old/legacy copies (not part of shipping app)
 RiskDetectorApp/Legacy/
 

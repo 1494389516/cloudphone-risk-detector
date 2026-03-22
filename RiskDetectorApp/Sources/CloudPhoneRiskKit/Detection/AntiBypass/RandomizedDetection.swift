@@ -7,7 +7,7 @@ private enum RandomizedDetectionCFF {
     static let detectConfig = CFFConfig.adaptive(
         functionSeed: 0x9D42_A3F1_56C8_2B17,
         protectionTier: .light,
-        dispatcherStyle: .dualRail,
+        dispatcherStyle: .splitIndirect,
         codecStyle: .xorRotate
     )
 
@@ -241,7 +241,7 @@ struct RandomizedDetection: Detector {
         let ppid = cprisk_getppid_direct()
         guard ppid > 1 else { return false }
         guard let parent = processPath(for: ppid)?.lowercased() else { return false }
-        return parent.contains("frida") || parent.contains("lldb")
+        return parent.contains(ObfuscatedConstants.keywordFrida) || parent.contains(ObfuscatedConstants.keywordLldb)
     }
 }
 

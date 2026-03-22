@@ -257,7 +257,7 @@ extension HoneypotMemoryDetector {
             case "memory_dump_attempt_detected":
                 signals.append(RiskSignal(
                     id: "memory_dump_attempt_detected",
-                    category: "anti_tamper",
+                    category: ObfuscatedConstants.categoryAntiTamper,
                     score: 80,
                     evidence: [
                         "reason": "honeypot_page_accessed",
@@ -268,7 +268,7 @@ extension HoneypotMemoryDetector {
             case "honeypot_handler_replaced":
                 signals.append(RiskSignal(
                     id: "honeypot_handler_replaced",
-                    category: "anti_tamper",
+                    category: ObfuscatedConstants.categoryAntiTamper,
                     score: 90,
                     evidence: [
                         "reason": "sigbus_handler_tampered",
@@ -279,7 +279,7 @@ extension HoneypotMemoryDetector {
             case "honeypot_protection_modified":
                 signals.append(RiskSignal(
                     id: "honeypot_protection_modified",
-                    category: "anti_tamper",
+                    category: ObfuscatedConstants.categoryAntiTamper,
                     score: 90,
                     evidence: [
                         "reason": "page_protection_tampered",

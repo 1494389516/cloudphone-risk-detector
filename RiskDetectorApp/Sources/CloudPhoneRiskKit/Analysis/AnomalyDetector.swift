@@ -383,7 +383,7 @@ public final class AnomalyDetector {
                 severity: severity,
                 anomalyScore: min(riskScoreZ.zScore / 5.0, 1.0),
                 description: "风险分数异常：Z-score = \(String(format: "%.2f", riskScoreZ.zScore))",
-                affectedMetrics: ["risk_score"],
+                affectedMetrics: [ObfuscatedConstants.keywordRiskScore],
                 detectionMethod: "z_score"
             ))
         }
@@ -409,7 +409,7 @@ public final class AnomalyDetector {
                     severity: severity,
                     anomalyScore: score,
                     description: "风险分数超出四分位距范围",
-                    affectedMetrics: ["risk_score"],
+                    affectedMetrics: [ObfuscatedConstants.keywordRiskScore],
                     detectionMethod: "iqr"
                 ))
             }

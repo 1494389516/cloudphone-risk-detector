@@ -72,6 +72,21 @@ final class ArmorIntegrationTests: XCTestCase {
         cprisk_cleanup_protection()
     }
 
+    func testHeaderRestorePathIsGracefulOnUnarmoredBinaries() {
+        let rc = cprisk_restore_macho_header()
+        XCTAssertTrue(
+            rc == 0 || rc == 1 || rc == -1,
+            "header restore should fail gracefully without crashes, got \(rc)"
+        )
+    }
+
+    func testImportResolverReturnsFailClosedWhenTableUnavailable() {
+        var addr: UnsafeMutableRawPointer?
+        let rc = cprisk_resolve_import(0, &addr)
+        XCTAssertEqual(rc, -1, "unarmored test binaries should fail closed on import resolve")
+        XCTAssertNil(addr)
+    }
+
     /// 验证白盒前置 ABI/能力探测接口已接通。
     /// 当前工程版未嵌入真实 white-box 表，但 probe 至少应返回编译态 capability 与稳定 ABI 版本。
     func testWhiteboxProbeExposesFrontendCapabilities() {

@@ -6,6 +6,8 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <mach-o/dyld.h>
+#include <sys/sysctl.h>
 
 static uint32_t cprisk_cff_rotate_left32(uint32_t value, uint32_t shift) {
     const uint32_t amount = shift & 31u;
@@ -48,22 +50,186 @@ static uint64_t cprisk_cff_thread_fingerprint(void) {
     return hash;
 }
 
+static uint32_t cprisk_cff_os_mix32(void) {
+    char osrelease[128];
+    size_t len = sizeof(osrelease);
+    if (sysctlbyname("kern.osrelease", osrelease, &len, NULL, 0) != 0 || len == 0) {
+        return 0xA24BAED5u;
+    }
+
+    uint32_t hash = 0x811C9DC5u;
+    for (size_t i = 0; i < len && osrelease[i] != '\0'; i++) {
+        hash ^= (uint32_t)(uint8_t)osrelease[i];
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+static uint32_t cprisk_cff_dyld_mix32(void) {
+    const uint32_t image_count = _dyld_image_count();
+    return (image_count << 9u) ^ (image_count >> 5u) ^ 0x6C8E9CF5u;
+}
+
+static uint32_t cprisk_cff_affine_multiplier(uint32_t key, uint32_t salt) {
+    return cprisk_cff_avalanche32(key ^ cprisk_cff_rotate_left32(salt, 7u) ^ 0xD1B54A35u) | 1u;
+}
+
+static uint32_t cprisk_cff_affine_addend(uint32_t key, uint32_t salt) {
+    return cprisk_cff_avalanche32((key * 0x9E3779B1u) ^ salt ^ 0x94D049BBu);
+}
+
+static uint32_t cprisk_cff_mod_inverse_odd32(uint32_t odd_value) {
+    uint32_t inverse = odd_value;
+    inverse *= 2u - odd_value * inverse;
+    inverse *= 2u - odd_value * inverse;
+    inverse *= 2u - odd_value * inverse;
+    inverse *= 2u - odd_value * inverse;
+    inverse *= 2u - odd_value * inverse;
+    return inverse;
+}
+
+static cprisk_cff_codec_style_t cprisk_cff_resolve_style(uint32_t seed, uint32_t entry_state, uint8_t requested_style) {
+    const cprisk_cff_codec_style_t requested = (cprisk_cff_codec_style_t)requested_style;
+    if (requested == CPRISK_CFF_CODEC_STYLE_XOR_ROTATE ||
+        requested == CPRISK_CFF_CODEC_STYLE_ADD_ROTATE_XOR ||
+        requested == CPRISK_CFF_CODEC_STYLE_AFFINE) {
+        return requested;
+    }
+
+    const uint32_t selector =
+        cprisk_cff_avalanche32(seed ^ cprisk_cff_rotate_left32(entry_state, 11u) ^ 0x13579BDFu) % 3u;
+    switch (selector) {
+        case 0u:
+            return CPRISK_CFF_CODEC_STYLE_XOR_ROTATE;
+        case 1u:
+            return CPRISK_CFF_CODEC_STYLE_ADD_ROTATE_XOR;
+        default:
+            return CPRISK_CFF_CODEC_STYLE_AFFINE;
+    }
+}
+
+static uint32_t cprisk_cff_opaque_selector_i(const cprisk_cff_context_t *context, uint32_t decoded_state) {
+    uint32_t token = cprisk_cff_avalanche32(
+        context->encoded_state ^
+        decoded_state ^
+        (context->runtime_salt * 0x9E3779B1u) ^
+        ((uint32_t)context->codec_style << 24u) ^
+        0x6C8E9CF5u
+    );
+    token ^= cprisk_cff_rotate_left32(token, ((context->seed >> 27u) & 31u) | 1u);
+    return token;
+}
+
 static uint32_t cprisk_cff_mix_seed(uint32_t seed, uint32_t entry_state) {
     return cprisk_cff_avalanche32(seed ^ (entry_state * 0x9E3779B1u) ^ 0xA24BAED5u);
 }
 
+static uint32_t cprisk_cff_default_seed(void) {
+    struct timespec now;
+    uint64_t monotonic_ns = 0u;
+    const uint64_t pid = (uint64_t)getpid();
+    const uint64_t tid_hash = cprisk_cff_thread_fingerprint();
+    const uintptr_t fn_addr_mix = (uintptr_t)&cprisk_cff_default_seed ^ (uintptr_t)&cprisk_cff_encode_state;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &now) == 0) {
+        monotonic_ns = ((uint64_t)now.tv_sec * 1000000000ULL) + (uint64_t)now.tv_nsec;
+    }
+
+    uint32_t seed = 0u;
+    seed ^= (uint32_t)pid;
+    seed ^= (uint32_t)(pid >> 32u);
+    seed ^= (uint32_t)tid_hash;
+    seed ^= (uint32_t)(tid_hash >> 32u);
+    seed ^= (uint32_t)monotonic_ns;
+    seed ^= (uint32_t)(monotonic_ns >> 29u);
+    seed ^= (uint32_t)fn_addr_mix;
+    seed ^= (uint32_t)(fn_addr_mix >> 32u);
+    seed = cprisk_cff_avalanche32(seed ^ 0x91E10DA5u);
+    return seed == 0u ? 1u : seed;
+}
+
 uint32_t cprisk_cff_encode_state(uint32_t state, uint32_t key, uint32_t salt) {
-    const uint32_t mix = cprisk_cff_avalanche32(key ^ salt ^ 0x9E3779B9u);
-    const uint32_t shift = (mix & 31u) | 1u;
-    const uint32_t masked = state ^ mix ^ (salt * 0x45D9F3Bu);
-    return cprisk_cff_rotate_left32(masked, shift) + (key * 0x27D4EB2Du);
+    return cprisk_cff_encode_state_with_style(
+        state,
+        key,
+        salt,
+        CPRISK_CFF_CODEC_STYLE_XOR_ROTATE
+    );
 }
 
 uint32_t cprisk_cff_decode_state(uint32_t encoded_state, uint32_t key, uint32_t salt) {
-    const uint32_t mix = cprisk_cff_avalanche32(key ^ salt ^ 0x9E3779B9u);
-    const uint32_t shift = (mix & 31u) | 1u;
-    const uint32_t unshifted = cprisk_cff_rotate_right32(encoded_state - (key * 0x27D4EB2Du), shift);
-    return unshifted ^ mix ^ (salt * 0x45D9F3Bu);
+    return cprisk_cff_decode_state_with_style(
+        encoded_state,
+        key,
+        salt,
+        CPRISK_CFF_CODEC_STYLE_XOR_ROTATE
+    );
+}
+
+uint32_t cprisk_cff_encode_state_with_style(
+    uint32_t state,
+    uint32_t key,
+    uint32_t salt,
+    cprisk_cff_codec_style_t style
+) {
+    switch (style) {
+        case CPRISK_CFF_CODEC_STYLE_ADD_ROTATE_XOR: {
+            const uint32_t addend = cprisk_cff_avalanche32(key + salt + 0x7F4A7C15u);
+            const uint32_t shift = (((key >> 3u) ^ salt) & 31u) | 1u;
+            const uint32_t mixed = cprisk_cff_rotate_left32(state + addend, shift);
+            return mixed ^ cprisk_cff_avalanche32(key ^ 0xA24BAED5u) ^ (salt * 0x165667B1u);
+        }
+        case CPRISK_CFF_CODEC_STYLE_AFFINE: {
+            const uint32_t mask = cprisk_cff_avalanche32(key + salt + 0x51ED270Bu);
+            const uint32_t multiplier = cprisk_cff_affine_multiplier(key, salt);
+            const uint32_t addend = cprisk_cff_affine_addend(key, salt);
+            const uint32_t masked = state ^ mask;
+            return (masked * multiplier + addend) ^ cprisk_cff_rotate_left32(key, (salt & 31u) | 1u);
+        }
+        case CPRISK_CFF_CODEC_STYLE_XOR_ROTATE:
+        case CPRISK_CFF_CODEC_STYLE_AUTO:
+        default: {
+            const uint32_t mix = cprisk_cff_avalanche32(key ^ salt ^ 0x9E3779B9u);
+            const uint32_t shift = (mix & 31u) | 1u;
+            const uint32_t masked = state ^ mix ^ (salt * 0x45D9F3Bu);
+            return cprisk_cff_rotate_left32(masked, shift) + (key * 0x27D4EB2Du);
+        }
+    }
+}
+
+uint32_t cprisk_cff_decode_state_with_style(
+    uint32_t encoded_state,
+    uint32_t key,
+    uint32_t salt,
+    cprisk_cff_codec_style_t style
+) {
+    switch (style) {
+        case CPRISK_CFF_CODEC_STYLE_ADD_ROTATE_XOR: {
+            const uint32_t addend = cprisk_cff_avalanche32(key + salt + 0x7F4A7C15u);
+            const uint32_t shift = (((key >> 3u) ^ salt) & 31u) | 1u;
+            const uint32_t unmasked =
+                encoded_state ^ cprisk_cff_avalanche32(key ^ 0xA24BAED5u) ^ (salt * 0x165667B1u);
+            return cprisk_cff_rotate_right32(unmasked, shift) - addend;
+        }
+        case CPRISK_CFF_CODEC_STYLE_AFFINE: {
+            const uint32_t mask = cprisk_cff_avalanche32(key + salt + 0x51ED270Bu);
+            const uint32_t multiplier = cprisk_cff_affine_multiplier(key, salt);
+            const uint32_t inverse = cprisk_cff_mod_inverse_odd32(multiplier);
+            const uint32_t addend = cprisk_cff_affine_addend(key, salt);
+            const uint32_t unxored = encoded_state ^ cprisk_cff_rotate_left32(key, (salt & 31u) | 1u);
+            const uint32_t unscaled = (unxored - addend) * inverse;
+            return unscaled ^ mask;
+        }
+        case CPRISK_CFF_CODEC_STYLE_XOR_ROTATE:
+        case CPRISK_CFF_CODEC_STYLE_AUTO:
+        default: {
+            const uint32_t mix = cprisk_cff_avalanche32(key ^ salt ^ 0x9E3779B9u);
+            const uint32_t shift = (mix & 31u) | 1u;
+            const uint32_t unshifted =
+                cprisk_cff_rotate_right32(encoded_state - (key * 0x27D4EB2Du), shift);
+            return unshifted ^ mix ^ (salt * 0x45D9F3Bu);
+        }
+    }
 }
 
 uint32_t cprisk_cff_runtime_salt(uint32_t seed, uint32_t runtime_hint) {
@@ -82,6 +248,8 @@ uint32_t cprisk_cff_runtime_salt(uint32_t seed, uint32_t runtime_hint) {
         (uint32_t)pid ^
         (uint32_t)(monotonic_ns >> 11u) ^
         (uint32_t)(tid_hash >> 17u) ^
+        cprisk_cff_os_mix32() ^
+        cprisk_cff_dyld_mix32() ^
         0x7F4A7C15u
     );
 }
@@ -95,11 +263,12 @@ void cprisk_cff_init(cprisk_cff_context_t *context, const cprisk_cff_config_t *c
 
     if (config == NULL) {
         memset(&local_config, 0, sizeof(local_config));
-        local_config.seed = 0xCFF0C0DEu;
+        local_config.seed = cprisk_cff_default_seed();
         local_config.entry_state = 0u;
         local_config.iteration_budget = CPRISK_CFF_ITERATION_BUDGET;
         local_config.release_build = (uint8_t)CPRISK_CFF_RELEASE_BUILD;
         local_config.enable_fake_states = (uint8_t)CPRISK_CFF_ENABLE_FAKE_STATE;
+        local_config.codec_style = (uint8_t)CPRISK_CFF_CODEC_STYLE_AUTO;
         local_config.default_action = CPRISK_CFF_RELEASE_BUILD ? CPRISK_CFF_DEFAULT_POISON : CPRISK_CFF_DEFAULT_FAIL_CLOSED;
         config = &local_config;
     }
@@ -115,8 +284,18 @@ void cprisk_cff_init(cprisk_cff_context_t *context, const cprisk_cff_config_t *c
     context->release_build = config->release_build;
     context->enable_fake_states = config->enable_fake_states;
     context->fake_state_budget = (uint8_t)((config->enable_fake_states != 0u && config->release_build != 0u) ? 2u : 0u);
+    context->codec_style = (uint8_t)cprisk_cff_resolve_style(
+        context->seed,
+        config->entry_state,
+        config->codec_style
+    );
     context->default_action = config->default_action;
-    context->encoded_state = cprisk_cff_encode_state(config->entry_state, context->seed, context->runtime_salt);
+    context->encoded_state = cprisk_cff_encode_state_with_style(
+        config->entry_state,
+        context->seed,
+        context->runtime_salt,
+        (cprisk_cff_codec_style_t)context->codec_style
+    );
     context->last_decoded_state = config->entry_state;
 }
 
@@ -129,6 +308,7 @@ void cprisk_cff_init_default(cprisk_cff_context_t *context, uint32_t seed, uint3
     config.iteration_budget = CPRISK_CFF_ITERATION_BUDGET;
     config.release_build = (uint8_t)CPRISK_CFF_RELEASE_BUILD;
     config.enable_fake_states = (uint8_t)CPRISK_CFF_ENABLE_FAKE_STATE;
+    config.codec_style = (uint8_t)CPRISK_CFF_CODEC_STYLE_AUTO;
     config.default_action = CPRISK_CFF_RELEASE_BUILD ? CPRISK_CFF_DEFAULT_POISON : CPRISK_CFF_DEFAULT_FAIL_CLOSED;
     cprisk_cff_init(context, &config);
 }
@@ -138,7 +318,12 @@ uint32_t cprisk_cff_current_state(cprisk_cff_context_t *context) {
         return 0u;
     }
 
-    context->last_decoded_state = cprisk_cff_decode_state(context->encoded_state, context->seed, context->runtime_salt);
+    context->last_decoded_state = cprisk_cff_decode_state_with_style(
+        context->encoded_state,
+        context->seed,
+        context->runtime_salt,
+        (cprisk_cff_codec_style_t)context->codec_style
+    );
     return context->last_decoded_state;
 }
 
@@ -148,7 +333,12 @@ void cprisk_cff_set_state(cprisk_cff_context_t *context, uint32_t next_state) {
     }
 
     context->last_decoded_state = next_state;
-    context->encoded_state = cprisk_cff_encode_state(next_state, context->seed, context->runtime_salt);
+    context->encoded_state = cprisk_cff_encode_state_with_style(
+        next_state,
+        context->seed,
+        context->runtime_salt,
+        (cprisk_cff_codec_style_t)context->codec_style
+    );
 }
 
 void cprisk_cff_set_encoded_state(cprisk_cff_context_t *context, uint32_t encoded_state) {
@@ -157,24 +347,28 @@ void cprisk_cff_set_encoded_state(cprisk_cff_context_t *context, uint32_t encode
     }
 
     context->encoded_state = encoded_state;
-    context->last_decoded_state = cprisk_cff_decode_state(encoded_state, context->seed, context->runtime_salt);
+    context->last_decoded_state = cprisk_cff_decode_state_with_style(
+        encoded_state,
+        context->seed,
+        context->runtime_salt,
+        (cprisk_cff_codec_style_t)context->codec_style
+    );
 }
 
 int cprisk_cff_should_visit_fake_state(const cprisk_cff_context_t *context, uint32_t decoded_state) {
     uint32_t mixed = 0u;
+    uint32_t modulo = 0u;
 
     if (context == NULL || context->enable_fake_states == 0u || context->release_build == 0u || context->fake_state_budget == 0u) {
         return 0;
     }
 
-    mixed = cprisk_cff_avalanche32(
-        context->encoded_state ^
-        decoded_state ^
-        (context->runtime_salt * 0x9E3779B1u) ^
-        0x6C8E9CF5u
-    );
+    mixed = cprisk_cff_opaque_selector_i(context, decoded_state);
+    modulo = 5u + ((uint32_t)context->codec_style % 3u);
+    if (modulo == 0u)
+        modulo = 5u;
 
-    return (mixed % 5u) == 0u;
+    return (mixed % modulo) == 0u;
 }
 
 void cprisk_cff_poison_default(cprisk_cff_context_t *context) {
@@ -189,12 +383,22 @@ void cprisk_cff_poison_default(cprisk_cff_context_t *context) {
         case CPRISK_CFF_DEFAULT_POISON:
             cprisk_force_integrity_poison();
             context->iteration_budget = 0u;
-            context->encoded_state = cprisk_cff_encode_state(0xFFFF0001u, context->seed, context->runtime_salt);
+            context->encoded_state = cprisk_cff_encode_state_with_style(
+                0xFFFF0001u,
+                context->seed,
+                context->runtime_salt,
+                (cprisk_cff_codec_style_t)context->codec_style
+            );
             break;
         case CPRISK_CFF_DEFAULT_FAIL_CLOSED:
         default:
             context->iteration_budget = 0u;
-            context->encoded_state = cprisk_cff_encode_state(0xFFFF0000u, context->seed, context->runtime_salt);
+            context->encoded_state = cprisk_cff_encode_state_with_style(
+                0xFFFF0000u,
+                context->seed,
+                context->runtime_salt,
+                (cprisk_cff_codec_style_t)context->codec_style
+            );
             break;
     }
 }

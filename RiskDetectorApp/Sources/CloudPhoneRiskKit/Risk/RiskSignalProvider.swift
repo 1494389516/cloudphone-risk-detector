@@ -88,7 +88,7 @@ final class RiskSignalProviderRegistry {
         "drm_capability",
         "battery_entropy",
         "time_pattern",
-        "anti_tampering",
+        ObfuscatedConstants.detectorIDAntiTampering,
         "app_attest",
         "environment_consistency",
         "hardware_capability",
@@ -168,7 +168,7 @@ final class RiskSignalProviderRegistry {
         if unregisterAttempts > 0 {
             out.append(RiskSignal(
                 id: "provider_tamper_attempt",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: 85,
                 evidence: ["attempts": "\(unregisterAttempts)"],
                 state: .tampered,
@@ -181,7 +181,7 @@ final class RiskSignalProviderRegistry {
             let ids = replacedIDs.sorted().joined(separator: ",")
             out.append(RiskSignal(
                 id: "provider_instance_replaced",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: 85,
                 evidence: ["providers": ids],
                 state: .tampered,

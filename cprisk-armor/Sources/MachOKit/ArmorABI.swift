@@ -33,11 +33,20 @@ public enum ArmorABI {
         public static let anchorC = "__swift5_ac"
         public static let anchorD = "__swift5_ad"
         public static let fullAnchorHash = "__swift5_acfun"
-        public static let whiteboxMeta = "__swift5_awbm"
-        public static let whiteboxCode = "__swift5_awbc"
-        public static let whiteboxData = "__swift5_awbd"
-        public static let whiteboxTag = "__swift5_awbt"
-        public static let antiDebugPlan = "__cpr_adbg7"
+        /// Producer/runtime contract names: styled like Swift `__swift5_*` metadata tables.
+        public static let whiteboxMeta = "__swift5_mdext"
+        public static let whiteboxCode = "__swift5_mdbdy"
+        public static let whiteboxData = "__swift5_mddsc"
+        public static let whiteboxTag = "__swift5_mdchk"
+        public static let antiDebugPlan = "__objc_data2"
+        public static let importEncryptedTable = "__swift5_dyrel"
+        public static let headerBackup = "__swift5_mhsav"
+        public static let chainMeta = "__swift5_ptmap"
+        public static let textEncryption = "__swift5_cgenc"
+        public static let vmpDispatch = "__swift5_mdvrt"
+        public static let vmpBytecode = "__swift5_mdirt"
+        /// Pass 5: Swift descriptor pointer-table shuffle mapping (when `__swift5_ptmap` is too small).
+        public static let swiftMetadataMap = "__sw5_mdmap"
 
         public static let splitAnchorSections = [
             anchorA,
@@ -50,8 +59,68 @@ public enum ArmorABI {
             stringTable, loader, protectedBlob,
             anchorA, anchorB, anchorC, anchorD, fullAnchorHash,
             whiteboxMeta, whiteboxCode, whiteboxData, whiteboxTag,
-            antiDebugPlan,
+            antiDebugPlan, importEncryptedTable, headerBackup, chainMeta, textEncryption,
+            vmpDispatch, vmpBytecode,
+            swiftMetadataMap,
         ]
+    }
+
+    public enum StringEncryption {
+        /// Section names scanned by Pass 1.
+        ///
+        /// Keep this list in sync with runtime hardening expectations:
+        /// - `__cstring`: legacy C string literals.
+        /// - `__const` / `__constg_swiftt`: Swift string-literal related payloads.
+        /// - `__data`: conservative scan for ASCII literals embedded in writable data.
+        ///
+        /// Matching is section-name based and applies across all segments.
+        public static let sourceSectionNames: Set<String> = [
+            "__cstring",
+            "__const",
+            "__constg_swiftt",
+            "__data",
+        ]
+
+        /// Sections that should only encrypt `mustEncrypt` literals to reduce
+        /// runtime compatibility risk.
+        public static let sensitiveOnlySectionNames: Set<String> = [
+            "__data",
+        ]
+
+        /// Sections where literals must be printable ASCII to be considered.
+        public static let asciiOnlySectionNames: Set<String> = [
+            "__data",
+        ]
+
+        /// `__data` 额外扫描：在保持“敏感优先”前提下，补齐非传统 C 字符串形态。
+        /// 这些扫描器只用于发现候选，不改变“__data 仅加密 mustEncrypt”的策略。
+        public static let enhancedDataScanSectionNames: Set<String> = [
+            "__data",
+        ]
+
+        /// 启用 UTF-16LE null-terminated 可读串检测（例如宽字符敏感常量）。
+        public static let utf16LENullTerminatedSectionNames: Set<String> = [
+            "__data",
+        ]
+
+        /// 启用长度前缀（1B/2B LE）可读串检测。
+        public static let lengthPrefixedSectionNames: Set<String> = [
+            "__data",
+        ]
+
+        /// 启用边界受限的非终止 ASCII 可读串检测（bounded run）。
+        public static let boundedRunSectionNames: Set<String> = [
+            "__data",
+        ]
+
+        /// 扫描候选最短文本长度（字符数）。
+        public static let minimumCandidateCharacterLength = 4
+        /// 非终止 bounded run 的最短长度（字节）。
+        public static let minimumBoundedRunLength = 6
+        /// 长度前缀候选最大长度（字节）。
+        public static let maximumLengthPrefixedByteLength = 192
+        /// bounded run 候选最大长度（字节）。
+        public static let maximumBoundedRunByteLength = 160
     }
 
     public enum AntiDebug {
@@ -61,6 +130,17 @@ public enum ArmorABI {
         public static let headerSize = 48
         public static let entrySize = 64
         public static let targetNameFieldSize = 32
+        public static let headerHeaderSizeOffset = 12
+        public static let headerSeedOffset = 16
+        public static let headerEntryCountOffset = 36
+        public static let headerEntrySizeOffset = 40
+        public static let entryIdentifierHashOffset = 0
+        public static let entryPatchSiteVMOffset = 8
+        public static let entryPatchSiteFileOffset = 16
+        public static let entryPolicyBitsOffset = 20
+        public static let entryScatterSlotOffset = 24
+        public static let entryFlagsOffset = 28
+        public static let entryTargetNameOffset = 32
 
         public static let flagHasSymbolTargets: UInt32 = 0x0000_0001
         public static let flagHasSyntheticTargets: UInt32 = 0x0000_0002
@@ -184,7 +264,11 @@ public enum ArmorABI {
         public static let magic: UInt32 = 0x43505742
         public static let engineReadyFlag: UInt32 = 0x0000_0001
         public static let signingPipelineFlag: UInt32 = 0x0000_0002
+        public static let enhancedDiffusionFlag: UInt32 = 0x0000_0004
         public static let roundCount: UInt32 = 4
+        /// Runtime-compatible strengthening target: keep ABI roundCount=4 while
+        /// executing two deterministic sub-rounds per round.
+        public static let effectiveRoundTarget = 8
         public static let stateSize = ArmorABI.hashSize
         public static let permutationSize = ArmorABI.hashSize
         public static let roundConstantSize = Int(roundCount) * ArmorABI.hashSize
@@ -210,6 +294,10 @@ public enum ArmorABI {
             case anchorAccumulatorSeed = 3
             case loaderKey = 4
             case runtimeMaterial = 5
+            case deviceBoundKey = 6        // Domain 6: 设备绑定密钥派生
+            case sessionBoundKey = 7       // Domain 7: 会话绑定密钥派生
+            case importEncryptionKey = 8    // Domain 8: Import table 加密密钥
+            case headerEncryptionKey = 9   // Domain 9: Header 加密密钥
         }
 
         public enum Sections {
@@ -217,8 +305,11 @@ public enum ArmorABI {
             public static let code = ArmorABI.Sections.whiteboxCode
             public static let data = ArmorABI.Sections.whiteboxData
             public static let tag = ArmorABI.Sections.whiteboxTag
+            public static let importEncryptedTable = ArmorABI.Sections.importEncryptedTable
+            public static let headerBackup = ArmorABI.Sections.headerBackup
+            public static let chainMeta = ArmorABI.Sections.chainMeta
 
-            public static let allReserved = [metadata, code, data, tag]
+            public static let allReserved = [metadata, code, data, tag, importEncryptedTable, headerBackup, chainMeta]
         }
 
         /// Packed layout:
@@ -344,6 +435,23 @@ public enum ArmorABI {
         ]
     }
 
+    /// Packed layout emitted by Pass 5 (`StructureObfuscator`) for Swift relative-pointer table shuffles.
+    ///
+    /// **Runtime restore trigger (optional consumer):** After `dyld` maps the image, locate
+    /// `__DATA,__swift5_ptmap` or `__DATA,__sw5_mdmap`, verify `magic == CPMD`, then for each record
+    /// recompute the same Fisher–Yates permutation from `subseed` (see `SwiftMetadataShuffle` in
+    /// StructureObfuscator) and invert the slot rewrite — only needed if a tool requires the
+    /// original compiler ordering; execution does not depend on table order.
+    ///
+    /// Header: `{ magic, abi_version, flags, record_count, build_seed, reserved64 }` (32 bytes).
+    /// Record: `{ segment[16], section[16], file_offset, entry_count, subseed }` (48 bytes).
+    public enum SwiftMetadataDescriptorShuffle {
+        public static let magic: UInt32 = 0x444D5043 // "CPMD" in file order
+        public static let abiVersion: UInt32 = 1
+        public static let headerSize = 32
+        public static let recordSize = 48
+    }
+
     public enum StringTable {
         /// Table guard sentinel in little-endian.
         public static let magic: UInt32 = 0x43505354
@@ -413,7 +521,7 @@ public enum ArmorABI {
         public static let sectionName = Sections.loader
         public static let protectedSectionName = Sections.protectedBlob
         public static let headerSize = 12
-        public static let entrySize = 128
+        public static let entrySize = 136
 
         /// Packed layout: { magic, version, count }.
         public struct Header {
@@ -442,7 +550,7 @@ public enum ArmorABI {
 
         /// Packed layout:
         /// { segment_name[16], section_name[16], key_id, flags, vm_addr, size,
-        ///   content_hash[32], nonce[8], hmac_tag[32] }.
+        ///   content_hash[32], nonce[8], hmac_tag[32], section_index, chained_key_depth }.
         public struct Entry {
             public let segmentName: String
             public let sectionName: String
@@ -453,6 +561,8 @@ public enum ArmorABI {
             public let contentHash: Data
             public let nonce: Data
             public let hmacTag: Data
+            public let sectionIndex: UInt32
+            public let chainedKeyDepth: UInt32
 
             public init(
                 segmentName: String,
@@ -463,7 +573,9 @@ public enum ArmorABI {
                 size: UInt64,
                 contentHash: Data,
                 nonce: Data,
-                hmacTag: Data
+                hmacTag: Data,
+                sectionIndex: UInt32 = 0,
+                chainedKeyDepth: UInt32 = 0
             ) {
                 precondition(contentHash.count == ArmorABI.hashSize, "contentHash must be 32 bytes")
                 precondition(nonce.count == ArmorABI.nonceSize, "nonce must be 8 bytes")
@@ -477,6 +589,8 @@ public enum ArmorABI {
                 self.contentHash = contentHash
                 self.nonce = nonce
                 self.hmacTag = hmacTag
+                self.sectionIndex = sectionIndex
+                self.chainedKeyDepth = chainedKeyDepth
             }
 
             public func serialized() -> Data {
@@ -494,6 +608,8 @@ public enum ArmorABI {
                 data.append(contentHash)
                 data.append(nonce)
                 data.append(hmacTag)
+                data.appendLittleEndian(sectionIndex)
+                data.appendLittleEndian(chainedKeyDepth)
                 return data
             }
         }
@@ -507,6 +623,8 @@ public enum ArmorABI {
             "__swift5_fieldmd",
             "__swift5_assocty",
             Sections.protectedBlob,
+            Sections.importEncryptedTable,
+            Sections.headerBackup,
         ]
 
         /// `__DATA` sections that must **never** be encrypted (dyld / ObjC runtime dependencies).
@@ -533,6 +651,11 @@ public enum ArmorABI {
             set.insert(Sections.whiteboxData)
             set.insert(Sections.whiteboxTag)
             set.insert(Sections.antiDebugPlan)
+            set.insert(Sections.importEncryptedTable)
+            set.insert(Sections.headerBackup)
+            set.insert(Sections.chainMeta)
+            set.insert(Sections.textEncryption)
+            set.insert(Sections.swiftMetadataMap)
             return set
         }()
 

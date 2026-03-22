@@ -188,7 +188,7 @@ extension DyldImageMonitor {
         if !suspiciousLoads.isEmpty {
             signals.append(RiskSignal(
                 id: "dyld_monitor_suspicious_injection",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: min(Double(suspiciousLoads.count) * 70, 100),
                 evidence: ["detail": suspiciousLoads.joined(separator: ",")],
                 state: .tampered,
@@ -201,7 +201,7 @@ extension DyldImageMonitor {
         if !genJumps.isEmpty {
             signals.append(RiskSignal(
                 id: "dyld_monitor_gen_anomaly",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: 50,
                 evidence: ["detail": genJumps.joined(separator: ",")],
                 state: .tampered,
@@ -214,7 +214,7 @@ extension DyldImageMonitor {
         if !countDecreases.isEmpty {
             signals.append(RiskSignal(
                 id: "dyld_monitor_image_removed",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: 40,
                 evidence: ["detail": countDecreases.joined(separator: ",")],
                 state: .tampered,
@@ -227,7 +227,7 @@ extension DyldImageMonitor {
         if !hashDivergences.isEmpty {
             signals.append(RiskSignal(
                 id: "dyld_monitor_silent_mutation",
-                category: "anti_tamper",
+                category: ObfuscatedConstants.categoryAntiTamper,
                 score: 50,
                 evidence: ["detail": hashDivergences.joined(separator: ",")],
                 state: .tampered,

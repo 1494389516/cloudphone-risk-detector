@@ -2,37 +2,7 @@ import Foundation
 import Darwin
 
 struct HookDetector: Detector {
-    private let suspiciousObjCClasses = [
-        // Cydia / Sileo / package managers
-        "CydiaObject",
-        "Cydia",
-        "CydiaDelegate",
-        "SileoPackage",
-        "SileoSource",
-        "SileoManager",
-
-        "FLEXManager",
-        "FLEXExplorerViewController",
-        "FLEXExplorer",
-        "FLEXWindow",
-        "FishHook",
-        "CydiaSubstrate",
-        "SubstrateLoader",
-        "FridaServer",
-        "FridaGadget",
-        "FridaAgent",
-        "GumInvocationContext",
-        "GumInterceptor",
-        "SSLKillSwitch",
-        "Liberty",
-        "LibertyLite",
-        "ABypass",
-        "RocketBootstrap",
-        "RBManager",
-        "CPDistributedMessaging",
-        "HBPreferences",
-        "HBLOptionsController",
-    ]
+    private let suspiciousObjCClasses = ObfuscatedConstants.hookSuspiciousObjCClasses
 
     let symbolImageChecks: [(symbol: String, score: Double)] = [
         ("open", 25),
@@ -48,17 +18,7 @@ struct HookDetector: Detector {
         ("objc_msgSend", 18),
     ]
 
-    let suspiciousImageTokens: [String] = [
-        "frida",
-        "gadget",
-        "substrate",
-        "substitute",
-        "libhooker",
-        "ellekit",
-        "tweak",
-        "xposed",
-        "hook",
-    ]
+    let suspiciousImageTokens: [String] = ObfuscatedConstants.hookSuspiciousImageTokens
 
     func detect() throws -> DetectorResult {
         var score: Double = 0
@@ -67,7 +27,7 @@ struct HookDetector: Detector {
         for name in suspiciousObjCClasses where NSClassFromString(name) != nil {
             score += 15
             methods.append("objc_class:\(name)")
-            Logger.log("jailbreak.hook.hit: objc_class=\(name) (+15)")
+            Logger.log("jb.guard.hit: objc_class=\(name) (+15)")
         }
 
         for check in symbolImageChecks {
@@ -76,7 +36,7 @@ struct HookDetector: Detector {
             if isSuspiciousImagePath(path) {
                 score += check.score
                 methods.append("symbol_image_suspicious:\(check.symbol):\(path)")
-                Logger.log("jailbreak.hook.hit: symbol_image_suspicious \(check.symbol)=\(path) (+\(check.score))")
+                Logger.log("jb.guard.hit: symbol_image_suspicious \(check.symbol)=\(path) (+\(check.score))")
                 continue
             }
 
@@ -84,7 +44,7 @@ struct HookDetector: Detector {
                 let penalty = min(18, max(8, check.score * 0.7))
                 score += penalty
                 methods.append("symbol_image_untrusted:\(check.symbol):\(path)")
-                Logger.log("jailbreak.hook.hit: symbol_image_untrusted \(check.symbol)=\(path) (+\(penalty))")
+                Logger.log("jb.guard.hit: symbol_image_untrusted \(check.symbol)=\(path) (+\(penalty))")
             }
         }
 
@@ -154,7 +114,7 @@ private struct ObjCMetadataDetector: Detector {
             for name in classHits.prefix(3) {
                 methods.append("objc_scan:\(name)")
             }
-            Logger.log("jailbreak.objcmeta.hit: class_scan hits=\(classHits.count) (+15)")
+            Logger.log("jb.meta.hit: class_scan hits=\(classHits.count) (+15)")
         }
 
         let protoHits = suspiciousProtocolsFound()
@@ -163,13 +123,13 @@ private struct ObjCMetadataDetector: Detector {
             for p in protoHits.prefix(3) {
                 methods.append("objc_proto:\(p)")
             }
-            Logger.log("jailbreak.objcmeta.hit: protocols hits=\(protoHits.count) (+10)")
+            Logger.log("jb.meta.hit: protocols hits=\(protoHits.count) (+10)")
         }
 
         if let m = suspiciousNSObjectExtensionMethod() {
             score += 8
             methods.append("objc_method:\(m)")
-            Logger.log("jailbreak.objcmeta.hit: nsobject_extension method=\(m) (+8)")
+            Logger.log("jb.meta.hit: nsobject_extension method=\(m) (+8)")
         }
 
         return DetectorResult(score: min(score, 35), methods: methods)
@@ -180,11 +140,7 @@ private struct ObjCMetadataDetector: Detector {
         guard let classes = objc_copyClassList(&count) else { return [] }
         defer { free(UnsafeMutableRawPointer(classes)) }
 
-        let patterns = [
-            "cydia", "sileo", "zebra", "filza", "frida", "gum",
-            "substrate", "substitute", "preferenceloader", "activator",
-            "rocketbootstrap", "libhooker", "ellekit", "shadow", "dopamine",
-        ]
+        let patterns = ObfuscatedConstants.hookObjcScanPatterns
 
         var hits: [String] = []
         hits.reserveCapacity(8)
@@ -200,13 +156,7 @@ private struct ObjCMetadataDetector: Detector {
     }
 
     private func suspiciousProtocolsFound() -> [String] {
-        let names = [
-            "CydiaDelegate",
-            "SileoDelegate",
-            "SubstituteDelegate",
-            "FridaHelper",
-            "JailbreakProtocol",
-        ]
+        let names = ObfuscatedConstants.hookSuspiciousProtocolNames
         var hits: [String] = []
         for n in names {
             if objc_getProtocol(n) != nil { hits.append(n) }
@@ -220,16 +170,7 @@ private struct ObjCMetadataDetector: Detector {
         guard let methods = class_copyMethodList(cls, &methodCount) else { return nil }
         defer { free(methods) }
 
-        let prefixes = [
-            "jb_",
-            "cydia_",
-            "sileo_",
-            "hook_",
-            "patch_",
-            "tweak_",
-            "substrate_",
-            "ms_",
-        ]
+        let prefixes = ObfuscatedConstants.hookObjcMethodPrefixes
 
         for i in 0..<Int(methodCount) {
             let sel = method_getName(methods[i])

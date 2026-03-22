@@ -3,17 +3,7 @@ import Foundation
 import MachO
 
 struct CodeSignatureValidator: Detector {
-    let suspiciousInjectedLibraryTokens: [String] = [
-        "frida",
-        "gadget",
-        "gum",
-        "substrate",
-        "substitute",
-        "libhooker",
-        "ellekit",
-        "tweak",
-        "hook",
-    ]
+    var suspiciousInjectedLibraryTokens: [String] { ObfuscatedConstants.suspiciousInjectedLibraryTokens }
 
     let suspiciousEnvKeys: [String] = [
         "DYLD_INSERT_LIBRARIES",
