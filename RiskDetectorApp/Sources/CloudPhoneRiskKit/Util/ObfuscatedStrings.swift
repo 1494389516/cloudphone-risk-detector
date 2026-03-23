@@ -186,6 +186,83 @@ enum ObfuscatedConstants {
         StringDeobfuscator.base64Decode("YW50aV9kZWJ1Z193YXRjaGRvZ19leGNlcHRpb25fcXVlcnk=")
     }
 
+    /// Protocol-stable `SignalID` values (decoded at runtime; avoid plaintext in `SignalID` enum).
+    static var signalAntiDebugWatchdogDyldInjection: String {
+        StringDeobfuscator.base64Decode("YW50aV9kZWJ1Z193YXRjaGRvZ19keWxkX2luamVjdGlvbg==")
+    }
+
+    static var signalAntiDebugWatchdogDenyAttachVerify: String {
+        StringDeobfuscator.base64Decode("YW50aV9kZWJ1Z193YXRjaGRvZ19kZW55X2F0dGFjaF92ZXJpZnk=")
+    }
+
+    static var signalAntiDebugWatchdogAMFICsFlags: String {
+        StringDeobfuscator.base64Decode("YW50aV9kZWJ1Z193YXRjaGRvZ19hbWZpX2NzX2ZsYWdz")
+    }
+
+    static var signalAntiDebugWatchdogGetTaskAllow: String {
+        StringDeobfuscator.base64Decode("YW50aV9kZWJ1Z193YXRjaGRvZ19nZXRfdGFza19hbGxvdw==")
+    }
+
+    static var signalSoftwareBreakpointDetected: String {
+        StringDeobfuscator.base64Decode("c29mdHdhcmVfYnJlYWtwb2ludF9kZXRlY3RlZA==")
+    }
+
+    static var signalExceptionDeliveryTimeout: String {
+        StringDeobfuscator.base64Decode("ZXhjZXB0aW9uX2RlbGl2ZXJ5X3RpbWVvdXQ=")
+    }
+
+    static var signalStalkerJitRWX: String {
+        StringDeobfuscator.base64Decode("c3RhbGtlcl9qaXRfcnd4")
+    }
+
+    static var signalRwxJitCoexistence: String {
+        StringDeobfuscator.base64Decode("cnd4X2ppdF9jb2V4aXN0ZW5jZQ==")
+    }
+
+    static var signalMultipathCrossInconsistency: String {
+        StringDeobfuscator.base64Decode("bXVsdGlwYXRoX2Nyb3NzX2luY29uc2lzdGVuY3k=")
+    }
+
+    static var signalPacDisabled: String {
+        StringDeobfuscator.base64Decode("cGFjX2Rpc2FibGVk")
+    }
+
+    static var signalPacPointerInvalid: String {
+        StringDeobfuscator.base64Decode("cGFjX3BvaW50ZXJfaW52YWxpZA==")
+    }
+
+    static var signalDtraceKdebugActivity: String {
+        StringDeobfuscator.base64Decode("ZHRyYWNlX2tkZWJ1Z19hY3Rpdml0eQ==")
+    }
+
+    static var signalLldbJitSmallRWX: String {
+        StringDeobfuscator.base64Decode("bGxkYl9qaXRfc21hbGxfcnd4")
+    }
+
+    static var signalDyldSharedCacheIntegrity: String {
+        StringDeobfuscator.base64Decode("ZHlsZF9zaGFyZWRfY2FjaGVfaW50ZWdyaXR5")
+    }
+
+    static var signalDyldSharedCacheUUIDMismatch: String {
+        StringDeobfuscator.base64Decode("ZHlsZF9zaGFyZWRfY2FjaGVfdXVpZF9taXNtYXRjaA==")
+    }
+
+    static var signalDyldSharedCacheSlideMismatch: String {
+        StringDeobfuscator.base64Decode("ZHlsZF9zaGFyZWRfY2FjaGVfc2xpZGVfbWlzbWF0Y2g=")
+    }
+
+    static var signalDyldSharedCacheSymbolMismatch: String {
+        StringDeobfuscator.base64Decode("ZHlsZF9zaGFyZWRfY2FjaGVfc3ltYm9sX21pc21hdGNo")
+    }
+
+    static var signalDylibInjectImageCountLow: String {
+        StringDeobfuscator.base64Decode("ZHlsaWJfaW5qZWN0X2ltYWdlX2NvdW50X2xvdw==")
+    }
+
+    static var signalIfaceSpawnPathDivergence: String {
+        StringDeobfuscator.base64Decode("aWZhY2Vfc3Bhd25fcGF0aF9kaXZlcmdlbmNl")
+    }
+
     static var signalFridaModuleDetected: String {
         StringDeobfuscator.base64Decode("ZnJpZGFfbW9kdWxlX2RldGVjdGVk")
     }

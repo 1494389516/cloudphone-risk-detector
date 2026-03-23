@@ -76,12 +76,18 @@ enum {
 };
 
 /**
- * M3 optional: expected FNV-1a (32-bit) of the first \c CPRISK_VM_M3_SELF_BYTES bytes of
- * \c cprisk_vm_execute in the linked TEXT segment (no address mixing; stable under ASLR).
+ * M3 optional: rolling FNV-1a (32-bit) over three **concatenated** TEXT windows (no address
+ * mixing): \c CPRISK_VM_M3_SELF_EXEC_BYTES at \c cprisk_vm_execute, then
+ * \c CPRISK_VM_M3_SELF_LOOP_BYTES at \c cprisk_vm_interp_loop_a (main interpret loop prefix),
+ * then \c CPRISK_VM_M3_SELF_DISPATCH_BYTES at \c cprisk_vm_dispatch_lookup (dispatch decode path).
+ * Loop/dispatch windows are intentionally wider than the legacy 48/32 split so tamper in the
+ * hot loop/dispatch path invalidates CPSF/CPSH together with runtime decode seeds (see self-check
+ * wiring in \c cprisk_vm_execute_engine_i).
+ * Sum equals \c CPRISK_VM_M3_SELF_BYTES; \c cprisk-armor \c VMSelfExpectInjector hashes the same
+ * layout from Mach-O symtab (post-link CPSF/CPSH).
  * When 0, the self-check is skipped even if \c CPRISK_VMP_BC_FLAG_M3_SELFCHK is set.
  * Enable a strict check by defining this at compile time to the fingerprint for your
- * toolchain (e.g. arm64 -O2 reference: \c 0x2f32ecc6u for the object file produced
- * from this source snapshot; re-derive after material interpreter changes).
+ * toolchain; re-derive after material interpreter changes.
  *
  * Additional sources (when macro is 0): optional \c CPRISK_ARMOR_SECTION_VMP_SELF_EXPECT
  * section (magic + LE u32 expect value). See \c CPRISK_VMP_SELF_EXPECT_MAGIC.
@@ -93,7 +99,20 @@ enum {
 #define CPRISK_VM_M3_SELF_EXPECT 0u
 #endif
 #if !defined(CPRISK_VM_M3_SELF_BYTES)
-#define CPRISK_VM_M3_SELF_BYTES 96u
+#define CPRISK_VM_M3_SELF_BYTES 176u
+#endif
+/** Split of \c CPRISK_VM_M3_SELF_BYTES: VM entry + main loop prefix + dispatch lookup (must sum to total). */
+#if !defined(CPRISK_VM_M3_SELF_EXEC_BYTES)
+#define CPRISK_VM_M3_SELF_EXEC_BYTES 48u
+#endif
+#if !defined(CPRISK_VM_M3_SELF_LOOP_BYTES)
+#define CPRISK_VM_M3_SELF_LOOP_BYTES 64u
+#endif
+#if !defined(CPRISK_VM_M3_SELF_DISPATCH_BYTES)
+#define CPRISK_VM_M3_SELF_DISPATCH_BYTES 64u
+#endif
+#if !defined(CPRISK_VM_M3_SELF_INCLUDE_LOOP)
+#define CPRISK_VM_M3_SELF_INCLUDE_LOOP 1
 #endif
 #if !defined(CPRISK_VM_SELFCHK_POLICY)
 #define CPRISK_VM_SELFCHK_POLICY 0

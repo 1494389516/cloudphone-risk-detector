@@ -114,7 +114,17 @@ public final class CPRiskKit: NSObject {
         ObfuscatedConstants.signalAppSigningIdentityTampered, ObfuscatedConstants.signalAppSigningBaselineChanged,
         ObfuscatedConstants.signalKernelHookTimingAnomaly, ObfuscatedConstants.signalKernelHookStalkerAmplified,
         "system_library_wx_mapping", "system_library_anonymous_exec_region",
-        "app_image_segment_layout_anomaly"
+        "app_image_segment_layout_anomaly",
+        SignalID.antiDebugWatchdogDyldInjection,
+        SignalID.antiDebugWatchdogAMFICsFlags,
+        SignalID.antiDebugWatchdogGetTaskAllow,
+        SignalID.antiDebugWatchdogDenyAttachVerify,
+        SignalID.dylibInjectImageCountLow,
+        SignalID.ifaceSpawnPathDivergence,
+        "dyld_monitor_suspicious_injection",
+        "dyld_monitor_silent_mutation",
+        "dyld_image_overload",
+        "dyld_env_abuse"
     ]
 
     private static let remoteConfigEndpointKey = "com.cloudphone.riskkit.remote.endpoint"
@@ -1298,33 +1308,7 @@ public final class CPRiskKit: NSObject {
     }
 
     private func registerProviders(for config: CPRiskConfig) {
-        RiskSignalProviderRegistry.shared.register(ExternalServerAggregateProvider.shared)
-        RiskSignalProviderRegistry.shared.register(DeviceHardwareProvider.shared)
-        RiskSignalProviderRegistry.shared.register(DeviceAgeProvider.shared)
-        RiskSignalProviderRegistry.shared.register(AppAttestSignalProvider.shared)
-        RiskSignalProviderRegistry.shared.register(VPhoneHardwareProvider.shared)
-        RiskSignalProviderRegistry.shared.register(HardwareCapabilityProvider.shared)
-        RiskSignalProviderRegistry.shared.register(DisplayMuxProvider.shared)
-        RiskSignalProviderRegistry.shared.register(BiometricStateProvider.shared)
-        RiskSignalProviderRegistry.shared.register(LayeredConsistencyProvider.shared)
-        RiskSignalProviderRegistry.shared.register(MountPointProvider.shared)
-        RiskSignalProviderRegistry.shared.register(NetworkInterfaceProvider.shared)
-        RiskSignalProviderRegistry.shared.register(DRMCapabilityProvider.shared)
-        RiskSignalProviderRegistry.shared.register(BatteryEntropyProvider.shared)
-        RiskSignalProviderRegistry.shared.register(EnvironmentConsistencyProvider.shared)
-        RiskSignalProviderRegistry.shared.register(AudioRouteProvider.shared)
-        RiskSignalProviderRegistry.shared.register(BasebandIsolationProvider.shared)
-        RiskSignalProviderRegistry.shared.register(GPURenderFingerprintProvider.shared)
-        RiskSignalProviderRegistry.shared.register(IMUNoiseSpectrumProvider.shared)
-
-        if config.enableTemporalAnalysis {
-            RiskSignalProviderRegistry.shared.register(TimePatternProvider.shared)
-        } else {
-            RiskSignalProviderRegistry.shared.unregister(id: TimePatternProvider.shared.id)
-        }
-
-        RiskSignalProviderRegistry.shared.register(AntiTamperingSignalProvider.shared)
-        RiskSignalProviderRegistry.shared.register(CloudPhoneEnvironmentProvider.shared)
+        BuiltInProviderBootstrap.apply(to: RiskSignalProviderRegistry.shared, config: config)
     }
 
     private func runCapabilityProbe(remoteConfig: RemoteConfig?) -> CapabilityProbeRuntimeResult {

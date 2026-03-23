@@ -294,7 +294,7 @@ struct FridaDetector: Detector {
         if hookMemorySignatureScanEnabled {
             let hooks = Self.hookState.withLock { $0 }
             for hook in hooks {
-                guard let hit = hook()?.trimmingCharacters(in: .whitespacesAndNewlines),
+                guard let hit = hook()?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines),
                       !hit.isEmpty else {
                     continue
                 }

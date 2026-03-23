@@ -37,6 +37,120 @@ public extension RiskSignalProvider {
     func serverSignals(snapshot: RiskSnapshot) -> ServerSignals? { nil }
 }
 
+enum BuiltInProviderBootstrap {
+    private struct Entry {
+        let token: UInt64
+        let isEnabled: (CPRiskConfig) -> Bool
+        let apply: (RiskSignalProviderRegistry) -> Void
+    }
+
+    private static let tokenMix: UInt64 = 0x8F42_C193_A55E_17D4
+
+    private static let internalProviders: [RiskSignalProvider] = [
+        ExternalServerAggregateProvider.shared,
+        DeviceHardwareProvider.shared,
+        DeviceAgeProvider.shared,
+        AppAttestSignalProvider.shared,
+        VPhoneHardwareProvider.shared,
+        HardwareCapabilityProvider.shared,
+        DisplayMuxProvider.shared,
+        BiometricStateProvider.shared,
+        LayeredConsistencyProvider.shared,
+        MountPointProvider.shared,
+        NetworkInterfaceProvider.shared,
+        DRMCapabilityProvider.shared,
+        BatteryEntropyProvider.shared,
+        EnvironmentConsistencyProvider.shared,
+        AudioRouteProvider.shared,
+        BasebandIsolationProvider.shared,
+        GPURenderFingerprintProvider.shared,
+        IMUNoiseSpectrumProvider.shared,
+        TimePatternProvider.shared,
+        AntiTamperingSignalProvider.shared,
+        CloudPhoneEnvironmentProvider.shared,
+    ]
+
+    private static let plan: [Entry] = [
+        Entry(token: 0x1010_A001_B201_C301, isEnabled: { _ in true }) { registry in
+            registry.register(ExternalServerAggregateProvider.shared)
+        },
+        Entry(token: 0x1010_A002_B202_C302, isEnabled: { _ in true }) { registry in
+            registry.register(DeviceHardwareProvider.shared)
+        },
+        Entry(token: 0x1010_A003_B203_C303, isEnabled: { _ in true }) { registry in
+            registry.register(DeviceAgeProvider.shared)
+        },
+        Entry(token: 0x1010_A004_B204_C304, isEnabled: { _ in true }) { registry in
+            registry.register(AppAttestSignalProvider.shared)
+        },
+        Entry(token: 0x1010_A005_B205_C305, isEnabled: { _ in true }) { registry in
+            registry.register(VPhoneHardwareProvider.shared)
+        },
+        Entry(token: 0x1010_A006_B206_C306, isEnabled: { _ in true }) { registry in
+            registry.register(HardwareCapabilityProvider.shared)
+        },
+        Entry(token: 0x1010_A007_B207_C307, isEnabled: { _ in true }) { registry in
+            registry.register(DisplayMuxProvider.shared)
+        },
+        Entry(token: 0x1010_A008_B208_C308, isEnabled: { _ in true }) { registry in
+            registry.register(BiometricStateProvider.shared)
+        },
+        Entry(token: 0x1010_A009_B209_C309, isEnabled: { _ in true }) { registry in
+            registry.register(LayeredConsistencyProvider.shared)
+        },
+        Entry(token: 0x1010_A00A_B20A_C30A, isEnabled: { _ in true }) { registry in
+            registry.register(MountPointProvider.shared)
+        },
+        Entry(token: 0x1010_A00B_B20B_C30B, isEnabled: { _ in true }) { registry in
+            registry.register(NetworkInterfaceProvider.shared)
+        },
+        Entry(token: 0x1010_A00C_B20C_C30C, isEnabled: { _ in true }) { registry in
+            registry.register(DRMCapabilityProvider.shared)
+        },
+        Entry(token: 0x1010_A00D_B20D_C30D, isEnabled: { _ in true }) { registry in
+            registry.register(BatteryEntropyProvider.shared)
+        },
+        Entry(token: 0x1010_A00E_B20E_C30E, isEnabled: { _ in true }) { registry in
+            registry.register(EnvironmentConsistencyProvider.shared)
+        },
+        Entry(token: 0x1010_A00F_B20F_C30F, isEnabled: { _ in true }) { registry in
+            registry.register(AudioRouteProvider.shared)
+        },
+        Entry(token: 0x1010_A010_B210_C310, isEnabled: { _ in true }) { registry in
+            registry.register(BasebandIsolationProvider.shared)
+        },
+        Entry(token: 0x1010_A011_B211_C311, isEnabled: { _ in true }) { registry in
+            registry.register(GPURenderFingerprintProvider.shared)
+        },
+        Entry(token: 0x1010_A012_B212_C312, isEnabled: { _ in true }) { registry in
+            registry.register(IMUNoiseSpectrumProvider.shared)
+        },
+        Entry(token: 0x1010_A013_B213_C313, isEnabled: { $0.enableTemporalAnalysis }) { registry in
+            registry.register(TimePatternProvider.shared)
+        },
+        Entry(token: 0x1010_A014_B214_C314, isEnabled: { !$0.enableTemporalAnalysis }) { registry in
+            registry.unregister(id: TimePatternProvider.shared.id)
+        },
+        Entry(token: 0x1010_A015_B215_C315, isEnabled: { _ in true }) { registry in
+            registry.register(AntiTamperingSignalProvider.shared)
+        },
+        Entry(token: 0x1010_A016_B216_C316, isEnabled: { _ in true }) { registry in
+            registry.register(CloudPhoneEnvironmentProvider.shared)
+        },
+    ]
+
+    static let internalProviderIDs: Set<String> = Set(internalProviders.map(\.id))
+
+    static func apply(to registry: RiskSignalProviderRegistry, config: CPRiskConfig) {
+        let orderedPlan = plan.sorted { lhs, rhs in
+            (lhs.token ^ tokenMix) < (rhs.token ^ tokenMix)
+        }
+        for entry in orderedPlan where entry.isEnabled(config) {
+            entry.apply(registry)
+        }
+    }
+}
+
 /// ## 线程模型（所有 Provider 必须遵守）
 ///
 /// `collectWithTimeout` 是 Registry 的线程模型守卫：
@@ -78,28 +192,7 @@ final class RiskSignalProviderRegistry {
     private(set) var tamperedUnregisterAttempts: Int = 0
     private var consecutiveFailures: [String: Int] = [:]
 
-    private static let internalProviderIDs: Set<String> = [
-        "server_aggregate",
-        "device_hardware",
-        "device_age",
-        "vphone_hardware",
-        "layered_consistency",
-        "mount_point",
-        "drm_capability",
-        "battery_entropy",
-        "time_pattern",
-        ObfuscatedConstants.detectorIDAntiTampering,
-        "app_attest",
-        "environment_consistency",
-        "hardware_capability",
-        "network_interface",
-        "biometric_state",
-        "audio_route",
-        "display_mux",
-        "baseband_isolation",
-        "gpu_render_fingerprint",
-        "imu_noise_spectrum",
-    ]
+    private static let internalProviderIDs = BuiltInProviderBootstrap.internalProviderIDs
 
     func seal() {
         lock.withLock {

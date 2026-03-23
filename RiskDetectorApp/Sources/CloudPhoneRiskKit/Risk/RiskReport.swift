@@ -71,8 +71,12 @@ public enum SignalID {
     static let antiDebugWatchdogDenyAttachFailed = ObfuscatedConstants.signalAntiDebugWatchdogDenyAttachFailed
     static let antiDebugWatchdogExceptionPort = ObfuscatedConstants.signalAntiDebugWatchdogExceptionPort
     static let antiDebugWatchdogExceptionQuery = ObfuscatedConstants.signalAntiDebugWatchdogExceptionQuery
-    static let softwareBreakpointDetected = "software_breakpoint_detected"
-    static let exceptionDeliveryTimeout = "exception_delivery_timeout"
+    static let antiDebugWatchdogDyldInjection = ObfuscatedConstants.signalAntiDebugWatchdogDyldInjection
+    static let antiDebugWatchdogDenyAttachVerify = ObfuscatedConstants.signalAntiDebugWatchdogDenyAttachVerify
+    static let antiDebugWatchdogAMFICsFlags = ObfuscatedConstants.signalAntiDebugWatchdogAMFICsFlags
+    static let antiDebugWatchdogGetTaskAllow = ObfuscatedConstants.signalAntiDebugWatchdogGetTaskAllow
+    static let softwareBreakpointDetected = ObfuscatedConstants.signalSoftwareBreakpointDetected
+    static let exceptionDeliveryTimeout = ObfuscatedConstants.signalExceptionDeliveryTimeout
 
     // Frida module
     static let fridaModuleDetected = ObfuscatedConstants.signalFridaModuleDetected
@@ -81,23 +85,26 @@ public enum SignalID {
     static let fridaModuleString = ObfuscatedConstants.signalFridaModuleString
 
     // RWX / JIT (Stalker-like)
-    static let stalkerJitRWX = "stalker_jit_rwx"
-    static let rwxJitCoexistence = "rwx_jit_coexistence"
+    static let stalkerJitRWX = ObfuscatedConstants.signalStalkerJitRWX
+    static let rwxJitCoexistence = ObfuscatedConstants.signalRwxJitCoexistence
 
     // Multi-path consistency / vm_remap / PAC / task-port / dtrace-kdebug / LLDB JIT / dyld shared cache
-    static let multiPathCrossInconsistency = "multipath_cross_inconsistency"
+    static let multiPathCrossInconsistency = ObfuscatedConstants.signalMultipathCrossInconsistency
     static let vmRemapSharedAnonymous = ObfuscatedConstants.signalVMRemapSharedAnonymous
     static let vmRemapImageAlias = ObfuscatedConstants.signalVMRemapImageAlias
-    static let pacDisabled = "pac_disabled"
-    static let pacPointerInvalid = "pac_pointer_invalid"
+    static let pacDisabled = ObfuscatedConstants.signalPacDisabled
+    static let pacPointerInvalid = ObfuscatedConstants.signalPacPointerInvalid
     static let taskPortExceptionHijack = ObfuscatedConstants.signalTaskPortExceptionHijack
     static let taskPortRightsAnomaly = ObfuscatedConstants.signalTaskPortRightsAnomaly
-    static let dtraceKdebugActivity = "dtrace_kdebug_activity"
-    static let lldbJitSmallRWX = "lldb_jit_small_rwx"
-    static let dyldSharedCacheIntegrity = "dyld_shared_cache_integrity"
-    static let dyldSharedCacheUUIDMismatch = "dyld_shared_cache_uuid_mismatch"
-    static let dyldSharedCacheSlideMismatch = "dyld_shared_cache_slide_mismatch"
-    static let dyldSharedCacheSymbolMismatch = "dyld_shared_cache_symbol_mismatch"
+    static let dtraceKdebugActivity = ObfuscatedConstants.signalDtraceKdebugActivity
+    static let lldbJitSmallRWX = ObfuscatedConstants.signalLldbJitSmallRWX
+    static let dyldSharedCacheIntegrity = ObfuscatedConstants.signalDyldSharedCacheIntegrity
+    static let dyldSharedCacheUUIDMismatch = ObfuscatedConstants.signalDyldSharedCacheUUIDMismatch
+    static let dyldSharedCacheSlideMismatch = ObfuscatedConstants.signalDyldSharedCacheSlideMismatch
+    static let dyldSharedCacheSymbolMismatch = ObfuscatedConstants.signalDyldSharedCacheSymbolMismatch
+    static let dylibInjectImageCountLow = ObfuscatedConstants.signalDylibInjectImageCountLow
+    /// Multi-path libc spawn entry resolution mismatch (RTLD_DEFAULT / dlopen+dlsym / export trie) or prologue anomaly.
+    static let ifaceSpawnPathDivergence = ObfuscatedConstants.signalIfaceSpawnPathDivergence
 }
 
 // MARK: - Signal Categories

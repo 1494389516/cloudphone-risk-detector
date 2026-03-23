@@ -70,7 +70,7 @@ public enum ConfigSignatureVerifier {
             return ed25519Result
         }
 
-        // 回退到 HMAC-SHA256 对称验签（兼容旧配置）
+        // 回退到自定义 pad 的 SHA-256 MAC 对称验签（兼容旧配置接口）
         let keyBytes: Data? = lock.withLock { readKeyFromKeychain() }
         guard let keyBytes else {
             #if DEBUG
@@ -81,17 +81,12 @@ public enum ConfigSignatureVerifier {
 
         var mutableKeyBytes = keyBytes
         defer { secureZeroData(&mutableKeyBytes) }
-        let key = SymmetricKey(data: mutableKeyBytes)
 
         guard let signatureData = Data(hexString: signatureHex) else {
             return VerificationResult(isValid: false, reason: "invalid_signature_format")
         }
 
-        let isValid = HMAC<SHA256>.isValidAuthenticationCode(
-            signatureData,
-            authenticating: payload,
-            using: key
-        )
+        let isValid = CPRiskMessageAuth.isValidAuthenticationCode(signatureData, authenticating: payload, keyData: mutableKeyBytes)
 
         return VerificationResult(isValid: isValid, reason: isValid ? nil : "signature_mismatch")
     }

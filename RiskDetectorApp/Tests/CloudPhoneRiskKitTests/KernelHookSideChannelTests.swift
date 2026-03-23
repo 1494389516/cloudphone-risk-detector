@@ -46,6 +46,8 @@ final class KernelHookSideChannelTests: XCTestCase {
             "kernel_hook_time_desync",
             "kernel_hook_pid_unstable",
             "kernel_hook_stalker_amplified",
+            "kernel_hook_crypto_trace_skew",
+            "kernel_hook_crypto_trace_invariant",
         ]
         for signal in signals {
             XCTAssertTrue(validIDs.contains(signal.id),

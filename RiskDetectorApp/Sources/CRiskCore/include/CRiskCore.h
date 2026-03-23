@@ -11,6 +11,7 @@
 #include "cprisk_secure_zero.h"
 #include "cprisk_memory_guard.h"
 #include "cprisk_vm_interpreter.h"
+#include "cprisk_crypto_trace.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -232,6 +233,21 @@ typedef struct cprisk_path_probe_snapshot {
 /// Probe path existence in C layer using access/stat/fopen.
 /// Returns 0 on success, -1 on invalid input.
 int cprisk_probe_path_snapshot(const char *path, cprisk_path_probe_snapshot_t *out_snapshot);
+
+/// Result of libc spawn-entry multi-path address comparison (RTLD_DEFAULT vs dlopen+dlsym vs export trie).
+typedef struct cprisk_spawn_iface_probe_result {
+    uint64_t addr_rtld_default_spawn;
+    uint64_t addr_dlopen_libc_spawn;
+    uint64_t addr_export_trie_spawn;
+    uint64_t addr_rtld_default_spawnp;
+    uint64_t addr_dlopen_libc_spawnp;
+    uint64_t addr_export_trie_spawnp;
+    uint32_t flags;
+    uint32_t reserved;
+} cprisk_spawn_iface_probe_result_t;
+
+/// Populate \p out with resolved addresses and inconsistency flags. Returns 0 on success, -1 if \p out is NULL.
+int cprisk_spawn_iface_probe(cprisk_spawn_iface_probe_result_t *out);
 
 /// Return the current process ID via direct syscall (SYS_getpid).
 /// Never fails; uses cprisk_direct_syscall0 for minimal overhead.
@@ -507,6 +523,9 @@ int cprisk_whitebox_available(void);
 /// slide; runtime decodes using \c aslr_table_anchor_slide before PRF evaluation.
 /// Disable at runtime: \c CPRISK_WB_ASLR_TABLE_DISABLE=1. Strip decode path at compile
 /// time: \c CPRISK_DISABLE_WHITEBOX_ASLR_TABLE.
+/// Domains 6-9: when \c cprisk_get_effective_root() succeeds (after hybrid KDF), the PRF
+/// input is SHA256(label||domain_id_le||input||effective_root); if not, input is identity
+/// (early boot before KDF).
 int cprisk_whitebox_evaluate_domain(
     uint32_t domain_id,
     const uint8_t input[32],
@@ -516,8 +535,9 @@ int cprisk_whitebox_evaluate_domain(
 /// Derive a 32-byte effective signing key from the current runtime material and
 /// the caller-provided base key. This is the C-side equivalent of the former
 /// Swift HMAC(runtime_material, base_key_utf8) step.
-/// Optional ASLR bind (iOS device): set env `CPRISK_SIGNING_KEY_ASLR_BIND=1` to XOR
-/// slide-derived entropy into the first 8 bytes of runtime material before HMAC.
+/// ASLR bind (iOS device): release builds XOR slide-derived entropy into the first
+/// 8 bytes of runtime material before HMAC by default. Override with
+/// `CPRISK_SIGNING_KEY_ASLR_BIND=1` to force enable or `=0` to force disable.
 /// Returns 0 on success, -1 on failure.
 int cprisk_derive_effective_signing_key(
     const uint8_t *base_key,
@@ -743,6 +763,15 @@ void cprisk_test_clear_whitebox_bundle(void);
 /// cprisk_whitebox_evaluate_domain(), used to verify poison/fail-closed behavior.
 void cprisk_test_set_whitebox_recompute_mismatch(int enabled);
 
+/// Test-only: mirror PRF input preparation for domain 6-9 effectiveRoot binding
+/// (SHA256 when hybrid KDF has run; else identity). Domains 1-5 copy input.
+/// Returns 0 on success, -1 on invalid out pointer.
+int cprisk_test_whitebox_prepare_domain_input(
+    uint32_t domain_id,
+    const uint8_t input[32],
+    uint8_t out[32]
+);
+
 /// Test-only: inject an anti-debug plan payload for parser/policy verification.
 /// The runtime copies and owns the plan bytes until cprisk_test_clear_antidebug_plan().
 /// Returns 0 on success, -1 on invalid input or allocation failure.
@@ -823,6 +852,12 @@ enum {
     CPRISK_TIMING_ANOMALY_CLOCK_SKEW = 1u << 3,
     /** CNTPCT_EL0 delta vs mach_absolute_time delta around the same workload disagree (DBI / time virtualization). */
     CPRISK_TIMING_ANOMALY_DUAL_CLOCK_DRIFT = 1u << 4,
+    /** Internal SHA-256/HMAC sentinel observed gross slowdown consistent with DBI / Stalker / QBDI trace amplification. */
+    CPRISK_TIMING_ANOMALY_CRYPTO_TRACE = 1u << 5,
+    /** Crypto-trace CNTPCT vs Mach skew on the same workload (see cprisk_crypto_trace). */
+    CPRISK_TIMING_ANOMALY_CRYPTO_TRACE_SKEW = 1u << 6,
+    /** Deterministic crypto-trace workload digest mismatch. */
+    CPRISK_TIMING_ANOMALY_CRYPTO_TRACE_INVARIANT = 1u << 7,
 };
 
 /// Probe debugger presence via SIGTRAP signal delivery after BRK #0xC0DE.

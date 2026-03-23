@@ -7,6 +7,7 @@
  */
 
 #include "include/CRiskCore.h"
+#include "include/cprisk_crypto_trace.h"
 
 #include <signal.h>
 #include <setjmp.h>
@@ -214,6 +215,14 @@ static uint32_t cprisk_detect_dbi_env_markers_i(int *hit_count_out) {
         "QBDI_APPEND",
         "QBDI_FRIDA",
         "QBDI_STOCK_FILE_REMOVE",
+        /* Unicorn / QEMU / Qiling style harnesses often expose one or more of these. */
+        "UNICORN_ARCH",
+        "UNICORN_MODE",
+        "UNICORN_CPU",
+        "QILING_ROOTFS",
+        "QILING_PROFILE",
+        "QILING_VERBOSE",
+        "QEMU_CPU",
     };
     static const char *const tokenized_env_keys[] = {
         "DYLD_INSERT_LIBRARIES",
@@ -238,6 +247,16 @@ static uint32_t cprisk_detect_dbi_env_markers_i(int *hit_count_out) {
         "qbdipreload",
         "/qbdi/",
         "quarkslab",
+        /* Generic user-mode emulation / sandbox harnesses */
+        "unicorn",
+        "libunicorn",
+        "/unicorn/",
+        "qiling",
+        "libqiling",
+        "/qiling/",
+        "qemu",
+        "qemu-aarch64",
+        "qemu-system",
     };
 
     int hit_count = 0;
@@ -291,6 +310,15 @@ static uint32_t cprisk_detect_dbi_environ_scan_i(int *hit_count_out) {
         "qbdipreload",
         "/qbdi/",
         "quarkslab",
+        "unicorn",
+        "libunicorn",
+        "/unicorn/",
+        "qiling",
+        "libqiling",
+        "/qiling/",
+        "qemu",
+        "qemu-aarch64",
+        "qemu-system",
     };
 
     int hit_count = 0;
@@ -348,6 +376,15 @@ static uint32_t cprisk_detect_dbi_image_markers_i(int *hit_count_out) {
         "libqbdi",
         "qbdipreload",
         "/qbdi/",
+        "unicorn",
+        "libunicorn",
+        "/unicorn/",
+        "qiling",
+        "libqiling",
+        "/qiling/",
+        "qemu",
+        "qemu-aarch64",
+        "qemu-system",
     };
 
     uint32_t flags = 0u;
@@ -385,6 +422,9 @@ static uint32_t cprisk_detect_dbi_thread_markers_i(int *hit_count_out) {
         "pin-tool",
         "qbdi",
         "qbdipreload",
+        "unicorn",
+        "qiling",
+        "qemu",
     };
 
     uint32_t flags = 0u;
@@ -530,7 +570,18 @@ int cprisk_get_last_dbi_marker_hit_count(void) {
 }
 
 uint32_t cprisk_get_last_timing_anomaly_flags(void) {
-    return atomic_load(&s_timing_last_anomaly_flags);
+    uint32_t flags = atomic_load(&s_timing_last_anomaly_flags);
+    const uint32_t crypto = cprisk_crypto_trace_peek_flags_i();
+    if ((crypto & CPRISK_CRYPTO_TRACE_FLAG_SLOW) != 0u) {
+        flags |= CPRISK_TIMING_ANOMALY_CRYPTO_TRACE;
+    }
+    if ((crypto & CPRISK_CRYPTO_TRACE_FLAG_CNT_MACH_SKEW) != 0u) {
+        flags |= CPRISK_TIMING_ANOMALY_CRYPTO_TRACE_SKEW;
+    }
+    if ((crypto & CPRISK_CRYPTO_TRACE_FLAG_INVARIANT_FAIL) != 0u) {
+        flags |= CPRISK_TIMING_ANOMALY_CRYPTO_TRACE_INVARIANT;
+    }
+    return flags;
 }
 
 uint64_t cprisk_get_last_timing_probe_median_ns(void) {
@@ -538,11 +589,15 @@ uint64_t cprisk_get_last_timing_probe_median_ns(void) {
 }
 
 uint64_t cprisk_get_last_timing_probe_max_ns(void) {
-    return atomic_load(&s_timing_last_max_ns);
+    const uint64_t probe_max = atomic_load(&s_timing_last_max_ns);
+    const uint64_t crypto_max = cprisk_crypto_trace_last_ns_i();
+    return probe_max > crypto_max ? probe_max : crypto_max;
 }
 
 uint64_t cprisk_get_last_timing_probe_threshold_ns(void) {
-    return atomic_load(&s_timing_last_threshold_ns);
+    const uint64_t probe_threshold = atomic_load(&s_timing_last_threshold_ns);
+    const uint64_t crypto_threshold = cprisk_crypto_trace_threshold_ns_i();
+    return probe_threshold > crypto_threshold ? probe_threshold : crypto_threshold;
 }
 
 static void cprisk_reset_exception_delivery_probe_state_i(void) {
@@ -1523,10 +1578,23 @@ int cprisk_detect_developer_disk(void) { return 0; }
 int cprisk_detect_dbi_markers(void) { return 0; }
 uint32_t cprisk_get_last_dbi_marker_flags(void) { return 0u; }
 int cprisk_get_last_dbi_marker_hit_count(void) { return 0; }
-uint32_t cprisk_get_last_timing_anomaly_flags(void) { return 0u; }
+uint32_t cprisk_get_last_timing_anomaly_flags(void) {
+    uint32_t f = 0u;
+    const uint32_t c = cprisk_crypto_trace_peek_flags_i();
+    if ((c & CPRISK_CRYPTO_TRACE_FLAG_SLOW) != 0u) {
+        f |= CPRISK_TIMING_ANOMALY_CRYPTO_TRACE;
+    }
+    if ((c & CPRISK_CRYPTO_TRACE_FLAG_CNT_MACH_SKEW) != 0u) {
+        f |= CPRISK_TIMING_ANOMALY_CRYPTO_TRACE_SKEW;
+    }
+    if ((c & CPRISK_CRYPTO_TRACE_FLAG_INVARIANT_FAIL) != 0u) {
+        f |= CPRISK_TIMING_ANOMALY_CRYPTO_TRACE_INVARIANT;
+    }
+    return f;
+}
 uint64_t cprisk_get_last_timing_probe_median_ns(void) { return 0u; }
-uint64_t cprisk_get_last_timing_probe_max_ns(void) { return 0u; }
-uint64_t cprisk_get_last_timing_probe_threshold_ns(void) { return 0u; }
+uint64_t cprisk_get_last_timing_probe_max_ns(void) { return cprisk_crypto_trace_last_ns_i(); }
+uint64_t cprisk_get_last_timing_probe_threshold_ns(void) { return cprisk_crypto_trace_threshold_ns_i(); }
 uint32_t cprisk_run_all_signal_probes(void) { return 0; }
 int cprisk_is_cntpct_clock_available(void) { return 0; }
 

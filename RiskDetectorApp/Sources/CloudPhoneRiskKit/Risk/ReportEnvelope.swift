@@ -39,7 +39,7 @@ public struct ReportEnvelope: Codable, Sendable {
     /// 字段映射版本（用于字段混淆轮换）
     public let fieldMappingVersion: String?
 
-    /// HMAC-SHA256 签名（hex）
+    /// 基于 SHA-256 的自定义 MAC 签名（hex）
     public let signature: String
 
     /// App Attest 密钥标识（base64，可选；SDK 4.4 硬件信任根）
@@ -559,9 +559,7 @@ public struct ReportEnvelope: Codable, Sendable {
     }
 
     private static func hmacHex(message: Data, keyData: Data) -> String {
-        let key = SymmetricKey(data: keyData)
-        let digest = HMAC<SHA256>.authenticationCode(for: message, using: key)
-        return digest.map { String(format: "%02x", $0) }.joined()
+        CPRiskMessageAuth.authenticationCodeHex(for: message, keyData: keyData)
     }
 
     private static func signatureInputData(from signatureInput: String) throws -> Data {

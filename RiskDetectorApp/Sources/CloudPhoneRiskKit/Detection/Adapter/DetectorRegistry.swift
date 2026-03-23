@@ -4,7 +4,7 @@ import Foundation
 ///
 /// 管理 SDK 2.0 中新增的检测器，提供统一的注册和调用接口
 ///
-/// ## 架构���明
+/// ## 架构说明
 /// - 使用注册模式，支持动态添加/移除检测器
 /// - 与现有 JailbreakEngine 兼容，可以通过配置启用新检测器
 /// - 支持检测器分组管理（越狱检测、反篡改检测、行为检测等）
@@ -14,7 +14,10 @@ public final class DetectorRegistry {
     
     public static let shared = DetectorRegistry()
     
-    private init() {}
+    private init() {
+        self.registry = DetectorRegistryBootstrap.makeDefaultRegistry()
+        self.groupTypeOrder = DetectorRegistryBootstrap.makeOrderedGroups()
+    }
     
     // MARK: - 检测器类型
 
@@ -221,33 +224,11 @@ public final class DetectorRegistry {
     /// 检测器工厂类型
     public typealias DetectorFactory = () -> Detector
     
-    /// 检测器注册表
-    private var registry: [DetectorType: DetectorFactory] = [
-        // 原有检测器
-        .file: { FileDetector() },
-        .dyld: { DyldDetector() },
-        .env: { EnvDetector() },
-        .sysctl: { SysctlDetector() },
-        .scheme: { SchemeDetector() },
-        .hook: { HookDetector() },
-        
-        // 新增检测器
-        .antiTampering: { AntiTamperingDetector() },
-        .debugger: { DebuggerDetector() },
-        .frida: { FridaDetector() },
-        .fridaModule: { FridaModuleDetector() },
-        .dylibInjection: { DylibInjectionDetector() },
-        .codeSignature: { CodeSignatureValidator() },
-        .memoryIntegrity: { MemoryIntegrityChecker() },
-        .runtimeIntegrity: { RuntimeIntegrityValidator() },
-    ]
+    /// 检测器注册表（由运行时 plan 构建，避免单一巨型字面量）
+    private var registry: [DetectorType: DetectorFactory]
     
-    /// 检测器分组映射
-    private let groupMapping: [DetectorGroup: Set<DetectorType>] = [
-        .jailbreak: [.file, .dyld, .env, .sysctl, .scheme, .hook],
-        .antiTamper: [.antiTampering, .debugger, .frida, .fridaModule, .dylibInjection],
-        .integrity: [.codeSignature, .memoryIntegrity, .runtimeIntegrity]
-    ]
+    /// 分组内检测顺序（稳定、可复现；不依赖 `Set` 迭代顺序）
+    private let groupTypeOrder: [DetectorGroup: [DetectorType]]
     
     // MARK: - 公开 API
     
@@ -291,14 +272,13 @@ public final class DetectorRegistry {
     /// - Parameter type: 检测器类型
     /// - Returns: 检测器实例，如果类型未注册则返回 nil
     public func createDetector(type: DetectorType) -> Detector? {
-        let factory: DetectorFactory? = lock.withLock {
-            guard let f = registry[type] else {
+        lock.withLock {
+            guard let factory = registry[type] else {
                 Logger.log("DetectorRegistry.createDetector: \(type.rawValue) not found")
                 return nil
             }
-            return f
+            return factory()
         }
-        return factory?()
     }
     
     /// 执行指定类型的检测
@@ -411,10 +391,9 @@ public final class DetectorRegistry {
     /// - Parameter group: 检测器分组
     /// - Returns: 分组检测结果
     public func detect(group: DetectorGroup) -> GroupDetectionResult {
-        guard let types = groupMapping[group] else {
+        guard let orderedTypes = groupTypeOrder[group], !orderedTypes.isEmpty else {
             return GroupDetectionResult(score: 0, methods: [], details: "group_not_found")
         }
-        let orderedTypes = Array(types)
         let cffConfig = CFF.detectGroupConfig
         let salt = CFF.salt(for: group, detectorCount: orderedTypes.count)
         let entryState: UInt32 = 0x41
@@ -424,7 +403,8 @@ public final class DetectorRegistry {
         let settleState: UInt32 = 0x45
         let finishState: UInt32 = 0x46
 
-        var rawResults: [(DetectorType, DetectorResult)] = []
+        var totalScore: Double = 0
+        var allMethods: [String] = []
         var typeIndex = 0
         var currentType: DetectorType?
         var loopBudget = max(24, orderedTypes.count * 5 + 10)
@@ -443,14 +423,7 @@ public final class DetectorRegistry {
         var encodedState = encodeState(entryState)
 
         func finalizeResult() -> GroupDetectionResult {
-            let deduped = deduplicateByOverlapGroup(rawResults)
-            var totalScore: Double = 0
-            var allMethods: [String] = []
-            for (_, result) in deduped {
-                totalScore += result.score
-                allMethods.append(contentsOf: result.methods)
-            }
-            return GroupDetectionResult(
+            GroupDetectionResult(
                 score: totalScore,
                 methods: Array(Set(allMethods)).sorted(),
                 details: "\(group.rawValue)_group"
@@ -479,9 +452,10 @@ public final class DetectorRegistry {
                     currentType = orderedTypes[typeIndex]
                     encodedState = encodeState(executeState)
                 } else if decodedState == executeState {
-                    if let ct = currentType {
-                        let result = detect(type: ct)
-                        rawResults.append((ct, result))
+                    if let currentType {
+                        let result = detect(type: currentType)
+                        totalScore += result.score
+                        allMethods.append(contentsOf: result.methods)
                     }
                     currentType = nil
                     typeIndex += 1
@@ -508,9 +482,10 @@ public final class DetectorRegistry {
                     currentType = orderedTypes[typeIndex]
                     encodedState = encodeState(executeState)
                 case executeState:
-                    if let ct = currentType {
-                        let result = detect(type: ct)
-                        rawResults.append((ct, result))
+                    if let currentType {
+                        let result = detect(type: currentType)
+                        totalScore += result.score
+                        allMethods.append(contentsOf: result.methods)
                     }
                     currentType = nil
                     typeIndex += 1
@@ -583,7 +558,7 @@ public final class DetectorRegistry {
     /// - Parameter type: 检测器类型
     /// - Returns: 检测器分组
     public func group(for type: DetectorType) -> DetectorGroup? {
-        for (group, types) in groupMapping {
+        for (group, types) in groupTypeOrder {
             if types.contains(type) {
                 return group
             }
@@ -595,7 +570,7 @@ public final class DetectorRegistry {
     /// - Parameter group: 检测器分组
     /// - Returns: 检测器类型集合
     public func types(in group: DetectorGroup) -> Set<DetectorType> {
-        groupMapping[group] ?? []
+        Set(groupTypeOrder[group] ?? [])
     }
     
     // MARK: - Manifest 查询
@@ -651,6 +626,86 @@ public final class DetectorRegistry {
         methods_hit=\(methodCount)
         methods=\(methods.prefix(10).joined(separator: ","))
         """
+    }
+}
+
+// MARK: - 运行时工厂 Plan（降低静态字面量可扫性）
+
+private enum DetectorRegistryBootstrap {
+    /// 与 token 混合后再排序，使源码中的行序与运行时注册序解耦
+    static let planMix: UInt64 = 0xD37E_C70E_9E41_D6C1
+
+    private struct FactoryToken {
+        let token: UInt64
+        let type: DetectorRegistry.DetectorType
+        let factory: DetectorRegistry.DetectorFactory
+    }
+
+    private static let factoryPlan: [FactoryToken] = [
+        FactoryToken(token: 0x4B21F9A2C0D18E71, type: .file, factory: { FileDetector() }),
+        FactoryToken(token: 0x2E88D403F19A56B4, type: .dyld, factory: { DyldDetector() }),
+        FactoryToken(token: 0x7C3A9012E4D5F678, type: .env, factory: { EnvDetector() }),
+        FactoryToken(token: 0x1F9C2B45A67890DE, type: .sysctl, factory: { SysctlDetector() }),
+        FactoryToken(token: 0x9A0E4F23C567B890, type: .scheme, factory: { SchemeDetector() }),
+        FactoryToken(token: 0x3D71E6A8B234C501, type: .hook, factory: { HookDetector() }),
+        FactoryToken(token: 0x5E92C4F1A837D602, type: .antiTampering, factory: { AntiTamperingDetector() }),
+        FactoryToken(token: 0x6F03D5E2B948E713, type: .debugger, factory: { DebuggerDetector() }),
+        FactoryToken(token: 0x8014E6F3CA59F824, type: .frida, factory: { FridaDetector() }),
+        FactoryToken(token: 0x9125F704DB6A0935, type: .fridaModule, factory: { FridaModuleDetector() }),
+        FactoryToken(token: 0xA2360815EC7B1A46, type: .dylibInjection, factory: { DylibInjectionDetector() }),
+        FactoryToken(token: 0xB3471926FD8C2B57, type: .codeSignature, factory: { CodeSignatureValidator() }),
+        FactoryToken(token: 0xC4582A370E9D3C68, type: .memoryIntegrity, factory: { MemoryIntegrityChecker() }),
+        FactoryToken(token: 0xD5693B481FAE4D79, type: .runtimeIntegrity, factory: { RuntimeIntegrityValidator() }),
+    ]
+
+    private static let groupMembership: [DetectorRegistry.DetectorGroup: Set<DetectorRegistry.DetectorType>] = [
+        .jailbreak: [.file, .dyld, .env, .sysctl, .scheme, .hook],
+        .antiTamper: [.antiTampering, .debugger, .frida, .fridaModule, .dylibInjection],
+        .integrity: [.codeSignature, .memoryIntegrity, .runtimeIntegrity],
+    ]
+
+    private static func groupSalt(_ group: DetectorRegistry.DetectorGroup) -> UInt64 {
+        switch group {
+        case .jailbreak: return 0x1110_AAAA_BBBB_CCC1
+        case .antiTamper: return 0x2220_DDDD_EEEE_FFF2
+        case .integrity: return 0x3330_7777_8888_9993
+        }
+    }
+
+    private static func fnv1a64(_ text: String) -> UInt64 {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for b in text.utf8 {
+            hash ^= UInt64(b)
+            hash &*= 0x100000001b3
+        }
+        return hash
+    }
+
+    static func makeDefaultRegistry() -> [DetectorRegistry.DetectorType: DetectorRegistry.DetectorFactory] {
+        let ordered = factoryPlan.sorted {
+            ($0.token ^ planMix) < ($1.token ^ planMix)
+        }
+        var reg: [DetectorRegistry.DetectorType: DetectorRegistry.DetectorFactory] = [:]
+        reg.reserveCapacity(ordered.count)
+        for entry in ordered {
+            reg[entry.type] = entry.factory
+        }
+        return reg
+    }
+
+    static func makeOrderedGroups() -> [DetectorRegistry.DetectorGroup: [DetectorRegistry.DetectorType]] {
+        var out: [DetectorRegistry.DetectorGroup: [DetectorRegistry.DetectorType]] = [:]
+        for (group, members) in groupMembership {
+            let salt = groupSalt(group)
+            let ordered = members.sorted { a, b in
+                let ka = fnv1a64(a.rawValue) ^ salt
+                let kb = fnv1a64(b.rawValue) ^ salt
+                if ka != kb { return ka < kb }
+                return a.rawValue < b.rawValue
+            }
+            out[group] = ordered
+        }
+        return out
     }
 }
 

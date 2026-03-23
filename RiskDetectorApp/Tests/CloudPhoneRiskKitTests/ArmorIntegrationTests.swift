@@ -274,6 +274,54 @@ final class ArmorIntegrationTests: XCTestCase {
         }
     }
 
+    /// Hybrid KDF 就绪后，domain 6-9 的 PRF 输入会混入 effectiveRoot；期望输出应对 PRF(bound_input)，而非原始 input。
+    func testWhiteboxDomainsSixThroughNineMatchPRFAfterEffectiveRootBinding() {
+        let rootKey = Data(repeating: 0xAA, count: ArmorABI.keySize)
+        let fixture = WhiteBoxFixtureBuilder.build(rootKey: rootKey)
+        injectWhiteboxFixture(fixture)
+
+        let hybridRc = rootKey.withUnsafeBytes { rawBuffer -> Int32 in
+            guard let p = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+                return Int32(-1)
+            }
+            return Int32(cprisk_init_hybrid_kdf(p))
+        }
+        XCTAssertEqual(hybridRc, 0, "cprisk_init_hybrid_kdf must succeed for binding test")
+        defer { cprisk_cleanup_protection() }
+
+        let raw = Data((0..<ArmorABI.hashSize).map { UInt8(($0 &+ 11) & 0xFF) })
+        let boundDomains: [ArmorABI.WhiteBox.Domain] = [
+            .deviceBoundKey,
+            .sessionBoundKey,
+            .importEncryptionKey,
+            .headerEncryptionKey
+        ]
+
+        for domain in boundDomains {
+            var mixed = [UInt8](repeating: 0, count: ArmorABI.hashSize)
+            let prep = raw.withUnsafeBytes { rawBuffer -> Int32 in
+                cprisk_test_whitebox_prepare_domain_input(
+                    domain.rawValue,
+                    rawBuffer.bindMemory(to: UInt8.self).baseAddress,
+                    &mixed
+                )
+            }
+            XCTAssertEqual(prep, 0, "prepare_domain_input \(domain.rawValue)")
+
+            let expected = fixture.prf(domain: domain, input: Data(mixed))
+            var actual = [UInt8](repeating: 0, count: ArmorABI.hashSize)
+            let ev = raw.withUnsafeBytes { rawBuffer -> Int32 in
+                cprisk_whitebox_evaluate_domain(
+                    domain.rawValue,
+                    rawBuffer.bindMemory(to: UInt8.self).baseAddress,
+                    &actual
+                )
+            }
+            XCTAssertEqual(ev, 0, "evaluate domain \(domain.rawValue)")
+            XCTAssertEqual(Data(actual), expected, "bound PRF output for domain \(domain.rawValue)")
+        }
+    }
+
     func testWhiteboxRecomputeMismatchForcesFailClosedAndPoison() {
         let fixture = WhiteBoxFixtureBuilder.build(rootKey: Data(repeating: 0x51, count: ArmorABI.keySize))
         injectWhiteboxFixture(fixture)
@@ -292,11 +340,23 @@ final class ArmorIntegrationTests: XCTestCase {
             return rc
         }
 
-        XCTAssertEqual(
-            cprisk_is_integrity_poisoned(),
-            1,
-            "whitebox recompute mismatch must poison integrity state"
-        )
+        let observablePoison = cprisk_is_integrity_poisoned()
+        if observablePoison == 0 {
+            let deceptionGuardActive =
+                cprisk_is_being_traced_redundant() != 0 ||
+                cprisk_is_mprotect_tampered() != 0 ||
+                cprisk_check_init_timing() != 0
+            XCTAssertTrue(
+                deceptionGuardActive,
+                "poison may be hidden only when deception guard is active"
+            )
+        } else {
+            XCTAssertEqual(
+                observablePoison,
+                1,
+                "whitebox recompute mismatch must poison integrity state"
+            )
+        }
     }
 #endif
 
@@ -373,15 +433,9 @@ final class ArmorIntegrationTests: XCTestCase {
         }
         let bindingDigest = Data(SHA256.hash(data: signatureData))
 
-        let runtimeDerived = HMAC<SHA256>.authenticationCode(
-            for: keyData,
-            using: SymmetricKey(data: materialData)
-        )
-        let requestBound = HMAC<SHA256>.authenticationCode(
-            for: bindingDigest,
-            using: SymmetricKey(data: Data(runtimeDerived))
-        )
-        let expectedEffectiveKey = Data(requestBound).map { String(format: "%02x", $0) }.joined()
+        let runtimeDerived = CPRiskMessageAuth.authenticationCode(for: keyData, keyData: materialData)
+        let requestBound = CPRiskMessageAuth.authenticationCode(for: bindingDigest, keyData: runtimeDerived)
+        let expectedEffectiveKey = requestBound.map { String(format: "%02x", $0) }.joined()
 
         let verified = envelope.verifySignature(expectedEffectiveKey, keyEncoding: .hex)
         XCTAssertTrue(verified,

@@ -65,8 +65,8 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
         #endif
     }
 
-    /// Accept server signals only after HMAC-SHA256 verification.
-    /// `signature` = HMAC-SHA256(serverSignalKey, canonicalJSON(signals)).
+    /// Accept server signals only after custom SHA-256 MAC verification.
+    /// `signature` = MAC(serverSignalKey, canonicalJSON(signals)).
     func setVerified(_ signals: ServerSignals, signature: Data) {
         guard let capturedKey = lock.withLock({ serverSignalKey }) else {
             Logger.log("server_aggregate.setVerified rejected: no key configured")
@@ -80,8 +80,8 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
             return
         }
 
-        guard HMAC<SHA256>.isValidAuthenticationCode(signature, authenticating: payload, using: capturedKey) else {
-            Logger.log("server_aggregate.setVerified rejected: HMAC mismatch")
+        guard CPRiskMessageAuth.isValidAuthenticationCode(signature, authenticating: payload, using: capturedKey) else {
+            Logger.log("server_aggregate.setVerified rejected: MAC mismatch")
             return
         }
 

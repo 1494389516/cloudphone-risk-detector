@@ -86,6 +86,7 @@ static void cprisk_whitebox_memxor_block_pad_i(uint64_t slide_term,
 
 static void cprisk_whitebox_xor_tables_aslr_i(uint8_t *buf,
                                               size_t len,
+                                              uint32_t first_block_index,
                                               intptr_t runtime_slide,
                                               uint64_t anchor_slide_u64,
                                               uint32_t domain_id) {
@@ -95,7 +96,7 @@ static void cprisk_whitebox_xor_tables_aslr_i(uint8_t *buf,
 
     for (size_t base = 0; base < len; base += 32u) {
         const size_t chunk = (len - base < 32u) ? (len - base) : 32u;
-        const uint32_t blk = (uint32_t)(base / 32u);
+        const uint32_t blk = first_block_index + (uint32_t)(base / 32u);
         uint8_t pr[32], pa[32];
         cprisk_whitebox_memxor_block_pad_i(tr, domain_id, blk, pr);
         cprisk_whitebox_memxor_block_pad_i(ta, domain_id, blk, pa);
@@ -691,32 +692,28 @@ static int cprisk_whitebox_eval_record_i(
         return -1;
 
     const uint8_t *tables_src = bundle->code + record->table_offset;
-    uint8_t *tables_heap = NULL;
-    const uint8_t *tables = tables_src;
+    const size_t tlen = (size_t)record->table_length;
+    int aslr_tables = 0;
 #if !defined(CPRISK_DISABLE_WHITEBOX_ASLR_TABLE)
-    if (cprisk_whitebox_aslr_table_bind_runtime_enabled_i(&bundle->header)) {
-        const size_t tlen = (size_t)record->table_length;
-        if (tlen == 0u || tlen > CPRISK_MAX_SECTION_SIZE)
-            return -1;
-        tables_heap = (uint8_t *)malloc(tlen);
-        if (!tables_heap)
-            return -1;
-        memcpy(tables_heap, tables_src, tlen);
-        intptr_t rs = (intptr_t)0;
-        if (!s_test_bundle_i.active) {
-            const struct mach_header_64 *mh = cprisk_whitebox_hdr_i();
-            if (mh)
-                rs = cprisk_compute_slide(mh);
-        }
-        cprisk_whitebox_xor_tables_aslr_i(
-            tables_heap,
-            tlen,
-            rs,
-            bundle->header.aslr_table_anchor_slide,
-            record->domain_id);
-        tables = tables_heap;
-    }
+    if (cprisk_whitebox_aslr_table_bind_runtime_enabled_i(&bundle->header))
+        aslr_tables = 1;
 #endif
+    uint8_t *round_heap = NULL;
+    if (aslr_tables) {
+        if (tlen == 0u || tlen > CPRISK_MAX_SECTION_SIZE ||
+            tlen != CPRISK_WHITEBOX_DOMAIN_TABLE_BYTES)
+            return -1;
+        round_heap = (uint8_t *)malloc(CPRISK_WHITEBOX_TABLE_STRIDE);
+        if (!round_heap)
+            return -1;
+    }
+
+    intptr_t rs = (intptr_t)0;
+    if (aslr_tables && !s_test_bundle_i.active) {
+        const struct mach_header_64 *mh = cprisk_whitebox_hdr_i();
+        if (mh)
+            rs = cprisk_compute_slide(mh);
+    }
 
     uint8_t state[CPRISK_WHITEBOX_STATE_SIZE];
     uint8_t next[CPRISK_WHITEBOX_STATE_SIZE];
@@ -726,7 +723,25 @@ static int cprisk_whitebox_eval_record_i(
     memcpy(state, input, sizeof(state));
 
     for (size_t round = 0; round < CPRISK_WHITEBOX_ROUND_COUNT; round++) {
-        const uint8_t *round_tables = tables + round * CPRISK_WHITEBOX_TABLE_STRIDE;
+        const uint8_t *round_tables = NULL;
+        if (aslr_tables) {
+            memcpy(
+                round_heap,
+                tables_src + round * CPRISK_WHITEBOX_TABLE_STRIDE,
+                CPRISK_WHITEBOX_TABLE_STRIDE);
+            const uint32_t blk_base =
+                (uint32_t)((round * CPRISK_WHITEBOX_TABLE_STRIDE) / 32u);
+            cprisk_whitebox_xor_tables_aslr_i(
+                round_heap,
+                CPRISK_WHITEBOX_TABLE_STRIDE,
+                blk_base,
+                rs,
+                bundle->header.aslr_table_anchor_slide,
+                record->domain_id);
+            round_tables = round_heap;
+        } else {
+            round_tables = tables_src + round * CPRISK_WHITEBOX_TABLE_STRIDE;
+        }
         const uint8_t *round_constants =
             record->round_constants + round * CPRISK_WHITEBOX_STATE_SIZE;
 
@@ -744,14 +759,17 @@ static int cprisk_whitebox_eval_record_i(
 
         for (size_t i = 0; i < CPRISK_WHITEBOX_STATE_SIZE; i++)
             state[i] = next[record->permutation[i]];
+
+        if (aslr_tables)
+            cprisk_secure_zero(round_heap, CPRISK_WHITEBOX_TABLE_STRIDE);
     }
 
     for (size_t i = 0; i < CPRISK_WHITEBOX_STATE_SIZE; i++)
         out[i] = (uint8_t)(state[i] ^ record->final_mask[i]);
 
-    if (tables_heap) {
-        cprisk_secure_zero(tables_heap, (size_t)record->table_length);
-        free(tables_heap);
+    if (round_heap) {
+        cprisk_secure_zero(round_heap, CPRISK_WHITEBOX_TABLE_STRIDE);
+        free(round_heap);
     }
     cprisk_secure_zero(state, sizeof(state));
     cprisk_secure_zero(next, sizeof(next));
@@ -771,6 +789,59 @@ static int cprisk_whitebox_eval_record_recompute_i(
     /* Recompute via an independent invocation path so injected transient
        faults must survive two full PRF evaluations to stay undetected. */
     return cprisk_whitebox_eval_record_i(bundle, record, input, out);
+}
+
+/* Domains 6-9: when hybrid KDF has produced effectiveRoot, PRF input is
+ * SHA256(label || domain_id || input || er); otherwise identity (domains 1-5
+ * unchanged). Identity-before-hybrid preserves early constructors (e.g. header
+ * restore before cprisk_init_protection) and injected test fixtures. */
+static int cprisk_whitebox_prepare_prf_input_i(
+    uint32_t domain_id,
+    const uint8_t *input_opt,
+    uint8_t out[CPRISK_WHITEBOX_STATE_SIZE]
+) {
+    const uint8_t *src = input_opt ? input_opt : s_zero_state_i;
+
+    if (domain_id < CPRISK_WHITEBOX_DOMAIN_DEVICE_BOUND ||
+        domain_id > CPRISK_WHITEBOX_DOMAIN_HEADER_ENCRYPTION) {
+        memcpy(out, src, CPRISK_WHITEBOX_STATE_SIZE);
+        return 0;
+    }
+
+    uint8_t er[CPRISK_ARMOR_KEY_SIZE];
+    if (cprisk_get_effective_root(er) != 0) {
+        memcpy(out, src, CPRISK_WHITEBOX_STATE_SIZE);
+        return 0;
+    }
+
+    static const uint8_t k_bind_label[] = "CPRISK_WB_DOMAIN_ER_BIND_v1";
+    uint8_t domain_le[4];
+    domain_le[0] = (uint8_t)(domain_id & 0xFFu);
+    domain_le[1] = (uint8_t)((domain_id >> 8) & 0xFFu);
+    domain_le[2] = (uint8_t)((domain_id >> 16) & 0xFFu);
+    domain_le[3] = (uint8_t)((domain_id >> 24) & 0xFFu);
+    cprisk_sha256_ctx ctx;
+    cprisk_sha256_init(&ctx);
+    cprisk_sha256_update(&ctx, k_bind_label, sizeof(k_bind_label) - 1u);
+    cprisk_sha256_update(&ctx, domain_le, sizeof(domain_le));
+    cprisk_sha256_update(&ctx, src, CPRISK_WHITEBOX_STATE_SIZE);
+    cprisk_sha256_update(&ctx, er, sizeof(er));
+    cprisk_sha256_final(&ctx, out);
+    cprisk_secure_zero(er, sizeof(er));
+    return 0;
+}
+
+int cprisk_test_whitebox_prepare_domain_input(
+    uint32_t domain_id,
+    const uint8_t input[CPRISK_WHITEBOX_STATE_SIZE],
+    uint8_t out[CPRISK_WHITEBOX_STATE_SIZE]
+) {
+    if (!out)
+        return -1;
+    return cprisk_whitebox_prepare_prf_input_i(
+        domain_id,
+        input ? input : s_zero_state_i,
+        out);
 }
 
 static uint32_t cprisk_base_capabilities_i(void) {
@@ -859,17 +930,24 @@ int cprisk_whitebox_evaluate_domain(
         return -1;
     }
 
+    uint8_t prf_input[CPRISK_WHITEBOX_STATE_SIZE];
+    if (cprisk_whitebox_prepare_prf_input_i(domain_id, input, prf_input) != 0) {
+        cprisk_secure_zero(prf_input, sizeof(prf_input));
+        cprisk_secure_zero(&bundle.header, sizeof(bundle.header));
+        return -1;
+    }
+
     const int rc = cprisk_whitebox_eval_record_i(
         &bundle,
         record,
-        input ? input : s_zero_state_i,
+        prf_input,
         out);
     if (rc == 0) {
         uint8_t recomputed[CPRISK_WHITEBOX_STATE_SIZE];
         const int rc_recompute = cprisk_whitebox_eval_record_recompute_i(
             &bundle,
             record,
-            input ? input : s_zero_state_i,
+            prf_input,
             recomputed);
         if (rc_recompute != 0) {
             cprisk_secure_zero(recomputed, sizeof(recomputed));
@@ -889,6 +967,7 @@ int cprisk_whitebox_evaluate_domain(
         }
         cprisk_secure_zero(recomputed, sizeof(recomputed));
     }
+    cprisk_secure_zero(prf_input, sizeof(prf_input));
     cprisk_secure_zero(&bundle.header, sizeof(bundle.header));
 
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
@@ -928,10 +1007,29 @@ static int cprisk_derive_effective_signing_key_core_i(
         for (size_t pi = 0; pi < CPRISK_ARMOR_HASH_SIZE; pi++)
             runtime_material[pi] ^= 0xA5u;
     }
-    /* Optional: bind HMAC key material to ASLR slide (offline replay needs same slide + env). */
+    /*
+     * Bind HMAC key material to ASLR slide in release builds by default so
+     * offline replay needs both the same runtime material and the same image
+     * layout. Debug builds stay opt-in to avoid surprising local fixtures.
+     *
+     * Override rules:
+     *   - CPRISK_SIGNING_KEY_ASLR_BIND=1 => force enable
+     *   - CPRISK_SIGNING_KEY_ASLR_BIND=0 => force disable
+     *   - unset => enabled on release, disabled on debug
+     */
     {
         const char *eb = getenv("CPRISK_SIGNING_KEY_ASLR_BIND");
-        if (eb && eb[0] == '1' && eb[1] == '\0') {
+        int should_bind = 0;
+        if (eb && eb[0] != '\0') {
+            should_bind = (eb[0] == '1' || eb[0] == 'y' || eb[0] == 'Y') ? 1 : 0;
+        } else {
+#if defined(DEBUG)
+            should_bind = 0;
+#else
+            should_bind = 1;
+#endif
+        }
+        if (should_bind) {
             const struct mach_header_64 *mh =
                 cprisk_find_own_header((const void *)&cprisk_derive_effective_signing_key);
             if (mh) {

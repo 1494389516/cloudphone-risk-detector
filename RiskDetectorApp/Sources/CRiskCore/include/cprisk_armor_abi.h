@@ -38,6 +38,15 @@
 #define CPRISK_ARMOR_SECTION_VMP_DISPATCH_SHARD "__swift5_mdvsh"
 /** Optional 8-byte blob: magic (LE u32) + expected M3 FNV-1a (LE u32) for \c CPRISK_VMP_BC_FLAG_M3_SELFCHK. */
 #define CPRISK_ARMOR_SECTION_VMP_SELF_EXPECT "__swift5_mdvsk"
+/** Optional self-check span map for producer-side expect injection (header + LE records of vmaddr/length/kind). */
+#define CPRISK_ARMOR_SECTION_VMP_SELF_SPANS "__swift5_mdvsi"
+
+#define CPRISK_VMP_SELF_SPAN_MAGIC 0x56535043u /* "CPSV" little-endian */
+#define CPRISK_VMP_SELF_SPAN_VERSION 1u
+#define CPRISK_VMP_SELF_SPAN_KIND_EXEC 1u
+#define CPRISK_VMP_SELF_SPAN_KIND_LOOP_A 2u
+#define CPRISK_VMP_SELF_SPAN_KIND_DISPATCH 3u
+/** Span byte lengths match \c CPRISK_VM_M3_SELF_* in \c cprisk_vm_interpreter.h (exec+loop+dispatch concat). */
 
 #define CPRISK_TEXT_ENCRYPT_MAGIC 0x45545043u /* "CPTE" little-endian */
 #define CPRISK_TEXT_ENCRYPT_ABI_VERSION 1u
@@ -234,14 +243,21 @@ _Static_assert(CPRISK_ARMOR_ANCHOR_LANE_COUNT * CPRISK_ARMOR_ANCHOR_LANE_SIZE ==
                    CPRISK_ARMOR_HASH_SIZE,
                "split anchor sections must reconstruct a 32-byte hash");
 
-/* ── HMAC-SHA256 ───────────────────────────────────────────────────── */
+/* ── Custom-pad SHA-256 MAC ───────────────────────────────────────── */
 
 #define CPRISK_HMAC_BLOCK_SIZE 64
+
+/* Custom service-coordinated pad bytes; split to avoid a single literal fingerprint. */
+#define CPRISK_HMAC_IPAD_XOR_A ((uint8_t)0xD7u)
+#define CPRISK_HMAC_IPAD_XOR_B ((uint8_t)0xBAu) /* A^B = 0x6D */
+#define CPRISK_HMAC_OPAD_XOR_A ((uint8_t)0x4Cu)
+#define CPRISK_HMAC_OPAD_XOR_B ((uint8_t)0xEFu) /* A^B = 0xA3 */
 
 static inline __attribute__((always_inline))
 void cprisk_hmac_sha256(const uint8_t *key, size_t key_len,
                         const uint8_t *msg, size_t msg_len,
                         uint8_t out[CPRISK_ARMOR_HASH_SIZE]) {
+    cprisk_crypto_trace_primitive_enter_i();
     uint8_t k_norm[CPRISK_HMAC_BLOCK_SIZE];
     memset(k_norm, 0, CPRISK_HMAC_BLOCK_SIZE);
     if (key_len > CPRISK_HMAC_BLOCK_SIZE) {
@@ -253,8 +269,8 @@ void cprisk_hmac_sha256(const uint8_t *key, size_t key_len,
     uint8_t ipad[CPRISK_HMAC_BLOCK_SIZE];
     uint8_t opad[CPRISK_HMAC_BLOCK_SIZE];
     for (int i = 0; i < CPRISK_HMAC_BLOCK_SIZE; i++) {
-        ipad[i] = k_norm[i] ^ 0x36;
-        opad[i] = k_norm[i] ^ 0x5C;
+        ipad[i] = (uint8_t)(k_norm[i] ^ CPRISK_HMAC_IPAD_XOR_A ^ CPRISK_HMAC_IPAD_XOR_B);
+        opad[i] = (uint8_t)(k_norm[i] ^ CPRISK_HMAC_OPAD_XOR_A ^ CPRISK_HMAC_OPAD_XOR_B);
     }
 
     cprisk_sha256_ctx ctx;

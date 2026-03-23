@@ -101,9 +101,14 @@ static void cprisk_mini_vm_exec_buf(uint8_t buf[32], const uint8_t *code, size_t
     }
 }
 
+/* Deterministic non-identity bootstrap: XOR_IMM then HALT (was pure HALT). */
+static void cprisk_mini_vm_bootstrap_material32(uint8_t buf[32]) {
+    const uint8_t prog[] = { CPRISK_MV_OP_XOR_IMM, 0xA5u, CPRISK_MV_OP_HALT };
+    cprisk_mini_vm_exec_buf(buf, prog, sizeof(prog));
+}
+
 static void cprisk_loader_key_mini_vm_bootstrap(uint8_t key[32]) {
-    const uint8_t prog[] = { CPRISK_MV_OP_HALT };
-    cprisk_mini_vm_exec_buf(key, prog, sizeof(prog));
+    cprisk_mini_vm_bootstrap_material32(key);
 }
 
 static int cprisk_mini_vm_bootstrap_disabled(void) {
@@ -1175,10 +1180,8 @@ static int cprisk_init_protection_legacy_i(
         string_acc,
         cprisk_get_data_integrity_accumulator(),
         s_runtime_material);
-    if (!cprisk_mini_vm_bootstrap_disabled()) {
-        const uint8_t p[] = { CPRISK_MV_OP_HALT };
-        cprisk_mini_vm_exec_buf(s_runtime_material, p, sizeof(p));
-    }
+    if (!cprisk_mini_vm_bootstrap_disabled())
+        cprisk_mini_vm_bootstrap_material32(s_runtime_material);
     s_runtime_material_ready = 1;
     rc = 0;
 
@@ -1303,10 +1306,8 @@ static int cprisk_init_protection_whitebox_i(
         goto cleanup;
     }
 
-    if (!cprisk_mini_vm_bootstrap_disabled()) {
-        const uint8_t p[] = { CPRISK_MV_OP_HALT };
-        cprisk_mini_vm_exec_buf(s_runtime_material, p, sizeof(p));
-    }
+    if (!cprisk_mini_vm_bootstrap_disabled())
+        cprisk_mini_vm_bootstrap_material32(s_runtime_material);
     s_runtime_material_ready = 1;
     rc = 0;
 

@@ -170,9 +170,10 @@ final class ReportEnvelopeNegativeTests: XCTestCase {
 
         let signatureInput = "v2|\(nonce)|\(oldTs)|session-exp|report-exp|key-1|||{\"test\":1}"
         let signatureData = signatureInput.data(using: .utf8)!
-        let key = CryptoKit.SymmetricKey(data: Data(signingKey.utf8))
-        let digest = CryptoKit.HMAC<CryptoKit.SHA256>.authenticationCode(for: signatureData, using: key)
-        let signatureHex = digest.map { String(format: "%02x", $0) }.joined()
+        let signatureHex = CPRiskMessageAuth.authenticationCodeHex(
+            for: signatureData,
+            keyData: Data(signingKey.utf8)
+        )
 
         let expired = ReportEnvelope(
             nonce: nonce,
@@ -272,5 +273,3 @@ final class ReportEnvelopeNegativeTests: XCTestCase {
         XCTAssertTrue(withBoth.hasHardwareAttestation)
     }
 }
-
-import CryptoKit

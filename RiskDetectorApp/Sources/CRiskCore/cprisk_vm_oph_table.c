@@ -1,0 +1,26 @@
+#include "include/cprisk_vm_interpreter_internal.h"
+
+const cprisk_vm_oph_fn cprisk_vm_oph_table[CPRISK_VM_OPH_TABLE_LEN] = {
+    [CPRISK_VM_OP_NOP] = cprisk_vm_oph_nop,
+    [CPRISK_VM_OP_RET] = cprisk_vm_oph_ret,
+    [CPRISK_VM_OP_RAW_REGION] = cprisk_vm_oph_raw_region,
+    [CPRISK_VM_OP_HALT] = cprisk_vm_oph_halt,
+    [CPRISK_VM_OP_ADD] = cprisk_vm_oph_add,
+    [CPRISK_VM_OP_BRANCH_REL] = cprisk_vm_oph_branch_rel,
+    [CPRISK_VM_OP_BRANCH_COND] = cprisk_vm_oph_branch_cond,
+    [CPRISK_VM_OP_CALL] = cprisk_vm_oph_call,
+    [CPRISK_VM_OP_MOV_WIDE] = cprisk_vm_oph_emitter_family,
+    [CPRISK_VM_OP_ADR_ADD] = cprisk_vm_oph_emitter_family,
+    [CPRISK_VM_OP_COND_SELECT] = cprisk_vm_oph_emitter_family,
+    [CPRISK_VM_OP_LOAD_STORE] = cprisk_vm_oph_emitter_family,
+    [CPRISK_VM_OP_XOR_MIX] = cprisk_vm_oph_xor_mix,
+    [CPRISK_VM_OP_OR_LANE] = cprisk_vm_oph_or_lane,
+    [CPRISK_VM_OP_AND_LANE] = cprisk_vm_oph_and_lane,
+    [CPRISK_VM_OP_ROL_ACC] = cprisk_vm_oph_rol_acc,
+    [CPRISK_VM_OP_VM_CALL_FUNC] = cprisk_vm_oph_vm_call_func,
+    [CPRISK_VM_OP_VREG_MOV] = cprisk_vm_oph_vreg_mov,
+    [CPRISK_VM_OP_VREG_ALU] = cprisk_vm_oph_vreg_alu,
+    [CPRISK_VM_OP_VREG_MEM] = cprisk_vm_oph_vreg_mem,
+    [CPRISK_VM_OP_SUB_LANE] = cprisk_vm_oph_sub_lane,
+    [CPRISK_VM_OP_MUL_LANE] = cprisk_vm_oph_mul_lane,
+};

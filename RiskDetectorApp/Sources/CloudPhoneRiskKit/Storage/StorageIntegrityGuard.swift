@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 
-/// HMAC 签名/校验，密钥存 Keychain。SDK 4.4 Phase 6: kSecAttrAccessibleWhenUnlockedThisDeviceOnly。
+/// 自定义 pad 的 SHA-256 MAC 签名/校验，密钥存 Keychain。SDK 4.4 Phase 6: kSecAttrAccessibleWhenUnlockedThisDeviceOnly。
 enum StorageIntegrityGuard {
     private static let keychainService = "CloudPhoneRiskKit.StorageHMAC"
     private static let keychainAccount = "hmac_key_v1"
@@ -15,8 +15,7 @@ enum StorageIntegrityGuard {
         combined.append(Data(bytes: &length, count: 4))
         combined.append(purposeData)
         combined.append(data)
-        let mac = HMAC<SHA256>.authenticationCode(for: combined, using: key)
-        return Data(mac)
+        return CPRiskMessageAuth.authenticationCode(for: combined, using: key)
     }
 
     static func verify(_ data: Data, signature: Data, purpose: String) -> Bool {
@@ -27,7 +26,7 @@ enum StorageIntegrityGuard {
         combined.append(Data(bytes: &length, count: 4))
         combined.append(purposeData)
         combined.append(data)
-        return HMAC<SHA256>.isValidAuthenticationCode(signature, authenticating: combined, using: key)
+        return CPRiskMessageAuth.isValidAuthenticationCode(signature, authenticating: combined, using: key)
     }
 
     private static func getOrCreateKey() -> SymmetricKey {

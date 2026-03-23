@@ -34,11 +34,11 @@ public struct SignedRiskConclusion: Codable, Sendable {
         let signalsDigest = SignalDigest.computeFullDigest(report.signals)
 
         let input = "\(report.score)|\(report.isHighRisk)|\(timestamp)|\(nonce)|\(report.tampered)|\(signalsDigest)"
-        let hmac = SecureScope.withSecureBytes(Array(input.utf8)) { ptr in
+        let mac = SecureScope.withSecureBytes(Array(input.utf8)) { ptr in
             let data = Data(buffer: ptr)
-            return HMAC<SHA256>.authenticationCode(for: data, using: deviceKey)
+            return CPRiskMessageAuth.authenticationCode(for: data, using: deviceKey)
         }
-        let sigHex = Data(hmac).map { String(format: "%02x", $0) }.joined()
+        let sigHex = mac.map { String(format: "%02x", $0) }.joined()
         return SignedRiskConclusion(
             score: report.score,
             isHighRisk: report.isHighRisk,
@@ -70,7 +70,7 @@ public struct SignedRiskConclusion: Codable, Sendable {
 
         return SecureScope.withSecureBytes(Array(input.utf8)) { ptr in
             let data = Data(buffer: ptr)
-            return HMAC<SHA256>.isValidAuthenticationCode(signatureData, authenticating: data, using: deviceKey)
+            return CPRiskMessageAuth.isValidAuthenticationCode(signatureData, authenticating: data, using: deviceKey)
         }
     }
 }

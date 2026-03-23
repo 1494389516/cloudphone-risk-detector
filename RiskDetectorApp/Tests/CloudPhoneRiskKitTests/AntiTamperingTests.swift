@@ -472,6 +472,9 @@ final class AntiTamperingTests: XCTestCase {
             | UInt32(CPRISK_TIMING_ANOMALY_JITTER)
             | UInt32(CPRISK_TIMING_ANOMALY_CLOCK_SKEW)
             | UInt32(CPRISK_TIMING_ANOMALY_DUAL_CLOCK_DRIFT)
+            | UInt32(CPRISK_TIMING_ANOMALY_CRYPTO_TRACE)
+            | UInt32(CPRISK_TIMING_ANOMALY_CRYPTO_TRACE_SKEW)
+            | UInt32(CPRISK_TIMING_ANOMALY_CRYPTO_TRACE_INVARIANT)
 
         XCTAssertGreaterThan(thresholdNs, 0)
         XCTAssertGreaterThanOrEqual(maxNs, medianNs)
@@ -610,7 +613,7 @@ final class AntiTamperingTests: XCTestCase {
             anomalyFlags: flags,
             dbiDetected: true,
             dbiMarkerFlags: UInt32(CPRISK_DBI_MARKER_ENV),
-            timingAnomalyFlags: UInt32(CPRISK_TIMING_ANOMALY_MEDIAN),
+            timingAnomalyFlags: UInt32(CPRISK_TIMING_ANOMALY_MEDIAN) | UInt32(CPRISK_TIMING_ANOMALY_CRYPTO_TRACE),
             timingProbeMedianNs: 1_500_000,
             timingProbeMaxNs: 2_900_000,
             timingProbeThresholdNs: 1_200_000,
@@ -627,6 +630,11 @@ final class AntiTamperingTests: XCTestCase {
         }
         XCTAssertTrue(summary.evidence["anomaly_kinds"]?.contains("dbi_marker") ?? false)
         XCTAssertTrue(summary.evidence["anomaly_kinds"]?.contains("timing_sidechannel") ?? false)
+        XCTAssertEqual(summary.evidence["crypto_trace_slow"], "1")
+        XCTAssertEqual(
+            signals.first(where: { $0.id == "\(ObfuscatedConstants.detectorIDAntiDebugWatchdog)_timing_sidechannel" })?.evidence["crypto_trace_slow"],
+            "1"
+        )
     }
 
     func testProtectedDuplicateSignalsAreCollapsedToStrongestSignal() {
@@ -758,6 +766,13 @@ final class AntiTamperingTests: XCTestCase {
             "dylib_injection",
             "anti_debug_watchdog",
         ])
+    }
+
+    func testDefaultConfigurationCheckPlanCount() {
+        let provider = AntiTamperingSignalProvider()
+        let snapshot = makeSnapshot()
+        let ids = provider.configuredCheckIDs(snapshot: snapshot)
+        XCTAssertEqual(ids.count, 39, "descriptor plan drift: update expected count when adding/removing checks")
     }
 
     // MARK: - FridaDetector Logic Tests
@@ -1301,5 +1316,132 @@ final class AntiTamperingTests: XCTestCase {
         let result = try RandomizedDetection(config: config).detect()
         XCTAssertGreaterThanOrEqual(result.score, 0)
         XCTAssertLessThanOrEqual(result.score, 70)
+    }
+
+    // MARK: - Watchdog dyld / AMFI / get-task-allow / deny-attach-verify
+
+    func testAntiDebugWatchdogSnapshotProducesDyldFamilySignals() {
+        let provider = AntiTamperingSignalProvider()
+        let flags = UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DYLD_INJECTION)
+            | UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DENY_ATTACH_VERIFY)
+            | UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_AMFI_CS_FLAGS)
+            | UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GET_TASK_ALLOW)
+
+        let snapshot = makeWatchdogSnapshot(
+            anomalyFlags: flags,
+            iterationCount: 1,
+            dyldInjectionAnomalyCount: 1,
+            lastDyldInjectionFlags: 1,
+            lastCsopsStatusFlags: 8,
+            lastAmfiProbeBits: 4,
+            lastGetTaskAllowSuspect: true,
+            lastDenyAttachVerifyBits: 2,
+            denyAttachVerifyAnomalyCount: 1,
+            amfiCsFlagsAnomalyCount: 1,
+            getTaskAllowAnomalyCount: 1
+        )
+
+        let signals = provider.antiDebugWatchdogSignals(from: snapshot)
+        let ids = Set(signals.map { $0.id })
+
+        XCTAssertTrue(ids.contains(SignalID.antiDebugWatchdogDyldInjection))
+        XCTAssertTrue(ids.contains(SignalID.antiDebugWatchdogDenyAttachVerify))
+        XCTAssertTrue(ids.contains(SignalID.antiDebugWatchdogAMFICsFlags))
+        XCTAssertTrue(ids.contains(SignalID.antiDebugWatchdogGetTaskAllow))
+
+        guard let summary = signals.first(where: { $0.id == SignalID.antiDebugWatchdogAnomaly }) else {
+            return XCTFail("missing anti_debug_watchdog_anomaly summary signal")
+        }
+        let kinds = summary.evidence["anomaly_kinds"] ?? ""
+        XCTAssertTrue(kinds.contains("dyld_injection"), "expected dyld_injection in \(kinds)")
+        XCTAssertTrue(kinds.contains("deny_attach_verify"), "expected deny_attach_verify in \(kinds)")
+        XCTAssertTrue(kinds.contains("amfi_cs_flags"), "expected amfi_cs_flags in \(kinds)")
+        XCTAssertTrue(kinds.contains("get_task_allow"), "expected get_task_allow in \(kinds)")
+    }
+
+    // MARK: - Dylib image count low → dylibInjectImageCountLow
+
+    func testDylibInjectionClassifyImageCountLowMapsToAsSignalsFilters() {
+        let hard = DylibInjectionDetector.classifyImageCount(80)
+        XCTAssertFalse(hard.methods.isEmpty)
+        XCTAssertTrue(hard.methods.allSatisfy { $0.contains("image_count_low_hard") })
+
+        let soft = DylibInjectionDetector.classifyImageCount(150)
+        XCTAssertFalse(soft.methods.isEmpty)
+        XCTAssertTrue(soft.methods.allSatisfy { $0.contains("image_count_low_soft") })
+
+        let nominal = DylibInjectionDetector.classifyImageCount(250)
+        XCTAssertTrue(nominal.methods.isEmpty)
+
+        // Mirrors DylibInjectionDetector.asSignals() low-path filter
+        let isLow: (String) -> Bool = {
+            $0.contains("image_count_low_hard") || $0.contains("image_count_low_soft")
+        }
+        let lowDetail = hard.methods.filter { $0.hasPrefix("dylib_inject:image_count") }.filter(isLow)
+        XCTAssertFalse(lowDetail.isEmpty)
+    }
+
+    func testDylibInjectImageCountLowSignalIdIsStable() {
+        XCTAssertEqual(SignalID.dylibInjectImageCountLow, "dylib_inject_image_count_low")
+    }
+
+    // MARK: - Cross-consistency (dyld_topology family)
+
+    func testCrossConsistencyIncludesDyldTopologyWithWatchdogDyldInjection() {
+        let provider = AntiTamperingSignalProvider()
+        let drivers: [RiskSignal] = [
+            RiskSignal(
+                id: SignalID.pacDisabled,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 50,
+                evidence: [:],
+                state: .tampered,
+                layer: 1,
+                weightHint: 70
+            ),
+            RiskSignal(
+                id: SignalID.antiDebugWatchdogDyldInjection,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 84,
+                evidence: ["dyld_injection_flags": "1"],
+                state: .tampered,
+                layer: 2,
+                weightHint: 90
+            ),
+        ]
+
+        let consensus = provider.crossConsistencySignals(from: drivers)
+        XCTAssertEqual(consensus.count, 1)
+        XCTAssertEqual(consensus.first?.id, "multi_path_consistency_consensus")
+        XCTAssertTrue(consensus.first?.evidence["families"]?.contains("dyld_topology") ?? false)
+        XCTAssertTrue(consensus.first?.evidence["matched_signals"]?.contains(SignalID.antiDebugWatchdogDyldInjection) ?? false)
+    }
+
+    func testCrossConsistencyDyldTopologyAcceptsDylibInjectImageCountLow() {
+        let provider = AntiTamperingSignalProvider()
+        let drivers: [RiskSignal] = [
+            RiskSignal(
+                id: SignalID.vmRemapSharedAnonymous,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 50,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 80
+            ),
+            RiskSignal(
+                id: SignalID.dylibInjectImageCountLow,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 30,
+                evidence: ["detail": "dylib_inject:image_count_low_hard:100"],
+                state: .soft(confidence: 0.82),
+                layer: 2,
+                weightHint: 62
+            ),
+        ]
+
+        let consensus = provider.crossConsistencySignals(from: drivers)
+        XCTAssertEqual(consensus.count, 1)
+        XCTAssertTrue(consensus.first?.evidence["matched_signals"]?.contains(SignalID.dylibInjectImageCountLow) ?? false)
     }
 }
