@@ -98,15 +98,17 @@ static uint64_t cprisk_mach_abs_to_ns_i(uint64_t delta_abs) {
 
 static uint64_t cprisk_monotonic_now_ns_i(void) {
 #if CPRISK_TIMING_CNTPCT_AVAILABLE
-    static uint64_t s_cntfrq = 0u;
-    if (s_cntfrq == 0u) {
-        __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(s_cntfrq));
+    static _Atomic uint64_t s_cntfrq = 0u;
+    uint64_t freq = atomic_load_explicit(&s_cntfrq, memory_order_relaxed);
+    if (freq == 0u) {
+        __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+        atomic_store_explicit(&s_cntfrq, freq, memory_order_relaxed);
     }
-    if (s_cntfrq != 0u) {
+    if (freq != 0u) {
         uint64_t ticks = 0u;
         __asm__ volatile("mrs %0, cntpct_el0" : "=r"(ticks));
-        return (ticks / s_cntfrq) * 1000000000ull +
-               ((ticks % s_cntfrq) * 1000000000ull) / s_cntfrq;
+        return (ticks / freq) * 1000000000ull +
+               ((ticks % freq) * 1000000000ull) / freq;
     }
 #endif
     return cprisk_mach_abs_to_ns_i(mach_absolute_time());
@@ -413,6 +415,9 @@ static uint32_t cprisk_detect_dbi_thread_markers_i(int *hit_count_out) {
         }
     }
 
+    for (mach_msg_type_number_t i = 0; i < thread_count; i++) {
+        mach_port_deallocate(mach_task_self(), threads[i]);
+    }
     vm_deallocate(
         mach_task_self(),
         (vm_address_t)threads,

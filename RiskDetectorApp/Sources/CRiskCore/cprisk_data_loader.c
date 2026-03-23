@@ -222,6 +222,8 @@ void cprisk_armor_derive_chained_key(
     uint8_t out_key[CPRISK_ARMOR_KEY_SIZE]
 ) {
     /* Level 1: HMAC(parent, index || nonce) */
+    if (nonce_len > CPRISK_ARMOR_NONCE_SIZE)
+        return;
     uint8_t chain_material[4 + CPRISK_ARMOR_NONCE_SIZE];
     chain_material[0] = (uint8_t)(section_index);
     chain_material[1] = (uint8_t)(section_index >> 8);

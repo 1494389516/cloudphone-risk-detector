@@ -39,8 +39,17 @@ final class SecureString {
     }
 
     func use<T>(_ block: (String) -> T) -> T {
-        let str = String(bytes: bytes, encoding: .utf8) ?? ""
-        let result = block(str)
+        let result = bytes.withUnsafeBufferPointer { buf -> T in
+            let str = String(decoding: buf, as: UTF8.self)
+            return block(str)
+        }
+        secureZero(&bytes)
+        return result
+    }
+
+    /// Provides direct access to the raw UTF-8 bytes without creating a String copy.
+    func useBytes<T>(_ block: (UnsafeBufferPointer<UInt8>) -> T) -> T {
+        let result = bytes.withUnsafeBufferPointer { block($0) }
         secureZero(&bytes)
         return result
     }

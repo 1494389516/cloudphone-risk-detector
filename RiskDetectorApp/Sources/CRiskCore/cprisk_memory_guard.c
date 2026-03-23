@@ -79,6 +79,8 @@ static int cprisk_sigbus_addr_in_guard(const struct cprisk_guard_state *state, c
         if (!trap_addr || trap_size == 0)
             continue;
         const uintptr_t start = (uintptr_t)trap_addr;
+        if (start > UINTPTR_MAX - trap_size)
+            continue;
         const uintptr_t end = start + trap_size;
         if (target >= start && target < end)
             return 1;
@@ -211,6 +213,9 @@ int cprisk_verify_page_protection(void *region, size_t len) {
         (vm_region_info_t)&info,
         &count,
         &object_name);
+
+    if (object_name != MACH_PORT_NULL)
+        mach_port_deallocate(mach_task_self(), object_name);
 
     if (kr != KERN_SUCCESS)
         return 0;

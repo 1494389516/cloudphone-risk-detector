@@ -851,9 +851,10 @@ public final class CPRiskKit: NSObject {
         )
 
         // Update signal continuity state for next evaluate() call.
-        let allVerdictSignalIds = Set(verdict.signals.map(\.id))
+        // Use pre-engine extraSignals IDs (not verdict.signals) so the comparison in the
+        // continuity check at the start of evaluate() compares the same signal stage.
         stateLock.withLock {
-            previousSignalIds = allVerdictSignalIds
+            previousSignalIds = allCurrentSignalIds
             previousSignalsDigest = SignalDigest.computeFullDigest(verdict.signals)
         }
 

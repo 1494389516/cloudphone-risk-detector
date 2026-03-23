@@ -176,6 +176,8 @@ static int cprisk_breakpoint_immediate_from_state_i(
     kern_return_t kr = vm_region_64(mach_task_self(), &region_addr, &region_size,
                                      VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info,
                                      &info_count, &object_name);
+    if (object_name != MACH_PORT_NULL)
+        mach_port_deallocate(mach_task_self(), object_name);
     if (kr != KERN_SUCCESS || region_addr > (vm_address_t)pc ||
         (vm_address_t)pc + sizeof(uint32_t) > region_addr + region_size ||
         !(info.protection & VM_PROT_READ)) {

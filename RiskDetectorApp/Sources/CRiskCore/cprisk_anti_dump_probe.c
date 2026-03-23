@@ -23,7 +23,7 @@ extern volatile int s_integrity_deception_active;
 
 static pthread_t s_probe_thread;
 static pthread_mutex_t s_probe_mutex = PTHREAD_MUTEX_INITIALIZER;
-static volatile int s_probe_running;
+static _Atomic int s_probe_running;
 static int s_probe_started;
 static int s_probe_interval_seconds = 5;
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
@@ -90,6 +90,11 @@ static int cprisk_scan_vm_regions(void) {
             return -1;
         }
 
+        if (obj_name != MACH_PORT_NULL)
+            mach_port_deallocate(mach_task_self(), obj_name);
+
+        if (size == 0 || addr > UINTPTR_MAX - size)
+            break;
         addr += size;
     }
     return 0;

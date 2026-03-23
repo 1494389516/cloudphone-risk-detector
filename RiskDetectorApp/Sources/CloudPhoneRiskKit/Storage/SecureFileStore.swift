@@ -41,7 +41,7 @@ final class SecureFileStore: @unchecked Sendable {
             do {
                 try ensureDirectory()
                 let url = fileURL(for: key)
-                try data.write(to: url, options: [.atomic])
+                try data.write(to: url, options: [.atomic, .completeFileProtection])
                 try FileManager.default.setAttributes(
                     [.protectionKey: FileProtectionType.complete],
                     ofItemAtPath: url.path
