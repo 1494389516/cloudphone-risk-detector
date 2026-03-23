@@ -32,6 +32,7 @@ RiskDetectorApp/Legacy/
 
 # Logs
 *.log
+/.tmp_anti_debug.i
 
 # Red team analysis notes & SDK spec (local only)
 RED_TEAM_ANALYSIS_ROUND*.md
