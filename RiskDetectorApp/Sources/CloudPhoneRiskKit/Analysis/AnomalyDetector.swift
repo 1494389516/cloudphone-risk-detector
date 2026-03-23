@@ -444,7 +444,7 @@ private func sqrt(_ x: Double) -> Double {
 private func interpolatedPercentile(sorted: [Double], p: Double) -> Double {
     guard !sorted.isEmpty else { return 0 }
     let n = Double(sorted.count)
-    let index = max(0, min((p * n) - 0.5, n - 1))
+    let index = max(0, min(p * (n - 1), n - 1))
     let lower = Int(Darwin.floor(index))
     let upper = Int(Darwin.ceil(index))
     guard lower >= 0, upper < sorted.count else { return sorted[max(0, min(lower, sorted.count - 1))] }

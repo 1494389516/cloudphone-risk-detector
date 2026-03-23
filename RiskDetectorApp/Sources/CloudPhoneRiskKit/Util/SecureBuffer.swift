@@ -57,10 +57,14 @@ final class SecureString {
     /// 常量时间比较，避免通过时序泄露
     func secureCompare(with other: String) -> Bool {
         let otherBytes = Array(other.utf8)
-        guard bytes.count == otherBytes.count else { return false }
-        var acc: UInt8 = 0
-        for i in 0..<bytes.count {
-            acc |= bytes[i] ^ otherBytes[i]
+        let maxLen = max(bytes.count, otherBytes.count)
+        guard maxLen > 0 else { return bytes.count == otherBytes.count }
+        // Fold length mismatch into accumulator to avoid early-return timing leak
+        var acc: UInt8 = bytes.count == otherBytes.count ? 0 : 1
+        for i in 0..<maxLen {
+            let a: UInt8 = i < bytes.count ? bytes[i] : 0
+            let b: UInt8 = i < otherBytes.count ? otherBytes[i] : 0
+            acc |= a ^ b
         }
         return acc == 0
     }
@@ -98,8 +102,11 @@ enum SecureScope {
     static func withSecureValue<T>(_ value: String, _ body: (String) -> T) -> T {
         var bytes = Array(value.utf8)
         defer { secureZero(&bytes) }
-        let str = String(bytes: bytes, encoding: .utf8) ?? ""
-        return body(str)
+        let result = bytes.withUnsafeBufferPointer { buf -> T in
+            let str = String(decoding: buf, as: UTF8.self)
+            return body(str)
+        }
+        return result
     }
 
     static func withSecureBytes<T>(_ bytes: [UInt8], _ body: (UnsafeBufferPointer<UInt8>) -> T) -> T {

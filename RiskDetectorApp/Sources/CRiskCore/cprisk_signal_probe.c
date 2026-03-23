@@ -727,6 +727,9 @@ int cprisk_detect_thread_exception_ports(void) {
         }
     }
 
+    for (mach_msg_type_number_t i = 0; i < thread_count; i++) {
+        mach_port_deallocate(mach_task_self(), threads[i]);
+    }
     vm_deallocate(mach_task_self(),
                   (vm_address_t)threads,
                   sizeof(thread_act_t) * thread_count);
@@ -762,6 +765,9 @@ int cprisk_detect_hardware_breakpoints(void) {
         }
     }
 
+    for (mach_msg_type_number_t i = 0; i < thread_count; i++) {
+        mach_port_deallocate(mach_task_self(), threads[i]);
+    }
     vm_deallocate(mach_task_self(),
                   (vm_address_t)threads,
                   sizeof(thread_act_t) * thread_count);
@@ -1379,6 +1385,9 @@ int cprisk_detect_suspicious_threads(void) {
         }
     }
 
+    for (mach_msg_type_number_t i = 0; i < thread_count; i++) {
+        mach_port_deallocate(mach_task_self(), threads[i]);
+    }
     vm_deallocate(mach_task_self(),
                   (vm_address_t)threads,
                   sizeof(thread_act_t) * thread_count);

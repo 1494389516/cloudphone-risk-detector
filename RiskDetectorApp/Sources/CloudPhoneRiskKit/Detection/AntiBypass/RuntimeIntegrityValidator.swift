@@ -191,10 +191,30 @@ struct RuntimeIntegrityValidator: Detector {
     /// - Branch register `BR Xn`: fixed encoding 0xD61F0000 | (Rn << 5)
     /// - `BRK #imm16`: top 8 bits = 0xD4, bits [23:21] = 001, bit 0 = 0
     /// - `LDR Xn, #+8` followed by `BR Xn` (trampoline pattern)
+    private func safeReadInstruction(at address: UnsafeRawPointer) -> UInt32? {
+        var instruction: UInt32 = 0
+        var outSize: mach_vm_size_t = 0
+        let kr = withUnsafeMutablePointer(to: &instruction) { ptr in
+            vm_read_overwrite(
+                mach_task_self_,
+                vm_address_t(UInt(bitPattern: address)),
+                vm_size_t(MemoryLayout<UInt32>.size),
+                vm_address_t(UInt(bitPattern: ptr)),
+                &outSize
+            )
+        }
+        guard kr == KERN_SUCCESS, outSize == mach_vm_size_t(MemoryLayout<UInt32>.size) else {
+            return nil
+        }
+        return instruction
+    }
+
     private func detectInlineHookAtAddress(_ address: UnsafeRawPointer) -> Bool {
-        // Read first two instructions (8 bytes)
-        let instruction0 = address.assumingMemoryBound(to: UInt32.self).pointee
-        let instruction1 = address.advanced(by: 4).assumingMemoryBound(to: UInt32.self).pointee
+        // Read first two instructions safely via vm_read_overwrite to avoid EXC_BAD_ACCESS
+        guard let instruction0 = safeReadInstruction(at: address),
+              let instruction1 = safeReadInstruction(at: address.advanced(by: 4)) else {
+            return false
+        }
 
         // Check for unconditional branch: B imm26
         // Encoding: [31:26] = 000101

@@ -77,6 +77,8 @@ static int cprisk_scan_vm_regions(void) {
         /* Shared+write mappings are suspicious for injected dump channels.
          * Plain read-only shared mappings are common for normal dylibs. */
         if (info.shared && (info.protection & VM_PROT_WRITE)) {
+            if (obj_name != MACH_PORT_NULL)
+                mach_port_deallocate(mach_task_self(), obj_name);
             return -1;
         }
 
@@ -87,6 +89,8 @@ static int cprisk_scan_vm_regions(void) {
             (info.protection & VM_PROT_WRITE)) {
             /* Also require that the region is not in a system framework bundle,
              * which legitimately uses JIT for JavaScriptCore/WebKit. */
+            if (obj_name != MACH_PORT_NULL)
+                mach_port_deallocate(mach_task_self(), obj_name);
             return -1;
         }
 

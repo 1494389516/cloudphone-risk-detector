@@ -127,7 +127,7 @@ enum RiskScorer {
         let isHighRisk = (total >= config.threshold) || context.jailbreak.isJailbroken
         if context.jailbreak.isJailbroken, total < config.threshold {
             // Hard verdict: jailbreak => at least threshold.
-            total = config.threshold
+            total = min(config.threshold, scoreCap)
         }
         #if DEBUG
         Logger.log("score total=\(total) threshold=\(config.threshold) isHighRisk=\(isHighRisk)")
