@@ -460,6 +460,10 @@ static int cprisk_watchdog_should_stop(void) {
     return atomic_load(&s_watchdog_stop_requested) != 0;
 }
 
+int cprisk_watchdog_probe_should_stop(void) {
+    return cprisk_watchdog_should_stop();
+}
+
 static uint32_t cprisk_watchdog_pick_interval_ms_i(uint32_t anomaly_flags) {
     const uint64_t rnd = cprisk_watchdog_random_u64_i();
     if (anomaly_flags != CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_NONE) {

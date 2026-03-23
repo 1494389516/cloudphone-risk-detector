@@ -211,7 +211,11 @@ public enum ConfigSignatureVerifier {
 extension Data {
     init?(hexString: String) {
         let hex = hexString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !hex.isEmpty, hex.count.isMultiple(of: 2) else { return nil }
+        guard hex.count.isMultiple(of: 2) else { return nil }
+        if hex.isEmpty {
+            self = Data()
+            return
+        }
         var data = Data(capacity: hex.count / 2)
         var index = hex.startIndex
         while index < hex.endIndex {

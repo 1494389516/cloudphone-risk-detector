@@ -702,8 +702,12 @@ static int cprisk_whitebox_eval_record_i(
         if (!tables_heap)
             return -1;
         memcpy(tables_heap, tables_src, tlen);
-        const struct mach_header_64 *mh = cprisk_whitebox_hdr_i();
-        const intptr_t rs = mh ? cprisk_compute_slide(mh) : (intptr_t)0;
+        intptr_t rs = (intptr_t)0;
+        if (!s_test_bundle_i.active) {
+            const struct mach_header_64 *mh = cprisk_whitebox_hdr_i();
+            if (mh)
+                rs = cprisk_compute_slide(mh);
+        }
         cprisk_whitebox_xor_tables_aslr_i(
             tables_heap,
             tlen,
@@ -833,7 +837,7 @@ int cprisk_whitebox_evaluate_domain(
 ) {
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
     /* Entry trace check: deterministic but incorrect PRF output */
-    if (cprisk_is_being_traced_redundant()) {
+    if (!s_test_bundle_i.active && cprisk_is_being_traced_redundant()) {
         const uint8_t *src = input ? input : s_zero_state_i;
         cprisk_sha256_ctx pctx;
         cprisk_sha256_init(&pctx);
@@ -889,7 +893,7 @@ int cprisk_whitebox_evaluate_domain(
 
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
     /* Exit trace check: debugger may attach mid-evaluation */
-    if (rc == 0 && cprisk_is_being_traced_redundant()) {
+    if (rc == 0 && !s_test_bundle_i.active && cprisk_is_being_traced_redundant()) {
         const uint8_t *src = input ? input : s_zero_state_i;
         cprisk_sha256_ctx pctx;
         cprisk_sha256_init(&pctx);
@@ -901,9 +905,10 @@ int cprisk_whitebox_evaluate_domain(
     return rc;
 }
 
-int cprisk_derive_effective_signing_key(
+static int cprisk_derive_effective_signing_key_core_i(
     const uint8_t *base_key,
     size_t base_key_len,
+    const uint8_t *request_binding_digest,
     uint8_t out_key[32]
 ) {
     if (!out_key)
@@ -946,36 +951,48 @@ int cprisk_derive_effective_signing_key(
                        base_key_len,
                        out_key);
 
-    /* Request-level hardening: when a fresh binding material exists (nonce /
-     * challenge / canonical request input), re-key the derived key with a
-     * short-lived mix so signatures are less reusable across requests. */
-    {
-        uint32_t request_mix = 0u;
-        if (cprisk_get_request_binding_mix(&request_mix) == 0) {
-            uint8_t bind_material[16];
-            const uint32_t lane0 = request_mix;
-            const uint32_t lane1 = (request_mix << 13u) | (request_mix >> 19u);
-            const uint32_t lane2 = request_mix ^ 0xA24BAED5u;
-            const uint32_t lane3 = lane1 ^ 0x6C8E9CF5u;
-            memcpy(bind_material + 0, &lane0, sizeof(lane0));
-            memcpy(bind_material + 4, &lane1, sizeof(lane1));
-            memcpy(bind_material + 8, &lane2, sizeof(lane2));
-            memcpy(bind_material + 12, &lane3, sizeof(lane3));
-
-            uint8_t rebound_key[CPRISK_ARMOR_HASH_SIZE];
-            cprisk_hmac_sha256(out_key,
-                               CPRISK_ARMOR_HASH_SIZE,
-                               bind_material,
-                               sizeof(bind_material),
-                               rebound_key);
-            memcpy(out_key, rebound_key, CPRISK_ARMOR_HASH_SIZE);
-            cprisk_secure_zero(rebound_key, sizeof(rebound_key));
-            cprisk_secure_zero(bind_material, sizeof(bind_material));
-        }
+    if (request_binding_digest) {
+        uint8_t rebound_key[CPRISK_ARMOR_HASH_SIZE];
+        cprisk_hmac_sha256(out_key,
+                           CPRISK_ARMOR_HASH_SIZE,
+                           request_binding_digest,
+                           CPRISK_ARMOR_HASH_SIZE,
+                           rebound_key);
+        memcpy(out_key, rebound_key, CPRISK_ARMOR_HASH_SIZE);
+        cprisk_secure_zero(rebound_key, sizeof(rebound_key));
     }
 
     cprisk_secure_zero(runtime_material, sizeof(runtime_material));
     return 0;
+}
+
+int cprisk_derive_effective_signing_key(
+    const uint8_t *base_key,
+    size_t base_key_len,
+    uint8_t out_key[32]
+) {
+    return cprisk_derive_effective_signing_key_core_i(
+        base_key,
+        base_key_len,
+        NULL,
+        out_key
+    );
+}
+
+int cprisk_derive_effective_signing_key_with_request_binding_digest(
+    const uint8_t *base_key,
+    size_t base_key_len,
+    const uint8_t request_binding_digest[32],
+    uint8_t out_key[32]
+) {
+    if (!request_binding_digest)
+        return -1;
+    return cprisk_derive_effective_signing_key_core_i(
+        base_key,
+        base_key_len,
+        request_binding_digest,
+        out_key
+    );
 }
 
 int cprisk_derive_effective_signing_key_hex(
@@ -1020,11 +1037,12 @@ int cprisk_hmac_sha256_hex(
     return 0;
 }
 
-int cprisk_sign_with_derived_key(
+static int cprisk_sign_with_derived_key_core_i(
     const uint8_t *base_key,
     size_t base_key_len,
     const uint8_t *msg,
     size_t msg_len,
+    const uint8_t *request_binding_digest,
     char out_hex[CPRISK_ARMOR_HEX_ENCODED_HASH_SIZE + 1]
 ) {
     if (!out_hex)
@@ -1033,8 +1051,12 @@ int cprisk_sign_with_derived_key(
         return -1;
 
     uint8_t derived_key[CPRISK_ARMOR_HASH_SIZE];
-    if (cprisk_derive_effective_signing_key(base_key, base_key_len, derived_key) != 0)
+    if (cprisk_derive_effective_signing_key_core_i(base_key,
+                                                   base_key_len,
+                                                   request_binding_digest,
+                                                   derived_key) != 0) {
         return -1;
+    }
 
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
     /* Flip select key bytes under debugger — signature silently invalid */
@@ -1053,6 +1075,43 @@ int cprisk_sign_with_derived_key(
                                           out_hex);
     cprisk_secure_zero(derived_key, sizeof(derived_key));
     return rc;
+}
+
+int cprisk_sign_with_derived_key(
+    const uint8_t *base_key,
+    size_t base_key_len,
+    const uint8_t *msg,
+    size_t msg_len,
+    char out_hex[CPRISK_ARMOR_HEX_ENCODED_HASH_SIZE + 1]
+) {
+    return cprisk_sign_with_derived_key_core_i(
+        base_key,
+        base_key_len,
+        msg,
+        msg_len,
+        NULL,
+        out_hex
+    );
+}
+
+int cprisk_sign_with_derived_key_and_request_binding_digest(
+    const uint8_t *base_key,
+    size_t base_key_len,
+    const uint8_t *msg,
+    size_t msg_len,
+    const uint8_t request_binding_digest[32],
+    char out_hex[CPRISK_ARMOR_HEX_ENCODED_HASH_SIZE + 1]
+) {
+    if (!request_binding_digest)
+        return -1;
+    return cprisk_sign_with_derived_key_core_i(
+        base_key,
+        base_key_len,
+        msg,
+        msg_len,
+        request_binding_digest,
+        out_hex
+    );
 }
 
 int cprisk_verify_with_derived_key(
@@ -1077,6 +1136,42 @@ int cprisk_verify_with_derived_key(
                                      msg,
                                      msg_len,
                                      computed_hex) != 0) {
+        cprisk_secure_zero(computed_hex, sizeof(computed_hex));
+        return -1;
+    }
+
+    const int rc = cprisk_ct_ascii_eq_i(
+        computed_hex,
+        expected_hex,
+        CPRISK_ARMOR_HEX_ENCODED_HASH_SIZE);
+    cprisk_secure_zero(computed_hex, sizeof(computed_hex));
+    return rc;
+}
+
+int cprisk_verify_with_derived_key_and_request_binding_digest(
+    const uint8_t *base_key,
+    size_t base_key_len,
+    const uint8_t *msg,
+    size_t msg_len,
+    const uint8_t request_binding_digest[32],
+    const char *expected_hex
+) {
+    if (!expected_hex || !request_binding_digest)
+        return -1;
+
+    const size_t expected_len = cprisk_cstrnlen_i(
+        expected_hex, CPRISK_ARMOR_HEX_ENCODED_HASH_SIZE + 1);
+    if (expected_len != CPRISK_ARMOR_HEX_ENCODED_HASH_SIZE)
+        return -1;
+
+    char computed_hex[CPRISK_ARMOR_HEX_ENCODED_HASH_SIZE + 1];
+    memset(computed_hex, 0, sizeof(computed_hex));
+    if (cprisk_sign_with_derived_key_and_request_binding_digest(base_key,
+                                                                base_key_len,
+                                                                msg,
+                                                                msg_len,
+                                                                request_binding_digest,
+                                                                computed_hex) != 0) {
         cprisk_secure_zero(computed_hex, sizeof(computed_hex));
         return -1;
     }

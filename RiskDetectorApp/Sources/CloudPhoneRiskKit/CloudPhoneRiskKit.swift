@@ -2193,12 +2193,18 @@ public final class CPRiskKit: NSObject {
         }
     }
 
+    private static func requestBindingDigest(for signatureInput: Data) -> Data {
+        Data(SHA256.hash(data: signatureInput))
+    }
+
     private static func signWithArmorDerivedKey(baseKey: String, signatureInput: Data) -> String? {
         guard var keyData = baseKey.data(using: .utf8) else {
             Logger.log("armor_sign: UTF-8 encoding failed for baseKey")
             return nil
         }
         defer { secureZeroData(&keyData) }
+        var bindingDigest = requestBindingDigest(for: signatureInput)
+        defer { secureZeroData(&bindingDigest) }
 
         var signatureBuffer = [CChar](
             repeating: 0,
@@ -2208,24 +2214,28 @@ public final class CPRiskKit: NSObject {
 
         let rc = signatureBuffer.withUnsafeMutableBufferPointer { signaturePtr in
             keyData.withUnsafeBytes { keyRaw in
-                signatureInput.withUnsafeBytes { inputRaw in
-                    guard let keyPtr = keyRaw.bindMemory(to: UInt8.self).baseAddress,
-                          let inputPtr = inputRaw.bindMemory(to: UInt8.self).baseAddress,
-                          let sigPtr = signaturePtr.baseAddress else {
-                        return Int32(-1)
+                bindingDigest.withUnsafeBytes { digestRaw in
+                    signatureInput.withUnsafeBytes { inputRaw in
+                        guard let keyPtr = keyRaw.bindMemory(to: UInt8.self).baseAddress,
+                              let digestPtr = digestRaw.bindMemory(to: UInt8.self).baseAddress,
+                              let inputPtr = inputRaw.bindMemory(to: UInt8.self).baseAddress,
+                              let sigPtr = signaturePtr.baseAddress else {
+                            return Int32(-1)
+                        }
+                        return cprisk_sign_with_derived_key_and_request_binding_digest(
+                            keyPtr,
+                            keyData.count,
+                            inputPtr,
+                            signatureInput.count,
+                            digestPtr,
+                            sigPtr
+                        )
                     }
-                    return cprisk_sign_with_derived_key(
-                        keyPtr,
-                        keyData.count,
-                        inputPtr,
-                        signatureInput.count,
-                        sigPtr
-                    )
                 }
             }
         }
         guard rc == 0 else {
-            Logger.log("armor_sign: cprisk_sign_with_derived_key failed rc=\(rc)")
+            Logger.log("armor_sign: bound cprisk_sign_with_derived_key failed rc=\(rc)")
             return nil
         }
         return String(cString: signatureBuffer)
@@ -2241,25 +2251,31 @@ public final class CPRiskKit: NSObject {
             return false
         }
         defer { secureZeroData(&keyData) }
+        var bindingDigest = requestBindingDigest(for: signatureInput)
+        defer { secureZeroData(&bindingDigest) }
 
         var expectedCString = Array(expectedSignature.utf8CString)
         defer { clearCStringBuffer(&expectedCString) }
 
         let rc = expectedCString.withUnsafeBufferPointer { signaturePtr in
             keyData.withUnsafeBytes { keyRaw in
-                signatureInput.withUnsafeBytes { inputRaw in
-                    guard let keyPtr = keyRaw.bindMemory(to: UInt8.self).baseAddress,
-                          let inputPtr = inputRaw.bindMemory(to: UInt8.self).baseAddress,
-                          let sigPtr = signaturePtr.baseAddress else {
-                        return Int32(-1)
+                bindingDigest.withUnsafeBytes { digestRaw in
+                    signatureInput.withUnsafeBytes { inputRaw in
+                        guard let keyPtr = keyRaw.bindMemory(to: UInt8.self).baseAddress,
+                              let digestPtr = digestRaw.bindMemory(to: UInt8.self).baseAddress,
+                              let inputPtr = inputRaw.bindMemory(to: UInt8.self).baseAddress,
+                              let sigPtr = signaturePtr.baseAddress else {
+                            return Int32(-1)
+                        }
+                        return cprisk_verify_with_derived_key_and_request_binding_digest(
+                            keyPtr,
+                            keyData.count,
+                            inputPtr,
+                            signatureInput.count,
+                            digestPtr,
+                            sigPtr
+                        )
                     }
-                    return cprisk_verify_with_derived_key(
-                        keyPtr,
-                        keyData.count,
-                        inputPtr,
-                        signatureInput.count,
-                        sigPtr
-                    )
                 }
             }
         }

@@ -1700,6 +1700,9 @@ int cprisk_runtime_material_ready(void) {
 }
 
 int cprisk_recheck_integrity(void) {
+    if (!s_integrity_hash_saved)
+        return -1;
+
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
     /* Under debugger: report "all clear" but silently activate deception */
     if (cprisk_is_being_traced_redundant()) {
@@ -1712,9 +1715,6 @@ int cprisk_recheck_integrity(void) {
         return 0;
     }
 #endif
-
-    if (!s_integrity_hash_saved)
-        return -1;
 
     if (cprisk_validate_pac_cfi_i(s_saved_integrity_hash, CPRISK_ARMOR_HASH_SIZE) != 0) {
         s_integrity_poisoned = 1;

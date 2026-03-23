@@ -217,8 +217,7 @@ struct FridaModuleDetector: Detector {
         let runtimeAddress = Int64(section.addr) + slide
         guard byteCount > 0,
               runtimeAddress > 0,
-              runtimeAddress <= Int64(UInt.max),
-              let base = UnsafeRawPointer(bitPattern: UInt(runtimeAddress)) else {
+              let base = UnsafeRawPointer(bitPattern: Int(runtimeAddress)) else {
             return nil
         }
 

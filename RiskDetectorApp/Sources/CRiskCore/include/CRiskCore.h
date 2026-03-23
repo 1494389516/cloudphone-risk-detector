@@ -525,6 +525,18 @@ int cprisk_derive_effective_signing_key(
     uint8_t out_key[32]
 );
 
+/// Variant of cprisk_derive_effective_signing_key() that performs request-level
+/// direct re-key with the full 32-byte request-binding digest:
+///   derived = HMAC(runtime_material, base_key)
+///   rebound = HMAC(derived, request_binding_digest)
+/// Returns 0 on success, -1 on failure.
+int cprisk_derive_effective_signing_key_with_request_binding_digest(
+    const uint8_t *base_key,
+    size_t base_key_len,
+    const uint8_t request_binding_digest[32],
+    uint8_t out_key[32]
+);
+
 /// Same derivation as cprisk_derive_effective_signing_key(), but hex-encodes
 /// the resulting 32-byte key into out_hex (64 chars + trailing NUL).
 /// Returns 0 on success, -1 on failure.
@@ -557,6 +569,18 @@ int cprisk_sign_with_derived_key(
     char out_hex[CPRISK_ARMOR_HEX_ENCODED_HASH_SIZE + 1]
 );
 
+/// Same helper pipeline as cprisk_sign_with_derived_key(), but first direct
+/// re-keys the effective key with a full 32-byte request-binding digest.
+/// Returns 0 on success, -1 on failure.
+int cprisk_sign_with_derived_key_and_request_binding_digest(
+    const uint8_t *base_key,
+    size_t base_key_len,
+    const uint8_t *msg,
+    size_t msg_len,
+    const uint8_t request_binding_digest[32],
+    char out_hex[CPRISK_ARMOR_HEX_ENCODED_HASH_SIZE + 1]
+);
+
 /// Same helper pipeline as cprisk_sign_with_derived_key(), but compares the
 /// computed hex digest with expected_hex in constant time.
 /// Returns 0 on success (match), -1 on mismatch or failure.
@@ -565,6 +589,19 @@ int cprisk_verify_with_derived_key(
     size_t base_key_len,
     const uint8_t *msg,
     size_t msg_len,
+    const char *expected_hex
+);
+
+/// Same helper pipeline as
+/// cprisk_sign_with_derived_key_and_request_binding_digest(), but compares the
+/// computed hex digest with expected_hex in constant time.
+/// Returns 0 on success (match), -1 on mismatch or failure.
+int cprisk_verify_with_derived_key_and_request_binding_digest(
+    const uint8_t *base_key,
+    size_t base_key_len,
+    const uint8_t *msg,
+    size_t msg_len,
+    const uint8_t request_binding_digest[32],
     const char *expected_hex
 );
 

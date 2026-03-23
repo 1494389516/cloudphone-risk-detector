@@ -54,6 +54,8 @@
 #define CPRISK_TIMING_JITTER_DIVISOR 4ull
 #define CPRISK_SOFTWARE_BP_RANDOM_DEFAULT_WINDOWS 8u
 #define CPRISK_SOFTWARE_BP_RANDOM_DEFAULT_WINDOW_BYTES 768u
+#define CPRISK_DBI_EXECMEM_REGION_BUDGET 8192u
+#define CPRISK_DBI_EXECMEM_TIME_BUDGET_NS 20000000ull
 
 /* ── (a) SIGTRAP signal probe ─────────────────────────────────────── */
 
@@ -75,6 +77,8 @@ static atomic_uint_fast32_t s_timing_last_anomaly_flags = 0;
 static atomic_uint_fast64_t s_timing_last_median_ns = 0;
 static atomic_uint_fast64_t s_timing_last_max_ns = 0;
 static atomic_uint_fast64_t s_timing_last_threshold_ns = 0;
+
+int cprisk_watchdog_probe_should_stop(void);
 
 #if defined(__APPLE__) && (defined(__arm64__) || defined(__aarch64__)) && \
     (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
@@ -424,8 +428,23 @@ static uint32_t cprisk_detect_dbi_execmem_i(int *hit_count_out) {
     uint32_t flags = 0u;
     int hit_count = 0;
     mach_vm_address_t addr = MACH_VM_MIN_ADDRESS;
+    uint32_t scanned_regions = 0u;
+    const uint64_t start_ns = cprisk_monotonic_now_ns_i();
 
     while (1) {
+        if (cprisk_watchdog_probe_should_stop()) {
+            break;
+        }
+        if (scanned_regions >= CPRISK_DBI_EXECMEM_REGION_BUDGET) {
+            break;
+        }
+        if (start_ns != 0u) {
+            const uint64_t now_ns = cprisk_monotonic_now_ns_i();
+            if (now_ns > start_ns &&
+                now_ns - start_ns >= CPRISK_DBI_EXECMEM_TIME_BUDGET_NS) {
+                break;
+            }
+        }
         mach_vm_size_t region_size = 0u;
         uint32_t depth = 0u;
         vm_region_submap_info_data_64_t info;
@@ -441,6 +460,7 @@ static uint32_t cprisk_detect_dbi_execmem_i(int *hit_count_out) {
         if (kr != KERN_SUCCESS) {
             break;
         }
+        scanned_regions += 1u;
         if (info.is_submap) {
             depth += 1u;
             continue;
