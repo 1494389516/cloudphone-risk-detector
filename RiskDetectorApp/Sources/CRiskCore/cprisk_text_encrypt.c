@@ -62,7 +62,9 @@ static uint64_t cprisk_text_ticks_to_ns(uint64_t delta_ticks) {
     (void)pthread_once(&s_tb_once, cprisk_text_timebase_once);
     if (s_timebase.denom == 0)
         return 0;
-    return delta_ticks * (uint64_t)s_timebase.numer / (uint64_t)s_timebase.denom;
+    uint64_t numer = (uint64_t)s_timebase.numer;
+    uint64_t denom = (uint64_t)s_timebase.denom;
+    return delta_ticks / denom * numer + (delta_ticks % denom) * numer / denom;
 }
 
 static const struct mach_header_64 *cprisk_text_own_hdr(void) {

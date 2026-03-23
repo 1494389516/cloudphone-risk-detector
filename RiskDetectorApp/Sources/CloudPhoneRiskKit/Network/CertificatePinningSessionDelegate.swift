@@ -93,6 +93,21 @@ public final class CertificatePinningSessionDelegate: NSObject, URLSessionDelega
         }
     }
 
+    // ASN.1 SPKI headers for wrapping raw key bytes into DER SubjectPublicKeyInfo.
+    // Required so that SHA-256 hashes match those produced by standard tooling
+    // (e.g. `openssl x509 -pubkey | openssl pkey -pubin -outform der | sha256`).
+    private static let rsaSPKIHeader: [UInt8] = [
+        0x30, 0x82, 0x01, 0x22, 0x30, 0x0D, 0x06, 0x09,
+        0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01,
+        0x01, 0x05, 0x00, 0x03, 0x82, 0x01, 0x0F, 0x00
+    ]
+    private static let ecP256SPKIHeader: [UInt8] = [
+        0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2A, 0x86,
+        0x48, 0xCE, 0x3D, 0x02, 0x01, 0x06, 0x08, 0x2A,
+        0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07, 0x03,
+        0x42, 0x00
+    ]
+
     /// Extract SPKI SHA-256 hash from a certificate
     private func spkiSHA256(certificate: SecCertificate) -> String? {
         guard let publicKey = SecCertificateCopyKey(certificate) else { return nil }
@@ -101,7 +116,25 @@ public final class CertificatePinningSessionDelegate: NSObject, URLSessionDelega
             error?.takeRetainedValue()  // release to avoid leak
             return nil
         }
-        let hash = SHA256.hash(data: publicKeyData)
+
+        // Determine the appropriate SPKI header based on key type and size
+        let header: [UInt8]
+        if let keyType = SecKeyCopyAttributes(publicKey) as? [CFString: Any],
+           let type = keyType[kSecAttrKeyType] as? String {
+            if type == (kSecAttrKeyTypeRSA as String), publicKeyData.count == 270 {
+                header = Self.rsaSPKIHeader
+            } else if type == (kSecAttrKeyTypeECSECPrimeRandom as String), publicKeyData.count == 65 {
+                header = Self.ecP256SPKIHeader
+            } else {
+                header = []
+            }
+        } else {
+            header = []
+        }
+
+        var spkiData = Data(header)
+        spkiData.append(publicKeyData)
+        let hash = SHA256.hash(data: spkiData)
         return Data(hash).base64EncodedString()
     }
 

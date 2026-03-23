@@ -490,7 +490,7 @@ static uint8_t cprisk_vm_xor_equiv_i(uint8_t lhs, uint8_t rhs, uint32_t style) {
     case 6u:
         return (uint8_t)((L + R) - 2u * (L & R));
     case 7u:
-        return (uint8_t)(L ^ R ^ ((L & R) << 1u));
+        return (uint8_t)(L ^ R);
     case 8u:
         return (uint8_t)((L | R) & (uint8_t)(~(L & R)));
     case 9u:

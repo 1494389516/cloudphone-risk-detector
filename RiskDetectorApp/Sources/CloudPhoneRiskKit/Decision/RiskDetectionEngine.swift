@@ -33,7 +33,7 @@ public struct RiskDetectionEngine: Sendable {
 
     /// 本地 killSwitch 覆盖开关 — 设为 true 时即使远程配置启用 killSwitch 也继续正常评估。
     /// 用于防止远程配置被劫持后一键关闭所有防护。
-    public static var localKillSwitchOverride: Bool = false
+    public nonisolated(unsafe) static var localKillSwitchOverride: Bool = false
 
     /// 自定义信号提供者
     private let customProviders: [String: @Sendable (RiskContext) -> [RiskSignal]]
@@ -1136,8 +1136,10 @@ public struct RiskDetectionEngine: Sendable {
             // silently inflate the score when a blocklist/comboRule uses .allow as its action.
             return 0
         case .challenge:
+            return scenarioPolicy.mediumThreshold
+        case .stepUpAuth:
             return scenarioPolicy.highThreshold
-        case .stepUpAuth, .block:
+        case .block:
             return scenarioPolicy.criticalThreshold
         }
     }

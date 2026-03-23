@@ -149,15 +149,17 @@ static inline int cprisk_wd_csops_debug_probe_inline_i(void) {
 }
 
 static uint64_t cprisk_monotonic_time_ns(void) {
-    static uint64_t s_cntfrq = 0u;
-    if (s_cntfrq == 0u) {
-        __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(s_cntfrq));
+    static _Atomic uint64_t s_cntfrq = 0u;
+    uint64_t freq = atomic_load_explicit(&s_cntfrq, memory_order_relaxed);
+    if (freq == 0u) {
+        __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+        atomic_store_explicit(&s_cntfrq, freq, memory_order_relaxed);
     }
-    if (s_cntfrq != 0u) {
+    if (freq != 0u) {
         uint64_t ticks = 0u;
         __asm__ volatile("mrs %0, cntpct_el0" : "=r"(ticks));
-        return (ticks / s_cntfrq) * 1000000000ull +
-               ((ticks % s_cntfrq) * 1000000000ull) / s_cntfrq;
+        return (ticks / freq) * 1000000000ull +
+               ((ticks % freq) * 1000000000ull) / freq;
     }
 
     struct timespec ts;

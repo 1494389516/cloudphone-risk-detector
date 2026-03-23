@@ -372,6 +372,8 @@ static int cprisk_antidebug_patch_site_i(uintptr_t patch_addr, int *out_tamper) 
                      (vm_region_info_t)&info,
                      &info_count,
                      &object_name) == KERN_SUCCESS) {
+        if (object_name != MACH_PORT_NULL)
+            mach_port_deallocate(mach_task_self(), object_name);
         int queried = (int)info.protection & (PROT_READ | PROT_WRITE | PROT_EXEC);
         if (queried != 0) {
             restore_prot = queried;

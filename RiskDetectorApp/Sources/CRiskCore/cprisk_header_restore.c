@@ -175,8 +175,8 @@ static int cprisk_derive_header_key(uint8_t out_key[CPRISK_ARMOR_KEY_SIZE]) {
         out_key);
     if (rc != 0) {
         uint8_t runtime_material[CPRISK_ARMOR_KEY_SIZE];
-        uint8_t fallback_seed[CPRISK_ARMOR_KEY_SIZE + 32];
         static const char label[] = "cprisk.header.key.fallback.v1";
+        uint8_t fallback_seed[CPRISK_ARMOR_KEY_SIZE + sizeof(label) - 1u];
         memset(runtime_material, 0, sizeof(runtime_material));
         if (cprisk_get_runtime_material(runtime_material) == 0) {
             memset(fallback_seed, 0, sizeof(fallback_seed));
