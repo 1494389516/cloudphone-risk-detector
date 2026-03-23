@@ -1,7 +1,7 @@
 # CloudPhoneRiskKit SDK 隐私声明
 
 > 文档定位：`CloudPhoneRiskKit` 的 SDK 级隐私声明  
-> 适用版本：SDK 7.0  
+> 适用版本：SDK 7.1  
 > 适用对象：SDK 接入方、法务/隐私团队、客户安全评审  
 > 适用范围：iOS / iPadOS 端集成 `CloudPhoneRiskKit` 的场景  
 > 说明：本文描述的是 **SDK 自身的处理边界**，不替代宿主 App 的隐私政策、App Privacy 标签或 App Review Information
@@ -81,17 +81,20 @@ SDK 当前自带的 privacy manifest 文件位于：
 - SDK **显式声明空的 `NSPrivacyTrackingDomains`**
 - SDK **不以广告追踪为目的**使用所采集数据
 
-### 3.4 7.0 版本升级是否改变隐私声明范围
+### 3.4 7.1 版本升级是否改变隐私声明范围
 
 不会。
 
-7.0 主要新增并持续强化的是**二进制保护与运行时虚拟化能力**，例如：
+7.1 主要新增并继续强化的是**VM 运行时自校验链路与 dispatcher 分散化能力**，例如：
 
 - Pass 7 runtime gate
 - Pass 10 ImportEncryptor
 - Pass 11 HeaderEncryptor
 - Pass 12 TextSegmentEncryptor
 - Pass 13 VMProtector
+- VM self-check 从硬编码符号窗口对齐到 `__swift5_mdvsi`（CPSV）span map 驱动
+- `cprisk-vm-self-expect` 同时支持 CPSF/FNV 与 CPSH/HMAC expect blob
+- VM opcode handler 从单文件聚合拆到多个编译单元，dispatcher 继续保持函数指针表路径
 - 更早期的异常端口抢占
 - 多频 watchdog / timing canary / Frida 行为指纹增强
 - VM 解释器的 dead handler、opaque predicate chain、解释器自身 CFF 接线
@@ -102,7 +105,7 @@ SDK 当前自带的 privacy manifest 文件位于：
 - 白盒表/元数据的可选 ASLR 绑定解码路径
 - bootstrap 阶段的 mini-VM 保护关键初始化片段
 
-这些能力会增强 SDK 的反调试、反篡改和逆向对抗强度，但**不会新增 privacy manifest 中的 collected data 类型，也不会新增 Required Reason API 类别**。因此从隐私边界上看，7.0 仍然以 `Device ID`、`UserDefaults`、`SystemBootTime` 这三项 manifest 事实为基线。
+这些能力会增强 SDK 的反调试、反篡改和逆向对抗强度，但**不会新增 privacy manifest 中的 collected data 类型，也不会新增 Required Reason API 类别**。因此从隐私边界上看，7.1 仍然以 `Device ID`、`UserDefaults`、`SystemBootTime` 这三项 manifest 事实为基线。
 
 ---
 
@@ -275,7 +278,7 @@ SDK 可以在设备侧本地完成：
 
 - SDK 本地为了做风控而读取、计算、比对某些信号，并不等于这些信号一定会离开设备
 - 只有当宿主 App 选择上报 `CPRiskReport`、`ReportEnvelope`、`GrpcReportPayload` 或自定义抽取其中字段时，相关数据才进入宿主 App 的对外披露范围
-- 7.0 的 runtime gate / text 加密 / VMP 保护只增强代码保护，不会单独增加新的用户数据出境路径
+- 7.1 的 runtime gate / text 加密 / VMP 保护 / CPSV 驱动 self-check 只增强代码保护，不会单独增加新的用户数据出境路径
 
 ---
 
@@ -383,22 +386,22 @@ SDK 当前会在本地执行更强的运行时完整性探测，包括：
 
 尤其在当前项目以**静态库 / 源码集成**为主的情况下，接入方不能误以为“SDK 带了 manifest 就自动全部覆盖”。
 
-### 8.1 当前 7.0 版本的额外提醒
+### 8.1 当前 7.1 版本的额外提醒
 
-从当前 7.0 版本的整体风险结构看，接入方需要区分两件事：
+从当前 7.1 版本的整体风险结构看，接入方需要区分两件事：
 
 1. **隐私合规**
 2. **App Store 对二进制保护强度的接受度**
 
-就 SDK 隐私边界本身而言，当前 7.0 版本并没有因为 Pass 12 `TextSegmentEncryptor`、Pass 13 `VMProtector`、HMAC 自校验、guard page anti-dump、白盒表 ASLR 绑定或 bootstrap mini-VM 而新增新的 collected data 类型，也没有扩大 Required Reason API 范围。因此：
+就 SDK 隐私边界本身而言，当前 7.1 版本并没有因为 Pass 12 `TextSegmentEncryptor`、Pass 13 `VMProtector`、CPSV span map 驱动 self-check、CPSH/HMAC expect blob、handler 跨编译单元散布、guard page anti-dump、白盒表 ASLR 绑定或 bootstrap mini-VM 而新增新的 collected data 类型，也没有扩大 Required Reason API 范围。因此：
 
-- 7.0 的主要新增风险**不是隐私类型扩张**
+- 7.1 的主要新增风险**不是隐私类型扩张**
 - 而是宿主 App 是否选择启用更强的二进制保护后，带来额外的审核解释成本
-- 当前项目比早期 7.0 文档所描述的 Full Armor 更进一步，已经落到“按页代码恢复、guard page 反 dump、HMAC self-check、白盒表绑定”这一层，审核备注和交付说明需要比之前写得更明确
+- 当前项目比早期 7.0 文档所描述的 Full Armor 更进一步，已经落到“按页代码恢复、guard page 反 dump、CPSV/CPSH 驱动 self-check、白盒表绑定、跨 TU handler 散布”这一层，审核备注和交付说明需要比之前写得更明确
 
 也就是说：
 
-> **隐私文档回答的是“收什么、为什么收、谁来披露”；是否适合直接带 Full Armor 版本上架，则应优先参考 `CloudPhoneRiskKit_AppStore_合规指南.md` 中的 7.0 上架风险评估章节。**
+> **隐私文档回答的是“收什么、为什么收、谁来披露”；是否适合直接带 Full Armor 版本上架，则应优先参考 `CloudPhoneRiskKit_AppStore_合规指南.md` 中的 7.1 上架风险评估章节。**
 
 ---
 

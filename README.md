@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
-  <img src="https://img.shields.io/badge/SDK-7.0-FF3B30?style=for-the-badge" alt="SDK">
+  <img src="https://img.shields.io/badge/SDK-7.1-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
   <img src="https://img.shields.io/badge/License-Proprietary-8E8E93?style=for-the-badge" alt="License">
 </p>
@@ -66,6 +66,7 @@
 | **6.7** | **控制流平坦化 + 反去混淆 + Pass 9** | 源码级 CFF 基础设施（CFFStateCodec / CFFDispatcher / CFFReturnSink / CFFRuntimeSalt）、DecisionTree / RiskDetectionEngine / ChallengeSession / TrustChainManager / anti_debug_watchdog 接入编码状态机、Pass 9 ControlFlowOrchestrator 策略编排（`cff_policy.yaml`）、异构 dispatcher（switch / if-else / dual-rail / region）、runtime salt 绑定、fail-closed 默认路径、避免 OLLVM 模板化特征 |
 | **6.8** | **反调试 Runtime Gate + Pass 10/11 + CFF/白盒强化** | `__thread_init` 早期异常端口抢占与竞态回收、AntiDebug plan 运行时 inline patch gate（`BRK #0xC0E0`）、Unix syscall vs Mach 路径交叉校验、Frida 协议指纹与可选全端口扫描、多频 watchdog + 互监 deadline、关键路径 timing canary、白盒 PRF 增强扩散层、Pass 10 ImportEncryptor、Pass 11 HeaderEncryptor、CFF 新增 `splitIndirect` dispatcher 与 `affine` 编码风格、CFF 覆盖建议器 |
 | **7.0** | **TextSegmentEncryptor + VMProtector(M3) + 13 Pass 收口** | Pass 12 `TextSegmentEncryptor` 对 `__TEXT.__text` 做页级加密并写入 `__swift5_cgenc` 元数据，Pass 13 `VMProtector` 对 7 个高价值函数执行“ARM64 → 自定义字节码 + VM 入口跳板”虚拟化，运行时新增 `cprisk_vm_interpreter`、`__swift5_mdvrt/__swift5_mdirt` section、M2 handler 变体 / VPC 仿射编码 / 更多 ARM64 lift 覆盖，以及 M3 解释器自身 CFF 接线、dead handler 注入、VPC 不透明谓词链与可选自校验门控 |
+| **7.1** | **VM 自校验链路对齐 + dispatcher 跨单元散布 + 合规文档收口** | VM self-check 改为优先消费 `__swift5_mdvsi` span map 驱动注入与运行时校验，`cprisk-vm-self-expect` 同时支持 CPSF/CPSH（FNV/HMAC）产物写入；解释器主 dispatcher 延续函数指针表架构，并将 22 个 `cprisk_vm_oph_*` handler 拆分到多个 `.c` 编译单元，减少单文件语义聚合；同步更新 SDK 隐私声明与 App Store 合规文档，明确 7.1 加固升级不扩大 collected data / Required Reason API 边界 |
 ## 架构概览
 
 ```
@@ -114,6 +115,23 @@
 | **硬信号** | 本地独立判定，单点即可触发 | 越狱、DRM 降级、ChargeCounter 异常、PLT 篡改、ObjC Swizzle、异常端口劫持、SDK 二进制替换、DYLD Interpose | 80-100 |
 | **软信号** | 需结合场景综合评分 | VPN、行为异常、电压方差低、挂载点异常、时序侧信道、线程枚举异常、指纹突变、随机化检测、行为数据不足 | 30-75 |
 | **服务端信号** | 依赖外部聚合 | 机房 IP、ASN 黑名单、IP 设备聚合度、图社区风险、硬件画像聚集 | 55-100 |
+
+---
+
+## 7.1 新增能力 — VM Self-Check 对齐 + Dispatcher 跨单元散布
+
+7.1 在 7.0 的 TextSegmentEncryptor、VMProtector(M3) 与解释器自保护基础上，继续把 VM runtime 本身往“更难静态切片、更难单点伪造”的方向推进，重点补齐三条链路：第一，**self-check expect blob 链路从硬编码符号窗口升级为 CPSV span map 驱动**，即由 `__DATA.__swift5_mdvsi` 记录的三段 TEXT 窗口统一驱动注入器与运行时校验，减少 producer / runtime 偏移；第二，**self-check CLI 同时支持 CPSF/FNV 与 CPSH/HMAC**，便于交付时直接生成两种 expect blob；第三，**全局 opcode dispatcher 在保留函数指针表架构的前提下，将 22 个 `cprisk_vm_oph_*` handler 拆分到多个编译单元**，降低单文件聚合语义暴露面，使 pattern-based 恢复更依赖跨 TU 还原。
+
+### 7.1 核心改动
+
+| 改动 | 说明 |
+|------|------|
+| **CPSV span map 驱动 self-check** | `VMSelfExpectInjector` 优先读取 `__swift5_mdvsi`（CPSV）而不是只依赖 `_cprisk_vm_execute / _cprisk_vm_interp_loop_a / _cprisk_vm_dispatch_lookup` 三符号硬编码布局，注入与 runtime hash/HMAC 共享同一窗口定义 |
+| **CPSF / CPSH 双路径 CLI** | `cprisk-vm-self-expect` 支持传统 CPSF/FNV 与 CPSH/HMAC 写入，可通过参数选择写入模式并在交付链路中显式控制 |
+| **runtime 自校验对齐 producer span** | `cprisk_vm_interpreter.c` 在 M3 self-check 时优先消费 `__swift5_mdvsi` 中记录的 span 布局，确保 observed bytes 与 post-link producer 注入字节源一致 |
+| **dispatcher 继续去 switch 化** | 主 opcode 路径仍走 `cprisk_vm_oph_table[logical]()` 间接 dispatch，不回退为大 `switch` |
+| **handler 跨编译单元散布** | 22 个 `cprisk_vm_oph_*` handler 已拆到 `cprisk_vm_oph_basic/lane/branch/bitwise/vreg/nested.c` 与 `cprisk_vm_oph_table.c`，减少单文件语义聚合 |
+| **隐私/合规文档同步升级** | README、SDK 隐私声明、App Store 合规指南统一升级到 7.1，并明确这些 VM/runtime hardening 不会新增 privacy manifest 的 collected data 类型或 Required Reason API 类别 |
 
 ---
 
@@ -614,6 +632,8 @@ SDK 在对抗安全的同时兼顾业务可用性，内置多层灰度与降级�
 | 文档 | 路径 |
 |------|------|
 | SDK 使用与构建说明 | `CloudPhoneRiskKit_文档/CloudPhoneRiskKit_使用说明.md` |
+| SDK 隐私声明 | `CloudPhoneRiskKit_文档/CloudPhoneRiskKit_SDK_隐私声明.md` |
+| App Store / 接入合规指南 | `CloudPhoneRiskKit_文档/CloudPhoneRiskKit_AppStore_合规指南.md` |
 
 ---
 
@@ -647,4 +667,4 @@ cd RiskDetectorApp && swift test --scratch-path "${TMPDIR:-/tmp}/cloudphone-risk
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 7.0 — TextSegmentEncryptor + VMProtector(M3) (13 Pass)</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 7.1 — VM self-check alignment + split VM dispatcher handlers</sub></p>

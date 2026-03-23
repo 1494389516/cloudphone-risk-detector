@@ -3,7 +3,7 @@
 > 文档类型：技术文档  
 > 适用对象：集成 `CloudPhoneRiskKit` 的 iOS 客户端团队、交付团队、法务/隐私同学  
 > 适用场景：App Store / TestFlight 分发、源码集成、XCFramework 二进制分发  
-> 适用版本：SDK 7.0  
+> 适用版本：SDK 7.1  
 > 当前 SDK 事实基础：`CloudPhoneRiskKit` 以 **静态库 / 源码包** 为主，SDK 当前 privacy manifest 已声明 `Device ID`、`UserDefaults`、`SystemBootTime`，并显式声明 `NSPrivacyTracking = false`
 
 ---
@@ -97,15 +97,18 @@
 
 这类“否定性声明”在成熟 SDK 文档里很重要，因为审核和客户法务最先问的常常不是“你收什么”，而是“你是不是在 tracking”。
 
-### 4.4 7.0 版本升级对合规披露的影响
+### 4.4 7.1 版本升级对合规披露的影响
 
-7.0 这次升级主要新增并继续加强的是**二进制保护、text 页加密与 VMP 虚拟化增强**，包括：
+7.1 这次升级主要新增并继续加强的是**VM 自校验链路、dispatcher 分散化与解释器运行时对齐能力**，包括：
 
 - Pass 7 runtime gate
 - Pass 10 ImportEncryptor
 - Pass 11 HeaderEncryptor
 - Pass 12 TextSegmentEncryptor
 - Pass 13 VMProtector（含 M2/M3 反分析）
+- VM self-check 改为优先消费 `__swift5_mdvsi`（CPSV）span map，与注入器共享窗口定义
+- `cprisk-vm-self-expect` 同时支持 CPSF/FNV 与 CPSH/HMAC 写入
+- 22 个 `cprisk_vm_oph_*` handler 拆分到多个 `.c` 编译单元，dispatcher 延续函数指针表路径
 - 更早期的异常端口抢占
 - 多频 watchdog / timing canary / Frida 行为指纹增强
 - `__TEXT.__text` 的按页按需解密、空闲重加密与 guard page anti-dump
@@ -295,7 +298,7 @@ SDK 文档可以给你分类建议，但最终 `App Privacy` 的责任主体始�
 - **SDK 本地采集但不上报**：重点落在 SDK manifest、权限说明、审核备注，不等同于宿主 App 一定要把所有字段都填进 `App Privacy`
 - **SDK 生成报告且宿主 App 上报**：按照“哪些字段离开设备”来填 `App Privacy`
 - **宿主 App 把字段与账号、手机号、用户中心 ID 绑定**：除了数据类型本身，还要重新评估 `Linked` 是否应为 `true`
-- **7.0 的 runtime gate / text 加密 / VM 保护**：属于安全实现增强，不单独生成新的隐私披露项
+- **7.1 的 runtime gate / text 加密 / VM 保护 / CPSV 驱动 self-check**：属于安全实现增强，不单独生成新的隐私披露项
 
 ---
 
@@ -570,18 +573,18 @@ cprisk-armor 在控制流混淆、反重打包、截屏防护、安全键盘等�
 
 ---
 
-## 12. 当前 7.0 上架风险评估
+## 12. 当前 7.1 上架风险评估
 
-这一节回答一个最实际的问题：**基于当前仓库状态，7.0 版本如果直接按 Full Armor 提审，审核风险到底有多大。**
+这一节回答一个最实际的问题：**基于当前仓库状态，7.1 版本如果直接按 Full Armor 提审，审核风险到底有多大。**
 
 ### 12.1 先结论
 
-当前 7.0 版本的风险结构可以概括为：
+当前 7.1 版本的风险结构可以概括为：
 
 | 维度 | 当前判断 | 说明 |
 |------|----------|------|
 | **隐私合规风险** | 低到中 | SDK manifest 当前只覆盖 `Device ID`、`UserDefaults`、`SystemBootTime`，且 `NSPrivacyTracking = false`；只要宿主 App 正确承接 app-level manifest、权限说明与 App Privacy，隐私本身不是最大阻塞项 |
-| **二进制审核风险** | 中到高 | Pass 12 `TextSegmentEncryptor` 与 Pass 13 `VMProtector` 已经进入“改变代码可见形态与执行形态”的级别，会显著提高 reviewer 的解释成本 |
+| **二进制审核风险** | 中到高 | Pass 12 `TextSegmentEncryptor`、Pass 13 `VMProtector`、CPSV/CPSH 驱动的 VM self-check 与 handler 跨 TU 散布已经进入“改变代码可见形态与执行形态”的级别，会显著提高 reviewer 的解释成本 |
 | **金融 / 高安全行业适配度** | 高 | 若业务场景本身就是反欺诈、账户安全、支付保护，这些机制较容易被接受 |
 | **普通消费类 App 首发适配度** | 一般 | 若是工具、电商、内容、社交等普通消费类 App，首次提审不建议直接使用 Full Armor |
 
@@ -593,7 +596,7 @@ cprisk-armor 在控制流混淆、反重打包、截屏防护、安全键盘等�
 
 ### 12.2 为什么当前主要风险不在隐私
 
-从隐私与合规文档角度看，当前 7.0 版本已经具备以下基础条件：
+从隐私与合规文档角度看，当前 7.1 版本已经具备以下基础条件：
 
 - SDK 当前明确声明 `NSPrivacyTracking = false`
 - 没有 `NSPrivacyTrackingDomains`
@@ -605,7 +608,7 @@ cprisk-armor 在控制流混淆、反重打包、截屏防护、安全键盘等�
 - 风险信号、行为摘要、设备状态是否被认定为“已收集并上传”，主要取决于**宿主 App 的接入方式**
 - 只要宿主 App 正确补齐 `PrivacyInfo.xcprivacy`、`Info.plist` 权限说明、App Store Connect 中的 `App Privacy` 标签，**隐私本身通常可控**
 
-因此，当前 7.0 的主要不确定性不在 manifest，而在 reviewer 对**保护强度是否“明显超过普通 App 常见做法”**的判断。
+因此，当前 7.1 的主要不确定性不在 manifest，而在 reviewer 对**保护强度是否“明显超过普通 App 常见做法”**的判断。
 
 ### 12.3 当前最敏感的审核点
 
@@ -613,10 +616,10 @@ cprisk-armor 在控制流混淆、反重打包、截屏防护、安全键盘等�
 
 | 风险点 | 当前状态 | 为什么敏感 |
 |--------|----------|------------|
-| **Pass 13 VMProtector** | 已上线，且含 M2/M3 + HMAC self-check + 双主循环解释器 | 高价值函数已不再以原生 ARM64 直接暴露，而是通过 VM 跳板 + 自定义字节码执行；当前解释器路径更复杂，更容易被理解为“隐藏核心逻辑” |
+| **Pass 13 VMProtector** | 已上线，且含 M2/M3 + CPSV/CPSH self-check + 双主循环解释器 | 高价值函数已不再以原生 ARM64 直接暴露，而是通过 VM 跳板 + 自定义字节码执行；当前解释器路径更复杂，更容易被理解为“隐藏核心逻辑” |
 | **Pass 12 TextSegmentEncryptor** | 已上线，且带空闲重加密 / guard page | `__TEXT.__text` 页级加密会让静态代码可见性明显下降，解释成本高于 import/header 级别保护 |
 | **runtime anti-debug 组合** | 已上线 | 异常端口、watchdog、runtime gate、timing canary、Frida 指纹等叠加后，整体观感会偏“高对抗” |
-| **解释器自身加固** | 已上线 | 解释器纳入 CFF 接线、dead handler、opaque predicate chain、HMAC self-check 后，已不再只是“普通防护逻辑”，而是明显具备反分析特征 |
+| **解释器自身加固** | 已上线 | 解释器纳入 CFF 接线、dead handler、opaque predicate chain、CPSV/CPSH self-check、handler 跨 TU 散布后，已不再只是“普通防护逻辑”，而是明显具备反分析特征 |
 | **白盒表 ASLR 绑定 / mini-VM bootstrap** | 已上线 | 这类机制虽然不新增隐私采集，但会让 reviewer 更关注“是否存在运行时自恢复、自解释、自隐藏逻辑” |
 
 要注意的是：
@@ -627,7 +630,7 @@ cprisk-armor 在控制流混淆、反重打包、截屏防护、安全键盘等�
 
 ### 12.4 当前版本的适用建议
 
-| 场景 | 直接使用 Full Armor 7.0 | 建议 |
+| 场景 | 直接使用 Full Armor 7.1 | 建议 |
 |------|-------------------------|------|
 | 金融 / 银行 / 支付 | 可考虑 | 建议准备完整 Review Notes，并做好被问询的准备；必要时优先灰度启用更激进的 guard page / 白盒表绑定 |
 | 企业安全 / 账号高价值风控 | 可考虑 | 若业务定位明确，强保护通常更容易自洽 |
@@ -644,7 +647,7 @@ cprisk-armor 在控制流混淆、反重打包、截屏防护、安全键盘等�
 3. **确认审核历史稳定后**：再评估 `Pass 12`。
 4. **仅在高安全行业或已有充分审核历史时**：再启用 `Pass 13 VMProtector`。
 
-对当前 7.0 来说，最保守也最稳妥的建议是：
+对当前 7.1 来说，最保守也最稳妥的建议是：
 
 > **首发不直接启用 Pass 12/13；把 VMP 与按页 text 恢复链作为第二阶段加固能力，而不是第一版即全量上线。**
 
