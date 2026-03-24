@@ -417,6 +417,14 @@ int cprisk_text_jit_decrypt(void *fault_addr) {
         return 0;
 
     pthread_mutex_lock(&s_text_mutex);
+
+    /* Re-check after acquiring the lock -- another thread may have called
+     * cprisk_text_encrypt_uninstall() between the pre-check and the lock. */
+    if (!s_parent_ready || !s_entries || s_entry_count == 0) {
+        pthread_mutex_unlock(&s_text_mutex);
+        return 0;
+    }
+
     uint64_t now = mach_absolute_time();
     cprisk_text_maybe_reencrypt_idle(now);
 

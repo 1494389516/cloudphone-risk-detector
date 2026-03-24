@@ -179,10 +179,11 @@ struct FileDetector: Detector {
     private func pathAccessWithErrno(_ path: String) -> (exists: Bool, errno: Int32) {
         path.withCString { cPath in
             let result = access(cPath, F_OK)
+            let savedErrno = errno
             if result == 0 {
                 return (true, 0)
             }
-            return (false, errno)
+            return (false, savedErrno)
         }
     }
 

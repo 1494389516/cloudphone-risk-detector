@@ -184,8 +184,9 @@ struct HoneypotMemoryDetector: Detector {
             sigemptyset(&newAction.sa_mask)
 
             var oldAction = sigaction()
-            sigaction(SIGBUS, &newAction, &oldAction)
+            sigaction(SIGBUS, nil, &oldAction)
             previousSigbusHandler = oldAction
+            sigaction(SIGBUS, &newAction, nil)
         }
 #endif
     }

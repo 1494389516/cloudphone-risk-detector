@@ -193,7 +193,7 @@ struct RuntimeIntegrityValidator: Detector {
     /// - `LDR Xn, #+8` followed by `BR Xn` (trampoline pattern)
     private func safeReadInstruction(at address: UnsafeRawPointer) -> UInt32? {
         var instruction: UInt32 = 0
-        var outSize: mach_vm_size_t = 0
+        var outSize: vm_size_t = 0
         let kr = withUnsafeMutablePointer(to: &instruction) { ptr in
             vm_read_overwrite(
                 mach_task_self_,
@@ -203,7 +203,7 @@ struct RuntimeIntegrityValidator: Detector {
                 &outSize
             )
         }
-        guard kr == KERN_SUCCESS, outSize == mach_vm_size_t(MemoryLayout<UInt32>.size) else {
+        guard kr == KERN_SUCCESS, outSize == vm_size_t(MemoryLayout<UInt32>.size) else {
             return nil
         }
         return instruction
