@@ -119,23 +119,6 @@
 
 ---
 
-## 7.2 新增能力 — MIE/MTE 姿态接入 + iPhoneOS 26 SDK 构建兼容
-
-7.2 在 7.1 的 VM self-check / dispatcher 纵深基础上，开始把 Apple 近代硬件提供的内存完整性能力以“**保守接入、可降级、可解释**”的方式纳入 SDK：第一，Release 构建增加 `CPRISK_MTE_COMPILE_SUPPORT` 与 Xcode `ENABLE_ENHANCED_SECURITY` 路径，使 SDK 在支持设备上可以消费更强的系统内存完整性语义；第二，C 层新增 `cprisk_mte_guard`，通过 `hw.optional.arm.FEAT_MTE*` / `FEAT_PAuth` 等 `sysctl`、本地 self-test、关键区域 baseline hash + tag snapshot canary，对 `runtime material` 与完整性摘要做低侵入防护；第三，Swift 层新增 `MIEPostureDetector`，把设备姿态映射为 `mie_posture`、`mte_inactive_for_process`、`mte_canary_tampered` 等信号，并对高价值内存/注入类信号做轻量上下文加权；第四，同步修复 `HoneypotMemoryDetector` 在 iPhoneOS 26 SDK 下 `ucontext_t`/PC 字段形态变化导致的 `iphoneos` 构建失败问题，通过 C 层统一封装 signal context PC 前移逻辑，恢复 `xcodebuild -sdk iphoneos` 全绿。
-
-### 7.2 核心改动
-
-| 改动 | 说明 |
-|------|------|
-| **Release 编译期开关接入 MIE** | `Package.swift` / Xcode Release 配置接入 `CPRISK_MTE_COMPILE_SUPPORT`，并为对应 target 打开 `ENABLE_ENHANCED_SECURITY`，使支持设备可暴露更强的 Memory Integrity Enforcement 能力 |
-| **C 层 `cprisk_mte_guard`** | 新增 `cprisk_mte_available()` / `cprisk_mte_self_test()` / `cprisk_mte_guard_snapshot()` 与 region-bound canary，围绕关键运行时材料做 baseline hash + top-byte tag 快照校验，在不支持设备上安全降级，不强行执行高风险 MTE 指令 |
-| **Swift 层 `MIEPostureDetector`** | 通过 `sysctl` + CRiskCore 本地快照评估 `none / pacOnly / miePartial / mieFull` 四级姿态，并输出 `mie_posture`、`mte_unavailable_on_capable_device`、`mte_inactive_for_process`、`mte_canary_tampered` 等信号 |
-| **反篡改权重上下文增强** | `AntiTamperingSignalProvider` 在 `miePartial / mieFull` 下对匿名可执行内存、Frida、文本段篡改等高价值信号做小幅上下文加权，同时把 `device_mie_level` 注入证据域，便于服务端解释 |
-| **隐私/合规文档同步升级** | README、SDK 隐私声明、App Store 合规指南、架构/威胁模型文档统一补充 MIE 能力边界，明确该能力通常只在 A17 / A17 Pro 及后续较新产品线上更可能观察到相关位形，且不新增 collected data 或用户内容采集 |
-| **iPhoneOS 26 SDK 兼容修复** | `HoneypotMemoryDetector` 不再在 Swift 中直接假设 `ucontext_t` 的 `__pc / __opaque_pc` 形态，而改为调用 C 层 `cprisk_advance_ucontext_pc(...)` 做统一适配，消除 arm64 / arm64e 下的新 SDK 接口差异 |
-
----
-
 ## 7.1 新增能力 — VM Self-Check 对齐 + Dispatcher 跨单元散布
 
 7.1 在 7.0 的 TextSegmentEncryptor、VMProtector(M3) 与解释器自保护基础上，继续把 VM runtime 本身往“更难静态切片、更难单点伪造”的方向推进，重点补齐三条链路：第一，**self-check expect blob 链路从硬编码符号窗口升级为 CPSV span map 驱动**，即由 `__DATA.__swift5_mdvsi` 记录的三段 TEXT 窗口统一驱动注入器与运行时校验，减少 producer / runtime 偏移；第二，**self-check CLI 同时支持 CPSF/FNV 与 CPSH/HMAC**，便于交付时直接生成两种 expect blob；第三，**全局 opcode dispatcher 在保留函数指针表架构的前提下，将 22 个 `cprisk_vm_oph_*` handler 拆分到多个编译单元**，降低单文件聚合语义暴露面，使 pattern-based 恢复更依赖跨 TU 还原。
@@ -150,6 +133,23 @@
 | **dispatcher 继续去 switch 化** | 主 opcode 路径现在走“family 分流 + single-access handler materialization”(`cprisk_vm_dispatch_oph_materialized_i(...)`)，不回退为大 `switch`，也不再暴露明文 `oph_table[logical]()` 指针总表 |
 | **handler 跨编译单元散布** | 22 个 `cprisk_vm_oph_*` handler 已拆到 `cprisk_vm_oph_basic/lane/branch/bitwise/vreg/nested.c` 与 `cprisk_vm_oph_table.c`，减少单文件语义聚合 |
 | **隐私/合规文档同步升级** | README、SDK 隐私声明、App Store 合规指南统一升级到 7.1，并明确这些 VM/runtime hardening 不会新增 privacy manifest 的 collected data 类型或 Required Reason API 类别 |
+
+---
+
+## 7.2 新增能力 — MIE/MTE 姿态接入 + iPhoneOS 26 SDK 构建兼容
+
+7.2 在 7.1 的 VM self-check / dispatcher 纵深基础上，开始把 Apple 近代硬件提供的内存完整性能力以“**保守接入、可降级、可解释**”的方式纳入 SDK：第一，Release 构建增加 `CPRISK_MTE_COMPILE_SUPPORT` 与 Xcode `ENABLE_ENHANCED_SECURITY` 路径，使 SDK 在支持设备上可以消费更强的系统内存完整性语义；第二，C 层新增 `cprisk_mte_guard`，通过 `hw.optional.arm.FEAT_MTE*` / `FEAT_PAuth` 等 `sysctl`、本地 self-test、关键区域 baseline hash + tag snapshot canary，对 `runtime material` 与完整性摘要做低侵入防护；第三，Swift 层新增 `MIEPostureDetector`，把设备姿态映射为 `mie_posture`、`mte_inactive_for_process`、`mte_canary_tampered` 等信号，并对高价值内存/注入类信号做轻量上下文加权；第四，同步修复 `HoneypotMemoryDetector` 在 iPhoneOS 26 SDK 下 `ucontext_t`/PC 字段形态变化导致的 `iphoneos` 构建失败问题，通过 C 层统一封装 signal context PC 前移逻辑，恢复 `xcodebuild -sdk iphoneos` 全绿。
+
+### 7.2 核心改动
+
+| 改动 | 说明 |
+|------|------|
+| **Release 编译期开关接入 MIE** | `Package.swift` / Xcode Release 配置接入 `CPRISK_MTE_COMPILE_SUPPORT`，并为对应 target 打开 `ENABLE_ENHANCED_SECURITY`，使支持设备可暴露更强的 Memory Integrity Enforcement 能力 |
+| **C 层 `cprisk_mte_guard`** | 新增 `cprisk_mte_available()` / `cprisk_mte_self_test()` / `cprisk_mte_guard_snapshot()` 与 region-bound canary，围绕关键运行时材料做 baseline hash + top-byte tag 快照校验，在不支持设备上安全降级，不强行执行高风险 MTE 指令 |
+| **Swift 层 `MIEPostureDetector`** | 通过 `sysctl` + CRiskCore 本地快照评估 `none / pacOnly / miePartial / mieFull` 四级姿态，并输出 `mie_posture`、`mte_unavailable_on_capable_device`、`mte_inactive_for_process`、`mte_canary_tampered` 等信号 |
+| **反篡改权重上下文增强** | `AntiTamperingSignalProvider` 在 `miePartial / mieFull` 下对匿名可执行内存、Frida、文本段篡改等高价值信号做小幅上下文加权，同时把 `device_mie_level` 注入证据域，便于服务端解释 |
+| **隐私/合规文档同步升级** | README、SDK 隐私声明、App Store 合规指南、架构/威胁模型文档统一补充 MIE 能力边界，明确该能力通常只在 A17 / A17 Pro 及后续较新产品线上更可能观察到相关位形，且不新增 collected data 或用户内容采集 |
+| **iPhoneOS 26 SDK 兼容修复** | `HoneypotMemoryDetector` 不再在 Swift 中直接假设 `ucontext_t` 的 `__pc / __opaque_pc` 形态，而改为调用 C 层 `cprisk_advance_ucontext_pc(...)` 做统一适配，消除 arm64 / arm64e 下的新 SDK 接口差异 |
 
 ---
 
