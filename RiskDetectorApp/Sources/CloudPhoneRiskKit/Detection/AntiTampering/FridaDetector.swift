@@ -233,19 +233,19 @@ struct FridaDetector: Detector {
             probe.withCString { cstr in
                 _ = send(fd, cstr, strlen(cstr), 0)
             }
+            guard waitReadable(fd, timeoutMs: timeoutMs) else { continue }
+
+            var buffer = [UInt8](repeating: 0, count: 160)
+            let readCount = recv(fd, &buffer, buffer.count, 0)
+            guard readCount > 0 else { continue }
+
+            let response = String(decoding: buffer.prefix(Int(readCount)), as: UTF8.self).lowercased()
+            if response.contains("frida") { return "frida" }
+            if response.contains("gum") { return "gum" }
+            if response.contains("re.frida") { return "re.frida" }
+            if response.contains("dbus") { return "dbus" }
+            if response.contains("auth") && response.contains("reject") { return "dbus_auth" }
         }
-        guard waitReadable(fd, timeoutMs: timeoutMs) else { return nil }
-
-        var buffer = [UInt8](repeating: 0, count: 160)
-        let readCount = recv(fd, &buffer, buffer.count, 0)
-        guard readCount > 0 else { return nil }
-
-        let response = String(decoding: buffer.prefix(Int(readCount)), as: UTF8.self).lowercased()
-        if response.contains("frida") { return "frida" }
-        if response.contains("gum") { return "gum" }
-        if response.contains("re.frida") { return "re.frida" }
-        if response.contains("dbus") { return "dbus" }
-        if response.contains("auth") && response.contains("reject") { return "dbus_auth" }
         return nil
     }
 

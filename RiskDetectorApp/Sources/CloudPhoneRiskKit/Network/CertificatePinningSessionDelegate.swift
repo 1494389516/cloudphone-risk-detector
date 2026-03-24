@@ -96,16 +96,30 @@ public final class CertificatePinningSessionDelegate: NSObject, URLSessionDelega
     // ASN.1 SPKI headers for wrapping raw key bytes into DER SubjectPublicKeyInfo.
     // Required so that SHA-256 hashes match those produced by standard tooling
     // (e.g. `openssl x509 -pubkey | openssl pkey -pubin -outform der | sha256`).
-    private static let rsaSPKIHeader: [UInt8] = [
+    // RSA-2048: PKCS#1 key data is 270 bytes
+    private static let rsa2048SPKIHeader: [UInt8] = [
         0x30, 0x82, 0x01, 0x22, 0x30, 0x0D, 0x06, 0x09,
         0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01,
         0x01, 0x05, 0x00, 0x03, 0x82, 0x01, 0x0F, 0x00
     ]
+    // RSA-4096: PKCS#1 key data is 526 bytes
+    private static let rsa4096SPKIHeader: [UInt8] = [
+        0x30, 0x82, 0x02, 0x22, 0x30, 0x0D, 0x06, 0x09,
+        0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01,
+        0x01, 0x05, 0x00, 0x03, 0x82, 0x02, 0x0F, 0x00
+    ]
+    // EC P-256: uncompressed point is 65 bytes
     private static let ecP256SPKIHeader: [UInt8] = [
         0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2A, 0x86,
         0x48, 0xCE, 0x3D, 0x02, 0x01, 0x06, 0x08, 0x2A,
         0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07, 0x03,
         0x42, 0x00
+    ]
+    // EC P-384: uncompressed point is 97 bytes
+    private static let ecP384SPKIHeader: [UInt8] = [
+        0x30, 0x76, 0x30, 0x10, 0x06, 0x07, 0x2A, 0x86,
+        0x48, 0xCE, 0x3D, 0x02, 0x01, 0x06, 0x05, 0x2B,
+        0x81, 0x04, 0x00, 0x22, 0x03, 0x62, 0x00
     ]
 
     /// Extract SPKI SHA-256 hash from a certificate
@@ -119,13 +133,26 @@ public final class CertificatePinningSessionDelegate: NSObject, URLSessionDelega
 
         // Determine the appropriate SPKI header based on key type and size
         let header: [UInt8]
-        if let keyType = SecKeyCopyAttributes(publicKey) as? [CFString: Any],
-           let type = keyType[kSecAttrKeyType] as? String {
-            if type == (kSecAttrKeyTypeRSA as String), publicKeyData.count == 270 {
-                header = Self.rsaSPKIHeader
-            } else if type == (kSecAttrKeyTypeECSECPrimeRandom as String), publicKeyData.count == 65 {
-                header = Self.ecP256SPKIHeader
+        if let attrs = SecKeyCopyAttributes(publicKey) as? [CFString: Any],
+           let type = attrs[kSecAttrKeyType] as? String {
+            if type == (kSecAttrKeyTypeRSA as String) {
+                switch publicKeyData.count {
+                case 270: header = Self.rsa2048SPKIHeader
+                case 526: header = Self.rsa4096SPKIHeader
+                default:
+                    Logger.log("spkiSHA256: unsupported RSA key size \(publicKeyData.count) bytes")
+                    header = []
+                }
+            } else if type == (kSecAttrKeyTypeECSECPrimeRandom as String) {
+                switch publicKeyData.count {
+                case 65: header = Self.ecP256SPKIHeader
+                case 97: header = Self.ecP384SPKIHeader
+                default:
+                    Logger.log("spkiSHA256: unsupported EC key size \(publicKeyData.count) bytes")
+                    header = []
+                }
             } else {
+                Logger.log("spkiSHA256: unsupported key type")
                 header = []
             }
         } else {

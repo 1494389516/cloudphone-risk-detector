@@ -145,8 +145,10 @@ static void cprisk_keystream_at_l(const uint8_t *key, uint32_t sid,
                                   const uint8_t *nonce, size_t nonce_len,
                                   size_t byte_offset,
                                   uint8_t *out, size_t len) {
-    if (nonce_len > CPRISK_ARMOR_NONCE_SIZE)
+    if (nonce_len > CPRISK_ARMOR_NONCE_SIZE) {
+        if (len > 0) memset(out, 0, len);
         return;
+    }
     if (len == 0)
         return;
 
@@ -222,8 +224,10 @@ void cprisk_armor_derive_chained_key(
     uint8_t out_key[CPRISK_ARMOR_KEY_SIZE]
 ) {
     /* Level 1: HMAC(parent, index || nonce) */
-    if (nonce_len > CPRISK_ARMOR_NONCE_SIZE)
+    if (nonce_len > CPRISK_ARMOR_NONCE_SIZE) {
+        memset(out_key, 0, CPRISK_ARMOR_KEY_SIZE);
         return;
+    }
     uint8_t chain_material[4 + CPRISK_ARMOR_NONCE_SIZE];
     chain_material[0] = (uint8_t)(section_index);
     chain_material[1] = (uint8_t)(section_index >> 8);
