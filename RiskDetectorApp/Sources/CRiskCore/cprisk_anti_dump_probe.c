@@ -11,6 +11,7 @@
  */
 
 #include "include/CRiskCore.h"
+#include "include/cprisk_secure_zero.h"
 #include <pthread.h>
 #include <mach/mach.h>
 #include <mach-o/dyld.h>
@@ -31,18 +32,7 @@ static int s_probe_interval_seconds = 5;
 static atomic_uint_fast32_t s_task_for_pid_baseline = ATOMIC_VAR_INIT(UINT32_MAX);
 #endif
 
-/* Patterns that indicate dump or injection tools */
-static const char *s_suspicious_patterns[] = {
-    "frida",
-    "cycript",
-    ".app/Contents/Frameworks/Frida",
-    "SSLKillSwitch",
-    "Substrate",
-    "substrate",
-    "frida-gadget",
-    "frida-agent",
-    "libcycript",
-};
+/* Encoded needles: mask = SHA256(le32(domain)||le32(key_id)) — no searchable ASCII literals. */
 
 /*
  * Probe: scan VM regions for suspicious mappings.
@@ -145,17 +135,61 @@ static void cprisk_probe_sleep_cancelable(int total_seconds) {
  * Returns 0 if clean, -1 if injection indicators found.
  */
 static int cprisk_check_dylib_injection(void) {
+    static const uint8_t e1[] = {0x1c, 0x19, 0x59, 0x9c, 0x06};
+    static const uint8_t e2[] = {0xd6, 0xb9, 0x49, 0xc2, 0x2e, 0xf2, 0xf5};
+    static const uint8_t e3[] = {
+        0x7b, 0x7b, 0x67, 0x7e, 0xb9, 0x56, 0x09, 0x94, 0x3b, 0xc7, 0x6c, 0x87, 0xe4, 0xd0, 0x3b, 0xdd,
+        0x04, 0xfd, 0x8a, 0xfc, 0xc4, 0x2d, 0xca, 0x3f, 0x42, 0x75, 0xa5, 0x00, 0xec, 0x85};
+    static const uint8_t e4[] = {
+        0xdf, 0x08, 0x81, 0x02, 0x5f, 0xd3, 0x19, 0xb6, 0x43, 0x55, 0x2c, 0x16, 0xe5};
+    static const uint8_t e5[] = {0x48, 0xb9, 0xc0, 0xdd, 0xee, 0xd7, 0xb2, 0x44, 0x40};
+    static const uint8_t e6[] = {0xf7, 0xcf, 0x9e, 0xcc, 0x3c, 0x38, 0x9d, 0x67, 0x8d};
+    static const uint8_t e7[] = {
+        0xe8, 0x33, 0x91, 0xf5, 0x71, 0x5a, 0x07, 0x60, 0xe4, 0x14, 0x44, 0x46};
+    static const uint8_t e8[] = {
+        0xc7, 0xac, 0x23, 0x8f, 0x8d, 0xac, 0x3a, 0xfd, 0x3a, 0x84, 0x02};
+    static const uint8_t e9[] = {0x98, 0xea, 0x5a, 0x26, 0xaf, 0x89, 0x79, 0x67, 0x6c, 0x30};
+    static const struct {
+        uint32_t key_id;
+        const uint8_t *enc;
+        size_t enc_len;
+    } rows[] = {
+        {1u, e1, sizeof(e1)},
+        {2u, e2, sizeof(e2)},
+        {3u, e3, sizeof(e3)},
+        {4u, e4, sizeof(e4)},
+        {5u, e5, sizeof(e5)},
+        {6u, e6, sizeof(e6)},
+        {7u, e7, sizeof(e7)},
+        {8u, e8, sizeof(e8)},
+        {9u, e9, sizeof(e9)},
+    };
+    const uint32_t D = CPRISK_OBF_TAG_DOMAIN_ANTI_DUMP;
+
     uint32_t count = _dyld_image_count();
     for (uint32_t i = 0; i < count; i++) {
         const char *name = _dyld_get_image_name(i);
         if (!name)
             continue;
-        for (size_t j = 0; j < sizeof(s_suspicious_patterns) / sizeof(char *); j++) {
-            if (strstr(name, s_suspicious_patterns[j]) != NULL) {
-                /* Found a known injection library — do not log or crash here.
-                 * Just flag and let deception mode handle it silently. */
+        for (size_t j = 0; j < sizeof(rows) / sizeof(rows[0]); j++) {
+            char buf[64];
+            if (rows[j].enc_len + 1u > sizeof(buf)) {
+                continue;
+            }
+            if (cprisk_obf_decode_sha256_tag(
+                    D,
+                    rows[j].key_id,
+                    rows[j].enc,
+                    rows[j].enc_len,
+                    buf,
+                    sizeof(buf)) != 0) {
+                continue;
+            }
+            if (strstr(name, buf) != NULL) {
+                cprisk_secure_zero(buf, sizeof(buf));
                 return -1;
             }
+            cprisk_secure_zero(buf, sizeof(buf));
         }
     }
     return 0;

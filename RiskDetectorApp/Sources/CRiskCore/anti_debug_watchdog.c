@@ -1,7 +1,10 @@
 #include "include/CRiskCore.h"
+#include "include/cprisk_vm_interpreter_internal.h"
+#include "include/cprisk_secure_zero.h"
 #include "cprisk_cff.h"
 
 #include <TargetConditionals.h>
+#include <errno.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <string.h>
@@ -52,9 +55,13 @@ static atomic_uint_fast32_t s_watchdog_peer_stall_latch = 0u;
 static atomic_uint_fast32_t s_watchdog_shadow_stack_latch = 0u;
 
 #define CPRISK_WATCHDOG_PROLOGUE_BYTES 16u
-#define CPRISK_WATCHDOG_PROLOGUE_SLOTS 3u
+/* Monitored symbols: VM/trace/whitebox/deny-attach/signal probe/JIT decrypt + watchdog entry wrappers + shared body. */
+#define CPRISK_WATCHDOG_PROLOGUE_SLOTS 10u
+/* Bit in last_prologue_fail_mask when libsystem pthread_create prologue mismatches baseline. */
+#define CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_PTHREAD_CREATE (1u << 31)
 
 static uint8_t s_watchdog_prologue_ref[CPRISK_WATCHDOG_PROLOGUE_SLOTS][CPRISK_WATCHDOG_PROLOGUE_BYTES];
+static uint8_t s_watchdog_pthread_create_ref[CPRISK_WATCHDOG_PROLOGUE_BYTES];
 static atomic_uint_fast32_t s_watchdog_prologue_captured = 0u;
 static atomic_uint_fast64_t s_watchdog_dyld_suspicious_events = 0u;
 static atomic_uint_fast32_t s_watchdog_dyld_flags = 0u;
@@ -69,6 +76,19 @@ extern int cprisk_whitebox_evaluate_domain(
     uint8_t out[32]
 );
 extern int cprisk_get_last_exception_delivery_probe_handled(void);
+extern int cprisk_text_jit_decrypt(void *fault_addr);
+extern cprisk_vm_flow_t cprisk_vm_dispatch_leaf_wb_wrapped_i(
+    cprisk_vm_interp_frame_t *fr,
+    uint8_t op_raw,
+    uint8_t logical,
+    uint64_t imm,
+    uint32_t pc,
+    uint32_t hvar,
+    cprisk_vm_oph_fn materialized);
+
+static void *cprisk_watchdog_entry_primary(void *arg);
+static void *cprisk_watchdog_entry_secondary(void *arg);
+static void *cprisk_watchdog_thread_main_impl(void *arg);
 
 static cprisk_anti_debug_watchdog_snapshot_t s_watchdog_snapshot = {
     .supported = 1u,
@@ -131,6 +151,8 @@ static cprisk_anti_debug_watchdog_snapshot_t s_watchdog_snapshot = {
     .deny_attach_verify_anomaly_count = 0u,
     .amfi_cs_flags_anomaly_count = 0u,
     .get_task_allow_anomaly_count = 0u,
+    .vm_mprotect_crosscheck_mismatch_total = 0u,
+    .vm_mprotect_mach_trap_mismatch_total = 0u,
 };
 
 static inline uint32_t cprisk_wd_amfi_flags_from_probe_bits_i(uint32_t amfi_probe_bits) {
@@ -169,19 +191,54 @@ static uint64_t cprisk_monotonic_time_ns(void) {
     return ((uint64_t)ts.tv_sec * 1000000000ull) + (uint64_t)ts.tv_nsec;
 }
 
+static void cprisk_watchdog_fill_prologue_addrs_i(const void **addrs) {
+    addrs[0] = (const void *)&cprisk_vm_execute;
+    addrs[1] = (const void *)&cprisk_is_being_traced;
+    addrs[2] = (const void *)&cprisk_whitebox_evaluate_domain;
+    addrs[3] = (const void *)&cprisk_deny_attach;
+    addrs[4] = (const void *)&cprisk_probe_debugger_via_signal;
+    addrs[5] = (const void *)&cprisk_text_jit_decrypt;
+    addrs[6] = (const void *)&cprisk_watchdog_entry_primary;
+    addrs[7] = (const void *)&cprisk_watchdog_entry_secondary;
+    addrs[8] = (const void *)&cprisk_watchdog_thread_main_impl;
+    addrs[9] = (const void *)&cprisk_vm_dispatch_leaf_wb_wrapped_i;
+}
+
 static void cprisk_watchdog_capture_prologue_once_i(void) {
     if (atomic_load(&s_watchdog_prologue_captured) != 0u) {
         return;
     }
-    const void *addrs[CPRISK_WATCHDOG_PROLOGUE_SLOTS] = {
-        (const void *)&cprisk_vm_execute,
-        (const void *)&cprisk_is_being_traced,
-        (const void *)&cprisk_whitebox_evaluate_domain,
-    };
+    const void *addrs[CPRISK_WATCHDOG_PROLOGUE_SLOTS];
+    cprisk_watchdog_fill_prologue_addrs_i(addrs);
     for (uint32_t i = 0u; i < CPRISK_WATCHDOG_PROLOGUE_SLOTS; i++) {
         memcpy(s_watchdog_prologue_ref[i], addrs[i], CPRISK_WATCHDOG_PROLOGUE_BYTES);
     }
+    memcpy(s_watchdog_pthread_create_ref, (const void *)&pthread_create, CPRISK_WATCHDOG_PROLOGUE_BYTES);
     atomic_store(&s_watchdog_prologue_captured, 1u);
+}
+
+/*
+ * Early baseline: priority 10 runs before most other CRiskCore constructors (e.g. 101+),
+ * shrinking the window where hooks can win before the first snapshot.
+ */
+__attribute__((constructor(10)))
+static void cprisk_watchdog_prologue_early_ctor_i(void) {
+    cprisk_watchdog_capture_prologue_once_i();
+}
+
+static int cprisk_watchdog_verify_pthread_create_prologue_i(uint32_t *mask_out) {
+    if (atomic_load(&s_watchdog_prologue_captured) == 0u) {
+        cprisk_watchdog_capture_prologue_once_i();
+    }
+    uint8_t live[CPRISK_WATCHDOG_PROLOGUE_BYTES];
+    /* TOCTOU: snapshot libsystem code into a stack shadow before compare (not direct memcmp on r-x). */
+    memcpy(live, (const void *)&pthread_create, CPRISK_WATCHDOG_PROLOGUE_BYTES);
+    if (memcmp(s_watchdog_pthread_create_ref, live, CPRISK_WATCHDOG_PROLOGUE_BYTES) != 0) {
+        *mask_out |= CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_PTHREAD_CREATE;
+        cprisk_force_integrity_poison();
+        return 0;
+    }
+    return 1;
 }
 
 static void cprisk_watchdog_verify_prologue_i(uint32_t *anomaly_out, uint32_t *mask_out) {
@@ -191,13 +248,13 @@ static void cprisk_watchdog_verify_prologue_i(uint32_t *anomaly_out, uint32_t *m
         cprisk_watchdog_capture_prologue_once_i();
         return;
     }
-    const void *addrs[CPRISK_WATCHDOG_PROLOGUE_SLOTS] = {
-        (const void *)&cprisk_vm_execute,
-        (const void *)&cprisk_is_being_traced,
-        (const void *)&cprisk_whitebox_evaluate_domain,
-    };
+    const void *addrs[CPRISK_WATCHDOG_PROLOGUE_SLOTS];
+    cprisk_watchdog_fill_prologue_addrs_i(addrs);
     for (uint32_t i = 0u; i < CPRISK_WATCHDOG_PROLOGUE_SLOTS; i++) {
-        if (memcmp(s_watchdog_prologue_ref[i], addrs[i], CPRISK_WATCHDOG_PROLOGUE_BYTES) != 0) {
+        uint8_t live[CPRISK_WATCHDOG_PROLOGUE_BYTES];
+        /* TOCTOU: compare against shadow snapshot; attacker could otherwise flip bytes mid-memcmp. */
+        memcpy(live, addrs[i], CPRISK_WATCHDOG_PROLOGUE_BYTES);
+        if (memcmp(s_watchdog_prologue_ref[i], live, CPRISK_WATCHDOG_PROLOGUE_BYTES) != 0) {
             *anomaly_out |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_FUNCTION_PROLOGUE;
             *mask_out |= (1u << i);
             cprisk_force_integrity_poison();
@@ -220,31 +277,67 @@ static int cprisk_watchdog_dyld_name_suspicious_i(const char *path, uint32_t *fl
     }
     lowered[n] = '\0';
 
-    uint32_t f = 0u;
+    static const uint8_t k_e_frida[] = {0xfc, 0x82, 0x19, 0x6b, 0xa3};
+    static const uint8_t k_e_gum_dash[] = {0xdc, 0x33, 0x9b, 0x4d};
+    static const uint8_t k_e_cycript[] = {0x69, 0x19, 0x5c, 0x10, 0x02, 0x22, 0xca};
+    static const uint8_t k_e_substrate[] = {0x36, 0x91, 0xe4, 0xaa, 0xad, 0xdb, 0xc2, 0xbd, 0x5f};
+    static const uint8_t k_e_substitute[] = {
+        0x3c, 0x64, 0x41, 0x26, 0x26, 0xd2, 0x4a, 0xf3, 0x5b, 0xbe};
+    static const uint8_t k_e_libhooker[] = {0xd0, 0xf0, 0xd3, 0xb4, 0x00, 0x69, 0xc8, 0x8a, 0x7a};
+    static const uint8_t k_e_ssl_kill[] = {0x4b, 0x7d, 0xf6, 0x3f, 0x37, 0xc9, 0x51, 0x4a};
+    static const uint8_t k_e_sskill[] = {0x3d, 0x14, 0xc2, 0x31, 0x37, 0x4c};
+    static const uint8_t k_e_cephei[] = {0x46, 0xdd, 0xc7, 0xe4, 0xb8, 0xbc};
+    static const uint8_t k_e_rocket[] = {
+        0x7a, 0x0c, 0xe4, 0xff, 0xce, 0x2b, 0xaf, 0x39, 0xa5, 0xe1, 0xf8, 0xdd, 0xba, 0x42, 0x07};
+    static const uint8_t k_e_dopamine[] = {0xf4, 0x29, 0x61, 0xdb, 0x74, 0xae, 0x67, 0xef};
+    static const uint8_t k_e_ellekit[] = {0x84, 0xa8, 0x44, 0x78, 0x90, 0x96, 0x8a};
+    static const uint8_t k_e_qbdi[] = {0x69, 0xe7, 0x05, 0x24};
+    static const uint8_t k_e_libqbdi[] = {0xf6, 0x50, 0xdd, 0xc9, 0xac, 0x79, 0x6c};
+    static const uint8_t k_e_qbdipreload[] = {
+        0xca, 0xa7, 0x88, 0x33, 0xe8, 0xea, 0x4c, 0x36, 0x2b, 0x09, 0x43};
+
     static const struct {
-        const char *needle;
+        uint32_t key_id;
+        const uint8_t *enc;
+        size_t enc_len;
         uint32_t flag;
-    } k_patterns[] = {
-        {"frida", 1u << 0},
-        {"gum-", 1u << 1},
-        {"cycript", 1u << 2},
-        {"substrate", 1u << 3},
-        {"substitute", 1u << 4},
-        {"libhooker", 1u << 5},
-        {"ssl-kill", 1u << 6},
-        {"sskill", 1u << 7},
-        {"cephei", 1u << 8},
-        {"rocketbootstrap", 1u << 9},
-        {"dopamine", 1u << 10},
-        {"ellekit", 1u << 11},
-        {"qbdi", 1u << 12},
-        {"libqbdi", 1u << 13},
-        {"qbdipreload", 1u << 14},
+    } k_rows[] = {
+        {1u, k_e_frida, sizeof(k_e_frida), 1u << 0},
+        {2u, k_e_gum_dash, sizeof(k_e_gum_dash), 1u << 1},
+        {3u, k_e_cycript, sizeof(k_e_cycript), 1u << 2},
+        {4u, k_e_substrate, sizeof(k_e_substrate), 1u << 3},
+        {5u, k_e_substitute, sizeof(k_e_substitute), 1u << 4},
+        {6u, k_e_libhooker, sizeof(k_e_libhooker), 1u << 5},
+        {7u, k_e_ssl_kill, sizeof(k_e_ssl_kill), 1u << 6},
+        {8u, k_e_sskill, sizeof(k_e_sskill), 1u << 7},
+        {9u, k_e_cephei, sizeof(k_e_cephei), 1u << 8},
+        {10u, k_e_rocket, sizeof(k_e_rocket), 1u << 9},
+        {11u, k_e_dopamine, sizeof(k_e_dopamine), 1u << 10},
+        {12u, k_e_ellekit, sizeof(k_e_ellekit), 1u << 11},
+        {13u, k_e_qbdi, sizeof(k_e_qbdi), 1u << 12},
+        {14u, k_e_libqbdi, sizeof(k_e_libqbdi), 1u << 13},
+        {15u, k_e_qbdipreload, sizeof(k_e_qbdipreload), 1u << 14},
     };
 
-    for (size_t i = 0u; i < sizeof(k_patterns) / sizeof(k_patterns[0]); i++) {
+    const uint32_t D = CPRISK_OBF_TAG_DOMAIN_WD_DYLD;
+    uint32_t f = 0u;
+    for (size_t i = 0u; i < sizeof(k_rows) / sizeof(k_rows[0]); i++) {
+        char needle[40];
+        memset(needle, 0, sizeof(needle));
+        if (k_rows[i].enc_len + 1u > sizeof(needle)) {
+            continue;
+        }
+        if (cprisk_obf_decode_sha256_tag(
+                D,
+                k_rows[i].key_id,
+                k_rows[i].enc,
+                k_rows[i].enc_len,
+                needle,
+                sizeof(needle)) != 0) {
+            continue;
+        }
         const char *h = lowered;
-        const char *nd = k_patterns[i].needle;
+        const char *nd = needle;
         for (; *h != '\0'; h++) {
             const char *a = h;
             const char *b = nd;
@@ -253,10 +346,11 @@ static int cprisk_watchdog_dyld_name_suspicious_i(const char *path, uint32_t *fl
                 b++;
             }
             if (*b == '\0') {
-                f |= k_patterns[i].flag;
+                f |= k_rows[i].flag;
                 break;
             }
         }
+        cprisk_secure_zero(needle, sizeof(needle));
     }
     *flags_out = f;
     return f != 0u ? 1 : 0;
@@ -453,9 +547,11 @@ static void cprisk_watchdog_reset_locked(void) {
     s_watchdog_snapshot.deny_attach_verify_anomaly_count = 0u;
     s_watchdog_snapshot.amfi_cs_flags_anomaly_count = 0u;
     s_watchdog_snapshot.get_task_allow_anomaly_count = 0u;
+    s_watchdog_snapshot.vm_mprotect_crosscheck_mismatch_total = 0u;
+    s_watchdog_snapshot.vm_mprotect_mach_trap_mismatch_total = 0u;
     atomic_store(&s_watchdog_dyld_flags, 0u);
     atomic_store(&s_watchdog_dyld_suspicious_events, 0ull);
-    atomic_store(&s_watchdog_prologue_captured, 0u);
+    /* Intentionally retain prologue / pthread_create baselines across restarts (early ctor snapshot). */
 }
 
 static int cprisk_watchdog_should_stop(void) {
@@ -569,6 +665,9 @@ static uint32_t cprisk_watchdog_run_secondary_iteration_i(uint32_t inherited_fla
     if (software_bp >= CPRISK_WATCHDOG_SOFTWARE_BP_STRONG_THRESHOLD) {
         anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SOFTWARE_BP;
     }
+    if (cprisk_scan_instant_return_key_symbols_prefix() != 0) {
+        anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_INSTANT_RETURN_PATCH;
+    }
     if (single_step != 0) {
         anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SINGLE_STEP;
     }
@@ -633,6 +732,7 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
     int signal_probe = 0;
     int software_bp = 0;
     int software_bp_strong = 0;
+    int instant_ret_patch = 0;
     int hw_bp = 0;
     int csops_dbg = 0;
     int suspicious_threads = 0;
@@ -664,6 +764,18 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
     uint32_t prologue_anom = 0u;
     uint32_t prologue_mask = 0u;
     cprisk_watchdog_verify_prologue_i(&prologue_anom, &prologue_mask);
+    uint32_t svc_stub_anom = 0u;
+    if (cprisk_verify_svc_stub_integrity() != 0u) {
+        svc_stub_anom = CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SVC_STUB_INTEGRITY;
+        cprisk_force_integrity_poison();
+    }
+    const uint32_t vm_cc_total = cprisk_get_vm_mprotect_crosscheck_mismatch_count();
+    const uint32_t vm_mt_total = cprisk_get_vm_mprotect_mach_trap_mismatch_count();
+    uint32_t vm_mprotect_anom = 0u;
+    if (vm_cc_total > 0u || vm_mt_total > 0u) {
+        vm_mprotect_anom = CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_MPROTECT_MACH_DIVERGENCE;
+        cprisk_force_integrity_poison();
+    }
     const uint32_t dyld_flags_now = (uint32_t)atomic_load(&s_watchdog_dyld_flags);
     cprisk_cff_config_t cff_config;
 
@@ -768,6 +880,7 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
             if (mid_checks) {
                 software_bp = cprisk_watchdog_scan_software_breakpoints_i();
                 software_bp_strong = software_bp >= CPRISK_WATCHDOG_SOFTWARE_BP_STRONG_THRESHOLD;
+                instant_ret_patch = cprisk_scan_instant_return_key_symbols_prefix();
                 hw_bp = cprisk_detect_hardware_breakpoints();
                 csops_dbg = cprisk_wd_csops_debug_probe_inline_i();
                 suspicious_threads = cprisk_detect_suspicious_threads();
@@ -799,6 +912,8 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
             if (mid_checks) {
                 if (software_bp_strong != 0)
                     anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SOFTWARE_BP;
+                if (instant_ret_patch != 0)
+                    anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_INSTANT_RETURN_PATCH;
                 if (hw_bp != 0)
                     anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_HARDWARE_BP;
                 if (csops_dbg != 0)
@@ -823,7 +938,7 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
                     anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DBI_MARKER;
             }
 
-            anomaly_flags |= prologue_anom;
+            anomaly_flags |= prologue_anom | svc_stub_anom | vm_mprotect_anom;
             if (dyld_flags_now != 0u) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DYLD_INJECTION;
             }
@@ -859,12 +974,15 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_AMFI_CS_FLAGS |
                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GET_TASK_ALLOW |
                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DYLD_INJECTION |
-                 CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_WATCHDOG_PEER_STALL);
+                 CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_WATCHDOG_PEER_STALL |
+                 CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SVC_STUB_INTEGRITY |
+                 CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_MPROTECT_MACH_DIVERGENCE);
             if ((anomaly_flags & high_risk_flags) != 0u) {
                 cprisk_cff_trigger_symbolic_explosion(cpr_cff_ctx, anomaly_flags & high_risk_flags);
             }
             if ((anomaly_flags & (CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SIGNAL_PROBE |
                                   CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SOFTWARE_BP |
+                                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_INSTANT_RETURN_PATCH |
                                   CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_HARDWARE_BP |
                                   CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_CSOPS_DEBUGGED |
                                   CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DBI_MARKER |
@@ -877,7 +995,9 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
                                   CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACED_PROBE_DIVERGENCE |
                                   CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DENY_ATTACH_VERIFY |
                                   CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_AMFI_CS_FLAGS |
-                                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GET_TASK_ALLOW)) != 0u) {
+                                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GET_TASK_ALLOW |
+                                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SVC_STUB_INTEGRITY |
+                                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_MPROTECT_MACH_DIVERGENCE)) != 0u) {
                 cprisk_force_integrity_poison();
             }
             CPR_CFF_GOTO(0x16u);
@@ -899,6 +1019,8 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
             s_watchdog_snapshot.last_exception_query_kern_return = exception_snapshot.last_query_kern_return;
             s_watchdog_snapshot.last_exception_register_kern_return = exception_snapshot.last_register_kern_return;
             s_watchdog_snapshot.anomaly_flags = anomaly_flags;
+            s_watchdog_snapshot.vm_mprotect_crosscheck_mismatch_total = (uint64_t)vm_cc_total;
+            s_watchdog_snapshot.vm_mprotect_mach_trap_mismatch_total = (uint64_t)vm_mt_total;
             if (deny_result != 0) {
                 s_watchdog_snapshot.deny_attach_error_count += 1u;
             }
@@ -912,7 +1034,8 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
                                   CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACE_CROSSCHECK |
                                   CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DENY_ATTACH_VERIFY |
                                   CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_AMFI_CS_FLAGS |
-                                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GET_TASK_ALLOW)) != 0u) {
+                                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GET_TASK_ALLOW |
+                                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_MPROTECT_MACH_DIVERGENCE)) != 0u) {
                 s_watchdog_snapshot.exception_anomaly_count += 1u;
             }
             s_watchdog_snapshot.last_signal_probe_result = signal_probe != 0 ? 1u : 0u;
@@ -1002,7 +1125,7 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
     return anomaly_flags;
 }
 
-static void *cprisk_watchdog_thread_main(void *arg) {
+static void *cprisk_watchdog_thread_main_impl(void *arg) {
     const uint32_t worker_id = (uint32_t)(uintptr_t)arg;
     atomic_store(&s_watchdog_worker_active[worker_id], 1u);
     atomic_store(&s_watchdog_heartbeat_ns[worker_id], cprisk_monotonic_time_ns());
@@ -1079,6 +1202,14 @@ static void *cprisk_watchdog_thread_main(void *arg) {
     return NULL;
 }
 
+static void *cprisk_watchdog_entry_primary(void *arg) {
+    return cprisk_watchdog_thread_main_impl(arg);
+}
+
+static void *cprisk_watchdog_entry_secondary(void *arg) {
+    return cprisk_watchdog_thread_main_impl(arg);
+}
+
 int cprisk_start_anti_debug_watchdog(void) {
     pthread_mutex_lock(&s_watchdog_mutex);
     if (s_watchdog_state != CPRISK_WATCHDOG_STATE_STOPPED) {
@@ -1100,9 +1231,22 @@ int cprisk_start_anti_debug_watchdog(void) {
         atomic_store(&s_watchdog_deadline_ns[i], 0u);
     }
 
+    uint32_t pthread_mask = 0u;
+    if (cprisk_watchdog_verify_pthread_create_prologue_i(&pthread_mask) == 0) {
+        s_watchdog_state = CPRISK_WATCHDOG_STATE_STOPPED;
+        s_watchdog_snapshot.running = 0u;
+        s_watchdog_snapshot.anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_FUNCTION_PROLOGUE;
+        s_watchdog_snapshot.last_prologue_fail_mask = pthread_mask;
+        s_watchdog_snapshot.prologue_integrity_anomaly_count += 1u;
+        s_watchdog_snapshot.last_deny_attach_result = -1;
+        s_watchdog_snapshot.last_deny_attach_errno = EACCES;
+        pthread_mutex_unlock(&s_watchdog_mutex);
+        return -1;
+    }
+
     const int rc_primary = pthread_create(&s_watchdog_threads[CPRISK_WATCHDOG_PRIMARY_ID],
                                           NULL,
-                                          cprisk_watchdog_thread_main,
+                                          cprisk_watchdog_entry_primary,
                                           (void *)(uintptr_t)CPRISK_WATCHDOG_PRIMARY_ID);
     if (rc_primary != 0) {
         s_watchdog_state = CPRISK_WATCHDOG_STATE_STOPPED;
@@ -1116,7 +1260,7 @@ int cprisk_start_anti_debug_watchdog(void) {
 
     const int rc_secondary = pthread_create(&s_watchdog_threads[CPRISK_WATCHDOG_SECONDARY_ID],
                                             NULL,
-                                            cprisk_watchdog_thread_main,
+                                            cprisk_watchdog_entry_secondary,
                                             (void *)(uintptr_t)CPRISK_WATCHDOG_SECONDARY_ID);
     if (rc_secondary == 0) {
         s_watchdog_started_mask |= (1u << CPRISK_WATCHDOG_SECONDARY_ID);

@@ -18,7 +18,10 @@ final class VMSelfExpectInjectorIntegrationTests: XCTestCase {
 
         let result = try VMSelfExpectInjector.inject(into: url)
         XCTAssertEqual(result.fnvExpect, expectedHash)
+        XCTAssertEqual(result.expectMagicLE, VMSelfExpectInjector.magicLE)
         XCTAssertTrue(result.usedCPSVSpanMap)
+        XCTAssertEqual(result.source, .cpsvSpanMap)
+        XCTAssertEqual(result.resolvedSymbolNames, ["_other_symbol", "cpsv.loop[1]", "cpsv.dispatch[2]"])
         XCTAssertEqual(result.fileOffsets, [
             UInt64(fixture.layout.execFileOff),
             UInt64(fixture.layout.loopFileOff),
@@ -48,7 +51,9 @@ final class VMSelfExpectInjectorIntegrationTests: XCTestCase {
 
         let result = try VMSelfExpectInjector.inject(into: url)
         XCTAssertEqual(result.fnvExpect, expectedHash)
+        XCTAssertEqual(result.expectMagicLE, VMSelfExpectInjector.magicLE)
         XCTAssertFalse(result.usedCPSVSpanMap)
+        XCTAssertEqual(result.source, .legacySymtab)
         XCTAssertEqual(
             Set(result.resolvedSymbolNames),
             Set(["_cprisk_vm_execute", "_cprisk_vm_interp_loop_a", "_cprisk_vm_dispatch_lookup"])
@@ -75,7 +80,9 @@ final class VMSelfExpectInjectorIntegrationTests: XCTestCase {
 
         let result = try VMSelfExpectInjector.injectHmac(into: url, runtimeMaterial32: runtimeMaterial)
         XCTAssertEqual(result.fnvExpect, expectedTag)
+        XCTAssertEqual(result.expectMagicLE, VMSelfExpectInjector.magicHmacLE)
         XCTAssertTrue(result.usedCPSVSpanMap)
+        XCTAssertEqual(result.source, .cpsvSpanMap)
 
         let file = try MachOFile(url: url)
         let section = try XCTUnwrap(try file.section(segment: ArmorABI.dataSegmentName, section: ArmorABI.Sections.vmpSelfExpect))
@@ -127,10 +134,36 @@ final class VMSelfExpectInjectorIntegrationTests: XCTestCase {
         }
     }
 
+    func testMalformedCPSVSpanMapDoesNotSilentlyFallbackToLegacySymtab() throws {
+        let fixture = Self.makeFixture(
+            textSize: 0x600,
+            symbolMode: .threeInterpreterSymbols,
+            includeSpanMap: true
+        )
+        let url = Self.temporaryURL(named: "vm_self_expect_bad_cpsv")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        var broken = fixture.data
+        let spanMapFileOff = try XCTUnwrap(fixture.layout.spanMapFileOff)
+        Self.writeLE32(&broken, at: spanMapFileOff + 8, value: 2)
+        try broken.write(to: url)
+
+        XCTAssertThrowsError(try VMSelfExpectInjector.inject(into: url)) { error in
+            guard case MachOError.invalidData(let message) = error else {
+                return XCTFail("Expected invalidData, got: \(error)")
+            }
+            XCTAssertTrue(
+                message.contains("CPSV span map must have count==3"),
+                "existing but malformed CPSV must fail closed instead of falling back to legacy symtab"
+            )
+        }
+    }
+
     private struct FixtureLayout {
         let execFileOff: Int
         let loopFileOff: Int
         let dispatchFileOff: Int
+        let spanMapFileOff: Int?
     }
 
     private struct Fixture {
@@ -196,7 +229,8 @@ final class VMSelfExpectInjectorIntegrationTests: XCTestCase {
         let layout = FixtureLayout(
             execFileOff: Int(textOffset) + Int(execOff),
             loopFileOff: Int(textOffset) + Int(loopOff),
-            dispatchFileOff: Int(textOffset) + Int(dispatchOff)
+            dispatchFileOff: Int(textOffset) + Int(dispatchOff),
+            spanMapFileOff: includeSpanMap ? Int(mdvsiOffset) : nil
         )
 
         switch symbolMode {
@@ -353,6 +387,14 @@ final class VMSelfExpectInjectorIntegrationTests: XCTestCase {
             | (UInt32(data[offset + 1]) << 8)
             | (UInt32(data[offset + 2]) << 16)
             | (UInt32(data[offset + 3]) << 24)
+    }
+
+    private static func writeLE32(_ data: inout Data, at offset: Int, value: UInt32) {
+        precondition(offset >= 0 && offset + 4 <= data.count)
+        data[offset] = UInt8(value & 0xFF)
+        data[offset + 1] = UInt8((value >> 8) & 0xFF)
+        data[offset + 2] = UInt8((value >> 16) & 0xFF)
+        data[offset + 3] = UInt8((value >> 24) & 0xFF)
     }
 }
 

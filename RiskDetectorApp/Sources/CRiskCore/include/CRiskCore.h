@@ -10,6 +10,7 @@
 #include "cprisk_armor_abi.h"
 #include "cprisk_secure_zero.h"
 #include "cprisk_memory_guard.h"
+#include "cprisk_mte_guard.h"
 #include "cprisk_vm_interpreter.h"
 #include "cprisk_crypto_trace.h"
 
@@ -80,6 +81,12 @@ enum {
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GET_TASK_ALLOW = 1u << 23,
     /** Guard page (PROT_NONE honeypot) fault — anti-dump / scan attempt. */
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GUARD_PAGE = 1u << 24,
+    /** ARM64 function-entry NOP/RET instant-return patch (e.g. mov x0,x0; ret) on monitored symbols. */
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_INSTANT_RETURN_PATCH = 1u << 25,
+    /** Direct syscall SVC stub snapshot mismatch (syscall template or deny-attach body). */
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SVC_STUB_INTEGRITY = 1u << 26,
+    /** vm_region/vm_protect cross-check saw POSIX mprotect success diverge from Mach VM state. */
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_MPROTECT_MACH_DIVERGENCE = 1u << 27,
 };
 
 enum {
@@ -165,6 +172,10 @@ typedef struct cprisk_anti_debug_watchdog_snapshot {
     uint64_t deny_attach_verify_anomaly_count;
     uint64_t amfi_cs_flags_anomaly_count;
     uint64_t get_task_allow_anomaly_count;
+    /** Cumulative Mach vs POSIX mprotect cross-check mismatches (see cprisk_data_loader.c). */
+    uint64_t vm_mprotect_crosscheck_mismatch_total;
+    /** Cumulative vm_protect trap failures after a \"successful\" mprotect (hook surface). */
+    uint64_t vm_mprotect_mach_trap_mismatch_total;
 } cprisk_anti_debug_watchdog_snapshot_t;
 
 typedef struct cprisk_antidebug_plan_snapshot {
@@ -329,6 +340,15 @@ int cprisk_getentropy_direct(void *buf, size_t buflen, int *error_out);
 /// Returns 0 on success, -1 on error.
 int cprisk_mprotect_direct(void *addr, size_t len, int prot, int *error_out);
 
+#ifndef CPRISK_MPROTECT_FULL_FAIL_STREAK_THRESHOLD
+/// Consecutive "full" mprotect failures (direct + libc fallback both fail, or no libc)
+/// required before cprisk_is_mprotect_tampered() latches. Override at compile time if needed.
+#define CPRISK_MPROTECT_FULL_FAIL_STREAK_THRESHOLD 3u
+#endif
+
+/// Data-loader VM protection entry (direct syscall + libc fallback + tamper streak policy).
+int cprisk_armor_vm_protect(void *addr, size_t len, int prot);
+
 /// Register EXC_BREAKPOINT handler to preempt Frida/debugger from hijacking exception ports.
 /// Call from CPRiskKit.start() after cprisk_deny_attach.
 void cprisk_register_exception_handler(void);
@@ -455,6 +475,20 @@ int cprisk_read_full_anchor_hash(uint8_t *out_hash);
 /// Returns 0 on success (HMAC matches), -1 on failure.
 int cprisk_verify_anchor_hmac(const uint8_t root_material[32],
                               const uint8_t full_hash[32]);
+
+/// Anti-debug / init policy tier for SDK integration (development vs production).
+/// Set via \c cprisk_set_runtime_hardening_mode() before \c cprisk_init_protection()
+/// (or any time — affects subsequent policy application and init-timing checks).
+enum {
+    CPRISK_RUNTIME_HARDENING_PRODUCTION = 0,
+    /** Dev/QA: weak probes (TTY, Developer Disk, timing) do not inflate debugger scoring; init-timing bar is higher. */
+    CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA = 1,
+};
+
+typedef int cprisk_runtime_hardening_mode_t;
+
+void cprisk_set_runtime_hardening_mode(cprisk_runtime_hardening_mode_t mode);
+cprisk_runtime_hardening_mode_t cprisk_get_runtime_hardening_mode(void);
 
 /// Master initialization: root material + full anchor hash + integrity hash
 /// feed an anchor-bound accumulator, which is then consumed by loader-key
@@ -720,6 +754,24 @@ uint32_t cprisk_get_mprotect_direct_failure_count(void);
 /// Returns how many times libc mprotect fallback succeeded after direct failure.
 uint32_t cprisk_get_mprotect_fallback_success_count(void);
 
+/// Current consecutive "full failure" streak (direct failed and libc failed or absent).
+uint32_t cprisk_get_mprotect_consecutive_full_fail_streak(void);
+
+/// Effective fail-streak threshold (see CPRISK_MPROTECT_FULL_FAIL_STREAK_THRESHOLD).
+uint32_t cprisk_get_mprotect_fail_streak_threshold(void);
+
+/// Test-only: force the direct syscall path to report failure without calling it.
+void cprisk_test_mprotect_set_force_direct_fail(int enabled);
+
+/// Test-only: force the libc mprotect fallback to report failure without calling it.
+void cprisk_test_mprotect_set_force_fallback_fail(int enabled);
+
+/// Test-only: set consecutive full-failure threshold (0 restores compile default).
+void cprisk_test_mprotect_set_fail_streak_threshold(uint32_t threshold);
+
+/// Test-only: reset tamper flag, counters, streak, threshold override, and injection flags.
+void cprisk_test_mprotect_reset_tamper_state(void);
+
 /* ── Per-Section Chained Key Derivation ─────────────────────────── */
 
 /// Returns 1 if chained per-section keys are active (v3 entries were processed),
@@ -729,11 +781,24 @@ int cprisk_get_chain_status(void);
 /// Return wall-clock nanoseconds spent in cprisk_init_protection().
 uint64_t cprisk_get_init_elapsed_ns(void);
 
-/// Check if cprisk_init_protection() took suspiciously long (>5s).
+/// Current suspicious-init threshold (nanoseconds), after device-tier slack and mode.
+/// Use for diagnostics/tests; compares against \c cprisk_get_init_elapsed_ns().
+uint64_t cprisk_get_init_timing_threshold_ns(void);
+
+/// Check if cprisk_init_protection() took suspiciously long (device-tiered; not a fixed 5s).
 /// A DBI tool (e.g. Frida Stalker) slows execution 10-100x, pushing init
 /// well beyond the normal sub-second range.
 /// Returns 1 if suspicious, 0 otherwise.
 int cprisk_check_init_timing(void);
+
+/// Test-only: override init-timing threshold (0 = disable, use live computation).
+void cprisk_test_set_init_timing_threshold_ns_override(uint64_t threshold_ns);
+
+/// Test-only: compute threshold from a synthetic hw.machine string (no sysctl).
+uint64_t cprisk_test_init_timing_threshold_ns_for_machine(
+    const char *machine,
+    cprisk_runtime_hardening_mode_t mode
+);
 
 /// Thin wrapper around cprisk_secure_zero() exposed for testing.
 void cprisk_test_secure_zero(void *buf, size_t len);
@@ -811,6 +876,44 @@ typedef struct cprisk_frida_runtime_snapshot {
 int cprisk_frida_runtime_snapshot(cprisk_frida_runtime_snapshot_t *out);
 #define CPRISK_FRIDA_RUNTIME_SNAPSHOT_DECLARED 1
 
+/// Decode a short literal using SHA256(label) as a repeating XOR mask (v1).
+/// Sensitive keywords are not stored as contiguous ASCII in the binary.
+/// Returns 0 on success, -1 on invalid input.
+int cprisk_obf_decode_sha256_label(
+    const char *label,
+    size_t label_len,
+    const uint8_t *enc,
+    size_t enc_len,
+    char *out,
+    size_t out_sz
+);
+
+/** v2: mask = SHA256(le32(domain) || le32(key_id)) — no searchable ASCII label constant. */
+int cprisk_obf_decode_sha256_tag(
+    uint32_t domain,
+    uint32_t key_id,
+    const uint8_t *enc,
+    size_t enc_len,
+    char *out,
+    size_t out_sz
+);
+
+#define CPRISK_OBF_TAG_DOMAIN_FRIDA_RT 0xC0A11901u
+#define CPRISK_OBF_TAG_DOMAIN_WD_DYLD 0xC0A11902u
+#define CPRISK_OBF_TAG_DOMAIN_ANTI_DUMP 0xC0A11903u
+#define CPRISK_OBF_TAG_DOMAIN_SIGNAL_DBI 0xC0A11904u
+
+/// Mach VM cross-check counters after `cprisk_armor_vm_protect` / hidden mprotect.
+uint32_t cprisk_get_vm_mprotect_crosscheck_mismatch_count(void);
+uint32_t cprisk_get_vm_mprotect_mach_trap_mismatch_count(void);
+
+/// Snapshot + periodic verify for critical `svc #0x80` syscall templates.
+/// Returns a bitmask: bit0 = syscall6, bit1 = deny-attach, bit2 = syscall0 (each 1 = failure).
+uint32_t cprisk_verify_svc_stub_integrity(void);
+
+/// arm64: returns 1 if [fn, fn+len) contains at least one A64 `svc` opcode (Darwin syscall ABI).
+int cprisk_stub_contains_svc_opcode(const void *fn, size_t len);
+
 /* ── Signal Probe Bitmask ──────────────────────────────────────────── */
 
 enum {
@@ -827,6 +930,8 @@ enum {
     CPRISK_PROBE_TIMING_ANOMALY    = 1u << 10,
     CPRISK_PROBE_THREAD_EXCEPTION_PORT = 1u << 11,
     CPRISK_PROBE_TRACE_CROSSCHECK  = 1u << 12,
+    /** mov x0,x0; ret / nop; ret style patches at function prefix (key symbols only). */
+    CPRISK_PROBE_INSTANT_RETURN_PATCH = 1u << 13,
 };
 
 enum {
@@ -876,6 +981,16 @@ int cprisk_detect_thread_exception_ports(void);
 /// Scan a memory region for software BRK instructions (excluding our own).
 /// Returns the number of foreign BRK instructions found.
 int cprisk_scan_software_breakpoints(const void *func_ptr, size_t size);
+
+/// Scan only the first \p prefix_bytes (min 8) of \p func_ptr for ARM64
+/// instant-return patches: two-word sequences such as `mov x0, x0; ret`,
+/// `nop; ret`, or `mov w0, w0; ret` at offset 0. Returns 1 if a match is found, else 0.
+int cprisk_scan_arm64_instant_return_nop_patch_prefix(const void *func_ptr, size_t prefix_bytes);
+
+/// Prefix-only scan of the same high-value symbols as the anti-debug watchdog
+/// (deny-attach, signal probes, exception-handler helpers). Returns the number
+/// of symbols whose entry matches an instant-return patch pattern.
+int cprisk_scan_instant_return_key_symbols_prefix(void);
 
 /// Randomly sample executable __TEXT sections for software BRK instructions.
 /// Returns the number of foreign BRK instructions found.

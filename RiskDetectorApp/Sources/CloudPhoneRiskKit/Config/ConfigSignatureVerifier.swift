@@ -14,6 +14,11 @@ public enum ConfigSignatureVerifier {
     private static let keychainService = "CloudPhoneRiskKit.ConfigSigning"
     private static let keychainAccount = "verification_key"
     private static let accessible = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+#if DEBUG
+    // Simulator / CI may not expose usable Keychain entitlements (-34018).
+    // Keep a process-local fallback so verification semantics remain testable.
+    private static var debugInMemoryKeys: [String: Data] = [:]
+#endif
 
     /// Configure with UTF-8 signing key. Returns false if keychain save failed; verify is only valid after true.
     @discardableResult
@@ -178,8 +183,15 @@ public enum ConfigSignatureVerifier {
         ]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess, let data = item as? Data else { return nil }
-        return data
+        if status == errSecSuccess, let data = item as? Data {
+            return data
+        }
+#if DEBUG
+        if keychainStatusIndicatesUnavailable(status) {
+            return debugInMemoryKeys[account]
+        }
+#endif
+        return nil
     }
 
     private static func saveToKeychain(_ data: Data, account: String) -> Bool {
@@ -198,11 +210,26 @@ public enum ConfigSignatureVerifier {
             kSecAttrAccessible as String: accessible,
         ]
         let status = SecItemAdd(addQuery as CFDictionary, nil)
+        if status == errSecSuccess {
+            return true
+        }
+#if DEBUG
+        if keychainStatusIndicatesUnavailable(status) {
+            debugInMemoryKeys[account] = data
+            return true
+        }
+#endif
         guard status == errSecSuccess else {
             Logger.log("ConfigSignatureVerifier.saveToKeychain(\(account)): SecItemAdd failed (status=\(status))")
             return false
         }
         return true
+    }
+
+    private static func keychainStatusIndicatesUnavailable(_ status: OSStatus) -> Bool {
+        status == errSecInteractionNotAllowed ||
+        status == errSecMissingEntitlement ||
+        status == errSecNotAvailable
     }
 }
 

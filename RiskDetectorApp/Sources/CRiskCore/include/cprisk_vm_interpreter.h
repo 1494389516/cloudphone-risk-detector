@@ -48,6 +48,16 @@ extern "C" {
 #define CPRISK_VMP_BC_FLAG_M3_SELFCHK_HMAC 0x00000100u
 /** M4: interpret the 16-byte VPC metadata block as non-linear Feistel/SPN material instead of plain affine A/B. */
 #define CPRISK_VMP_BC_FLAG_VPC_NONLINEAR 0x00000400u
+/**
+ * When set, runtime takes a SHA256 baseline of each function's bytecode blob at entry and re-checks on a step
+ * cadence + selected control-flow boundaries (see CRiskCore VM interpreter). Backward-compatible when unset.
+ * Periodic re-hashes are throttled against the last successful check; an early-step check and
+ * return/halt/nested-call boundaries run more eagerly.
+ */
+#define CPRISK_VMP_BC_FLAG_BC_SEG_RUNTIME_SHA256 0x00000800u
+
+/** White-box PRF domain used for per-dispatch session-bound side effects (feeds opaque/session chain). */
+#define CPRISK_VM_WB_HANDLER_SIDE_DOMAIN 7u
 
 /** Dispatch header flags (`cprisk_vmp_dispatch_header_t::flags`). */
 #define CPRISK_VMP_DH_FLAG_HANDLER_DUPLICATION 0x00000001u
@@ -82,7 +92,7 @@ enum {
  * then \c CPRISK_VM_M3_SELF_DISPATCH_BYTES at \c cprisk_vm_dispatch_lookup (dispatch decode path).
  * Loop/dispatch windows are intentionally wider than the legacy 48/32 split so tamper in the
  * hot loop/dispatch path invalidates CPSF/CPSH together with runtime decode seeds (see self-check
- * wiring in \c cprisk_vm_execute_engine_i).
+ * wiring in the lane-specific VM execute paths).
  * Sum equals \c CPRISK_VM_M3_SELF_BYTES; \c cprisk-armor \c VMSelfExpectInjector hashes the same
  * layout from Mach-O symtab (post-link CPSF/CPSH).
  * When 0, the self-check is skipped even if \c CPRISK_VMP_BC_FLAG_M3_SELFCHK is set.

@@ -1,5 +1,12 @@
 import Foundation
 
+/// Armor / anti-debug 运行时策略：生产保持强约束；开发或 QA 降低 TTY、Developer Disk、timing 等弱信号导致的误伤。
+@objc(CPRiskAntiDebugRuntimeMode)
+public enum CPRiskAntiDebugRuntimeMode: Int {
+    case production = 0
+    case relaxedDevelopmentQA = 1
+}
+
 public struct RiskConfig: Sendable {
     /// 默认风险阈值
     public static let defaultThreshold: Double = 60
@@ -81,6 +88,9 @@ public final class CPRiskConfig: NSObject {
 
     /// 是否启用反篡改检测（预留开关）
     @objc public var enableAntiTamper: Bool = true
+
+    /// C 层 anti-debug 策略：生产默认；开发/QA 宽松（弱探针不计入 debugger 评分，init timing 阈值更高）。
+    @objc public var antiDebugRuntimeMode: CPRiskAntiDebugRuntimeMode = .production
 
     /// 远程配置地址（可选）
     @objc public var remoteConfigURLString: String = ""

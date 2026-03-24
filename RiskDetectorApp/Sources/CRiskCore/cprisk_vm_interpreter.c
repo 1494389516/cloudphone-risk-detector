@@ -11,6 +11,9 @@
 
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
+#include <mach/mach.h>
+#include <mach/mach_time.h>
+#include <pthread.h>
 #include <time.h>
 #include <unistd.h>
 #endif
@@ -19,6 +22,22 @@
 #define CPRISK_VM_DISPATCH_CACHE_BYTES 16u
 #define CPRISK_VMP_BYTECODE_HEADER_CORE_BYTES ((size_t)sizeof(cprisk_vmp_bytecode_header_t))
 #define CPRISK_VMP_BYTECODE_VPC_EXT_BYTES 16u
+
+/** Re-hash bytecode segment every N steps when \c CPRISK_VMP_BC_FLAG_BC_SEG_RUNTIME_SHA256 is set. */
+#ifndef CPRISK_VM_BC_HASH_PERIOD
+#define CPRISK_VM_BC_HASH_PERIOD 256u
+#endif
+/**
+ * Skip redundant periodic SHA256 when the last successful bytecode hash was fewer than this many
+ * steps ago (control-flow boundary checks are unaffected).
+ */
+#ifndef CPRISK_VM_BC_HASH_MIN_INTERVAL
+#define CPRISK_VM_BC_HASH_MIN_INTERVAL 32u
+#endif
+/** Minimum interval (in completed steps) for session-domain white-box side effects when not on a hot M3 path. */
+#ifndef CPRISK_VM_WB_SIDE_PERIOD
+#define CPRISK_VM_WB_SIDE_PERIOD 64u
+#endif
 
 uint64_t cprisk_read_le_u64_i(const uint8_t *p) {
     uint64_t value = 0;
@@ -93,6 +112,60 @@ static int cprisk_vmp_vpc_is_nonlinear_i(const cprisk_vmp_bytecode_header_t *bh)
 }
 
 static uint32_t cprisk_vm_session_mix_i(void);
+static void cprisk_vm_interp_loop_a(struct cprisk_vm_interp_frame *fr);
+static void cprisk_vm_interp_loop_b(struct cprisk_vm_interp_frame *fr);
+static void cprisk_vm_interp_finish_run_lane0_i(cprisk_vm_interp_frame_t *fr);
+static void cprisk_vm_interp_finish_run_lane1_i(cprisk_vm_interp_frame_t *fr);
+static void cprisk_vm_interp_finish_run_lane2_i(cprisk_vm_interp_frame_t *fr);
+static int cprisk_vm_execute_lane0_i(uint64_t func_id,
+                                     cprisk_vm_run_result_t *out,
+                                     const void *hdr_sym);
+static int cprisk_vm_execute_lane1_i(uint64_t func_id,
+                                     cprisk_vm_run_result_t *out,
+                                     const void *hdr_sym);
+static int cprisk_vm_execute_lane2_i(uint64_t func_id,
+                                     cprisk_vm_run_result_t *out,
+                                     const void *hdr_sym);
+static void cprisk_vm_run_program_i(const struct mach_header_64 *hdr,
+                                    const uint8_t *d_sec,
+                                    const cprisk_vmp_dispatch_header_t *dhdr,
+                                    const uint8_t *b_sec,
+                                    unsigned long bsz,
+                                    const cprisk_vmp_bytecode_header_t *bh,
+                                    uint32_t path_lane,
+                                    uint64_t func_id,
+                                    uint8_t acc[32],
+                                    cprisk_vm_run_result_t *out);
+static void cprisk_vm_run_program_lane0_i(const struct mach_header_64 *hdr,
+                                          const uint8_t *d_sec,
+                                          const cprisk_vmp_dispatch_header_t *dhdr,
+                                          const uint8_t *b_sec,
+                                          unsigned long bsz,
+                                          const cprisk_vmp_bytecode_header_t *bh,
+                                          uint64_t func_id,
+                                          uint8_t acc[32],
+                                          cprisk_vm_run_result_t *out);
+static void cprisk_vm_run_program_lane1_i(const struct mach_header_64 *hdr,
+                                          const uint8_t *d_sec,
+                                          const cprisk_vmp_dispatch_header_t *dhdr,
+                                          const uint8_t *b_sec,
+                                          unsigned long bsz,
+                                          const cprisk_vmp_bytecode_header_t *bh,
+                                          uint64_t func_id,
+                                          uint8_t acc[32],
+                                          cprisk_vm_run_result_t *out);
+static void cprisk_vm_run_program_lane2_i(const struct mach_header_64 *hdr,
+                                          const uint8_t *d_sec,
+                                          const cprisk_vmp_dispatch_header_t *dhdr,
+                                          const uint8_t *b_sec,
+                                          unsigned long bsz,
+                                          const cprisk_vmp_bytecode_header_t *bh,
+                                          uint64_t func_id,
+                                          uint8_t acc[32],
+                                          cprisk_vm_run_result_t *out);
+uint64_t cprisk_vm_entry(uint64_t func_id);
+uint64_t cprisk_vm_entry_alt1(uint64_t func_id);
+uint64_t cprisk_vm_entry_alt2(uint64_t func_id);
 
 static uint32_t cprisk_vmp_rotl32_i(uint32_t x, uint32_t n) {
     n &= 31u;
@@ -1598,29 +1671,146 @@ __attribute__((noinline)) static void cprisk_vm_m3_dead_heavy_shadow_i(uint8_t a
  * Decoys in read-only const data: resemble handler RVA / stream-XOR / class tags.
  * Values are not executable pointers; XOR-mixed into opaque predicates only.
  */
+static void cprisk_vm_m3_dead_dispatch_i(uint8_t acc[32], uint32_t hdr_reserved, uint32_t opkind);
+
 static const struct {
     uint64_t faux_text_rva;
     uint64_t stream_xor;
     uint32_t class_tag;
-    uint32_t pad;
+    uint16_t dispatch_slot;
+    uint8_t lane_tag;
+    uint8_t span_tag;
+    uint32_t bind_mix;
+    uint32_t key_mix;
 } cprisk_vmp_relro_handler_decoy[] = {
-    { UINT64_C(0x1F0E1D2C3B4A5968), UINT64_C(0xEEDDAABBCCDD0011), 0x4856484Bu, 0u },
-    { UINT64_C(0x2E3D4C5B6A7988A7), UINT64_C(0xFF10FFEEDDCCBBAA), 0x4D455441u, 0u },
-    { UINT64_C(0x4030201080706050), UINT64_C(0xBADCAFE00B01E0E1), 0x4445434Fu, 0u },
-    { UINT64_C(0xF0E1D2C3B4A59687), UINT64_C(0x1122334455667788), 0x42415432u, 0u },
+    { UINT64_C(0x1F0E1D2C3B4A5968), UINT64_C(0xEEDDAABBCCDD0011), 0x4856484Bu, 0x0140u, 0x11u, 0x09u, 0x6D2B79F5u, 0x510E527Fu },
+    { UINT64_C(0x2E3D4C5B6A7988A7), UINT64_C(0xFF10FFEEDDCCBBAA), 0x4D455441u, 0x0211u, 0x23u, 0x05u, 0x165667B1u, 0x243F6A88u },
+    { UINT64_C(0x4030201080706050), UINT64_C(0xBADCAFE00B01E0E1), 0x4445434Fu, 0x0332u, 0x35u, 0x0Du, 0x85EBCA6Bu, 0x13198A2Eu },
+    { UINT64_C(0xF0E1D2C3B4A59687), UINT64_C(0x1122334455667788), 0x42415432u, 0x0443u, 0x47u, 0x11u, 0x27D4EB2Du, 0xA4093822u },
+    { UINT64_C(0x7162534415263728), UINT64_C(0x90ABCDEF13572468), 0x534C4F54u, 0x0554u, 0x59u, 0x15u, 0x45D9F3Bu, 0x082EFA98u },
+    { UINT64_C(0x89ABCDEF01234567), UINT64_C(0x76543210FEDCBA98), 0x524F5554u, 0x0665u, 0x6Bu, 0x19u, 0x7F4A7C15u, 0xBB67AE85u },
+    { UINT64_C(0x55AA33CC77EE1188), UINT64_C(0xCAFED00D0BADBEEF), 0x54414733u, 0x0776u, 0x7Du, 0x1Du, 0xB5297A4Du, 0x3C6EF372u },
+    { UINT64_C(0xDEC0AD0B12345678), UINT64_C(0x31415926A5A5C3C3), 0x4C414E45u, 0x0887u, 0x8Fu, 0x21u, 0x31415927u, 0x1F83D9ABu },
+    { UINT64_C(0x4E3D2C1B0A998877), UINT64_C(0x0123456789ABCDE0), 0x44534348u, 0x0998u, 0x91u, 0x07u, 0xC3A5C85Cu, 0x5BE0CD19u },
+    { UINT64_C(0x93A4B5C6D7E8F901), UINT64_C(0xA1B2C3D4E5F60718), 0x564D4C31u, 0x0AA9u, 0xA3u, 0x17u, 0x9E3779B9u, 0xCBBB9D5Du },
+    { UINT64_C(0x1029384756AABBCC), UINT64_C(0x55AA55AA77889900), 0x48564452u, 0x0BBAu, 0xB5u, 0x0Bu, 0xA5C31F27u, 0x6A09E667u },
+    { UINT64_C(0xC1D2E3F405162738), UINT64_C(0x0F1E2D3C4B5A6978), 0x44494358u, 0x0CCBu, 0xC7u, 0x13u, 0x0F1055A1u, 0x510E527Fu },
 };
+
+typedef struct {
+    const void *target;
+    uint64_t bias;
+    uint32_t salt;
+    uint32_t rotate;
+    uint32_t class_tag;
+    uint32_t stride_tag;
+} cprisk_vm_dispatch_bait_meta_t;
+
+#if defined(__APPLE__)
+__attribute__((used, section("__DATA_CONST,__const")))
+#endif
+static const cprisk_vm_dispatch_bait_meta_t cprisk_vm_dispatch_bait_meta_i[] = {
+    { (const void *)&cprisk_vm_m3_dead_bait_xor_i, UINT64_C(0x6A09E667F3BCC909), 0x9E3779B9u, 5u, 0x22010031u, 0x00100020u },
+    { (const void *)&cprisk_vm_m3_dead_bait_add_i, UINT64_C(0xBB67AE8584CAA73B), 0x85EBCA6Bu, 11u, 0x22020042u, 0x00180028u },
+    { (const void *)&cprisk_vm_m3_dead_bait_roll_i, UINT64_C(0x3C6EF372FE94F82B), 0xC2B2AE35u, 17u, 0x22030053u, 0x00200030u },
+    { (const void *)&cprisk_vm_m3_dead_heavy_shadow_i, UINT64_C(0xA54FF53A5F1D36F1), 0x27D4EB2Du, 23u, 0x23010074u, 0x00280038u },
+    { (const void *)&cprisk_vm_m3_dead_dispatch_i, UINT64_C(0x510E527FADE682D1), 0x165667B1u, 3u, 0x23020085u, 0x00300040u },
+    { (const void *)&cprisk_vm_dispatch_lookup, UINT64_C(0x1F83D9ABFB41BD6B), 0x7F4A7C15u, 9u, 0x24010096u, 0x00380048u },
+    { (const void *)&cprisk_vm_interp_loop_a, UINT64_C(0x5BE0CD19137E2179), 0x045D9F3Bu, 15u, 0x240200A7u, 0x00400050u },
+    { (const void *)&cprisk_vm_execute, UINT64_C(0xCBBB9D5DC1059ED8), 0x6D2B79F5u, 21u, 0x250100B8u, 0x00480058u },
+};
+
+#if defined(__APPLE__)
+__attribute__((used, section("__DATA_CONST,__const")))
+#endif
+static const cprisk_vm_dispatch_bait_meta_t cprisk_vm_dispatch_bait_aux_meta_i[] = {
+    { (const void *)&cprisk_vm_entry, UINT64_C(0x243F6A8885A308D3), 0x31415927u, 7u, 0x31010011u, 0x00080018u },
+    { (const void *)&cprisk_vm_entry_alt1, UINT64_C(0x13198A2E03707344), 0x27182818u, 13u, 0x31020022u, 0x00100020u },
+    { (const void *)&cprisk_vm_entry_alt2, UINT64_C(0xA4093822299F31D0), 0xB5297A4Du, 19u, 0x31030033u, 0x00180028u },
+    { (const void *)&cprisk_vm_execute, UINT64_C(0x082EFA98EC4E6C89), 0xC3A5C85Cu, 25u, 0x32010044u, 0x00200030u },
+};
+
+#if defined(__APPLE__)
+__attribute__((used, section("__DATA_CONST,__const")))
+#endif
+static const cprisk_vm_dispatch_bait_meta_t cprisk_vm_dispatch_bait_lane_meta_i[] = {
+    { (const void *)&cprisk_vm_execute_lane0_i, UINT64_C(0x0D6D0185A8B3C4D7), 0x4CF5AD43u, 6u, 0x41010051u, 0x00200060u },
+    { (const void *)&cprisk_vm_execute_lane1_i, UINT64_C(0x1F2E3D4C5B6A7988), 0x9B9773E1u, 10u, 0x41020062u, 0x00280068u },
+    { (const void *)&cprisk_vm_execute_lane2_i, UINT64_C(0x2233445566778899), 0x6A5D39C7u, 14u, 0x41030073u, 0x00300070u },
+    { (const void *)&cprisk_vm_run_program_lane0_i, UINT64_C(0x33445566778899AA), 0xA54FC2D9u, 18u, 0x42010084u, 0x00380078u },
+    { (const void *)&cprisk_vm_run_program_lane1_i, UINT64_C(0x445566778899AABB), 0x1B873593u, 22u, 0x42020095u, 0x00400080u },
+    { (const void *)&cprisk_vm_run_program_lane2_i, UINT64_C(0x5566778899AABBCC), 0x7F4A7C15u, 26u, 0x420300A6u, 0x00480088u },
+    { (const void *)&cprisk_vm_interp_finish_run_lane0_i, UINT64_C(0x3F84D5B5B5470917), 0x19D7A4E3u, 5u, 0x430100B7u, 0x00500090u },
+    { (const void *)&cprisk_vm_interp_finish_run_lane1_i, UINT64_C(0x9216D5D98979FB1B), 0x2C1B3D97u, 11u, 0x430200C8u, 0x00580098u },
+    { (const void *)&cprisk_vm_interp_finish_run_lane2_i, UINT64_C(0xD1310BA698DFB5AC), 0x5F43E291u, 17u, 0x430300D9u, 0x006000A0u },
+    { (const void *)&cprisk_vm_interp_loop_b, UINT64_C(0x66778899AABBCCDD), 0x045D9F3Bu, 30u, 0x440100EAu, 0x006800A8u },
+    { (const void *)&cprisk_vm_dispatch_oph_materialized_i, UINT64_C(0x778899AABBCCDDEE), 0x85EBCA6Bu, 4u, 0x440200FBu, 0x007000B0u },
+};
+
+static uint32_t cprisk_vm_dispatch_bait_meta_mix_i(const cprisk_vm_dispatch_bait_meta_t *meta,
+                                                   size_t count,
+                                                   uint32_t basis) {
+    uint32_t acc = basis;
+    for (size_t i = 0u; i < count; i++) {
+        uint64_t x =
+            ((uint64_t)(uintptr_t)meta[i].target ^ meta[i].bias) ^
+            ((uint64_t)meta[i].salt << ((meta[i].rotate & 15u) + 1u)) ^
+            ((uint64_t)meta[i].rotate << 48u) ^
+            ((uint64_t)meta[i].class_tag << 7u) ^
+            ((uint64_t)meta[i].stride_tag << 19u);
+        acc ^= cprisk_vmp_avalanche32_i(
+            (uint32_t)x ^
+            (uint32_t)(x >> 32u) ^
+            meta[i].class_tag ^
+            cprisk_vmp_rotl32_i(meta[i].stride_tag, meta[i].rotate & 31u) ^
+            ((uint32_t)i * 0x9E3779B9u)
+        );
+    }
+    return cprisk_vmp_avalanche32_i(acc ^ (uint32_t)count * 0x27D4EB2Du);
+}
 
 static uint32_t cprisk_vmp_relro_bait_mix_i(void) {
     uint32_t acc = 0u;
-    for (unsigned i = 0u; i < 4u; i++) {
+    for (size_t i = 0u; i < sizeof(cprisk_vmp_relro_handler_decoy) / sizeof(cprisk_vmp_relro_handler_decoy[0]); i++) {
         const uint64_t sx = cprisk_vmp_relro_handler_decoy[i].stream_xor;
         uint32_t lo = (uint32_t)sx;
         uint32_t hi = (uint32_t)(sx >> 32);
         uint64_t w = cprisk_vmp_relro_handler_decoy[i].faux_text_rva
-            ^ ((uint64_t)cprisk_vmp_rotl32_i(lo, 8) | ((uint64_t)cprisk_vmp_rotr32_i(hi, 9) << 32));
-        acc ^= cprisk_vmp_avalanche32_i((uint32_t)w ^ cprisk_vmp_relro_handler_decoy[i].class_tag ^ (unsigned)i * 0x9E37u);
+            ^ ((uint64_t)cprisk_vmp_rotl32_i(lo, 8u) | ((uint64_t)cprisk_vmp_rotr32_i(hi, 9u) << 32u))
+            ^ ((uint64_t)cprisk_vmp_relro_handler_decoy[i].dispatch_slot << 17u)
+            ^ ((uint64_t)cprisk_vmp_relro_handler_decoy[i].lane_tag << 49u)
+            ^ ((uint64_t)cprisk_vmp_relro_handler_decoy[i].span_tag << 43u);
+        acc ^= cprisk_vmp_avalanche32_i(
+            (uint32_t)w ^
+            cprisk_vmp_relro_handler_decoy[i].class_tag ^
+            cprisk_vmp_relro_handler_decoy[i].bind_mix ^
+            cprisk_vmp_rotl32_i(
+                cprisk_vmp_relro_handler_decoy[i].key_mix,
+                (cprisk_vmp_relro_handler_decoy[i].lane_tag & 7u) + 1u
+            ) ^
+            ((uint32_t)i * 0x9E37u)
+        );
+        acc = cprisk_vmp_rotl32_i(
+            acc ^ cprisk_vmp_relro_handler_decoy[i].bind_mix ^ cprisk_vmp_relro_handler_decoy[i].key_mix,
+            (cprisk_vmp_relro_handler_decoy[i].span_tag & 7u) + 1u
+        );
     }
-    return acc;
+    acc ^= cprisk_vm_dispatch_bait_meta_mix_i(
+        cprisk_vm_dispatch_bait_meta_i,
+        sizeof(cprisk_vm_dispatch_bait_meta_i) / sizeof(cprisk_vm_dispatch_bait_meta_i[0]),
+        0x6D2B79F5u
+    );
+    acc ^= cprisk_vm_dispatch_bait_meta_mix_i(
+        cprisk_vm_dispatch_bait_aux_meta_i,
+        sizeof(cprisk_vm_dispatch_bait_aux_meta_i) / sizeof(cprisk_vm_dispatch_bait_aux_meta_i[0]),
+        0xA511E9B3u
+    );
+    acc ^= cprisk_vm_dispatch_bait_meta_mix_i(
+        cprisk_vm_dispatch_bait_lane_meta_i,
+        sizeof(cprisk_vm_dispatch_bait_lane_meta_i) / sizeof(cprisk_vm_dispatch_bait_lane_meta_i[0]),
+        0x31415927u
+    );
+    return cprisk_vmp_avalanche32_i(acc ^ 0xC3EF4D27u);
 }
 
 static void cprisk_vm_m3_dead_dispatch_i(uint8_t acc[32], uint32_t hdr_reserved, uint32_t opkind) {
@@ -1650,31 +1840,54 @@ static void cprisk_vm_m3_dead_dispatch_i(uint8_t acc[32], uint32_t hdr_reserved,
     }
 }
 
-typedef struct {
-    const void *target;
-    uint64_t bias;
-    uint32_t salt;
-    uint32_t rotate;
-} cprisk_vm_dispatch_bait_meta_t;
-
-#if defined(__APPLE__)
-__attribute__((used, section("__DATA_CONST,__const")))
-#endif
-static const cprisk_vm_dispatch_bait_meta_t cprisk_vm_dispatch_bait_meta_i[] = {
-    { (const void *)&cprisk_vm_m3_dead_bait_xor_i, UINT64_C(0x6A09E667F3BCC909), 0x9E3779B9u, 5u },
-    { (const void *)&cprisk_vm_m3_dead_bait_add_i, UINT64_C(0xBB67AE8584CAA73B), 0x85EBCA6Bu, 11u },
-    { (const void *)&cprisk_vm_m3_dead_bait_roll_i, UINT64_C(0x3C6EF372FE94F82B), 0xC2B2AE35u, 17u },
-    { (const void *)&cprisk_vm_m3_dead_heavy_shadow_i, UINT64_C(0xA54FF53A5F1D36F1), 0x27D4EB2Du, 23u },
-};
-
 static uint32_t cprisk_vm_dispatch_bait_seed_i(uint32_t lane, uint32_t logical) {
     const cprisk_vm_dispatch_bait_meta_t *meta =
-        &cprisk_vm_dispatch_bait_meta_i[(lane ^ logical) & 3u];
+        &cprisk_vm_dispatch_bait_meta_i[
+            (lane ^ logical) % (sizeof(cprisk_vm_dispatch_bait_meta_i) / sizeof(cprisk_vm_dispatch_bait_meta_i[0]))
+        ];
+    const cprisk_vm_dispatch_bait_meta_t *aux =
+        &cprisk_vm_dispatch_bait_aux_meta_i[
+            (cprisk_vmp_rotl32_i(lane, 3u) ^ logical ^ (lane >> 1u))
+            % (sizeof(cprisk_vm_dispatch_bait_aux_meta_i) / sizeof(cprisk_vm_dispatch_bait_aux_meta_i[0]))
+        ];
+    const cprisk_vm_dispatch_bait_meta_t *lane_meta =
+        &cprisk_vm_dispatch_bait_lane_meta_i[
+            (cprisk_vmp_rotr32_i(logical, 1u) ^ (lane * 7u) ^ (logical >> 2u))
+            % (sizeof(cprisk_vm_dispatch_bait_lane_meta_i) / sizeof(cprisk_vm_dispatch_bait_lane_meta_i[0]))
+        ];
+    const size_t rel_idx =
+        ((size_t)lane * 5u + (size_t)logical * 3u)
+        % (sizeof(cprisk_vmp_relro_handler_decoy) / sizeof(cprisk_vmp_relro_handler_decoy[0]));
     uint64_t x =
         ((uint64_t)(uintptr_t)meta->target ^ meta->bias) ^
         ((uint64_t)meta->salt << 32u) ^
-        ((uint64_t)meta->rotate << 11u);
+        ((uint64_t)meta->rotate << 11u) ^
+        ((uint64_t)meta->class_tag << 17u) ^
+        ((uint64_t)meta->stride_tag << 29u);
+    uint64_t y =
+        ((uint64_t)(uintptr_t)aux->target ^ aux->bias) ^
+        ((uint64_t)aux->salt << 29u) ^
+        ((uint64_t)aux->rotate << 7u) ^
+        ((uint64_t)aux->class_tag << 15u) ^
+        ((uint64_t)aux->stride_tag << 23u);
+    uint64_t w =
+        ((uint64_t)(uintptr_t)lane_meta->target ^ lane_meta->bias) ^
+        ((uint64_t)lane_meta->salt << 27u) ^
+        ((uint64_t)lane_meta->rotate << 19u) ^
+        ((uint64_t)lane_meta->class_tag << 9u) ^
+        ((uint64_t)lane_meta->stride_tag << 37u);
+    uint64_t z =
+        cprisk_vmp_relro_handler_decoy[rel_idx].faux_text_rva ^
+        cprisk_vmp_relro_handler_decoy[rel_idx].stream_xor ^
+        ((uint64_t)cprisk_vmp_relro_handler_decoy[rel_idx].class_tag << 17u) ^
+        ((uint64_t)cprisk_vmp_relro_handler_decoy[rel_idx].dispatch_slot << 41u) ^
+        ((uint64_t)cprisk_vmp_relro_handler_decoy[rel_idx].lane_tag << 57u) ^
+        ((uint64_t)cprisk_vmp_relro_handler_decoy[rel_idx].bind_mix << 3u) ^
+        ((uint64_t)cprisk_vmp_relro_handler_decoy[rel_idx].key_mix << 27u);
+    x ^= y ^ z ^ w;
     x ^= x >> (meta->rotate & 31u);
+    x ^= y >> (aux->rotate & 31u);
+    x ^= w >> (lane_meta->rotate & 31u);
     return cprisk_vmp_avalanche32_i((uint32_t)x ^ (uint32_t)(x >> 32u));
 }
 
@@ -1689,7 +1902,7 @@ static const uint8_t *cprisk_vmp_dispatch_class_table_ptr_i(const uint8_t *d_sec
 
 /* P0: one-shot keystream for dispatch v2 (build-time seed parity with VMBytecodeEmitter.dispatchKeystreamBytes). */
 static void __attribute__((unused)) cprisk_vmp_dispatch_v2_keystream_i(uint64_t seed,
-                                                                       uint8_t ks_out[CPRISK_VMP_CLASS_TABLE_BYTES]) {
+                                               uint8_t ks_out[CPRISK_VMP_CLASS_TABLE_BYTES]) {
     uint64_t state = seed ^ 0x4D4456544B455953ULL; /* "MDVTKEYS" */
     if (state == 0u)
         state = 0xDEADBEEFCAFEBABEULL;
@@ -2041,12 +2254,37 @@ static void cprisk_vm_trace_sidefx_i(cprisk_vm_interp_frame_t *fr,
     fr->vregs[vreg_idx] = vreg_orig;
 }
 
-static void cprisk_vm_interp_finish_run_i(cprisk_vm_interp_frame_t *fr) {
+static void cprisk_vm_interp_finish_run_lane0_i(cprisk_vm_interp_frame_t *fr) {
     memcpy(fr->out->acc, fr->acc, sizeof(fr->acc));
     memcpy(fr->out->vregs, fr->vregs, sizeof(fr->vregs));
     fr->out->steps = fr->steps;
     uint8_t wb_out[32];
     int wbr = cprisk_whitebox_evaluate_domain(5u, fr->out->acc, wb_out);
+    fr->out->whitebox_domain_rc = wbr;
+    if (wbr == 0)
+        memcpy(fr->out->acc, wb_out, sizeof(wb_out));
+}
+
+static void cprisk_vm_interp_finish_run_lane1_i(cprisk_vm_interp_frame_t *fr) {
+    uint8_t wb_out[32];
+    int wbr = cprisk_whitebox_evaluate_domain(5u, fr->acc, wb_out);
+    fr->out->whitebox_domain_rc = wbr;
+    fr->out->steps = fr->steps;
+    memcpy(fr->out->vregs, fr->vregs, sizeof(fr->vregs));
+    memcpy(fr->out->acc, fr->acc, sizeof(fr->acc));
+    if (wbr == 0)
+        memcpy(fr->out->acc, wb_out, sizeof(wb_out));
+}
+
+static void cprisk_vm_interp_finish_run_lane2_i(cprisk_vm_interp_frame_t *fr) {
+    uint8_t lane_acc[32];
+    memcpy(lane_acc, fr->acc, sizeof(lane_acc));
+    lane_acc[(fr->opaque_session_mix ^ fr->path_lane) & 31u] ^= 0u;
+    memcpy(fr->out->acc, lane_acc, sizeof(lane_acc));
+    memcpy(fr->out->vregs, fr->vregs, sizeof(fr->vregs));
+    fr->out->steps = fr->steps;
+    uint8_t wb_out[32];
+    int wbr = cprisk_whitebox_evaluate_domain(5u, lane_acc, wb_out);
     fr->out->whitebox_domain_rc = wbr;
     if (wbr == 0)
         memcpy(fr->out->acc, wb_out, sizeof(wb_out));
@@ -2202,22 +2440,304 @@ static void cprisk_vm_interp_loop_b_cluster_spread_i(uint8_t logical) {
     tbl[cprisk_vm_interp_loop_b_cluster_slot_i(logical) & 7u]();
 }
 
-static void cprisk_vm_opaque_runtime_init_i(cprisk_vm_interp_frame_t *fr) {
-    uint32_t nonce = fr->session_mix ^ cprisk_vm_dispatch_bait_seed_i(fr->path_lane, 0u);
-    fr->opaque_pid = 1;
-    fr->opaque_clock_rc = 0;
+static uint32_t cprisk_vm_opaque_bytes_mix_i(const void *ptr, size_t len, uint32_t seed) {
+    const uint8_t *bytes = (const uint8_t *)ptr;
+    uint32_t acc = seed ^ 0xA511E9B3u;
+    for (size_t i = 0u; i < len; i++) {
+        acc ^= (uint32_t)bytes[i] + ((uint32_t)i * 0x45D9F3Bu);
+        acc = cprisk_vmp_rotl32_i(acc, (uint32_t)((i & 7u) + 1u));
+        acc *= 0x7FEB352Du;
+    }
+    return cprisk_vmp_avalanche32_i(acc ^ ((uint32_t)len * 0x9E3779B9u));
+}
+
+static uint32_t cprisk_vm_opaque_runtime_contract_mix_i(cprisk_vm_interp_frame_t *fr,
+                                                        uint32_t logical,
+                                                        uint32_t pc,
+                                                        uint32_t stage,
+                                                        uint32_t sample_mix) {
+    uint32_t mix =
+        fr->session_mix ^
+        fr->opaque_session_mix ^
+        fr->opaque_chain ^
+        fr->opaque_rt_nonce ^
+        fr->opaque_runtime_fold ^
+        fr->opaque_clock_ns ^
+        fr->opaque_port_name ^
+        (uint32_t)fr->opaque_pid ^
+        (uint32_t)fr->opaque_port_rc ^
+        sample_mix ^
+        cprisk_vm_dispatch_bait_seed_i(fr->path_lane ^ stage, logical + 1u) ^
+        logical * 0x85EBCA6Bu ^
+        pc * 0x27D4EB2Du ^
+        stage * 0x165667B1u;
 #if defined(__APPLE__)
+    pthread_t self = pthread_self();
+    const int self_eq = pthread_equal(self, self);
+    uint64_t tid = 0u;
+    const int tid_rc = pthread_threadid_np(NULL, &tid);
+    const uint64_t abs_now = mach_absolute_time();
+    mix ^= cprisk_vm_opaque_bytes_mix_i(&self, sizeof(pthread_t), sample_mix ^ 0xB5297A4Du);
+    mix ^= cprisk_vmp_avalanche32_i(
+        (uint32_t)tid ^
+        (uint32_t)(tid >> 32u) ^
+        cprisk_vmp_rotl32_i((uint32_t)abs_now, (stage & 15u) + 1u) ^
+        cprisk_vmp_rotr32_i((uint32_t)(abs_now >> 32u), (logical & 7u) + 1u)
+    );
+    mix ^= cprisk_vmp_avalanche32_i(
+        (uint32_t)(self_eq != 0) * 0x9E3779B9u ^
+        (uint32_t)(tid_rc == 0) * 0x45D9F3Bu ^
+        (uint32_t)(fr->opaque_clock_rc == 0) * 0x27D4EB2Du ^
+        cprisk_vmp_rotl32_i(fr->opaque_clock_ns, (logical & 7u) + 1u) ^
+        cprisk_vmp_rotr32_i(fr->opaque_port_name, (stage & 7u) + 1u) ^
+        ((uint32_t)fr->opaque_port_rc * 0x165667B1u) ^
+        (uint32_t)((fr->opaque_pid > 0) ? 0x6D2B79F5u : 0xA511E9B3u)
+    );
+#endif
+    mix = cprisk_vmp_avalanche32_i(mix);
+    if (mix == 0u)
+        mix = 0x31415927u ^ logical ^ stage;
+    return mix;
+}
+
+static uint32_t cprisk_vm_opaque_runtime_probe_i(cprisk_vm_interp_frame_t *fr,
+                                                 uint32_t logical,
+                                                 uint32_t pc,
+                                                 uint32_t stage) {
+    uint32_t mix =
+        fr->opaque_runtime_fold ^
+        fr->opaque_thread_mix ^
+        fr->opaque_session_mix ^
+        fr->session_mix ^
+        cprisk_vm_dispatch_bait_seed_i(fr->path_lane + (stage & 3u), logical ^ stage) ^
+        (uint32_t)fr->steps ^
+        logical * 0x9E3779B9u ^
+        pc * 0x45D9F3Bu ^
+        stage * 0x27D4EB2Du;
+    fr->opaque_pid = 1;
+    fr->opaque_clock_rc = -1;
+    fr->opaque_port_rc = -1;
+    fr->opaque_clock_ns =
+        cprisk_vmp_avalanche32_i(fr->opaque_session_mix ^ logical ^ pc ^ (stage * 0x9E37u))
+        & 0x3FFFFFFFu;
+    fr->opaque_port_name =
+        cprisk_vmp_avalanche32_i(fr->opaque_thread_mix ^ fr->opaque_rt_nonce ^ pc ^ stage);
+#if defined(__APPLE__)
+    pthread_t self = pthread_self();
+    mix ^= cprisk_vm_opaque_bytes_mix_i(&self, sizeof(pthread_t), fr->opaque_runtime_fold ^ logical ^ 0xC2B2AE35u);
+    uint64_t tid = 0u;
+    const int tid_rc = pthread_threadid_np(NULL, &tid);
+    const uint64_t abs_now = mach_absolute_time();
+    mix ^= cprisk_vmp_avalanche32_i(
+        (uint32_t)tid ^
+        (uint32_t)(tid >> 32u) ^
+        (uint32_t)(tid_rc * 0x7F4A7C15u) ^
+        cprisk_vmp_rotl32_i((uint32_t)abs_now, (stage & 15u) + 1u)
+    );
+    mix ^= cprisk_vmp_avalanche32_i(
+        (uint32_t)(abs_now >> 32u) ^
+        cprisk_vmp_rotr32_i((uint32_t)abs_now, (logical & 7u) + 1u) ^
+        fr->opaque_rt_nonce
+    );
     fr->opaque_pid = (int32_t)getpid();
+    mix ^= cprisk_vmp_avalanche32_i((uint32_t)fr->opaque_pid * 0x85EBCA6Bu ^ fr->path_lane ^ stage);
     struct timespec ts;
     memset(&ts, 0, sizeof(ts));
     fr->opaque_clock_rc = clock_gettime(CLOCK_MONOTONIC, &ts);
-    nonce ^= (uint32_t)ts.tv_nsec;
-    nonce ^= (uint32_t)ts.tv_sec * 0x9E3779B9u;
+    struct timespec wall_ts;
+    memset(&wall_ts, 0, sizeof(wall_ts));
+    const int wall_rc = clock_gettime(CLOCK_REALTIME, &wall_ts);
+    fr->opaque_clock_ns = cprisk_vmp_avalanche32_i(
+        fr->opaque_clock_ns ^
+        (uint32_t)ts.tv_nsec ^
+        cprisk_vmp_rotl32_i((uint32_t)ts.tv_sec, (logical ^ stage) & 31u) ^
+        (uint32_t)wall_ts.tv_nsec ^
+        cprisk_vmp_rotr32_i((uint32_t)wall_ts.tv_sec, ((logical >> 1u) ^ stage) & 31u) ^
+        (uint32_t)(fr->opaque_clock_rc * 0x9E37u) ^
+        (uint32_t)(wall_rc * 0x7F4Au) ^
+        fr->opaque_rt_nonce
+    );
+    mix ^= cprisk_vmp_avalanche32_i(
+        fr->opaque_clock_ns ^
+        cprisk_vmp_rotl32_i((uint32_t)ts.tv_sec, (logical ^ stage) & 31u) ^
+        (uint32_t)(fr->opaque_clock_rc * 0x9E37u)
+    );
+    mix ^= cprisk_vmp_avalanche32_i(
+        (uint32_t)wall_ts.tv_nsec ^
+        cprisk_vmp_rotr32_i((uint32_t)wall_ts.tv_sec, ((logical >> 1u) ^ stage) & 31u) ^
+        (uint32_t)(wall_rc * 0x7F4A7C15u) ^
+        fr->opaque_clock_ns
+    );
+    mach_port_t self_port = mach_thread_self();
+    fr->opaque_port_name = cprisk_vmp_avalanche32_i(
+        fr->opaque_port_name ^
+        (uint32_t)self_port ^
+        cprisk_vmp_rotl32_i((uint32_t)self_port, 9u) ^
+        fr->opaque_clock_ns
+    );
+    kern_return_t self_port_rc = mach_port_deallocate(mach_task_self(), self_port);
+    fr->opaque_port_rc = (int32_t)self_port_rc;
+    mix ^= cprisk_vmp_avalanche32_i(
+        fr->opaque_port_name ^
+        cprisk_vmp_rotl32_i(fr->opaque_port_name, 9u) ^
+        fr->opaque_thread_mix ^
+        ((uint32_t)fr->opaque_port_rc << 19u)
+    );
 #endif
-    fr->opaque_rt_nonce = cprisk_vmp_avalanche32_i(nonce ^ (uint32_t)fr->func_id ^ (uint32_t)(fr->func_id >> 32u));
+    mix ^= cprisk_vmp_relro_bait_mix_i();
+    const uint32_t contract_mix =
+        cprisk_vm_opaque_runtime_contract_mix_i(fr, logical, pc, stage, mix ^ fr->opaque_clock_ns);
+    mix ^= contract_mix;
+    mix = cprisk_vmp_avalanche32_i(mix);
+    if (mix == 0u)
+        mix = 0xDB4F0B91u ^ logical ^ stage;
+    const uint32_t lattice = cprisk_vmp_avalanche32_i(
+        mix ^
+        fr->opaque_chain ^
+        fr->opaque_rt_nonce ^
+        fr->opaque_session_mix ^
+        contract_mix ^
+        cprisk_vm_dispatch_bait_seed_i(fr->path_lane ^ stage, logical ^ fr->path_lane)
+    );
+    fr->opaque_session_mix = cprisk_vmp_avalanche32_i(
+        fr->opaque_session_mix ^
+        fr->session_mix ^
+        mix ^
+        contract_mix ^
+        fr->opaque_clock_ns ^
+        fr->opaque_port_name ^
+        (uint32_t)fr->opaque_port_rc ^
+        logical ^
+        (uint32_t)fr->steps
+    );
+    if (fr->opaque_session_mix == 0u)
+        fr->opaque_session_mix = 0x7F4A7C15u ^ stage ^ fr->path_lane;
+    fr->opaque_thread_mix = cprisk_vmp_avalanche32_i(
+        fr->opaque_thread_mix ^ mix ^ lattice ^ contract_mix ^ fr->opaque_session_mix ^ logical ^ (uint32_t)fr->steps
+    );
+    fr->opaque_runtime_fold = cprisk_vmp_avalanche32_i(
+        fr->opaque_runtime_fold ^
+        mix ^
+        lattice ^
+        contract_mix ^
+        fr->opaque_session_mix ^
+        fr->opaque_clock_ns ^
+        fr->opaque_port_name ^
+        pc ^
+        (stage * 0x9E37u)
+    );
+    return cprisk_vmp_avalanche32_i(
+        lattice ^
+        fr->opaque_session_mix ^
+        fr->opaque_clock_ns ^
+        fr->opaque_port_name ^
+        (uint32_t)fr->opaque_port_rc
+    );
+}
+
+static void cprisk_vm_opaque_runtime_init_i(cprisk_vm_interp_frame_t *fr) {
+    uint32_t nonce = fr->session_mix ^ cprisk_vm_dispatch_bait_seed_i(fr->path_lane, 0u);
+    fr->opaque_pid = 1;
+    fr->opaque_clock_rc = -1;
+    fr->opaque_port_rc = -1;
+    fr->opaque_clock_ns =
+        cprisk_vm_dispatch_bait_seed_i(fr->path_lane ^ 0x29u, fr->path_lane + 7u) & 0x3FFFFFFFu;
+    fr->opaque_port_name =
+        cprisk_vm_dispatch_bait_seed_i(fr->path_lane ^ 0x17u, fr->path_lane + 3u);
+    fr->opaque_session_mix = cprisk_vmp_avalanche32_i(
+        fr->session_mix ^
+        fr->opaque_clock_ns ^
+        fr->opaque_port_name ^
+        (uint32_t)fr->func_id ^
+        (uint32_t)(fr->func_id >> 32u) ^
+        cprisk_vmp_relro_bait_mix_i()
+    );
+    fr->opaque_thread_mix =
+        cprisk_vm_dispatch_bait_seed_i(fr->path_lane ^ 0x13u, 1u) ^
+        cprisk_vmp_relro_bait_mix_i() ^
+        fr->opaque_session_mix;
+    fr->opaque_runtime_fold = cprisk_vmp_avalanche32_i(
+        fr->session_mix ^
+        fr->opaque_thread_mix ^
+        fr->opaque_session_mix ^
+        (uint32_t)fr->func_id ^
+        (uint32_t)(fr->func_id >> 32u)
+    );
+    fr->opaque_chain = cprisk_vmp_avalanche32_i(
+        fr->opaque_runtime_fold ^
+        fr->opaque_session_mix ^
+        cprisk_vm_dispatch_bait_seed_i(fr->path_lane, fr->path_lane + 1u)
+    );
+    const uint32_t runtime_seed =
+        cprisk_vm_opaque_runtime_probe_i(fr, fr->path_lane ^ 0x31u, (uint32_t)fr->func_id, 0x31u);
+    const uint32_t contract_mix =
+        cprisk_vm_opaque_runtime_contract_mix_i(
+            fr,
+            fr->path_lane ^ 0x31u,
+            (uint32_t)fr->func_id,
+            0x31u,
+            runtime_seed ^ nonce
+        );
+    nonce ^= runtime_seed;
+    nonce ^= contract_mix;
+    nonce ^= fr->opaque_runtime_fold ^ fr->opaque_thread_mix ^ fr->opaque_session_mix;
+    fr->opaque_session_mix = cprisk_vmp_avalanche32_i(
+        fr->opaque_session_mix ^
+        runtime_seed ^
+        contract_mix ^
+        fr->opaque_clock_ns ^
+        fr->opaque_port_name ^
+        (uint32_t)fr->opaque_port_rc ^
+        cprisk_vm_dispatch_bait_seed_i(fr->path_lane ^ 0x2Bu, fr->path_lane + 7u)
+    );
+    if (fr->opaque_session_mix == 0u)
+        fr->opaque_session_mix = 0xB5297A4Du ^ fr->path_lane;
+    fr->session_mix = cprisk_vmp_avalanche32_i(
+        fr->session_mix ^
+        runtime_seed ^
+        contract_mix ^
+        fr->opaque_session_mix ^
+        fr->opaque_thread_mix ^
+        cprisk_vm_dispatch_bait_seed_i(fr->path_lane ^ 0x21u, fr->path_lane + 5u)
+    );
+    if (fr->session_mix == 0u)
+        fr->session_mix = 0x7F4A7C15u ^ fr->path_lane;
+    fr->opaque_session_mix = cprisk_vmp_avalanche32_i(
+        fr->opaque_session_mix ^
+        fr->session_mix ^
+        runtime_seed ^
+        contract_mix ^
+        nonce
+    );
+    if (fr->opaque_session_mix == 0u)
+        fr->opaque_session_mix = 0x45D9F3Bu ^ fr->path_lane;
+    fr->opaque_rt_nonce = cprisk_vmp_avalanche32_i(
+        nonce ^
+        contract_mix ^
+        (uint32_t)fr->func_id ^
+        (uint32_t)(fr->func_id >> 32u) ^
+        fr->session_mix ^
+        fr->opaque_session_mix
+    );
     if (fr->opaque_rt_nonce == 0u)
         fr->opaque_rt_nonce = 0x6D2B79F5u;
-    fr->opaque_chain = fr->opaque_rt_nonce ^ cprisk_vm_dispatch_bait_seed_i(fr->path_lane, fr->path_lane + 1u);
+    fr->opaque_runtime_fold = cprisk_vmp_avalanche32_i(
+        fr->opaque_runtime_fold ^
+        fr->opaque_rt_nonce ^
+        contract_mix ^
+        fr->session_mix ^
+        fr->opaque_session_mix ^
+        cprisk_vm_dispatch_bait_seed_i(fr->path_lane, fr->path_lane + 3u)
+    );
+    fr->opaque_chain = cprisk_vmp_avalanche32_i(
+        fr->opaque_chain ^
+        fr->opaque_rt_nonce ^
+        fr->opaque_runtime_fold ^
+        contract_mix ^
+        fr->session_mix ^
+        fr->opaque_session_mix ^
+        cprisk_vm_dispatch_bait_seed_i(fr->path_lane, fr->path_lane + 1u)
+    );
 }
 
 static uint32_t cprisk_vm_opaque_chain_advance_i(cprisk_vm_interp_frame_t *fr,
@@ -2225,21 +2745,112 @@ static uint32_t cprisk_vm_opaque_chain_advance_i(cprisk_vm_interp_frame_t *fr,
                                                  uint64_t imm,
                                                  uint32_t pc,
                                                  uint32_t stage) {
+    const uint32_t runtime_mix = cprisk_vm_opaque_runtime_probe_i(fr, logical, pc, stage);
+    const uint32_t runtime_contract =
+        cprisk_vm_opaque_runtime_contract_mix_i(
+            fr,
+            logical,
+            pc,
+            stage,
+            runtime_mix ^ (uint32_t)imm ^ (uint32_t)(imm >> 32u)
+        );
+    const uint32_t runtime_path = cprisk_vmp_avalanche32_i(
+        runtime_mix ^
+        runtime_contract ^
+        fr->opaque_session_mix ^
+        fr->opaque_clock_ns ^
+        fr->opaque_port_name ^
+        (uint32_t)fr->opaque_port_rc
+    );
     uint32_t acc_mix = cprisk_vm_mix32_from_acc_i(
         fr->acc,
         fr->opaque_chain ^ logical ^ pc ^ (stage * 0x45D9F3Bu)
     );
+    const uint32_t session_fold = cprisk_vmp_avalanche32_i(
+        fr->session_mix ^
+        fr->opaque_session_mix ^
+        fr->opaque_runtime_fold ^
+        fr->opaque_thread_mix ^
+        runtime_mix ^
+        runtime_contract ^
+        runtime_path ^
+        cprisk_vm_dispatch_bait_seed_i(fr->path_lane ^ logical, stage)
+    );
+    fr->session_mix = cprisk_vmp_avalanche32_i(
+        fr->session_mix ^
+        runtime_mix ^
+        runtime_contract ^
+        runtime_path ^
+        fr->opaque_session_mix ^
+        fr->opaque_rt_nonce ^
+        cprisk_vmp_rotl32_i(fr->opaque_chain, (logical & 7u) + 1u) ^
+        stage
+    );
+    if (fr->session_mix == 0u)
+        fr->session_mix = 0x31415927u ^ logical ^ stage;
+    fr->opaque_rt_nonce = cprisk_vmp_avalanche32_i(
+        fr->opaque_rt_nonce ^
+        runtime_mix ^
+        runtime_contract ^
+        session_fold ^
+        (uint32_t)fr->steps ^
+        logical ^
+        (uint32_t)imm ^
+        (uint32_t)(imm >> 32u) ^
+        fr->session_mix ^
+        fr->opaque_session_mix ^
+        runtime_path
+    );
+    if (fr->opaque_rt_nonce == 0u)
+        fr->opaque_rt_nonce = 0x6D2B79F5u ^ stage;
     uint32_t chain =
         fr->opaque_chain ^
         acc_mix ^
         (uint32_t)imm ^
         (uint32_t)(imm >> 32u) ^
         fr->opaque_rt_nonce ^
+        runtime_mix ^
+        runtime_contract ^
+        runtime_path ^
+        session_fold ^
+        fr->session_mix ^
+        fr->opaque_session_mix ^
         cprisk_vm_dispatch_bait_seed_i(stage ^ logical, fr->path_lane) ^
         cprisk_vmp_relro_bait_mix_i();
     chain = cprisk_vmp_avalanche32_i(chain);
     if (chain == 0u)
         chain = 0xA511E9B3u ^ stage;
+    fr->opaque_session_mix = cprisk_vmp_avalanche32_i(
+        fr->opaque_session_mix ^
+        fr->session_mix ^
+        runtime_mix ^
+        runtime_contract ^
+        runtime_path ^
+        session_fold ^
+        chain ^
+        cprisk_vm_dispatch_bait_seed_i(fr->path_lane + stage, logical ^ (uint32_t)fr->steps)
+    );
+    if (fr->opaque_session_mix == 0u)
+        fr->opaque_session_mix = 0xDB4F0B91u ^ stage ^ logical;
+    fr->opaque_runtime_fold = cprisk_vmp_avalanche32_i(
+        fr->opaque_runtime_fold ^
+        chain ^
+        session_fold ^
+        runtime_contract ^
+        runtime_path ^
+        fr->session_mix ^
+        fr->opaque_session_mix ^
+        pc ^
+        logical
+    );
+    fr->opaque_thread_mix = cprisk_vmp_avalanche32_i(
+        fr->opaque_thread_mix ^
+        chain ^
+        fr->opaque_rt_nonce ^
+        runtime_path ^
+        fr->opaque_session_mix ^
+        logical
+    );
     fr->opaque_chain = chain;
     return chain;
 }
@@ -2251,12 +2862,59 @@ static int cprisk_vm_opaque_dead_branch_i(cprisk_vm_interp_frame_t *fr,
                                           uint32_t stage) {
     const uint32_t chain = cprisk_vm_opaque_chain_advance_i(fr, logical, imm, pc, stage);
     const uint32_t rel = cprisk_vmp_relro_bait_mix_i();
+    const uint32_t runtime_contract =
+        cprisk_vm_opaque_runtime_contract_mix_i(
+            fr,
+            logical ^ (chain & 0xFFu),
+            pc,
+            stage,
+            chain ^ rel ^ (uint32_t)imm ^ (uint32_t)(imm >> 32u)
+        );
+    const uint32_t runtime_path = cprisk_vmp_avalanche32_i(
+        runtime_contract ^
+        fr->opaque_session_mix ^
+        fr->opaque_clock_ns ^
+        fr->opaque_port_name ^
+        (uint32_t)fr->opaque_port_rc ^
+        chain
+    );
+    const uint32_t runtime_fold = cprisk_vmp_avalanche32_i(
+        fr->opaque_runtime_fold ^
+        fr->opaque_thread_mix ^
+        fr->opaque_rt_nonce ^
+        fr->session_mix ^
+        fr->opaque_session_mix ^
+        runtime_contract ^
+        runtime_path ^
+        rel ^
+        cprisk_vm_dispatch_bait_seed_i(fr->path_lane + stage, logical)
+    );
     uint32_t p = cprisk_vmp_avalanche32_i(
-        chain ^ rel ^ stage * 0x9E3779B9u ^ (uint32_t)pc ^ (uint32_t)(logical * 0xC2B2u)
+        chain ^
+        rel ^
+        runtime_fold ^
+        runtime_contract ^
+        fr->session_mix ^
+        fr->opaque_session_mix ^
+        runtime_path ^
+        stage * 0x9E3779B9u ^
+        (uint32_t)pc ^
+        (uint32_t)(logical * 0xC2B2u)
     );
     p ^= (uint32_t)(imm ^ (imm >> 32));
-    uint32_t q = cprisk_vmp_rotl32_i(p, (stage & 15u) + 1u)
-        ^ cprisk_vmp_rotr32_i((uint32_t)(imm >> 11), 7);
+    uint32_t q = cprisk_vmp_rotl32_i(
+        p ^ runtime_fold ^ runtime_contract ^ fr->opaque_session_mix ^ runtime_path,
+        (stage & 15u) + 1u
+    ) ^ cprisk_vmp_rotr32_i(
+        (uint32_t)(imm >> 11) ^ runtime_fold ^ fr->session_mix ^ fr->opaque_session_mix ^ runtime_path,
+        7u
+    );
+    const uint32_t clock_mask =
+        (fr->opaque_clock_rc == 0) ? ((fr->opaque_clock_ns & 7u) | 1u) : 0u;
+    const uint32_t port_mask =
+        (fr->opaque_port_name != 0u) ? ((fr->opaque_port_name & 7u) | 1u) : 0u;
+    const uint32_t rc_mask =
+        (fr->opaque_port_rc == 0) ? 1u : 0u;
 
     if (p != 0u && (p + 0xFFFFFFFFu) == 0u && p != 1u)
         return 1;
@@ -2268,7 +2926,54 @@ static int cprisk_vm_opaque_dead_branch_i(cprisk_vm_interp_frame_t *fr,
         return 1;
     if ((p | p) < (p & p))
         return 1;
-    uint32_t r = cprisk_vmp_avalanche32_i(chain ^ fr->opaque_rt_nonce ^ rel ^ (uint32_t)fr->steps);
+    if (clock_mask != 0u
+        && cprisk_vmp_rotl32_i(runtime_path ^ runtime_fold, clock_mask & 31u)
+            == cprisk_vmp_rotl32_i(runtime_path ^ runtime_fold, clock_mask & 31u) + clock_mask) {
+        return 1;
+    }
+    if (port_mask != 0u && ((runtime_path ^ port_mask) == runtime_path))
+        return 1;
+    if (rc_mask != 0u && ((runtime_contract + rc_mask) == runtime_contract))
+        return 1;
+    if (fr->opaque_pid <= 0 && ((runtime_contract ^ fr->opaque_session_mix) & 1u) != 0u)
+        return 1;
+#if defined(__APPLE__)
+    if (fr->opaque_port_rc == KERN_SUCCESS && fr->opaque_port_name == (uint32_t)MACH_PORT_NULL)
+        return 1;
+    pthread_t self = pthread_self();
+    if (pthread_equal(self, self) == 0 && ((runtime_contract ^ fr->opaque_thread_mix) & 1u) != 0u)
+        return 1;
+    uint64_t tid_now = 0u;
+    if (pthread_threadid_np(NULL, &tid_now) == 0
+        && tid_now == 0u
+        && ((runtime_contract ^ chain) & 2u) != 0u) {
+        return 1;
+    }
+    struct timespec chk_ts;
+    memset(&chk_ts, 0, sizeof(chk_ts));
+    int chk_rc = clock_gettime(CLOCK_MONOTONIC, &chk_ts);
+    if (chk_rc == 0
+        && (uint32_t)chk_ts.tv_nsec >= 1000000000u
+        && ((runtime_contract ^ fr->opaque_rt_nonce) & 4u) != 0u) {
+        return 1;
+    }
+    if (((runtime_contract ^ stage ^ logical) & 3u) == 0u) {
+        mach_port_t dead_port = mach_thread_self();
+        kern_return_t dead_port_rc = mach_port_deallocate(mach_task_self(), dead_port);
+        if (dead_port_rc == KERN_SUCCESS && dead_port == MACH_PORT_NULL)
+            return 1;
+    }
+#endif
+    uint32_t r = cprisk_vmp_avalanche32_i(
+        chain ^
+        fr->opaque_rt_nonce ^
+        rel ^
+        runtime_fold ^
+        runtime_contract ^
+        fr->session_mix ^
+        fr->opaque_session_mix ^
+        (uint32_t)fr->steps
+    );
     if (r != 0u && (r + 0xFFFFFFFFu) == 0u && r != 1u)
         return 1;
     (void)fr->opaque_pid;
@@ -2276,7 +2981,226 @@ static int cprisk_vm_opaque_dead_branch_i(cprisk_vm_interp_frame_t *fr,
     return 0;
 }
 
-/* Opcode handlers and \c cprisk_vm_oph_table live in \c cprisk_vm_oph_*.c. */
+/* Opcode handlers live in \c cprisk_vm_oph_*.c; single-access materialization lives in \c cprisk_vm_oph_table.c. */
+
+static int cprisk_vm_ct_memeq32_i(const uint8_t *a, const uint8_t *b) {
+    uint8_t d = 0;
+    for (size_t i = 0; i < 32u; i++)
+        d |= (uint8_t)(a[i] ^ b[i]);
+    return d == 0 ? 1 : 0;
+}
+
+static void cprisk_vm_wb_sidefx_build_input_i(const cprisk_vm_interp_frame_t *fr,
+                                              uint8_t logical,
+                                              uint64_t imm,
+                                              uint32_t pc,
+                                              uint32_t hvar,
+                                              uint8_t out32[32]) {
+    cprisk_sha256_ctx ctx;
+    cprisk_sha256_init(&ctx);
+    cprisk_sha256_update(&ctx, fr->acc, sizeof(fr->acc));
+    uint8_t le64[8];
+    memcpy(le64, &fr->func_id, sizeof(le64));
+    cprisk_sha256_update(&ctx, le64, sizeof(le64));
+    uint32_t mix =
+        fr->opaque_chain ^
+        fr->session_mix ^
+        fr->opaque_session_mix ^
+        (uint32_t)logical ^
+        pc ^
+        (uint32_t)fr->steps ^
+        hvar;
+    cprisk_sha256_update(&ctx, (const uint8_t *)&mix, sizeof(mix));
+    cprisk_sha256_update(&ctx, (const uint8_t *)&imm, sizeof(imm));
+    uint64_t vpc_pack = fr->vpc_a ^ (fr->vpc_b << 1u);
+    cprisk_sha256_update(&ctx, (const uint8_t *)&vpc_pack, sizeof(vpc_pack));
+    cprisk_sha256_final(&ctx, out32);
+}
+
+static int cprisk_vm_wb_sidefx_should_run_i(const cprisk_vm_interp_frame_t *fr, uint8_t logical) {
+    if (fr->m3_opaque != 0u) {
+        if ((fr->steps & 31u) == 0u)
+            return 1;
+    }
+    if ((fr->steps % CPRISK_VM_WB_SIDE_PERIOD) == 0u && fr->steps != 0u)
+        return 1;
+    switch (logical) {
+    case CPRISK_VM_OP_RET:
+    case CPRISK_VM_OP_HALT:
+    case CPRISK_VM_OP_VM_CALL_FUNC:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static void cprisk_vm_wb_sidefx_apply_out_i(cprisk_vm_interp_frame_t *fr,
+                                            uint8_t logical,
+                                            const uint8_t wb_out[32]) {
+    const uint32_t w0 = cprisk_read_le_u32_i(wb_out);
+    const uint32_t w1 = cprisk_read_le_u32_i(wb_out + 4u);
+    const uint32_t w2 = cprisk_read_le_u32_i(wb_out + 8u);
+    const uint32_t w3 = cprisk_read_le_u32_i(wb_out + 12u);
+    fr->opaque_chain = cprisk_vmp_avalanche32_i(
+        fr->opaque_chain ^ w0 ^ ((uint32_t)logical * 0x9E3779B9u) ^ (uint32_t)(fr->steps * 0x27D4EB2Du)
+    );
+    fr->opaque_session_mix = cprisk_vmp_avalanche32_i(fr->opaque_session_mix ^ w1 ^ fr->session_mix ^ w3);
+    fr->opaque_rt_nonce = cprisk_vmp_avalanche32_i(
+        fr->opaque_rt_nonce ^ w2 ^ fr->opaque_chain ^ (uint32_t)(fr->func_id >> 32u)
+    );
+    fr->session_mix = cprisk_vmp_avalanche32_i(
+        fr->session_mix ^ w3 ^ cprisk_vmp_rotl32_i(w1, (logical & 7u) + 1u) ^ fr->opaque_chain
+    );
+    if (fr->opaque_chain == 0u)
+        fr->opaque_chain = 0x31415927u ^ (uint32_t)logical;
+    if (fr->session_mix == 0u)
+        fr->session_mix = 0x7F4A7C15u ^ (uint32_t)fr->steps;
+}
+
+static void cprisk_vm_wb_sidefx_fallback_i(cprisk_vm_interp_frame_t *fr,
+                                           uint8_t logical,
+                                           const uint8_t digest[32]) {
+    const uint32_t w0 = cprisk_read_le_u32_i(digest);
+    const uint32_t w1 = cprisk_read_le_u32_i(digest + 8u);
+    fr->opaque_chain = cprisk_vmp_avalanche32_i(fr->opaque_chain ^ w0 ^ (uint32_t)logical);
+    fr->session_mix = cprisk_vmp_avalanche32_i(fr->session_mix ^ w1 ^ (uint32_t)fr->steps);
+}
+
+static void cprisk_vm_xor_acc32_i(uint8_t acc[32], const uint8_t xorv[32]) {
+    for (size_t i = 0u; i < 32u; i++)
+        acc[i] ^= xorv[i];
+}
+
+/** Derive a full acc XOR mask from white-box output (diffusion; mask is self-inverse under XOR). */
+static void cprisk_vm_wb_derive_xor_mask_from_wb_out_i(const uint8_t wb_out[32], uint8_t mask[32]) {
+    for (size_t i = 0u; i < 32u; i++) {
+        const size_t j = (i + 13u) % 32u;
+        const size_t k = (i + 29u) % 32u;
+        mask[i] = (uint8_t)(wb_out[i] ^ wb_out[j] ^ wb_out[k] ^ (uint8_t)(i * 0x1Bu));
+    }
+}
+
+static int cprisk_vm_logical_wb_xor_surround_eligible_i(uint8_t logical) {
+    /** Only \c CPRISK_VM_OP_XOR_MIX is XOR-linear on the acc semantic path (mask cancels after handler). */
+    return logical == CPRISK_VM_OP_XOR_MIX ? 1 : 0;
+}
+
+cprisk_vm_flow_t cprisk_vm_dispatch_leaf_wb_wrapped_i(cprisk_vm_interp_frame_t *fr,
+                                                      uint8_t op_raw,
+                                                      uint8_t logical,
+                                                      uint64_t imm,
+                                                      uint32_t pc,
+                                                      uint32_t hvar,
+                                                      cprisk_vm_oph_fn materialized) {
+    /**
+     * Full domain-7 evaluation + opaque/session updates run on every opcode for \c CPRISK_VM_OP_XOR_MIX:
+     * pre-handler PRF drives a self-inverse acc XOR mask (semantics unchanged), so accumulator effects
+     * depend on session-bound white-box material. Other opcodes keep periodic WB in \c cprisk_vm_oph_post_handler_i
+     * to limit SHA256+PRF cost on hot paths.
+     */
+    if (cprisk_vm_logical_wb_xor_surround_eligible_i(logical) == 0) {
+        const cprisk_vm_flow_t inner = materialized(fr, op_raw, logical, imm, pc, hvar);
+        fr->vm_wb_inline_done = 0u;
+        return cprisk_vm_oph_post_handler_i(fr, logical, imm, pc, hvar, inner);
+    }
+
+    uint8_t wb_in[32];
+    uint8_t wb_out[32];
+    uint8_t mask[32];
+    int surround = 0;
+
+    cprisk_vm_wb_sidefx_build_input_i(fr, logical, imm, pc, hvar, wb_in);
+    const int wbr = cprisk_whitebox_evaluate_domain(CPRISK_VM_WB_HANDLER_SIDE_DOMAIN, wb_in, wb_out);
+    if (wbr == 0) {
+        cprisk_vm_wb_derive_xor_mask_from_wb_out_i(wb_out, mask);
+        cprisk_vm_xor_acc32_i(fr->acc, mask);
+        surround = 1;
+    }
+    const cprisk_vm_flow_t inner = materialized(fr, op_raw, logical, imm, pc, hvar);
+    if (surround != 0) {
+        cprisk_vm_xor_acc32_i(fr->acc, mask);
+        cprisk_secure_zero(mask, sizeof(mask));
+    }
+    if (wbr == 0)
+        cprisk_vm_wb_sidefx_apply_out_i(fr, logical, wb_out);
+    else
+        cprisk_vm_wb_sidefx_fallback_i(fr, logical, wb_in);
+    cprisk_secure_zero(wb_in, sizeof(wb_in));
+    cprisk_secure_zero(wb_out, sizeof(wb_out));
+    fr->vm_wb_inline_done = 1u;
+    return cprisk_vm_oph_post_handler_i(fr, logical, imm, pc, hvar, inner);
+}
+
+static int cprisk_vm_bc_seg_hash_should_check_i(const cprisk_vm_interp_frame_t *fr, uint8_t logical) {
+    if (fr->bc_seg_hash_enabled == 0u)
+        return 0;
+    if (fr->steps == 0u)
+        return 0;
+    /** One early check after the first retired step catches runtime patch before the first period boundary. */
+    if (fr->steps == 1u)
+        return 1;
+    switch (logical) {
+    case CPRISK_VM_OP_RET:
+    case CPRISK_VM_OP_HALT:
+    case CPRISK_VM_OP_VM_CALL_FUNC:
+        return 1;
+    default:
+        break;
+    }
+    if ((fr->steps % CPRISK_VM_BC_HASH_PERIOD) != 0u)
+        return 0;
+    if (fr->bc_last_hash_step != 0u
+        && (uint32_t)fr->steps - fr->bc_last_hash_step < CPRISK_VM_BC_HASH_MIN_INTERVAL) {
+        return 0;
+    }
+    return 1;
+}
+
+cprisk_vm_flow_t cprisk_vm_oph_post_handler_i(cprisk_vm_interp_frame_t *fr,
+                                              uint8_t logical,
+                                              uint64_t imm,
+                                              uint32_t pc,
+                                              uint32_t hvar,
+                                              cprisk_vm_flow_t inner) {
+    if (!fr || !fr->out)
+        return inner;
+
+    if (cprisk_vm_bc_seg_hash_should_check_i(fr, logical)) {
+        uint8_t now[32];
+        if (fr->code && fr->blen > 0u)
+            cprisk_sha256(fr->code, (size_t)fr->blen, now);
+        else
+            memset(now, 0, sizeof(now));
+        const int ok = cprisk_vm_ct_memeq32_i(now, fr->bc_seg_hash_expect);
+        cprisk_secure_zero(now, sizeof(now));
+        if (!ok) {
+            fr->out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
+            fr->out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
+            cprisk_vm_self_fail_acc_i(fr->acc, fr->func_id);
+            return CPRISK_VM_FLOW_LEAVE;
+        }
+        fr->bc_last_hash_step = (uint32_t)fr->steps;
+    }
+
+    if (fr->vm_wb_inline_done != 0u) {
+        return inner;
+    }
+
+    if (cprisk_vm_wb_sidefx_should_run_i(fr, logical)) {
+        uint8_t wb_in[32];
+        uint8_t wb_out[32];
+        cprisk_vm_wb_sidefx_build_input_i(fr, logical, imm, pc, hvar, wb_in);
+        const int wbr = cprisk_whitebox_evaluate_domain(CPRISK_VM_WB_HANDLER_SIDE_DOMAIN, wb_in, wb_out);
+        if (wbr == 0)
+            cprisk_vm_wb_sidefx_apply_out_i(fr, logical, wb_out);
+        else
+            cprisk_vm_wb_sidefx_fallback_i(fr, logical, wb_in);
+        cprisk_secure_zero(wb_in, sizeof(wb_in));
+        cprisk_secure_zero(wb_out, sizeof(wb_out));
+    }
+
+    return inner;
+}
 
 static cprisk_vm_flow_t cprisk_vm_dispatch_oph_core_i(cprisk_vm_interp_frame_t *fr,
                                                       uint8_t op_raw,
@@ -2288,12 +3212,13 @@ static cprisk_vm_flow_t cprisk_vm_dispatch_oph_core_i(cprisk_vm_interp_frame_t *
         return cprisk_vm_oph_poison(fr, op_raw, logical, imm, pc, hvar);
     if (logical >= CPRISK_VM_OPH_TABLE_LEN)
         return cprisk_vm_oph_unknown(fr, op_raw, logical, imm, pc, hvar);
-    return cprisk_vm_oph_table[logical](fr, op_raw, logical, imm, pc, hvar);
+    return cprisk_vm_dispatch_oph_materialized_i(fr, op_raw, logical, imm, pc, hvar);
 }
 
 void cprisk_vm_interp_loop_a(struct cprisk_vm_interp_frame *fr)
 {
     while (fr->steps < CPRISK_VM_MAX_STEPS) {
+        fr->vm_wb_inline_done = 0u;
         if (fr->path_lane == 0u) {
             cprisk_vm_interp_core_marker0_i();
         } else if (fr->path_lane == 1u) {
@@ -2412,7 +3337,7 @@ void cprisk_vm_interp_loop_a(struct cprisk_vm_interp_frame *fr)
 
         const uint8_t op_raw = fr->code[pc];
         uint8_t op = op_raw;
-        const uint32_t pc_index = pc / CPRISK_VM_INSN_WIDTH;
+            const uint32_t pc_index = pc / CPRISK_VM_INSN_WIDTH;
         if (fr->enc_op != 0u) {
             op = (uint8_t)(op_raw ^ cprisk_vmp_opcode_mix_byte_i(fr->func_id, pc_index, fr->opcode_seed_root));
         }
@@ -2479,13 +3404,14 @@ void cprisk_vm_interp_loop_a(struct cprisk_vm_interp_frame *fr)
 
     }
 vm_leave_a:
-    cprisk_vm_interp_finish_run_i(fr);
+    cprisk_vm_interp_finish_run_lane0_i(fr);
 }
 
 
 static void cprisk_vm_interp_loop_b(struct cprisk_vm_interp_frame *fr)
 {
     while (fr->steps < CPRISK_VM_MAX_STEPS) {
+        fr->vm_wb_inline_done = 0u;
         if (fr->path_lane == 0u) {
             cprisk_vm_interp_core_marker0_i();
         } else if (fr->path_lane == 1u) {
@@ -2679,19 +3605,23 @@ static void cprisk_vm_interp_loop_b(struct cprisk_vm_interp_frame *fr)
 
     }
 vm_leave_b:
-    cprisk_vm_interp_finish_run_i(fr);
+    if (fr->path_lane == 1u)
+        cprisk_vm_interp_finish_run_lane1_i(fr);
+    else
+        cprisk_vm_interp_finish_run_lane2_i(fr);
 }
 
-static void cprisk_vm_run_program_i(const struct mach_header_64 *hdr,
-                                    const uint8_t *d_sec,
-                                    const cprisk_vmp_dispatch_header_t *dhdr,
+static int cprisk_vm_prepare_program_i(const struct mach_header_64 *hdr,
+                                       const uint8_t *d_sec,
+                                       const cprisk_vmp_dispatch_header_t *dhdr,
                                     const uint8_t *b_sec,
                                     unsigned long bsz,
                                     const cprisk_vmp_bytecode_header_t *bh,
                                     uint32_t path_lane,
                                     uint64_t func_id,
                                     uint8_t acc[32],
-                                    cprisk_vm_run_result_t *out) {
+                                       cprisk_vm_run_result_t *out,
+                                       cprisk_vm_interp_frame_t *fr) {
     const size_t bc_hdr_total = cprisk_vmp_bytecode_header_total_bytes_i(bh);
     const size_t entry_stride = cprisk_vmp_bytecode_entry_stride_i(bh);
 
@@ -2720,7 +3650,7 @@ static void cprisk_vm_run_program_i(const struct mach_header_64 *hdr,
         out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
         out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
         cprisk_vm_wb_finalize_i(out, acc);
-        return;
+        return 0;
     }
 
     if ((bh->reserved & CPRISK_VMP_BC_FLAG_PER_ENTRY_VPC) != 0u) {
@@ -2734,7 +3664,7 @@ static void cprisk_vm_run_program_i(const struct mach_header_64 *hdr,
     uint64_t encoded_pc = 0u;
     if (!cprisk_vm_encode_pc_i(bh, 0u, vpc_a, vpc_b, &encoded_pc, out)) {
         cprisk_vm_wb_finalize_i(out, acc);
-        return;
+        return 0;
     }
     uint32_t semantic_family = 1u;
     uint32_t mixed_predicate_profile = 0u;
@@ -2769,7 +3699,7 @@ static void cprisk_vm_run_program_i(const struct mach_header_64 *hdr,
         out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
         out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
         cprisk_vm_wb_finalize_i(out, acc);
-        return;
+        return 0;
     }
 
     uint64_t decode_fault_mask = 0u;
@@ -2786,7 +3716,7 @@ static void cprisk_vm_run_program_i(const struct mach_header_64 *hdr,
             out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
             out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
             cprisk_vm_wb_finalize_i(out, acc);
-            return;
+            return 0;
         }
         size_t imm_seed_off = CPRISK_VMP_BYTECODE_HEADER_CORE_BYTES;
         if (cprisk_vmp_bytecode_has_m2_i(bh))
@@ -2795,7 +3725,7 @@ static void cprisk_vm_run_program_i(const struct mach_header_64 *hdr,
             out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
             out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
             cprisk_vm_wb_finalize_i(out, acc);
-            return;
+            return 0;
         }
         imm_seed_root = cprisk_read_le_u64_i(b_sec + imm_seed_off);
     }
@@ -2805,7 +3735,7 @@ static void cprisk_vm_run_program_i(const struct mach_header_64 *hdr,
             out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
             out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
             cprisk_vm_wb_finalize_i(out, acc);
-            return;
+            return 0;
         }
         size_t op_seed_off = CPRISK_VMP_BYTECODE_HEADER_CORE_BYTES;
         if (cprisk_vmp_bytecode_has_m2_i(bh))
@@ -2816,7 +3746,7 @@ static void cprisk_vm_run_program_i(const struct mach_header_64 *hdr,
             out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
             out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
             cprisk_vm_wb_finalize_i(out, acc);
-            return;
+            return 0;
         }
         opcode_seed_root = cprisk_read_le_u64_i(b_sec + op_seed_off);
     }
@@ -2837,62 +3767,170 @@ static void cprisk_vm_run_program_i(const struct mach_header_64 *hdr,
         (max_subcall_depth >= 8u) ||
         ((bh->reserved & CPRISK_VMP_BC_FLAG_ANTI_SYMBOLIC_HEAVY) != 0u);
 
-    cprisk_vm_interp_frame_t fr;
-    memset(&fr, 0, sizeof(fr));
-    fr.hdr = hdr;
-    fr.b_sec = b_sec;
-    fr.bsz = bsz;
-    fr.bh = bh;
-    fr.dispatch_sec = d_sec;
-    fr.dispatch_hdr = dhdr;
-    fr.dispatch_hdr_flags = dhdr ? dhdr->flags : 0u;
-    fr.dispatch_decode_seed = cprisk_vmp_dispatch_keystream_seed_i(d_sec, dhdr);
+    memset(fr, 0, sizeof(*fr));
+    fr->hdr = hdr;
+    fr->b_sec = b_sec;
+    fr->bsz = bsz;
+    fr->bh = bh;
+    fr->dispatch_sec = d_sec;
+    fr->dispatch_hdr = dhdr;
+    fr->dispatch_hdr_flags = dhdr ? dhdr->flags : 0u;
+    fr->dispatch_decode_seed = cprisk_vmp_dispatch_keystream_seed_i(d_sec, dhdr);
     if ((bh->reserved & CPRISK_VMP_BC_FLAG_M3_SELFCHK) != 0u && m3_seal_mix != 0u)
-        fr.dispatch_decode_seed ^= m3_seal_mix;
-    fr.path_lane = path_lane;
-    fr.func_id = func_id;
-    fr.out = out;
-    fr.bc_hdr_total = bc_hdr_total;
-    fr.entry_stride = entry_stride;
-    fr.vpc_a = vpc_a;
-    fr.vpc_b = vpc_b;
-    fr.code = code;
-    fr.blen = blen;
-    fr.encoded_pc = encoded_pc;
-    fr.semantic_family = semantic_family;
-    fr.mixed_predicate_profile = mixed_predicate_profile;
-    fr.max_subcall_depth = max_subcall_depth;
-    memcpy(fr.return_stack, return_stack, sizeof(return_stack));
-    fr.return_sp = return_sp;
-    memcpy(fr.vm_snap, vm_snap, sizeof(vm_snap));
-    fr.vm_snap_sp = vm_snap_sp;
-    memcpy(fr.vregs, vregs, sizeof(vregs));
-    fr.enc_imm = enc_imm;
-    fr.enc_op = enc_op;
-    fr.imm_seed_root = imm_seed_root;
-    fr.opcode_seed_root = opcode_seed_root;
-    fr.raw_bind_root = raw_bind_root;
-    fr.m3_opaque = m3_opaque;
-    fr.m3_dead = m3_dead;
-    fr.vm_anti_symbolic_heavy = vm_anti_symbolic_heavy;
-    fr.session_mix = cprisk_vm_session_mix_i();
-    fr.decode_fault_mask = decode_fault_mask;
-    memcpy(fr.acc, acc, sizeof(fr.acc));
-    cprisk_vm_opaque_runtime_init_i(&fr);
-    fr.steps = 0u;
-
-    if (path_lane == 0u)
-        cprisk_vm_interp_loop_a(&fr);
-    else
-        cprisk_vm_interp_loop_b(&fr);
-
-    memcpy(acc, fr.acc, sizeof(fr.acc));
+        fr->dispatch_decode_seed ^= m3_seal_mix;
+    fr->path_lane = path_lane;
+    fr->func_id = func_id;
+    fr->out = out;
+    fr->bc_hdr_total = bc_hdr_total;
+    fr->entry_stride = entry_stride;
+    fr->vpc_a = vpc_a;
+    fr->vpc_b = vpc_b;
+    fr->code = code;
+    fr->blen = blen;
+    fr->bc_seg_hash_enabled = 0u;
+    fr->bc_last_hash_step = 0u;
+    memset(fr->bc_seg_hash_expect, 0, sizeof(fr->bc_seg_hash_expect));
+    if ((bh->reserved & CPRISK_VMP_BC_FLAG_BC_SEG_RUNTIME_SHA256) != 0u && code != NULL && blen > 0u) {
+        cprisk_sha256(code, (size_t)blen, fr->bc_seg_hash_expect);
+        fr->bc_seg_hash_enabled = 1u;
+    }
+    fr->encoded_pc = encoded_pc;
+    fr->semantic_family = semantic_family;
+    fr->mixed_predicate_profile = mixed_predicate_profile;
+    fr->max_subcall_depth = max_subcall_depth;
+    memcpy(fr->return_stack, return_stack, sizeof(return_stack));
+    fr->return_sp = return_sp;
+    memcpy(fr->vm_snap, vm_snap, sizeof(vm_snap));
+    fr->vm_snap_sp = vm_snap_sp;
+    memcpy(fr->vregs, vregs, sizeof(vregs));
+    fr->enc_imm = enc_imm;
+    fr->enc_op = enc_op;
+    fr->imm_seed_root = imm_seed_root;
+    fr->opcode_seed_root = opcode_seed_root;
+    fr->raw_bind_root = raw_bind_root;
+    fr->m3_opaque = m3_opaque;
+    fr->m3_dead = m3_dead;
+    fr->vm_anti_symbolic_heavy = vm_anti_symbolic_heavy;
+    fr->session_mix = cprisk_vm_session_mix_i();
+    fr->decode_fault_mask = decode_fault_mask;
+    memcpy(fr->acc, acc, sizeof(fr->acc));
+    cprisk_vm_opaque_runtime_init_i(fr);
+    fr->steps = 0u;
+    return 1;
 }
 
-static int cprisk_vm_execute_engine_i(uint64_t func_id,
+static void cprisk_vm_run_prelude_lane0_i(cprisk_vm_interp_frame_t *fr) {
+    fr->opaque_chain = cprisk_vmp_avalanche32_i(
+        fr->opaque_chain ^
+        cprisk_vm_dispatch_bait_seed_i(0u, fr->semantic_family ^ 0x11u)
+    );
+}
+
+static void cprisk_vm_run_prelude_lane1_i(cprisk_vm_interp_frame_t *fr) {
+    const uint32_t lane_mix =
+        cprisk_vm_dispatch_bait_seed_i(1u, fr->semantic_family ^ fr->mixed_predicate_profile);
+    fr->opaque_rt_nonce = cprisk_vmp_avalanche32_i(
+        fr->opaque_rt_nonce ^ lane_mix ^ fr->opaque_thread_mix ^ (uint32_t)fr->func_id
+    );
+    fr->opaque_chain = cprisk_vmp_avalanche32_i(
+        fr->opaque_chain ^ fr->opaque_rt_nonce ^ lane_mix ^ fr->session_mix
+    );
+}
+
+static void cprisk_vm_run_prelude_lane2_i(cprisk_vm_interp_frame_t *fr) {
+    const uint32_t lane_mix =
+        cprisk_vm_dispatch_bait_seed_i(2u, fr->max_subcall_depth ^ (uint32_t)(fr->func_id >> 32u));
+    fr->session_mix = cprisk_vmp_avalanche32_i(
+        fr->session_mix ^ lane_mix ^ fr->opaque_runtime_fold ^ (uint32_t)fr->func_id
+    );
+    if (fr->session_mix == 0u)
+        fr->session_mix = 0xC3EF4D27u ^ fr->path_lane;
+    fr->opaque_runtime_fold = cprisk_vmp_avalanche32_i(
+        fr->opaque_runtime_fold ^ fr->session_mix ^ lane_mix ^ fr->opaque_rt_nonce
+    );
+    fr->opaque_chain = cprisk_vmp_avalanche32_i(
+        fr->opaque_chain ^ fr->opaque_runtime_fold ^ fr->session_mix ^ lane_mix
+    );
+}
+
+static void cprisk_vm_run_finish_lane0_i(cprisk_vm_interp_frame_t *fr, uint8_t acc[32]) {
+    memcpy(acc, fr->acc, sizeof(fr->acc));
+}
+
+static void cprisk_vm_run_finish_lane1_i(cprisk_vm_interp_frame_t *fr, uint8_t acc[32]) {
+    fr->opaque_thread_mix = cprisk_vmp_avalanche32_i(
+        fr->opaque_thread_mix ^
+        fr->opaque_chain ^
+        fr->opaque_rt_nonce ^
+        cprisk_vm_dispatch_bait_seed_i(1u, (uint32_t)fr->steps)
+    );
+    memcpy(acc, fr->acc, sizeof(fr->acc));
+}
+
+static void cprisk_vm_run_finish_lane2_i(cprisk_vm_interp_frame_t *fr, uint8_t acc[32]) {
+    fr->opaque_runtime_fold = cprisk_vmp_avalanche32_i(
+        fr->opaque_runtime_fold ^
+        fr->opaque_chain ^
+        fr->session_mix ^
+        cprisk_vm_dispatch_bait_seed_i(2u, fr->path_lane + 3u)
+    );
+    memcpy(acc, fr->acc, sizeof(fr->acc));
+}
+
+static void cprisk_vm_run_program_lane0_i(const struct mach_header_64 *hdr,
+                                          const uint8_t *d_sec,
+                                          const cprisk_vmp_dispatch_header_t *dhdr,
+                                          const uint8_t *b_sec,
+                                          unsigned long bsz,
+                                          const cprisk_vmp_bytecode_header_t *bh,
+                                          uint64_t func_id,
+                                          uint8_t acc[32],
+                                          cprisk_vm_run_result_t *out) {
+    cprisk_vm_interp_frame_t fr;
+    if (!cprisk_vm_prepare_program_i(hdr, d_sec, dhdr, b_sec, bsz, bh, 0u, func_id, acc, out, &fr))
+        return;
+    cprisk_vm_run_prelude_lane0_i(&fr);
+        cprisk_vm_interp_loop_a(&fr);
+    cprisk_vm_run_finish_lane0_i(&fr, acc);
+}
+
+static void cprisk_vm_run_program_lane1_i(const struct mach_header_64 *hdr,
+                                          const uint8_t *d_sec,
+                                          const cprisk_vmp_dispatch_header_t *dhdr,
+                                          const uint8_t *b_sec,
+                                          unsigned long bsz,
+                                          const cprisk_vmp_bytecode_header_t *bh,
+                                          uint64_t func_id,
+                                          uint8_t acc[32],
+                                          cprisk_vm_run_result_t *out) {
+    cprisk_vm_interp_frame_t fr;
+    if (!cprisk_vm_prepare_program_i(hdr, d_sec, dhdr, b_sec, bsz, bh, 1u, func_id, acc, out, &fr))
+        return;
+    cprisk_vm_run_prelude_lane1_i(&fr);
+        cprisk_vm_interp_loop_b(&fr);
+    cprisk_vm_run_finish_lane1_i(&fr, acc);
+}
+
+static void cprisk_vm_run_program_lane2_i(const struct mach_header_64 *hdr,
+                                          const uint8_t *d_sec,
+                                          const cprisk_vmp_dispatch_header_t *dhdr,
+                                          const uint8_t *b_sec,
+                                          unsigned long bsz,
+                                          const cprisk_vmp_bytecode_header_t *bh,
+                                          uint64_t func_id,
+                                          uint8_t acc[32],
+                                          cprisk_vm_run_result_t *out) {
+    cprisk_vm_interp_frame_t fr;
+    if (!cprisk_vm_prepare_program_i(hdr, d_sec, dhdr, b_sec, bsz, bh, 2u, func_id, acc, out, &fr))
+        return;
+    cprisk_vm_run_prelude_lane2_i(&fr);
+    cprisk_vm_interp_loop_b(&fr);
+    cprisk_vm_run_finish_lane2_i(&fr, acc);
+}
+
+static int cprisk_vm_execute_lane0_i(uint64_t func_id,
                                       cprisk_vm_run_result_t *out,
-                                      const void *hdr_sym,
-                                      unsigned path_lane) {
+                                     const void *hdr_sym) {
     if (!out)
         return -1;
 
@@ -2962,34 +4000,166 @@ static int cprisk_vm_execute_engine_i(uint64_t func_id,
 
     const cprisk_vmp_dispatch_header_t *dhdr = (const cprisk_vmp_dispatch_header_t *)(const void *)d_sec;
 
-    cprisk_vm_run_program_i(
-        hdr,
-        d_sec,
-        dhdr,
-        b_sec,
-        bsz,
-        bh,
-        (uint32_t)path_lane,
-        func_id,
-        acc,
-        out
-    );
+    cprisk_vm_run_program_lane0_i(hdr, d_sec, dhdr, b_sec, bsz, bh, func_id, acc, out);
 
     return 0;
 }
 
-int cprisk_vm_execute(uint64_t func_id, cprisk_vm_run_result_t *out) {
-    return cprisk_vm_execute_engine_i(func_id, out, (const void *)&cprisk_vm_execute, 0u);
+static int cprisk_vm_execute_lane1_i(uint64_t func_id,
+                                     cprisk_vm_run_result_t *out,
+                                     const void *hdr_sym) {
+    if (!out)
+        return -1;
+
+    memset(out, 0, sizeof(*out));
+    out->last_opcode = 0xFFFFFFFFu;
+    out->last_dispatch_class = 0xFFFFFFFFu;
+    out->whitebox_domain_rc = UINT32_MAX;
+
+    uint8_t acc[32];
+    memset(acc, 0, sizeof(acc));
+    (void)cprisk_get_runtime_material(acc);
+
+    volatile uint32_t lane_probe =
+        cprisk_vmp_avalanche32_i((uint32_t)func_id ^ cprisk_vmp_rotl32_i((uint32_t)(func_id >> 32u), 7u));
+    lane_probe ^= cprisk_vm_dispatch_bait_seed_i(1u, (uint32_t)func_id);
+    acc[(lane_probe >> 3u) & 31u] ^= 0u;
+
+#if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+    if (cprisk_is_being_traced_sysctl_only() != 0 ||
+        cprisk_mach_trace_suspicious() != 0 ||
+        cprisk_is_being_traced() != 0) {
+        out->poison_flags |= CPRISK_VM_POISON_TRACED;
+        out->status = CPRISK_VM_STATUS_TRACED_SHORTCIRCUIT;
+        cprisk_vm_traced_decoy_acc_i(acc);
+        memcpy(out->acc, acc, sizeof(acc));
+        uint8_t wb_out[32];
+        int wbr = cprisk_whitebox_evaluate_domain(5u, out->acc, wb_out);
+        out->whitebox_domain_rc = wbr;
+        if (wbr == 0)
+            memcpy(out->acc, wb_out, sizeof(wb_out));
+    return 0;
+}
+#endif
+
+    cprisk_frida_runtime_snapshot_t fr;
+    memset(&fr, 0, sizeof(fr));
+    if (cprisk_frida_runtime_snapshot(&fr) == 0 && fr.supported != 0u && fr.flags != 0u)
+        out->poison_flags |= CPRISK_VM_POISON_FRIDA;
+
+    const struct mach_header_64 *hdr = cprisk_find_own_header(hdr_sym);
+    if (!hdr) {
+        out->poison_flags |= CPRISK_VM_POISON_DISPATCH;
+        out->status = CPRISK_VM_STATUS_INVALID_DISPATCH;
+        memcpy(out->acc, acc, sizeof(acc));
+        return 0;
+    }
+
+    unsigned long dsz = 0;
+    unsigned long bsz = 0;
+    const uint8_t *d_sec =
+        cprisk_find_section(hdr, CPRISK_ARMOR_SEGMENT_DATA, CPRISK_ARMOR_SECTION_VMP_DISPATCH, &dsz);
+    const uint8_t *b_sec =
+        cprisk_find_section(hdr, CPRISK_ARMOR_SEGMENT_DATA, CPRISK_ARMOR_SECTION_VMP_BYTECODE, &bsz);
+
+    const cprisk_vmp_bytecode_header_t *bh = NULL;
+    if (!cprisk_vmp_headers_ok_i(d_sec, dsz, b_sec, bsz, &bh) || !bh) {
+        out->poison_flags |= CPRISK_VM_POISON_DISPATCH | CPRISK_VM_POISON_BYTECODE;
+        out->status = CPRISK_VM_STATUS_INVALID_DISPATCH;
+        memcpy(out->acc, acc, sizeof(acc));
+        uint8_t wb_out[32];
+        int wbr = cprisk_whitebox_evaluate_domain(5u, out->acc, wb_out);
+        out->whitebox_domain_rc = wbr;
+        if (wbr == 0)
+            memcpy(out->acc, wb_out, sizeof(wb_out));
+        return 0;
+    }
+
+    const cprisk_vmp_dispatch_header_t *dhdr = (const cprisk_vmp_dispatch_header_t *)(const void *)d_sec;
+    cprisk_vm_run_program_lane1_i(hdr, d_sec, dhdr, b_sec, bsz, bh, func_id, acc, out);
+    return 0;
 }
 
-__attribute__((noinline)) static uint64_t cprisk_vm_entry_finish_lane_i(uint64_t func_id,
-                                                                          const void *hdr_sym,
-                                                                          unsigned path_lane) {
-    cprisk_vm_run_result_t result;
-    if (cprisk_vm_execute_engine_i(func_id, &result, hdr_sym, path_lane) != 0)
+static int cprisk_vm_execute_lane2_i(uint64_t func_id,
+                                     cprisk_vm_run_result_t *out,
+                                     const void *hdr_sym) {
+    if (!out)
+        return -1;
+
+    memset(out, 0, sizeof(*out));
+    out->last_opcode = 0xFFFFFFFFu;
+    out->last_dispatch_class = 0xFFFFFFFFu;
+    out->whitebox_domain_rc = UINT32_MAX;
+
+    uint8_t acc[32];
+    memset(acc, 0, sizeof(acc));
+    (void)cprisk_get_runtime_material(acc);
+
+    volatile uint64_t lane_stamp =
+        ((uint64_t)(uintptr_t)hdr_sym ^ func_id ^ UINT64_C(0xA5A5C3C36D2B79F5));
+    lane_stamp ^= lane_stamp >> 29u;
+    acc[(lane_stamp >> 11u) & 31u] ^= 0u;
+
+#if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+    if (cprisk_is_being_traced_sysctl_only() != 0 ||
+        cprisk_mach_trace_suspicious() != 0 ||
+        cprisk_is_being_traced() != 0) {
+        out->poison_flags |= CPRISK_VM_POISON_TRACED;
+        out->status = CPRISK_VM_STATUS_TRACED_SHORTCIRCUIT;
+        cprisk_vm_traced_decoy_acc_i(acc);
+        memcpy(out->acc, acc, sizeof(acc));
+        uint8_t wb_out[32];
+        int wbr = cprisk_whitebox_evaluate_domain(5u, out->acc, wb_out);
+        out->whitebox_domain_rc = wbr;
+        if (wbr == 0)
+            memcpy(out->acc, wb_out, sizeof(wb_out));
         return 0;
-    uint64_t folded = 0;
-    memcpy(&folded, result.acc, sizeof(folded));
+    }
+#endif
+
+    cprisk_frida_runtime_snapshot_t fr;
+    memset(&fr, 0, sizeof(fr));
+    if (cprisk_frida_runtime_snapshot(&fr) == 0 && fr.supported != 0u && fr.flags != 0u)
+        out->poison_flags |= CPRISK_VM_POISON_FRIDA;
+
+    const struct mach_header_64 *hdr = cprisk_find_own_header(hdr_sym);
+    if (!hdr) {
+        out->poison_flags |= CPRISK_VM_POISON_DISPATCH;
+        out->status = CPRISK_VM_STATUS_INVALID_DISPATCH;
+        memcpy(out->acc, acc, sizeof(acc));
+        return 0;
+    }
+
+    unsigned long dsz = 0;
+    unsigned long bsz = 0;
+    const uint8_t *d_sec =
+        cprisk_find_section(hdr, CPRISK_ARMOR_SEGMENT_DATA, CPRISK_ARMOR_SECTION_VMP_DISPATCH, &dsz);
+    const uint8_t *b_sec =
+        cprisk_find_section(hdr, CPRISK_ARMOR_SEGMENT_DATA, CPRISK_ARMOR_SECTION_VMP_BYTECODE, &bsz);
+
+    const cprisk_vmp_bytecode_header_t *bh = NULL;
+    if (!cprisk_vmp_headers_ok_i(d_sec, dsz, b_sec, bsz, &bh) || !bh) {
+        out->poison_flags |= CPRISK_VM_POISON_DISPATCH | CPRISK_VM_POISON_BYTECODE;
+        out->status = CPRISK_VM_STATUS_INVALID_DISPATCH;
+        memcpy(out->acc, acc, sizeof(acc));
+        uint8_t wb_out[32];
+        int wbr = cprisk_whitebox_evaluate_domain(5u, out->acc, wb_out);
+        out->whitebox_domain_rc = wbr;
+        if (wbr == 0)
+            memcpy(out->acc, wb_out, sizeof(wb_out));
+        return 0;
+    }
+
+    const cprisk_vmp_dispatch_header_t *dhdr = (const cprisk_vmp_dispatch_header_t *)(const void *)d_sec;
+    cprisk_vm_run_program_lane2_i(hdr, d_sec, dhdr, b_sec, bsz, bh, func_id, acc, out);
+    return 0;
+}
+
+static uint64_t cprisk_vm_fold_result_i(const cprisk_vm_run_result_t *result) {
+    uint64_t folded = 0u;
+    if (!result)
+        return 0u;
+    memcpy(&folded, result->acc, sizeof(folded));
     return folded;
 }
 
@@ -3007,6 +4177,10 @@ typedef uint64_t (*cprisk_vm_entry_finish_pack32_fp_i)(uint32_t lo,
                                                        uint32_t ticket,
                                                        const void *hdr_sym);
 
+int cprisk_vm_execute(uint64_t func_id, cprisk_vm_run_result_t *out) {
+    return cprisk_vm_execute_lane0_i(func_id, out, (const void *)&cprisk_vm_execute);
+}
+
 static uint32_t cprisk_vm_entry_ticket_i(uint64_t func_id, const void *hdr_sym, uint32_t lane) {
     uint32_t mix =
         (uint32_t)func_id ^
@@ -3021,23 +4195,40 @@ static uint32_t cprisk_vm_entry_ticket_i(uint64_t func_id, const void *hdr_sym, 
     return mix;
 }
 
-__attribute__((noinline)) static uint64_t cprisk_vm_entry_finish_ticket_i(const cprisk_vm_entry_ticket_t *ticket) {
+__attribute__((noinline)) static uint64_t cprisk_vm_entry_finish_ticket_lane0_i(const cprisk_vm_entry_ticket_t *ticket) {
     if (!ticket || !ticket->hdr_sym)
         return 0u;
     if (ticket->ticket != cprisk_vm_entry_ticket_i(ticket->func_id, ticket->hdr_sym, ticket->lane))
         return 0u;
-    return cprisk_vm_entry_finish_lane_i(ticket->func_id, ticket->hdr_sym, ticket->lane);
+    cprisk_vm_run_result_t result;
+    if (cprisk_vm_execute_lane0_i(ticket->func_id, &result, ticket->hdr_sym) != 0)
+        return 0u;
+    return cprisk_vm_fold_result_i(&result);
 }
 
-__attribute__((noinline)) static uint64_t cprisk_vm_entry_finish_pack32_i(uint32_t lo,
-                                                                           uint32_t hi,
-                                                                           uint32_t lane,
-                                                                           uint32_t ticket,
-                                                                           const void *hdr_sym) {
+__attribute__((noinline)) static uint64_t cprisk_vm_entry_finish_pack32_lane1_i(uint32_t lo,
+                                                                                 uint32_t hi,
+                                                                                 uint32_t lane,
+                                                                                 uint32_t ticket,
+                                                                                 const void *hdr_sym) {
     const uint64_t func_id = ((uint64_t)hi << 32u) | (uint64_t)lo;
     if (ticket != cprisk_vm_entry_ticket_i(func_id, hdr_sym, lane))
         return 0u;
-    return cprisk_vm_entry_finish_lane_i(func_id, hdr_sym, lane);
+    cprisk_vm_run_result_t result;
+    if (cprisk_vm_execute_lane1_i(func_id, &result, hdr_sym) != 0)
+        return 0u;
+    return cprisk_vm_fold_result_i(&result);
+}
+
+__attribute__((noinline)) static uint64_t cprisk_vm_entry_finish_ticket_lane2_i(const cprisk_vm_entry_ticket_t *ticket) {
+    if (!ticket || !ticket->hdr_sym)
+        return 0u;
+    if (ticket->ticket != cprisk_vm_entry_ticket_i(ticket->func_id, ticket->hdr_sym, ticket->lane))
+        return 0u;
+    cprisk_vm_run_result_t result;
+    if (cprisk_vm_execute_lane2_i(ticket->func_id, &result, ticket->hdr_sym) != 0)
+        return 0u;
+    return cprisk_vm_fold_result_i(&result);
 }
 
 __attribute__((noinline)) uint64_t cprisk_vm_entry(uint64_t func_id) {
@@ -3059,10 +4250,10 @@ __attribute__((noinline)) uint64_t cprisk_vm_entry(uint64_t func_id) {
     ticket.ticket = cprisk_vm_entry_ticket_i(func_id, ticket.hdr_sym, ticket.lane) ^ (uint32_t)prelude;
     ticket.ticket ^= (uint32_t)prelude;
     if (((uint32_t)prelude & 1u) == 0u) {
-        cprisk_vm_entry_finish_ticket_fp_i fp = cprisk_vm_entry_finish_ticket_i;
+        cprisk_vm_entry_finish_ticket_fp_i fp = cprisk_vm_entry_finish_ticket_lane0_i;
         return fp(&ticket);
     }
-    return cprisk_vm_entry_finish_ticket_i(&ticket);
+    return cprisk_vm_entry_finish_ticket_lane0_i(&ticket);
 }
 
 __attribute__((noinline)) uint64_t cprisk_vm_entry_alt1(uint64_t func_id) {
@@ -3073,7 +4264,7 @@ __attribute__((noinline)) uint64_t cprisk_vm_entry_alt1(uint64_t func_id) {
     uint32_t hi = (uint32_t)(func_id >> 32u);
     volatile uint32_t ledger = cprisk_vmp_avalanche32_i(lo ^ cprisk_vmp_rotl32_i(hi, 7u) ^ 0xA5A5C3C3u);
     ledger ^= cprisk_vm_dispatch_bait_seed_i(1u, hi & 3u);
-    cprisk_vm_entry_finish_pack32_fp_i fp = cprisk_vm_entry_finish_pack32_i;
+    cprisk_vm_entry_finish_pack32_fp_i fp = cprisk_vm_entry_finish_pack32_lane1_i;
     const uint32_t ticket = cprisk_vm_entry_ticket_i(func_id, (const void *)&cprisk_vm_entry_alt1, 1u)
         ^ ledger ^ ledger;
     return fp(lo, hi, 1u, ticket, (const void *)&cprisk_vm_entry_alt1);
@@ -3091,8 +4282,8 @@ __attribute__((noinline)) uint64_t cprisk_vm_entry_alt2(uint64_t func_id) {
     ticket.lane = 2u;
     ticket.ticket = cprisk_vm_entry_ticket_i(func_id, ticket.hdr_sym, ticket.lane);
     if ((ticket.ticket & 1u) != 0u) {
-        cprisk_vm_entry_finish_ticket_fp_i fp = cprisk_vm_entry_finish_ticket_i;
+        cprisk_vm_entry_finish_ticket_fp_i fp = cprisk_vm_entry_finish_ticket_lane2_i;
         return fp(&ticket);
     }
-    return cprisk_vm_entry_finish_ticket_i(&ticket);
+    return cprisk_vm_entry_finish_ticket_lane2_i(&ticket);
 }

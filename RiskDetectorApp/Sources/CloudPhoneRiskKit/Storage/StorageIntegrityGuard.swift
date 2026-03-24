@@ -6,6 +6,10 @@ enum StorageIntegrityGuard {
     private static let keychainService = "CloudPhoneRiskKit.StorageHMAC"
     private static let keychainAccount = "hmac_key_v1"
     private static let lock = NSLock()  // NSLock: Keychain I/O inside lock
+#if DEBUG
+    // Test/Simulator fallback when Keychain is unavailable (e.g. -34018).
+    private static var debugFallbackKeyData: Data?
+#endif
 
     static func sign(_ data: Data, purpose: String) -> Data {
         let key = getOrCreateKey()
@@ -49,6 +53,14 @@ enum StorageIntegrityGuard {
                 secureZeroData(&mutableData)
                 return key
             }
+#if DEBUG
+            if keychainStatusIndicatesUnavailable(status), let fallback = debugFallbackKeyData {
+                var mutableFallback = fallback
+                let key = SymmetricKey(data: mutableFallback)
+                secureZeroData(&mutableFallback)
+                return key
+            }
+#endif
 
             let newKey = SymmetricKey(size: .bits256)
             var keyData = newKey.withUnsafeBytes { Data($0) }
@@ -78,9 +90,21 @@ enum StorageIntegrityGuard {
                     return key
                 }
             }
+#if DEBUG
+            if keychainStatusIndicatesUnavailable(addStatus) {
+                debugFallbackKeyData = Data(keyData)
+                return newKey
+            }
+#endif
 
             Logger.log("StorageIntegrityGuard: SecItemAdd failed with status \(addStatus)")
             return newKey
         }
+    }
+
+    private static func keychainStatusIndicatesUnavailable(_ status: OSStatus) -> Bool {
+        status == errSecInteractionNotAllowed ||
+        status == errSecMissingEntitlement ||
+        status == errSecNotAvailable
     }
 }

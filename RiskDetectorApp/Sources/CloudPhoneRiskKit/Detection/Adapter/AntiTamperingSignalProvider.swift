@@ -74,6 +74,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         var enableMultiPathCrossValidation: Bool = true
         var enableVMRemapDetect: Bool = true
         var enablePACValidation: Bool = true
+        var enableMIEPosture: Bool = true
         var enableTaskPortAudit: Bool = true
         var enableDTraceKDebugDetect: Bool = true
         var enableLLDBJITDetect: Bool = true
@@ -159,8 +160,9 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
 
         func finalizeSignals() -> [RiskSignal] {
             let merged = coalesceProtectedDuplicateSignals(signals)
-            return (merged + crossConsistencySignals(from: merged))
-                .filter { $0.score >= configuration.minScoreThreshold }
+            let withCross = merged + crossConsistencySignals(from: merged)
+            let weighted = applyMiePostureWeighting(withCross)
+            return weighted.filter { $0.score >= configuration.minScoreThreshold }
         }
 
         while !sink.isResolved {
@@ -426,6 +428,11 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                 Row(internalToken: nextKey(&c), enabled: { $0.enablePACValidation }) { _, _, _ in
                     DetectorCheck(id: "pac_validation") {
                         PACValidationDetector().asSignals()
+                    }
+                },
+                Row(internalToken: nextKey(&c), enabled: { $0.enableMIEPosture }) { _, _, _ in
+                    DetectorCheck(id: "mie_posture") {
+                        MIEPostureDetector().asSignals()
                     }
                 },
                 Row(internalToken: nextKey(&c), enabled: { $0.enableTaskPortAudit }) { _, _, _ in
@@ -1413,6 +1420,8 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         let exceptionPortFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_PORT)) != 0
         let exceptionQueryFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_QUERY)) != 0
         let softwareBreakpointFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SOFTWARE_BP)) != 0
+        let instantReturnPatchFlag =
+            (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_INSTANT_RETURN_PATCH)) != 0
         let exceptionDeliveryTimeoutFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_DELIVERY_TIMEOUT)) != 0
         let peerStallFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_WATCHDOG_PEER_STALL)) != 0
         let shadowStackFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SHADOW_STACK)) != 0
@@ -1655,6 +1664,26 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
             )
         }
 
+        if instantReturnPatchFlag {
+            let score = 62.0
+            maxScore = max(maxScore, score)
+            anomalyKinds.append("instant_return_patch")
+            signals.append(
+                RiskSignal(
+                    id: "\(ObfuscatedConstants.detectorIDAntiDebugWatchdog)_instant_return_patch",
+                    category: ObfuscatedConstants.categoryAntiTamper,
+                    score: score,
+                    evidence: [
+                        "mechanism": "arm64_nop_ret_prefix",
+                        "scope": "key_symbols",
+                    ],
+                    state: .tampered,
+                    layer: 2,
+                    weightHint: 78
+                )
+            )
+        }
+
         if exceptionDeliveryTimeoutFlag || snapshot.exceptionDeliveryTimeoutDetected {
             let score = snapshot.exceptionDeliveryProbeHandled ? 38.0 : 52.0
             maxScore = max(maxScore, score)
@@ -1803,6 +1832,8 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                     "amfi_csflags_anomaly_count": "\(snapshot.amfiCsFlagsAnomalyCount)",
                     "get_task_allow_suspect": snapshot.lastGetTaskAllowSuspect ? "1" : "0",
                     "get_task_allow_anomaly_count": "\(snapshot.getTaskAllowAnomalyCount)",
+                    "vm_mprotect_crosscheck_mismatch_total": "\(snapshot.vmMprotectCrosscheckMismatchTotal)",
+                    "vm_mprotect_mach_trap_mismatch_total": "\(snapshot.vmMprotectMachTrapMismatchTotal)",
                 ],
                 state: .tampered,
                 layer: 2,
@@ -1900,6 +1931,77 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
             )
         ]
     }
+
+    /// 在 `miePartial` / `mieFull` 时对少数高价值抗注入/内存族信号做**小幅**加分，并写入 `device_mie_level` 供服务端解释。
+    private func applyMiePostureWeighting(_ signals: [RiskSignal]) -> [RiskSignal] {
+        guard configuration.enableMIEPosture else { return signals }
+        guard let mie = signals.first(where: { $0.id == SignalID.miePosture }),
+              let raw = mie.evidence["mie_level"] else {
+            return signals
+        }
+        return signals.map { signal in
+            var ev = signal.evidence
+            if ev["device_mie_level"] == nil {
+                ev["device_mie_level"] = raw
+            }
+            guard raw == MIEPostureDetector.Level.miePartial.rawValue || raw == MIEPostureDetector.Level.mieFull.rawValue else {
+                return RiskSignal(
+                    id: signal.id,
+                    category: signal.category,
+                    score: signal.score,
+                    evidence: ev,
+                    state: signal.state,
+                    layer: signal.layer,
+                    weightHint: signal.weightHint
+                )
+            }
+            guard Self.mieBoostSignalIDs.contains(signal.id) else {
+                return RiskSignal(
+                    id: signal.id,
+                    category: signal.category,
+                    score: signal.score,
+                    evidence: ev,
+                    state: signal.state,
+                    layer: signal.layer,
+                    weightHint: signal.weightHint
+                )
+            }
+            let deltaScore: Double = raw == MIEPostureDetector.Level.mieFull.rawValue ? 4 : 2
+            let deltaHint: Double = raw == MIEPostureDetector.Level.mieFull.rawValue ? 2 : 1
+            return RiskSignal(
+                id: signal.id,
+                category: signal.category,
+                score: min(100, signal.score + deltaScore),
+                evidence: ev,
+                state: signal.state,
+                layer: signal.layer,
+                weightHint: signal.weightHint + deltaHint
+            )
+        }
+    }
+
+    private static let mieBoostSignalIDs: Set<String> = [
+        SignalID.fridaModuleDetected,
+        SignalID.fridaModuleImage,
+        SignalID.fridaModuleSection,
+        SignalID.fridaModuleString,
+        SignalID.pacDisabled,
+        SignalID.pacPointerInvalid,
+        SignalID.vmRemapSharedAnonymous,
+        SignalID.vmRemapImageAlias,
+        SignalID.taskPortExceptionHijack,
+        SignalID.taskPortRightsAnomaly,
+        ObfuscatedConstants.signalMemoryProtectionTampered,
+        ObfuscatedConstants.signalMemoryProtectionSemanticBypass,
+        SignalID.lldbJitSmallRWX,
+        SignalID.stalkerJitRWX,
+        SignalID.rwxJitCoexistence,
+        "rwx_anonymous",
+        "anonymous_executable_memory",
+        "frida_detected",
+        "memory_integrity_violated",
+        "text_segment_tampered",
+    ]
 }
 
 // MARK: - 便捷扩展
@@ -1915,6 +2017,7 @@ extension AntiTamperingSignalProvider {
         config.enableCodeSignature = true
         config.enableAppSigningIdentity = true
         config.enableMemoryIntegrity = true
+        config.enableMIEPosture = true
         config.minScoreThreshold = 0  // 不过滤任何信号
         return config
     }
@@ -1932,6 +2035,7 @@ extension AntiTamperingSignalProvider {
         config.enableLLDBJITDetect = false
         config.enableSystemLibrarySegmentLayoutDetect = false
         config.enableAntiDebugWatchdog = true
+        config.enableMIEPosture = true
         config.minScoreThreshold = 15  // 过滤低分信号
         return config
     }

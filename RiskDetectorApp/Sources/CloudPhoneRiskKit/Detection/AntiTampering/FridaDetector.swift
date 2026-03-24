@@ -1,8 +1,17 @@
 import CRiskCore
+import CryptoKit
 import Darwin
 import Foundation
 
 struct FridaDetector: Detector {
+    /// XOR+SHA256(label) decode — matches CRiskCore `cprisk_obf_decode_sha256_label` v1.
+    private static func protoToken(label: String, enc: [UInt8]) -> String {
+        let d = SHA256.hash(data: Data(label.utf8))
+        let digest = Array(d)
+        let bytes = enc.enumerated().map { i, b in b ^ digest[i % 32] }
+        return String(decoding: bytes, as: UTF8.self)
+    }
+
     let knownPorts: [Int] = [27042, 27043, 23946]
     let knownServerPaths: [String] = ObfuscatedConstants.fridaServerPaths
     private let protocolProbeTimeoutMs: Int32 = 120
@@ -229,6 +238,13 @@ struct FridaDetector: Detector {
         )
 
         let probes = ["AUTH\r\n", "GET / HTTP/1.0\r\n\r\n", "\u{0000}"]
+        let fridaTok = Self.protoToken(label: "CPRISK_FN_FRIDA", enc: [0x0f, 0x3e, 0x6c, 0x77, 0x8e])
+        let gumTok = Self.protoToken(label: "CPRISK_PROTO_GUM", enc: [0xee, 0xcc, 0x4e])
+        let reFridaTok = Self.protoToken(label: "CPRISK_PROTO_RE_FRIDA", enc: [0x62, 0x0d, 0x3e, 0x3b, 0x52, 0x9d, 0xea, 0xc7])
+        let dbusTok = Self.protoToken(label: "CPRISK_PROTO_DBUS", enc: [0x1e, 0x63, 0xe8, 0xc6])
+        let authTok = Self.protoToken(label: "CPRISK_PROTO_AUTH", enc: [0xca, 0x31, 0x82, 0x18])
+        let rejectTok = Self.protoToken(label: "CPRISK_PROTO_REJECT", enc: [0x94, 0x8f, 0xdf, 0x74, 0x92, 0xab])
+        let dbusAuthTok = Self.protoToken(label: "CPRISK_PROTO_DBUS_AUTH", enc: [0x4b, 0xb0, 0x51, 0x07, 0x01, 0xdf, 0x65, 0x43, 0x6c])
         for probe in probes {
             probe.withCString { cstr in
                 _ = send(fd, cstr, strlen(cstr), 0)
@@ -240,11 +256,11 @@ struct FridaDetector: Detector {
             guard readCount > 0 else { continue }
 
             let response = String(decoding: buffer.prefix(Int(readCount)), as: UTF8.self).lowercased()
-            if response.contains("frida") { return "frida" }
-            if response.contains("gum") { return "gum" }
-            if response.contains("re.frida") { return "re.frida" }
-            if response.contains("dbus") { return "dbus" }
-            if response.contains("auth") && response.contains("reject") { return "dbus_auth" }
+            if response.contains(fridaTok) { return fridaTok }
+            if response.contains(gumTok) { return gumTok }
+            if response.contains(reFridaTok) { return reFridaTok }
+            if response.contains(dbusTok) { return dbusTok }
+            if response.contains(authTok) && response.contains(rejectTok) { return dbusAuthTok }
         }
         return nil
     }

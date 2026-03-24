@@ -244,6 +244,8 @@ public final class CPRiskKit: NSObject {
         public let denyAttachVerifyAnomalyCount: UInt64
         public let amfiCsFlagsAnomalyCount: UInt64
         public let getTaskAllowAnomalyCount: UInt64
+        public let vmMprotectCrosscheckMismatchTotal: UInt64
+        public let vmMprotectMachTrapMismatchTotal: UInt64
 
         public var hasAnyAnomaly: Bool {
             anomalyFlags != 0
@@ -313,17 +315,27 @@ public final class CPRiskKit: NSObject {
     }
 
     private var armorRuntimeSnapshot = ArmorRuntimeSnapshot.inactive
+    /// 最近一次下发到 CRiskCore 的 anti-debug mode；仅缓存必要字段，避免外部继续修改 CPRiskConfig
+    /// 实例后影响后续无参路径（如信封验签）。
+    private var lastArmorRuntimeAntiDebugMode: CPRiskAntiDebugRuntimeMode = .production
 
     /// 启动自动采集（全局触摸 + 传感器）。
     /// 建议在 `application(_:didFinishLaunchingWithOptions:)` 里尽早调用。
     @objc public func start() {
+        start(config: .default)
+    }
+
+    /// 与 `start()` 相同，但可指定 `CPRiskConfig.antiDebugRuntimeMode`（须在 armor 首次初始化前生效，见 `ensureArmorRuntimeStarted`）。
+    @objc(startWithConfig:)
+    public func start(config: CPRiskConfig) {
+        applyAntiDebugRuntimeConfigToCore(config)
         cprisk_deny_attach()
         cprisk_register_exception_handler()
         let watchdogStartResult = cprisk_start_anti_debug_watchdog()
         if watchdogStartResult != 0 {
             Logger.log("anti_debug_\(ObfuscatedConstants.keywordWatchdog).start failed rc=\(watchdogStartResult)")
         }
-        let armorSnapshot = ensureArmorRuntimeStarted(trigger: "start")
+        let armorSnapshot = ensureArmorRuntimeStarted(trigger: "start", config: config)
 #if os(iOS) && !targetEnvironment(macCatalyst)
         if armorSnapshot.status == .active {
             cprisk_erase_macho_header()
@@ -345,7 +357,7 @@ public final class CPRiskKit: NSObject {
         if !AppAttestSignalProvider.isHardwareTrustSupported {
             Logger.log("app_attest: hardware_trust_unsupported (evaluate will emit signal weight=95)")
         }
-        registerProviders(for: .default)
+        registerProviders(for: config)
         RiskSignalProviderRegistry.shared.seal()
         ConditionExpression.sealCustomEvaluators()
         installGraphFeedbackReEvaluateObserver()
@@ -687,7 +699,7 @@ public final class CPRiskKit: NSObject {
         // Ensure CRiskCore and armor runtime are initialized even if start() was never called.
         cprisk_deny_attach()
         cprisk_register_exception_handler()
-        let armorRuntimeSnapshot = ensureArmorRuntimeStarted(trigger: "evaluate")
+        let armorRuntimeSnapshot = ensureArmorRuntimeStarted(trigger: "evaluate", config: config)
         // Recheck integrity when armor runtime is active; on tampering, material may
         // silently switch to decoy bytes instead of surfacing a direct return-code oracle.
         if armorRuntimeSnapshot.status == .active {
@@ -1279,7 +1291,9 @@ public final class CPRiskKit: NSObject {
             lastDenyAttachVerifyBits: raw.last_deny_attach_verify_bits,
             denyAttachVerifyAnomalyCount: raw.deny_attach_verify_anomaly_count,
             amfiCsFlagsAnomalyCount: raw.amfi_cs_flags_anomaly_count,
-            getTaskAllowAnomalyCount: raw.get_task_allow_anomaly_count
+            getTaskAllowAnomalyCount: raw.get_task_allow_anomaly_count,
+            vmMprotectCrosscheckMismatchTotal: raw.vm_mprotect_crosscheck_mismatch_total,
+            vmMprotectMachTrapMismatchTotal: raw.vm_mprotect_mach_trap_mismatch_total
         )
     }
 
@@ -1328,8 +1342,32 @@ public final class CPRiskKit: NSObject {
         return CapabilityProbeRuntimeResult(score: detailed.score, probes: detailed.probes)
     }
 
+    private func applyAntiDebugRuntimeModeToCore(_ mode: CPRiskAntiDebugRuntimeMode) {
+        switch mode {
+        case .production:
+            cprisk_set_runtime_hardening_mode(cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_PRODUCTION))
+        case .relaxedDevelopmentQA:
+            cprisk_set_runtime_hardening_mode(cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA))
+        @unknown default:
+            cprisk_set_runtime_hardening_mode(cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_PRODUCTION))
+        }
+    }
+
+    private func applyAntiDebugRuntimeConfigToCore(_ config: CPRiskConfig) {
+        let mode = config.antiDebugRuntimeMode
+        stateLock.withLock { lastArmorRuntimeAntiDebugMode = mode }
+        applyAntiDebugRuntimeModeToCore(mode)
+    }
+
     @discardableResult
-    private func ensureArmorRuntimeStarted(trigger: String) -> ArmorRuntimeSnapshot {
+    private func ensureArmorRuntimeStarted(trigger: String, config: CPRiskConfig? = nil) -> ArmorRuntimeSnapshot {
+        if let config {
+            applyAntiDebugRuntimeConfigToCore(config)
+        } else {
+            let mode = stateLock.withLock { lastArmorRuntimeAntiDebugMode }
+            applyAntiDebugRuntimeModeToCore(mode)
+        }
+
         let existing: ArmorRuntimeSnapshot? = stateLock.withLock {
             armorRuntimeSnapshot.status != .inactive ? armorRuntimeSnapshot : nil
         }
@@ -1413,6 +1451,7 @@ public final class CPRiskKit: NSObject {
 
     private func resetArmorRuntime() {
         let shouldCleanup = stateLock.withLock {
+            lastArmorRuntimeAntiDebugMode = .production
             let cleanup = armorRuntimeSnapshot.status != .inactive || armorRuntimeSnapshot.attemptCount > 0
             armorRuntimeSnapshot = .inactive
             return cleanup

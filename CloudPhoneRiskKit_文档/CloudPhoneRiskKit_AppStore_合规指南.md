@@ -557,6 +557,7 @@ cprisk-armor --input <app_binary> --output <output> --pass3 --pass4 --pass5 --pa
 | Pass 13 VM 解释器 | `cprisk_vm_interpreter.c` | 高 — 高价值函数通过 VM 字节码执行，当前还包含多入口、多解释循环、HMAC self-check 与虚拟寄存器，需要在 Review Notes 中清楚说明其仅用于反篡改与反逆向 | 仅建议在已有审核历史或高安全行业启用 |
 | 白盒表 ASLR 绑定 | `cprisk_whitebox.c` | 中 — 主要影响密钥/白盒内部求值路径，对隐私无直接新增，但会提高 reviewer 对“运行时自恢复/自解释”的敏感度 | 高安全场景优先 |
 | Pass 9 CFF 运行时 | 源码级 CFF 状态机（CFFDispatcher / CFFStateCodec） | 低 — 纯逻辑层控制流编码，不新增系统调用或数据采集 | 始终开启（SDK 内嵌） |
+| MIE / MTE 姿态（`MIEPostureDetector` + `AntiTamperingSignalProvider`） | 读取 `sysctl hw.optional.arm.FEAT_MTE*` 等设备级能力摘要；可选软信号说明进程级 tagging 不可由 sysctl 单独推断；通常仅 A17 / A17 Pro 及后续较新产品线更可能暴露相关位形 | 低 — 与设备能力查询同类，不读取用户内容；非全设备具备 OID 或非零读数，需按“安全降级”理解 | 默认开启；可按 `enableMIEPosture` 关闭 |
 
 ### 11.6 合规参考：同类商用 SDK 的保护等级
 

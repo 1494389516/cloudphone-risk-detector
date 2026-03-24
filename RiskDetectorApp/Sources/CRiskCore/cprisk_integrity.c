@@ -15,6 +15,7 @@
 #include <time.h>
 #include <stdatomic.h>
 #include <sys/mman.h>
+#include <sys/sysctl.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
 #ifdef __APPLE__
@@ -58,8 +59,19 @@ static int s_deception_material_ready;
 static uint8_t s_saved_integrity_hash[CPRISK_ARMOR_HASH_SIZE];
 static int s_integrity_hash_saved;
 static int s_integrity_poisoned;
+#if defined(CPRISK_MTE_COMPILE_SUPPORT)
+static cprisk_mte_canary_state_t s_runtime_material_canary;
+static cprisk_mte_canary_state_t s_saved_integrity_canary;
+#endif
 
 static uint64_t s_init_elapsed_ns;
+
+/* SDK-configurable anti-debug tier (production vs dev/QA relaxed). */
+static int s_runtime_hardening_mode = CPRISK_RUNTIME_HARDENING_PRODUCTION;
+static uint64_t s_init_timing_threshold_override_ns;
+
+#define CPRISK_INIT_TIMING_BASE_NS 5000000000ULL
+#define CPRISK_INIT_TIMING_RELAXED_EXTRA_NS 10000000000ULL
 
 static const struct mach_header_64 *cprisk_own_hdr_i(void);
 static uint64_t cprisk_monotonic_ns(void);
@@ -601,6 +613,67 @@ static uint64_t cprisk_antidebug_delay_response_i(uint64_t seed, uint32_t probe_
     return delay_ns;
 }
 
+static int cprisk_parse_apple_hw_major_generation_i(const char *machine, int *out_major) {
+    if (!machine || !out_major)
+        return -1;
+    *out_major = -1;
+    const char *p = NULL;
+    if (strncmp(machine, "iPhone", 6) == 0)
+        p = machine + 6;
+    else if (strncmp(machine, "iPad", 4) == 0)
+        p = machine + 4;
+    else if (strncmp(machine, "iPod", 4) == 0)
+        p = machine + 4;
+    else if (strncmp(machine, "Mac", 3) == 0)
+        p = machine + 3;
+    else if (strncmp(machine, "Watch", 5) == 0)
+        p = machine + 5;
+    else if (strncmp(machine, "Appletv", 7) == 0)
+        p = machine + 7;
+    else
+        return -1;
+    if (*p < '0' || *p > '9')
+        return -1;
+    int v = 0;
+    while (*p >= '0' && *p <= '9') {
+        v = v * 10 + (*p - '0');
+        if (v > 9999)
+            return -1;
+        p++;
+    }
+    *out_major = v;
+    return 0;
+}
+
+static uint64_t cprisk_generation_slack_ns_i(int major_gen) {
+    if (major_gen < 0)
+        return 8000000000ULL;
+    if (major_gen >= 16)
+        return 0;
+    if (major_gen >= 14)
+        return 2000000000ULL;
+    if (major_gen >= 12)
+        return 5000000000ULL;
+    return 10000000000ULL;
+}
+
+static uint64_t cprisk_compute_init_timing_threshold_ns_for_machine_i(
+    const char *machine,
+    cprisk_runtime_hardening_mode_t mode
+) {
+    int m = -1;
+    if (machine && machine[0] != '\0')
+        (void)cprisk_parse_apple_hw_major_generation_i(machine, &m);
+    uint64_t t = CPRISK_INIT_TIMING_BASE_NS + cprisk_generation_slack_ns_i(m);
+    if (mode == CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA)
+        t += CPRISK_INIT_TIMING_RELAXED_EXTRA_NS;
+    return t;
+}
+
+static int cprisk_runtime_relaxed_dev_qa_i(void) {
+    return s_runtime_hardening_mode == CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA;
+}
+
 static void cprisk_antidebug_apply_policies_i(uint32_t trigger_flags, int init_rc_hint, int integrity_rc_hint) {
     cprisk_antidebug_load_plan_i();
     if (s_adbg_plan_i.section_valid == 0u || s_adbg_plan_i.policy_union_bits == 0u)
@@ -614,6 +687,7 @@ static void cprisk_antidebug_apply_policies_i(uint32_t trigger_flags, int init_r
         CPRISK_PROBE_THREAD_EXCEPTION_PORT |
         CPRISK_PROBE_HARDWARE_BP |
         CPRISK_PROBE_SOFTWARE_BP |
+        CPRISK_PROBE_INSTANT_RETURN_PATCH |
         CPRISK_PROBE_CSOPS |
         CPRISK_PROBE_DBI_MARKER |
         CPRISK_PROBE_EXCEPTION_DELIVERY_TIMEOUT |
@@ -631,7 +705,13 @@ static void cprisk_antidebug_apply_policies_i(uint32_t trigger_flags, int init_r
         probe_bits |= CPRISK_PROBE_TRACE_CROSSCHECK;
     }
     const uint32_t strong_hits = cprisk_popcount32_i(probe_bits & strong_probe_mask);
-    const uint32_t weak_hits = cprisk_popcount32_i(probe_bits & weak_probe_mask);
+    uint32_t weak_scoring_mask = weak_probe_mask;
+    if (cprisk_runtime_relaxed_dev_qa_i()) {
+        weak_scoring_mask &= (uint32_t)~(CPRISK_PROBE_TTY |
+                                         CPRISK_PROBE_DEVELOPER_DISK |
+                                         CPRISK_PROBE_TIMING_ANOMALY);
+    }
+    const uint32_t weak_hits = cprisk_popcount32_i(probe_bits & weak_scoring_mask);
     const int debug_strength = (traced ? 3 : 0) + (int)(strong_hits * 2u + weak_hits);
     const int debugger_likely = traced != 0 || debug_strength >= 3;
     const int debugger_confirmed = traced != 0 || debug_strength >= 5 || strong_hits >= 2u;
@@ -1575,6 +1655,10 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
     cprisk_secure_zero(s_runtime_material, sizeof(s_runtime_material));
     cprisk_secure_zero(s_saved_integrity_hash, sizeof(s_saved_integrity_hash));
     cprisk_secure_zero(s_deception_material, sizeof(s_deception_material));
+#if defined(CPRISK_MTE_COMPILE_SUPPORT)
+    cprisk_mte_canary_remove(&s_runtime_material_canary);
+    cprisk_mte_canary_remove(&s_saved_integrity_canary);
+#endif
     cprisk_antidebug_reset_plan_state_i();
 
     cprisk_fill_root_material_i(root_key, root_key_len, root_material);
@@ -1640,6 +1724,34 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
         /* Keep anti-dump probe lifecycle tied to protection lifecycle,
          * while remaining idempotent when watchdog already started it. */
         (void)cprisk_start_anti_dump_probe(5);
+#if defined(CPRISK_MTE_COMPILE_SUPPORT)
+        if (cprisk_mte_available() != 0) {
+            if (cprisk_mte_self_test() != 0) {
+                cprisk_secure_zero(s_runtime_material, sizeof(s_runtime_material));
+                s_runtime_material_ready = 0;
+                cprisk_unload_protected_data();
+                cprisk_cleanup_string_decryptor();
+                cprisk_force_integrity_poison();
+                rc = -8;
+            } else if (cprisk_mte_canary_install(
+                           &s_runtime_material_canary,
+                           s_runtime_material,
+                           sizeof(s_runtime_material)) != 0 ||
+                       cprisk_mte_canary_install(
+                           &s_saved_integrity_canary,
+                           s_saved_integrity_hash,
+                           sizeof(s_saved_integrity_hash)) != 0) {
+                cprisk_mte_canary_remove(&s_runtime_material_canary);
+                cprisk_mte_canary_remove(&s_saved_integrity_canary);
+                cprisk_secure_zero(s_runtime_material, sizeof(s_runtime_material));
+                s_runtime_material_ready = 0;
+                cprisk_unload_protected_data();
+                cprisk_cleanup_string_decryptor();
+                cprisk_force_integrity_poison();
+                rc = -8;
+            }
+        }
+#endif
     }
 
 cleanup:
@@ -1663,6 +1775,10 @@ cleanup:
 }
 
 void cprisk_cleanup_protection(void) {
+#if defined(CPRISK_MTE_COMPILE_SUPPORT)
+    cprisk_mte_canary_remove(&s_runtime_material_canary);
+    cprisk_mte_canary_remove(&s_saved_integrity_canary);
+#endif
     cprisk_secure_zero(s_runtime_material, sizeof(s_runtime_material));
     cprisk_secure_zero(s_saved_integrity_hash, sizeof(s_saved_integrity_hash));
     s_runtime_material_ready = 0;
@@ -1682,6 +1798,8 @@ void cprisk_cleanup_protection(void) {
     cprisk_stop_anti_dump_probe();
     cprisk_cleanup_string_decryptor();
     cprisk_unload_protected_data();
+    s_runtime_hardening_mode = CPRISK_RUNTIME_HARDENING_PRODUCTION;
+    s_init_timing_threshold_override_ns = 0;
 }
 
 int cprisk_get_runtime_material(uint8_t out_material[32]) {
@@ -1731,6 +1849,22 @@ int cprisk_recheck_integrity(void) {
             1);
         return 1;
     }
+
+#if defined(CPRISK_MTE_COMPILE_SUPPORT)
+    if (cprisk_mte_canary_verify(&s_runtime_material_canary) != 0 ||
+        cprisk_mte_canary_verify(&s_saved_integrity_canary) != 0) {
+        s_integrity_poisoned = 1;
+        if (cprisk_should_activate_deception_i()) {
+            cprisk_prepare_deception_material_i(NULL, NULL, NULL);
+            s_integrity_deception_active = 1;
+        }
+        cprisk_antidebug_apply_policies_i(
+            CPRISK_ADBG_TRIGGER_INTEGRITY_TAMPER_I,
+            0,
+            1);
+        return 1;
+    }
+#endif
 
     uint8_t current[CPRISK_ARMOR_HASH_SIZE];
     if (cprisk_compute_integrity_hash(current) != 0) {
@@ -1793,9 +1927,48 @@ uint64_t cprisk_get_init_elapsed_ns(void) {
     return s_init_elapsed_ns;
 }
 
+void cprisk_set_runtime_hardening_mode(cprisk_runtime_hardening_mode_t mode) {
+    if (mode != CPRISK_RUNTIME_HARDENING_PRODUCTION && mode != CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA)
+        mode = CPRISK_RUNTIME_HARDENING_PRODUCTION;
+    s_runtime_hardening_mode = mode;
+}
+
+cprisk_runtime_hardening_mode_t cprisk_get_runtime_hardening_mode(void) {
+    return (cprisk_runtime_hardening_mode_t)s_runtime_hardening_mode;
+}
+
+uint64_t cprisk_get_init_timing_threshold_ns(void) {
+    if (s_init_timing_threshold_override_ns != 0)
+        return s_init_timing_threshold_override_ns;
+    char machine[256];
+    size_t len = sizeof(machine);
+    if (sysctlbyname("hw.machine", machine, &len, NULL, 0) != 0 || len == 0) {
+        return cprisk_compute_init_timing_threshold_ns_for_machine_i(
+            NULL,
+            cprisk_get_runtime_hardening_mode());
+    }
+    if (len >= sizeof(machine))
+        len = sizeof(machine) - 1;
+    machine[len] = '\0';
+    return cprisk_compute_init_timing_threshold_ns_for_machine_i(
+        machine,
+        cprisk_get_runtime_hardening_mode());
+}
+
+void cprisk_test_set_init_timing_threshold_ns_override(uint64_t threshold_ns) {
+    s_init_timing_threshold_override_ns = threshold_ns;
+}
+
+uint64_t cprisk_test_init_timing_threshold_ns_for_machine(
+    const char *machine,
+    cprisk_runtime_hardening_mode_t mode
+) {
+    return cprisk_compute_init_timing_threshold_ns_for_machine_i(machine, mode);
+}
+
 int cprisk_check_init_timing(void) {
-    /* 5 seconds in nanoseconds — if init took longer, likely DBI-traced */
-    return s_init_elapsed_ns > 5000000000ULL ? 1 : 0;
+    const uint64_t thr = cprisk_get_init_timing_threshold_ns();
+    return s_init_elapsed_ns > thr ? 1 : 0;
 }
 
 void cprisk_test_secure_zero(void *buf, size_t len) {

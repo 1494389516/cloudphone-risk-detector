@@ -49,6 +49,8 @@ public struct VMPolicyHardeningM3: Equatable, Sendable {
     public let dispatchTableKeystream: Bool
     /// v3 bytecode immediate keystream (opt-in; requires CRiskCore v3 decode when enabled).
     public let bytecodeImmediateKeystream: Bool
+    /// Emit `CPRISK_VMP_BC_FLAG_BC_SEG_RUNTIME_SHA256` for runtime bytecode segment SHA256 checks.
+    public let bytecodeSegmentRuntimeSha256: Bool
 
     public init(
         protectVmInterpreterWithCff: Bool = false,
@@ -57,7 +59,8 @@ public struct VMPolicyHardeningM3: Equatable, Sendable {
         interpreterSelfIntegrityCheck: Bool = false,
         interpreterCffTier: VMPInterpreterCffTier = .medium,
         dispatchTableKeystream: Bool = false,
-        bytecodeImmediateKeystream: Bool = false
+        bytecodeImmediateKeystream: Bool = false,
+        bytecodeSegmentRuntimeSha256: Bool = false
     ) {
         self.protectVmInterpreterWithCff = protectVmInterpreterWithCff
         self.enableDeadHandlerInjection = enableDeadHandlerInjection
@@ -66,6 +69,7 @@ public struct VMPolicyHardeningM3: Equatable, Sendable {
         self.interpreterCffTier = interpreterCffTier
         self.dispatchTableKeystream = dispatchTableKeystream
         self.bytecodeImmediateKeystream = bytecodeImmediateKeystream
+        self.bytecodeSegmentRuntimeSha256 = bytecodeSegmentRuntimeSha256
     }
 }
 
@@ -136,6 +140,7 @@ enum VMPolicyParser {
         var interpreterCffTier = VMPInterpreterCffTier.medium
         var dispatchTableKs = false
         var bytecodeImmKs = false
+        var bytecodeSegSha256 = false
 
         for rawLine in contents.components(separatedBy: .newlines) {
             let sanitized = stripComment(rawLine).trimmingCharacters(in: .whitespaces)
@@ -183,6 +188,7 @@ enum VMPolicyParser {
                     parseBoolKey(sanitized, key: "interpreter_self_integrity_check", into: &selfIntegrity)
                     parseBoolKey(sanitized, key: "dispatch_table_keystream", into: &dispatchTableKs)
                     parseBoolKey(sanitized, key: "bytecode_immediate_keystream", into: &bytecodeImmKs)
+                    parseBoolKey(sanitized, key: "bytecode_segment_runtime_sha256", into: &bytecodeSegSha256)
                     parseTierKey(sanitized, into: &interpreterCffTier)
                 default:
                     break
@@ -214,7 +220,8 @@ enum VMPolicyParser {
                 interpreterSelfIntegrityCheck: selfIntegrity,
                 interpreterCffTier: interpreterCffTier,
                 dispatchTableKeystream: dispatchTableKs,
-                bytecodeImmediateKeystream: bytecodeImmKs
+                bytecodeImmediateKeystream: bytecodeImmKs,
+                bytecodeSegmentRuntimeSha256: bytecodeSegSha256
             )
         )
     }
@@ -320,7 +327,8 @@ public final class VMProtectorPass: ArmorPass {
                 enableDeadHandlers: policy.hardening.enableDeadHandlerInjection,
                 enableOpaquePredicateChain: policy.hardening.opaqueVpcPredicateChain,
                 enableSelfIntegrityCheck: policy.hardening.interpreterSelfIntegrityCheck,
-                enableSelfIntegrityHmac: policy.hardening.interpreterSelfIntegrityCheck
+                enableSelfIntegrityHmac: policy.hardening.interpreterSelfIntegrityCheck,
+                bytecodeSegmentRuntimeSha256: policy.hardening.bytecodeSegmentRuntimeSha256
             ),
             dispatchTableKeystream: policy.hardening.dispatchTableKeystream,
             dispatchKeystreamMaterial: seedNonZero ^ UInt64(truncatingIfNeeded: policy.version & 0xFFFF),
@@ -342,7 +350,7 @@ public final class VMProtectorPass: ArmorPass {
             String(format: "opcode_seed=0x%016llX", opcodeTable.seed),
             "m2: handler_dup=\(policy.antiAnalysis.handlerDuplication) opaque_vpc=\(policy.opaqueVpcEncoding.enabled)",
             "m3: interpreter_cff=\(policy.hardening.protectVmInterpreterWithCff) tier=\(policy.hardening.interpreterCffTier.rawValue) dead_handlers=\(policy.hardening.enableDeadHandlerInjection) vpc_pred=\(policy.hardening.opaqueVpcPredicateChain) self_integrity=\(policy.hardening.interpreterSelfIntegrityCheck)",
-            "emit: dispatch_ks=\(policy.hardening.dispatchTableKeystream) imm_ks_v3=\(policy.hardening.bytecodeImmediateKeystream) opcode_ks_v3=\(policy.hardening.bytecodeImmediateKeystream)"
+            "emit: dispatch_ks=\(policy.hardening.dispatchTableKeystream) imm_ks_v3=\(policy.hardening.bytecodeImmediateKeystream) opcode_ks_v3=\(policy.hardening.bytecodeImmediateKeystream) bc_seg_sha256=\(policy.hardening.bytecodeSegmentRuntimeSha256)"
         ]
         if policy.hardening.protectVmInterpreterWithCff {
             let tier = policy.hardening.interpreterCffTier.rawValue
@@ -448,19 +456,23 @@ public final class VMProtectorPass: ArmorPass {
         }
 
         let payloads = emitter.emit(programs: programs, opcodeTable: opcodeTable, options: m2Opts)
+        let slackDispatch = Self.vmpSlackMaterial(config: config, seed: seedNonZero, role: 0xD1)
+        let slackBytecode = Self.vmpSlackMaterial(config: config, seed: seedNonZero, role: 0xB2)
         _ = try file.addOrUpdateSection(
             segment: VMBytecodeFormat.sectionSegment,
             section: VMBytecodeFormat.dispatchSection,
             content: payloads.dispatch,
             align: 4,
-            flags: 0
+            flags: 0,
+            slackPadding: .keyedPseudorandom(material: slackDispatch)
         )
         _ = try file.addOrUpdateSection(
             segment: VMBytecodeFormat.sectionSegment,
             section: VMBytecodeFormat.bytecodeSection,
             content: payloads.bytecode,
             align: 4,
-            flags: 0
+            flags: 0,
+            slackPadding: .keyedPseudorandom(material: slackBytecode)
         )
 
         details.append(
@@ -516,6 +528,20 @@ public final class VMProtectorPass: ArmorPass {
             return addr
         }
         return end
+    }
+
+    private static func vmpSlackMaterial(config: PassConfig, seed: UInt64, role: UInt8) -> Data {
+        var d = Data()
+        if let k = config.encryptionKey {
+            d.append(k)
+        }
+        var s = seed.littleEndian
+        Swift.withUnsafeBytes(of: &s) { d.append(contentsOf: $0) }
+        var b = config.buildSeed.littleEndian
+        Swift.withUnsafeBytes(of: &b) { d.append(contentsOf: $0) }
+        d.append(role)
+        d.append(Data("pass13.vmp_slack.v1".utf8))
+        return d
     }
 
     private static func normalizePolicySymbol(_ raw: String) -> [String] {

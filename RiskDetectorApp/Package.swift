@@ -28,7 +28,10 @@ let protectedReleaseSwiftSettings: [SwiftSetting] = packageEnvEnabled("CPRISK_EN
         "-Xfrontend", "-disable-reflection-metadata",
         "-Xfrontend", "-disable-reflection-names",
     ], .when(configuration: .release)),
-] : []
+    .define("CPRISK_MTE_COMPILE_SUPPORT", .when(configuration: .release)),
+] : [
+    .define("CPRISK_MTE_COMPILE_SUPPORT", .when(configuration: .release)),
+]
 
 if packageEnvEnabled("CPRISK_ENABLE_HIKARI") {
     if packageEnvironment["SWIFT_EXEC"] == nil {
@@ -72,6 +75,9 @@ let package = Package(
             name: "CRiskCore",
             dependencies: [],
             publicHeadersPath: "include",
+            cSettings: [
+                .define("CPRISK_MTE_COMPILE_SUPPORT", .when(configuration: .release)),
+            ],
             linkerSettings: [
                 .linkedFramework("Security", .when(platforms: [.iOS, .macOS])),
                 .linkedFramework("IOKit", .when(platforms: [.macOS])),

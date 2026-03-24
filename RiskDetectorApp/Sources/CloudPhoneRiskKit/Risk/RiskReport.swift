@@ -94,6 +94,15 @@ public enum SignalID {
     static let vmRemapImageAlias = ObfuscatedConstants.signalVMRemapImageAlias
     static let pacDisabled = ObfuscatedConstants.signalPacDisabled
     static let pacPointerInvalid = ObfuscatedConstants.signalPacPointerInvalid
+
+    /// MIE / MTE（含 EMTE sysctl 形状）设备姿态：仅 sysctl 观测，保守分级。
+    static let miePosture = "mie_posture"
+    /// 窄条件：sysctl 子集之间出现与“基位/扩展位”不一致的形状（不推断具体攻击）。
+    static let mteUnavailableOnCapable = "mte_unavailable_on_capable_device"
+    /// 进程级 MTE tagging 无法仅从 sysctl 断言；iOS 上作说明性软信号。
+    static let mteInactiveForProcess = "mte_inactive_for_process"
+    /// 预留：native MTE canary 链路与 CRiskCore 对齐后由底层填充；Swift 层不伪造。
+    static let mteCanaryTampered = "mte_canary_tampered"
     static let taskPortExceptionHijack = ObfuscatedConstants.signalTaskPortExceptionHijack
     static let taskPortRightsAnomaly = ObfuscatedConstants.signalTaskPortRightsAnomaly
     static let dtraceKdebugActivity = ObfuscatedConstants.signalDtraceKdebugActivity

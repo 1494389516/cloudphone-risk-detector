@@ -541,7 +541,8 @@ public final class MachOFile {
         section sectionName: String,
         content: Data,
         align: UInt32 = 2,
-        flags: UInt32 = 0
+        flags: UInt32 = 0,
+        slackPadding: SectionSlackPadding = .zeros
     ) throws -> Section {
         if let existing = try section(segment: segmentName, section: sectionName) {
             guard content.count <= Int(existing.size) else {
@@ -552,7 +553,16 @@ public final class MachOFile {
 
             var replacement = content
             if replacement.count < Int(existing.size) {
-                replacement.append(Data(repeating: 0, count: Int(existing.size) - replacement.count))
+                let padCount = Int(existing.size) - replacement.count
+                switch slackPadding {
+                case .zeros:
+                    replacement.append(Data(repeating: 0, count: padCount))
+                case .keyedPseudorandom(let material):
+                    var mat = material
+                    mat.append(Data(sectionName.utf8))
+                    mat.append(Data(segmentName.utf8))
+                    replacement.append(ArmorPseudoRandomFill.bytes(count: padCount, material: mat))
+                }
             }
             try replaceBytes(at: UInt64(existing.offset), with: replacement)
             return existing

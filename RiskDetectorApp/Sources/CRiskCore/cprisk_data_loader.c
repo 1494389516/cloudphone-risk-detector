@@ -32,6 +32,12 @@ static pthread_once_t s_dlsym_once = PTHREAD_ONCE_INIT;
 static volatile int s_mprotect_tampered = 0;
 static volatile uint32_t s_mprotect_direct_failure_count = 0u;
 static volatile uint32_t s_mprotect_fallback_success_count = 0u;
+static volatile uint32_t s_mprotect_consecutive_full_fail_streak = 0u;
+static volatile uint32_t s_vm_mprotect_crosscheck_mismatch = 0u;
+static volatile uint32_t s_vm_mprotect_mach_trap_mismatch = 0u;
+static uint32_t s_mprotect_fail_streak_threshold = CPRISK_MPROTECT_FULL_FAIL_STREAK_THRESHOLD;
+static volatile int s_test_mprotect_force_direct_fail = 0;
+static volatile int s_test_mprotect_force_fallback_fail = 0;
 
 static void init_dlsym_once(void) {
     s_mprotect_fn = (cprisk_mprotect_func_t)cprisk_dlsym("libsystem_kernel.dylib", "mprotect");
@@ -39,27 +45,74 @@ static void init_dlsym_once(void) {
     s_munlock_fn = (cprisk_munlock_func_t)cprisk_dlsym("libsystem_kernel.dylib", "munlock");
 }
 
+static inline uint32_t cprisk_mprotect_effective_fail_threshold(void) {
+    uint32_t t = s_mprotect_fail_streak_threshold;
+    if (t == 0u)
+        t = CPRISK_MPROTECT_FULL_FAIL_STREAK_THRESHOLD;
+    return t;
+}
+
+static inline void cprisk_mprotect_on_vm_op_success(void) {
+    s_mprotect_consecutive_full_fail_streak = 0u;
+}
+
+static inline void cprisk_mprotect_record_full_failure(void) {
+    uint32_t thr = cprisk_mprotect_effective_fail_threshold();
+    uint32_t next = s_mprotect_consecutive_full_fail_streak + 1u;
+    s_mprotect_consecutive_full_fail_streak = next;
+    if (next >= thr)
+        s_mprotect_tampered = 1;
+}
+
 static inline int cprisk_hidden_mprotect(void *addr, size_t len, int prot) {
     int direct_errno = 0;
-    if (cprisk_mprotect_direct(addr, len, prot, &direct_errno) == 0) {
+    int direct_ok;
+    if (s_test_mprotect_force_direct_fail) {
+        direct_ok = 0;
+    } else {
+        direct_ok = (cprisk_mprotect_direct(addr, len, prot, &direct_errno) == 0);
+    }
+    if (direct_ok) {
+#if defined(__APPLE__)
+        const int cc = cprisk_vm_crosscheck_mprotect(addr, len, prot);
+        if (cc == 1) {
+            s_vm_mprotect_crosscheck_mismatch += 1u;
+        } else if (cc == 2) {
+            s_vm_mprotect_mach_trap_mismatch += 1u;
+        }
+#endif
+        cprisk_mprotect_on_vm_op_success();
         return 0;
     }
-    s_mprotect_tampered = 1;
     s_mprotect_direct_failure_count += 1u;
 
     /* Safety fallback: keep legacy path for unsupported platforms/builds. */
     (void)pthread_once(&s_dlsym_once, init_dlsym_once);
     if (s_mprotect_fn) {
-        int rc = s_mprotect_fn(addr, len, prot);
+        int rc;
+        if (s_test_mprotect_force_fallback_fail) {
+            rc = -1;
+        } else {
+            rc = s_mprotect_fn(addr, len, prot);
+        }
         if (rc == 0) {
             s_mprotect_fallback_success_count += 1u;
-        } else {
-            s_mprotect_tampered = 1;
+#if defined(__APPLE__)
+            const int cc = cprisk_vm_crosscheck_mprotect(addr, len, prot);
+            if (cc == 1) {
+                s_vm_mprotect_crosscheck_mismatch += 1u;
+            } else if (cc == 2) {
+                s_vm_mprotect_mach_trap_mismatch += 1u;
+            }
+#endif
+            cprisk_mprotect_on_vm_op_success();
+            return 0;
         }
+        cprisk_mprotect_record_full_failure();
         return rc;
     }
 
-    s_mprotect_tampered = 1;
+    cprisk_mprotect_record_full_failure();
     (void)direct_errno;
     return -1;
 }
@@ -68,12 +121,53 @@ int cprisk_is_mprotect_tampered(void) {
     return s_mprotect_tampered;
 }
 
+uint32_t cprisk_get_vm_mprotect_crosscheck_mismatch_count(void) {
+    return s_vm_mprotect_crosscheck_mismatch;
+}
+
+uint32_t cprisk_get_vm_mprotect_mach_trap_mismatch_count(void) {
+    return s_vm_mprotect_mach_trap_mismatch;
+}
+
 uint32_t cprisk_get_mprotect_direct_failure_count(void) {
     return s_mprotect_direct_failure_count;
 }
 
 uint32_t cprisk_get_mprotect_fallback_success_count(void) {
     return s_mprotect_fallback_success_count;
+}
+
+uint32_t cprisk_get_mprotect_consecutive_full_fail_streak(void) {
+    return s_mprotect_consecutive_full_fail_streak;
+}
+
+uint32_t cprisk_get_mprotect_fail_streak_threshold(void) {
+    return cprisk_mprotect_effective_fail_threshold();
+}
+
+void cprisk_test_mprotect_set_force_direct_fail(int enabled) {
+    s_test_mprotect_force_direct_fail = enabled ? 1 : 0;
+}
+
+void cprisk_test_mprotect_set_force_fallback_fail(int enabled) {
+    s_test_mprotect_force_fallback_fail = enabled ? 1 : 0;
+}
+
+void cprisk_test_mprotect_set_fail_streak_threshold(uint32_t threshold) {
+    s_mprotect_fail_streak_threshold =
+        (threshold == 0u) ? CPRISK_MPROTECT_FULL_FAIL_STREAK_THRESHOLD : threshold;
+}
+
+void cprisk_test_mprotect_reset_tamper_state(void) {
+    s_mprotect_tampered = 0;
+    s_mprotect_direct_failure_count = 0u;
+    s_mprotect_fallback_success_count = 0u;
+    s_mprotect_consecutive_full_fail_streak = 0u;
+    s_vm_mprotect_crosscheck_mismatch = 0u;
+    s_vm_mprotect_mach_trap_mismatch = 0u;
+    s_mprotect_fail_streak_threshold = CPRISK_MPROTECT_FULL_FAIL_STREAK_THRESHOLD;
+    s_test_mprotect_force_direct_fail = 0;
+    s_test_mprotect_force_fallback_fail = 0;
 }
 
 static inline int cprisk_hidden_mlock(const void *addr, size_t len) {
@@ -447,8 +541,7 @@ static void cprisk_rollback_l(
                 size_t span = 0;
                 if (cprisk_page_span_l(ptr, (size_t)ent->size, &page, &span) == 0) {
                     if (page && span > 0) {
-                        if (cprisk_hidden_mprotect(page, span, PROT_READ | PROT_WRITE) != 0)
-                            s_mprotect_tampered = 1;
+                        (void)cprisk_hidden_mprotect(page, span, PROT_READ | PROT_WRITE);
                     }
                     (void)cprisk_armor_xor_region(ptr, (size_t)ent->size, ent->key_id,
                                               ent->nonce, CPRISK_ARMOR_NONCE_SIZE,
@@ -566,7 +659,6 @@ int cprisk_load_protected_data(void) {
         if (page && span > 0) {
             (void)cprisk_hidden_mlock(page, span);
             if (cprisk_hidden_mprotect(page, span, PROT_NONE) != 0) {
-                s_mprotect_tampered = 1;
                 cprisk_force_integrity_poison();
                 cprisk_hidden_munlock(page, span);
             }
@@ -639,7 +731,6 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
              * PROT_NONE at this point — any user-space read without this
              * would trigger a nested EXC_BAD_ACCESS inside the handler. */
             if (cprisk_hidden_mprotect(page, span, PROT_READ | PROT_WRITE) != 0) {
-                s_mprotect_tampered = 1;
                 pthread_mutex_unlock(&s_loader_mutex);
                 return 0;
             }
@@ -659,7 +750,6 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
             {
                 if (ent->size > SIZE_MAX - CPRISK_ARMOR_NONCE_SIZE) {
                     if (cprisk_hidden_mprotect(page, span, PROT_NONE) != 0) {
-                        s_mprotect_tampered = 1;
                         cprisk_force_integrity_poison();
                     }
                     pthread_mutex_unlock(&s_loader_mutex);
@@ -670,7 +760,6 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
                 hmac_msg = (uint8_t *)malloc(hmac_msg_len);
                 if (!hmac_msg) {
                     if (cprisk_hidden_mprotect(page, span, PROT_NONE) != 0) {
-                        s_mprotect_tampered = 1;
                         cprisk_force_integrity_poison();
                     }
                     pthread_mutex_unlock(&s_loader_mutex);
@@ -687,7 +776,6 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
                                        CPRISK_ARMOR_HASH_SIZE) != 0) {
                     cprisk_secure_zero(computed_hmac, sizeof(computed_hmac));
                     if (cprisk_hidden_mprotect(page, span, PROT_NONE) != 0) {
-                        s_mprotect_tampered = 1;
                         cprisk_force_integrity_poison();
                     }
                     pthread_mutex_unlock(&s_loader_mutex);
@@ -715,7 +803,6 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
                                               ent->nonce, CPRISK_ARMOR_NONCE_SIZE,
                                               decrypt_key);
                     if (cprisk_hidden_mprotect(page, span, PROT_NONE) != 0) {
-                        s_mprotect_tampered = 1;
                         cprisk_force_integrity_poison();
                     }
                     pthread_mutex_unlock(&s_loader_mutex);
@@ -734,7 +821,6 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
 
                 s_decrypted_flags[i] = 1;
                 if (cprisk_hidden_mprotect(page, span, PROT_READ) != 0) {
-                    s_mprotect_tampered = 1;
                     cprisk_force_integrity_poison();
                 }
 
@@ -744,7 +830,6 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
                 return 1;
             } else {
                 if (cprisk_hidden_mprotect(page, span, PROT_NONE) != 0) {
-                    s_mprotect_tampered = 1;
                     cprisk_force_integrity_poison();
                 }
                 pthread_mutex_unlock(&s_loader_mutex);
@@ -791,8 +876,7 @@ void cprisk_unload_protected_data(void) {
                  * also be unlocked here; without this, mlock is leaked and the
                  * pages remain unswappable after stop(). */
                 if (page && span > 0) {
-                    if (cprisk_hidden_mprotect(page, span, PROT_READ | PROT_WRITE) != 0)
-                        s_mprotect_tampered = 1;
+                    (void)cprisk_hidden_mprotect(page, span, PROT_READ | PROT_WRITE);
                 }
                 if (s_decrypted_flags[i - 1]) {
                     /* Page was JIT-decrypted: re-encrypt before releasing. */
@@ -836,6 +920,9 @@ void cprisk_unload_protected_data(void) {
     s_data_acc = 0;
     s_mprotect_direct_failure_count = 0u;
     s_mprotect_fallback_success_count = 0u;
+    s_mprotect_consecutive_full_fail_streak = 0u;
+    s_mprotect_tampered = 0;
+    s_mprotect_fail_streak_threshold = CPRISK_MPROTECT_FULL_FAIL_STREAK_THRESHOLD;
 
     pthread_mutex_unlock(&s_loader_mutex);
 }

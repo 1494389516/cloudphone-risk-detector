@@ -53,19 +53,23 @@ public struct VMM3EmitOptions: Equatable, Sendable {
     public var enableSelfIntegrityCheck: Bool
     /// When `enableSelfIntegrityCheck` is true, use HMAC-SHA256 (truncated) vs CPSH blob instead of FNV/CPSF.
     public var enableSelfIntegrityHmac: Bool
+    /// Runtime SHA256 baseline + periodic re-check of each function bytecode blob (`CPRISK_VMP_BC_FLAG_BC_SEG_RUNTIME_SHA256`).
+    public var bytecodeSegmentRuntimeSha256: Bool
 
     public init(
         vpcPredicateConstants: [UInt64] = [],
         enableDeadHandlers: Bool = false,
         enableOpaquePredicateChain: Bool = false,
         enableSelfIntegrityCheck: Bool = false,
-        enableSelfIntegrityHmac: Bool = false
+        enableSelfIntegrityHmac: Bool = false,
+        bytecodeSegmentRuntimeSha256: Bool = false
     ) {
         self.vpcPredicateConstants = vpcPredicateConstants
         self.enableDeadHandlers = enableDeadHandlers
         self.enableOpaquePredicateChain = enableOpaquePredicateChain
         self.enableSelfIntegrityCheck = enableSelfIntegrityCheck
         self.enableSelfIntegrityHmac = enableSelfIntegrityHmac
+        self.bytecodeSegmentRuntimeSha256 = bytecodeSegmentRuntimeSha256
     }
 }
 
@@ -160,6 +164,8 @@ public enum VMBytecodeFormat {
         public static let immediateKeystream: UInt32 = 1 << 5
         /// v3: wire opcode bytes XOR’d per insn (see on-disk opcode seed field).
         public static let opcodeWireObfuscation: UInt32 = 1 << 6
+        /// Runtime: SHA256 baseline + periodic bytecode segment integrity checks (CRiskCore `CPRISK_VMP_BC_FLAG_BC_SEG_RUNTIME_SHA256`).
+        public static let bcSegmentRuntimeSha256: UInt32 = 1 << 11
     }
 
     /// Dispatch header `flags` (M2 + M3 producer hints). CRiskCore does not branch on these today; safe to extend.
@@ -450,6 +456,9 @@ public struct VMBytecodeEmitter: Sendable {
             if options.m3.enableSelfIntegrityHmac {
                 flags |= VMBytecodeFormat.BytecodeFlags.m3SelfIntegrityHmac
             }
+        }
+        if options.m3.bytecodeSegmentRuntimeSha256 {
+            flags |= VMBytecodeFormat.BytecodeFlags.bcSegmentRuntimeSha256
         }
         if immKs {
             flags |= VMBytecodeFormat.BytecodeFlags.immediateKeystream

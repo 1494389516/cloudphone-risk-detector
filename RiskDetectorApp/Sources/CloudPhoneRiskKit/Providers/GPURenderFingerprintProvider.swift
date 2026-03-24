@@ -98,10 +98,9 @@ final class GPURenderFingerprintProvider: RiskSignalProvider {
         encoder.dispatchThreadgroups(threadgroups, threadsPerThreadgroup: threadgroupSize)
         encoder.endEncoding()
 
-        buffer.commit()
-
         let semaphore = DispatchSemaphore(value: 0)
         buffer.addCompletedHandler { _ in semaphore.signal() }
+        buffer.commit()
         // Use 2s timeout (< ProviderRegistry's 3s) to avoid racing the registry deadline
         if semaphore.wait(timeout: .now() + 2.0) == .timedOut {
             return nil

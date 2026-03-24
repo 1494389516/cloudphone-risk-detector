@@ -70,8 +70,26 @@ struct cprisk_vm_interp_frame {
     uint64_t decode_fault_mask;
     int32_t opaque_pid;
     int32_t opaque_clock_rc;
+    int32_t opaque_port_rc;
     uint32_t opaque_rt_nonce;
     uint32_t opaque_chain;
+    uint32_t opaque_runtime_fold;
+    uint32_t opaque_session_mix;
+    uint32_t opaque_thread_mix;
+    uint32_t opaque_clock_ns;
+    uint32_t opaque_port_name;
+
+    /** When non-zero, \c bc_seg_hash_expect is valid; interpreter re-hashes bytecode periodically. */
+    uint32_t bc_seg_hash_enabled;
+    uint32_t bc_last_hash_step;
+    uint8_t bc_seg_hash_expect[32];
+
+    /**
+     * When non-zero, \c cprisk_vm_dispatch_leaf_wb_wrapped_i already ran domain-7 WB + opaque apply for this insn
+     * (currently \c CPRISK_VM_OP_XOR_MIX only); \c cprisk_vm_oph_post_handler_i skips duplicate WB side effects
+     * (still runs bytecode hash checks).
+     */
+    uint32_t vm_wb_inline_done;
 
     uint8_t acc[32];
     uint8_t trace_scratch[64];
@@ -100,11 +118,40 @@ typedef cprisk_vm_flow_t (*cprisk_vm_oph_fn)(cprisk_vm_interp_frame_t *fr,
 #define CPRISK_VM_OPH_TABLE_LEN 22u
 
 /**
- * Dense handler table: function pointers live in \c cprisk_vm_oph_table.c; opcode implementations are
- * split across \c cprisk_vm_oph_*.c. Main interpreter (\c cprisk_vm_interpreter.c) performs indirect
- * dispatch through this array (\c cprisk_vm_dispatch_oph_core_i).
+ * Opcode handlers are still split across \c cprisk_vm_oph_*.c, but the runtime no longer exposes a
+ * plaintext global handler-pointer table. The dispatcher in \c cprisk_vm_oph_table.c resolves a
+ * family first, then materializes only the selected handler pointer for the current access.
  */
-extern const cprisk_vm_oph_fn cprisk_vm_oph_table[CPRISK_VM_OPH_TABLE_LEN];
+cprisk_vm_flow_t cprisk_vm_dispatch_oph_materialized_i(cprisk_vm_interp_frame_t *fr,
+                                                       uint8_t op_raw,
+                                                       uint8_t logical,
+                                                       uint64_t imm,
+                                                       uint32_t pc,
+                                                       uint32_t hvar);
+
+/**
+ * Opcode dispatch wrapper: for \c CPRISK_VM_OP_XOR_MIX, session-bound white-box PRF on pre-handler state,
+ * self-inverse acc XOR mask derived from PRF output, then materialized handler; opaque/session updates from PRF.
+ * Other opcodes delegate to the materialized handler and \c cprisk_vm_oph_post_handler_i (periodic WB).
+ */
+cprisk_vm_flow_t cprisk_vm_dispatch_leaf_wb_wrapped_i(cprisk_vm_interp_frame_t *fr,
+                                                      uint8_t op_raw,
+                                                      uint8_t logical,
+                                                      uint64_t imm,
+                                                      uint32_t pc,
+                                                      uint32_t hvar,
+                                                      cprisk_vm_oph_fn materialized);
+
+/**
+ * Post-handler hook: session-bound white-box side effect + optional bytecode segment SHA256 checks.
+ * \p inner is the flow returned by the materialized opcode handler.
+ */
+cprisk_vm_flow_t cprisk_vm_oph_post_handler_i(cprisk_vm_interp_frame_t *fr,
+                                              uint8_t logical,
+                                              uint64_t imm,
+                                              uint32_t pc,
+                                              uint32_t hvar,
+                                              cprisk_vm_flow_t inner);
 
 cprisk_vm_flow_t cprisk_vm_oph_poison(cprisk_vm_interp_frame_t *fr,
                                       uint8_t op_raw,

@@ -9,6 +9,10 @@ enum PayloadCrypto {
     private static let keyAccount = "aes_gcm_key_v1"
     private static let accessible = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
     private static let lock = UnfairLock()
+#if DEBUG
+    // Process-local key fallback for simulator/CI where Keychain may be unavailable.
+    private static var debugFallbackKeyData: Data?
+#endif
 
     /// 加密载荷的 magic 标识字节，用于区分密文与明文，防止静默降级
     static let encryptedMagic: UInt8 = 0xAE
@@ -107,11 +111,19 @@ enum PayloadCrypto {
         ]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecSuccess, let data = item as? Data {
+            return data
+        }
+#if DEBUG
+        if keychainStatusIndicatesUnavailable(status) {
+            return debugFallbackKeyData
+        }
+#else
         if status == errSecInteractionNotAllowed {
             throw NSError(domain: "PayloadCrypto", code: Int(errSecInteractionNotAllowed))
         }
-        guard status == errSecSuccess, let data = item as? Data else { return nil }
-        return data
+#endif
+        return nil
     }
 
     private static func saveKey(_ data: Data) throws -> Data? {
@@ -124,10 +136,17 @@ enum PayloadCrypto {
         ]
 
         let status = SecItemAdd(addQuery as CFDictionary, nil)
+        if status == errSecSuccess { return nil }
+#if DEBUG
+        if keychainStatusIndicatesUnavailable(status) {
+            debugFallbackKeyData = Data(data)
+            return nil
+        }
+#else
         if status == errSecInteractionNotAllowed {
             throw NSError(domain: "PayloadCrypto", code: Int(errSecInteractionNotAllowed))
         }
-        if status == errSecSuccess { return nil }
+#endif
 
         if status == errSecDuplicateItem, let existing = try readKey() {
             return existing
@@ -139,6 +158,12 @@ enum PayloadCrypto {
             code: Int(status),
             userInfo: [NSLocalizedDescriptionKey: "SecItemAdd failed with status \(status)"]
         )
+    }
+
+    private static func keychainStatusIndicatesUnavailable(_ status: OSStatus) -> Bool {
+        status == errSecInteractionNotAllowed ||
+        status == errSecMissingEntitlement ||
+        status == errSecNotAvailable
     }
 }
 

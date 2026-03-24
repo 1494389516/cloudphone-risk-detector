@@ -42,6 +42,8 @@ public final class SymbolStripperPass: ArmorPass {
             )
         }
 
+        let symtabSnapshot = try file.findSymbolTable()
+
         var obfuscatedCount = 0
         var bytesModified = 0
         var details = [String]()
@@ -67,9 +69,15 @@ public final class SymbolStripperPass: ArmorPass {
         let headerBytes = try zeroSymtabHeaders(in: file)
         bytesModified += headerBytes
 
+        var scrubbed = 0
+        if let snap = symtabSnapshot {
+            scrubbed = try scrubStaleSymtabPayloads(in: file, snapshot: snap, config: config)
+            bytesModified += scrubbed
+        }
+
         let localCount = symbols.filter { $0.nlist.isDefinedLocal }.count
         details.insert(
-            "Local symbols: \(localCount)/\(symbols.count) total, \(obfuscatedCount) obfuscated, symtab header zeroed",
+            "Local symbols: \(localCount)/\(symbols.count) total, \(obfuscatedCount) obfuscated, symtab header zeroed, stale sym payload scrub: \(scrubbed) B",
             at: 0
         )
 
@@ -128,6 +136,43 @@ public final class SymbolStripperPass: ArmorPass {
         }
 
         return bytesZeroed
+    }
+
+    /// After LC_SYMTAB is logically empty, the historical nlist/strtab bytes may still
+    /// linger in ``__LINKEDIT`` and be recovered by raw file scanners. Overwrite those
+    /// regions with deterministic high-entropy filler (same sizes; dyld does not consult
+    /// symtab when offsets are zero).
+    private func scrubStaleSymtabPayloads(in file: MachOFile, snapshot: SymbolTableInfo, config: PassConfig) throws -> Int {
+        var base = Data("cprisk.pass6.linkedit_symtab_scrub.v1".utf8)
+        if let key = config.encryptionKey {
+            base.append(key)
+        }
+        var bs = config.buildSeed.littleEndian
+        Swift.withUnsafeBytes(of: &bs) { base.append(contentsOf: $0) }
+
+        var total = 0
+        let symoff = Int(snapshot.symoff)
+        let nsyms = Int(snapshot.nsyms)
+        let nlistBytes = nsyms * Nlist64Entry.entrySize
+        if nlistBytes > 0, symoff >= 0, symoff + nlistBytes <= file.data.count {
+            var mat = base
+            mat.append(0x4E) // 'N' — nlist region
+            let noise = ArmorPseudoRandomFill.bytes(count: nlistBytes, material: mat)
+            try file.replaceBytes(at: UInt64(symoff), with: noise)
+            total += nlistBytes
+        }
+
+        let stroff = Int(snapshot.stroff)
+        let strsize = Int(snapshot.strsize)
+        if strsize > 0, stroff >= 0, stroff + strsize <= file.data.count {
+            var mat = base
+            mat.append(0x53) // 'S' — string table region
+            let noise = ArmorPseudoRandomFill.bytes(count: strsize, material: mat)
+            try file.replaceBytes(at: UInt64(stroff), with: noise)
+            total += strsize
+        }
+
+        return total
     }
 
     // MARK: - Decision Logic

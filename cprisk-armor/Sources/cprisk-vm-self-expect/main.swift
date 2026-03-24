@@ -86,9 +86,8 @@ struct CLI {
                 let names = r.resolvedSymbolNames.joined(separator: ",")
                 let vmaddrs = r.symbolVMAddresses.map { String(format: "0x%llx", $0) }.joined(separator: ",")
                 let fileoffs = r.fileOffsets.map { String($0) }.joined(separator: ",")
-                let span = r.usedCPSVSpanMap ? "cpsv" : "symtab"
                 print(
-                    "cprisk-vm-self-expect: ok mode=fnv fnv=0x\(fnvHex) source=\(span) symbols=\(names) vmaddr=\(vmaddrs) fileoff=\(fileoffs)"
+                    "cprisk-vm-self-expect: ok mode=fnv fnv=0x\(fnvHex) source=\(r.source.rawValue) symbols=\(names) vmaddr=\(vmaddrs) fileoff=\(fileoffs)"
                 )
             case .hmac:
                 let mat: Data?
@@ -102,9 +101,8 @@ struct CLI {
                 let names = r.resolvedSymbolNames.joined(separator: ",")
                 let vmaddrs = r.symbolVMAddresses.map { String(format: "0x%llx", $0) }.joined(separator: ",")
                 let fileoffs = r.fileOffsets.map { String($0) }.joined(separator: ",")
-                let span = r.usedCPSVSpanMap ? "cpsv" : "symtab"
                 print(
-                    "cprisk-vm-self-expect: ok mode=hmac tag=0x\(tagHex) source=\(span) symbols=\(names) vmaddr=\(vmaddrs) fileoff=\(fileoffs)"
+                    "cprisk-vm-self-expect: ok mode=hmac tag=0x\(tagHex) source=\(r.source.rawValue) symbols=\(names) vmaddr=\(vmaddrs) fileoff=\(fileoffs)"
                 )
             }
         } catch {

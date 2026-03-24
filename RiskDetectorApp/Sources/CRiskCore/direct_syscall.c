@@ -427,3 +427,113 @@ int cprisk_getentropy_direct(void *buf, size_t buflen, int *error_out) {
     return 0;
 #endif
 }
+
+/* ── SVC stub integrity (early snapshot vs periodic compare) ───────── */
+
+#define CPRISK_SVC_STUB_SNAPSHOT_BYTES 48u
+#define CPRISK_SVC0_STUB_SNAPSHOT_BYTES 32u
+
+static uint8_t s_cprisk_syscall6_text_ref[CPRISK_SVC_STUB_SNAPSHOT_BYTES];
+static volatile int s_cprisk_syscall6_text_ready = 0;
+static uint8_t s_cprisk_syscall0_text_ref[CPRISK_SVC0_STUB_SNAPSHOT_BYTES];
+static volatile int s_cprisk_syscall0_text_ready = 0;
+
+extern uint32_t cprisk_deny_attach_stub_integrity_mask(void);
+
+#if defined(__APPLE__) && (defined(__arm64__) || defined(__aarch64__))
+static inline int cprisk_arm64_word_is_svc_i(uint32_t w) {
+    /* A64 `svc #imm` family: top byte 0xd4, low 5 bits 0x1 (imm16 embedded). */
+    return ((w & 0xff000000u) == 0xd4000000u) && ((w & 0x1fu) == 0x1u);
+}
+
+int cprisk_stub_contains_svc_opcode(const void *fn, size_t len) {
+    if (!fn || len < 4u) {
+        return 0;
+    }
+    const uint8_t *p = (const uint8_t *)fn;
+    const size_t n = len / 4u;
+    for (size_t i = 0; i < n; i++) {
+        uint32_t w;
+        memcpy(&w, p + i * 4u, sizeof(w));
+        if (cprisk_arm64_word_is_svc_i(w)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+#else
+int cprisk_stub_contains_svc_opcode(const void *fn, size_t len) {
+    (void)fn;
+    (void)len;
+    return 1;
+}
+#endif
+
+#if defined(__APPLE__) && (defined(__arm64__) || defined(__aarch64__))
+__attribute__((constructor(8)))
+static void cprisk_svc_stub_capture_syscall6_i(void) {
+    memcpy(
+        s_cprisk_syscall6_text_ref,
+        (const void *)&cprisk_direct_syscall6,
+        CPRISK_SVC_STUB_SNAPSHOT_BYTES);
+    s_cprisk_syscall6_text_ready = 1;
+}
+
+__attribute__((constructor(8)))
+static void cprisk_svc_stub_capture_syscall0_i(void) {
+    memcpy(
+        s_cprisk_syscall0_text_ref,
+        (const void *)&cprisk_direct_syscall0,
+        CPRISK_SVC0_STUB_SNAPSHOT_BYTES);
+    s_cprisk_syscall0_text_ready = 1;
+}
+
+static uint32_t cprisk_direct_syscall6_stub_integrity_mask_i(void) {
+    if (!s_cprisk_syscall6_text_ready) {
+        return 0u;
+    }
+    uint8_t live[CPRISK_SVC_STUB_SNAPSHOT_BYTES];
+    memcpy(live, (const void *)&cprisk_direct_syscall6, sizeof(live));
+    if (memcmp(live, s_cprisk_syscall6_text_ref, sizeof(live)) != 0) {
+        return 1u;
+    }
+#if CPRISK_DIRECT_SYSCALLS_AVAILABLE
+    if (!cprisk_stub_contains_svc_opcode((const void *)&cprisk_direct_syscall6, sizeof(live))) {
+        return 1u;
+    }
+#endif
+    return 0u;
+}
+
+static uint32_t cprisk_direct_syscall0_stub_integrity_mask_i(void) {
+    if (!s_cprisk_syscall0_text_ready) {
+        return 0u;
+    }
+    uint8_t live[CPRISK_SVC0_STUB_SNAPSHOT_BYTES];
+    memcpy(live, (const void *)&cprisk_direct_syscall0, sizeof(live));
+    if (memcmp(live, s_cprisk_syscall0_text_ref, sizeof(live)) != 0) {
+        return 1u;
+    }
+#if CPRISK_DIRECT_SYSCALLS_AVAILABLE
+    if (!cprisk_stub_contains_svc_opcode((const void *)&cprisk_direct_syscall0, sizeof(live))) {
+        return 1u;
+    }
+#endif
+    return 0u;
+}
+#else
+static uint32_t cprisk_direct_syscall6_stub_integrity_mask_i(void) {
+    return 0u;
+}
+
+static uint32_t cprisk_direct_syscall0_stub_integrity_mask_i(void) {
+    return 0u;
+}
+#endif
+
+uint32_t cprisk_verify_svc_stub_integrity(void) {
+    const uint32_t a = cprisk_direct_syscall6_stub_integrity_mask_i();
+    const uint32_t b = cprisk_deny_attach_stub_integrity_mask();
+    const uint32_t c = cprisk_direct_syscall0_stub_integrity_mask_i();
+    return a | (b << 1) | (c << 2);
+}

@@ -593,4 +593,38 @@ final class VMProtectorTests: XCTestCase {
         let classOffset = version >= VMBytecodeFormat.dispatchABIVersionV2 ? (16 + VMBytecodeFormat.dispatchSeedBytes) : 16
         return [UInt8](dispatch[classOffset..<(classOffset + VMBytecodeFormat.dispatchTableSize)])
     }
+
+    func testBytecodeSegmentRuntimeSha256FlagEmitted() {
+        let table = VMOpcodeTable(seed: 77)
+        let emitter = VMBytecodeEmitter()
+        let programs: [(functionId: UInt64, entryVMA: UInt64, tier: VMBytecodeFormat.TierCode, instructions: [VMInstruction])] = [
+            (1, 0x1000, .full, [VMInstruction(op: .nop), VMInstruction(op: .halt)])
+        ]
+        let payloads = emitter.emit(
+            programs: programs,
+            opcodeTable: table,
+            options: VMM2EmitOptions(
+                handlerVariantSeed: 1,
+                perEntryVpcEnabled: false,
+                m3: VMM3EmitOptions(bytecodeSegmentRuntimeSha256: true)
+            )
+        )
+        let flags = payloads.bytecode.withUnsafeBytes { buf in
+            buf.load(fromByteOffset: 12, as: UInt32.self)
+        }
+        XCTAssertNotEqual(flags & VMBytecodeFormat.BytecodeFlags.bcSegmentRuntimeSha256, 0)
+    }
+
+    func testVMPolicyParsesBytecodeSegmentRuntimeSha256() {
+        let yaml = """
+        version: 6
+        hardening:
+          bytecode_segment_runtime_sha256: true
+        functions:
+          full:
+            - _x
+        """
+        let p = VMPolicyConfig.parse(yaml)
+        XCTAssertTrue(p.hardening.bytecodeSegmentRuntimeSha256)
+    }
 }

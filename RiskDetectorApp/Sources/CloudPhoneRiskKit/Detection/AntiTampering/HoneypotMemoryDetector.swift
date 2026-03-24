@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import CRiskCore
 
 /// [4.4.9] 蜜罐内存诱饵 (Honeypot Memory) — 加固版
 ///
@@ -65,14 +66,13 @@ private let honeypotSigbusHandler: @convention(c) (
            The handler runs in the context of the faulting thread, so modifying the
            saved PC in ucontext_t is async-signal-safe. */
         if let ctx = ctx {
-            let uctx = ctx.assumingMemoryBound(to: ucontext_t.self)
             #if arch(arm64)
-            uctx.pointee.uc_mcontext.pointee.__ss.__pc &+= 4
+            _ = cprisk_advance_ucontext_pc(ctx, 4)
             #elseif arch(x86_64)
             // x86_64 instruction length varies; skip past the faulting MOV (typically 1–3 bytes).
             // Use a conservative 1-byte advance — the PROT_NONE page will re-fault at the next
             // byte until we leave the page, which is acceptable since the flag is already set.
-            uctx.pointee.uc_mcontext.pointee.__ss.__rip &+= 1
+            _ = cprisk_advance_ucontext_pc(ctx, 1)
             #endif
         }
         return

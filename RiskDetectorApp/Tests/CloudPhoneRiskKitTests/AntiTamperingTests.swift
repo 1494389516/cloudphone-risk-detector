@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import XCTest
 import CRiskCore
@@ -113,7 +114,9 @@ final class AntiTamperingTests: XCTestCase {
         lastDenyAttachVerifyBits: UInt32 = 0,
         denyAttachVerifyAnomalyCount: UInt64 = 0,
         amfiCsFlagsAnomalyCount: UInt64 = 0,
-        getTaskAllowAnomalyCount: UInt64 = 0
+        getTaskAllowAnomalyCount: UInt64 = 0,
+        vmMprotectCrosscheckMismatchTotal: UInt64 = 0,
+        vmMprotectMachTrapMismatchTotal: UInt64 = 0
     ) -> CPRiskKit.AntiDebugWatchdogSnapshot {
         CPRiskKit.AntiDebugWatchdogSnapshot(
             supported: supported,
@@ -174,7 +177,9 @@ final class AntiTamperingTests: XCTestCase {
             lastDenyAttachVerifyBits: lastDenyAttachVerifyBits,
             denyAttachVerifyAnomalyCount: denyAttachVerifyAnomalyCount,
             amfiCsFlagsAnomalyCount: amfiCsFlagsAnomalyCount,
-            getTaskAllowAnomalyCount: getTaskAllowAnomalyCount
+            getTaskAllowAnomalyCount: getTaskAllowAnomalyCount,
+            vmMprotectCrosscheckMismatchTotal: vmMprotectCrosscheckMismatchTotal,
+            vmMprotectMachTrapMismatchTotal: vmMprotectMachTrapMismatchTotal
         )
     }
 
@@ -533,6 +538,64 @@ final class AntiTamperingTests: XCTestCase {
         }
     }
 
+    func testCRiskCoreArm64InstantReturnPatchPrefixDetectsCommonPatterns() throws {
+#if !arch(arm64)
+        throw XCTSkip("ARM64 opcode scan test requires an arm64 host")
+#endif
+        var movX0: [UInt32] = [0xAA00_03E0, 0xD65F_03C0]
+        XCTAssertEqual(
+            movX0.withUnsafeBufferPointer { cprisk_scan_arm64_instant_return_nop_patch_prefix($0.baseAddress!, 8) },
+            1
+        )
+
+        var nopRet: [UInt32] = [0xD503_201F, 0xD65F_03C0]
+        XCTAssertEqual(
+            nopRet.withUnsafeBufferPointer { cprisk_scan_arm64_instant_return_nop_patch_prefix($0.baseAddress!, 8) },
+            1
+        )
+
+        var movW0: [UInt32] = [0x2A00_03E0, 0xD65F_03C0]
+        XCTAssertEqual(
+            movW0.withUnsafeBufferPointer { cprisk_scan_arm64_instant_return_nop_patch_prefix($0.baseAddress!, 8) },
+            1
+        )
+
+        XCTAssertEqual(
+            movX0.withUnsafeBufferPointer { cprisk_scan_arm64_instant_return_nop_patch_prefix($0.baseAddress!, 4) },
+            0
+        )
+    }
+
+    func testCRiskCoreArm64InstantReturnPatchCleanKeyFunctionPrefix() throws {
+#if !arch(arm64)
+        throw XCTSkip("ARM64 key-symbol prefix test requires an arm64 host")
+#endif
+        typealias SignalProbeFn = @convention(c) () -> Int32
+        let probeFn: SignalProbeFn = cprisk_probe_debugger_via_signal
+        let probePtr = unsafeBitCast(probeFn, to: UnsafeRawPointer.self)
+        XCTAssertEqual(cprisk_scan_arm64_instant_return_nop_patch_prefix(probePtr, 8), 0)
+        XCTAssertEqual(cprisk_scan_instant_return_key_symbols_prefix(), 0)
+    }
+
+    func testCRiskCoreAggregateSignalProbesIncludeInstantReturnPatchBitWhenClean() {
+        let aggregateFlags = cprisk_run_all_signal_probes()
+        XCTAssertEqual(aggregateFlags & UInt32(CPRISK_PROBE_INSTANT_RETURN_PATCH), 0)
+    }
+
+    func testAntiDebugWatchdogSignalsIncludeInstantReturnPatchKind() {
+        let provider = AntiTamperingSignalProvider()
+        let snapshot = makeWatchdogSnapshot(
+            anomalyFlags: UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_INSTANT_RETURN_PATCH)
+        )
+        let signals = provider.antiDebugWatchdogSignals(from: snapshot)
+        let id = "\(ObfuscatedConstants.detectorIDAntiDebugWatchdog)_instant_return_patch"
+        XCTAssertTrue(signals.contains { $0.id == id })
+        guard let summary = signals.first(where: { $0.id == SignalID.antiDebugWatchdogAnomaly }) else {
+            return XCTFail("missing anti_debug_watchdog_anomaly summary signal")
+        }
+        XCTAssertTrue(summary.evidence["anomaly_kinds"]?.contains("instant_return_patch") ?? false)
+    }
+
     func testCRiskCoreThreadExceptionPortsAndHardwareProbeBits() throws {
         guard CPRiskKit.shared.antiDebugWatchdogSnapshot().supported else {
             throw XCTSkip("signal probe is unavailable on this platform")
@@ -772,7 +835,7 @@ final class AntiTamperingTests: XCTestCase {
         let provider = AntiTamperingSignalProvider()
         let snapshot = makeSnapshot()
         let ids = provider.configuredCheckIDs(snapshot: snapshot)
-        XCTAssertEqual(ids.count, 39, "descriptor plan drift: update expected count when adding/removing checks")
+        XCTAssertEqual(ids.count, 41, "descriptor plan drift: update expected count when adding/removing checks")
     }
 
     // MARK: - FridaDetector Logic Tests
@@ -821,12 +884,16 @@ final class AntiTamperingTests: XCTestCase {
         }
         let detector = FridaDetector()
         let result = try detector.detect()
+#if targetEnvironment(simulator)
+        XCTAssertTrue(result.methods.contains("unavailable_simulator"))
+#else
         XCTAssertTrue(
             result.methods.contains(where: {
                 $0.hasPrefix(ObfuscatedConstants.methodPrefixFridaMemorySig)
             }),
             "memory-signature hook should emit frida:memsig:* evidence when enabled"
         )
+#endif
     }
 
     func testFridaDetectorMemorySignatureHookPath_builtinDisabledStillEmits() throws {
@@ -1443,5 +1510,95 @@ final class AntiTamperingTests: XCTestCase {
         let consensus = provider.crossConsistencySignals(from: drivers)
         XCTAssertEqual(consensus.count, 1)
         XCTAssertTrue(consensus.first?.evidence["matched_signals"]?.contains(SignalID.dylibInjectImageCountLow) ?? false)
+    }
+}
+
+/// Exercises `cprisk_hidden_mprotect` tolerance: streak-based tamper latch + test injection.
+final class MprotectTamperThresholdTests: XCTestCase {
+
+    override func tearDown() {
+        cprisk_test_mprotect_reset_tamper_state()
+        super.tearDown()
+    }
+
+    func testDirectFailFallbackSucceedsDoesNotSetTampered() {
+        cprisk_test_mprotect_reset_tamper_state()
+        let pageSize = Int(sysconf(_SC_PAGESIZE))
+        let ptr = mmap(nil, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0)
+        XCTAssertNotEqual(ptr, MAP_FAILED)
+        defer { munmap(ptr, pageSize) }
+
+        cprisk_test_mprotect_set_force_direct_fail(1)
+        cprisk_test_mprotect_set_force_fallback_fail(0)
+
+        let rc = cprisk_armor_vm_protect(ptr, size_t(pageSize), PROT_READ)
+        XCTAssertEqual(rc, 0)
+
+        XCTAssertEqual(cprisk_is_mprotect_tampered(), 0)
+        XCTAssertEqual(cprisk_get_mprotect_direct_failure_count(), 1)
+        XCTAssertEqual(cprisk_get_mprotect_fallback_success_count(), 1)
+        XCTAssertEqual(cprisk_get_mprotect_consecutive_full_fail_streak(), 0)
+    }
+
+    func testConsecutiveFullFailuresReachThresholdSetsTampered() {
+        cprisk_test_mprotect_reset_tamper_state()
+        cprisk_test_mprotect_set_fail_streak_threshold(2)
+
+        let pageSize = Int(sysconf(_SC_PAGESIZE))
+        let ptr = mmap(nil, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0)
+        XCTAssertNotEqual(ptr, MAP_FAILED)
+        defer { munmap(ptr, pageSize) }
+
+        cprisk_test_mprotect_set_force_direct_fail(1)
+        cprisk_test_mprotect_set_force_fallback_fail(1)
+
+        XCTAssertEqual(cprisk_armor_vm_protect(ptr, size_t(pageSize), PROT_READ), -1)
+        XCTAssertEqual(cprisk_is_mprotect_tampered(), 0)
+        XCTAssertEqual(cprisk_get_mprotect_consecutive_full_fail_streak(), 1)
+
+        XCTAssertEqual(cprisk_armor_vm_protect(ptr, size_t(pageSize), PROT_READ), -1)
+        XCTAssertEqual(cprisk_is_mprotect_tampered(), 1)
+        XCTAssertEqual(cprisk_get_mprotect_consecutive_full_fail_streak(), 2)
+        XCTAssertEqual(cprisk_get_mprotect_fail_streak_threshold(), 2)
+    }
+
+    func testRealSuccessClearsFullFailStreak() {
+        cprisk_test_mprotect_reset_tamper_state()
+        cprisk_test_mprotect_set_fail_streak_threshold(3)
+
+        let pageSize = Int(sysconf(_SC_PAGESIZE))
+        let ptr = mmap(nil, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0)
+        XCTAssertNotEqual(ptr, MAP_FAILED)
+        defer { munmap(ptr, pageSize) }
+
+        cprisk_test_mprotect_set_force_direct_fail(1)
+        cprisk_test_mprotect_set_force_fallback_fail(1)
+        XCTAssertEqual(cprisk_armor_vm_protect(ptr, size_t(pageSize), PROT_READ), -1)
+        XCTAssertEqual(cprisk_armor_vm_protect(ptr, size_t(pageSize), PROT_READ), -1)
+        XCTAssertEqual(cprisk_get_mprotect_consecutive_full_fail_streak(), 2)
+        XCTAssertEqual(cprisk_is_mprotect_tampered(), 0)
+
+        cprisk_test_mprotect_set_force_direct_fail(0)
+        cprisk_test_mprotect_set_force_fallback_fail(0)
+        XCTAssertEqual(cprisk_armor_vm_protect(ptr, size_t(pageSize), PROT_READ), 0)
+        XCTAssertEqual(cprisk_get_mprotect_consecutive_full_fail_streak(), 0)
+
+        cprisk_test_mprotect_set_force_direct_fail(1)
+        cprisk_test_mprotect_set_force_fallback_fail(1)
+        XCTAssertEqual(cprisk_armor_vm_protect(ptr, size_t(pageSize), PROT_READ), -1)
+        XCTAssertEqual(cprisk_armor_vm_protect(ptr, size_t(pageSize), PROT_READ), -1)
+        XCTAssertEqual(cprisk_get_mprotect_consecutive_full_fail_streak(), 2)
+        XCTAssertEqual(cprisk_armor_vm_protect(ptr, size_t(pageSize), PROT_READ), -1)
+        XCTAssertEqual(cprisk_is_mprotect_tampered(), 1)
+    }
+
+    func testMIEPostureDetectorPrimarySignalAndLevel() {
+        let a = MIEPostureDetector.evaluate()
+        XCTAssertTrue(MIEPostureDetector.Level.allCases.contains(a.level))
+        let signals = MIEPostureDetector().asSignals()
+        let primary = signals.first { $0.id == SignalID.miePosture }
+        XCTAssertNotNil(primary)
+        XCTAssertEqual(primary?.score, 0)
+        XCTAssertFalse(signals.contains { $0.id == SignalID.mteCanaryTampered && $0.score > 0 })
     }
 }

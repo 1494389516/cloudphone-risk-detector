@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
-  <img src="https://img.shields.io/badge/SDK-7.1-FF3B30?style=for-the-badge" alt="SDK">
+  <img src="https://img.shields.io/badge/SDK-7.2-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
   <img src="https://img.shields.io/badge/License-Proprietary-8E8E93?style=for-the-badge" alt="License">
 </p>
@@ -66,6 +66,7 @@
 | **6.7** | **控制流平坦化 + 反去混淆 + Pass 9** | 源码级 CFF 基础设施（CFFStateCodec / CFFDispatcher / CFFReturnSink / CFFRuntimeSalt）、DecisionTree / RiskDetectionEngine / ChallengeSession / TrustChainManager / anti_debug_watchdog 接入编码状态机、Pass 9 ControlFlowOrchestrator 策略编排（`cff_policy.yaml`）、异构 dispatcher（switch / if-else / dual-rail / region）、runtime salt 绑定、fail-closed 默认路径、避免 OLLVM 模板化特征 |
 | **6.8** | **反调试 Runtime Gate + Pass 10/11 + CFF/白盒强化** | `__thread_init` 早期异常端口抢占与竞态回收、AntiDebug plan 运行时 inline patch gate（`BRK #0xC0E0`）、Unix syscall vs Mach 路径交叉校验、Frida 协议指纹与可选全端口扫描、多频 watchdog + 互监 deadline、关键路径 timing canary、白盒 PRF 增强扩散层、Pass 10 ImportEncryptor、Pass 11 HeaderEncryptor、CFF 新增 `splitIndirect` dispatcher 与 `affine` 编码风格、CFF 覆盖建议器 |
 | **7.0** | **TextSegmentEncryptor + VMProtector(M3) + 13 Pass 收口** | Pass 12 `TextSegmentEncryptor` 对 `__TEXT.__text` 做页级加密并写入 `__swift5_cgenc` 元数据，Pass 13 `VMProtector` 对 7 个高价值函数执行“ARM64 → 自定义字节码 + VM 入口跳板”虚拟化，运行时新增 `cprisk_vm_interpreter`、`__swift5_mdvrt/__swift5_mdirt` section、M2 handler 变体 / VPC 仿射编码 / 更多 ARM64 lift 覆盖，以及 M3 解释器自身 CFF 接线、dead handler 注入、VPC 不透明谓词链与可选自校验门控 |
+| **7.2** | **MIE/MTE 姿态接入 + iPhoneOS 26 SDK 构建兼容** | Release 构建接入 `CPRISK_MTE_COMPILE_SUPPORT` 与 `ENABLE_ENHANCED_SECURITY`，新增 `cprisk_mte_guard` / `MIEPostureDetector`，通过 sysctl + 本地快照 + region canary 保守感知 Apple Memory Integrity Enforcement 姿态，并补齐 `HoneypotMemoryDetector` 在 iPhoneOS 26 SDK 下的 `ucontext_t` / PC 字段兼容路径，使 `xcodebuild -sdk iphoneos` 恢复全绿 |
 | **7.1** | **VM 自校验链路对齐 + dispatcher 跨单元散布 + 合规文档收口** | VM self-check 改为优先消费 `__swift5_mdvsi` span map 驱动注入与运行时校验，`cprisk-vm-self-expect` 同时支持 CPSF/CPSH（FNV/HMAC）产物写入；解释器主 dispatcher 延续函数指针表架构，并将 22 个 `cprisk_vm_oph_*` handler 拆分到多个 `.c` 编译单元，减少单文件语义聚合；同步更新 SDK 隐私声明与 App Store 合规文档，明确 7.1 加固升级不扩大 collected data / Required Reason API 边界 |
 ## 架构概览
 
@@ -118,6 +119,23 @@
 
 ---
 
+## 7.2 新增能力 — MIE/MTE 姿态接入 + iPhoneOS 26 SDK 构建兼容
+
+7.2 在 7.1 的 VM self-check / dispatcher 纵深基础上，开始把 Apple 近代硬件提供的内存完整性能力以“**保守接入、可降级、可解释**”的方式纳入 SDK：第一，Release 构建增加 `CPRISK_MTE_COMPILE_SUPPORT` 与 Xcode `ENABLE_ENHANCED_SECURITY` 路径，使 SDK 在支持设备上可以消费更强的系统内存完整性语义；第二，C 层新增 `cprisk_mte_guard`，通过 `hw.optional.arm.FEAT_MTE*` / `FEAT_PAuth` 等 `sysctl`、本地 self-test、关键区域 baseline hash + tag snapshot canary，对 `runtime material` 与完整性摘要做低侵入防护；第三，Swift 层新增 `MIEPostureDetector`，把设备姿态映射为 `mie_posture`、`mte_inactive_for_process`、`mte_canary_tampered` 等信号，并对高价值内存/注入类信号做轻量上下文加权；第四，同步修复 `HoneypotMemoryDetector` 在 iPhoneOS 26 SDK 下 `ucontext_t`/PC 字段形态变化导致的 `iphoneos` 构建失败问题，通过 C 层统一封装 signal context PC 前移逻辑，恢复 `xcodebuild -sdk iphoneos` 全绿。
+
+### 7.2 核心改动
+
+| 改动 | 说明 |
+|------|------|
+| **Release 编译期开关接入 MIE** | `Package.swift` / Xcode Release 配置接入 `CPRISK_MTE_COMPILE_SUPPORT`，并为对应 target 打开 `ENABLE_ENHANCED_SECURITY`，使支持设备可暴露更强的 Memory Integrity Enforcement 能力 |
+| **C 层 `cprisk_mte_guard`** | 新增 `cprisk_mte_available()` / `cprisk_mte_self_test()` / `cprisk_mte_guard_snapshot()` 与 region-bound canary，围绕关键运行时材料做 baseline hash + top-byte tag 快照校验，在不支持设备上安全降级，不强行执行高风险 MTE 指令 |
+| **Swift 层 `MIEPostureDetector`** | 通过 `sysctl` + CRiskCore 本地快照评估 `none / pacOnly / miePartial / mieFull` 四级姿态，并输出 `mie_posture`、`mte_unavailable_on_capable_device`、`mte_inactive_for_process`、`mte_canary_tampered` 等信号 |
+| **反篡改权重上下文增强** | `AntiTamperingSignalProvider` 在 `miePartial / mieFull` 下对匿名可执行内存、Frida、文本段篡改等高价值信号做小幅上下文加权，同时把 `device_mie_level` 注入证据域，便于服务端解释 |
+| **隐私/合规文档同步升级** | README、SDK 隐私声明、App Store 合规指南、架构/威胁模型文档统一补充 MIE 能力边界，明确该能力通常只在 A17 / A17 Pro 及后续较新产品线上更可能观察到相关位形，且不新增 collected data 或用户内容采集 |
+| **iPhoneOS 26 SDK 兼容修复** | `HoneypotMemoryDetector` 不再在 Swift 中直接假设 `ucontext_t` 的 `__pc / __opaque_pc` 形态，而改为调用 C 层 `cprisk_advance_ucontext_pc(...)` 做统一适配，消除 arm64 / arm64e 下的新 SDK 接口差异 |
+
+---
+
 ## 7.1 新增能力 — VM Self-Check 对齐 + Dispatcher 跨单元散布
 
 7.1 在 7.0 的 TextSegmentEncryptor、VMProtector(M3) 与解释器自保护基础上，继续把 VM runtime 本身往“更难静态切片、更难单点伪造”的方向推进，重点补齐三条链路：第一，**self-check expect blob 链路从硬编码符号窗口升级为 CPSV span map 驱动**，即由 `__DATA.__swift5_mdvsi` 记录的三段 TEXT 窗口统一驱动注入器与运行时校验，减少 producer / runtime 偏移；第二，**self-check CLI 同时支持 CPSF/FNV 与 CPSH/HMAC**，便于交付时直接生成两种 expect blob；第三，**全局 opcode dispatcher 在保留函数指针表架构的前提下，将 22 个 `cprisk_vm_oph_*` handler 拆分到多个编译单元**，降低单文件聚合语义暴露面，使 pattern-based 恢复更依赖跨 TU 还原。
@@ -129,7 +147,7 @@
 | **CPSV span map 驱动 self-check** | `VMSelfExpectInjector` 优先读取 `__swift5_mdvsi`（CPSV）而不是只依赖 `_cprisk_vm_execute / _cprisk_vm_interp_loop_a / _cprisk_vm_dispatch_lookup` 三符号硬编码布局，注入与 runtime hash/HMAC 共享同一窗口定义 |
 | **CPSF / CPSH 双路径 CLI** | `cprisk-vm-self-expect` 支持传统 CPSF/FNV 与 CPSH/HMAC 写入，可通过参数选择写入模式并在交付链路中显式控制 |
 | **runtime 自校验对齐 producer span** | `cprisk_vm_interpreter.c` 在 M3 self-check 时优先消费 `__swift5_mdvsi` 中记录的 span 布局，确保 observed bytes 与 post-link producer 注入字节源一致 |
-| **dispatcher 继续去 switch 化** | 主 opcode 路径仍走 `cprisk_vm_oph_table[logical]()` 间接 dispatch，不回退为大 `switch` |
+| **dispatcher 继续去 switch 化** | 主 opcode 路径现在走“family 分流 + single-access handler materialization”(`cprisk_vm_dispatch_oph_materialized_i(...)`)，不回退为大 `switch`，也不再暴露明文 `oph_table[logical]()` 指针总表 |
 | **handler 跨编译单元散布** | 22 个 `cprisk_vm_oph_*` handler 已拆到 `cprisk_vm_oph_basic/lane/branch/bitwise/vreg/nested.c` 与 `cprisk_vm_oph_table.c`，减少单文件语义聚合 |
 | **隐私/合规文档同步升级** | README、SDK 隐私声明、App Store 合规指南统一升级到 7.1，并明确这些 VM/runtime hardening 不会新增 privacy manifest 的 collected data 类型或 Required Reason API 类别 |
 
@@ -643,6 +661,12 @@ SDK 在对抗安全的同时兼顾业务可用性，内置多层灰度与降级�
 cd RiskDetectorApp && swift build
 ```
 
+如需验证 Xcode 工程在设备 SDK 下的 Release 构建，可使用：
+
+```bash
+cd RiskDetectorApp && xcodebuild -project RiskDetectorApp.xcodeproj -target CloudPhoneRiskKit -configuration Release -sdk iphoneos build CODE_SIGNING_ALLOWED=NO
+```
+
 ## 测试
 
 单元测试通过 Swift Package Manager 运行。Xcode scheme 的 TestAction 若为空，默认可使用：
@@ -667,4 +691,4 @@ cd RiskDetectorApp && swift test --scratch-path "${TMPDIR:-/tmp}/cloudphone-risk
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 7.1 — VM self-check alignment + split VM dispatcher handlers</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 7.2 — MIE posture integration + iphoneos SDK compatibility</sub></p>

@@ -141,6 +141,7 @@ SDK 可能处理以下环境风险数据：
 - `deny_attach` 生效回溯验证、`task_for_pid` 异常成功、AMFI / entitlement 异常位
 - Frida/Gum/Gadget 模块特征（如已加载 image 名、可疑 Mach-O section 名、只读字符串片段）
 - guard page 命中、按页解密/重加密状态、VM 自校验状态、解释器路径异常
+- **内存完整性 / MTE 姿态（`MIEPostureDetector`）**：在支持的系统上，仅通过内核导出的 `sysctl`（如 `hw.optional.arm.FEAT_MTE*` 等 OID）读取**设备级硬件能力摘要**，用于本地安全姿态评估与反篡改信号的轻量上下文加权；**不读取通讯录、照片、消息等用户内容**，也不访问应用沙箱内的用户文件。该能力通常只会在 **A17 / A17 Pro 及后续较新产品线**上更可能观察到相关位形，最终仍以系统实际导出的 OID 与数值为准。
 
 这些字段的共同特点是：
 
@@ -152,6 +153,12 @@ SDK 可能处理以下环境风险数据：
 
 - `FridaModuleDetector` 主要检查**当前进程已加载模块与只读段内容**，用于识别 Frida/Gum/Gadget 注入痕迹，不读取用户文件内容，也不扩大对外网络发送的数据范围。
 - 新增的 watchdog / software breakpoint / exception timeout / guard page / deny-attach verify / HMAC self-check 探针，本质上仍属于**运行时完整性状态**，不是新的个人信息类别。
+
+**关于 MIE / MTE（含 Apple 在 sysctl 中暴露的 EMTE 相关位形）的补充说明**：
+
+- 该能力依赖**A17 / A17 Pro 及后续较新 Apple 芯片与对应系统**对 ARM 内存标记扩展（MTE）等能力的导出与兼容；**并非所有设备、并非所有系统版本**都会暴露相同的 `sysctl` OID 或非零读数。
+- 在不支持或 OID 不可读时，SDK **安全降级**为较低姿态层级（例如仅反映 PAC/PAuth 路径），**不会**为了“凑齐”能力而采集额外敏感个人信息或用户内容。
+- 输出语义为**本地安全姿态探测 / 运行时防护增强的上下文**，用于解释与加权部分风险信号；**不等于**读取用户数据、也不构成对用户存储的扫描。
 
 ### 4.3 行为与传感器类
 

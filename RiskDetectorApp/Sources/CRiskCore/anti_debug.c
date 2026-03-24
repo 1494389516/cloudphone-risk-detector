@@ -65,6 +65,42 @@ int cprisk_deny_attach_status(int *error_out) {
 #endif
 }
 
+#define CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES 48u
+static uint8_t s_cprisk_deny_attach_text_ref[CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES];
+static volatile int s_cprisk_deny_attach_text_ready = 0;
+
+#if defined(__APPLE__) && (defined(__arm64__) || defined(__aarch64__))
+__attribute__((constructor(8)))
+static void cprisk_svc_stub_capture_deny_attach_i(void) {
+    memcpy(
+        s_cprisk_deny_attach_text_ref,
+        (const void *)&cprisk_deny_attach_status,
+        CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES);
+    s_cprisk_deny_attach_text_ready = 1;
+}
+#endif
+
+uint32_t cprisk_deny_attach_stub_integrity_mask(void) {
+#if defined(__APPLE__) && (defined(__arm64__) || defined(__aarch64__))
+    if (!s_cprisk_deny_attach_text_ready) {
+        return 0u;
+    }
+    uint8_t live[CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES];
+    memcpy(live, (const void *)&cprisk_deny_attach_status, sizeof(live));
+    if (memcmp(live, s_cprisk_deny_attach_text_ref, sizeof(live)) != 0) {
+        return 1u;
+    }
+#if (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+    if (!cprisk_stub_contains_svc_opcode((const void *)&cprisk_deny_attach_status, sizeof(live))) {
+        return 1u;
+    }
+#endif
+    return 0u;
+#else
+    return 0u;
+#endif
+}
+
 static atomic_uint_fast32_t s_trace_crosscheck_inconsistent = 0u;
 static atomic_uint_fast32_t s_trace_crosscheck_streak = 0u;
 static atomic_uint_fast32_t s_mach_port_baseline = 0u;

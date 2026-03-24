@@ -160,6 +160,9 @@ private final class KeychainSalt {
     private let account = "device_key_salt"
     private let saltLength = 32
     private let lock = NSLock()  // NSLock: Keychain I/O inside lock
+#if DEBUG
+    private var debugFallbackSalt: String?
+#endif
 
     func getOrCreate() -> String {
         getOrCreateWithPersistedFlag().0
@@ -169,6 +172,11 @@ private final class KeychainSalt {
     func getOrCreateWithPersistedFlag() -> (String, Bool) {
         return lock.withLock {
             if let existing = read() { return (existing, true) }
+#if DEBUG
+            if let fallback = debugFallbackSalt {
+                return (fallback, false)
+            }
+#endif
 
             var bytes = [UInt8](repeating: 0, count: saltLength)
             defer { secureZeroBytes(&bytes) }
@@ -186,6 +194,9 @@ private final class KeychainSalt {
             if let existing = save(hex) {
                 return (existing, true)
             }
+#if DEBUG
+            debugFallbackSalt = hex
+#endif
             return (hex, false)
         }
     }

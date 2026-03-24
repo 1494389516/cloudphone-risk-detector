@@ -17,6 +17,7 @@ hardening:
   interpreter_cff_tier: medium
   dispatch_table_keystream: true
   bytecode_immediate_keystream: true
+  bytecode_segment_runtime_sha256: true
 functions:
   full:
     - RiskDetectionEngine.collectAndAugmentSignals

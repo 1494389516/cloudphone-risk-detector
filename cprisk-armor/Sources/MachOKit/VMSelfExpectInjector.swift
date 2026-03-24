@@ -27,14 +27,23 @@ public enum VMSelfExpectInjector {
     /// `CPRISK_VM_M3_SELF_BYTES` — current CRiskCore total concatenated code bytes hashed.
     public static let selfByteCount: Int = execSegmentBytes + loopSegmentBytes + dispatchSegmentBytes
 
+    public enum Source: String, Sendable {
+        case cpsvSpanMap = "cpsv"
+        case legacySymtab = "symtab"
+    }
+
     public struct Result: Sendable {
         /// LE u32 after magic in mdvsk: FNV-1a (`inject`) or CPSH tag (`injectHmac`).
         public let fnvExpect: UInt32
+        /// LE u32 magic written to mdvsk: `CPSF` for FNV or `CPSH` for HMAC.
+        public let expectMagicLE: UInt32
         public let resolvedSymbolNames: [String]
         public let symbolVMAddresses: [UInt64]
         public let fileOffsets: [UInt64]
-        /// True when spans came from `__swift5_mdvsi` (CPSV); false when symtab fallback was used.
-        public let usedCPSVSpanMap: Bool
+        /// Explicit source path used to resolve the three self-check windows.
+        public let source: Source
+        /// Compatibility mirror for existing callers that only branch on CPSV vs legacy symtab.
+        public var usedCPSVSpanMap: Bool { source == .cpsvSpanMap }
     }
 
     /// Derives the 32-byte HMAC key the same way as `cprisk_vm_selfchk_hmac_key_i` (SHA-256 over material || XOR-mixed label || 8-byte session bind; bind is zero at link/inject time).
@@ -96,10 +105,11 @@ public enum VMSelfExpectInjector {
         _ = try file.write(to: machoURL, validateRoundTrip: true)
         return Result(
             fnvExpect: fnv,
+            expectMagicLE: Self.magicLE,
             resolvedSymbolNames: meta.map(\.name),
             symbolVMAddresses: meta.map(\.vmaddr),
             fileOffsets: meta.map(\.fileOffset),
-            usedCPSVSpanMap: usedCPSV
+            source: usedCPSV ? .cpsvSpanMap : .legacySymtab
         )
     }
 
@@ -127,10 +137,11 @@ public enum VMSelfExpectInjector {
         _ = try file.write(to: machoURL, validateRoundTrip: true)
         return Result(
             fnvExpect: tag,
+            expectMagicLE: Self.magicHmacLE,
             resolvedSymbolNames: meta.map(\.name),
             symbolVMAddresses: meta.map(\.vmaddr),
             fileOffsets: meta.map(\.fileOffset),
-            usedCPSVSpanMap: usedCPSV
+            source: usedCPSV ? .cpsvSpanMap : .legacySymtab
         )
     }
 

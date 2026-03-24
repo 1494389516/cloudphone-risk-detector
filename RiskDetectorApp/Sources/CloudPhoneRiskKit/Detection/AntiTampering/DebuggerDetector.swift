@@ -63,6 +63,11 @@ struct DebuggerDetector: Detector {
             methods.append("debugger:software_breakpoint:\(ObfuscatedConstants.keywordWatchdog)")
         }
 
+        if (watchdogSnapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_INSTANT_RETURN_PATCH)) != 0 {
+            score += 16
+            methods.append("debugger:instant_return_patch")
+        }
+
         if cprisk_probe_debugger_via_signal() != 0 {
             score += 20
             methods.append("debugger:signal_probe")

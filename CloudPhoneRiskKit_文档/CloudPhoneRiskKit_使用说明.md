@@ -441,6 +441,7 @@ CPRiskKit.register(provider: MyProvider())
 | `enableBehaviorDetect` | `Bool` | `true` | 行为指纹采集 |
 | `enableNetworkSignals` | `Bool` | `true` | 网络信号采集 |
 | `enableAntiTamper` | `Bool` | `true` | 反篡改 / Hook 检测（含反调试 watchdog、FridaModuleDetector、软件断点/异常超时信号） |
+| `AntiTamperingSignalProvider.Configuration.enableMIEPosture` | `Bool` | `true` | 内存完整性 / MTE（含 sysctl 可读的 EMTE 位形）姿态探测：仅设备级 `sysctl` 摘要；通常仅 A17 / A17 Pro 及后续较新产品线更可能暴露相关位形；不支持时安全降级；非用户内容采集 |
 | `enableTemporalAnalysis` | `Bool` | `false` | 时序模式分析 |
 | `enableRemoteConfig` | `Bool` | `false` | 远程配置拉取 |
 | `defaultScenario` | `RiskScenario` | `.default` | 默认评估场景 |

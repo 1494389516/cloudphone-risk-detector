@@ -198,6 +198,58 @@ final class ArmorRuntimeLifecycleTests: XCTestCase {
 
     // MARK: - Init Timing
 
+    func testInitTimingThresholdSyntheticMachineOlderGenerationIsHigherThanNew() {
+        let older = cprisk_test_init_timing_threshold_ns_for_machine(
+            "iPhone10,1",
+            cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_PRODUCTION)
+        )
+        let newer = cprisk_test_init_timing_threshold_ns_for_machine(
+            "iPhone17,1",
+            cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_PRODUCTION)
+        )
+        XCTAssertGreaterThan(
+            older,
+            newer,
+            "older SoC generations should receive a larger slack threshold than recent ones"
+        )
+    }
+
+    func testRelaxedAntiDebugModeRaisesInitTimingThresholdVersusProduction() {
+        let machine = "iPhone14,2"
+        let prod = cprisk_test_init_timing_threshold_ns_for_machine(
+            machine,
+            cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_PRODUCTION)
+        )
+        let relaxed = cprisk_test_init_timing_threshold_ns_for_machine(
+            machine,
+            cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA)
+        )
+        XCTAssertGreaterThan(relaxed, prod)
+    }
+
+    func testAntiDebugRuntimeModeEnumAlignsWithCConstants() {
+        XCTAssertEqual(CPRiskAntiDebugRuntimeMode.production.rawValue, Int(CPRISK_RUNTIME_HARDENING_PRODUCTION))
+        XCTAssertEqual(CPRiskAntiDebugRuntimeMode.relaxedDevelopmentQA.rawValue, Int(CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA))
+    }
+
+    func testRuntimeHardeningModeRoundTripInC() {
+        cprisk_set_runtime_hardening_mode(cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA))
+        XCTAssertEqual(Int(cprisk_get_runtime_hardening_mode()), Int(CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA))
+        cprisk_set_runtime_hardening_mode(cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_PRODUCTION))
+        XCTAssertEqual(Int(cprisk_get_runtime_hardening_mode()), Int(CPRISK_RUNTIME_HARDENING_PRODUCTION))
+    }
+
+    func testStartWithRelaxedAntiDebugModeAppliesCoreModeAndStopResetsIt() {
+        let config = CPRiskConfig()
+        config.antiDebugRuntimeMode = .relaxedDevelopmentQA
+
+        CPRiskKit.shared.start(config: config)
+        XCTAssertEqual(Int(cprisk_get_runtime_hardening_mode()), Int(CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA))
+
+        CPRiskKit.shared.stop()
+        XCTAssertEqual(Int(cprisk_get_runtime_hardening_mode()), Int(CPRISK_RUNTIME_HARDENING_PRODUCTION))
+    }
+
     func testInitElapsedNsIsNonZeroAfterStart() {
         CPRiskKit.shared.start()
         defer { CPRiskKit.shared.stop() }
@@ -349,6 +401,26 @@ final class ArmorRuntimeLifecycleTests: XCTestCase {
             seen.insert(selected)
         }
         XCTAssertGreaterThanOrEqual(seen.count, 3, "path selector should spread calls across multiple variants")
+    }
+
+    func testObfDecodeSha256TagMatchesFridaToken() {
+        let domain = UInt32(CPRISK_OBF_TAG_DOMAIN_FRIDA_RT)
+        let enc: [UInt8] = [0xad, 0x0c, 0x6f, 0xa8, 0x2c]
+        var buf = [CChar](repeating: 0, count: 32)
+        let rc = cprisk_obf_decode_sha256_tag(domain, 1, enc, enc.count, &buf, buf.count)
+        XCTAssertEqual(rc, 0)
+        XCTAssertEqual(String(cString: buf), "frida")
+    }
+
+    func testVmMprotectCountersReadableAfterReset() {
+        cprisk_test_mprotect_reset_tamper_state()
+        XCTAssertEqual(cprisk_get_vm_mprotect_crosscheck_mismatch_count(), 0)
+        XCTAssertEqual(cprisk_get_vm_mprotect_mach_trap_mismatch_count(), 0)
+    }
+
+    func testSvcStubIntegrityReturnsStableMaskOnThisPlatform() {
+        let mask = cprisk_verify_svc_stub_integrity()
+        XCTAssertLessThanOrEqual(mask, 0x7)
     }
 
     private func makeAntiDebugPlanPayload(
