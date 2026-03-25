@@ -1263,6 +1263,29 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                 weightHint: 62
             ))
         }
+
+        var whiteboxProbe = cprisk_whitebox_probe_result()
+        let whiteboxProbeRc = cprisk_whitebox_probe(&whiteboxProbe)
+        if cprisk_whitebox_available() != 0 {
+            let metaOk = (whiteboxProbe.flags & UInt32(CPRISK_WHITEBOX_PROBE_FLAG_METADATA_VALID)) != 0
+            let engineOk = (whiteboxProbe.flags & UInt32(CPRISK_WHITEBOX_PROBE_FLAG_ENGINE_READY)) != 0
+            if whiteboxProbeRc != 0 || !metaOk || !engineOk {
+                signals.append(RiskSignal(
+                    id: SignalID.whiteboxPrfProbeDegraded,
+                    category: ObfuscatedConstants.categoryAntiTamper,
+                    score: 58,
+                    evidence: [
+                        "probe_rc": "\(whiteboxProbeRc)",
+                        "flags": "\(whiteboxProbe.flags)",
+                        "abi_version": "\(whiteboxProbe.abi_version)",
+                        "mechanism": "cprisk_whitebox_probe",
+                    ],
+                    state: .tampered,
+                    layer: 1,
+                    weightHint: 76
+                ))
+            }
+        }
         #endif
 
         if !planSnapshot.sectionPresent || !planSnapshot.sectionValid {
@@ -1520,6 +1543,8 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         let peerStallFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_WATCHDOG_PEER_STALL)) != 0
         let shadowStackFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SHADOW_STACK)) != 0
         let dbiMarkerFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DBI_MARKER)) != 0
+        let dbiVmTraceCorrelFlag =
+            (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DBI_VM_TRACE_CORREL)) != 0
         let timingSidechannelFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TIMING_SIDECHANNEL)) != 0
         let traceCrosscheckFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACE_CROSSCHECK)) != 0
         let dyldInjectionFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DYLD_INJECTION)) != 0
@@ -1527,6 +1552,12 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         let amfiCsFlagsFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_AMFI_CS_FLAGS)) != 0
         let getTaskAllowFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GET_TASK_ALLOW)) != 0
         let guardPageFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GUARD_PAGE)) != 0
+        let functionPrologueFlag =
+            (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_FUNCTION_PROLOGUE)) != 0
+        let pacThreadEntryFlag =
+            (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_PAC_THREAD_ENTRY)) != 0
+        let vmImageLayoutDriftFlag =
+            (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_IMAGE_WHITELIST)) != 0
 
         var maxScore = 0.0
         var anomalyKinds: [String] = []
@@ -1738,6 +1769,75 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
             )
         }
 
+        if pacThreadEntryFlag {
+            let score = 91.0
+            maxScore = max(maxScore, score)
+            anomalyKinds.append("pac_thread_entry")
+            signals.append(
+                RiskSignal(
+                    id: SignalID.antiDebugWatchdogPacThreadEntry,
+                    category: ObfuscatedConstants.categoryAntiTamper,
+                    score: score,
+                    evidence: [
+                        "mechanism": "pthread_pac_thunk_auth_failed",
+                        "anomaly_flags": "\(snapshot.anomalyFlags)",
+                    ],
+                    state: .tampered,
+                    layer: 1,
+                    weightHint: 93
+                )
+            )
+        }
+
+        if vmImageLayoutDriftFlag {
+            let score = 78.0
+            maxScore = max(maxScore, score)
+            anomalyKinds.append("vm_image_layout_drift")
+            signals.append(
+                RiskSignal(
+                    id: SignalID.antiDebugWatchdogVmImageLayoutDrift,
+                    category: ObfuscatedConstants.categoryAntiTamper,
+                    score: score,
+                    evidence: [
+                        "mechanism": "dyld_layout_digest_or_mem_guard_image_tick",
+                        "vm_mprotect_cc": "\(snapshot.vmMprotectCrosscheckMismatchTotal)",
+                        "vm_mprotect_mach": "\(snapshot.vmMprotectMachTrapMismatchTotal)",
+                    ],
+                    state: .tampered,
+                    layer: 2,
+                    weightHint: 84
+                )
+            )
+        }
+
+        if functionPrologueFlag || snapshot.prologueIntegrityAnomalyCount > 0 {
+            let mask = snapshot.lastPrologueFailMask
+            let objcBit = UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_OBJC_MSGSEND)
+            let dyldIcBit = UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_DYLD_IMAGE_COUNT)
+            let score = 90.0
+            maxScore = max(maxScore, score)
+            anomalyKinds.append("function_prologue")
+            signals.append(
+                RiskSignal(
+                    id: SignalID.antiDebugWatchdogCriticalHookSurface,
+                    category: ObfuscatedConstants.categoryAntiTamper,
+                    score: score,
+                    evidence: [
+                        "mechanism": "memcmp_prologue_baseline",
+                        "prologue_integrity_anomaly_count": "\(snapshot.prologueIntegrityAnomalyCount)",
+                        "last_prologue_fail_mask": "\(mask)",
+                        "fail_objc_msgsend": ((mask & objcBit) != 0) ? "1" : "0",
+                        "fail_dyld_image_count": ((mask & dyldIcBit) != 0) ? "1" : "0",
+                        "fail_dlsym": ((mask & UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_DLSYM)) != 0) ? "1" : "0",
+                        "fail_pthread_create": ((mask & UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_PTHREAD_CREATE)) != 0) ? "1" : "0",
+                    ],
+                    state: .tampered,
+                    layer: 1,
+                    weightHint: 94
+                )
+            )
+        }
+
         if softwareBreakpointFlag || snapshot.softwareBreakpointDetected {
             let score = snapshot.softwareBreakpointDetected ? 58.0 : 34.0
             maxScore = max(maxScore, score)
@@ -1861,6 +1961,30 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
             )
         }
 
+        if dbiVmTraceCorrelFlag
+            || (snapshot.dbiMarkerFlags & UInt32(CPRISK_DBI_MARKER_STALKER_CORREL)) != 0
+            || (snapshot.dbiMarkerFlags & UInt32(CPRISK_DBI_MARKER_ANON_EXEC_SLAB)) != 0 {
+            let score = (snapshot.dbiMarkerFlags & UInt32(CPRISK_DBI_MARKER_STALKER_CORREL)) != 0 ? 78.0 : 70.0
+            maxScore = max(maxScore, score)
+            anomalyKinds.append("dbi_vm_trace_correl")
+            signals.append(
+                RiskSignal(
+                    id: "\(ObfuscatedConstants.detectorIDAntiDebugWatchdog)_dbi_vm_trace_correl",
+                    category: ObfuscatedConstants.categoryAntiTamper,
+                    score: score,
+                    evidence: [
+                        "marker_flags": "\(snapshot.dbiMarkerFlags)",
+                        "stalker_correl": ((snapshot.dbiMarkerFlags & UInt32(CPRISK_DBI_MARKER_STALKER_CORREL)) != 0) ? "1" : "0",
+                        "anon_exec_slab": ((snapshot.dbiMarkerFlags & UInt32(CPRISK_DBI_MARKER_ANON_EXEC_SLAB)) != 0) ? "1" : "0",
+                        "suspicious_thread_count": "\(snapshot.suspiciousThreadCount)",
+                    ],
+                    state: .tampered,
+                    layer: 1,
+                    weightHint: 93
+                )
+            )
+        }
+
         if timingSidechannelFlag || snapshot.timingAnomalyFlags != 0 {
             let isHard = snapshot.timingProbeMaxNs > snapshot.timingProbeThresholdNs
                 && snapshot.timingProbeThresholdNs > 0
@@ -1928,6 +2052,8 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                     "get_task_allow_anomaly_count": "\(snapshot.getTaskAllowAnomalyCount)",
                     "vm_mprotect_crosscheck_mismatch_total": "\(snapshot.vmMprotectCrosscheckMismatchTotal)",
                     "vm_mprotect_mach_trap_mismatch_total": "\(snapshot.vmMprotectMachTrapMismatchTotal)",
+                    "prologue_integrity_anomaly_count": "\(snapshot.prologueIntegrityAnomalyCount)",
+                    "last_prologue_fail_mask": "\(snapshot.lastPrologueFailMask)",
                 ],
                 state: .tampered,
                 layer: 2,

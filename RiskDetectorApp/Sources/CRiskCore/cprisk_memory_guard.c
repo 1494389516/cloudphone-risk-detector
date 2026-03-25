@@ -16,13 +16,22 @@
 #include <string.h>
 #include <signal.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <sys/mman.h>
 #include <mach/mach.h>
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
 #if defined(__aarch64__)
 #include <mach/arm/thread_status.h>
 #endif
 #if defined(__APPLE__)
 #include <mach/vm_prot.h>
+#include <stdint.h>
+#endif
+
+#if defined(__APPLE__) && !(defined(TARGET_OS_SIMULATOR) && TARGET_OS_SIMULATOR)
+extern void cprisk_svc_reloc_rx_page_whitelist_bounds(uintptr_t *out_lo, uintptr_t *out_hi);
 #endif
 
 #ifndef CPRISK_PAGE_MASK
@@ -557,3 +566,122 @@ void cprisk_remove_memory_trap(struct cprisk_guard_state *state) {
     cprisk_remove_sigbus_guard(state);
     memset(state, 0, sizeof(*state));
 }
+
+#if defined(__APPLE__)
+#define CPRISK_MEM_GUARD_VM_REGION_SCAN_MAX 96u
+
+#if !(defined(TARGET_OS_SIMULATOR) && TARGET_OS_SIMULATOR)
+static vm_address_t s_cprisk_mem_guard_vm_addr_cursor;
+#endif
+
+static int cprisk_mem_guard_user_tag_is_anonymous_i(unsigned int user_tag) {
+    return (user_tag >= 240u && user_tag <= 245u) ? 1 : 0;
+}
+
+static int cprisk_mem_guard_user_tag_is_expected_image_i(unsigned int user_tag) {
+#if defined(VM_MEMORY_DYLIB)
+    if (user_tag == VM_MEMORY_DYLIB) {
+        return 1;
+    }
+#endif
+#if defined(VM_MEMORY_SHARED_PMAP)
+    if (user_tag == VM_MEMORY_SHARED_PMAP) {
+        return 1;
+    }
+#endif
+    return 0;
+}
+
+uint32_t cprisk_memory_guard_image_vm_tick(void) {
+    uint32_t flags = 0u;
+    const int layout_diff = cprisk_vm_dyld_image_layout_digest_differs_from_baseline();
+    if (layout_diff == 1) {
+        flags |= CPRISK_MEM_GUARD_TICK_IMAGE_LIST_CHANGED;
+    }
+
+#if defined(TARGET_OS_SIMULATOR) && TARGET_OS_SIMULATOR
+    vm_address_t addr = 0u;
+#else
+    vm_address_t addr = s_cprisk_mem_guard_vm_addr_cursor;
+#endif
+    natural_t depth = 0u;
+    for (uint32_t step = 0; step < CPRISK_MEM_GUARD_VM_REGION_SCAN_MAX; step++) {
+        vm_size_t sz = 0u;
+        vm_region_submap_info_data_64_t info;
+        mach_msg_type_number_t count = VM_REGION_SUBMAP_INFO_COUNT_64;
+        vm_address_t a = addr;
+        kern_return_t kr = vm_region_recurse_64(
+            mach_task_self(),
+            &a,
+            &sz,
+            &depth,
+            (vm_region_recurse_info_t)&info,
+            &count);
+        if (kr != KERN_SUCCESS) {
+#if !(defined(TARGET_OS_SIMULATOR) && TARGET_OS_SIMULATOR)
+            s_cprisk_mem_guard_vm_addr_cursor = 0u;
+#endif
+            break;
+        }
+        if (info.is_submap) {
+            depth += 1u;
+            continue;
+        }
+#if !(defined(TARGET_OS_SIMULATOR) && TARGET_OS_SIMULATOR)
+        if (sz > 0u &&
+            (info.protection & VM_PROT_WRITE) != 0 &&
+            (info.protection & VM_PROT_EXECUTE) != 0) {
+            flags |= CPRISK_MEM_GUARD_TICK_EXECUTABLE_WRITE;
+        }
+#endif
+        const vm_prot_t rx_need = VM_PROT_READ | VM_PROT_EXECUTE;
+        if (sz > 0u && (info.protection & rx_need) == rx_need) {
+            const uintptr_t a0 = (uintptr_t)a;
+            const uintptr_t a1 = a0 + (uintptr_t)(sz >> 1);
+            const uintptr_t a2 = a0 + (uintptr_t)(sz - 1u);
+            const int p0_in_image = cprisk_addr_in_any_image_executable((const void *)a0);
+            const int p1_in_image = cprisk_addr_in_any_image_executable((const void *)a1);
+            const int p2_in_image = cprisk_addr_in_any_image_executable((const void *)a2);
+            const int all_in_image = p0_in_image != 0 && p1_in_image != 0 && p2_in_image != 0;
+            const int all_outside_image = p0_in_image == 0 && p1_in_image == 0 && p2_in_image == 0;
+            if (all_outside_image) {
+                uintptr_t wl_lo = 0u;
+                uintptr_t wl_hi = 0u;
+                cprisk_svc_reloc_rx_page_whitelist_bounds(&wl_lo, &wl_hi);
+                const uintptr_t ra = (uintptr_t)a;
+                const uintptr_t ra_end = ra + (uintptr_t)sz;
+                const int region_is_only_reloc_svc_page =
+                    wl_lo != 0u && wl_hi > wl_lo && ra == wl_lo && ra_end == wl_hi;
+                if (region_is_only_reloc_svc_page) {
+                    /* Known anonymous RX from direct_syscall SVC stub relocation — not a foreign slab. */
+                } else {
+                    if (cprisk_mem_guard_user_tag_is_expected_image_i(info.user_tag) != 0) {
+                        flags |= CPRISK_MEM_GUARD_TICK_IMAGE_LIST_CHANGED;
+                    }
+                    flags |= CPRISK_MEM_GUARD_TICK_UNKNOWN_EXECUTABLE_RX;
+                    break;
+                }
+            }
+            if (all_in_image &&
+                cprisk_mem_guard_user_tag_is_anonymous_i(info.user_tag) != 0) {
+                flags |= CPRISK_MEM_GUARD_TICK_IMAGE_LIST_CHANGED;
+            }
+        }
+        if (sz == 0u || a + sz < a) {
+#if !(defined(TARGET_OS_SIMULATOR) && TARGET_OS_SIMULATOR)
+            s_cprisk_mem_guard_vm_addr_cursor = 0u;
+#endif
+            break;
+        }
+        addr = a + sz;
+    }
+#if !(defined(TARGET_OS_SIMULATOR) && TARGET_OS_SIMULATOR)
+    s_cprisk_mem_guard_vm_addr_cursor = addr;
+#endif
+    return flags;
+}
+#else
+uint32_t cprisk_memory_guard_image_vm_tick(void) {
+    return 0u;
+}
+#endif

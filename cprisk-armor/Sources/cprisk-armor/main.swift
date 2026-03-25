@@ -125,6 +125,7 @@ func printUsage() {
       CPRISK_ARMOR_BUILD_SEED Decimal or 0x-prefixed seed for deterministic randomization (preferred override)
       CPRISK_BUILD_SEED       Legacy alias for CPRISK_ARMOR_BUILD_SEED (fallback when --build-seed is missing)
       CPRISK_METADATA_SCRUB_LEVEL  Pass 2: conservative (default) or aggressive
+                        (aggressive overwrites non-`__swift5_types` ancillary sections in full; may break reflection / some dynamic features)
 
     A key is REQUIRED when any encryption pass (1, 3, 4, 12) or --all is enabled.
     """)

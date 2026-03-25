@@ -18,16 +18,20 @@
 #include <sys/sysctl.h>
 #include <sys/types.h>
 #include <sys/proc.h>
+#include <sys/mman.h>
 #include <stdatomic.h>
 #include <string.h>
 #include <unistd.h>
+#include "include/cprisk_instruction_cache.h"
 #endif
 
 void cprisk_deny_attach(void) {
     (void)cprisk_deny_attach_status(NULL);
 }
 
-int cprisk_deny_attach_status(int *error_out) {
+#define CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES 48u
+
+static int cprisk_deny_attach_status_template(int *error_out) {
 #if (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
     register long x0 __asm("x0") = 31;  /* PT_DENY_ATTACH */
     register long x1 __asm("x1") = 0;   /* pid = 0 (self) */
@@ -65,17 +69,105 @@ int cprisk_deny_attach_status(int *error_out) {
 #endif
 }
 
-#define CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES 48u
-static uint8_t s_cprisk_deny_attach_text_ref[CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES];
+static int (*s_deny_attach_fn)(int *) = cprisk_deny_attach_status_template;
+
+#if (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+
+static void *s_deny_rx_page;
+static size_t s_deny_rx_page_size;
+static uintptr_t s_deny_rx_offset;
+static uint64_t s_deny_rx_page_hash_ref;
+static uint64_t s_deny_rx_stub_roll_ref;
+static volatile int s_deny_reloc_ready;
+
+static uint64_t cprisk_deny_fnv1a64_i(const void *p, size_t n) {
+    const uint8_t *b = (const uint8_t *)p;
+    uint64_t h = 14695981039346656037ULL;
+    for (size_t i = 0u; i < n; i++) {
+        h ^= (uint64_t)b[i];
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+__attribute__((constructor(3)))
+static void cprisk_deny_attach_rx_reloc_ctor_i(void) {
+    const size_t ps = (size_t)getpagesize();
+    if (ps < CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES + 64u) {
+        return;
+    }
+    uint64_t r = 0u;
+    int ge = 0;
+    if (cprisk_getentropy_direct(&r, sizeof(r), &ge) != 0) {
+        r = (uint64_t)(uintptr_t)&cprisk_deny_attach_rx_reloc_ctor_i ^ 0x5A5A5A5Au;
+    }
+    void *pg = mmap(NULL, ps, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (pg == MAP_FAILED) {
+        return;
+    }
+    memset(pg, 0, ps);
+    const uintptr_t max_off = ps - CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES - 8u;
+    const uintptr_t off = (uintptr_t)((r % (max_off / 4u)) * 4u);
+    memcpy((uint8_t *)pg + off, (const void *)&cprisk_deny_attach_status_template, CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES);
+    cprisk_flush_instruction_cache((uint8_t *)pg + off, CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES);
+
+    int mperr = 0;
+    if (cprisk_mprotect_direct(pg, ps, PROT_READ | PROT_EXEC, &mperr) != 0) {
+        munmap(pg, ps);
+        return;
+    }
+
+    uint64_t h = cprisk_deny_fnv1a64_i(pg, ps);
+    h ^= (uint64_t)off << 40;
+    h ^= 0x3D3C2B1A0F0E0D0CULL;
+
+    const uint8_t *pd = (const uint8_t *)pg + off;
+    uint64_t roll = cprisk_deny_fnv1a64_i(pd, CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES);
+    roll ^= cprisk_deny_fnv1a64_i(
+        pd + CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES / 4u,
+        CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES - CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES / 4u);
+
+    s_deny_rx_page = pg;
+    s_deny_rx_page_size = ps;
+    s_deny_rx_offset = off;
+    s_deny_rx_page_hash_ref = h;
+    s_deny_rx_stub_roll_ref = roll;
+    s_deny_attach_fn = (int (*)(int *))((uint8_t *)pg + off);
+    s_deny_reloc_ready = 1;
+}
+#endif
+
+int cprisk_deny_attach_status(int *error_out) {
+    return s_deny_attach_fn(error_out);
+}
+
+#define CPRISK_DENY_ATTACH_CHUNKS 3u
+#define CPRISK_DENY_ATTACH_CHUNK 16u
+
+static uint64_t s_cprisk_deny_attach_chunk_expected[CPRISK_DENY_ATTACH_CHUNKS];
 static volatile int s_cprisk_deny_attach_text_ready = 0;
+static atomic_uint_fast32_t s_cprisk_deny_attach_stub_tick;
 
 #if defined(__APPLE__) && (defined(__arm64__) || defined(__aarch64__))
+static uint8_t s_deny_page_sha256_ref[32];
+
 __attribute__((constructor(8)))
 static void cprisk_svc_stub_capture_deny_attach_i(void) {
-    memcpy(
-        s_cprisk_deny_attach_text_ref,
-        (const void *)&cprisk_deny_attach_status,
-        CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES);
+#if (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+    const void *src = (s_deny_reloc_ready != 0 && s_deny_rx_page != NULL)
+                           ? (const void *)((const uint8_t *)s_deny_rx_page + s_deny_rx_offset)
+                           : (const void *)&cprisk_deny_attach_status_template;
+#else
+    const void *src = (const void *)&cprisk_deny_attach_status_template;
+#endif
+    const uintptr_t base = (uintptr_t)src;
+    uint8_t snap[CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES];
+    memcpy(snap, src, sizeof(snap));
+    for (uint32_t c = 0; c < CPRISK_DENY_ATTACH_CHUNKS; c++) {
+        s_cprisk_deny_attach_chunk_expected[c] =
+            cprisk_svc_stub_chunk_hash_fnv16(snap + (size_t)c * CPRISK_DENY_ATTACH_CHUNK, base);
+    }
+    cprisk_sha256_text_page(src, s_deny_page_sha256_ref);
     s_cprisk_deny_attach_text_ready = 1;
 }
 #endif
@@ -85,13 +177,77 @@ uint32_t cprisk_deny_attach_stub_integrity_mask(void) {
     if (!s_cprisk_deny_attach_text_ready) {
         return 0u;
     }
+#if (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+    if (s_deny_reloc_ready != 0 && s_deny_rx_page != NULL) {
+        uint64_t h = cprisk_deny_fnv1a64_i(s_deny_rx_page, s_deny_rx_page_size);
+        h ^= (uint64_t)s_deny_rx_offset << 40;
+        h ^= 0x3D3C2B1A0F0E0D0CULL;
+        if (h != s_deny_rx_page_hash_ref) {
+            return 1u;
+        }
+        const uint8_t *pd = (const uint8_t *)s_deny_rx_page + s_deny_rx_offset;
+        uint64_t roll = cprisk_deny_fnv1a64_i(pd, CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES);
+        roll ^= cprisk_deny_fnv1a64_i(
+            pd + CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES / 4u,
+            CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES - CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES / 4u);
+        if (roll != s_deny_rx_stub_roll_ref) {
+            return 1u;
+        }
+        uint8_t live[CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES];
+        memcpy(live, pd, sizeof(live));
+        const uint32_t t =
+            atomic_fetch_add_explicit(&s_cprisk_deny_attach_stub_tick, 1u, memory_order_relaxed) + 1u;
+        const int full = (t % 4u) == 0u;
+        if (full) {
+            for (uint32_t c = 0; c < CPRISK_DENY_ATTACH_CHUNKS; c++) {
+                const uint64_t ch = cprisk_svc_stub_chunk_hash_fnv16(
+                    live + (size_t)c * CPRISK_DENY_ATTACH_CHUNK,
+                    (uintptr_t)pd);
+                if (ch != s_cprisk_deny_attach_chunk_expected[c]) {
+                    return 1u;
+                }
+            }
+        } else {
+            const uint32_t idx = (t - 1u) % CPRISK_DENY_ATTACH_CHUNKS;
+            const uint64_t ch = cprisk_svc_stub_chunk_hash_fnv16(
+                live + (size_t)idx * CPRISK_DENY_ATTACH_CHUNK,
+                (uintptr_t)pd);
+            if (ch != s_cprisk_deny_attach_chunk_expected[idx]) {
+                return 1u;
+            }
+        }
+        if (!cprisk_stub_contains_svc_opcode(pd, CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES)) {
+            return 1u;
+        }
+        return 0u;
+    }
+#endif
     uint8_t live[CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES];
-    memcpy(live, (const void *)&cprisk_deny_attach_status, sizeof(live));
-    if (memcmp(live, s_cprisk_deny_attach_text_ref, sizeof(live)) != 0) {
-        return 1u;
+    memcpy(live, (const void *)&cprisk_deny_attach_status_template, sizeof(live));
+    const uintptr_t base = (uintptr_t)(void *)&cprisk_deny_attach_status_template;
+    const uint32_t t =
+        atomic_fetch_add_explicit(&s_cprisk_deny_attach_stub_tick, 1u, memory_order_relaxed) + 1u;
+    const int full = (t % 4u) == 0u;
+    if (full) {
+        for (uint32_t c = 0; c < CPRISK_DENY_ATTACH_CHUNKS; c++) {
+            const uint64_t ch = cprisk_svc_stub_chunk_hash_fnv16(
+                live + (size_t)c * CPRISK_DENY_ATTACH_CHUNK,
+                base);
+            if (ch != s_cprisk_deny_attach_chunk_expected[c]) {
+                return 1u;
+            }
+        }
+    } else {
+        const uint32_t idx = (t - 1u) % CPRISK_DENY_ATTACH_CHUNKS;
+        const uint64_t ch = cprisk_svc_stub_chunk_hash_fnv16(
+            live + (size_t)idx * CPRISK_DENY_ATTACH_CHUNK,
+            base);
+        if (ch != s_cprisk_deny_attach_chunk_expected[idx]) {
+            return 1u;
+        }
     }
 #if (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
-    if (!cprisk_stub_contains_svc_opcode((const void *)&cprisk_deny_attach_status, sizeof(live))) {
+    if (!cprisk_stub_contains_svc_opcode((const void *)&cprisk_deny_attach_status_template, sizeof(live))) {
         return 1u;
     }
 #endif
@@ -100,6 +256,45 @@ uint32_t cprisk_deny_attach_stub_integrity_mask(void) {
     return 0u;
 #endif
 }
+
+#if defined(__APPLE__) && (defined(__arm64__) || defined(__aarch64__))
+void cprisk_deny_attach_stub_page_sha256_digest(uint8_t out_digest[32]) {
+    if (!out_digest) {
+        return;
+    }
+#if (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+    const void *src =
+        (s_deny_reloc_ready != 0 && s_deny_rx_page != NULL)
+            ? (const void *)((const uint8_t *)s_deny_rx_page + s_deny_rx_offset)
+            : (const void *)&cprisk_deny_attach_status_template;
+    cprisk_sha256_text_page(src, out_digest);
+#elif (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__)
+    cprisk_sha256_text_page((const void *)&cprisk_deny_attach_status_template, out_digest);
+#else
+    memset(out_digest, 0, 32);
+#endif
+}
+
+uint32_t cprisk_deny_attach_stub_sha256_page_mask(void) {
+#if (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__)
+    uint8_t live[32];
+    cprisk_deny_attach_stub_page_sha256_digest(live);
+    return memcmp(live, s_deny_page_sha256_ref, 32) != 0 ? (1u << 5) : 0u;
+#else
+    return 0u;
+#endif
+}
+#else
+void cprisk_deny_attach_stub_page_sha256_digest(uint8_t out_digest[32]) {
+    if (out_digest) {
+        memset(out_digest, 0, 32);
+    }
+}
+
+uint32_t cprisk_deny_attach_stub_sha256_page_mask(void) {
+    return 0u;
+}
+#endif
 
 static atomic_uint_fast32_t s_trace_crosscheck_inconsistent = 0u;
 static atomic_uint_fast32_t s_trace_crosscheck_streak = 0u;

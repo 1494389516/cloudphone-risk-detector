@@ -236,6 +236,7 @@
 		A47F56142A976DD0AD40DBAC /* cprisk_exception_handler.c in Sources */ = {isa = PBXBuildFile; fileRef = 56F91A8001337633371A2035 /* cprisk_exception_handler.c */; };
 		A49EDC193395D7120B1C0F7B /* BatteryEntropyProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B291F2B219159A9D12BDF40 /* BatteryEntropyProvider.swift */; };
 		A4F7437BC73AE7BF36F5C487 /* CFFStateCodecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD4F4C02F9E7BDC40796BCFB /* CFFStateCodecTests.swift */; };
+		A515EA0325767C37C409B506 /* cprisk_trust_hook_surface.c in Sources */ = {isa = PBXBuildFile; fileRef = 7BA49EA76A6332A9D4F69108 /* cprisk_trust_hook_surface.c */; };
 		A739D5EF4FCFE98D9B4AD62C /* Detector.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC0381761BD047E4BC2D453E /* Detector.swift */; };
 		A7F2845E29063B3B30A66054 /* UnfairLock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 854D16C66C64B2E9825FBB3C /* UnfairLock.swift */; };
 		A8FE9C098117E706930049E5 /* ChallengeTrigger.swift in Sources */ = {isa = PBXBuildFile; fileRef = F682F4274B9FE9DB66A2B85E /* ChallengeTrigger.swift */; };
@@ -584,6 +585,7 @@
 		7968F20F5F831E6BF2E14834 /* IntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntegrationTests.swift; sourceTree = "<group>"; };
 		79FA01ECF015809EA071846D /* TextSegmentIntegrityChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextSegmentIntegrityChecker.swift; sourceTree = "<group>"; };
 		7A766D8B5D5C3CE316654A7D /* RiskReportMapperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskReportMapperTests.swift; sourceTree = "<group>"; };
+		7BA49EA76A6332A9D4F69108 /* cprisk_trust_hook_surface.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_trust_hook_surface.c; sourceTree = "<group>"; };
 		7BF48DC524C5A7052AD731BC /* RiskScorer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskScorer.swift; sourceTree = "<group>"; };
 		7CAC58068C6B9A2D013F1041 /* SHA256MaskedRoundConstantsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SHA256MaskedRoundConstantsTests.swift; sourceTree = "<group>"; };
 		7CADFFA2F83EA30EB6D6C003 /* libCRiskCore.a */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = archive.ar; path = libCRiskCore.a; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -1335,6 +1337,7 @@
 				7EDF493F0C5268BA96B9D4EB /* cprisk_text_encrypt.c */,
 				0007821953DE700465559CDE /* cprisk_text_tail_honeypot.c */,
 				BB4FBACBB5015902987454CF /* cprisk_tls_init.c */,
+				7BA49EA76A6332A9D4F69108 /* cprisk_trust_hook_surface.c */,
 				A6C61B085480D381D7B6E03B /* cprisk_vm_interpreter.c */,
 				3E28AFF1DBC724A7AE8C12DA /* cprisk_vm_oph_basic.c */,
 				A65590B1B232D9542EBD734D /* cprisk_vm_oph_bitwise.c */,
@@ -1972,6 +1975,7 @@
 				6EA1D6096F4347133710FACB /* cprisk_text_encrypt.c in Sources */,
 				28334657A159869DFB60E38C /* cprisk_text_tail_honeypot.c in Sources */,
 				EFE8C7AAA15F4ECADE3D6707 /* cprisk_tls_init.c in Sources */,
+				A515EA0325767C37C409B506 /* cprisk_trust_hook_surface.c in Sources */,
 				40C5860EC1D7A10F652ACDA7 /* cprisk_vm_interpreter.c in Sources */,
 				5CCB84D7DC86A944D48215AC /* cprisk_vm_oph_basic.c in Sources */,
 				A9E96C9FC1AB46CEDA2F1EE1 /* cprisk_vm_oph_bitwise.c in Sources */,
@@ -2062,6 +2066,7 @@
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_INTENTS_METADATA_GENERATION = NO;
+				GCC_GENERATE_TESTING_SYMBOLS = NO;
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -2076,6 +2081,8 @@
 				STRIP_INSTALLED_PRODUCT = YES;
 				STRIP_STYLE = all;
 				STRIP_SWIFT_SYMBOLS = YES;
+				SWIFT_REFLECTION_METADATA_LEVEL = minimal;
+				SWIFT_SERIALIZE_DEBUGGING_OPTIONS = NO;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
@@ -2229,6 +2236,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				DEFINES_MODULE = YES;
+				GCC_GENERATE_TESTING_SYMBOLS = NO;
 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -2238,6 +2246,8 @@
 				PRODUCT_NAME = CloudPhoneRiskAppCore;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = NO;
+				SWIFT_REFLECTION_METADATA_LEVEL = minimal;
+				SWIFT_SERIALIZE_DEBUGGING_OPTIONS = NO;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
@@ -2333,6 +2343,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				DEFINES_MODULE = YES;
+				GCC_GENERATE_TESTING_SYMBOLS = NO;
 				HEADER_SEARCH_PATHS = "$(inherited) $(SRCROOT)/Sources/CRiskCore/include";
 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -2343,6 +2354,9 @@
 				PRODUCT_NAME = CloudPhoneRiskKit;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_REFLECTION_METADATA_LEVEL = minimal;
+				SWIFT_SERIALIZE_DEBUGGING_OPTIONS = NO;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;

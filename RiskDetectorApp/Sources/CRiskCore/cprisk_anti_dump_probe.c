@@ -19,9 +19,6 @@
 #include <unistd.h>
 #include <time.h>
 
-/* External symbols defined in cprisk_integrity.c */
-extern volatile int s_integrity_deception_active;
-
 static pthread_t s_probe_thread;
 static pthread_mutex_t s_probe_mutex = PTHREAD_MUTEX_INITIALIZER;
 static _Atomic int s_probe_running;
@@ -29,7 +26,7 @@ static int s_probe_started;
 static int s_probe_interval_seconds = 5;
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
 #include <stdatomic.h>
-static atomic_uint_fast32_t s_task_for_pid_baseline = ATOMIC_VAR_INIT(UINT32_MAX);
+static atomic_uint_fast32_t s_task_for_pid_baseline = UINT32_MAX;
 #endif
 
 /* Encoded needles: mask = SHA256(le32(domain)||le32(key_id)) — no searchable ASCII literals. */
@@ -215,20 +212,28 @@ static void *cprisk_probe_main(void *arg) {
 
         if (cprisk_scan_vm_regions() != 0) {
             cprisk_integrity_poison_anti_dump_lane();
-            s_integrity_deception_active = 1;
             continue;
         }
 
-        if (cprisk_check_dylib_injection() != 0) {
+#if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+        /*
+         * Second track: private anonymous RX outside any Mach-O image (Stalker/Gum trace slabs).
+         * Stronger than generic RWX-only heuristics when DBI has transitioned to W^X.
+         */
+        if (cprisk_vm_probe_anonymous_exec_outside_images() != 0) {
             cprisk_integrity_poison_anti_dump_lane();
-            s_integrity_deception_active = 1;
+            continue;
+        }
+#endif
+
+        if (cprisk_check_dylib_injection() != 0) {
+            cprisk_integrity_poison_anti_dump_lane_now();
             continue;
         }
 
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
         if (cprisk_probe_task_for_pid_escalation() != 0) {
             cprisk_integrity_poison_anti_dump_lane();
-            s_integrity_deception_active = 1;
             continue;
         }
 #endif

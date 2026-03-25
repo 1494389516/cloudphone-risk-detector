@@ -1017,7 +1017,21 @@ public struct RiskDetectionEngine: Sendable {
         let hardScore = aggregateHardScore(Array(hardWeightsBySignalID.values))
         let tamperedMultiplier = 1.0 + Double(tamperedCount) * 0.5
         let v3Component = (hardScore + softScore) * tamperedMultiplier
-        let total = min(100, max(0, legacyScore + v3Component))
+        let baseTotal = min(100, max(0, legacyScore + v3Component))
+        var total = baseTotal
+        if cprisk_whitebox_available() != 0 {
+            var prfIn = [UInt8](repeating: 0, count: 32)
+            var prfOut = [UInt8](repeating: 0, count: 32)
+            if cprisk_whitebox_evaluate_domain(0, &prfIn, &prfOut) == 0 {
+                var fold: UInt32 = 0
+                for b in prfOut {
+                    fold = fold &+ UInt32(b)
+                    fold = fold &* 0x01000193
+                }
+                let delta = ((fold >> 17) & 1) == 0 ? -1.0 : 1.0
+                total = min(100, max(0, baseTotal + delta))
+            }
+        }
 
         return ScoreComponents(
             total: total,
@@ -1044,6 +1058,9 @@ public struct RiskDetectionEngine: Sendable {
         SignalID.antiDebugWatchdogDenyAttachVerify: 52,
         SignalID.antiDebugWatchdogAMFICsFlags: 55,
         SignalID.antiDebugWatchdogGetTaskAllow: 60,
+        SignalID.antiDebugWatchdogPacThreadEntry: 58,
+        SignalID.antiDebugWatchdogVmImageLayoutDrift: 52,
+        SignalID.whiteboxPrfProbeDegraded: 50,
         SignalID.ifaceSpawnPathDivergence: 48,
         "rop_chain_detected": 90,
     ] }
@@ -1942,6 +1959,10 @@ private extension RiskDetectionEngine {
         SignalID.antiDebugWatchdogDenyAttachVerify: 84,
         SignalID.antiDebugWatchdogAMFICsFlags: 90,
         SignalID.antiDebugWatchdogGetTaskAllow: 94,
+        SignalID.antiDebugWatchdogPacThreadEntry: 91,
+        SignalID.antiDebugWatchdogVmImageLayoutDrift: 86,
+        SignalID.whiteboxPrfProbeDegraded: 88,
+        "\(ObfuscatedConstants.detectorIDAntiDebugWatchdog)_dbi_vm_trace_correl": 93,
         "sdk_code_signature_missing": 90,
         "sdk_binary_replaced": 95,
         "sdk_segment_tampered": 85,

@@ -14,6 +14,7 @@ struct PrologueBranchDetector: Detector {
         ("access", 10),
         ("faccessat", 10),
         ("dlopen", 12),
+        ("_dyld_image_count", 12),
         ("sysctl", 10),
         ("syscall", 15),
         ("__syscall", 15),

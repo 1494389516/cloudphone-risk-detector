@@ -11,6 +11,26 @@ settings:
     SWIFT_VERSION: "5.9"
     MARKETING_VERSION: "1.0.0"
     CURRENT_PROJECT_VERSION: "1"
+# Release: lower Swift reflection metadata emission (Xcode “Reflection Metadata Level” → minimal).
+# Debug/Test: default `all` so Mirrors and tooling behave normally.
+# cprisk-armor Pass 2 further scrubs Mach-O metadata; optional env:
+#   CPRISK_METADATA_SCRUB_LEVEL=aggressive  (CLI: --metadata-scrub-level aggressive)
+#
+# Additional Release hardening (CloudPhoneRiskKit / CloudPhoneRiskAppCore / app):
+#   - SWIFT_SERIALIZE_DEBUGGING_OPTIONS=NO — fewer compiler flags embedded in .swiftmodule artifacts.
+#   - GCC_GENERATE_TESTING_SYMBOLS=NO — drop testing symbol generation in Release slices.
+#
+# Residual Swift metadata gaps (in-repo only; no full strip without armor pipeline):
+#   - Public @objc / resilient interfaces still emit descriptors as required by ABI.
+#   - Generics and protocol witnesses retain names needed for runtime casting.
+#   - STRIP_SWIFT_SYMBOLS applies to the app target install strip; static libs are merged at link.
+#   - SWIFT_REFLECTION_METADATA_LEVEL=minimal still emits field/type metadata required by the ABI;
+#     “none” would break Mirror-heavy code paths — not enabled here.
+#   - Class/type “aliasing” in Swift does not rename mangled symbols; it is cosmetic at source level only.
+#   - @objc(CPR_…) on NSObject subclasses and @objc enums sets the ObjC runtime name (objc_getClass /
+#     NSClassFromString); Swift source names stay the same for API consumers.
+#   - Swift private / internal types still appear in metadata where required for resilience; no “strip class names”
+#     flag exists without breaking dynamic casts; rely on armor Pass-2 + minimal reflection for release slices.
 
 targets:
   CRiskCore:
@@ -69,6 +89,12 @@ targets:
         SKIP_INSTALL: NO
         DEFINES_MODULE: YES
         HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/Sources/CRiskCore/include"
+      configs:
+        Release:
+          SWIFT_REFLECTION_METADATA_LEVEL: minimal
+          SWIFT_COMPILATION_MODE: wholemodule
+          SWIFT_SERIALIZE_DEBUGGING_OPTIONS: NO
+          GCC_GENERATE_TESTING_SYMBOLS: NO
 
   CloudPhoneRiskAppCore:
     type: library.static
@@ -85,6 +111,12 @@ targets:
         PRODUCT_NAME: CloudPhoneRiskAppCore
         SKIP_INSTALL: NO
         DEFINES_MODULE: YES
+      configs:
+        Release:
+          SWIFT_REFLECTION_METADATA_LEVEL: minimal
+          SWIFT_COMPILATION_MODE: wholemodule
+          SWIFT_SERIALIZE_DEBUGGING_OPTIONS: NO
+          GCC_GENERATE_TESTING_SYMBOLS: NO
 
   RiskDetectorApp:
     type: application
@@ -142,6 +174,11 @@ targets:
         STRIP_STYLE: all
         STRIP_SWIFT_SYMBOLS: YES
         DEAD_CODE_STRIPPING: YES
+      configs:
+        Release:
+          SWIFT_REFLECTION_METADATA_LEVEL: minimal
+          SWIFT_SERIALIZE_DEBUGGING_OPTIONS: NO
+          GCC_GENERATE_TESTING_SYMBOLS: NO
     dependencies:
       - target: CloudPhoneRiskKit
       - target: CloudPhoneRiskAppCore

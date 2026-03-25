@@ -30,7 +30,7 @@ final class CertificatePinningTelemetryProvider: RiskSignalProvider {
 
     private func scoreAndState(for kind: CertificatePinningTelemetryKind) -> (Double, RiskSignalState?) {
         switch kind {
-        case .trustResultMismatch, .integrityRecheckTamper, .svcStubIntegrity, .integrityRecheckComputeFailed, .pinValidatorDiverged:
+        case .trustResultMismatch, .integrityRecheckTamper, .svcStubIntegrity, .integrityRecheckComputeFailed, .pinValidatorDiverged, .trustHookSurfaceIntegrity:
             return (78, .tampered)
         case .trustEvalFailed, .leafPublicKeyMissing, .pinMismatch, .emptyCertificateChain:
             return (65, .hard(detected: true))

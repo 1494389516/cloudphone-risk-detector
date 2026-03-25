@@ -53,9 +53,11 @@ typealias _CRiskVoidFnInt = @convention(c) (CInt) -> Void
 typealias _CRiskIntFnScanBP = @convention(c) (UnsafeRawPointer?, Int) -> CInt
 typealias _CRiskIntFnAdvanceUContext = @convention(c) (UnsafeMutableRawPointer?, UInt) -> CInt
 typealias _CRiskIntFnReadAnchor = @convention(c) (UnsafeMutablePointer<UInt8>?) -> CInt
+typealias _CRiskIntFnWhiteboxProbe = @convention(c) (UnsafeMutablePointer<cprisk_whitebox_probe_result>?) -> CInt
 typealias _CRiskIntFnPinsetContainsDigest = @convention(c) (UnsafePointer<UInt8>?, Int, UnsafePointer<UInt8>?, Int) -> CInt
 typealias _CRiskIntFnSign = @convention(c) (UnsafePointer<UInt8>?, Int, UnsafePointer<UInt8>?, Int, UnsafePointer<UInt8>?, UnsafeMutablePointer<CChar>?) -> CInt
 typealias _CRiskIntFnVerify = @convention(c) (UnsafePointer<UInt8>?, Int, UnsafePointer<UInt8>?, Int, UnsafePointer<UInt8>?, UnsafePointer<CChar>?) -> CInt
+typealias _CRiskWhiteboxEval = @convention(c) (UInt32, UnsafePointer<UInt8>?, UnsafeMutablePointer<UInt8>?) -> CInt
 
 let cprisk_access_direct: _CRiskIntFnCStringIntErr =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_ACCESS_DIRECT), as: _CRiskIntFnCStringIntErr.self)
@@ -141,6 +143,10 @@ let cprisk_recheck_integrity: _CRiskIntFn0 =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_RECHECK_INTEGRITY), as: _CRiskIntFn0.self)
 let cprisk_verify_svc_stub_integrity: _CRiskUInt32Fn0 =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_VERIFY_SVC_STUB_INTEGRITY), as: _CRiskUInt32Fn0.self)
+let cprisk_whitebox_available: _CRiskIntFn0 =
+    CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_WHITEBOX_AVAILABLE), as: _CRiskIntFn0.self)
+let cprisk_whitebox_probe: _CRiskIntFnWhiteboxProbe =
+    CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_WHITEBOX_PROBE), as: _CRiskIntFnWhiteboxProbe.self)
 let cprisk_register_exception_handler: _CRiskVoidFn0 =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_REGISTER_EXCEPTION_HANDLER), as: _CRiskVoidFn0.self)
 let cprisk_scan_software_breakpoints: _CRiskIntFnScanBP =
@@ -171,3 +177,5 @@ let cprisk_verify_exception_handler: _CRiskVoidFn0 =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_VERIFY_EXCEPTION_HANDLER), as: _CRiskVoidFn0.self)
 let cprisk_verify_with_derived_key_and_request_binding_digest: _CRiskIntFnVerify =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_VERIFY_WITH_DERIVED_KEY_AND_REQUEST_BINDING_DIGEST), as: _CRiskIntFnVerify.self)
+let cprisk_whitebox_evaluate_domain: _CRiskWhiteboxEval =
+    CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_WHITEBOX_EVALUATE_DOMAIN), as: _CRiskWhiteboxEval.self)

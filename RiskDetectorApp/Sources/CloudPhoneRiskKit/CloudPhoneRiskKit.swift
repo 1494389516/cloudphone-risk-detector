@@ -36,7 +36,7 @@ import Foundation
 import UIKit
 #endif
 
-@objc(CPRiskKit)
+@objc(CPR_RiskKit)
 public final class CPRiskKit: NSObject {
     @objc public static let shared = CPRiskKit()
 

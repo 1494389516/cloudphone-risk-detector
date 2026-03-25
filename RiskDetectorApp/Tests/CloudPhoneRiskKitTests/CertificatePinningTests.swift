@@ -149,6 +149,14 @@ final class CertificatePinningTests: XCTestCase {
         session.invalidateAndCancel()
     }
 
+    /// 进程内未打补丁时，trust hook 表面前缀校验应通过（与 pinning 预检同源 C 路径）。
+    func testTrustHookSurfaceIntegritySucceedsInNormalProcess() {
+        var mask: UInt32 = 0
+        let ok = cprisk_verify_trust_hook_surface_integrity(&mask)
+        XCTAssertEqual(ok, 1)
+        XCTAssertEqual(mask, 0)
+    }
+
     // MARK: - Pinning telemetry side-channel
 
     func testPinningTelemetryRecordsAndDrains() {

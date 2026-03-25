@@ -601,9 +601,19 @@ static uint32_t cprisk_detect_dbi_thread_markers_i(int *hit_count_out) {
     return flags;
 }
 
+/*
+ * Anonymous VM user tags used for MAP_ANON regions on Darwin (see vm_statistics.h VM_MEMORY_*).
+ * Matches CloudPhoneRiskKit RWXMemoryScanner anonymousUserTags (240–245).
+ */
+static int cprisk_vm_user_tag_is_anonymous_i(unsigned int user_tag) {
+    return (user_tag >= 240u && user_tag <= 245u) ? 1 : 0;
+}
+
 static uint32_t cprisk_detect_dbi_execmem_i(int *hit_count_out) {
     uint32_t flags = 0u;
-    int hit_count = 0;
+    int exec_write_hits = 0;
+    int anon_exec_slab_hits = 0;
+    int foreign_mapped_exec_hits = 0;
     cprisk_vm_region_address_t addr = CPRISK_VM_REGION_MIN_ADDRESS_I;
     uint32_t scanned_regions = 0u;
     const uint64_t start_ns = cprisk_monotonic_now_ns_i();
@@ -642,24 +652,66 @@ static uint32_t cprisk_detect_dbi_execmem_i(int *hit_count_out) {
             depth += 1u;
             continue;
         }
-        if ((info.protection & VM_PROT_EXECUTE) != 0 &&
-            (info.protection & VM_PROT_WRITE) != 0) {
+        const vm_prot_t prot = info.protection;
+        const int has_x = (prot & VM_PROT_EXECUTE) != 0;
+        const int has_w = (prot & VM_PROT_WRITE) != 0;
+
+        if (has_x && has_w) {
             flags |= CPRISK_DBI_MARKER_EXEC_WRITE;
-            hit_count++;
-            if (hit_count >= 4) {
-                break;
+            exec_write_hits++;
+        }
+
+        /*
+         * File-backed or non-anonymous RX mapping whose sample points all fall outside
+         * dyld-reported Mach-O segments (whitelist diff vs task VM).
+         */
+        if (has_x && !has_w && region_size > 0u &&
+            !cprisk_vm_user_tag_is_anonymous_i(info.user_tag)) {
+            const uintptr_t a0 = (uintptr_t)addr;
+            const uintptr_t a1 = a0 + (uintptr_t)(region_size >> 1);
+            const uintptr_t a2 = a0 + (uintptr_t)(region_size - 1u);
+            if (cprisk_addr_in_any_image_executable((const void *)a0) == 0 &&
+                cprisk_addr_in_any_image_executable((const void *)a1) == 0 &&
+                cprisk_addr_in_any_image_executable((const void *)a2) == 0) {
+                flags |= CPRISK_DBI_MARKER_FOREIGN_MAPPED_EXEC;
+                foreign_mapped_exec_hits++;
             }
         }
+
+        /*
+         * Stalker/Gum often materialize trampolines or finalized trace slabs as private
+         * anonymous RX (W^X) mappings outside any dyld image — distinct from generic RWX.
+         */
+        if (has_x && !has_w && region_size > 0u &&
+            region_size <= (cprisk_vm_region_size_t)(512u * 1024u) &&
+            cprisk_vm_user_tag_is_anonymous_i(info.user_tag) != 0 &&
+            (info.share_mode == 0u || info.share_mode == 3u) &&
+            cprisk_addr_in_any_image_executable((const void *)(uintptr_t)addr) == 0) {
+            flags |= CPRISK_DBI_MARKER_ANON_EXEC_SLAB;
+            anon_exec_slab_hits++;
+        }
+
+        if (exec_write_hits >= 4 || anon_exec_slab_hits >= 1 || foreign_mapped_exec_hits >= 1) {
+            break;
+        }
+
         if (region_size == 0u || addr > UINT64_MAX - region_size) {
             break;
         }
         addr += region_size;
     }
 
+    const int hit_total = exec_write_hits + anon_exec_slab_hits + foreign_mapped_exec_hits;
     if (hit_count_out) {
-        *hit_count_out = hit_count;
+        *hit_count_out = hit_total;
     }
     return flags;
+}
+
+int cprisk_vm_probe_anonymous_exec_outside_images(void) {
+    int hits = 0;
+    const uint32_t f = cprisk_detect_dbi_execmem_i(&hits);
+    return (f & CPRISK_DBI_MARKER_ANON_EXEC_SLAB) != 0u ? 1 : 0;
 }
 
 static uint64_t cprisk_mul_u64_saturating_i(uint64_t a, uint64_t b) {
@@ -680,14 +732,31 @@ int cprisk_detect_dbi_markers(void) {
     int execmem_hits = 0;
 
     uint32_t marker_flags = 0u;
+    if (_dyld_image_count() < 6u) {
+        marker_flags |= CPRISK_DBI_MARKER_DYLD_IMAGE_COUNT_LOW;
+    }
     marker_flags |= cprisk_detect_dbi_env_markers_i(&env_hits);
     marker_flags |= cprisk_detect_dbi_environ_scan_i(&environ_scan_hits);
     marker_flags |= cprisk_detect_dbi_image_markers_i(&image_hits);
     marker_flags |= cprisk_detect_dbi_thread_markers_i(&thread_hits);
     marker_flags |= cprisk_detect_dbi_execmem_i(&execmem_hits);
 
+    /*
+     * Cross-correlate Mach thread PCs outside any image with anonymous exec / RWX JIT surfaces.
+     * This matches Frida Stalker-style "foreign code" threads feeding off Gum slabs.
+     */
+    if (cprisk_detect_suspicious_threads() > 0 &&
+        (marker_flags & (CPRISK_DBI_MARKER_ANON_EXEC_SLAB | CPRISK_DBI_MARKER_EXEC_WRITE)) != 0u) {
+        marker_flags |= CPRISK_DBI_MARKER_STALKER_CORREL;
+    }
+
+    int correl_hit = 0;
+    if ((marker_flags & CPRISK_DBI_MARKER_STALKER_CORREL) != 0u) {
+        correl_hit = 1;
+    }
+
     const int total_hits =
-        env_hits + environ_scan_hits + image_hits + thread_hits + execmem_hits;
+        env_hits + environ_scan_hits + image_hits + thread_hits + execmem_hits + correl_hit;
     atomic_store(&s_dbi_last_marker_flags, marker_flags);
     atomic_store(&s_dbi_last_hit_count, total_hits > 0 ? (uint32_t)total_hits : 0u);
     return total_hits;
@@ -1562,7 +1631,7 @@ int cprisk_detect_suspicious_threads(void) {
 #else
             uintptr_t pc = (uintptr_t)ts.__pc;
 #endif
-            if (pc != 0 && !cprisk_addr_in_any_image((const void *)pc)) {
+            if (pc != 0 && !cprisk_addr_in_any_image_executable((const void *)pc)) {
                 suspicious++;
             }
         }
@@ -1724,6 +1793,7 @@ int cprisk_detect_single_stepping(void) { return 0; }
 int cprisk_detect_suspicious_threads(void) { return 0; }
 int cprisk_detect_developer_disk(void) { return 0; }
 int cprisk_detect_dbi_markers(void) { return 0; }
+int cprisk_vm_probe_anonymous_exec_outside_images(void) { return 0; }
 uint32_t cprisk_get_last_dbi_marker_flags(void) { return 0u; }
 int cprisk_get_last_dbi_marker_hit_count(void) { return 0; }
 uint32_t cprisk_get_last_timing_anomaly_flags(void) {

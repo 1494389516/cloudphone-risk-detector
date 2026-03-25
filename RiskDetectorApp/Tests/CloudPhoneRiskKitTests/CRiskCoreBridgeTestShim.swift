@@ -34,6 +34,7 @@ typealias _CRiskTestUInt32FnDecryptPath = @convention(c) (UInt32, UnsafePointer<
 typealias _CRiskTestIntFnSetPlan = @convention(c) (UnsafePointer<UInt8>?, Int) -> CInt
 typealias _CRiskTestIntFnWhiteboxEval = @convention(c) (UInt32, UnsafePointer<UInt8>?, UnsafeMutablePointer<UInt8>?) -> CInt
 typealias _CRiskTestIntFnWhiteboxProbe = @convention(c) (UnsafeMutablePointer<cprisk_whitebox_probe_result>?) -> CInt
+typealias _CRiskTestIntFnTrustHookMask = @convention(c) (UnsafeMutablePointer<UInt32>?) -> CInt
 
 let cprisk_armor_vm_protect: @convention(c) (UnsafeMutableRawPointer?, Int, CInt) -> CInt =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_ARMOR_VM_PROTECT), as: (@convention(c) (UnsafeMutableRawPointer?, Int, CInt) -> CInt).self)
@@ -169,12 +170,20 @@ let cprisk_unprotect_pages: _CRiskTestIntFnSecureRegion =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_UNPROTECT_PAGES), as: _CRiskTestIntFnSecureRegion.self)
 let cprisk_verify_dlsym_prologue: _CRiskTestIntFn0 =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_VERIFY_DLSYM_PROLOGUE), as: _CRiskTestIntFn0.self)
+let cprisk_verify_runtime_hook_surface_prologues: _CRiskTestIntFn0 =
+    CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_VERIFY_RUNTIME_HOOK_SURFACE_PROLOGUES), as: _CRiskTestIntFn0.self)
+let cprisk_integrity_poison_watchdog_lane: _CRiskTestVoidFn0 =
+    CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_INTEGRITY_POISON_WATCHDOG_LANE), as: _CRiskTestVoidFn0.self)
+let cprisk_test_reset_staged_poison_for_tests: _CRiskTestVoidFn0 =
+    CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_TEST_RESET_STAGED_POISON_FOR_TESTS), as: _CRiskTestVoidFn0.self)
 let cprisk_verify_mprotect_dlsym_matches_export_trie: _CRiskTestIntFn0 =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_VERIFY_MPROTECT_DLSYM_MATCHES_EXPORT_TRIE), as: _CRiskTestIntFn0.self)
 let cprisk_verify_page_protection: _CRiskTestIntFnSecureRegion =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_VERIFY_PAGE_PROTECTION), as: _CRiskTestIntFnSecureRegion.self)
 let cprisk_verify_svc_stub_integrity: _CRiskTestUInt32Fn0 =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_VERIFY_SVC_STUB_INTEGRITY), as: _CRiskTestUInt32Fn0.self)
+let cprisk_verify_trust_hook_surface_integrity: _CRiskTestIntFnTrustHookMask =
+    CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_VERIFY_TRUST_HOOK_SURFACE_INTEGRITY), as: _CRiskTestIntFnTrustHookMask.self)
 let cprisk_verify_with_derived_key_and_request_binding_digest: _CRiskTestIntFnVerify =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_VERIFY_WITH_DERIVED_KEY_AND_REQUEST_BINDING_DIGEST), as: _CRiskTestIntFnVerify.self)
 let cprisk_whitebox_available: _CRiskTestIntFn0 =

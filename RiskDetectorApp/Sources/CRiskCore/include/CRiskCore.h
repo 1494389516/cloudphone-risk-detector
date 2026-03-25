@@ -88,6 +88,12 @@ enum {
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SVC_STUB_INTEGRITY = 1u << 26,
     /** vm_region/vm_protect cross-check saw POSIX mprotect success diverge from Mach VM state. */
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_MPROTECT_MACH_DIVERGENCE = 1u << 27,
+    /** Anonymous executable RX slab and/or Stalker-style PC↔VM cross-correlation (see CPRISK_DBI_MARKER_*). */
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DBI_VM_TRACE_CORREL = 1u << 28,
+    /** arm64e: PAC auth of watchdog thread main impl failed at pthread entry (see anti_debug_watchdog.c). */
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_PAC_THREAD_ENTRY = 1u << 29,
+    /** Dyld image path digest changed and/or executable VM region outside any loaded image (memory_guard tick). */
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_IMAGE_WHITELIST = 1u << 30,
 };
 
 enum {
@@ -421,6 +427,33 @@ int cprisk_get_anti_debug_watchdog_snapshot(
 /// 0 on mismatch (integrity poison). On simulator / unsupported builds this is a no-op success.
 int cprisk_verify_dlsym_prologue(void);
 
+/// Bits for \c cprisk_get_anti_debug_watchdog_snapshot()->last_prologue_fail_mask (high-value external symbols).
+enum {
+    /** Bits 0–9: internal CRiskCore slot index when the monitored in-image function mismatches baseline. */
+    CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_DYLD_IMAGE_COUNT = 1u << 28,
+    CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_OBJC_MSGSEND = 1u << 29,
+    CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_DLSYM = 1u << 30,
+    CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_PTHREAD_CREATE = 1u << 31,
+};
+
+/// Verify `objc_msgSend` + libdyld \c _dyld_image_count prologues against early ctor baselines (watchdog-aligned).
+/// Complements trust-hook / dlsym-only paths. Returns 1 if intact, 0 on mismatch. Simulator: no-op success.
+int cprisk_verify_runtime_hook_surface_prologues(void);
+
+/// Bits for \c cprisk_verify_trust_hook_surface_integrity() failure mask (TLS / Frida hook surface).
+enum {
+    CPRISK_TRUST_HOOK_FAIL_SEC_TRUST_EVAL_WITH_ERROR = 1u << 0,
+    CPRISK_TRUST_HOOK_FAIL_SEC_TRUST_GET_TRUST_RESULT = 1u << 1,
+    CPRISK_TRUST_HOOK_FAIL_SEC_TRUST_COPY_KEY = 1u << 2,
+    CPRISK_TRUST_HOOK_FAIL_DLSYM = 1u << 3,
+    CPRISK_TRUST_HOOK_FAIL_DLOPEN = 1u << 4,
+};
+
+/// Snapshot + verify prologues for Security.framework trust APIs used on the pinning path, plus
+/// \c dlsym / \c dlopen (dynamic hook surface). Returns 1 if intact, 0 on mismatch. On failure,
+/// \p fail_mask_out receives \c CPRISK_TRUST_HOOK_FAIL_* bits (may be NULL). Non-Apple: no-op success.
+int cprisk_verify_trust_hook_surface_integrity(uint32_t *fail_mask_out);
+
 /// Copy the latest anti-debug plan parser/policy snapshot into out_snapshot.
 /// Returns 0 on success, -1 when out_snapshot is NULL.
 int cprisk_get_antidebug_plan_snapshot(
@@ -606,8 +639,10 @@ int cprisk_whitebox_available(void);
 /// Disable at runtime: \c CPRISK_WB_ASLR_TABLE_DISABLE=1. Strip decode path at compile
 /// time: \c CPRISK_DISABLE_WHITEBOX_ASLR_TABLE.
 /// Domains 6-9: when \c cprisk_get_effective_root() succeeds (after hybrid KDF), the PRF
-/// input is SHA256(label||domain_id_le||input||effective_root); if not, input is identity
-/// (early boot before KDF).
+/// input is SHA256(label||domain_id_le||le32(signal_probe_bits)||le32(wb_pressure_mask)||
+/// le8(min(vm_mprotect_crosscheck_mismatch_count,255))||le8(min(vm_mprotect_mach_trap_mismatch_count,255))||
+/// input||effective_root) (probe bits, wb_pressure, and VM count bytes omitted for injected
+/// white-box test bundles); if not, input is identity (early boot before KDF).
 int cprisk_whitebox_evaluate_domain(
     uint32_t domain_id,
     const uint8_t input[32],
@@ -791,13 +826,39 @@ int cprisk_is_integrity_poisoned(void);
 /// domain-specific lanes below so semantics do not collapse into two generic buckets.
 void cprisk_integrity_poison_evt_a(void);
 void cprisk_integrity_poison_evt_b(void);
+
+/// Intermediate signing tier: XOR-mix \p buf in-place when staged weak hits, weak-only
+/// probes, or passive trace/DBI hints suggest degraded authenticity (without full poison).
+/// Does not change \c cprisk_get_runtime_material(); used only inside
+/// \c cprisk_derive_effective_signing_key / sign helpers.
+/// Tiers (orthogonal to full poison): weak-only (tail 8), single staged (middle 16),
+/// multi-staged (full 32), trace-only degraded (middle 16), DBI-only degraded (middle 16),
+/// trace+DBI degraded (full 32). Seeds mix \c s_poison_cause_mix and staged opacity ticks.
+void cprisk_signing_runtime_material_intermediate_mix(uint8_t buf[32]);
+
+/// Fingerprint of the last signing-path intermediate mix (0 = none). Upper nibble encodes
+/// tier (1=weak tail, 2=medium staged, 3=staged full, 4=trace-only degraded, 5=dbi-only degraded,
+/// 6=trace+dbi degraded full-width, 7=ambient wb_pressure VM/hook-surface without weak bucket);
+/// lower 28 bits are deterministic noise from internal seed — server-visible alongside signatures,
+/// not a local pass/fail oracle.
+uint32_t cprisk_get_signing_mix_fingerprint(void);
+
+/// Bitset folded into white-box domains 6–9 PRF input (alongside passive \c cprisk_collect_passive_signal_binding_bits):
+/// bit0=staged watchdog hits, bit1=staged anti-dump, bit2=passive trace|DBI,
+/// bit3=vm mprotect Mach↔POSIX cross-check mismatch, bit4=vm_protect trap mismatch,
+/// bit5=mprotect tamper latched, bit6=passive timing anomaly, bit7=TTY|developer disk|libc syscall fallback.
+uint32_t cprisk_integrity_wb_prf_pressure_mask(void);
 /// Domain-specific lanes (preferred over \c cprisk_force_integrity_poison for new call sites).
 void cprisk_integrity_poison_watchdog_lane(void);
+/// Fail-closed immediate watchdog lane poison (resets staged counter). Use for high-confidence signals.
+void cprisk_integrity_poison_watchdog_lane_now(void);
 void cprisk_integrity_poison_code_signing_lane(void);
 void cprisk_integrity_poison_svc_iface_lane(void);
 void cprisk_integrity_poison_antidebug_lane(void);
 void cprisk_integrity_poison_exception_lane(void);
 void cprisk_integrity_poison_anti_dump_lane(void);
+/// Immediate anti-dump lane poison (resets staged counter). Use for unambiguous injection-class signals.
+void cprisk_integrity_poison_anti_dump_lane_now(void);
 void cprisk_integrity_poison_data_loader_lane(void);
 void cprisk_integrity_poison_text_encrypt_lane(void);
 void cprisk_integrity_poison_whitebox_lane(void);
@@ -908,6 +969,9 @@ int cprisk_check_init_timing(void);
 /// Test-only: override init-timing threshold (0 = disable, use live computation).
 void cprisk_test_set_init_timing_threshold_ns_override(uint64_t threshold_ns);
 
+/// Test-only: clear staged poison counters + integrity poison flags (does not tear down runtime material).
+void cprisk_test_reset_staged_poison_for_tests(void);
+
 /// Test-only: compute threshold from a synthetic hw.machine string (no sysctl).
 uint64_t cprisk_test_init_timing_threshold_ns_for_machine(
     const char *machine,
@@ -969,6 +1033,31 @@ void cprisk_test_clear_antidebug_plan(void);
 /// Resistant to dladdr hook used to hide anonymous memory (e.g. Frida Stalker JIT).
 int cprisk_addr_in_any_image(const void *addr);
 
+/// Like \c cprisk_addr_in_any_image, but only matches segments that are executable mappings
+/// (Mach-O initprot/maxprot include VM_PROT_EXECUTE, or segment name is __TEXT).
+/// Use when correlating VM execute regions with dyld-backed code vs non-exec segments.
+int cprisk_addr_in_any_image_executable(const void *addr);
+
+/// SHA-256 digest over dyld image list (v2: full image count, paths, load bases, __TEXT runtime bounds).
+/// For server-side attestation / diff vs anonymous-exec heuristics. Returns 0 on success, -1 on failure.
+int cprisk_vm_dyld_image_layout_digest(uint8_t out_digest[32]);
+
+/// Snapshot the current dyld layout digest as the baseline for differential checks (watchdog + memory_guard).
+void cprisk_vm_dyld_image_layout_digest_baseline_snapshot(void);
+
+/// Returns 1 if current digest differs from baseline, 0 if match, -1 on compute error.
+/// If no baseline exists yet, copies current digest as baseline and returns 0.
+int cprisk_vm_dyld_image_layout_digest_differs_from_baseline(void);
+
+/// SHA-256 of the entire R/X page containing `addr` (page-aligned coverage; PIC/reloc-safe).
+void cprisk_sha256_text_page(const void *addr, uint8_t out_digest[32]);
+
+/// Deny-attach stub: whole-page SHA-256 digest for the active entry (RX reloc or template).
+void cprisk_deny_attach_stub_page_sha256_digest(uint8_t out_digest[32]);
+
+/// Deny-attach stub: whole-page SHA-256 mismatch vs boot baseline (bit 5 of `cprisk_verify_svc_stub_integrity` mask).
+uint32_t cprisk_deny_attach_stub_sha256_page_mask(void);
+
 /* ── Frida / Gum runtime hints (dyld image paths, dlsym, proc table) ─ */
 
 enum {
@@ -1022,7 +1111,8 @@ uint32_t cprisk_get_vm_mprotect_crosscheck_mismatch_count(void);
 uint32_t cprisk_get_vm_mprotect_mach_trap_mismatch_count(void);
 
 /// Snapshot + periodic verify for critical `svc #0x80` syscall templates.
-/// Returns a bitmask: bit0 = syscall6, bit1 = deny-attach, bit2 = syscall0 (each 1 = failure).
+/// Returns a bitmask: bit0 = syscall6, bit1 = deny-attach, bit2 = syscall0 (each 1 = failure);
+/// bit3..5 = page-level SHA-256 mismatch for syscall6 / syscall0 / deny-attach stubs.
 uint32_t cprisk_verify_svc_stub_integrity(void);
 
 /// Constant-time compare of one raw SHA-256 digest against a packed pinset buffer.
@@ -1054,6 +1144,9 @@ int cprisk_pinset_match_layered_sha256_digest(
 
 /// arm64: returns 1 if [fn, fn+len) contains at least one A64 `svc` opcode (Darwin syscall ABI).
 int cprisk_stub_contains_svc_opcode(const void *fn, size_t len);
+
+/// FNV-1a (64-bit) over 16 bytes of stub text, page-mixed via stub_fn_addr (4 KiB page base XOR-fold).
+uint64_t cprisk_svc_stub_chunk_hash_fnv16(const uint8_t *chunk16, uintptr_t stub_fn_addr);
 
 /* ── Signal Probe Bitmask ──────────────────────────────────────────── */
 
@@ -1089,6 +1182,14 @@ enum {
     CPRISK_DBI_MARKER_ENVIRON_SCAN = 1u << 3,
     /** Current task exposes writable+executable code regions typical of DBI/JIT code caches. */
     CPRISK_DBI_MARKER_EXEC_WRITE = 1u << 4,
+    /** Private anonymous RX mapping outside any Mach-O image (Stalker/Gum slab / trace cache). */
+    CPRISK_DBI_MARKER_ANON_EXEC_SLAB = 1u << 5,
+    /** Suspicious thread PC outside loaded images correlates with anon exec slab or RWX JIT surface. */
+    CPRISK_DBI_MARKER_STALKER_CORREL = 1u << 6,
+    /** Fewer loaded dyld images than expected (stripped / abnormal process). */
+    CPRISK_DBI_MARKER_DYLD_IMAGE_COUNT_LOW = 1u << 7,
+    /** Non-anonymous RX region with sample PCs outside all dyld image segments. */
+    CPRISK_DBI_MARKER_FOREIGN_MAPPED_EXEC = 1u << 8,
 };
 
 enum {
@@ -1192,6 +1293,10 @@ int cprisk_detect_developer_disk(void);
 /// plus a bounded full-environ substring scan.
 /// Returns the number of matched markers in the current process view.
 int cprisk_detect_dbi_markers(void);
+
+/// Returns 1 if a private anonymous executable (RX) region exists outside any loaded image
+/// (Stalker/Gum-style slab). Safe no-op (0) on simulator / stub builds.
+int cprisk_vm_probe_anonymous_exec_outside_images(void);
 
 /// Return DBI marker category bits (CPRISK_DBI_MARKER_*).
 uint32_t cprisk_get_last_dbi_marker_flags(void);

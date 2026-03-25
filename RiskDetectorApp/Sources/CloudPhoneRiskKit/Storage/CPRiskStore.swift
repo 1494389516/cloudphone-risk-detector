@@ -1,7 +1,7 @@
 #if os(iOS)
 import Foundation
 
-@objc(CPRiskStore)
+@objc(CPR_RiskStore)
 public final class CPRiskStore: NSObject {
     @objc public static let shared = CPRiskStore()
 

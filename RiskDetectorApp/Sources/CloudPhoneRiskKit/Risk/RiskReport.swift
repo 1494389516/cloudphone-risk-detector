@@ -77,6 +77,11 @@ public enum SignalID {
     static let antiDebugWatchdogDenyAttachVerify = ObfuscatedConstants.signalAntiDebugWatchdogDenyAttachVerify
     static let antiDebugWatchdogAMFICsFlags = ObfuscatedConstants.signalAntiDebugWatchdogAMFICsFlags
     static let antiDebugWatchdogGetTaskAllow = ObfuscatedConstants.signalAntiDebugWatchdogGetTaskAllow
+    /// objc_msgSend / libdyld prologue baseline mismatch (watchdog-aligned).
+    static let antiDebugWatchdogCriticalHookSurface = ObfuscatedConstants.signalAntiDebugWatchdogCriticalHookSurface
+    static let antiDebugWatchdogPacThreadEntry = ObfuscatedConstants.signalAntiDebugWatchdogPacThreadEntry
+    static let antiDebugWatchdogVmImageLayoutDrift = ObfuscatedConstants.signalAntiDebugWatchdogVmImageLayoutDrift
+    static let whiteboxPrfProbeDegraded = ObfuscatedConstants.signalWhiteboxPrfProbeDegraded
     static let softwareBreakpointDetected = ObfuscatedConstants.signalSoftwareBreakpointDetected
     static let exceptionDeliveryTimeout = ObfuscatedConstants.signalExceptionDeliveryTimeout
     /// CRiskCore recorded at least one libc (or arc4random) path because direct syscall was unavailable for this API surface.
@@ -260,7 +265,7 @@ public struct RiskSignal: Sendable, Codable {
     }
 }
 
-@objc(CPRiskSignal)
+@objc(CPR_RiskSignal)
 public final class CPRiskSignal: NSObject {
     @objc public let id: String
     @objc public let category: String
@@ -287,7 +292,7 @@ public final class CPRiskSignal: NSObject {
     }
 }
 
-@objc(CPRiskReport)
+@objc(CPR_RiskReport)
 public final class CPRiskReport: NSObject {
     @objc public let deviceID: String
     /// 设备指纹（用于 TrustChainManager.evaluateTrustLevel 等）

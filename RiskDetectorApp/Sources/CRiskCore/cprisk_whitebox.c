@@ -10,6 +10,8 @@
 
 #include "include/cprisk_macho.h"
 
+extern uint32_t cprisk_collect_passive_signal_binding_bits(void);
+
 /* CPRISK_WHITEBOX_DOMAIN_COUNT is defined in cprisk_armor_abi.h (via CRiskCore.h).
  * Do NOT redefine it here to avoid macro redefinition conflict. */
 /* CPRISK_WHITEBOX_DOMAIN_DEVICE_BOUND through HEADER_ENCRYPTION (6-9) are also
@@ -824,6 +826,32 @@ static int cprisk_whitebox_prepare_prf_input_i(
     cprisk_sha256_init(&ctx);
     cprisk_sha256_update(&ctx, k_bind_label, sizeof(k_bind_label) - 1u);
     cprisk_sha256_update(&ctx, domain_le, sizeof(domain_le));
+    /* Fold passive/cached environment binding into domains 6-9 PRF input, avoid active probe sweep in hot path. */
+    if (!s_test_bundle_i.active) {
+        uint32_t pb = cprisk_collect_passive_signal_binding_bits();
+        uint8_t pb_le[4];
+        pb_le[0] = (uint8_t)(pb & 0xFFu);
+        pb_le[1] = (uint8_t)((pb >> 8) & 0xFFu);
+        pb_le[2] = (uint8_t)((pb >> 16) & 0xFFu);
+        pb_le[3] = (uint8_t)((pb >> 24) & 0xFFu);
+        cprisk_sha256_update(&ctx, pb_le, sizeof(pb_le));
+        uint32_t wbp = cprisk_integrity_wb_prf_pressure_mask();
+        uint8_t wbp_le[4];
+        wbp_le[0] = (uint8_t)(wbp & 0xFFu);
+        wbp_le[1] = (uint8_t)((wbp >> 8) & 0xFFu);
+        wbp_le[2] = (uint8_t)((wbp >> 16) & 0xFFu);
+        wbp_le[3] = (uint8_t)((wbp >> 24) & 0xFFu);
+        cprisk_sha256_update(&ctx, wbp_le, sizeof(wbp_le));
+        /* Graduated VM/hook-surface signal: bit flags alone are easier to spoof than monotonic counts. */
+        {
+            uint32_t cc = cprisk_get_vm_mprotect_crosscheck_mismatch_count();
+            uint32_t mt = cprisk_get_vm_mprotect_mach_trap_mismatch_count();
+            uint8_t cc_b = (uint8_t)cprisk_wb_u32_min_i(cc, 255u);
+            uint8_t mt_b = (uint8_t)cprisk_wb_u32_min_i(mt, 255u);
+            cprisk_sha256_update(&ctx, &cc_b, 1);
+            cprisk_sha256_update(&ctx, &mt_b, 1);
+        }
+    }
     cprisk_sha256_update(&ctx, src, CPRISK_WHITEBOX_STATE_SIZE);
     cprisk_sha256_update(&ctx, er, sizeof(er));
     cprisk_sha256_final(&ctx, out);
@@ -842,6 +870,10 @@ int cprisk_test_whitebox_prepare_domain_input(
         domain_id,
         input ? input : s_zero_state_i,
         out);
+}
+
+static uint32_t cprisk_wb_u32_min_i(uint32_t a, uint32_t b) {
+    return a < b ? a : b;
 }
 
 static uint32_t cprisk_base_capabilities_i(void) {
@@ -1000,6 +1032,10 @@ static int cprisk_derive_effective_signing_key_core_i(
     uint8_t runtime_material[CPRISK_ARMOR_HASH_SIZE];
     if (cprisk_get_runtime_material(runtime_material) != 0)
         return -1;
+
+    /* Intermediate signing tier: weak staged hits / low-confidence probes perturb
+     * material only on the signing path (not cprisk_get_runtime_material). */
+    cprisk_signing_runtime_material_intermediate_mix(runtime_material);
 
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
     /* Corrupt runtime material under debugger so derived key is silently wrong */

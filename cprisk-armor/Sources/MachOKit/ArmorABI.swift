@@ -467,6 +467,8 @@ public enum ArmorABI {
 
         public static let swiftTypeRef = "__swift5_typeref"
 
+        /// Ancillary Swift metadata; `__swift5_types` is handled separately by type-descriptor scrubbing
+        /// and must not be blindly bulk-overwritten (relative-pointer tables).
         public static let additionalScrubSections = [
             swiftFieldMetadata,
             swiftBuiltinTypes,
@@ -475,6 +477,8 @@ public enum ArmorABI {
             swiftProtocols,
             swiftProtocolConformances,
             swiftTypeRef,
+            /// Swift 5+ replaceable / resilient metadata (when present; conservative pass scrubs string-like payloads only).
+            "__swift5_replace",
         ]
     }
 

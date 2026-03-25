@@ -282,6 +282,23 @@ enum ObfuscatedConstants {
         StringDeobfuscator.base64Decode("YW50aV9kZWJ1Z193YXRjaGRvZ19nZXRfdGFza19hbGxvdw==")
     }
 
+    /// Watchdog memcmp prologue drift on objc_msgSend / libdyld (runtime Frida surface).
+    static var signalAntiDebugWatchdogCriticalHookSurface: String {
+        StringDeobfuscator.base64Decode("YW50aV9kZWJ1Z193YXRjaGRvZ19jcml0aWNhbF9ob29rX3N1cmZhY2U=")
+    }
+
+    static var signalAntiDebugWatchdogPacThreadEntry: String {
+        StringDeobfuscator.base64Decode("YW50aV9kZWJ1Z193YXRjaGRvZ19wYWNfdGhyZWFkX2VudHJ5")
+    }
+
+    static var signalAntiDebugWatchdogVmImageLayoutDrift: String {
+        StringDeobfuscator.base64Decode("YW50aV9kZWJ1Z193YXRjaGRvZ192bV9pbWFnZV9sYXlvdXRfZHJpZnQ=")
+    }
+
+    static var signalWhiteboxPrfProbeDegraded: String {
+        StringDeobfuscator.base64Decode("d2hpdGVib3hfcHJmX3Byb2JlX2RlZ3JhZGVk")
+    }
+
     static var signalSoftwareBreakpointDetected: String {
         StringDeobfuscator.base64Decode("c29mdHdhcmVfYnJlYWtwb2ludF9kZXRlY3RlZA==")
     }

@@ -420,11 +420,16 @@ final class ArmorRuntimeLifecycleTests: XCTestCase {
 
     func testSvcStubIntegrityReturnsStableMaskOnThisPlatform() {
         let mask = cprisk_verify_svc_stub_integrity()
-        XCTAssertLessThanOrEqual(mask, 0x7)
+        /* bits 0..2: syscall6/deny/syscall0; 3..5: SHA-256 whole-page auxiliary */
+        XCTAssertLessThanOrEqual(mask, 0x3F)
     }
 
     func testDlsymPrologueVerifierReturnsSuccessOnThisPlatform() {
         XCTAssertEqual(cprisk_verify_dlsym_prologue(), 1)
+    }
+
+    func testRuntimeHookSurfacePrologueVerifierReturnsSuccessOnThisPlatform() {
+        XCTAssertEqual(cprisk_verify_runtime_hook_surface_prologues(), 1)
     }
 
     func testCsopsStatusFlagsReturnsConsistentResultShape() {

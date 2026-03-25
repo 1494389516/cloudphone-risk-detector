@@ -1,7 +1,7 @@
 import Foundation
 
 /// Armor / anti-debug 运行时策略：生产保持强约束；开发或 QA 降低 TTY、Developer Disk、timing 等弱信号导致的误伤。
-@objc(CPRiskAntiDebugRuntimeMode)
+@objc(CPR_AntiDebugMode)
 public enum CPRiskAntiDebugRuntimeMode: Int {
     case production = 0
     case relaxedDevelopmentQA = 1
@@ -61,7 +61,7 @@ public struct RiskConfig: Sendable {
     )
 }
 
-@objc(CPRiskConfig)
+@objc(CPR_RiskConfig)
 public final class CPRiskConfig: NSObject {
     @objc public var enableBehaviorDetect: Bool = true
     @objc public var enableNetworkSignals: Bool = true

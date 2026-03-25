@@ -1,3 +1,4 @@
+import CRiskCore
 import CryptoKit
 import Foundation
 
@@ -249,7 +250,7 @@ extension ReportEnvelope {
             reason = "consistent"
         }
 
-        return [
+        var rows: [String: String] = [
             "status": status,
             "reason": reason,
             "api_chain": "json_serialization+cryptokit_sha256",
@@ -259,6 +260,15 @@ extension ReportEnvelope {
             "payload_canonical_sha256": canonicalDigestHex,
             "signature_input_sha256": signatureInputDigestHex,
         ]
+        let mixFp = cprisk_get_signing_mix_fingerprint()
+        if mixFp != 0 {
+            rows["signing_mix_fp"] = String(format: "%08x", mixFp)
+        }
+        let wbPressure = cprisk_integrity_wb_prf_pressure_mask()
+        if wbPressure != 0 {
+            rows["wb_prf_pressure_mask"] = String(format: "%08x", wbPressure)
+        }
+        return rows
     }
 
     private static func sha256Hex(_ data: Data) -> String {

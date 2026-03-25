@@ -66,6 +66,19 @@ int cprisk_vm_crosscheck_mprotect(void *addr, size_t len, int bsd_prot);
  */
 int cprisk_advance_ucontext_pc(void *uap, uintptr_t advance_bytes);
 
+/*
+ * Lightweight dyld / VM consistency tick:
+ *   1. Dyld layout digest (v2: paths + bases + __TEXT bounds) vs baseline snapshot
+ *   2. VM scan for executable mappings inconsistent with dyld image coverage / user_tag shape
+ * Returns bitmask (see CPRISK_MEM_GUARD_TICK_*). Safe to call from hardened loops (watchdog).
+ */
+#define CPRISK_MEM_GUARD_TICK_IMAGE_LIST_CHANGED 1u
+#define CPRISK_MEM_GUARD_TICK_UNKNOWN_EXECUTABLE_RX 2u
+/** Writable+executable mapping in the same region (W^X / DBI-style surface). Device-only tick. */
+#define CPRISK_MEM_GUARD_TICK_EXECUTABLE_WRITE 4u
+
+uint32_t cprisk_memory_guard_image_vm_tick(void);
+
 #ifdef __cplusplus
 }
 #endif

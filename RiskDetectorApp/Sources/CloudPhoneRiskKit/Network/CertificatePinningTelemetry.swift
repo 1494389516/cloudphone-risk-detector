@@ -12,6 +12,8 @@ public enum CertificatePinningTelemetryKind: String, Sendable {
     case pinValidatorDiverged
     case pinMismatch
     case emptyCertificateChain
+    /// Security.framework / dlsym / dlopen 入口 prologue 与基线不一致（Frida Interceptor 等）。
+    case trustHookSurfaceIntegrity
 }
 
 /// 线程安全的侧信道缓冲：网络 delegate 写入，Risk 管线读取。

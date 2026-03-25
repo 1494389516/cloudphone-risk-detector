@@ -7,6 +7,7 @@ import Security
 ///
 /// 使用 SPKI (Subject Public Key Info) SHA-256 哈希进行固定，
 /// 比证书固定更灵活（证书轮换时只需更新 hash，不需要嵌入新证书）。
+@objc(CPR_PinSessionDelegate)
 public final class CertificatePinningSessionDelegate: NSObject, URLSessionDelegate {
 
     private let pinMaterial: PinnedCertificatePinMaterial
@@ -172,6 +173,18 @@ public final class CertificatePinningSessionDelegate: NSObject, URLSessionDelega
                 host: host,
                 kind: .svcStubIntegrity,
                 detail: ["stub_mask": "\(stubMask)"]
+            )
+            #if !targetEnvironment(simulator)
+            return false
+            #endif
+        }
+
+        var trustHookMask: UInt32 = 0
+        if cprisk_verify_trust_hook_surface_integrity(&trustHookMask) == 0 {
+            recordPinning(
+                host: host,
+                kind: .trustHookSurfaceIntegrity,
+                detail: ["fail_mask": "\(trustHookMask)"]
             )
             #if !targetEnvironment(simulator)
             return false

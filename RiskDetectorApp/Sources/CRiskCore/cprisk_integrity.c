@@ -67,6 +67,20 @@ static uint32_t s_poison_semantic_rolling[2];
 static volatile uint32_t s_poison_epoch;
 static volatile uint64_t s_poison_cause_mix;
 
+/* Staged / deferred poison: weak-signal lanes accumulate opaque hits before full commit.
+ * Thresholds are compile-time tunable; partial hits mix into cause/rolling state without
+ * incrementing per-lane seq (avoids a linear “distance-to-poison” oracle). */
+#ifndef CPRISK_POISON_STAGED_WATCHDOG_THRESHOLD
+#define CPRISK_POISON_STAGED_WATCHDOG_THRESHOLD 3u
+#endif
+#ifndef CPRISK_POISON_STAGED_ANTI_DUMP_THRESHOLD
+#define CPRISK_POISON_STAGED_ANTI_DUMP_THRESHOLD 2u
+#endif
+
+static atomic_uint_fast32_t s_staged_watchdog_hits;
+static atomic_uint_fast32_t s_staged_anti_dump_hits;
+static atomic_uint_fast64_t s_staged_opacity_tick;
+
 #if defined(CPRISK_MTE_COMPILE_SUPPORT)
 static cprisk_mte_canary_state_t s_runtime_material_canary;
 static cprisk_mte_canary_state_t s_saved_integrity_canary;
@@ -1210,10 +1224,67 @@ static void cprisk_integrity_poison_lane_full_i(uint32_t lane) {
         lane = CPRISK_POISON_LANE_FORCE;
     s_integrity_poisoned = 1;
     cprisk_integrity_poison_lane_sidefx_i(lane);
-    if (cprisk_should_activate_deception_i()) {
+    /* Anti-dump full commit always arms deception material (legacy probe parity); other lanes
+     * only when traced / mprotect-tamper / init-timing heuristics fire. */
+    if (cprisk_should_activate_deception_i() ||
+        lane == (uint32_t)CPRISK_POISON_LANE_ANTI_DUMP) {
         cprisk_prepare_deception_material_i(NULL, NULL, NULL);
         s_integrity_deception_active = 1;
         cprisk_integrity_poison_lane_tweak_deception_i(lane);
+    }
+}
+
+static void cprisk_integrity_poison_staged_note_i(uint32_t lane) {
+    if (lane >= (uint32_t)CPRISK_POISON_LANE_COUNT)
+        lane = CPRISK_POISON_LANE_FORCE;
+    const uint64_t t = atomic_fetch_add(&s_staged_opacity_tick, 1) + 1ull;
+    uint64_t z = t * 0x9E3779B97F4A7C15ULL;
+    z ^= (uint64_t)(lane + 1u) << 48;
+    z ^= z >> 33;
+    z *= 0xff51afd7ed558ccdULL;
+    z ^= z >> 33;
+    z *= 0xc4ceb9fe1a85ec53ULL;
+    z ^= z >> 33;
+    z ^= (uint64_t)lane * 0xD6E8FEB86655FD96ULL;
+    s_poison_cause_mix ^= z;
+    s_poison_semantic_rolling[0] ^= (uint32_t)(z >> 32);
+    s_poison_semantic_rolling[1] ^= (uint32_t)z;
+    /*
+     * Signature-noise: fold staged tick into deception material so staged-only responses are not
+     * bitwise stable across ticks (complements lane_tweak_deception_i when full commit is deferred).
+     */
+    if (s_deception_material_ready) {
+        const uint32_t tv = (uint32_t)(t & 0xFFFFFFFFu);
+        uint32_t *dm = (uint32_t *)s_deception_material;
+        dm[0] ^= tv ^ (uint32_t)(z >> 32);
+        dm[1] ^= (uint32_t)z ^ ((uint32_t)lane * 0x13579BDFu);
+        if ((size_t)CPRISK_ARMOR_HASH_SIZE >= 16u) {
+            uint8_t *const m = s_deception_material;
+            m[12] ^= (uint8_t)(tv & 0xFFu);
+            m[13] ^= (uint8_t)((tv >> 8) & 0xFFu);
+            m[14] ^= (uint8_t)((uint32_t)lane ^ (uint32_t)(t >> 40));
+            m[15] ^= (uint8_t)((z >> 56) & 0xFFu);
+        }
+    }
+}
+
+static void cprisk_integrity_poison_watchdog_lane_staged_i(void) {
+    const uint32_t n = atomic_fetch_add(&s_staged_watchdog_hits, 1) + 1u;
+    if (n >= CPRISK_POISON_STAGED_WATCHDOG_THRESHOLD) {
+        atomic_store(&s_staged_watchdog_hits, 0u);
+        cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_WATCHDOG);
+    } else {
+        cprisk_integrity_poison_staged_note_i(CPRISK_POISON_LANE_WATCHDOG);
+    }
+}
+
+static void cprisk_integrity_poison_anti_dump_lane_staged_i(void) {
+    const uint32_t n = atomic_fetch_add(&s_staged_anti_dump_hits, 1) + 1u;
+    if (n >= CPRISK_POISON_STAGED_ANTI_DUMP_THRESHOLD) {
+        atomic_store(&s_staged_anti_dump_hits, 0u);
+        cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_ANTI_DUMP);
+    } else {
+        cprisk_integrity_poison_staged_note_i(CPRISK_POISON_LANE_ANTI_DUMP);
     }
 }
 
@@ -1828,6 +1899,9 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
 
     s_integrity_poisoned = 0;
     cprisk_integrity_poison_semantic_reset_i();
+    atomic_store(&s_staged_watchdog_hits, 0u);
+    atomic_store(&s_staged_anti_dump_hits, 0u);
+    atomic_store(&s_staged_opacity_tick, 0ull);
     s_integrity_hash_saved = 0;
     s_integrity_deception_active = 0;
     s_runtime_material_ready = 0;
@@ -1967,6 +2041,9 @@ void cprisk_cleanup_protection(void) {
     s_integrity_hash_saved = 0;
     s_integrity_poisoned = 0;
     cprisk_integrity_poison_semantic_reset_i();
+    atomic_store(&s_staged_watchdog_hits, 0u);
+    atomic_store(&s_staged_anti_dump_hits, 0u);
+    atomic_store(&s_staged_opacity_tick, 0ull);
     s_integrity_deception_active = 0;
     s_init_elapsed_ns = 0;
     /* Wipe Hybrid KDF state. */
@@ -2147,6 +2224,11 @@ void cprisk_integrity_poison_evt_b(void) {
 }
 
 void cprisk_integrity_poison_watchdog_lane(void) {
+    cprisk_integrity_poison_watchdog_lane_staged_i();
+}
+
+void cprisk_integrity_poison_watchdog_lane_now(void) {
+    atomic_store(&s_staged_watchdog_hits, 0u);
     cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_WATCHDOG);
 }
 
@@ -2167,6 +2249,11 @@ void cprisk_integrity_poison_exception_lane(void) {
 }
 
 void cprisk_integrity_poison_anti_dump_lane(void) {
+    cprisk_integrity_poison_anti_dump_lane_staged_i();
+}
+
+void cprisk_integrity_poison_anti_dump_lane_now(void) {
+    atomic_store(&s_staged_anti_dump_hits, 0u);
     cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_ANTI_DUMP);
 }
 
@@ -2237,6 +2324,255 @@ uint64_t cprisk_get_init_timing_threshold_ns(void) {
 
 void cprisk_test_set_init_timing_threshold_ns_override(uint64_t threshold_ns) {
     s_init_timing_threshold_override_ns = threshold_ns;
+}
+
+/* Last signing-path mix tier + fingerprint (server-visible via GrpcReportPayload output_path_integrity). */
+static uint32_t s_signing_mix_last_fp;
+
+void cprisk_test_reset_staged_poison_for_tests(void) {
+    atomic_store(&s_staged_watchdog_hits, 0u);
+    atomic_store(&s_staged_anti_dump_hits, 0u);
+    atomic_store(&s_staged_opacity_tick, 0ull);
+    s_integrity_poisoned = 0;
+    s_integrity_deception_active = 0;
+    s_signing_mix_last_fp = 0u;
+    cprisk_integrity_poison_semantic_reset_i();
+}
+
+/* Passive/cached environment binding for signing/whitebox hot paths: no cprisk_run_all_signal_probes(). */
+enum {
+    CPRISK_PASSIVE_BINDING_TRACE = 1u << 0,
+    CPRISK_PASSIVE_BINDING_DBI = 1u << 1,
+    CPRISK_PASSIVE_BINDING_TIMING = 1u << 2,
+    CPRISK_PASSIVE_BINDING_LIBC_FALLBACK = 1u << 3,
+    CPRISK_PASSIVE_BINDING_TTY = 1u << 4,
+    CPRISK_PASSIVE_BINDING_DEVELOPER_DISK = 1u << 5,
+};
+
+uint32_t cprisk_collect_passive_signal_binding_bits(void) {
+    uint32_t bits = 0u;
+    if (cprisk_trace_crosscheck_inconsistent() != 0 || cprisk_is_being_traced_sysctl_only() != 0)
+        bits |= CPRISK_PASSIVE_BINDING_TRACE;
+    if (cprisk_get_last_dbi_marker_flags() != 0u)
+        bits |= CPRISK_PASSIVE_BINDING_DBI;
+    if (cprisk_get_last_timing_anomaly_flags() != 0u || cprisk_check_init_timing() != 0)
+        bits |= CPRISK_PASSIVE_BINDING_TIMING;
+    if (cprisk_get_libc_fallback_used_mask() != 0u)
+        bits |= CPRISK_PASSIVE_BINDING_LIBC_FALLBACK;
+    if (cprisk_detect_tty_debug() != 0)
+        bits |= CPRISK_PASSIVE_BINDING_TTY;
+    if (cprisk_detect_developer_disk() != 0)
+        bits |= CPRISK_PASSIVE_BINDING_DEVELOPER_DISK;
+    return bits;
+}
+
+static void cprisk_signing_mix_set_fp_i(uint32_t tier_tag28, uint64_t seed) {
+    uint32_t h = (uint32_t)(seed ^ (seed >> 32));
+    h ^= tier_tag28 * 0x13579BDFu;
+    s_signing_mix_last_fp = (tier_tag28 << 28) | (h & 0x0FFFFFFFu);
+}
+
+void cprisk_signing_runtime_material_intermediate_mix(uint8_t buf[32]) {
+    if (!buf)
+        return;
+    if (!s_runtime_material_ready)
+        return;
+    if (s_integrity_poisoned || s_integrity_deception_active)
+        return;
+
+    const uint32_t wd = atomic_load(&s_staged_watchdog_hits);
+    const uint32_t ad = atomic_load(&s_staged_anti_dump_hits);
+    const uint32_t staged_sum = wd + ad;
+
+    int strong_staged = 0;
+    int medium_staged = 0;
+    uint64_t seed = 0;
+
+    if (wd > 0u || ad > 0u) {
+        seed = atomic_load(&s_staged_opacity_tick) ^ s_poison_cause_mix;
+        if (staged_sum == 1u) {
+            medium_staged = 1;
+        } else {
+            strong_staged = 1;
+        }
+    }
+
+    int weak_only = 0;
+    int degraded_tier = 0;
+    if (!strong_staged && !medium_staged) {
+        const uint32_t passive_bits = cprisk_collect_passive_signal_binding_bits();
+        const uint32_t weak_mask =
+            CPRISK_PASSIVE_BINDING_TIMING |
+            CPRISK_PASSIVE_BINDING_LIBC_FALLBACK |
+            CPRISK_PASSIVE_BINDING_TTY |
+            CPRISK_PASSIVE_BINDING_DEVELOPER_DISK;
+        const uint32_t strongish =
+            CPRISK_PASSIVE_BINDING_TRACE |
+            CPRISK_PASSIVE_BINDING_DBI;
+        if ((passive_bits & weak_mask) != 0u && (passive_bits & strongish) == 0u &&
+            cprisk_is_being_traced_redundant() == 0) {
+            weak_only = 1;
+            seed = (uint64_t)passive_bits * 0xD6E8FEB86655FD96ULL ^ 0x9E3779B97F4A7C15ULL;
+        } else if (!weak_only) {
+            const int has_tr = (passive_bits & CPRISK_PASSIVE_BINDING_TRACE) != 0u;
+            const int has_dbi = (passive_bits & CPRISK_PASSIVE_BINDING_DBI) != 0u;
+            if (has_tr || has_dbi) {
+                seed = (uint64_t)passive_bits * 0xD6E8FEB86655FD96ULL ^
+                       (uint64_t)s_poison_cause_mix ^ atomic_load(&s_staged_opacity_tick);
+                if (has_tr && has_dbi) {
+                    degraded_tier = 6;
+                } else if (has_tr) {
+                    degraded_tier = 4;
+                } else {
+                    degraded_tier = 5;
+                }
+            }
+        }
+    }
+
+    /* Ambient / hook-surface tier: wb_pressure has trace/VM/mprotect/timing/libc bits (2–7)
+     * but staged + passive paths above did not already classify — e.g. Mach↔POSIX mprotect
+     * mismatch without TTY/timing weak bucket. Perturbs signing material only (not raw runtime bytes). */
+    int ambient = 0;
+    if (!strong_staged && !medium_staged && !weak_only && degraded_tier == 0) {
+        const uint32_t wp = cprisk_integrity_wb_prf_pressure_mask();
+        if ((wp & 0xFCu) != 0u) {
+            ambient = 1;
+            seed = (uint64_t)wp * 0xD6E8FEB86655FD96ULL;
+            seed ^= (uint64_t)cprisk_get_vm_mprotect_crosscheck_mismatch_count() << 32;
+            seed ^= (uint64_t)cprisk_get_vm_mprotect_mach_trap_mismatch_count();
+            seed ^= atomic_load(&s_staged_opacity_tick);
+            seed ^= s_poison_cause_mix;
+        }
+    }
+
+    if (!strong_staged && !medium_staged && !weak_only && degraded_tier == 0 && !ambient)
+        return;
+
+    uint8_t seed_le[8];
+    cprisk_u64_to_le_i(seed, seed_le);
+    cprisk_sha256_ctx ctx;
+
+    if (strong_staged) {
+        static const uint8_t k_lab[] = "cprisk.sign.intermediate.v1";
+        cprisk_sha256_init(&ctx);
+        cprisk_sha256_update(&ctx, k_lab, sizeof(k_lab) - 1u);
+        cprisk_sha256_update(&ctx, seed_le, sizeof(seed_le));
+        cprisk_sha256_update(&ctx, buf, 32);
+        uint8_t mask[32];
+        cprisk_sha256_final(&ctx, mask);
+        for (size_t i = 0; i < 32u; i++) {
+            buf[i] ^= mask[i];
+        }
+        cprisk_secure_zero(mask, sizeof(mask));
+        cprisk_signing_mix_set_fp_i(3u, seed);
+    } else if (medium_staged) {
+        static const uint8_t k_lab_m[] = "cprisk.sign.intermediate.medium.v1";
+        cprisk_sha256_init(&ctx);
+        cprisk_sha256_update(&ctx, k_lab_m, sizeof(k_lab_m) - 1u);
+        cprisk_sha256_update(&ctx, seed_le, sizeof(seed_le));
+        cprisk_sha256_update(&ctx, buf, 32);
+        uint8_t mask[32];
+        cprisk_sha256_final(&ctx, mask);
+        for (size_t i = 0; i < 16u; i++) {
+            buf[8u + i] ^= mask[i];
+        }
+        cprisk_secure_zero(mask, sizeof(mask));
+        cprisk_signing_mix_set_fp_i(2u, seed);
+    } else if (weak_only) {
+        static const uint8_t k_lab_p[] = "cprisk.sign.intermediate.partial.v1";
+        cprisk_sha256_init(&ctx);
+        cprisk_sha256_update(&ctx, k_lab_p, sizeof(k_lab_p) - 1u);
+        cprisk_sha256_update(&ctx, seed_le, sizeof(seed_le));
+        cprisk_sha256_update(&ctx, buf, 32);
+        uint8_t mask[32];
+        cprisk_sha256_final(&ctx, mask);
+        for (size_t i = 0; i < 8u; i++) {
+            buf[24u + i] ^= mask[i];
+        }
+        cprisk_secure_zero(mask, sizeof(mask));
+        cprisk_signing_mix_set_fp_i(1u, seed);
+    } else if (degraded_tier == 6) {
+        static const uint8_t k_lab_td[] = "cprisk.sign.intermediate.degraded.trace_dbi.v1";
+        cprisk_sha256_init(&ctx);
+        cprisk_sha256_update(&ctx, k_lab_td, sizeof(k_lab_td) - 1u);
+        cprisk_sha256_update(&ctx, seed_le, sizeof(seed_le));
+        cprisk_sha256_update(&ctx, buf, 32);
+        uint8_t mask[32];
+        cprisk_sha256_final(&ctx, mask);
+        for (size_t i = 0; i < 32u; i++) {
+            buf[i] ^= mask[i];
+        }
+        cprisk_secure_zero(mask, sizeof(mask));
+        cprisk_signing_mix_set_fp_i(6u, seed);
+    } else if (degraded_tier == 4) {
+        static const uint8_t k_lab_tr[] = "cprisk.sign.intermediate.degraded.trace.v1";
+        cprisk_sha256_init(&ctx);
+        cprisk_sha256_update(&ctx, k_lab_tr, sizeof(k_lab_tr) - 1u);
+        cprisk_sha256_update(&ctx, seed_le, sizeof(seed_le));
+        cprisk_sha256_update(&ctx, buf, 32);
+        uint8_t mask[32];
+        cprisk_sha256_final(&ctx, mask);
+        for (size_t i = 0; i < 16u; i++) {
+            buf[8u + i] ^= mask[i];
+        }
+        cprisk_secure_zero(mask, sizeof(mask));
+        cprisk_signing_mix_set_fp_i(4u, seed);
+    } else if (degraded_tier == 5) {
+        static const uint8_t k_lab_db[] = "cprisk.sign.intermediate.degraded.dbi.v1";
+        cprisk_sha256_init(&ctx);
+        cprisk_sha256_update(&ctx, k_lab_db, sizeof(k_lab_db) - 1u);
+        cprisk_sha256_update(&ctx, seed_le, sizeof(seed_le));
+        cprisk_sha256_update(&ctx, buf, 32);
+        uint8_t mask[32];
+        cprisk_sha256_final(&ctx, mask);
+        for (size_t i = 0; i < 16u; i++) {
+            buf[8u + i] ^= mask[i];
+        }
+        cprisk_secure_zero(mask, sizeof(mask));
+        cprisk_signing_mix_set_fp_i(5u, seed);
+    } else if (ambient) {
+        static const uint8_t k_lab_am[] = "cprisk.sign.intermediate.ambient.v1";
+        cprisk_sha256_init(&ctx);
+        cprisk_sha256_update(&ctx, k_lab_am, sizeof(k_lab_am) - 1u);
+        cprisk_sha256_update(&ctx, seed_le, sizeof(seed_le));
+        cprisk_sha256_update(&ctx, buf, 32);
+        uint8_t mask[32];
+        cprisk_sha256_final(&ctx, mask);
+        for (size_t i = 0; i < 8u; i++) {
+            buf[i] ^= mask[i];
+        }
+        cprisk_secure_zero(mask, sizeof(mask));
+        cprisk_signing_mix_set_fp_i(7u, seed);
+    }
+    cprisk_secure_zero(seed_le, sizeof(seed_le));
+}
+
+uint32_t cprisk_get_signing_mix_fingerprint(void) {
+    return s_signing_mix_last_fp;
+}
+
+uint32_t cprisk_integrity_wb_prf_pressure_mask(void) {
+    uint32_t m = 0u;
+    if (atomic_load(&s_staged_watchdog_hits) > 0u)
+        m |= 1u;
+    if (atomic_load(&s_staged_anti_dump_hits) > 0u)
+        m |= 2u;
+    const uint32_t pb = cprisk_collect_passive_signal_binding_bits();
+    if ((pb & (CPRISK_PASSIVE_BINDING_TRACE | CPRISK_PASSIVE_BINDING_DBI)) != 0u)
+        m |= 4u;
+    if (cprisk_get_vm_mprotect_crosscheck_mismatch_count() > 0u)
+        m |= 8u;
+    if (cprisk_get_vm_mprotect_mach_trap_mismatch_count() > 0u)
+        m |= 16u;
+    if (cprisk_is_mprotect_tampered() != 0)
+        m |= 32u;
+    if ((pb & CPRISK_PASSIVE_BINDING_TIMING) != 0u)
+        m |= 64u;
+    if ((pb & (CPRISK_PASSIVE_BINDING_TTY | CPRISK_PASSIVE_BINDING_DEVELOPER_DISK |
+               CPRISK_PASSIVE_BINDING_LIBC_FALLBACK)) != 0u)
+        m |= 128u;
+    return m;
 }
 
 uint64_t cprisk_test_init_timing_threshold_ns_for_machine(

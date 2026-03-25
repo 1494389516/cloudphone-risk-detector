@@ -512,6 +512,24 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertTrue(provider.antiDebugWatchdogSignals(from: snapshot).isEmpty)
     }
 
+    func testAntiDebugWatchdogSnapshotEmitsCriticalHookSurfaceWhenFunctionPrologueFlagSet() {
+        let provider = AntiTamperingSignalProvider()
+        let prologueFlag = UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_FUNCTION_PROLOGUE)
+        let mask = UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_OBJC_MSGSEND)
+            | UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_DYLD_IMAGE_COUNT)
+        let snapshot = makeWatchdogSnapshot(
+            anomalyFlags: prologueFlag,
+            iterationCount: 2,
+            prologueIntegrityAnomalyCount: 1,
+            lastPrologueFailMask: mask
+        )
+        let signals = provider.antiDebugWatchdogSignals(from: snapshot)
+        let hook = signals.first(where: { $0.id == SignalID.antiDebugWatchdogCriticalHookSurface })
+        XCTAssertNotNil(hook)
+        XCTAssertEqual(hook?.evidence["fail_objc_msgsend"], "1")
+        XCTAssertEqual(hook?.evidence["fail_dyld_image_count"], "1")
+    }
+
     func testAntiDebugWatchdogSnapshotProducesDetailedSignals() {
         let provider = AntiTamperingSignalProvider()
         let flags = UInt32(1 << 0)
@@ -552,6 +570,21 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertEqual(summary.state, RiskSignalState.tampered)
         XCTAssertEqual(summary.layer, 2)
         XCTAssertEqual(summary.evidence["anomaly_kinds"], "traced,deny_attach,exception_port,exception_query")
+    }
+
+    func testCRiskCoreDBIVmTraceMarkerFlagConstants() {
+        XCTAssertEqual(UInt32(CPRISK_DBI_MARKER_ANON_EXEC_SLAB), 32)
+        XCTAssertEqual(UInt32(CPRISK_DBI_MARKER_STALKER_CORREL), 64)
+        XCTAssertEqual(UInt32(CPRISK_DBI_MARKER_DYLD_IMAGE_COUNT_LOW), 128)
+        XCTAssertEqual(UInt32(CPRISK_DBI_MARKER_FOREIGN_MAPPED_EXEC), 256)
+        XCTAssertEqual(UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DBI_VM_TRACE_CORREL), 1 << 28)
+    }
+
+    func testCRiskCoreDyldImageLayoutDigestSucceeds() {
+        var digest = [UInt8](repeating: 0, count: 32)
+        let rc = digest.withUnsafeMutableBufferPointer { cprisk_vm_dyld_image_layout_digest($0.baseAddress!) }
+        XCTAssertEqual(rc, 0)
+        XCTAssertTrue(digest.contains { $0 != 0 })
     }
 
     func testCRiskCoreDBIProbeFlagsEnvMarkersAndAggregateProbeBit() throws {
@@ -1755,5 +1788,23 @@ final class MprotectTamperThresholdTests: XCTestCase {
         XCTAssertNotNil(primary)
         XCTAssertEqual(primary?.score, 0)
         XCTAssertFalse(signals.contains { $0.id == SignalID.mteCanaryTampered && $0.score > 0 })
+    }
+
+    /// Staged watchdog lane poison (default threshold 3) should not surface full integrity poison immediately.
+    func testStagedWatchdogPoisonRequiresThresholdHits() {
+        cprisk_test_reset_staged_poison_for_tests()
+        XCTAssertEqual(cprisk_is_integrity_poisoned(), 0)
+
+        cprisk_integrity_poison_watchdog_lane()
+        XCTAssertEqual(cprisk_is_integrity_poisoned(), 0)
+
+        cprisk_integrity_poison_watchdog_lane()
+        XCTAssertEqual(cprisk_is_integrity_poisoned(), 0)
+
+        cprisk_integrity_poison_watchdog_lane()
+        XCTAssertEqual(cprisk_is_integrity_poisoned(), 1)
+
+        cprisk_test_reset_staged_poison_for_tests()
+        XCTAssertEqual(cprisk_is_integrity_poisoned(), 0)
     }
 }
