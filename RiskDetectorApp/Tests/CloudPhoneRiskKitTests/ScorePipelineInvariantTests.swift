@@ -281,4 +281,192 @@ final class ScorePipelineInvariantTests: XCTestCase {
                 "rop_chain_detected tampered 信号应出现在 primaryReasons 中")
         }
     }
+
+    // MARK: - 聚合底线：分数档位优先于「单点树路径」，ForceRule 全关仍降级
+
+    /// 登录场景：决策树在高分段可能给出 stepUpAuth，但分数已达 critical → 应用 ScenarioPolicy 的 block 底线。
+    func testLoginScenarioPolicyScoreFloorOverridesTreeWhenCriticalScoreWithoutJailbreakSignal() {
+        let scenarioPolicy = ScenarioPolicy.login
+        let enginePolicy = EnginePolicy(
+            forceActionOnJailbreak: nil,
+            scenarioPolicies: [.login: scenarioPolicy]
+        )
+        let engine = RiskDetectionEngine(policy: enginePolicy, enableLogging: false)
+        let context = TestFixtures.makeRiskContext(isJailbroken: false, jailbreakConfidence: 0)
+        let criticalSignal = RiskSignal(
+            id: "rop_chain_detected",
+            category: ObfuscatedConstants.categoryAntiTamper,
+            score: 0,
+            evidence: [:],
+            state: .hard(detected: true),
+            layer: 2,
+            weightHint: 1
+        )
+        let verdict = engine.evaluate(context: context, scenario: .login, extraSignals: [criticalSignal])
+        XCTAssertGreaterThanOrEqual(verdict.score, scenarioPolicy.criticalThreshold)
+        XCTAssertEqual(verdict.internalLevel, .critical)
+        XCTAssertEqual(verdict.internalAction, .block, "critical 档位应对齐策略 block，而非仅依赖越狱 ForceRule 或树默认 stepUp")
+        XCTAssertEqual(verdict.decisionMetadata?["policy_score_floor"], "1")
+    }
+
+    /// `enableForceRules == false` 时仍应按累计分档位执行策略动作（不因缺少 ForceRule 放行）。
+    func testForceRulesDisabledStillAppliesScorePolicyFloor() {
+        let scenarioPolicy = ScenarioPolicy(
+            mediumThreshold: 30,
+            highThreshold: 55,
+            criticalThreshold: 80,
+            enableForceRules: false
+        )
+        let enginePolicy = EnginePolicy(
+            forceActionOnJailbreak: nil,
+            scenarioPolicies: [.default: scenarioPolicy]
+        )
+        let engine = RiskDetectionEngine(policy: enginePolicy, enableLogging: false)
+        let context = TestFixtures.makeRiskContext(isJailbroken: false)
+        let highSignal = RiskSignal(
+            id: "rop_chain_detected",
+            category: ObfuscatedConstants.categoryAntiTamper,
+            score: 0,
+            evidence: [:],
+            state: .hard(detected: true),
+            layer: 2,
+            weightHint: 1
+        )
+        let verdict = engine.evaluate(context: context, extraSignals: [highSignal])
+        XCTAssertGreaterThanOrEqual(verdict.score, scenarioPolicy.criticalThreshold)
+        XCTAssertEqual(verdict.internalAction, .block)
+    }
+
+    /// 多家族证据 + 高分：聚合升级元数据应出现（root/JB 单点绕过不影响其它家族计数）。
+    func testMultiFamilyAggregateEscalationMetadataWhenRootContextClean() {
+        let scenarioPolicy = ScenarioPolicy.general
+        let enginePolicy = EnginePolicy(scenarioPolicies: [.default: scenarioPolicy])
+        let engine = RiskDetectionEngine(policy: enginePolicy, enableLogging: false)
+        let context = TestFixtures.makeRiskContext(
+            isJailbroken: false,
+            jailbreakConfidence: 0,
+            vpnActive: true
+        )
+        let s1 = RiskSignal(
+            id: "frida_thread_anomaly",
+            category: ObfuscatedConstants.categoryAntiTamper,
+            score: 0,
+            evidence: [:],
+            state: .hard(detected: true),
+            layer: 2,
+            weightHint: 1
+        )
+        let s2 = RiskSignal(
+            id: "frida_js_engine_heap",
+            category: ObfuscatedConstants.categoryAntiTamper,
+            score: 0,
+            evidence: [:],
+            state: .hard(detected: true),
+            layer: 2,
+            weightHint: 1
+        )
+        let s3 = RiskSignal(
+            id: "touch_spread_low",
+            category: "behavior",
+            score: 12,
+            evidence: [:]
+        )
+        let s4 = RiskSignal(
+            id: "tampering_detected",
+            category: ObfuscatedConstants.categoryAntiTamper,
+            score: 0,
+            evidence: [:],
+            state: .tampered,
+            layer: 3,
+            weightHint: 85
+        )
+        let verdict = engine.evaluate(
+            context: context,
+            extraSignals: [s1, s2, s3, s4]
+        )
+        XCTAssertGreaterThanOrEqual(verdict.score, scenarioPolicy.highThreshold)
+        XCTAssertNotNil(verdict.decisionMetadata?["aggregate_rule"])
+        XCTAssertTrue(
+            verdict.primaryReasons.contains(where: { $0.contains("aggregate") }),
+            "primaryReasons 应带上聚合原因标签便于观测"
+        )
+    }
+
+    func testCompressedVerdictShortCircuitStillReconcilesAggregatePolicy() {
+        let scenarioPolicy = ScenarioPolicy(
+            mediumThreshold: 30,
+            highThreshold: 55,
+            criticalThreshold: 80,
+            compressedVerdictRules: [
+                CompressedVerdictRule(
+                    id: "always_allow_shortcut",
+                    layerIndex: 1,
+                    bitMask: 0,
+                    matchValue: 0,
+                    action: .allow
+                )
+            ]
+        )
+        let engine = RiskDetectionEngine(
+            policy: EnginePolicy(scenarioPolicies: [.default: scenarioPolicy]),
+            enableLogging: false
+        )
+        let context = TestFixtures.makeRiskContext(isJailbroken: false, jailbreakConfidence: 0)
+        let signals = [
+            RiskSignal(
+                id: "gpu_virtual",
+                category: "device",
+                score: 0,
+                evidence: [:],
+                state: .hard(detected: true),
+                layer: 1,
+                weightHint: 1
+            ),
+            RiskSignal(
+                id: "sdk_binary_replaced",
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 0,
+                evidence: [:],
+                state: .hard(detected: true),
+                layer: 2,
+                weightHint: 1
+            )
+        ]
+
+        let verdict = engine.evaluate(context: context, extraSignals: signals)
+
+        XCTAssertGreaterThanOrEqual(verdict.score, scenarioPolicy.highThreshold)
+        XCTAssertNotEqual(verdict.internalAction, .allow, "compressed short-circuit must still honor score floor and aggregate reconciliation")
+        XCTAssertEqual(verdict.decisionMetadata?["short_circuit_path"], "compressed_rule")
+    }
+
+    func testMultipleHardSignalsAccumulateWithDiminishingReturns() {
+        let engine = RiskDetectionEngine(policy: .default, enableLogging: false)
+        let context = TestFixtures.makeRiskContext(isJailbroken: false, jailbreakConfidence: 0)
+        let signals = [
+            RiskSignal(
+                id: "gpu_virtual",
+                category: "device",
+                score: 0,
+                evidence: [:],
+                state: .hard(detected: true),
+                layer: 1,
+                weightHint: 1
+            ),
+            RiskSignal(
+                id: "sdk_binary_replaced",
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 0,
+                evidence: [:],
+                state: .hard(detected: true),
+                layer: 2,
+                weightHint: 1
+            )
+        ]
+
+        let verdict = engine.evaluate(context: context, extraSignals: signals)
+
+        XCTAssertGreaterThanOrEqual(verdict.score, 70, "independent hard signals should stack with diminishing returns instead of collapsing to max(weight)")
+        XCTAssertTrue(verdict.internalAction == .challenge || verdict.internalAction == .stepUpAuth || verdict.internalAction == .block)
+    }
 }

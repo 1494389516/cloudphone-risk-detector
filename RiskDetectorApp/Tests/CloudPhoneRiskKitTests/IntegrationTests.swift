@@ -1,3 +1,4 @@
+import CRiskCore
 import XCTest
 @testable import CloudPhoneRiskKit
 
@@ -49,6 +50,30 @@ final class IntegrationTests: XCTestCase {
 
         let networkSignals = report.signals.filter { $0.category == "network" }
         XCTAssertFalse(networkSignals.isEmpty, "VPN + proxy should trigger network signals")
+    }
+
+    func testRiskDetectionEngineHonorsScorePolicyFloorWithoutJailbreakSignal() {
+        let engine = RiskDetectionEngine(
+            policy: EnginePolicy(
+                forceActionOnJailbreak: nil,
+                scenarioPolicies: [.login: .login]
+            ),
+            enableLogging: false
+        )
+        let context = TestFixtures.makeRiskContext(isJailbroken: false)
+        let signal = RiskSignal(
+            id: "rop_chain_detected",
+            category: ObfuscatedConstants.categoryAntiTamper,
+            score: 0,
+            evidence: [:],
+            state: .hard(detected: true),
+            layer: 2,
+            weightHint: 1
+        )
+        let verdict = engine.evaluate(context: context, scenario: .login, extraSignals: [signal])
+        XCTAssertGreaterThanOrEqual(verdict.score, ScenarioPolicy.login.criticalThreshold)
+        XCTAssertEqual(verdict.internalAction, .block)
+        XCTAssertNotNil(verdict.decisionMetadata?["policy_score_floor"])
     }
 
     func testScoringWithAllRiskFactors() {
@@ -144,6 +169,42 @@ final class IntegrationTests: XCTestCase {
         case .failure:
             break // Expected - nonce already consumed
         }
+    }
+
+    func testRiskReportPayloadPromotesLibcFallbackTelemetryFields() throws {
+        let context = TestFixtures.makeRiskContext()
+        let mask = UInt32(CPRISK_LIBC_FALLBACK_USED_UNSUPPORTED_PLATFORM)
+            | UInt32(CPRISK_LIBC_FALLBACK_USED_DIRECT_SYSCTL)
+        let signal = RiskSignal(
+            id: SignalID.libcDirectSyscallFallback,
+            category: ObfuscatedConstants.categoryAntiTamper,
+            score: 18,
+            evidence: [
+                "mask_hex": String(mask, radix: 16),
+                "libc_fallback_event_total": "2",
+                "watchdog_snapshot_supported": "0",
+            ],
+            state: .soft(confidence: 0.7),
+            layer: 1,
+            weightHint: 18
+        )
+        let report = RiskScoreReport(
+            score: 18,
+            isHighRisk: false,
+            signals: [signal],
+            summary: "libc_fallback_observed",
+            compressedDigest: nil,
+            mappingVersion: nil
+        )
+        let cprReport = CPRiskReport(context: context, report: report)
+        let payloadData = cprReport.unencryptedPayloadData()
+        let payload = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: payloadData) as? [String: Any]
+        )
+
+        XCTAssertEqual(payload["lfm"] as? String, String(mask, radix: 16))
+        XCTAssertEqual(payload["lfe"] as? Int, 2)
+        XCTAssertEqual(payload["lfs"] as? Bool, false)
     }
 
     // MARK: - Negative Path Tests

@@ -262,7 +262,7 @@ static int cprisk_trace_eval_aggregate_i(void) {
         }
         atomic_store(&s_trace_crosscheck_streak, streak);
         if (streak >= 2u && slow_traced != 0) {
-            cprisk_force_integrity_poison();
+            cprisk_integrity_poison_antidebug_lane();
         }
     } else {
         streak = 0u;
@@ -340,7 +340,8 @@ int cprisk_deny_attach_effective_verify(int deny_attach_rc, int deny_attach_errn
             detail_bits |= CPRISK_DENY_ATTACH_VERIFY_SELF_PID_MISMATCH;
         }
     }
-    if (sysctl(mib, 4, &libc_shadow, &sz_libc, NULL, 0) == 0) {
+    int libc_sys_err = 0;
+    if (cprisk_sysctl_direct(mib, 4, &libc_shadow, &sz_libc, NULL, 0, &libc_sys_err) == 0) {
         if ((pid_t)libc_shadow.kp_proc.p_pid != (pid_t)a.kp_proc.p_pid ||
             ((libc_shadow.kp_proc.p_flag ^ a.kp_proc.p_flag) & (uint32_t)P_TRACED) != 0u) {
             detail_bits |= CPRISK_DENY_ATTACH_VERIFY_LIBC_DIRECT_DIVERGENCE;

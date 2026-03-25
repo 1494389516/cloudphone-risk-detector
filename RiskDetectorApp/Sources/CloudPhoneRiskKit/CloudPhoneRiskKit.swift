@@ -129,7 +129,8 @@ public final class CPRiskKit: NSObject {
 
     private static let remoteConfigEndpointKey = "com.cloudphone.riskkit.remote.endpoint"
     private static let remoteTrustLock = UnfairLock()
-    private static var pinnedCertificateHashes: Set<String> = []
+    /// Digest-backed pin material (no long-lived `Set<String>` of `sha256/...` literals in static storage).
+    private static var pinnedCertificatePinMaterial: PinnedCertificatePinMaterial = .empty
     private static let localPolicyInjectionAllowed: Bool = {
 #if DEBUG
         return true
@@ -246,6 +247,10 @@ public final class CPRiskKit: NSObject {
         public let getTaskAllowAnomalyCount: UInt64
         public let vmMprotectCrosscheckMismatchTotal: UInt64
         public let vmMprotectMachTrapMismatchTotal: UInt64
+        /// Bitset from `cprisk_get_libc_fallback_used_mask` (libc / arc4random substitution for unavailable direct syscalls).
+        public let libcFallbackUsedMask: UInt32
+        /// Monotonic fallback notifications since last mask reset (`cprisk_get_libc_fallback_event_total`).
+        public let libcFallbackEventTotal: UInt32
 
         public var hasAnyAnomaly: Bool {
             anomalyFlags != 0
@@ -462,13 +467,14 @@ public final class CPRiskKit: NSObject {
 
     @objc public static func configurePinnedCertificateHashes(_ hashes: [String]) {
         let normalized = normalizedPinnedCertificateHashes(from: hashes)
+        let material = PinnedCertificatePinMaterial(pinStrings: normalized)
         remoteTrustLock.withLock {
-            pinnedCertificateHashes = normalized
+            pinnedCertificatePinMaterial = material
         }
 
-        PolicyManager.shared.configurePinning(hashes: normalized)
-        shared.applyPinnedCertificateHashes(normalized)
-        Logger.log("remote_transport_pinning configured: pins=\(normalized.count)")
+        PolicyManager.shared.configurePinning(pinMaterial: material)
+        shared.applyPinnedCertificateHashes(material)
+        Logger.log("remote_transport_pinning configured: pins=\(material.digestCount)")
     }
 
     @objc public static func clearExternalServerSignals() {
@@ -709,13 +715,17 @@ public final class CPRiskKit: NSObject {
 
         let context = buildRiskContext(config: runtimeConfig)
         let serverPolicy = PolicyManager.shared.activePolicy
+        let watchdogSnapshot = antiDebugWatchdogSnapshot()
         let snapshot = RiskSnapshot(
             deviceID: context.deviceID,
             device: context.device,
             network: context.network,
             behavior: context.behavior,
             jailbreak: context.jailbreak,
-            mutationStrategy: resolveMutationStrategy(from: serverPolicy)
+            mutationStrategy: resolveMutationStrategy(from: serverPolicy),
+            antiDebugWatchdogSupported: watchdogSnapshot.supported,
+            libcFallbackUsedMask: watchdogSnapshot.libcFallbackUsedMask,
+            libcFallbackEventTotal: watchdogSnapshot.libcFallbackEventTotal
         )
         let serverSignals = RiskSignalProviderRegistry.shared.serverSignals(snapshot: snapshot)
         let (acctIdForGraph, sessIdForGraph) = stateLock.withLock {
@@ -808,7 +818,10 @@ public final class CPRiskKit: NSObject {
             signals: verdict.signals,
             summary: verdict.summary,
             compressedDigest: verdict.compressedDigest,
-            mappingVersion: verdict.mappingVersion
+            mappingVersion: verdict.mappingVersion,
+            action: verdict.internalAction,
+            primaryReasons: verdict.primaryReasons,
+            decisionMetadata: verdict.decisionMetadata
         )
 
         Logger.log(
@@ -1293,7 +1306,9 @@ public final class CPRiskKit: NSObject {
             amfiCsFlagsAnomalyCount: raw.amfi_cs_flags_anomaly_count,
             getTaskAllowAnomalyCount: raw.get_task_allow_anomaly_count,
             vmMprotectCrosscheckMismatchTotal: raw.vm_mprotect_crosscheck_mismatch_total,
-            vmMprotectMachTrapMismatchTotal: raw.vm_mprotect_mach_trap_mismatch_total
+            vmMprotectMachTrapMismatchTotal: raw.vm_mprotect_mach_trap_mismatch_total,
+            libcFallbackUsedMask: raw.libc_fallback_used_mask,
+            libcFallbackEventTotal: raw.libc_fallback_event_total
         )
     }
 
@@ -1886,7 +1901,7 @@ public final class CPRiskKit: NSObject {
         }
 
         if sameEndpoint, let existingProvider {
-            existingProvider.configurePinning(hashes: Self.currentPinnedCertificateHashes())
+            existingProvider.configurePinning(pinMaterial: Self.currentPinnedPinMaterial())
             existingProvider.reloadCachedConfigTrustState()
             if !hasCachedConfig {
                 _ = applyRemoteConfigIfAccepted(existingProvider.currentConfig, source: "provider_reuse")
@@ -1896,7 +1911,7 @@ public final class CPRiskKit: NSObject {
 
         let provider = RemoteConfigProvider(
             configURL: url,
-            pinnedCertificateHashes: Self.currentPinnedCertificateHashes()
+            pinnedPinMaterial: Self.currentPinnedPinMaterial()
         )
         stateLock.withLock {
             remoteConfigEndpoint = url
@@ -1964,8 +1979,8 @@ public final class CPRiskKit: NSObject {
         }
     }
 
-    private func applyPinnedCertificateHashes(_ hashes: Set<String>) {
-        currentRemoteConfigProvider()?.configurePinning(hashes: hashes)
+    private func applyPinnedCertificateHashes(_ material: PinnedCertificatePinMaterial) {
+        currentRemoteConfigProvider()?.configurePinning(pinMaterial: material)
     }
 
     private func refreshRemoteTrustState() {
@@ -2182,6 +2197,7 @@ public final class CPRiskKit: NSObject {
         )
     }
 
+    /// Trims whitespace; invalid pins are ignored when building ``PinnedCertificatePinMaterial``.
     private static func normalizedPinnedCertificateHashes(from hashes: [String]) -> Set<String> {
         Set(
             hashes
@@ -2190,8 +2206,8 @@ public final class CPRiskKit: NSObject {
         )
     }
 
-    private static func currentPinnedCertificateHashes() -> Set<String> {
-        return remoteTrustLock.withLock { pinnedCertificateHashes }
+    private static func currentPinnedPinMaterial() -> PinnedCertificatePinMaterial {
+        remoteTrustLock.withLock { pinnedCertificatePinMaterial }
     }
 
     private static func releaseHardenedRemoteConfig(_ config: RemoteConfig) -> RemoteConfig {

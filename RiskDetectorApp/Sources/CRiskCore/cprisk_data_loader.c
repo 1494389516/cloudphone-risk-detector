@@ -89,6 +89,7 @@ static inline int cprisk_hidden_mprotect(void *addr, size_t len, int prot) {
     /* Safety fallback: keep legacy path for unsupported platforms/builds. */
     (void)pthread_once(&s_dlsym_once, init_dlsym_once);
     if (s_mprotect_fn) {
+        cprisk_note_libc_fallback_used(CPRISK_LIBC_FALLBACK_USED_ARMOR_MPROTECT);
         int rc;
         if (s_test_mprotect_force_fallback_fail) {
             rc = -1;
@@ -159,6 +160,7 @@ void cprisk_test_mprotect_set_fail_streak_threshold(uint32_t threshold) {
 }
 
 void cprisk_test_mprotect_reset_tamper_state(void) {
+    cprisk_reset_libc_fallback_used_mask();
     s_mprotect_tampered = 0;
     s_mprotect_direct_failure_count = 0u;
     s_mprotect_fallback_success_count = 0u;
@@ -659,7 +661,7 @@ int cprisk_load_protected_data(void) {
         if (page && span > 0) {
             (void)cprisk_hidden_mlock(page, span);
             if (cprisk_hidden_mprotect(page, span, PROT_NONE) != 0) {
-                cprisk_force_integrity_poison();
+                cprisk_integrity_poison_data_loader_lane();
                 cprisk_hidden_munlock(page, span);
             }
         }
@@ -683,7 +685,7 @@ int cprisk_load_protected_data(void) {
        silently produces wrong material. */
     if (cprisk_is_being_traced_redundant()) {
         s_data_acc ^= 0xDEADBEEFCAFEBABEULL;
-        cprisk_force_integrity_poison();
+        cprisk_integrity_poison_data_loader_lane();
     }
 #endif
 
@@ -750,7 +752,7 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
             {
                 if (ent->size > SIZE_MAX - CPRISK_ARMOR_NONCE_SIZE) {
                     if (cprisk_hidden_mprotect(page, span, PROT_NONE) != 0) {
-                        cprisk_force_integrity_poison();
+                        cprisk_integrity_poison_data_loader_lane();
                     }
                     pthread_mutex_unlock(&s_loader_mutex);
                     return 0;
@@ -760,7 +762,7 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
                 hmac_msg = (uint8_t *)malloc(hmac_msg_len);
                 if (!hmac_msg) {
                     if (cprisk_hidden_mprotect(page, span, PROT_NONE) != 0) {
-                        cprisk_force_integrity_poison();
+                        cprisk_integrity_poison_data_loader_lane();
                     }
                     pthread_mutex_unlock(&s_loader_mutex);
                     return 0;
@@ -776,7 +778,7 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
                                        CPRISK_ARMOR_HASH_SIZE) != 0) {
                     cprisk_secure_zero(computed_hmac, sizeof(computed_hmac));
                     if (cprisk_hidden_mprotect(page, span, PROT_NONE) != 0) {
-                        cprisk_force_integrity_poison();
+                        cprisk_integrity_poison_data_loader_lane();
                     }
                     pthread_mutex_unlock(&s_loader_mutex);
                     return 0;
@@ -803,7 +805,7 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
                                               ent->nonce, CPRISK_ARMOR_NONCE_SIZE,
                                               decrypt_key);
                     if (cprisk_hidden_mprotect(page, span, PROT_NONE) != 0) {
-                        cprisk_force_integrity_poison();
+                        cprisk_integrity_poison_data_loader_lane();
                     }
                     pthread_mutex_unlock(&s_loader_mutex);
                     return 0;
@@ -815,13 +817,13 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
                 if (cprisk_is_being_traced_redundant()) {
                     for (size_t pi = 0; pi < 4 && pi < (size_t)ent->size; pi++)
                         ptr[pi] ^= 0x01;
-                    cprisk_force_integrity_poison();
+                    cprisk_integrity_poison_data_loader_lane();
                 }
 #endif
 
                 s_decrypted_flags[i] = 1;
                 if (cprisk_hidden_mprotect(page, span, PROT_READ) != 0) {
-                    cprisk_force_integrity_poison();
+                    cprisk_integrity_poison_data_loader_lane();
                 }
 
                 cprisk_protect_decrypted_pages(ptr, (size_t)ent->size);
@@ -830,7 +832,7 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
                 return 1;
             } else {
                 if (cprisk_hidden_mprotect(page, span, PROT_NONE) != 0) {
-                    cprisk_force_integrity_poison();
+                    cprisk_integrity_poison_data_loader_lane();
                 }
                 pthread_mutex_unlock(&s_loader_mutex);
                 return 0;
@@ -918,6 +920,7 @@ void cprisk_unload_protected_data(void) {
     s_ldr_ready = 0;
     s_ldr_loaded = 0;
     s_data_acc = 0;
+    cprisk_reset_libc_fallback_used_mask();
     s_mprotect_direct_failure_count = 0u;
     s_mprotect_fallback_success_count = 0u;
     s_mprotect_consecutive_full_fail_streak = 0u;
@@ -934,7 +937,7 @@ static void cprisk_erase_macho_header_once(void) {
      * If restore fails, fail-closed via poison without mutating the header. */
     int rc = cprisk_restore_macho_header();
     if (rc < 0)
-        cprisk_force_integrity_poison();
+        cprisk_integrity_poison_data_loader_lane();
 }
 
 void cprisk_erase_macho_header(void) {

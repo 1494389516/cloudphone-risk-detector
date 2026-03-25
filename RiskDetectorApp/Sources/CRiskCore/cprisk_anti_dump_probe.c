@@ -214,20 +214,20 @@ static void *cprisk_probe_main(void *arg) {
             break;
 
         if (cprisk_scan_vm_regions() != 0) {
-            cprisk_force_integrity_poison();
+            cprisk_integrity_poison_anti_dump_lane();
             s_integrity_deception_active = 1;
             continue;
         }
 
         if (cprisk_check_dylib_injection() != 0) {
-            cprisk_force_integrity_poison();
+            cprisk_integrity_poison_anti_dump_lane();
             s_integrity_deception_active = 1;
             continue;
         }
 
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
         if (cprisk_probe_task_for_pid_escalation() != 0) {
-            cprisk_force_integrity_poison();
+            cprisk_integrity_poison_anti_dump_lane();
             s_integrity_deception_active = 1;
             continue;
         }

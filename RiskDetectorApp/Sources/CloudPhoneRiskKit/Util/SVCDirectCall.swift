@@ -244,7 +244,7 @@ enum DynamicSymbolResolver {
 
     private static func authenticate(_ entry: SignedEntry, for symbolID: SymbolID) -> UnsafeMutableRawPointer? {
         guard let authed = cprisk_pac_auth_function_pointer(entry.signedPointer, entry.discriminator) else {
-            cprisk_force_integrity_poison()
+            cprisk_integrity_poison_svc_iface_lane()
             lock.withLock { cache.removeValue(forKey: symbolID) }
             return nil
         }

@@ -39,6 +39,17 @@ final class DynamicFeatureListTests: XCTestCase {
         XCTAssertTrue(ports.contains(27043))
     }
 
+    func testBuiltinFallbackPortsMergedWithoutDuplicates() {
+        let list = DynamicFeatureList.shared
+        list.resetDynamic()
+
+        let ports = list.suspiciousPorts
+        XCTAssertTrue(ports.contains(27041), "builtin fallback should include adjacent Frida-adjacent ports")
+        XCTAssertTrue(ports.contains(8888)) // encoded in suspiciousPortsBuiltinFallback
+        let count27042 = ports.filter { $0 == 27042 }.count
+        XCTAssertEqual(count27042, 1, "defaults + fallback + remote must dedupe")
+    }
+
     // MARK: - applyRemoteConfig
 
     func testApplyRemoteConfigAddsLibraries() {
@@ -115,18 +126,19 @@ final class DynamicFeatureListTests: XCTestCase {
 
     func testResetDynamicKeepsDefaults() {
         let list = DynamicFeatureList.shared
+        let customPort = try! XCTUnwrap((60000...65000).first(where: { !list.suspiciousPorts.contains($0) }))
 
         list.applyRemoteConfig(
             additionalSuspiciousLibraries: ["custom_lib"],
             additionalSuspiciousPaths: ["/custom/path"],
-            additionalSuspiciousPorts: [8888]
+            additionalSuspiciousPorts: [customPort]
         )
 
         list.resetDynamic()
 
         XCTAssertFalse(list.suspiciousLibraries.contains("custom_lib"))
         XCTAssertFalse(list.suspiciousPaths.contains("/custom/path"))
-        XCTAssertFalse(list.suspiciousPorts.contains(8888))
+        XCTAssertFalse(list.suspiciousPorts.contains(customPort))
 
         // Defaults should still be present
         XCTAssertTrue(list.suspiciousLibraries.contains("frida"))

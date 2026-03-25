@@ -46,12 +46,7 @@ struct MultiPathConsistencyCrossValidator: Detector {
     private let minimumStableSplitPerPath = 2
     private let secureProbes: Set<Probe> = [.secureAccess, .secureStat, .secureLstat]
 
-    init(criticalPaths: [String] = [
-        "/Applications/Cydia.app",
-        "/Applications/Sileo.app",
-        "/var/jb",
-        "/Library/MobileSubstrate/MobileSubstrate.dylib",
-    ]) {
+    init(criticalPaths: [String] = ObfuscatedConstants.jailbreakConsensusCriticalPaths) {
         self.criticalPaths = criticalPaths
     }
 

@@ -118,7 +118,12 @@ public struct RiskDetectionEngine: Sendable {
             collected: collected,
             scenario: scenario
         ) {
-            let verdict = fastDecision.verdict
+            let verdict = reconcileShortCircuitVerdict(
+                baseVerdict: fastDecision.verdict,
+                context: context,
+                scenario: scenario,
+                collected: collected
+            )
             Logger.audit(action: "fast_digest_short_circuit", details: [
                 "level": String(verdict.level.rawValue),
                 "action": String(verdict.action.rawValue),
@@ -434,13 +439,17 @@ public struct RiskDetectionEngine: Sendable {
                 }
                 sink = IntermediateDecision(
                     adjustedScore: adjustedScore,
-                    forcedAction: forcedAction
+                    forcedAction: forcedAction,
+                    rawFinalScore: finalScore,
+                    scoreComponents: scoreComponents
                 )
             } else {
                 poison = poison &* 0x100000001b3 &+ 0xC6A4A7935BD1E995
                 sink = IntermediateDecision(
                     adjustedScore: collected.scenarioPolicy.criticalThreshold,
-                    forcedAction: .block
+                    forcedAction: .block,
+                    rawFinalScore: finalScore,
+                    scoreComponents: scoreComponents
                 )
             }
             budget += 1
@@ -448,7 +457,15 @@ public struct RiskDetectionEngine: Sendable {
 
         return sink ?? IntermediateDecision(
             adjustedScore: collected.scenarioPolicy.criticalThreshold,
-            forcedAction: .block
+            forcedAction: .block,
+            rawFinalScore: collected.scenarioPolicy.criticalThreshold,
+            scoreComponents: ScoreComponents(
+                total: 0,
+                legacyComponent: 0,
+                hardComponent: 0,
+                softComponent: 0,
+                tamperedCount: 0
+            )
         )
     }
 
@@ -510,20 +527,32 @@ public struct RiskDetectionEngine: Sendable {
                 finalAction = treeAction
                 state = encodeRegionState(0x45, key: regionKey, salt: regionSalt)
             case 0x45:
+                let reconciliation = reconcileAggregateDecision(
+                    preliminaryAction: finalAction,
+                    treeAction: treeAction,
+                    intermediate: intermediate,
+                    scenarioPolicy: collected.scenarioPolicy,
+                    signals: collected.allSignals,
+                    context: context
+                )
                 sink = RiskVerdict(
                     score: intermediate.adjustedScore,
                     internalLevel: collected.scenarioPolicy.level(for: intermediate.adjustedScore),
-                    internalAction: finalAction,
+                    internalAction: reconciliation.action,
                     confidence: calculateConfidence(
                         context: context,
                         signals: collected.allSignals,
                         score: intermediate.adjustedScore
                     ),
-                    primaryReasons: extractPrimaryReasons(signals: collected.allSignals),
+                    primaryReasons: mergeEngineDecisionReasons(
+                        base: extractPrimaryReasons(signals: collected.allSignals),
+                        reconciliation: reconciliation
+                    ),
                     signals: collected.allSignals,
                     scenario: scenario,
                     compressedDigest: collected.compressResult.digest,
-                    mappingVersion: collected.compressResult.mappingVersion
+                    mappingVersion: collected.compressResult.mappingVersion,
+                    decisionMetadata: reconciliation.metadata.isEmpty ? nil : reconciliation.metadata
                 )
             default:
                 poison = poison &* 0x9e3779b97f4a7c15 &+ 0xD6E8FEB86659FD93
@@ -932,7 +961,7 @@ public struct RiskDetectionEngine: Sendable {
         planner: MutationPlanner
     ) -> ScoreComponents {
         var legacyScore: Double = 0
-        var hardScore: Double = 0
+        var hardWeightsBySignalID: [String: Double] = [:]
         var softScore: Double = 0
         var tamperedCount = 0
         let softGate = planner.softConfidenceGate(default: 0.3)
@@ -944,7 +973,7 @@ public struct RiskDetectionEngine: Sendable {
                 switch state {
                 case .hard(let detected):
                     if detected {
-                        hardScore = max(hardScore, weight)
+                        hardWeightsBySignalID[signal.id] = max(hardWeightsBySignalID[signal.id] ?? 0, weight)
                     }
                 case .soft(let confidence):
                     let normalized = min(max(confidence, 0), 1)
@@ -969,6 +998,7 @@ public struct RiskDetectionEngine: Sendable {
             legacyScore += safeScore * categoryWeight
         }
 
+        let hardScore = aggregateHardScore(Array(hardWeightsBySignalID.values))
         let tamperedMultiplier = 1.0 + Double(tamperedCount) * 0.5
         let v3Component = (hardScore + softScore) * tamperedMultiplier
         let total = min(100, max(0, legacyScore + v3Component))
@@ -1062,7 +1092,12 @@ public struct RiskDetectionEngine: Sendable {
             signals: signals,
             scenario: scenario,
             compressedDigest: digest,
-            mappingVersion: SignalCompressor.mappingVersion
+            mappingVersion: SignalCompressor.mappingVersion,
+            decisionMetadata: [
+                "compressed_rule": strictestRule.id,
+                "compressed_rule_action": String(strictestRule.action.rawValue),
+                "short_circuit_path": "compressed_rule"
+            ]
         )
     }
 
@@ -1131,6 +1166,245 @@ public struct RiskDetectionEngine: Sendable {
     private func strictestAction(_ lhs: RiskAction?, _ rhs: RiskAction) -> RiskAction {
         guard let lhs else { return rhs }
         return lhs.severity >= rhs.severity ? lhs : rhs
+    }
+
+    private func strictestAction(_ lhs: RiskAction, _ rhs: RiskAction) -> RiskAction {
+        lhs.severity >= rhs.severity ? lhs : rhs
+    }
+
+    /// 将「决策树 / ForceRule」的初步动作与 **分数档位策略动作**、**多源证据聚合升级**对齐，避免：
+    /// - 越狱等单点 ForceRule 被绕过时，累计分已超过档位却仍被树路径放行；
+    /// - 仅依赖某一 detector 的强制规则而忽略跨层/跨家族一致性。
+    private func reconcileAggregateDecision(
+        preliminaryAction: RiskAction,
+        treeAction: RiskAction,
+        intermediate: IntermediateDecision,
+        scenarioPolicy: ScenarioPolicy,
+        signals: [RiskSignal],
+        context: RiskContext
+    ) -> DecisionReconciliation {
+        var meta: [String: String] = [:]
+        var reasonTags: [String] = []
+        let score = intermediate.adjustedScore
+        let policyFloor = scenarioPolicy.action(for: scenarioPolicy.level(for: score))
+
+        var action = strictestAction(preliminaryAction, policyFloor)
+        if action != preliminaryAction {
+            meta["policy_score_floor"] = "1"
+            meta["pre_action"] = String(preliminaryAction.rawValue)
+            meta["tree_action"] = String(treeAction.rawValue)
+            meta["floor_action"] = String(policyFloor.rawValue)
+            reasonTags.append("engine:policy_score_floor")
+        }
+
+        let families = countRiskFamilies(signals: signals, context: context)
+        meta["risk_family_count"] = String(families)
+
+        let fridaCluster = countFridaHighConfidenceSignals(signals)
+        meta["frida_cluster_signals"] = String(fridaCluster)
+
+        let antiTamperCluster = countHighConfidenceAntiTamperSignals(signals)
+        meta["anti_tamper_cluster_signals"] = String(antiTamperCluster)
+
+        let tamperedLayers = Set(signals.filter { $0.state == .tampered }.compactMap { $0.layer })
+        meta["distinct_tamper_layers"] = String(tamperedLayers.count)
+        meta["tampered_signal_count"] = String(intermediate.scoreComponents.tamperedCount)
+
+        var aggregateTarget: RiskAction?
+        var ruleLabel = ""
+
+        if fridaCluster >= 2, score >= scenarioPolicy.highThreshold {
+            aggregateTarget = score >= scenarioPolicy.criticalThreshold ? RiskAction.block : .stepUpAuth
+            ruleLabel = "frida_cluster"
+        } else if antiTamperCluster >= 3, score >= scenarioPolicy.highThreshold {
+            aggregateTarget = score >= scenarioPolicy.criticalThreshold ? .block : .stepUpAuth
+            ruleLabel = "anti_tamper_cluster"
+        } else if intermediate.scoreComponents.tamperedCount >= 2,
+                  tamperedLayers.count >= 2,
+                  score >= scenarioPolicy.highThreshold {
+            aggregateTarget = score >= scenarioPolicy.criticalThreshold ? .block : .stepUpAuth
+            ruleLabel = "multi_layer_tamper"
+        } else if families >= 3, score >= scenarioPolicy.highThreshold {
+            aggregateTarget = score >= scenarioPolicy.criticalThreshold
+                ? policyFloor
+                : .stepUpAuth
+            ruleLabel = "multi_family"
+        }
+
+        if let aggregateTarget {
+            let beforeAgg = action
+            action = strictestAction(action, aggregateTarget)
+            meta["aggregate_rule"] = ruleLabel
+            meta["aggregate_target_action"] = String(aggregateTarget.rawValue)
+            if action.severity > beforeAgg.severity {
+                meta["aggregate_escalation"] = "1"
+                reasonTags.append("engine:aggregate_escalation")
+            } else {
+                // 仍记录命中：常与 policy_score_floor 同效，便于服务端核对「多源证据链」未被单点规则绑架。
+                meta["aggregate_escalation"] = "0"
+                meta["aggregate_redundant_with_floor"] = "1"
+            }
+            reasonTags.append("engine:aggregate_trace")
+        }
+
+        if meta["aggregate_rule"] == nil, families >= 3 || fridaCluster >= 2 || tamperedLayers.count >= 2 {
+            meta["aggregate_probe"] = "below_escalation_threshold"
+        }
+
+        if meta["policy_score_floor"] == "1" || meta["aggregate_escalation"] == "1" {
+            meta["server_correlation_hint"] = "telemetry_and_policy_alignment"
+            meta["local_action_grading"] = String(action.rawValue)
+        }
+
+        return DecisionReconciliation(action: action, metadata: meta, reasonTags: reasonTags)
+    }
+
+    /// 粗粒度「风险家族」计数：同一类单点被绕过时不应清零其它家族的贡献。
+    private func countRiskFamilies(signals: [RiskSignal], context: RiskContext) -> Int {
+        var families = Set<String>()
+        if context.jailbreak.isJailbroken { families.insert("jailbreak_ctx") }
+        if signals.contains(where: { $0.id == ObfuscatedConstants.signalJailbreak }) {
+            families.insert("jailbreak_sig")
+        }
+        if signals.contains(where: {
+            $0.state == .tampered || $0.category == ObfuscatedConstants.categoryAntiTamper
+        }) {
+            families.insert("anti_tamper")
+        }
+        if signals.contains(where: { $0.id.lowercased().contains("frida") }) {
+            families.insert("frida")
+        }
+        if signals.contains(where: { $0.category == "network" }) { families.insert("network") }
+        if signals.contains(where: { $0.category == "behavior" }) { families.insert("behavior") }
+        if signals.contains(where: { $0.category == "device" }) { families.insert("device") }
+        return families.count
+    }
+
+    private func countFridaHighConfidenceSignals(_ signals: [RiskSignal]) -> Int {
+        signals.filter { signal in
+            guard signal.id.lowercased().contains("frida") else { return false }
+            guard let state = signal.state else { return false }
+            switch state {
+            case .hard(let detected):
+                return detected
+            case .tampered:
+                return true
+            case .soft(let confidence):
+                return confidence >= 0.85
+            case .serverRequired, .unavailable:
+                return false
+            }
+        }.count
+    }
+
+    private func countHighConfidenceAntiTamperSignals(_ signals: [RiskSignal]) -> Int {
+        var ids = Set<String>()
+        for signal in signals {
+            let antiTamperLike = signal.category == ObfuscatedConstants.categoryAntiTamper || signal.state == .tampered
+            guard antiTamperLike else { continue }
+            switch signal.state {
+            case .tampered?:
+                ids.insert(signal.id)
+            case .hard(let detected)? where detected:
+                ids.insert(signal.id)
+            case .soft(let confidence)? where confidence >= 0.7:
+                ids.insert(signal.id)
+            default:
+                continue
+            }
+        }
+        return ids.count
+    }
+
+    private func aggregateHardScore(_ weights: [Double]) -> Double {
+        guard !weights.isEmpty else { return 0 }
+        let sorted = weights.sorted(by: >)
+        let discounts: [Double] = [0.45, 0.3, 0.2]
+        var total = sorted[0]
+        for (index, weight) in sorted.dropFirst().enumerated() {
+            let factor = index < discounts.count ? discounts[index] : 0.15
+            total += weight * factor
+        }
+        return min(total, 100)
+    }
+
+    private func reconcileShortCircuitVerdict(
+        baseVerdict: RiskVerdict,
+        context: RiskContext,
+        scenario: RiskScenario,
+        collected: CollectedSignalContext
+    ) -> RiskVerdict {
+        let intermediate = scoreAndForceDecision(
+            context: context,
+            scenario: scenario,
+            collected: collected
+        )
+        let effectiveScore = max(baseVerdict.score, intermediate.adjustedScore)
+        let effectiveIntermediate = IntermediateDecision(
+            adjustedScore: effectiveScore,
+            forcedAction: intermediate.forcedAction,
+            rawFinalScore: max(baseVerdict.score, intermediate.rawFinalScore),
+            scoreComponents: intermediate.scoreComponents
+        )
+        let preliminaryAction = strictestAction(
+            baseVerdict.internalAction,
+            intermediate.forcedAction ?? baseVerdict.internalAction
+        )
+        let reconciliation = reconcileAggregateDecision(
+            preliminaryAction: preliminaryAction,
+            treeAction: baseVerdict.internalAction,
+            intermediate: effectiveIntermediate,
+            scenarioPolicy: collected.scenarioPolicy,
+            signals: collected.allSignals,
+            context: context
+        )
+        let metadata = mergedDecisionMetadata(
+            baseVerdict.decisionMetadata,
+            reconciliation.metadata
+        )
+        return RiskVerdict(
+            score: effectiveScore,
+            internalLevel: collected.scenarioPolicy.level(for: effectiveScore),
+            internalAction: reconciliation.action,
+            confidence: calculateConfidence(
+                context: context,
+                signals: collected.allSignals,
+                score: effectiveScore
+            ),
+            primaryReasons: mergeEngineDecisionReasons(
+                base: baseVerdict.primaryReasons,
+                reconciliation: reconciliation
+            ),
+            signals: collected.allSignals,
+            scenario: scenario,
+            compressedDigest: baseVerdict.compressedDigest,
+            mappingVersion: baseVerdict.mappingVersion,
+            decisionMetadata: metadata.isEmpty ? nil : metadata
+        )
+    }
+
+    private func mergedDecisionMetadata(
+        _ base: [String: String]?,
+        _ overlay: [String: String]
+    ) -> [String: String] {
+        var merged = base ?? [:]
+        for (key, value) in overlay {
+            merged[key] = value
+        }
+        return merged
+    }
+
+    private func mergeEngineDecisionReasons(
+        base: [String],
+        reconciliation: DecisionReconciliation
+    ) -> [String] {
+        var merged: [String] = []
+        merged.append(contentsOf: reconciliation.reasonTags)
+        merged.append(contentsOf: base)
+        if merged.count > 8 {
+            return Array(merged.prefix(8))
+        }
+        return merged
     }
 
     private func minScore(for action: RiskAction, scenarioPolicy: ScenarioPolicy) -> Double {
@@ -1475,6 +1749,14 @@ private struct FastDigestDecision: Sendable {
 private struct IntermediateDecision: Sendable {
     let adjustedScore: Double
     let forcedAction: RiskAction?
+    let rawFinalScore: Double
+    let scoreComponents: ScoreComponents
+}
+
+private struct DecisionReconciliation: Sendable {
+    let action: RiskAction
+    let metadata: [String: String]
+    let reasonTags: [String]
 }
 
 private extension RiskDetectionEngine {
@@ -1548,6 +1830,7 @@ private extension RiskDetectionEngine {
         "dyld_image_overload": 45,
         SignalID.dylibInjectImageCountLow: 52,
         SignalID.ifaceSpawnPathDivergence: 86,
+        SignalID.libcDirectSyscallFallback: 18,
         SignalID.antiDebugWatchdogDyldInjection: 92,
         SignalID.antiDebugWatchdogDenyAttachVerify: 84,
         SignalID.antiDebugWatchdogAMFICsFlags: 90,
@@ -1573,6 +1856,7 @@ private extension RiskDetectionEngine {
         "refresh_rate_mismatch": 75,
         "proximity_sensor_absent": 30,
         "network_interface_anomaly": 55,
+        SignalID.certificatePinningAnomaly: 72,
         // barometer_anomaly：PhysicalSensorProbe 当前未单独输出，预留权重供后续扩展
         "barometer_anomaly": 65,
         // SDK 5.2 新信号权重
@@ -1853,7 +2137,10 @@ extension RiskDetectionEngine {
             signals: verdict.signals,
             summary: verdict.summary,
             compressedDigest: verdict.compressedDigest,
-            mappingVersion: verdict.mappingVersion
+            mappingVersion: verdict.mappingVersion,
+            action: verdict.internalAction,
+            primaryReasons: verdict.primaryReasons,
+            decisionMetadata: verdict.decisionMetadata
         )
     }
 }

@@ -470,7 +470,7 @@ void cprisk_verify_exception_handler(void) {
         s_late_phase_checked = 1u;
         if (current_fingerprint != s_early_port_fingerprint) {
             s_status.last_race_detected = 1u;
-            cprisk_force_integrity_poison();
+            cprisk_integrity_poison_exception_lane();
         }
     }
 

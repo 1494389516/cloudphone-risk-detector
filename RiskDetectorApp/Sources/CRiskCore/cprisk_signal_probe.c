@@ -12,6 +12,7 @@
 #include "include/CRiskCore.h"
 #include "include/cprisk_crypto_trace.h"
 
+#include <errno.h>
 #include <signal.h>
 #include <setjmp.h>
 #include <stdatomic.h>
@@ -22,7 +23,6 @@
 
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
-#include <sys/syscall.h>
 #endif
 
 #if defined(__APPLE__) && (defined(__arm64__) || defined(__aarch64__)) && \
@@ -1172,10 +1172,6 @@ int cprisk_detect_tty_debug(void) {
 
 /* ── (e) csops CS_DEBUGGED check ──────────────────────────────────── */
 
-#ifndef SYS_csops
-#define SYS_csops 169
-#endif
-
 #ifndef CS_OPS_STATUS
 #define CS_OPS_STATUS 0
 #endif
@@ -1184,33 +1180,13 @@ int cprisk_detect_tty_debug(void) {
 #define CS_DEBUGGED 0x10000000u
 #endif
 
-static long cprisk_csops_syscall_i(pid_t pid, unsigned int ops,
-                                   void *useraddr, size_t usersize) {
-    register long x0 __asm("x0") = (long)pid;
-    register long x1 __asm("x1") = (long)ops;
-    register long x2 __asm("x2") = (long)(uintptr_t)useraddr;
-    register long x3 __asm("x3") = (long)usersize;
-    register long x16 __asm("x16") = SYS_csops;
-    unsigned int did_error = 0;
-
-    __asm__ volatile(
-        "svc #0x80\n"
-        "cset %w[did_error], cs\n"
-        : "+r"(x0), [did_error] "=r"(did_error)
-        : "r"(x1), "r"(x2), "r"(x3), "r"(x16)
-        : "cc", "memory"
-    );
-
-    if (did_error) return -1;
-    return x0;
-}
-
 int cprisk_csops_debug_check(void) {
     uint32_t flags = 0;
     pid_t pid = cprisk_getpid_direct();
+    int err = 0;
 
-    long result = cprisk_csops_syscall_i(pid, CS_OPS_STATUS, &flags, sizeof(flags));
-    if (result != 0) return 0;
+    if (cprisk_csops_direct(pid, CS_OPS_STATUS, &flags, sizeof(flags), &err) != 0)
+        return 0;
 
     return (flags & CS_DEBUGGED) ? 1 : 0;
 }
@@ -1226,10 +1202,10 @@ int cprisk_csops_status_flags(uint32_t *flags_out, int *error_out) {
         *error_out = 0;
     }
 
-    long result = cprisk_csops_syscall_i(pid, CS_OPS_STATUS, &flags, sizeof(flags));
-    if (result != 0) {
+    int err = 0;
+    if (cprisk_csops_direct(pid, CS_OPS_STATUS, &flags, sizeof(flags), &err) != 0) {
         if (error_out != NULL) {
-            *error_out = (int)result;
+            *error_out = err;
         }
         return -1;
     }
@@ -1604,11 +1580,38 @@ int cprisk_detect_suspicious_threads(void) {
 
 /* ── (h) Developer Disk Image detection ───────────────────────────── */
 
+static void cprisk_xor_dec_path_i(const uint8_t *enc, size_t enc_len, uint8_t xor_key, char *out, size_t out_cap) {
+    if (!enc || !out || enc_len + 1u > out_cap || out_cap == 0u) {
+        if (out && out_cap > 0u) {
+            out[0] = '\0';
+        }
+        return;
+    }
+    for (size_t i = 0u; i < enc_len; i++) {
+        out[i] = (char)(enc[i] ^ xor_key);
+    }
+    out[enc_len] = '\0';
+}
+
 int cprisk_detect_developer_disk(void) {
-    if (cprisk_access_direct("/Developer/usr/bin/debugserver", F_OK, NULL) == 0)
+    /* XOR-obfuscated paths (0x5A) — avoid contiguous ASCII literals in __TEXT/__cstring. */
+    static const uint8_t k_p1[] = {
+        117, 30, 63, 44, 63, 54, 53, 42, 63, 40, 117, 47, 41, 40, 117, 56, 51, 52, 117, 62, 63, 56, 47, 61, 41, 63, 40, 44, 63, 40};
+    static const uint8_t k_p2[] = {
+        117, 30, 63, 44, 63, 54, 53, 42, 63, 40, 117, 47, 41, 40, 117, 54, 51, 56, 117, 54, 51, 56, 23, 59, 51, 52, 14, 50, 40, 63, 59, 62, 25, 50, 63, 57, 49, 63, 40, 116, 62, 35, 54, 51, 56};
+    char buf[64];
+    cprisk_xor_dec_path_i(k_p1, sizeof(k_p1), 0x5Au, buf, sizeof(buf));
+    if (buf[0] != '\0' && cprisk_access_direct(buf, F_OK, NULL) == 0) {
+        cprisk_secure_zero(buf, sizeof(buf));
         return 1;
-    if (cprisk_access_direct("/Developer/usr/lib/libMainThreadChecker.dylib", F_OK, NULL) == 0)
+    }
+    cprisk_secure_zero(buf, sizeof(buf));
+    cprisk_xor_dec_path_i(k_p2, sizeof(k_p2), 0x5Au, buf, sizeof(buf));
+    if (buf[0] != '\0' && cprisk_access_direct(buf, F_OK, NULL) == 0) {
+        cprisk_secure_zero(buf, sizeof(buf));
         return 1;
+    }
+    cprisk_secure_zero(buf, sizeof(buf));
     return 0;
 }
 
@@ -1713,7 +1716,7 @@ int cprisk_csops_status_flags(uint32_t *flags_out, int *error_out) {
         *flags_out = 0u;
     }
     if (error_out != NULL) {
-        *error_out = 0;
+        *error_out = ENOTSUP;
     }
     return -1;
 }

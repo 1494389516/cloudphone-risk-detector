@@ -953,7 +953,7 @@ int cprisk_whitebox_evaluate_domain(
             cprisk_secure_zero(recomputed, sizeof(recomputed));
             cprisk_secure_zero(out, CPRISK_WHITEBOX_STATE_SIZE);
             cprisk_secure_zero(&bundle.header, sizeof(bundle.header));
-            cprisk_force_integrity_poison();
+            cprisk_integrity_poison_whitebox_lane();
             return -1;
         }
         if (s_test_force_recompute_mismatch_i)
@@ -962,7 +962,7 @@ int cprisk_whitebox_evaluate_domain(
             cprisk_secure_zero(recomputed, sizeof(recomputed));
             cprisk_secure_zero(out, CPRISK_WHITEBOX_STATE_SIZE);
             cprisk_secure_zero(&bundle.header, sizeof(bundle.header));
-            cprisk_force_integrity_poison();
+            cprisk_integrity_poison_whitebox_lane();
             return -1;
         }
         cprisk_secure_zero(recomputed, sizeof(recomputed));

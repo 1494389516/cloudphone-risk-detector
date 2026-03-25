@@ -230,13 +230,19 @@ typedef struct cprisk_vm_run_result {
     uint64_t vregs[8];
 } cprisk_vm_run_result_t;
 
+#if defined(__GNUC__)
+#define CPRISK_VM_EXPORT __attribute__((visibility("default")))
+#else
+#define CPRISK_VM_EXPORT
+#endif
+
 /// Execute VM bytecode for the given function id.
 /// Returns a 64-bit value folded from VM accumulator (reserved for ABI compatibility).
-uint64_t cprisk_vm_entry(uint64_t func_id);
+CPRISK_VM_EXPORT uint64_t cprisk_vm_entry(uint64_t func_id);
 
 /// Alternate VM entry symbols (same semantics as \c cprisk_vm_entry); kept distinct for CFF / linker \c -u wiring.
-uint64_t cprisk_vm_entry_alt1(uint64_t func_id);
-uint64_t cprisk_vm_entry_alt2(uint64_t func_id);
+CPRISK_VM_EXPORT uint64_t cprisk_vm_entry_alt1(uint64_t func_id);
+CPRISK_VM_EXPORT uint64_t cprisk_vm_entry_alt2(uint64_t func_id);
 
 /// Debug/testing entry: execute VM and emit detailed run result.
 /// Returns 0 on success, -1 on invalid input.

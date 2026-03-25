@@ -7,7 +7,6 @@
 #include <time.h>
 #include <unistd.h>
 #include <mach-o/dyld.h>
-#include <sys/sysctl.h>
 
 static uint32_t cprisk_cff_rotate_left32(uint32_t value, uint32_t shift) {
     const uint32_t amount = shift & 31u;
@@ -53,7 +52,8 @@ static uint64_t cprisk_cff_thread_fingerprint(void) {
 static uint32_t cprisk_cff_os_mix32(void) {
     char osrelease[128];
     size_t len = sizeof(osrelease);
-    if (sysctlbyname("kern.osrelease", osrelease, &len, NULL, 0) != 0 || len == 0) {
+    int err = 0;
+    if (cprisk_sysctlbyname_direct("kern.osrelease", osrelease, &len, NULL, 0, &err) != 0 || len == 0) {
         return 0xA24BAED5u;
     }
 
@@ -770,7 +770,7 @@ void cprisk_cff_poison_default(cprisk_cff_context_t *context) {
             __builtin_trap();
             break;
         case CPRISK_CFF_DEFAULT_POISON:
-            cprisk_force_integrity_poison();
+            cprisk_integrity_poison_cff_lane();
             context->iteration_budget = 0u;
             context->encoded_state = cprisk_cff_encode_state_with_style_impl(
                 0xFFFF0001u,

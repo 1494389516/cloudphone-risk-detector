@@ -30,6 +30,15 @@ public struct DeviceDetectionSnapshot: Codable, Sendable {
   /// 网络接口类型
   public var networkInterfaceType: String
 
+  /// Hex mask for libc/direct-syscall fallback observation when present.
+  public var libcFallbackMaskHex: String?
+
+  /// Monotonic fallback notification count when libc fallback observation is present.
+  public var libcFallbackEventTotal: UInt32?
+
+  /// Whether the watchdog snapshot path was supported when the fallback observation was captured.
+  public var libcFallbackWatchdogSupported: Bool?
+
   private enum CodingKeys: String, CodingKey {
     case timestamp = "ts"
     case deviceID = "di"
@@ -40,6 +49,9 @@ public struct DeviceDetectionSnapshot: Codable, Sendable {
     case isProxyEnabled = "pe"
     case behaviorSummary = "bs"
     case networkInterfaceType = "ni"
+    case libcFallbackMaskHex = "lfm"
+    case libcFallbackEventTotal = "lfe"
+    case libcFallbackWatchdogSupported = "lfs"
   }
 
   public init(
@@ -51,7 +63,10 @@ public struct DeviceDetectionSnapshot: Codable, Sendable {
     isVPNActive: Bool,
     isProxyEnabled: Bool,
     behaviorSummary: BehaviorSummary? = nil,
-    networkInterfaceType: String
+    networkInterfaceType: String,
+    libcFallbackMaskHex: String? = nil,
+    libcFallbackEventTotal: UInt32? = nil,
+    libcFallbackWatchdogSupported: Bool? = nil
   ) {
     self.timestamp = timestamp
     self.deviceID = deviceID
@@ -62,6 +77,9 @@ public struct DeviceDetectionSnapshot: Codable, Sendable {
     self.isProxyEnabled = isProxyEnabled
     self.behaviorSummary = behaviorSummary
     self.networkInterfaceType = networkInterfaceType
+    self.libcFallbackMaskHex = libcFallbackMaskHex
+    self.libcFallbackEventTotal = libcFallbackEventTotal
+    self.libcFallbackWatchdogSupported = libcFallbackWatchdogSupported
   }
 
   /// 从 RiskSnapshot 和 RiskScoreReport 创建快照
@@ -69,6 +87,7 @@ public struct DeviceDetectionSnapshot: Codable, Sendable {
     -> DeviceDetectionSnapshot
   {
     let now = Date().timeIntervalSince1970
+    let fallbackObserved = snapshot.libcFallbackUsedMask != 0
 
     return DeviceDetectionSnapshot(
       timestamp: now,
@@ -83,7 +102,10 @@ public struct DeviceDetectionSnapshot: Codable, Sendable {
       isVPNActive: snapshot.network.isVPNActive,
       isProxyEnabled: snapshot.network.proxyEnabled,
       behaviorSummary: BehaviorSummary(from: snapshot.behavior),
-      networkInterfaceType: snapshot.network.interfaceType.value
+      networkInterfaceType: snapshot.network.interfaceType.value,
+      libcFallbackMaskHex: fallbackObserved ? String(snapshot.libcFallbackUsedMask, radix: 16) : nil,
+      libcFallbackEventTotal: fallbackObserved ? snapshot.libcFallbackEventTotal : nil,
+      libcFallbackWatchdogSupported: fallbackObserved ? snapshot.antiDebugWatchdogSupported : nil
     )
   }
 }

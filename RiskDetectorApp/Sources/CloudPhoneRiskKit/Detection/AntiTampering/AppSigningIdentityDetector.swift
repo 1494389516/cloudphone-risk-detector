@@ -135,7 +135,7 @@ struct AppSigningIdentityDetector: Detector {
                 "[AppSigningIdentityDetector] forcing integrity poison: " +
                 inspection.findings.map(\.signalID).joined(separator: ",")
             )
-            cprisk_force_integrity_poison()
+            cprisk_integrity_poison_code_signing_lane()
         }
         return inspection.signals
     }

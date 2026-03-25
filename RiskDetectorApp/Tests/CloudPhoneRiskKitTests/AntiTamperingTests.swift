@@ -116,7 +116,9 @@ final class AntiTamperingTests: XCTestCase {
         amfiCsFlagsAnomalyCount: UInt64 = 0,
         getTaskAllowAnomalyCount: UInt64 = 0,
         vmMprotectCrosscheckMismatchTotal: UInt64 = 0,
-        vmMprotectMachTrapMismatchTotal: UInt64 = 0
+        vmMprotectMachTrapMismatchTotal: UInt64 = 0,
+        libcFallbackUsedMask: UInt32 = 0,
+        libcFallbackEventTotal: UInt32 = 0
     ) -> CPRiskKit.AntiDebugWatchdogSnapshot {
         CPRiskKit.AntiDebugWatchdogSnapshot(
             supported: supported,
@@ -179,8 +181,117 @@ final class AntiTamperingTests: XCTestCase {
             amfiCsFlagsAnomalyCount: amfiCsFlagsAnomalyCount,
             getTaskAllowAnomalyCount: getTaskAllowAnomalyCount,
             vmMprotectCrosscheckMismatchTotal: vmMprotectCrosscheckMismatchTotal,
-            vmMprotectMachTrapMismatchTotal: vmMprotectMachTrapMismatchTotal
+            vmMprotectMachTrapMismatchTotal: vmMprotectMachTrapMismatchTotal,
+            libcFallbackUsedMask: libcFallbackUsedMask,
+            libcFallbackEventTotal: libcFallbackEventTotal
         )
+    }
+
+    func testLibcDirectSyscallFallbackSignalEmittedWhenMaskNonZero() {
+        let provider = AntiTamperingSignalProvider()
+        let mask = UInt32(CPRISK_LIBC_FALLBACK_USED_DIRECT_SYSCTL)
+            | UInt32(CPRISK_LIBC_FALLBACK_USED_DIRECT_GETENTROPY)
+        let snapshot = makeWatchdogSnapshot(libcFallbackUsedMask: mask, libcFallbackEventTotal: 4)
+        let signals = provider.libcDirectSyscallFallbackSignals(from: snapshot)
+        XCTAssertEqual(signals.count, 1)
+        XCTAssertEqual(signals[0].id, SignalID.libcDirectSyscallFallback)
+        XCTAssertEqual(signals[0].evidence["libc_fallback_used_mask"], "\(mask)")
+        XCTAssertEqual(signals[0].evidence["mask_hex"], String(mask, radix: 16))
+        XCTAssertEqual(signals[0].evidence["libc_fallback_event_total"], "4")
+        XCTAssertTrue(
+            (signals[0].evidence["fallback_classes"] ?? "").contains("sysctl"),
+            "expected sysctl class label in \(signals[0].evidence["fallback_classes"] ?? "")"
+        )
+        XCTAssertTrue(
+            (signals[0].evidence["fallback_classes"] ?? "").contains("getentropy"),
+            "expected getentropy class label"
+        )
+    }
+
+    func testLibcDirectSyscallFallbackSignalStillEmittedWhenWatchdogUnsupportedButMaskNonZero() {
+        let provider = AntiTamperingSignalProvider()
+        let mask = UInt32(CPRISK_LIBC_FALLBACK_USED_UNSUPPORTED_PLATFORM)
+            | UInt32(CPRISK_LIBC_FALLBACK_USED_DIRECT_SYSCTL)
+        let signals = provider.libcDirectSyscallFallbackSignals(
+            from: makeWatchdogSnapshot(
+                supported: false,
+                libcFallbackUsedMask: mask,
+                libcFallbackEventTotal: 2
+            )
+        )
+        XCTAssertEqual(signals.count, 1)
+        XCTAssertEqual(signals[0].evidence["mask_hex"], String(mask, radix: 16))
+        XCTAssertEqual(signals[0].evidence["watchdog_snapshot_supported"], "0")
+        XCTAssertEqual(signals[0].evidence["libc_fallback_event_total"], "2")
+    }
+
+    func testLibcDirectSyscallFallbackSignalEmptyWhenMaskZero() {
+        let provider = AntiTamperingSignalProvider()
+        XCTAssertTrue(
+            provider.libcDirectSyscallFallbackSignals(from: makeWatchdogSnapshot(libcFallbackUsedMask: 0))
+                .isEmpty
+        )
+    }
+
+    func testSDKIntegrityCheckerLibcFallbackObservationStillEmittedWhenWatchdogUnsupportedButMaskNonZero() {
+        let mask = UInt32(CPRISK_LIBC_FALLBACK_USED_UNSUPPORTED_PLATFORM)
+            | UInt32(CPRISK_LIBC_FALLBACK_USED_DIRECT_SYSCTL)
+        let observation = SDKIntegrityChecker.libcDirectSyscallFallbackObservation(
+            from: makeWatchdogSnapshot(
+                supported: false,
+                libcFallbackUsedMask: mask,
+                libcFallbackEventTotal: 3
+            )
+        )
+        XCTAssertNotNil(observation)
+        XCTAssertEqual(observation?.score, 14)
+        XCTAssertTrue(observation?.method.contains("integrity:libc_direct_syscall_fallback:0x\(String(mask, radix: 16))") ?? false)
+        XCTAssertTrue(observation?.method.contains("events_total=3") ?? false)
+        XCTAssertTrue(observation?.method.contains("watchdog_supported=0") ?? false)
+    }
+
+    func testSDKIntegrityCheckerLibcFallbackObservationNilWhenMaskZero() {
+        XCTAssertNil(
+            SDKIntegrityChecker.libcDirectSyscallFallbackObservation(
+                from: makeWatchdogSnapshot(libcFallbackUsedMask: 0, libcFallbackEventTotal: 9)
+            )
+        )
+    }
+
+    /// Runtime contract: libc fallback signal id must be protocol-stable via `ObfuscatedConstants` (not inline literals).
+    func testLibcDirectSyscallFallbackSignalIdUsesObfuscatedContract() {
+        XCTAssertEqual(SignalID.libcDirectSyscallFallback, ObfuscatedConstants.signalLibcDirectSyscallFallback)
+    }
+
+    func testLibcDirectSyscallFallbackMechanismEvidenceUsesObfuscatedConstant() {
+        XCTAssertEqual(
+            ObfuscatedConstants.evidenceMechanismLibcDirectSyscallFallback,
+            "libc_or_arc4_fallback_after_direct_syscall_unavailable"
+        )
+    }
+
+    func testAntiDebugWatchdogDerivedSignalIdsUseObfuscatedContract() {
+        XCTAssertEqual(SignalID.debuggerDetected, ObfuscatedConstants.signalDebuggerDetected)
+        XCTAssertEqual(SignalID.csopsDebugged, ObfuscatedConstants.signalCsopsDebugged)
+        XCTAssertEqual(SignalID.hardwareBreakpointDetected, ObfuscatedConstants.signalHardwareBreakpointDetected)
+        XCTAssertEqual(SignalID.signalProbeDebugger, ObfuscatedConstants.signalSignalProbeDebugger)
+        XCTAssertEqual(SignalID.antidebugPlanEscalated, ObfuscatedConstants.signalAntidebugPlanEscalated)
+    }
+
+    func testLibcDirectSyscallFallbackSetsCompressorCrossLayerBit() {
+        let sig = RiskSignal(
+            id: SignalID.libcDirectSyscallFallback,
+            category: ObfuscatedConstants.categoryAntiTamper,
+            score: 30,
+            evidence: [:],
+            state: .soft(confidence: 0.8),
+            layer: 1,
+            weightHint: 28
+        )
+        let digest = SignalCompressor.compress(signals: [sig]).digest
+        XCTAssertEqual(digest.count, 9)
+        // `crossLayerBits` stores libc fallback at bit 16 (`0x00010000`) → byte index 5 is `(crossLayer >> 16) & 0xFF`.
+        XCTAssertEqual(digest[5], 1)
     }
 
     // MARK: - AntiTamperingDetector Logic Tests
@@ -835,7 +946,7 @@ final class AntiTamperingTests: XCTestCase {
         let provider = AntiTamperingSignalProvider()
         let snapshot = makeSnapshot()
         let ids = provider.configuredCheckIDs(snapshot: snapshot)
-        XCTAssertEqual(ids.count, 41, "descriptor plan drift: update expected count when adding/removing checks")
+        XCTAssertEqual(ids.count, 42, "descriptor plan drift: update expected count when adding/removing checks")
     }
 
     // MARK: - FridaDetector Logic Tests
@@ -853,6 +964,50 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertEqual(ObfuscatedConstants.methodPrefixFridaMemorySig, "frida:memsig:")
         XCTAssertEqual(ObfuscatedConstants.methodPrefixFridaRuntime, "frida:runtime:")
         XCTAssertEqual(ObfuscatedConstants.methodPrefixFridaRuntimeFused, "frida:runtime_fused:")
+    }
+
+    func testFridaProtocolWireClassification_saslOk() {
+        let tok = FridaDetector.classifyFridaWireResponseForTesting(Data("OK deadbeefbeef\r\n".utf8))
+        XCTAssertEqual(tok, FridaDetector.classifyFridaWireResponseForTesting(Data("ok\r\n".utf8)))
+        XCTAssertNotNil(tok)
+    }
+
+    func testFridaProtocolWireClassification_saslRejected() {
+        let tok = FridaDetector.classifyFridaWireResponseForTesting(Data("REJECTED EXTERNAL ANONYMOUS\r\n".utf8))
+        XCTAssertNotNil(tok)
+    }
+
+    func testFridaProtocolWireClassification_dbusShapedBinary() {
+        var bytes: [UInt8] = [
+            0x6c, 0x02, 0x00, 0x01, 0x04, 0x00, 0x00, 0x00,
+            0x02, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00,
+        ]
+        let tok = FridaDetector.classifyFridaWireResponseForTesting(Data(bytes))
+        XCTAssertNotNil(tok)
+    }
+
+    func testFridaProtocolActiveWirePayloadsOrder() {
+        let probes = ObfuscatedConstants.fridaProtocolActiveWirePayloads
+        XCTAssertTrue(probes.first?.hasPrefix("AUTH EXTERNAL") ?? false)
+        XCTAssertTrue(probes.contains("AUTH\r\n"))
+        XCTAssertFalse(ObfuscatedConstants.fridaProtocolProbePayloads.isEmpty)
+    }
+
+    func testFridaDetectorDefaultCandidatePortsIncludeOfflineFallback() {
+        let detector = FridaDetector()
+        let ports = detector.candidatePortsForTesting()
+        XCTAssertTrue(ports.contains(27042))
+        XCTAssertTrue(ports.contains(27041), "offline fallback should remain active without remote updates")
+        XCTAssertTrue(ports.contains(8888), "builtin magic ports should participate in default scan set")
+    }
+
+    func testFridaDetectorProactivePayloadsStartWithDbusShape() {
+        let payloads = FridaDetector.proactiveProtocolPayloadsForTesting()
+        let first = try? XCTUnwrap(payloads.first)
+        XCTAssertEqual(first?.count, 16)
+        XCTAssertEqual(first?.first, 0x6c, "first proactive payload should be D-Bus-shaped wire bytes")
+        let secondText = payloads.dropFirst().first.flatMap { String(data: $0, encoding: .utf8) }
+        XCTAssertTrue(secondText?.hasPrefix("AUTH EXTERNAL") ?? false)
     }
 
     func testCFridaRuntimeSnapshotAPI() {

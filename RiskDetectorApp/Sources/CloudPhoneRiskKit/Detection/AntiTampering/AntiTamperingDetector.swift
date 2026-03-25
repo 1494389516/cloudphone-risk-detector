@@ -35,23 +35,9 @@ private enum AntiTamperingDetectorCFF {
 
 struct AntiTamperingDetector: Detector {
 
-    let suspiciousParentNeedles: [String] = [
-        ObfuscatedConstants.keywordLldb,
-        "gdb",
-        "debugserver",
-        ObfuscatedConstants.keywordFrida,
-        "hopper",
-        "ida",
-        "cycript",
-    ]
+    let suspiciousParentNeedles: [String] = ObfuscatedConstants.antiTamperSuspiciousParentNeedles
 
-    let debugEnvironmentKeys: [String] = [
-        "DYLD_INSERT_LIBRARIES",
-        "DYLD_FORCE_FLAT_NAMESPACE",
-        "MallocStackLogging",
-        "NSUnbufferedIO",
-        "OS_ACTIVITY_DT_MODE",
-    ]
+    let debugEnvironmentKeys: [String] = ObfuscatedConstants.antiTamperingDebugEnvironmentKeys
 
     func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)

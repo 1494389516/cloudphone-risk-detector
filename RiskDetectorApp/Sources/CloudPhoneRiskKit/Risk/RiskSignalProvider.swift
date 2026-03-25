@@ -68,6 +68,7 @@ enum BuiltInProviderBootstrap {
         TimePatternProvider.shared,
         AntiTamperingSignalProvider.shared,
         CloudPhoneEnvironmentProvider.shared,
+        CertificatePinningTelemetryProvider.shared,
     ]
 
     private static let plan: [Entry] = [
@@ -136,6 +137,9 @@ enum BuiltInProviderBootstrap {
         },
         Entry(token: 0x1010_A016_B216_C316, isEnabled: { _ in true }) { registry in
             registry.register(CloudPhoneEnvironmentProvider.shared)
+        },
+        Entry(token: 0x1010_A017_B217_C317, isEnabled: { _ in true }) { registry in
+            registry.register(CertificatePinningTelemetryProvider.shared)
         },
     ]
 

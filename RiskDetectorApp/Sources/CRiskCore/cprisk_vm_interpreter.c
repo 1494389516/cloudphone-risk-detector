@@ -4231,7 +4231,7 @@ __attribute__((noinline)) static uint64_t cprisk_vm_entry_finish_ticket_lane2_i(
     return cprisk_vm_fold_result_i(&result);
 }
 
-__attribute__((noinline)) uint64_t cprisk_vm_entry(uint64_t func_id) {
+CPRISK_VM_EXPORT __attribute__((noinline)) uint64_t cprisk_vm_entry(uint64_t func_id) {
 #if defined(__aarch64__)
     __asm__ volatile("add x0, x0, #0");
 #endif
@@ -4256,7 +4256,7 @@ __attribute__((noinline)) uint64_t cprisk_vm_entry(uint64_t func_id) {
     return cprisk_vm_entry_finish_ticket_lane0_i(&ticket);
 }
 
-__attribute__((noinline)) uint64_t cprisk_vm_entry_alt1(uint64_t func_id) {
+CPRISK_VM_EXPORT __attribute__((noinline)) uint64_t cprisk_vm_entry_alt1(uint64_t func_id) {
 #if defined(__aarch64__)
     __asm__ volatile("eor x16, x0, x0");
 #endif
@@ -4270,7 +4270,7 @@ __attribute__((noinline)) uint64_t cprisk_vm_entry_alt1(uint64_t func_id) {
     return fp(lo, hi, 1u, ticket, (const void *)&cprisk_vm_entry_alt1);
 }
 
-__attribute__((noinline)) uint64_t cprisk_vm_entry_alt2(uint64_t func_id) {
+CPRISK_VM_EXPORT __attribute__((noinline)) uint64_t cprisk_vm_entry_alt2(uint64_t func_id) {
 #if defined(__aarch64__)
     __asm__ volatile("eor x17, x0, x0");
 #endif

@@ -3,10 +3,64 @@ import XCTest
 
 final class CertificatePinningTests: XCTestCase {
 
+    /// Valid SPKI SHA-256 placeholder pins (32 zero / 32 0xFF bytes, base64).
+    private var pinAllZero: String {
+        "sha256/" + Data(repeating: 0, count: 32).base64EncodedString()
+    }
+
+    private var pinAllFF: String {
+        "sha256/" + Data(repeating: 0xFF, count: 32).base64EncodedString()
+    }
+
+    // MARK: - PinnedCertificatePinMaterial
+
+    func testPinMaterialParsesSha256PrefixAndRawBase64() {
+        let b64 = Data(repeating: 0xAB, count: 32).base64EncodedString()
+        XCTAssertNotNil(PinnedCertificatePinMaterial.digestFromPinString("sha256/\(b64)"))
+        XCTAssertNotNil(PinnedCertificatePinMaterial.digestFromPinString(b64))
+    }
+
+    func testCanonicalPinStringsStable() {
+        let b64 = Data(repeating: 1, count: 32).base64EncodedString()
+        let messy = "  sha256/\(b64)  "
+        let canon = PinnedCertificatePinMaterial.canonicalPinStrings(from: Set([messy]))
+        XCTAssertEqual(canon, Set(["sha256/\(b64)"]))
+    }
+
+    func testPinMaterialContainsRawDigest() {
+        let digest = Data(repeating: 7, count: 32)
+        let pin = "sha256/" + digest.base64EncodedString()
+        let m = PinnedCertificatePinMaterial(pinStrings: Set([pin]))
+        XCTAssertTrue(m.containsRawDigest(digest))
+        XCTAssertTrue(m.containsSPKISHA256Base64(digest.base64EncodedString()))
+    }
+
+    func testPinMaterialCorePathMatchesSwiftPath() {
+        let digest = Data(repeating: 0x3C, count: 32)
+        let pin = "sha256/" + digest.base64EncodedString()
+        let material = PinnedCertificatePinMaterial(pinStrings: Set([pin]))
+        XCTAssertTrue(material.containsRawDigest(digest))
+        XCTAssertTrue(material.containsRawDigestViaCore(digest))
+    }
+
+    func testPinMaterialCorePathRejectsNonMatch() {
+        let digest = Data(repeating: 0x11, count: 32)
+        let other = Data(repeating: 0x22, count: 32)
+        let pin = "sha256/" + digest.base64EncodedString()
+        let material = PinnedCertificatePinMaterial(pinStrings: Set([pin]))
+        XCTAssertFalse(material.containsRawDigest(other))
+        XCTAssertFalse(material.containsRawDigestViaCore(other))
+    }
+
+    func testInvalidPinsProduceEmptyMaterial() {
+        let m = PinnedCertificatePinMaterial(pinStrings: ["sha256/not-valid", "nope"])
+        XCTAssertTrue(m.isEmpty)
+    }
+
     // MARK: - Initialization
 
     func testInitWithPinnedHashes() {
-        let hashes: Set<String> = ["sha256/AAAA", "sha256/BBBB"]
+        let hashes: Set<String> = [pinAllZero, pinAllFF]
         let delegate = CertificatePinningSessionDelegate(pinnedHashes: hashes)
         XCTAssertNotNil(delegate)
     }
@@ -17,7 +71,7 @@ final class CertificatePinningTests: XCTestCase {
     }
 
     func testInitWithAllowsSystemCA() {
-        let delegate = CertificatePinningSessionDelegate(pinnedHashes: ["sha256/TEST"], allowsSystemCA: true)
+        let delegate = CertificatePinningSessionDelegate(pinnedHashes: [pinAllZero], allowsSystemCA: true)
         XCTAssertNotNil(delegate)
     }
 
@@ -25,7 +79,7 @@ final class CertificatePinningTests: XCTestCase {
 
     func testPinnedSessionCreatesValidSession() {
         let session = CertificatePinningSessionDelegate.pinnedSession(
-            hashes: ["sha256/TEST_HASH"],
+            hashes: [pinAllZero],
             allowsSystemCA: false
         )
         XCTAssertNotNil(session)
@@ -37,7 +91,7 @@ final class CertificatePinningTests: XCTestCase {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 10
         let session = CertificatePinningSessionDelegate.pinnedSession(
-            hashes: ["sha256/ABC"],
+            hashes: [pinAllFF],
             configuration: config,
             allowsSystemCA: true
         )
@@ -48,22 +102,42 @@ final class CertificatePinningTests: XCTestCase {
 
     func testPinnedSessionDelegateIsCertificatePinning() {
         let session = CertificatePinningSessionDelegate.pinnedSession(
-            hashes: ["sha256/TEST"],
+            hashes: [pinAllZero],
             allowsSystemCA: false
         )
         XCTAssertTrue(session.delegate is CertificatePinningSessionDelegate)
         session.invalidateAndCancel()
     }
 
-    // MARK: - URLSession delegate conformance
+    // MARK: - Pinning telemetry side-channel
 
-    func testConformsToURLSessionDelegate() {
-        let delegate = CertificatePinningSessionDelegate(pinnedHashes: ["sha256/X"])
-        XCTAssertTrue(delegate is URLSessionDelegate)
+    func testPinningTelemetryRecordsAndDrains() {
+        CertificatePinningTelemetry.shared.resetForTesting()
+        CertificatePinningTelemetry.shared.record(
+            host: "example.com",
+            kind: .pinMismatch,
+            detail: ["unit": "1"]
+        )
+        let drained = CertificatePinningTelemetry.shared.drainEvents()
+        XCTAssertEqual(drained.count, 1)
+        XCTAssertEqual(drained.first?.host, "example.com")
+        XCTAssertEqual(drained.first?.kind, .pinMismatch)
+        XCTAssertEqual(CertificatePinningTelemetry.shared.peekEventsForTesting().count, 0)
     }
 
-    func testIsNSObject() {
-        let delegate = CertificatePinningSessionDelegate(pinnedHashes: ["sha256/X"])
-        XCTAssertTrue(delegate is NSObject)
+    func testPinningTelemetryProviderEmitsRiskSignals() {
+        CertificatePinningTelemetry.shared.resetForTesting()
+        CertificatePinningTelemetry.shared.record(host: "tls.test", kind: .trustEvalFailed, detail: [:])
+        let snapshot = RiskSnapshot(
+            deviceID: "pin-test",
+            device: TestFixtures.makeDeviceFingerprint(),
+            network: TestFixtures.makeNetworkSignals(),
+            behavior: TestFixtures.makeBehaviorSignals(),
+            jailbreak: TestFixtures.makeDetectionResult()
+        )
+        let signals = CertificatePinningTelemetryProvider.shared.signals(snapshot: snapshot)
+        XCTAssertEqual(signals.count, 1)
+        XCTAssertEqual(signals.first?.id, SignalID.certificatePinningAnomaly)
+        XCTAssertEqual(signals.first?.category, SignalCategory.network)
     }
 }

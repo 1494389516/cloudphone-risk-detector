@@ -12,6 +12,8 @@ public enum SignalID {
     static let vpnActive = ObfuscatedConstants.requiredSignalVpnActive
     static let proxyEnabled = "proxy_enabled"
     static let networkInterfaceAnomaly = "network_interface_anomaly"
+    /// 证书固定路径侧信道（Trust 交叉校验、完整性、stub、时序等）
+    static let certificatePinningAnomaly = "certificate_pinning_anomaly"
 
     // Behavior
     static let touchSpreadLow = "touch_spread_low"
@@ -77,6 +79,15 @@ public enum SignalID {
     static let antiDebugWatchdogGetTaskAllow = ObfuscatedConstants.signalAntiDebugWatchdogGetTaskAllow
     static let softwareBreakpointDetected = ObfuscatedConstants.signalSoftwareBreakpointDetected
     static let exceptionDeliveryTimeout = ObfuscatedConstants.signalExceptionDeliveryTimeout
+    /// CRiskCore recorded at least one libc (or arc4random) path because direct syscall was unavailable for this API surface.
+    static let libcDirectSyscallFallback = ObfuscatedConstants.signalLibcDirectSyscallFallback
+    /// `DebuggerDetector` aggregate signal.
+    static let debuggerDetected = ObfuscatedConstants.signalDebuggerDetected
+    static let csopsDebugged = ObfuscatedConstants.signalCsopsDebugged
+    static let hardwareBreakpointDetected = ObfuscatedConstants.signalHardwareBreakpointDetected
+    static let signalProbeDebugger = ObfuscatedConstants.signalSignalProbeDebugger
+    /// Anti-debug plan section reported escalation / trap activity.
+    static let antidebugPlanEscalated = ObfuscatedConstants.signalAntidebugPlanEscalated
 
     // Frida module
     static let fridaModuleDetected = ObfuscatedConstants.signalFridaModuleDetected
@@ -145,6 +156,12 @@ public struct RiskScoreReport: Sendable {
     public var compressedDigest: Data?
     /// 信号到 bit 映射表版本
     public var mappingVersion: String?
+    /// 最终动作，供上报链路与服务端联动使用。
+    public var action: RiskAction? = nil
+    /// 引擎提炼后的主要原因，便于静默标记与审计对齐。
+    public var primaryReasons: [String] = []
+    /// 引擎聚合/底线决策的可观测元数据。
+    public var decisionMetadata: [String: String]? = nil
 }
 
 public enum RiskSignalState: Sendable, Codable, Equatable {
@@ -422,6 +439,9 @@ private struct Payload: Codable {
     var summary: String
     var signals: [RiskSignal]
     var tamperedCount: Int
+    var actionRaw: Int?
+    var primaryReasons: [String]?
+    var decisionMetadata: [String: String]?
 
     var compressedDigestHex: String?
     var signalMappingVersion: String?
@@ -446,6 +466,9 @@ private struct Payload: Codable {
     var sessionId: String?
     var sceneTag: String?
     var behaviorVector: [Double]?
+    var libcFallbackMaskHex: String?
+    var libcFallbackEventTotal: UInt32?
+    var libcFallbackWatchdogSupported: Bool?
 
     var graphNode: GraphNodeDescriptor?
 
@@ -466,6 +489,9 @@ private struct Payload: Codable {
         case summary = "sm"
         case signals = "sg"
         case tamperedCount = "tc"
+        case actionRaw = "ia"
+        case primaryReasons = "rr"
+        case decisionMetadata = "md"
         case compressedDigestHex = "cd"
         case signalMappingVersion = "mv"
         case signalsDigest = "sd"
@@ -483,6 +509,9 @@ private struct Payload: Codable {
         case sessionId = "si"
         case sceneTag = "st"
         case behaviorVector = "bv"
+        case libcFallbackMaskHex = "lfm"
+        case libcFallbackEventTotal = "lfe"
+        case libcFallbackWatchdogSupported = "lfs"
         case graphNode = "gd"
         case textSegmentIntegrity = "ti"
     }
@@ -502,6 +531,9 @@ private struct Payload: Codable {
         self.summary = report.summary
         self.signals = report.signals
         self.tamperedCount = report.signals.filter { $0.state == .tampered }.count
+        self.actionRaw = report.action?.rawValue
+        self.primaryReasons = report.primaryReasons.isEmpty ? nil : report.primaryReasons
+        self.decisionMetadata = report.decisionMetadata
         self.compressedDigestHex = report.compressedDigest.map { $0.map { String(format: "%02x", $0) }.joined() }
         self.signalMappingVersion = report.mappingVersion
         self.signalsDigest = SignalDigest.computeFullDigest(report.signals)
@@ -519,8 +551,29 @@ private struct Payload: Codable {
         self.sessionId = nil
         self.sceneTag = nil
         self.behaviorVector = Self.computeBehaviorVector(from: context.behavior)
+        let libcFallbackTelemetry = Self.extractLibcFallbackTelemetry(from: report.signals)
+        self.libcFallbackMaskHex = libcFallbackTelemetry?.maskHex
+        self.libcFallbackEventTotal = libcFallbackTelemetry?.eventTotal
+        self.libcFallbackWatchdogSupported = libcFallbackTelemetry?.watchdogSupported
         self.graphNode = nil
         self.textSegmentIntegrity = Self.buildTextSegmentIntegrityPayload()
+    }
+
+    private static func extractLibcFallbackTelemetry(
+        from signals: [RiskSignal]
+    ) -> (maskHex: String, eventTotal: UInt32?, watchdogSupported: Bool?)? {
+        guard let signal = signals.first(where: { $0.id == SignalID.libcDirectSyscallFallback }) else {
+            return nil
+        }
+        guard
+            let maskHex = signal.evidence["mask_hex"] ?? signal.evidence["libc_fallback_used_mask"],
+            !maskHex.isEmpty
+        else {
+            return nil
+        }
+        let eventTotal = signal.evidence["libc_fallback_event_total"].flatMap(UInt32.init)
+        let watchdogSupported = signal.evidence["watchdog_snapshot_supported"].map { $0 == "1" }
+        return (maskHex: maskHex, eventTotal: eventTotal, watchdogSupported: watchdogSupported)
     }
 
     private static func buildTextSegmentIntegrityPayload() -> TextSegmentIntegrityPayload? {

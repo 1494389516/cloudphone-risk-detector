@@ -15,7 +15,6 @@
 #include <time.h>
 #include <stdatomic.h>
 #include <sys/mman.h>
-#include <sys/sysctl.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
 #ifdef __APPLE__
@@ -59,6 +58,15 @@ static int s_deception_material_ready;
 static uint8_t s_saved_integrity_hash[CPRISK_ARMOR_HASH_SIZE];
 static int s_integrity_hash_saved;
 static int s_integrity_poisoned;
+
+/* Distinct semantic bookkeeping per poison entry point (anti batch-NOP / single-hook). */
+static volatile uint32_t s_poison_lane_seq[CPRISK_POISON_LANE_COUNT];
+static volatile uint32_t s_poison_semantic_breadcrumb;
+static uint32_t s_poison_semantic_rolling[2];
+/* Poison-wave / ordering state: downstream material mix depends on more than s_integrity_poisoned alone. */
+static volatile uint32_t s_poison_epoch;
+static volatile uint64_t s_poison_cause_mix;
+
 #if defined(CPRISK_MTE_COMPILE_SUPPORT)
 static cprisk_mte_canary_state_t s_runtime_material_canary;
 static cprisk_mte_canary_state_t s_saved_integrity_canary;
@@ -123,6 +131,7 @@ static void cprisk_loader_key_mini_vm_bootstrap(uint8_t key[32]) {
     cprisk_mini_vm_bootstrap_material32(key);
 }
 
+#if (defined(DEBUG) && DEBUG) || defined(CPRISK_ALLOW_MINI_VM_BOOTSTRAP_ENV_BYPASS)
 static int cprisk_mini_vm_bootstrap_disabled(void) {
     static int s_cached = -1;
     if (s_cached >= 0)
@@ -131,6 +140,12 @@ static int cprisk_mini_vm_bootstrap_disabled(void) {
     s_cached = (e && (e[0] == '1' || e[0] == 'y' || e[0] == 'Y')) ? 1 : 0;
     return s_cached;
 }
+#else
+static int cprisk_mini_vm_bootstrap_disabled(void) {
+    /* Release: ignore env; optional unit-test override via compile flag above. */
+    return 0;
+}
+#endif
 
 #ifndef CPRISK_ANTI_DEBUG_HARD_CRASH_ON_DEBUGGER
 #define CPRISK_ANTI_DEBUG_HARD_CRASH_ON_DEBUGGER 0
@@ -431,7 +446,7 @@ static int cprisk_antidebug_apply_inline_patch_gate_i(void) {
         s_adbg_snapshot_i.inline_patch_failure_count += 1u;
         atomic_store(&s_adbg_inline_patch_tamper_i, 1u);
         s_adbg_snapshot_i.last_inline_patch_tamper = 1u;
-        cprisk_force_integrity_poison();
+        cprisk_integrity_poison_antidebug_lane();
         return -1;
     }
 
@@ -496,7 +511,7 @@ static int cprisk_antidebug_apply_inline_patch_gate_i(void) {
     atomic_store(&s_adbg_inline_patch_tamper_i, tamper_detected ? 1u : 0u);
 
     if (failure_count != 0u) {
-        cprisk_force_integrity_poison();
+        cprisk_integrity_poison_antidebug_lane();
         return -1;
     }
     return patched_count > 0u ? 1 : 0;
@@ -529,7 +544,7 @@ int cprisk_exception_handler_handle_runtime_gate_brk(uint16_t brk_imm, uintptr_t
         atomic_store(&s_adbg_inline_patch_tamper_i, 1u);
         s_adbg_snapshot_i.last_inline_patch_tamper = 1u;
         s_adbg_snapshot_i.trap_event_count += 1u;
-        cprisk_force_integrity_poison();
+        cprisk_integrity_poison_antidebug_lane();
         return -1;
     }
 
@@ -762,7 +777,7 @@ static void cprisk_antidebug_apply_policies_i(uint32_t trigger_flags, int init_r
     if ((policy_bits & CPRISK_ARMOR_ADBG_POLICY_ESCALATE_INTEGRITY) != 0u && high_risk) {
         applied |= CPRISK_ARMOR_ADBG_POLICY_ESCALATE_INTEGRITY;
         s_adbg_snapshot_i.escalation_count += 1u;
-        cprisk_force_integrity_poison();
+        cprisk_integrity_poison_antidebug_lane();
     }
 
     if ((policy_bits & CPRISK_ARMOR_ADBG_POLICY_TRAP_ON_TAMPER) != 0u &&
@@ -770,14 +785,14 @@ static void cprisk_antidebug_apply_policies_i(uint32_t trigger_flags, int init_r
         applied |= CPRISK_ARMOR_ADBG_POLICY_TRAP_ON_TAMPER;
         s_adbg_snapshot_i.trap_event_count += 1u;
         if (cprisk_probe_exception_delivery_timeout() != 0 || debugger_likely) {
-            cprisk_force_integrity_poison();
+            cprisk_integrity_poison_antidebug_lane();
         }
     }
 
     if ((policy_bits & CPRISK_ARMOR_ADBG_POLICY_CRASH_ON_DEBUGGER) != 0u && debugger_confirmed) {
         applied |= CPRISK_ARMOR_ADBG_POLICY_CRASH_ON_DEBUGGER;
         s_adbg_snapshot_i.last_soft_fail_mode = 1u;
-        cprisk_force_integrity_poison();
+        cprisk_integrity_poison_antidebug_lane();
         cprisk_prepare_deception_material_i(NULL, NULL, NULL);
         s_integrity_deception_active = 1;
 #if CPRISK_ANTI_DEBUG_HARD_CRASH_ON_DEBUGGER
@@ -1036,6 +1051,170 @@ static int cprisk_should_activate_deception_i(void) {
     if (cprisk_check_init_timing())
         return 1;
     return 0;
+}
+
+static void cprisk_integrity_poison_semantic_reset_i(void) {
+    memset((void *)&s_poison_lane_seq[0], 0, sizeof(s_poison_lane_seq));
+    s_poison_semantic_breadcrumb = 0u;
+    s_poison_semantic_rolling[0] = 0u;
+    s_poison_semantic_rolling[1] = 0u;
+    s_poison_epoch = 0u;
+    s_poison_cause_mix = 0u;
+}
+
+static void cprisk_integrity_poison_lane_sidefx_i(uint32_t lane) {
+    if (lane >= (uint32_t)CPRISK_POISON_LANE_COUNT)
+        lane = CPRISK_POISON_LANE_FORCE;
+    s_poison_lane_seq[lane] += 1u;
+    const uint32_t seq = s_poison_lane_seq[lane];
+    s_poison_epoch += 1u;
+    s_poison_cause_mix = s_poison_cause_mix * 0x9E3779B97F4A7C15ULL;
+    s_poison_cause_mix ^= ((uint64_t)(lane + 1u) << 48) ^ (uint64_t)seq ^ ((uint64_t)seq << 32);
+    const uint32_t lane_mix = lane * 0x85EBCA6Bu;
+    s_poison_semantic_rolling[0] ^= 0x9E3779B9u ^ lane_mix ^ seq;
+    s_poison_semantic_rolling[1] ^=
+        (uint32_t)(lane + 1u) * 0xC2B2AE3Du ^ (seq << (lane & 7u));
+
+    /* Lane-specific non-linear fold: not a second copy of the same transform (symbol rename only). */
+    if (lane == (uint32_t)CPRISK_POISON_LANE_EVT_A) {
+        s_poison_semantic_breadcrumb ^= (0xA5C3E971u ^ (seq * 0x9E3779B9u));
+        s_poison_semantic_breadcrumb =
+            (s_poison_semantic_breadcrumb << 11) | (s_poison_semantic_breadcrumb >> 21);
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_EVT_B) {
+        s_poison_semantic_breadcrumb ^= (0x4B7D8E0Fu ^ (seq * 0x85EBCA6Bu));
+        s_poison_semantic_breadcrumb =
+            (s_poison_semantic_breadcrumb >> 13) | (s_poison_semantic_breadcrumb << 19);
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_RECHECK) {
+        s_poison_semantic_breadcrumb ^= (0xC0DEF00Du ^ (seq * 0xDEADBEEFu));
+        s_poison_semantic_breadcrumb =
+            (s_poison_semantic_breadcrumb << 7) | (s_poison_semantic_breadcrumb >> 25);
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_WATCHDOG) {
+        s_poison_semantic_breadcrumb ^= (0xBADC0DE3u ^ (seq * 0x1234567u));
+        s_poison_semantic_breadcrumb =
+            (s_poison_semantic_breadcrumb << 17) | (s_poison_semantic_breadcrumb >> 15);
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_CODE_SIGNING) {
+        s_poison_semantic_breadcrumb ^= (0x51E9C0DEu ^ (seq * 0xABCDEF01u));
+        s_poison_semantic_breadcrumb =
+            (s_poison_semantic_breadcrumb >> 9) | (s_poison_semantic_breadcrumb << 23);
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_SVC_IFACE) {
+        s_poison_semantic_breadcrumb ^= (0xFACADE5Au ^ (seq * 0x55AA1100u));
+        s_poison_semantic_breadcrumb =
+            (s_poison_semantic_breadcrumb << 5) | (s_poison_semantic_breadcrumb >> 27);
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_ANTIDEBUG) {
+        s_poison_semantic_breadcrumb ^= (0xADB6D00Du ^ (seq * 0x10203041u));
+        s_poison_semantic_breadcrumb =
+            (s_poison_semantic_breadcrumb << 3) | (s_poison_semantic_breadcrumb >> 29);
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_EXCEPTION) {
+        s_poison_semantic_breadcrumb ^= (0xE11CE771u ^ (seq * 0x31415927u));
+        s_poison_semantic_breadcrumb =
+            (s_poison_semantic_breadcrumb >> 7) | (s_poison_semantic_breadcrumb << 25);
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_ANTI_DUMP) {
+        s_poison_semantic_breadcrumb ^= (0xA17DD00Fu ^ (seq * 0x27182818u));
+        s_poison_semantic_breadcrumb =
+            (s_poison_semantic_breadcrumb << 13) | (s_poison_semantic_breadcrumb >> 19);
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_DATA_LOADER) {
+        s_poison_semantic_breadcrumb ^= (0xDA7A10ADu ^ (seq * 0x01000193u));
+        s_poison_semantic_breadcrumb =
+            (s_poison_semantic_breadcrumb >> 11) | (s_poison_semantic_breadcrumb << 21);
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_TEXT_ENCRYPT) {
+        s_poison_semantic_breadcrumb ^= (0x7E87C0DEu ^ (seq * 0x5BD1E995u));
+        s_poison_semantic_breadcrumb =
+            (s_poison_semantic_breadcrumb << 9) | (s_poison_semantic_breadcrumb >> 23);
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_WHITEBOX) {
+        s_poison_semantic_breadcrumb ^= (0xB01DFACEu ^ (seq * 0x045D9F3Bu));
+        s_poison_semantic_breadcrumb =
+            (s_poison_semantic_breadcrumb >> 5) | (s_poison_semantic_breadcrumb << 27);
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_CFF) {
+        s_poison_semantic_breadcrumb ^= (0xCFF0A11Eu ^ (seq * 0x7F4A7C15u));
+        s_poison_semantic_breadcrumb =
+            (s_poison_semantic_breadcrumb << 15) | (s_poison_semantic_breadcrumb >> 17);
+    }
+    /* Low bits record which lanes fired (Swift/tests); applied after folds so they stay observable. */
+    if (lane < 32u)
+        s_poison_semantic_breadcrumb |= (1u << lane);
+}
+
+static void cprisk_integrity_poison_lane_tweak_deception_i(uint32_t lane) {
+    if (lane >= (uint32_t)CPRISK_POISON_LANE_COUNT || !s_deception_material_ready)
+        return;
+    const uint32_t salt0 = s_poison_semantic_rolling[0] ^ (lane * 0x243F6A88u);
+    const uint32_t salt1 = s_poison_semantic_rolling[1] ^ (s_poison_lane_seq[lane] * 7u);
+    uint8_t *const m = s_deception_material;
+
+    if (lane == (uint32_t)CPRISK_POISON_LANE_EVT_A) {
+        /* Front window: independent from evt_b's tail window. */
+        for (size_t i = 0; i < 12u && i < (size_t)CPRISK_ARMOR_HASH_SIZE; i++) {
+            m[i] ^= (uint8_t)((salt0 >> ((i % 4u) * 8u)) & 0xFFu) ^ (uint8_t)(0xA5u + (uint8_t)i);
+        }
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_EVT_B) {
+        for (size_t i = 0; i < 12u && (size_t)CPRISK_ARMOR_HASH_SIZE > 12u; i++) {
+            const size_t j = (size_t)CPRISK_ARMOR_HASH_SIZE - 12u + i;
+            m[j] ^= (uint8_t)((salt1 >> ((i % 4u) * 8u)) & 0xFFu) ^ (uint8_t)(0x5Au + (uint8_t)i);
+        }
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_RECHECK) {
+        /* Middle stripe: overlaps neither evt_a front nor evt_b tail windows. */
+        for (size_t i = 0; i < 12u && i + 8u <= (size_t)CPRISK_ARMOR_HASH_SIZE; i++) {
+            const size_t j = 8u + i;
+            m[j] ^= (uint8_t)((salt0 ^ salt1) >> ((i % 4u) * 8u)) ^ (uint8_t)(0x3Cu + (uint8_t)i);
+        }
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_WATCHDOG) {
+        for (size_t i = 0; i < 8u && i + 4u < (size_t)CPRISK_ARMOR_HASH_SIZE; i++) {
+            const size_t j = 4u + i;
+            m[j] ^= (uint8_t)(salt0 >> ((i % 4u) * 8u)) ^ (uint8_t)(0x71u + (uint8_t)i);
+        }
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_CODE_SIGNING) {
+        for (size_t i = 0; i < 6u && i + 20u < (size_t)CPRISK_ARMOR_HASH_SIZE; i++) {
+            const size_t j = 20u + i;
+            m[j] ^= (uint8_t)(salt1 >> ((i % 4u) * 8u)) ^ (uint8_t)(0xC0u + (uint8_t)i);
+        }
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_SVC_IFACE) {
+        uint32_t *dm = (uint32_t *)s_deception_material;
+        dm[2] ^= salt0 ^ 0xC001D00Du;
+        dm[3] ^= salt1 ^ 0xD00DF00Du;
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_ANTIDEBUG) {
+        for (size_t i = 0; i < 6u && i + 2u < (size_t)CPRISK_ARMOR_HASH_SIZE; i++) {
+            const size_t j = 2u + i;
+            m[j] ^= (uint8_t)(salt0 >> ((i % 4u) * 8u)) ^ (uint8_t)(0x44u + (uint8_t)i);
+        }
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_EXCEPTION) {
+        for (size_t i = 0; i < 6u && i + 14u < (size_t)CPRISK_ARMOR_HASH_SIZE; i++) {
+            const size_t j = 14u + i;
+            m[j] ^= (uint8_t)(salt1 >> ((i % 4u) * 8u)) ^ (uint8_t)(0x81u + (uint8_t)i);
+        }
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_ANTI_DUMP) {
+        for (size_t i = 0; i < 6u && i + 24u < (size_t)CPRISK_ARMOR_HASH_SIZE; i++) {
+            const size_t j = 24u + i;
+            m[j] ^= (uint8_t)((salt0 ^ salt1) >> ((i % 4u) * 8u)) ^ (uint8_t)(0x29u + (uint8_t)i);
+        }
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_DATA_LOADER) {
+        uint32_t *dm = (uint32_t *)s_deception_material;
+        dm[4] ^= salt0 ^ 0xDADA11AAu;
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_TEXT_ENCRYPT) {
+        uint32_t *dm = (uint32_t *)s_deception_material;
+        dm[5] ^= salt1 ^ 0x7E70C0DEu;
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_WHITEBOX) {
+        uint32_t *dm = (uint32_t *)s_deception_material;
+        dm[6] ^= (salt0 ^ salt1) ^ 0xB01DB0B0u;
+    } else if (lane == (uint32_t)CPRISK_POISON_LANE_CFF) {
+        uint32_t *dm = (uint32_t *)s_deception_material;
+        dm[7] ^= salt0 ^ 0xCF0CF0CFu;
+    } else {
+        uint32_t *dm = (uint32_t *)s_deception_material;
+        dm[0] ^= salt0;
+        dm[1] ^= salt1;
+    }
+}
+
+static void cprisk_integrity_poison_lane_full_i(uint32_t lane) {
+    if (lane >= (uint32_t)CPRISK_POISON_LANE_COUNT)
+        lane = CPRISK_POISON_LANE_FORCE;
+    s_integrity_poisoned = 1;
+    cprisk_integrity_poison_lane_sidefx_i(lane);
+    if (cprisk_should_activate_deception_i()) {
+        cprisk_prepare_deception_material_i(NULL, NULL, NULL);
+        s_integrity_deception_active = 1;
+        cprisk_integrity_poison_lane_tweak_deception_i(lane);
+    }
 }
 
 static void cprisk_derive_loader_key_i(
@@ -1298,7 +1477,7 @@ static int cprisk_init_protection_whitebox_i(
     memset(data_acc_le, 0, sizeof(data_acc_le));
 
     if (cprisk_verify_anchor_whitebox_i(full_anchor_hash) != 0) {
-        cprisk_force_integrity_poison();
+        cprisk_integrity_poison_whitebox_lane();
         rc = -4;
         goto cleanup;
     }
@@ -1307,7 +1486,7 @@ static int cprisk_init_protection_whitebox_i(
             CPRISK_WHITEBOX_DOMAIN_PASS1_STRING_KEY_I,
             NULL,
             pass1_key) != 0) {
-        cprisk_force_integrity_poison();
+        cprisk_integrity_poison_whitebox_lane();
         rc = -5;
         goto cleanup;
     }
@@ -1328,7 +1507,7 @@ static int cprisk_init_protection_whitebox_i(
             CPRISK_WHITEBOX_DOMAIN_ANCHOR_ACCUMULATOR_SEED_I,
             acc_digest,
             acc_seed) != 0) {
-        cprisk_force_integrity_poison();
+        cprisk_integrity_poison_whitebox_lane();
         rc = -6;
         goto cleanup;
     }
@@ -1346,7 +1525,7 @@ static int cprisk_init_protection_whitebox_i(
             CPRISK_WHITEBOX_DOMAIN_LOADER_KEY_I,
             loader_digest,
             loader_key) != 0) {
-        cprisk_force_integrity_poison();
+        cprisk_integrity_poison_whitebox_lane();
         rc = -6;
         goto cleanup;
     }
@@ -1380,7 +1559,7 @@ static int cprisk_init_protection_whitebox_i(
             CPRISK_WHITEBOX_DOMAIN_RUNTIME_MATERIAL_I,
             runtime_digest,
             s_runtime_material) != 0) {
-        cprisk_force_integrity_poison();
+        cprisk_integrity_poison_whitebox_lane();
         cprisk_unload_protected_data();
         rc = -7;
         goto cleanup;
@@ -1531,7 +1710,7 @@ static void cprisk_integrity_timing_canary_i(
     const double ratio = (double)slower / (double)faster;
     const uint64_t delta_ns = cprisk_abs_u64_i(path_a_ns, path_b_ns);
     if (ratio >= 48.0 && delta_ns >= 15000000ull) {
-        cprisk_force_integrity_poison();
+        cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_RECHECK);
     }
 }
 
@@ -1648,6 +1827,7 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
     int rc = -1;
 
     s_integrity_poisoned = 0;
+    cprisk_integrity_poison_semantic_reset_i();
     s_integrity_hash_saved = 0;
     s_integrity_deception_active = 0;
     s_runtime_material_ready = 0;
@@ -1731,7 +1911,7 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
                 s_runtime_material_ready = 0;
                 cprisk_unload_protected_data();
                 cprisk_cleanup_string_decryptor();
-                cprisk_force_integrity_poison();
+                cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_RECHECK);
                 rc = -8;
             } else if (cprisk_mte_canary_install(
                            &s_runtime_material_canary,
@@ -1747,7 +1927,7 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
                 s_runtime_material_ready = 0;
                 cprisk_unload_protected_data();
                 cprisk_cleanup_string_decryptor();
-                cprisk_force_integrity_poison();
+                cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_RECHECK);
                 rc = -8;
             }
         }
@@ -1786,6 +1966,7 @@ void cprisk_cleanup_protection(void) {
     s_deception_material_ready = 0;
     s_integrity_hash_saved = 0;
     s_integrity_poisoned = 0;
+    cprisk_integrity_poison_semantic_reset_i();
     s_integrity_deception_active = 0;
     s_init_elapsed_ns = 0;
     /* Wipe Hybrid KDF state. */
@@ -1802,6 +1983,26 @@ void cprisk_cleanup_protection(void) {
     s_init_timing_threshold_override_ns = 0;
 }
 
+static void cprisk_poison_runtime_material_output_mix_i(uint8_t buf[32]) {
+    uint64_t h = 0xD6E8FEB86655FD96ULL ^ (uint64_t)s_poison_semantic_breadcrumb;
+    h ^= (uint64_t)s_poison_semantic_rolling[0] << 32;
+    h ^= (uint64_t)s_poison_semantic_rolling[1];
+    h ^= (uint64_t)s_poison_epoch * 0x9E3779B97F4A7C15ULL;
+    h ^= s_poison_cause_mix;
+    for (size_t i = 0; i < 32u; i++) {
+        h ^= (uint64_t)buf[i] ^ ((uint64_t)i * 0x100000001B3ULL);
+        h ^= h >> 33;
+        h *= 0xff51afd7ed558ccdULL;
+        h ^= h >> 33;
+        h *= 0xc4ceb9fe1a85ec53ULL;
+        h ^= h >> 33;
+        buf[i] ^= (uint8_t)(h & 0xFFu);
+        h >>= 8;
+        if (h == 0)
+            h = 0x9E3779B97F4A7C15ULL ^ (uint64_t)(i + 1u);
+    }
+}
+
 int cprisk_get_runtime_material(uint8_t out_material[32]) {
     if (!out_material)
         return -1;
@@ -1809,6 +2010,7 @@ int cprisk_get_runtime_material(uint8_t out_material[32]) {
     if (s_integrity_poisoned || s_integrity_deception_active || !s_runtime_material_ready) {
         cprisk_prepare_deception_material_i(NULL, NULL, NULL);
         memcpy(out_material, s_deception_material, CPRISK_ARMOR_HASH_SIZE);
+        cprisk_poison_runtime_material_output_mix_i(out_material);
         return 0;
     }
 
@@ -1818,6 +2020,24 @@ int cprisk_get_runtime_material(uint8_t out_material[32]) {
 
 int cprisk_runtime_material_ready(void) {
     return s_runtime_material_ready ? 1 : 0;
+}
+
+enum {
+    CPRISK_POISON_RECHECK_SUB_PAC = 0xA01u,
+    CPRISK_POISON_RECHECK_SUB_MTE = 0xA02u,
+    CPRISK_POISON_RECHECK_SUB_COMPUTE = 0xA03u,
+    CPRISK_POISON_RECHECK_SUB_DIFF = 0xA04u,
+};
+
+static void cprisk_integrity_poison_from_recheck_i(uint32_t subreason) {
+    s_integrity_poisoned = 1;
+    s_poison_cause_mix ^= (uint64_t)subreason << 40;
+    cprisk_integrity_poison_lane_sidefx_i(CPRISK_POISON_LANE_RECHECK);
+    if (cprisk_should_activate_deception_i()) {
+        cprisk_prepare_deception_material_i(NULL, NULL, NULL);
+        s_integrity_deception_active = 1;
+        cprisk_integrity_poison_lane_tweak_deception_i(CPRISK_POISON_LANE_RECHECK);
+    }
 }
 
 int cprisk_recheck_integrity(void) {
@@ -1838,11 +2058,7 @@ int cprisk_recheck_integrity(void) {
 #endif
 
     if (cprisk_validate_pac_cfi_i(s_saved_integrity_hash, CPRISK_ARMOR_HASH_SIZE) != 0) {
-        s_integrity_poisoned = 1;
-        if (cprisk_should_activate_deception_i()) {
-            cprisk_prepare_deception_material_i(NULL, NULL, NULL);
-            s_integrity_deception_active = 1;
-        }
+        cprisk_integrity_poison_from_recheck_i(CPRISK_POISON_RECHECK_SUB_PAC);
         cprisk_antidebug_apply_policies_i(
             CPRISK_ADBG_TRIGGER_INTEGRITY_TAMPER_I,
             0,
@@ -1853,11 +2069,7 @@ int cprisk_recheck_integrity(void) {
 #if defined(CPRISK_MTE_COMPILE_SUPPORT)
     if (cprisk_mte_canary_verify(&s_runtime_material_canary) != 0 ||
         cprisk_mte_canary_verify(&s_saved_integrity_canary) != 0) {
-        s_integrity_poisoned = 1;
-        if (cprisk_should_activate_deception_i()) {
-            cprisk_prepare_deception_material_i(NULL, NULL, NULL);
-            s_integrity_deception_active = 1;
-        }
+        cprisk_integrity_poison_from_recheck_i(CPRISK_POISON_RECHECK_SUB_MTE);
         cprisk_antidebug_apply_policies_i(
             CPRISK_ADBG_TRIGGER_INTEGRITY_TAMPER_I,
             0,
@@ -1868,11 +2080,7 @@ int cprisk_recheck_integrity(void) {
 
     uint8_t current[CPRISK_ARMOR_HASH_SIZE];
     if (cprisk_compute_integrity_hash(current) != 0) {
-        s_integrity_poisoned = 1;
-        if (cprisk_should_activate_deception_i()) {
-            cprisk_prepare_deception_material_i(NULL, NULL, NULL);
-            s_integrity_deception_active = 1;
-        }
+        cprisk_integrity_poison_from_recheck_i(CPRISK_POISON_RECHECK_SUB_COMPUTE);
         cprisk_antidebug_apply_policies_i(
             CPRISK_ADBG_TRIGGER_INTEGRITY_TAMPER_I,
             0,
@@ -1888,11 +2096,7 @@ int cprisk_recheck_integrity(void) {
     cprisk_secure_zero(current, sizeof(current));
 
     if (diff != 0) {
-        s_integrity_poisoned = 1;
-        if (cprisk_should_activate_deception_i()) {
-            cprisk_prepare_deception_material_i(NULL, NULL, NULL);
-            s_integrity_deception_active = 1;
-        }
+        cprisk_integrity_poison_from_recheck_i(CPRISK_POISON_RECHECK_SUB_DIFF);
         cprisk_antidebug_apply_policies_i(
             CPRISK_ADBG_TRIGGER_INTEGRITY_TAMPER_I,
             0,
@@ -1908,18 +2112,93 @@ int cprisk_is_integrity_poisoned(void) {
     return s_integrity_poisoned;
 }
 
+uint32_t cprisk_get_integrity_poison_semantic_breadcrumb(void) {
+    if (s_integrity_deception_active)
+        return 0u;
+    return s_poison_semantic_breadcrumb;
+}
+
+uint32_t cprisk_get_integrity_poison_lane_event_count(unsigned lane) {
+    if (lane >= (unsigned)CPRISK_POISON_LANE_COUNT)
+        return 0u;
+    if (s_integrity_deception_active)
+        return 0u;
+    return s_poison_lane_seq[lane];
+}
+
+uint32_t cprisk_get_integrity_poison_epoch(void) {
+    if (s_integrity_deception_active)
+        return 0u;
+    return s_poison_epoch;
+}
+
+uint64_t cprisk_get_integrity_poison_cause_mix(void) {
+    if (s_integrity_deception_active)
+        return 0u;
+    return s_poison_cause_mix;
+}
+
+void cprisk_integrity_poison_evt_a(void) {
+    cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_EVT_A);
+}
+
+void cprisk_integrity_poison_evt_b(void) {
+    cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_EVT_B);
+}
+
+void cprisk_integrity_poison_watchdog_lane(void) {
+    cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_WATCHDOG);
+}
+
+void cprisk_integrity_poison_code_signing_lane(void) {
+    cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_CODE_SIGNING);
+}
+
+void cprisk_integrity_poison_svc_iface_lane(void) {
+    cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_SVC_IFACE);
+}
+
+void cprisk_integrity_poison_antidebug_lane(void) {
+    cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_ANTIDEBUG);
+}
+
+void cprisk_integrity_poison_exception_lane(void) {
+    cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_EXCEPTION);
+}
+
+void cprisk_integrity_poison_anti_dump_lane(void) {
+    cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_ANTI_DUMP);
+}
+
+void cprisk_integrity_poison_data_loader_lane(void) {
+    cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_DATA_LOADER);
+}
+
+void cprisk_integrity_poison_text_encrypt_lane(void) {
+    cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_TEXT_ENCRYPT);
+}
+
+void cprisk_integrity_poison_whitebox_lane(void) {
+    cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_WHITEBOX);
+}
+
+void cprisk_integrity_poison_cff_lane(void) {
+    cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_CFF);
+}
+
 void cprisk_force_integrity_poison(void) {
-    s_integrity_poisoned = 1;
-    if (cprisk_should_activate_deception_i()) {
-        cprisk_prepare_deception_material_i(NULL, NULL, NULL);
-        s_integrity_deception_active = 1;
-    }
+    /* Aggregate: three independent lane commits so semantics are not a single store / single side-effect batch. */
+    cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_EVT_A);
+    cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_EVT_B);
+    cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_FORCE);
 }
 
 void cprisk_guard_page_fault_notify(void) {
     s_integrity_poisoned = 1;
+    cprisk_integrity_poison_lane_sidefx_i(CPRISK_POISON_LANE_GUARD);
     s_integrity_deception_active = 1;
     cprisk_prepare_deception_material_i(NULL, NULL, NULL);
+    cprisk_integrity_poison_lane_tweak_deception_i(CPRISK_POISON_LANE_GUARD);
     cprisk_watchdog_note_guard_page_fault();
 }
 
@@ -1942,7 +2221,8 @@ uint64_t cprisk_get_init_timing_threshold_ns(void) {
         return s_init_timing_threshold_override_ns;
     char machine[256];
     size_t len = sizeof(machine);
-    if (sysctlbyname("hw.machine", machine, &len, NULL, 0) != 0 || len == 0) {
+    int err = 0;
+    if (cprisk_sysctlbyname_direct("hw.machine", machine, &len, NULL, 0, &err) != 0 || len == 0) {
         return cprisk_compute_init_timing_threshold_ns_for_machine_i(
             NULL,
             cprisk_get_runtime_hardening_mode());

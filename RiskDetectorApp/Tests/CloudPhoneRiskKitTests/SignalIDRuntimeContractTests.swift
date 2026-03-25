@@ -11,6 +11,7 @@ final class SignalIDRuntimeContractTests: XCTestCase {
         XCTAssertEqual(SignalID.antiDebugWatchdogGetTaskAllow, "anti_debug_watchdog_get_task_allow")
         XCTAssertEqual(SignalID.softwareBreakpointDetected, "software_breakpoint_detected")
         XCTAssertEqual(SignalID.exceptionDeliveryTimeout, "exception_delivery_timeout")
+        XCTAssertEqual(SignalID.libcDirectSyscallFallback, "libc_direct_syscall_fallback")
         XCTAssertEqual(SignalID.stalkerJitRWX, "stalker_jit_rwx")
         XCTAssertEqual(SignalID.rwxJitCoexistence, "rwx_jit_coexistence")
         XCTAssertEqual(SignalID.multiPathCrossInconsistency, "multipath_cross_inconsistency")
@@ -24,6 +25,7 @@ final class SignalIDRuntimeContractTests: XCTestCase {
         XCTAssertEqual(SignalID.dyldSharedCacheSymbolMismatch, "dyld_shared_cache_symbol_mismatch")
         XCTAssertEqual(SignalID.dylibInjectImageCountLow, "dylib_inject_image_count_low")
         XCTAssertEqual(SignalID.ifaceSpawnPathDivergence, "iface_spawn_path_divergence")
+        XCTAssertEqual(SignalID.certificatePinningAnomaly, "certificate_pinning_anomaly")
     }
 
     func testPreviouslyObfuscatedSignalIDsStillStable() {

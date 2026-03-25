@@ -6,13 +6,13 @@
  */
 
 #include "include/cprisk_mte_guard.h"
+#include "include/CRiskCore.h"
 
 #include "include/cprisk_secure_zero.h"
 #include "include/cprisk_sha256.h"
 
 #include <stdint.h>
 #include <string.h>
-#include <sys/sysctl.h>
 
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
@@ -41,7 +41,8 @@ static int cprisk_sysctl_int32_named(const char *name, int32_t *out) {
         return -1;
     int32_t v = 0;
     size_t len = sizeof(v);
-    if (sysctlbyname(name, &v, &len, NULL, 0) != 0)
+    int err = 0;
+    if (cprisk_sysctlbyname_direct(name, &v, &len, NULL, 0, &err) != 0)
         return -1;
     if (len != sizeof(int32_t))
         return -1;

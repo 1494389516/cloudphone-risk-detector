@@ -97,6 +97,8 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         var enableDyldImageMonitor: Bool = true
         var enableDylibInjectionDetect: Bool = true
         var enableAntiDebugWatchdog: Bool = true
+        /// libc / arc4random fallback bitset from `AntiDebugWatchdogSnapshot` (independent of `enableAntiDebugWatchdog` so telemetry survives when watchdog checks are disabled).
+        var enableLibcDirectSyscallFallbackReporting: Bool = true
         var minScoreThreshold: Double = 0
         
         public static let `default` = Configuration()
@@ -133,13 +135,15 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         let ordered = orderedChecks(snapshot: snapshot, baseScore: baseJailbreakScore)
         let cffConfig = AntiTamperingSignalProviderCFF.signalsConfig
         let salt = AntiTamperingSignalProviderCFF.salt(snapshot: snapshot, threshold: configuration.minScoreThreshold)
-        let entryState: UInt32 = 0x61
-        let iterateState: UInt32 = 0x62
-        let executeState: UInt32 = 0x63
-        let connectorState: UInt32 = 0x64
-        let settleState: UInt32 = 0x65
-        let mprotectState: UInt32 = 0x66
-        let finishState: UInt32 = 0x67
+        /* Salt-derived CFF state rung (7 consecutive values) — avoids a fixed 0x61…0x67 signature in TEXT. */
+        let stateBase = UInt32(0x40) + (salt % 120)
+        let entryState: UInt32 = stateBase
+        let iterateState: UInt32 = stateBase &+ 1
+        let executeState: UInt32 = stateBase &+ 2
+        let connectorState: UInt32 = stateBase &+ 3
+        let settleState: UInt32 = stateBase &+ 4
+        let mprotectState: UInt32 = stateBase &+ 5
+        let finishState: UInt32 = stateBase &+ 6
 
         let cffKey = CFFStateCodec.deriveSeed(function: AntiTamperingSignalProviderCFF.signalsDomainTag, config: cffConfig)
         let effectiveSalt = cffConfig.enableRuntimeSalt ? salt : salt ^ 0x13579BDF
@@ -619,6 +623,11 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                         p.detectAntiDebugWatchdogSignals()
                     }
                 },
+                Row(internalToken: nextKey(&c), enabled: { $0.enableLibcDirectSyscallFallbackReporting }) { p, snapshot, _ in
+                    DetectorCheck(id: "libc_syscall_fallback") {
+                        p.libcDirectSyscallFallbackSignals(from: snapshot)
+                    }
+                },
             ]
         }()
 
@@ -784,12 +793,12 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         if result.score > 0 {
             signals.append(
                 RiskSignal(
-                    id: "debugger_detected",
+                    id: SignalID.debuggerDetected,
                     category: "debugger",
                     score: result.score,
                     evidence: [
                         "methods": result.methods.joined(separator: ","),
-                        "detector": "DebuggerDetector"
+                        "detector": ObfuscatedConstants.detectorNameDebuggerDetector
                     ],
                     state: .soft(confidence: 0.7),
                     layer: 2,
@@ -1161,7 +1170,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
 
         if watchdogSnapshot.csopsDebugged {
             signals.append(RiskSignal(
-                id: "csops_debugged",
+                id: SignalID.csopsDebugged,
                 category: ObfuscatedConstants.categoryAntiTamper,
                 score: 90,
                 evidence: ["mechanism": "csops_cs_debugged_flag"],
@@ -1172,7 +1181,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         }
         if watchdogSnapshot.hardwareBpDetected {
             signals.append(RiskSignal(
-                id: "hardware_breakpoint_detected",
+                id: SignalID.hardwareBreakpointDetected,
                 category: ObfuscatedConstants.categoryAntiTamper,
                 score: 80,
                 evidence: ["mechanism": "arm64_debug_registers"],
@@ -1194,7 +1203,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         }
         if watchdogSnapshot.signalProbeResult {
             signals.append(RiskSignal(
-                id: "signal_probe_debugger",
+                id: SignalID.signalProbeDebugger,
                 category: ObfuscatedConstants.categoryAntiTamper,
                 score: 75,
                 evidence: ["mechanism": "sigtrap_brk_probe"],
@@ -1363,7 +1372,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                 }
 
                 signals.append(RiskSignal(
-                    id: "antidebug_plan_escalated",
+                    id: SignalID.antidebugPlanEscalated,
                     category: ObfuscatedConstants.categoryAntiTamper,
                     score: escalationSignalScore,
                     evidence: [
@@ -1408,6 +1417,91 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         default:
             return 15
         }
+    }
+
+    /// Emits a soft signal when CRiskCore reported use of libc (or arc4random) because direct-syscall paths were unavailable.
+    func libcDirectSyscallFallbackSignals(from snapshot: RiskSnapshot) -> [RiskSignal] {
+        libcDirectSyscallFallbackSignals(
+            mask: snapshot.libcFallbackUsedMask,
+            eventTotal: snapshot.libcFallbackEventTotal,
+            watchdogSupported: snapshot.antiDebugWatchdogSupported
+        )
+    }
+
+    /// Emits a soft signal when CRiskCore reported use of libc (or arc4random) because direct-syscall paths were unavailable.
+    func libcDirectSyscallFallbackSignals(from snapshot: CPRiskKit.AntiDebugWatchdogSnapshot) -> [RiskSignal] {
+        libcDirectSyscallFallbackSignals(
+            mask: snapshot.libcFallbackUsedMask,
+            eventTotal: snapshot.libcFallbackEventTotal,
+            watchdogSupported: snapshot.supported
+        )
+    }
+
+    private func libcDirectSyscallFallbackSignals(
+        mask: UInt32,
+        eventTotal: UInt32,
+        watchdogSupported: Bool
+    ) -> [RiskSignal] {
+        guard mask != 0 else {
+            return []
+        }
+        let labels = Self.libcFallbackClassLabels(mask: mask)
+        let syscallSurfaceBits = mask & ~UInt32(CPRISK_LIBC_FALLBACK_USED_UNSUPPORTED_PLATFORM)
+        #if targetEnvironment(simulator)
+        let score: Double = 20
+        let confidence: Double = 0.72
+        let weightHint: Double = syscallSurfaceBits != 0 ? 24 : 12
+        #else
+        /* Device: direct SVC is expected; libc-only syscall surfaces are stronger tamper/hook hints than build-flavor. */
+        let score: Double = syscallSurfaceBits != 0 ? 34 : 14
+        let confidence: Double = syscallSurfaceBits != 0 ? 0.82 : 0.55
+        let weightHint: Double = syscallSurfaceBits != 0 ? 34 : 18
+        #endif
+        return [
+            RiskSignal(
+                id: SignalID.libcDirectSyscallFallback,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: score + min(12, Double(eventTotal) * 0.25),
+                evidence: [
+                    "libc_fallback_used_mask": "\(mask)",
+                    "mask_hex": String(mask, radix: 16),
+                    "fallback_classes": labels,
+                    "libc_fallback_event_total": "\(eventTotal)",
+                    "watchdog_snapshot_supported": watchdogSupported ? "1" : "0",
+                    "mechanism": ObfuscatedConstants.evidenceMechanismLibcDirectSyscallFallback,
+                ],
+                state: .soft(confidence: confidence),
+                layer: 1,
+                weightHint: weightHint
+            ),
+        ]
+    }
+
+    private static func libcFallbackClassLabels(mask: UInt32) -> String {
+        let pairs: [(UInt32, String)] = [
+            (UInt32(CPRISK_LIBC_FALLBACK_USED_DIRECT_MPROTECT), "mprotect"),
+            (UInt32(CPRISK_LIBC_FALLBACK_USED_DIRECT_GETENTROPY), "getentropy"),
+            (UInt32(CPRISK_LIBC_FALLBACK_USED_DIRECT_SYSCTL), "sysctl"),
+            (UInt32(CPRISK_LIBC_FALLBACK_USED_DIRECT_STAT_PATH), "stat_path"),
+            (UInt32(CPRISK_LIBC_FALLBACK_USED_DIRECT_FD_IO), "fd_io"),
+            (UInt32(CPRISK_LIBC_FALLBACK_USED_DIRECT_IDS), "ids"),
+            (UInt32(CPRISK_LIBC_FALLBACK_USED_ARMOR_MPROTECT), "armor_mprotect"),
+            (UInt32(CPRISK_LIBC_FALLBACK_USED_UNSUPPORTED_PLATFORM), "unsupported_platform"),
+            (UInt32(CPRISK_LIBC_FALLBACK_USED_DIRECT_CSOPS_UNAVAILABLE), "csops_unavailable"),
+            (UInt32(CPRISK_LIBC_FALLBACK_USED_DIRECT_SYSCALL_STUB_FALLBACK), "syscall_stub_fallback"),
+        ]
+        let knownMask = pairs.reduce(UInt32(0)) { $0 | $1.0 }
+        var parts: [String] = []
+        for (bit, name) in pairs where (mask & bit) != 0 {
+            parts.append(name)
+        }
+        if (mask & ~knownMask) != 0 {
+            parts.append("reserved")
+        }
+        if parts.isEmpty {
+            return "unknown_0x\(String(mask, radix: 16))"
+        }
+        return parts.joined(separator: ",")
     }
 
     func antiDebugWatchdogSignals(from snapshot: CPRiskKit.AntiDebugWatchdogSnapshot) -> [RiskSignal] {

@@ -423,6 +423,22 @@ final class ArmorRuntimeLifecycleTests: XCTestCase {
         XCTAssertLessThanOrEqual(mask, 0x7)
     }
 
+    func testDlsymPrologueVerifierReturnsSuccessOnThisPlatform() {
+        XCTAssertEqual(cprisk_verify_dlsym_prologue(), 1)
+    }
+
+    func testCsopsStatusFlagsReturnsConsistentResultShape() {
+        var flags: UInt32 = 0
+        var err: Int32 = 0
+        let rc = cprisk_csops_status_flags(&flags, &err)
+        XCTAssertTrue(rc == 0 || rc == -1)
+        if rc == 0 {
+            XCTAssertEqual(err, 0)
+        } else {
+            XCTAssertNotEqual(err, 0)
+        }
+    }
+
     private func makeAntiDebugPlanPayload(
         policyBits: UInt32,
         entryFlags: UInt32 = UInt32(CPRISK_ARMOR_ADBG_ENTRY_FLAG_RUNTIME_GATE_RESERVED)

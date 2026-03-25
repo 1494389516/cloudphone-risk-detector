@@ -240,7 +240,7 @@ public final class PolicyManager: @unchecked Sendable {
         #if DEBUG
         Logger.log("⚠️ PolicyManager.init: no certificate hashes configured yet — falling back to system CA in DEBUG. Call configurePinning(hashes:) before fetching policy.")
         self.urlSession = CertificatePinningSessionDelegate.pinnedSession(
-            hashes: [],
+            pinMaterial: .empty,
             allowsSystemCA: true
         )
         #else
@@ -249,15 +249,15 @@ public final class PolicyManager: @unchecked Sendable {
         self.cachedPolicy = loadFromCache()
     }
 
-    public func configurePinning(hashes: Set<String>) {
+    public func configurePinning(pinMaterial: PinnedCertificatePinMaterial) {
         lock.withLock {
-            guard !hashes.isEmpty else {
+            guard !pinMaterial.isEmpty else {
                 Logger.log("PolicyManager.configurePinning: empty hashes provided — all TLS connections would fail")
                 #if DEBUG
                 Logger.log("⚠️ PolicyManager.configurePinning: [DEBUG] falling back to system CA with empty hashes")
                 urlSession.invalidateAndCancel()
                 urlSession = CertificatePinningSessionDelegate.pinnedSession(
-                    hashes: [],
+                    pinMaterial: .empty,
                     allowsSystemCA: true
                 )
                 #else
@@ -267,10 +267,15 @@ public final class PolicyManager: @unchecked Sendable {
             }
             urlSession.invalidateAndCancel()
             urlSession = CertificatePinningSessionDelegate.pinnedSession(
-                hashes: hashes,
+                pinMaterial: pinMaterial,
                 allowsSystemCA: false
             )
         }
+    }
+
+    /// Builds digest-backed material from pin strings (invalid entries ignored).
+    public func configurePinning(hashes: Set<String>) {
+        configurePinning(pinMaterial: PinnedCertificatePinMaterial(pinStrings: hashes))
     }
 
     public var activePolicy: ServerRiskPolicy? {

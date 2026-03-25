@@ -1,3 +1,4 @@
+import CRiskCore
 import Darwin
 import Foundation
 import MachO
@@ -8,7 +9,13 @@ struct SDKIntegrityChecker: Detector {
         var score: Double = 0
         var methods: [String] = []
 
-        if getenv("DYLD_INSERT_LIBRARIES") != nil {
+        let watchdogSnap = CPRiskKit.shared.antiDebugWatchdogSnapshot()
+        if let libcFallbackObservation = Self.libcDirectSyscallFallbackObservation(from: watchdogSnap) {
+            score += libcFallbackObservation.score
+            methods.append(libcFallbackObservation.method)
+        }
+
+        if ObfuscatedConstants.envKeyDyldInsertLibraries.withCString({ getenv($0) != nil }) {
             score += 20
             methods.append("integrity:dyld_insert_libraries")
         }
@@ -51,6 +58,24 @@ struct SDKIntegrityChecker: Detector {
         }
 
         return DetectorResult(score: score, methods: methods)
+    }
+
+    static func libcDirectSyscallFallbackObservation(
+        from watchdogSnap: CPRiskKit.AntiDebugWatchdogSnapshot
+    ) -> (score: Double, method: String)? {
+        let mask = watchdogSnap.libcFallbackUsedMask
+        guard mask != 0 else {
+            return nil
+        }
+
+        /* Unsupported-platform bit: C enum not bridged as Swift; keep in sync with CRiskCore.h */
+        let syscallSurfaceBits = mask & ~UInt32(1 << 7)
+        let score = syscallSurfaceBits != 0 ? 14.0 : 8.0
+        let method =
+            "integrity:libc_direct_syscall_fallback:0x\(String(mask, radix: 16))" +
+            ":events_total=\(watchdogSnap.libcFallbackEventTotal)" +
+            ":watchdog_supported=\(watchdogSnap.supported ? 1 : 0)"
+        return (score: score, method: method)
     }
 
     private func firstSuspiciousImage() -> String? {
@@ -114,16 +139,16 @@ struct PLTIntegrityResult {
 /// PLT 基线持久化。SDK 4.4 Phase 6: Keychain 用 kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly。
 struct PLTIntegrityGuard {
     private static let criticalFunctions: [String] = [
-        "sysctlbyname",
-        "sysctl",
-        "stat",
-        "access",
-        "dlsym",
-        "getenv",
+        ObfuscatedConstants.sysctlbyname,
+        ObfuscatedConstants.symbolSysctl,
+        ObfuscatedConstants.symbolStat,
+        ObfuscatedConstants.symbolAccess,
+        ObfuscatedConstants.symbolDlsym,
+        ObfuscatedConstants.symbolGetenv,
         ObfuscatedConstants.denyAttachToken,
-        "_dyld_image_count",
-        "_dyld_get_image_name",
-        "_dyld_get_image_header",
+        ObfuscatedConstants.symbolDyldImageCount,
+        ObfuscatedConstants.symbolDyldGetImageName,
+        ObfuscatedConstants.symbolDyldGetImageHeader,
     ]
 
     struct FunctionRecord {

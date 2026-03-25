@@ -34,6 +34,7 @@ targets:
         SKIP_INSTALL: NO
         DEFINES_MODULE: YES
         CLANG_ENABLE_MODULES: YES
+        OTHER_CFLAGS: "$(inherited) -fvisibility=hidden"
         MODULEMAP_FILE: "$(SRCROOT)/BuildSupport/CRiskCore/module.modulemap"
         PUBLIC_HEADERS_FOLDER_PATH: include
         HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/Sources/CRiskCore/include"

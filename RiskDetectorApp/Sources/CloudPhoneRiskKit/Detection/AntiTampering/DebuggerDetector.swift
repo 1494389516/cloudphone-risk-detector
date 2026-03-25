@@ -5,14 +5,9 @@ import Foundation
 struct DebuggerDetector: Detector {
     let debuggerParentNeedles: [String] = ObfuscatedConstants.debuggerParentNeedles
 
-    let debuggerEnvKeys: [String] = [
-        "DYLD_INSERT_LIBRARIES",
-        "OS_ACTIVITY_DT_MODE",
-        "NSZombieEnabled",
-        "MallocStackLogging",
-    ]
+    let debuggerEnvKeys: [String] = ObfuscatedConstants.debuggerInstrumentationEnvironmentKeys
 
-    let debuggerPorts: [Int] = [12345, 2345, 27042, 27043, 23946]
+    let debuggerPorts: [Int] = ObfuscatedConstants.debuggerPorts
 
     func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)
@@ -22,76 +17,77 @@ struct DebuggerDetector: Detector {
         var methods: [String] = []
         let watchdogSnapshot = CPRiskKit.shared.antiDebugWatchdogSnapshot()
 
+        let dp = ObfuscatedConstants.methodPrefixDebugger
         if isBeingDebugged() {
             score += 35
-            methods.append("debugger:attached")
+            methods.append("\(dp)attached")
         }
 
         if hasDebuggerParent() {
             score += 20
-            methods.append("debugger:parent")
+            methods.append("\(dp)parent")
         }
 
         if hasDebuggerEnv() {
             score += 15
-            methods.append("debugger:environment")
+            methods.append("\(dp)environment")
         }
 
         if hasDebuggerPort() {
             score += 10
-            methods.append("debugger:port")
+            methods.append("\(dp)port")
         }
 
         if cprisk_csops_debug_check() != 0 {
             score += 30
-            methods.append("debugger:csops_debugged")
+            methods.append("\(dp)csops_debugged")
         }
 
         if cprisk_detect_hardware_breakpoints() != 0 {
             score += 25
-            methods.append("debugger:hardware_breakpoint")
+            methods.append("\(dp)hardware_breakpoint")
         }
 
         let softwareBreakpointCount = softwareBreakpointScanCount()
         if softwareBreakpointCount > 0 {
             score += 18
-            methods.append("debugger:software_breakpoint:\(softwareBreakpointCount)")
+            methods.append("\(dp)software_breakpoint:\(softwareBreakpointCount)")
         } else if watchdogSnapshot.softwareBreakpointDetected ||
                     watchdogSnapshot.softwareBreakpointAnomalyCount > 0 ||
                     (watchdogSnapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SOFTWARE_BP)) != 0 {
             score += 10
-            methods.append("debugger:software_breakpoint:\(ObfuscatedConstants.keywordWatchdog)")
+            methods.append("\(dp)software_breakpoint:\(ObfuscatedConstants.keywordWatchdog)")
         }
 
         if (watchdogSnapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_INSTANT_RETURN_PATCH)) != 0 {
             score += 16
-            methods.append("debugger:instant_return_patch")
+            methods.append("\(dp)instant_return_patch")
         }
 
         if cprisk_probe_debugger_via_signal() != 0 {
             score += 20
-            methods.append("debugger:signal_probe")
+            methods.append("\(dp)signal_probe")
         }
 
         if cprisk_detect_tty_debug() != 0 {
             score += 10
-            methods.append("debugger:tty")
+            methods.append("\(dp)tty")
         }
 
         let suspiciousThreads = cprisk_detect_suspicious_threads()
         if suspiciousThreads > 0 {
             score += min(Double(suspiciousThreads) * 15, 30)
-            methods.append("debugger:suspicious_threads:\(suspiciousThreads)")
+            methods.append("\(dp)suspicious_threads:\(suspiciousThreads)")
         }
 
         if cprisk_detect_developer_disk() != 0 {
             score += 8
-            methods.append("debugger:developer_disk")
+            methods.append("\(dp)developer_disk")
         }
 
         if hasExceptionDeliveryTimeout(snapshot: watchdogSnapshot) {
             score += 14
-            methods.append("debugger:exception_delivery_timeout")
+            methods.append("\(dp)exception_delivery_timeout")
         }
 
         return DetectorResult(score: min(score, 100), methods: methods)

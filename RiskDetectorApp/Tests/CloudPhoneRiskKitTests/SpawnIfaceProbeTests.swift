@@ -18,4 +18,8 @@ final class SpawnIfaceProbeTests: XCTestCase {
         )
     }
 
+    /// Regression: libc dlsym vs CRiskCore export-trie (`cprisk_dlsym`) must agree for mprotect.
+    func testMprotectDlsymMatchesExportTrie() {
+        XCTAssertEqual(cprisk_verify_mprotect_dlsym_matches_export_trie(), 0)
+    }
 }

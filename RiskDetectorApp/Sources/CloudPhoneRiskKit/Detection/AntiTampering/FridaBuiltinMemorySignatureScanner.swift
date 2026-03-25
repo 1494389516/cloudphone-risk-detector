@@ -205,12 +205,12 @@ enum FridaBuiltinMemorySignatureScanner {
         let maxRegionIterations: Int
 
         static func current() -> Configuration {
-            let enabled = envBool(key: "CPRISK_FRIDA_MEMSIG_BUILTIN", defaultIfUnset: true)
-            let intervalMs = envInt(key: "CPRISK_FRIDA_MEMSIG_INTERVAL_MS", defaultValue: 90_000)
-            let maxPages = envInt(key: "CPRISK_FRIDA_MEMSIG_MAX_PAGES", defaultValue: 64)
-            let maxRegionBytes = envUInt64(key: "CPRISK_FRIDA_MEMSIG_MAX_REGION_BYTES", defaultValue: 64 * 1024 * 1024)
-            let chunkBytes = envInt(key: "CPRISK_FRIDA_MEMSIG_CHUNK_BYTES", defaultValue: 16 * 1024)
-            let maxIter = envInt(key: "CPRISK_FRIDA_MEMSIG_MAX_REGION_ITER", defaultValue: 4096)
+            let enabled = envBool(key: ObfuscatedConstants.envKeyCpriskFridaMemsigBuiltin, defaultIfUnset: true)
+            let intervalMs = envInt(key: ObfuscatedConstants.envKeyCpriskFridaMemsigIntervalMs, defaultValue: 90_000)
+            let maxPages = envInt(key: ObfuscatedConstants.envKeyCpriskFridaMemsigMaxPages, defaultValue: 64)
+            let maxRegionBytes = envUInt64(key: ObfuscatedConstants.envKeyCpriskFridaMemsigMaxRegionBytes, defaultValue: 64 * 1024 * 1024)
+            let chunkBytes = envInt(key: ObfuscatedConstants.envKeyCpriskFridaMemsigChunkBytes, defaultValue: 16 * 1024)
+            let maxIter = envInt(key: ObfuscatedConstants.envKeyCpriskFridaMemsigMaxRegionIter, defaultValue: 4096)
 
             return Configuration(
                 enabled: enabled,

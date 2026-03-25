@@ -111,7 +111,7 @@ public final class CapabilityProbeEngine: @unchecked Sendable {
         StringDeobfuscator.base64Decode("c3Vic3RyYXRl"),
         StringDeobfuscator.base64Decode("c3Vic3RpdHV0ZQ=="),
         StringDeobfuscator.base64Decode("ZG9iYnk="),
-        "fish\(ObfuscatedConstants.keywordHook)",
+        ObfuscatedConstants.hookFrameworkFishhookToken + ObfuscatedConstants.keywordHook,
     ]
 
     // MARK: - 配置

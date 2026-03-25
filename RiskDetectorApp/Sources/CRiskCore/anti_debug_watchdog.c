@@ -10,6 +10,7 @@
 #include <string.h>
 #include <time.h>
 #include <mach-o/dyld.h>
+#include <dlfcn.h>
 
 #if defined(__APPLE__) && (defined(__arm64__) || defined(__aarch64__)) && \
     (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR) && \
@@ -59,9 +60,19 @@ static atomic_uint_fast32_t s_watchdog_shadow_stack_latch = 0u;
 #define CPRISK_WATCHDOG_PROLOGUE_SLOTS 10u
 /* Bit in last_prologue_fail_mask when libsystem pthread_create prologue mismatches baseline. */
 #define CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_PTHREAD_CREATE (1u << 31)
+/* Bit when libsystem/libdyld dlsym (import resolve chain) prologue mismatches baseline. */
+#define CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_DLSYM (1u << 30)
 
 static uint8_t s_watchdog_prologue_ref[CPRISK_WATCHDOG_PROLOGUE_SLOTS][CPRISK_WATCHDOG_PROLOGUE_BYTES];
+/* Previous-iteration snapshot for intra-run drift detection (cross-check vs ctor baseline). */
+static uint8_t s_watchdog_prologue_last_ok[CPRISK_WATCHDOG_PROLOGUE_SLOTS][CPRISK_WATCHDOG_PROLOGUE_BYTES];
+static atomic_uint_fast32_t s_watchdog_prologue_last_ok_valid = 0u;
 static uint8_t s_watchdog_pthread_create_ref[CPRISK_WATCHDOG_PROLOGUE_BYTES];
+static uint8_t s_watchdog_pthread_create_last_ok[CPRISK_WATCHDOG_PROLOGUE_BYTES];
+static atomic_uint_fast32_t s_watchdog_pthread_create_last_ok_valid = 0u;
+static uint8_t s_watchdog_dlsym_ref[CPRISK_WATCHDOG_PROLOGUE_BYTES];
+static uint8_t s_watchdog_dlsym_last_ok[CPRISK_WATCHDOG_PROLOGUE_BYTES];
+static atomic_uint_fast32_t s_watchdog_dlsym_last_ok_valid = 0u;
 static atomic_uint_fast32_t s_watchdog_prologue_captured = 0u;
 static atomic_uint_fast64_t s_watchdog_dyld_suspicious_events = 0u;
 static atomic_uint_fast32_t s_watchdog_dyld_flags = 0u;
@@ -214,6 +225,7 @@ static void cprisk_watchdog_capture_prologue_once_i(void) {
         memcpy(s_watchdog_prologue_ref[i], addrs[i], CPRISK_WATCHDOG_PROLOGUE_BYTES);
     }
     memcpy(s_watchdog_pthread_create_ref, (const void *)&pthread_create, CPRISK_WATCHDOG_PROLOGUE_BYTES);
+    memcpy(s_watchdog_dlsym_ref, (const void *)&dlsym, CPRISK_WATCHDOG_PROLOGUE_BYTES);
     atomic_store(&s_watchdog_prologue_captured, 1u);
 }
 
@@ -233,12 +245,47 @@ static int cprisk_watchdog_verify_pthread_create_prologue_i(uint32_t *mask_out) 
     uint8_t live[CPRISK_WATCHDOG_PROLOGUE_BYTES];
     /* TOCTOU: snapshot libsystem code into a stack shadow before compare (not direct memcmp on r-x). */
     memcpy(live, (const void *)&pthread_create, CPRISK_WATCHDOG_PROLOGUE_BYTES);
-    if (memcmp(s_watchdog_pthread_create_ref, live, CPRISK_WATCHDOG_PROLOGUE_BYTES) != 0) {
+    if (atomic_load_explicit(&s_watchdog_pthread_create_last_ok_valid, memory_order_relaxed) != 0u &&
+        memcmp(s_watchdog_pthread_create_last_ok, live, CPRISK_WATCHDOG_PROLOGUE_BYTES) != 0) {
         *mask_out |= CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_PTHREAD_CREATE;
-        cprisk_force_integrity_poison();
+        cprisk_integrity_poison_watchdog_lane();
         return 0;
     }
+    if (memcmp(s_watchdog_pthread_create_ref, live, CPRISK_WATCHDOG_PROLOGUE_BYTES) != 0) {
+        *mask_out |= CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_PTHREAD_CREATE;
+        cprisk_integrity_poison_watchdog_lane();
+        return 0;
+    }
+    memcpy(s_watchdog_pthread_create_last_ok, live, CPRISK_WATCHDOG_PROLOGUE_BYTES);
+    atomic_store_explicit(&s_watchdog_pthread_create_last_ok_valid, 1u, memory_order_release);
     return 1;
+}
+
+static int cprisk_watchdog_verify_dlsym_prologue_i(uint32_t *mask_out) {
+    if (atomic_load(&s_watchdog_prologue_captured) == 0u) {
+        cprisk_watchdog_capture_prologue_once_i();
+    }
+    uint8_t live[CPRISK_WATCHDOG_PROLOGUE_BYTES];
+    memcpy(live, (const void *)&dlsym, CPRISK_WATCHDOG_PROLOGUE_BYTES);
+    if (atomic_load_explicit(&s_watchdog_dlsym_last_ok_valid, memory_order_relaxed) != 0u &&
+        memcmp(s_watchdog_dlsym_last_ok, live, CPRISK_WATCHDOG_PROLOGUE_BYTES) != 0) {
+        *mask_out |= CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_DLSYM;
+        cprisk_integrity_poison_watchdog_lane();
+        return 0;
+    }
+    if (memcmp(s_watchdog_dlsym_ref, live, CPRISK_WATCHDOG_PROLOGUE_BYTES) != 0) {
+        *mask_out |= CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_DLSYM;
+        cprisk_integrity_poison_watchdog_lane();
+        return 0;
+    }
+    memcpy(s_watchdog_dlsym_last_ok, live, CPRISK_WATCHDOG_PROLOGUE_BYTES);
+    atomic_store_explicit(&s_watchdog_dlsym_last_ok_valid, 1u, memory_order_release);
+    return 1;
+}
+
+int cprisk_verify_dlsym_prologue(void) {
+    uint32_t mask = 0u;
+    return cprisk_watchdog_verify_dlsym_prologue_i(&mask);
 }
 
 static void cprisk_watchdog_verify_prologue_i(uint32_t *anomaly_out, uint32_t *mask_out) {
@@ -250,16 +297,26 @@ static void cprisk_watchdog_verify_prologue_i(uint32_t *anomaly_out, uint32_t *m
     }
     const void *addrs[CPRISK_WATCHDOG_PROLOGUE_SLOTS];
     cprisk_watchdog_fill_prologue_addrs_i(addrs);
+    const int have_last =
+        atomic_load_explicit(&s_watchdog_prologue_last_ok_valid, memory_order_relaxed) != 0u;
     for (uint32_t i = 0u; i < CPRISK_WATCHDOG_PROLOGUE_SLOTS; i++) {
         uint8_t live[CPRISK_WATCHDOG_PROLOGUE_BYTES];
         /* TOCTOU: compare against shadow snapshot; attacker could otherwise flip bytes mid-memcmp. */
         memcpy(live, addrs[i], CPRISK_WATCHDOG_PROLOGUE_BYTES);
+        if (have_last != 0 &&
+            memcmp(s_watchdog_prologue_last_ok[i], live, CPRISK_WATCHDOG_PROLOGUE_BYTES) != 0) {
+            *anomaly_out |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_FUNCTION_PROLOGUE;
+            *mask_out |= (1u << i);
+            cprisk_integrity_poison_watchdog_lane();
+        }
         if (memcmp(s_watchdog_prologue_ref[i], live, CPRISK_WATCHDOG_PROLOGUE_BYTES) != 0) {
             *anomaly_out |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_FUNCTION_PROLOGUE;
             *mask_out |= (1u << i);
-            cprisk_force_integrity_poison();
+            cprisk_integrity_poison_watchdog_lane();
         }
+        memcpy(s_watchdog_prologue_last_ok[i], live, CPRISK_WATCHDOG_PROLOGUE_BYTES);
     }
+    atomic_store_explicit(&s_watchdog_prologue_last_ok_valid, 1u, memory_order_release);
 }
 
 static int cprisk_watchdog_dyld_name_suspicious_i(const char *path, uint32_t *flags_out) {
@@ -372,7 +429,7 @@ static void cprisk_watchdog_dyld_add_image_i(const struct mach_header *mh, intpt
     }
     atomic_fetch_or(&s_watchdog_dyld_flags, flags);
     atomic_fetch_add(&s_watchdog_dyld_suspicious_events, 1ull);
-    cprisk_force_integrity_poison();
+    cprisk_integrity_poison_watchdog_lane();
 }
 
 static void cprisk_watchdog_register_dyld_observer_once_i(void) {
@@ -551,7 +608,7 @@ static void cprisk_watchdog_reset_locked(void) {
     s_watchdog_snapshot.vm_mprotect_mach_trap_mismatch_total = 0u;
     atomic_store(&s_watchdog_dyld_flags, 0u);
     atomic_store(&s_watchdog_dyld_suspicious_events, 0ull);
-    /* Intentionally retain prologue / pthread_create baselines across restarts (early ctor snapshot). */
+    /* Intentionally retain prologue / pthread_create / dlsym baselines across restarts (early ctor snapshot). */
 }
 
 static int cprisk_watchdog_should_stop(void) {
@@ -631,7 +688,7 @@ static int cprisk_watchdog_peer_stalled_i(uint32_t worker_id, uint32_t interval_
 
 static void cprisk_watchdog_mark_peer_stall_i(void) {
     atomic_store(&s_watchdog_peer_stall_latch, 1u);
-    cprisk_force_integrity_poison();
+    cprisk_integrity_poison_watchdog_lane();
 
     pthread_mutex_lock(&s_watchdog_mutex);
     s_watchdog_snapshot.anomaly_flags |=
@@ -648,7 +705,7 @@ static uint32_t cprisk_watchdog_run_secondary_iteration_i(uint32_t inherited_fla
 
     if (cprisk_is_being_traced_sysctl_only() != 0 || cprisk_mach_trace_suspicious() != 0) {
         anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACED;
-        cprisk_force_integrity_poison();
+        cprisk_integrity_poison_watchdog_lane();
     }
 
     const int software_bp = cprisk_scan_software_breakpoints_randomized_text(
@@ -681,7 +738,7 @@ static uint32_t cprisk_watchdog_run_secondary_iteration_i(uint32_t inherited_fla
     }
 
     if (anomaly_flags != CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_NONE) {
-        cprisk_force_integrity_poison();
+        cprisk_integrity_poison_watchdog_lane();
     }
 
     pthread_mutex_lock(&s_watchdog_mutex);
@@ -764,17 +821,22 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
     uint32_t prologue_anom = 0u;
     uint32_t prologue_mask = 0u;
     cprisk_watchdog_verify_prologue_i(&prologue_anom, &prologue_mask);
+    uint32_t dlsym_fail_mask = 0u;
+    if (cprisk_watchdog_verify_dlsym_prologue_i(&dlsym_fail_mask) == 0) {
+        prologue_anom |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_FUNCTION_PROLOGUE;
+        prologue_mask |= dlsym_fail_mask;
+    }
     uint32_t svc_stub_anom = 0u;
     if (cprisk_verify_svc_stub_integrity() != 0u) {
         svc_stub_anom = CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SVC_STUB_INTEGRITY;
-        cprisk_force_integrity_poison();
+        cprisk_integrity_poison_watchdog_lane();
     }
     const uint32_t vm_cc_total = cprisk_get_vm_mprotect_crosscheck_mismatch_count();
     const uint32_t vm_mt_total = cprisk_get_vm_mprotect_mach_trap_mismatch_count();
     uint32_t vm_mprotect_anom = 0u;
     if (vm_cc_total > 0u || vm_mt_total > 0u) {
         vm_mprotect_anom = CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_MPROTECT_MACH_DIVERGENCE;
-        cprisk_force_integrity_poison();
+        cprisk_integrity_poison_watchdog_lane();
     }
     const uint32_t dyld_flags_now = (uint32_t)atomic_load(&s_watchdog_dyld_flags);
     cprisk_cff_config_t cff_config;
@@ -824,7 +886,7 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
             }
             if (deny_verify_suspicious != 0) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DENY_ATTACH_VERIFY;
-                cprisk_force_integrity_poison();
+                cprisk_integrity_poison_watchdog_lane();
             }
             anomaly_flags |= cprisk_wd_amfi_flags_from_probe_bits_i(amfi_probe_bits);
             if (get_task_allow_suspect != 0u) {
@@ -832,14 +894,14 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
             }
             if ((anomaly_flags & (CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_AMFI_CS_FLAGS |
                                   CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GET_TASK_ALLOW)) != 0u) {
-                cprisk_force_integrity_poison();
+                cprisk_integrity_poison_watchdog_lane();
             }
             if (traced != 0 || traced_sys != 0 || traced_mach != 0) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACED;
             }
             if ((traced_sys != 0 || traced_mach != 0) && traced == 0) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACED_PROBE_DIVERGENCE;
-                cprisk_force_integrity_poison();
+                cprisk_integrity_poison_watchdog_lane();
             }
             if (trace_crosscheck != 0) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACE_CROSSCHECK;
@@ -998,7 +1060,7 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
                                   CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GET_TASK_ALLOW |
                                   CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SVC_STUB_INTEGRITY |
                                   CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_MPROTECT_MACH_DIVERGENCE)) != 0u) {
-                cprisk_force_integrity_poison();
+                cprisk_integrity_poison_watchdog_lane();
             }
             CPR_CFF_GOTO(0x16u);
         }
@@ -1168,6 +1230,9 @@ static void *cprisk_watchdog_thread_main_impl(void *arg) {
                 run_low_checks
             );
         } else {
+            /* Pass12 __TEXT: same idle sweep as primary so plaintext pages are not
+             * serviced only on the primary thread's jittered interval (~0.35–1.1s). */
+            cprisk_text_encrypt_service_idle();
             if (run_mid_checks) {
                 last_anomaly_flags = cprisk_watchdog_run_secondary_iteration_i(
                     last_anomaly_flags &
@@ -1231,12 +1296,23 @@ int cprisk_start_anti_debug_watchdog(void) {
         atomic_store(&s_watchdog_deadline_ns[i], 0u);
     }
 
-    uint32_t pthread_mask = 0u;
-    if (cprisk_watchdog_verify_pthread_create_prologue_i(&pthread_mask) == 0) {
+    uint32_t libsys_mask = 0u;
+    if (cprisk_watchdog_verify_pthread_create_prologue_i(&libsys_mask) == 0) {
         s_watchdog_state = CPRISK_WATCHDOG_STATE_STOPPED;
         s_watchdog_snapshot.running = 0u;
         s_watchdog_snapshot.anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_FUNCTION_PROLOGUE;
-        s_watchdog_snapshot.last_prologue_fail_mask = pthread_mask;
+        s_watchdog_snapshot.last_prologue_fail_mask = libsys_mask;
+        s_watchdog_snapshot.prologue_integrity_anomaly_count += 1u;
+        s_watchdog_snapshot.last_deny_attach_result = -1;
+        s_watchdog_snapshot.last_deny_attach_errno = EACCES;
+        pthread_mutex_unlock(&s_watchdog_mutex);
+        return -1;
+    }
+    if (cprisk_watchdog_verify_dlsym_prologue_i(&libsys_mask) == 0) {
+        s_watchdog_state = CPRISK_WATCHDOG_STATE_STOPPED;
+        s_watchdog_snapshot.running = 0u;
+        s_watchdog_snapshot.anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_FUNCTION_PROLOGUE;
+        s_watchdog_snapshot.last_prologue_fail_mask = libsys_mask;
         s_watchdog_snapshot.prologue_integrity_anomaly_count += 1u;
         s_watchdog_snapshot.last_deny_attach_result = -1;
         s_watchdog_snapshot.last_deny_attach_errno = EACCES;
@@ -1332,10 +1408,17 @@ int cprisk_get_anti_debug_watchdog_snapshot(
     pthread_mutex_lock(&s_watchdog_mutex);
     *out_snapshot = s_watchdog_snapshot;
     pthread_mutex_unlock(&s_watchdog_mutex);
+    /* Live libc fallback counters (not only on watchdog iteration). */
+    out_snapshot->libc_fallback_used_mask = cprisk_get_libc_fallback_used_mask();
+    out_snapshot->libc_fallback_event_total = cprisk_get_libc_fallback_event_total();
     return 0;
 }
 
 #else
+
+int cprisk_verify_dlsym_prologue(void) {
+    return 1;
+}
 
 int cprisk_start_anti_debug_watchdog(void) {
     (void)cprisk_start_anti_dump_probe(5);
@@ -1357,6 +1440,9 @@ int cprisk_get_anti_debug_watchdog_snapshot(
     }
 
     memset(out_snapshot, 0, sizeof(*out_snapshot));
+    /* Keep libc fallback observability consistent with the full watchdog path. */
+    out_snapshot->libc_fallback_used_mask = cprisk_get_libc_fallback_used_mask();
+    out_snapshot->libc_fallback_event_total = cprisk_get_libc_fallback_event_total();
     return 0;
 }
 

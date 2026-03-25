@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import Security
 
@@ -8,16 +9,26 @@ import Security
 /// 比证书固定更灵活（证书轮换时只需更新 hash，不需要嵌入新证书）。
 public final class CertificatePinningSessionDelegate: NSObject, URLSessionDelegate {
 
-    private let pinnedHashes: Set<String>
+    private let pinMaterial: PinnedCertificatePinMaterial
     private let allowsSystemCA: Bool
 
+    /// 非模拟器上，`SecTrustEvaluateWithError` 耗时低于该阈值（纳秒）则记录时序异常侧信道（不单独断连）。
+    private static let trustEvalSuspiciouslyFastNs: UInt64 = 5_000
+
     /// - Parameters:
-    ///   - pinnedHashes: SPKI SHA-256 hashes in base64 format (e.g. "sha256/AAAA...")
+    ///   - pinMaterial: Parsed SPKI SHA-256 digests (see ``PinnedCertificatePinMaterial``).
     ///   - allowsSystemCA: If true, falls back to system CA when no pins match (dev mode)
-    public init(pinnedHashes: Set<String>, allowsSystemCA: Bool = false) {
-        self.pinnedHashes = pinnedHashes
+    public init(pinMaterial: PinnedCertificatePinMaterial, allowsSystemCA: Bool = false) {
+        self.pinMaterial = pinMaterial
         self.allowsSystemCA = allowsSystemCA
         super.init()
+    }
+
+    /// - Parameters:
+    ///   - pinnedHashes: SPKI SHA-256 hashes (e.g. `sha256/<base64>`); converted to digest-only material internally.
+    ///   - allowsSystemCA: If true, falls back to system CA when no pins match (dev mode)
+    public convenience init(pinnedHashes: Set<String>, allowsSystemCA: Bool = false) {
+        self.init(pinMaterial: PinnedCertificatePinMaterial(pinStrings: pinnedHashes), allowsSystemCA: allowsSystemCA)
     }
 
     public func urlSession(
@@ -31,23 +42,67 @@ public final class CertificatePinningSessionDelegate: NSObject, URLSessionDelega
             return
         }
 
-        guard !pinnedHashes.isEmpty else {
+        let host = challenge.protectionSpace.host
+
+        guard !pinMaterial.isEmpty else {
             completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }
 
-        // Evaluate server trust
-        var error: CFError?
-        let isValid = SecTrustEvaluateWithError(serverTrust, &error)
-        guard isValid else {
+        if !preflightPinningCore(host: host) {
             completionHandler(.cancelAuthenticationChallenge, nil)
             return
+        }
+
+        let t0 = PinningMonotonicNanos.now()
+        var error: CFError?
+        let isValid = SecTrustEvaluateWithError(serverTrust, &error)
+        let t1 = PinningMonotonicNanos.now()
+        let elapsed = t1 &- t0
+
+        #if !targetEnvironment(simulator)
+        if elapsed < Self.trustEvalSuspiciouslyFastNs {
+            recordPinning(
+                host: host,
+                kind: .trustEvalSuspiciouslyFast,
+                detail: [
+                    "elapsed_ns": "\(elapsed)",
+                    "threshold_ns": "\(Self.trustEvalSuspiciouslyFastNs)",
+                ]
+            )
+        }
+        #endif
+
+        guard isValid else {
+            var detail: [String: String] = [:]
+            if let err = error {
+                let ns = err as Error as NSError
+                detail["cf_error_domain"] = ns.domain
+                detail["cf_error_code"] = "\(ns.code)"
+            }
+            recordPinning(host: host, kind: .trustEvalFailed, detail: detail)
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+
+        guard crossCheckTrustEvaluation(serverTrust, host: host) else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+
+        if #available(iOS 14.0, macOS 11.0, *) {
+            guard SecTrustCopyKey(serverTrust) != nil else {
+                recordPinning(host: host, kind: .leafPublicKeyMissing, detail: [:])
+                completionHandler(.cancelAuthenticationChallenge, nil)
+                return
+            }
         }
 
         // Check each certificate in the chain
         let certificates: [SecCertificate]
         if #available(iOS 15.0, macOS 12.0, *) {
             guard let chain = SecTrustCopyCertificateChain(serverTrust) as? [SecCertificate], !chain.isEmpty else {
+                recordPinning(host: host, kind: .emptyCertificateChain, detail: ["reason": "ios15_chain"])
                 if allowsSystemCA {
                     completionHandler(.performDefaultHandling, nil)
                 } else {
@@ -65,6 +120,7 @@ public final class CertificatePinningSessionDelegate: NSObject, URLSessionDelega
                 }
             }
             guard !certs.isEmpty else {
+                recordPinning(host: host, kind: .emptyCertificateChain, detail: ["reason": "legacy_chain"])
                 if allowsSystemCA {
                     completionHandler(.performDefaultHandling, nil)
                 } else {
@@ -76,9 +132,22 @@ public final class CertificatePinningSessionDelegate: NSObject, URLSessionDelega
         }
 
         for cert in certificates {
-            if let spkiHash = spkiSHA256(certificate: cert) {
-                let pinString = "sha256/\(spkiHash)"
-                if pinnedHashes.contains(pinString) {
+            if let spkiDigest = spkiSHA256Digest(certificate: cert) {
+                let swiftMatch = pinMaterial.containsRawDigest(spkiDigest)
+                let coreMatch = pinMaterial.containsRawDigestViaCore(spkiDigest)
+                if swiftMatch != coreMatch {
+                    recordPinning(
+                        host: host,
+                        kind: .pinValidatorDiverged,
+                        detail: [
+                            "swift_match": swiftMatch ? "1" : "0",
+                            "core_match": coreMatch ? "1" : "0",
+                        ]
+                    )
+                    completionHandler(.cancelAuthenticationChallenge, nil)
+                    return
+                }
+                if swiftMatch && coreMatch {
                     completionHandler(.useCredential, URLCredential(trust: serverTrust))
                     return
                 }
@@ -86,11 +155,78 @@ public final class CertificatePinningSessionDelegate: NSObject, URLSessionDelega
         }
 
         // No pin matched
+        recordPinning(host: host, kind: .pinMismatch, detail: ["allows_system_ca": "\(allowsSystemCA)"])
         if allowsSystemCA {
             completionHandler(.performDefaultHandling, nil)
         } else {
             completionHandler(.cancelAuthenticationChallenge, nil)
         }
+    }
+
+    // MARK: - CRiskCore + redundant trust checks
+
+    /// 失败时返回 false，调用方应取消挑战。
+    private func preflightPinningCore(host: String) -> Bool {
+        let stubMask = cprisk_verify_svc_stub_integrity()
+        if stubMask != 0 {
+            recordPinning(
+                host: host,
+                kind: .svcStubIntegrity,
+                detail: ["stub_mask": "\(stubMask)"]
+            )
+            #if !targetEnvironment(simulator)
+            return false
+            #endif
+        }
+
+        let ir = cprisk_recheck_integrity()
+        switch ir {
+        case 1:
+            recordPinning(host: host, kind: .integrityRecheckTamper, detail: ["recheck": "1"])
+            return false
+        case -2:
+            recordPinning(host: host, kind: .integrityRecheckComputeFailed, detail: ["recheck": "-2"])
+            return false
+        case -1:
+            break
+        default:
+            break
+        }
+        return true
+    }
+
+    /// 与 `SecTrustEvaluateWithError` 独立的 `SecTrustGetTrustResult` 交叉校验，降低单点 hook 面。
+    private func crossCheckTrustEvaluation(_ serverTrust: SecTrust, host: String) -> Bool {
+        var trustResult = SecTrustResultType.invalid
+        let status = SecTrustGetTrustResult(serverTrust, &trustResult)
+        guard status == errSecSuccess else {
+            recordPinning(
+                host: host,
+                kind: .trustResultMismatch,
+                detail: [
+                    "sec_trust_get_result_status": "\(status)",
+                    "trust_result": "\(trustResult.rawValue)",
+                ]
+            )
+            return false
+        }
+        switch trustResult {
+        case .proceed, .unspecified:
+            return true
+        default:
+            recordPinning(
+                host: host,
+                kind: .trustResultMismatch,
+                detail: [
+                    "trust_result": "\(trustResult.rawValue)",
+                ]
+            )
+            return false
+        }
+    }
+
+    private func recordPinning(host: String, kind: CertificatePinningTelemetryKind, detail: [String: String]) {
+        CertificatePinningTelemetry.shared.record(host: host, kind: kind, detail: detail)
     }
 
     // ASN.1 SPKI headers for wrapping raw key bytes into DER SubjectPublicKeyInfo.
@@ -122,12 +258,12 @@ public final class CertificatePinningSessionDelegate: NSObject, URLSessionDelega
         0x81, 0x04, 0x00, 0x22, 0x03, 0x62, 0x00
     ]
 
-    /// Extract SPKI SHA-256 hash from a certificate
-    private func spkiSHA256(certificate: SecCertificate) -> String? {
+    /// Extract raw SPKI SHA-256 digest bytes from a certificate.
+    private func spkiSHA256Digest(certificate: SecCertificate) -> Data? {
         guard let publicKey = SecCertificateCopyKey(certificate) else { return nil }
         var error: Unmanaged<CFError>?
         guard let publicKeyData = SecKeyCopyExternalRepresentation(publicKey, &error) as Data? else {
-            error?.takeRetainedValue()  // release to avoid leak
+            _ = error?.takeRetainedValue()  // release to avoid leak
             return nil
         }
 
@@ -161,8 +297,7 @@ public final class CertificatePinningSessionDelegate: NSObject, URLSessionDelega
 
         var spkiData = Data(header)
         spkiData.append(publicKeyData)
-        let hash = SHA256.hash(data: spkiData)
-        return Data(hash).base64EncodedString()
+        return Data(SHA256.hash(data: spkiData))
     }
 
     @available(iOS, deprecated: 15.0)
@@ -177,16 +312,42 @@ public final class CertificatePinningSessionDelegate: NSObject, URLSessionDelega
         SecTrustGetCertificateAtIndex(trust, index)
     }
 
-    /// Create a URLSession with certificate pinning
+    /// Create a URLSession with certificate pinning (digest-backed material; no long-lived `sha256/...` strings on the delegate).
+    public static func pinnedSession(
+        pinMaterial: PinnedCertificatePinMaterial,
+        configuration: URLSessionConfiguration = .ephemeral,
+        allowsSystemCA: Bool = false
+    ) -> URLSession {
+        let delegate = CertificatePinningSessionDelegate(
+            pinMaterial: pinMaterial,
+            allowsSystemCA: allowsSystemCA
+        )
+        return URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+    }
+
+    /// Convenience: builds ``PinnedCertificatePinMaterial`` from pin strings (invalid entries ignored).
     public static func pinnedSession(
         hashes: Set<String>,
         configuration: URLSessionConfiguration = .ephemeral,
         allowsSystemCA: Bool = false
     ) -> URLSession {
-        let delegate = CertificatePinningSessionDelegate(
-            pinnedHashes: hashes,
+        pinnedSession(
+            pinMaterial: PinnedCertificatePinMaterial(pinStrings: hashes),
+            configuration: configuration,
             allowsSystemCA: allowsSystemCA
         )
-        return URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+    }
+}
+
+private enum PinningMonotonicNanos {
+    private static let timebase: mach_timebase_info_data_t = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return info
+    }()
+
+    static func now() -> UInt64 {
+        let t = mach_absolute_time()
+        return t * UInt64(timebase.numer) / UInt64(timebase.denom)
     }
 }

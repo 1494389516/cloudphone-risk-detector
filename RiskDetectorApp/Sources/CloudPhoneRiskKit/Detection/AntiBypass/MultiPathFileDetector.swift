@@ -20,12 +20,7 @@ struct MultiPathFileDetector: Detector {
         var score: Double = 0
         var methods: [String] = []
 
-        let criticalPaths = [
-            "/Applications/Cydia.app",
-            "/Applications/Sileo.app",
-            "/var/jb",
-            "/Library/MobileSubstrate/MobileSubstrate.dylib"
-        ]
+        let criticalPaths = ObfuscatedConstants.jailbreakConsensusCriticalPaths
 
         for path in criticalPaths {
             let result = checkPathWithAllMethods(path)
