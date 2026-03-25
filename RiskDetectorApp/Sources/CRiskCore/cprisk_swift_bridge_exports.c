@@ -391,6 +391,14 @@ CPRISK_ALIAS_RET(int, cpra_0111, cprisk_pinset_contains_sha256_digest,
                  (const uint8_t *candidate_digest, size_t candidate_len,
                   const uint8_t *packed_pins, size_t pin_count),
                  (candidate_digest, candidate_len, packed_pins, pin_count))
+CPRISK_ALIAS_RET(int, cpra_0112, cprisk_spki_sha256_from_sec_certificate,
+                 (void *sec_certificate_ref, uint8_t out_digest[32]),
+                 (sec_certificate_ref, out_digest))
+CPRISK_ALIAS_RET(int, cpra_0113, cprisk_pinset_match_layered_sha256_digest,
+                 (const uint8_t *candidate_digest, size_t candidate_len,
+                  const uint8_t *packed_pins, size_t pin_count,
+                  const uint8_t *scopes, uint32_t chain_index),
+                 (candidate_digest, candidate_len, packed_pins, pin_count, scopes, chain_index))
 
 static const void *const cprisk_swift_bridge_keepalive_i[] = {
     (const void *)&cpra_0001, (const void *)&cpra_0002, (const void *)&cpra_0003,
@@ -429,7 +437,8 @@ static const void *const cprisk_swift_bridge_keepalive_i[] = {
     (const void *)&cpra_0100, (const void *)&cpra_0101, (const void *)&cpra_0102,
     (const void *)&cpra_0103, (const void *)&cpra_0104, (const void *)&cpra_0105,
     (const void *)&cpra_0106, (const void *)&cpra_0107, (const void *)&cpra_0108,
-    (const void *)&cpra_0109, (const void *)&cpra_0110, (const void *)&cpra_0111,
+    (const void *)&cpra_0109,     (const void *)&cpra_0110, (const void *)&cpra_0111,
+    (const void *)&cpra_0112, (const void *)&cpra_0113,
 };
 
 void cprisk_swift_bridge_force_link(void) {

@@ -1,4 +1,4 @@
-import CryptoKit
+import CRiskCore
 import Darwin
 import Foundation
 import Security
@@ -131,26 +131,25 @@ public final class CertificatePinningSessionDelegate: NSObject, URLSessionDelega
             certificates = certs
         }
 
-        for cert in certificates {
-            if let spkiDigest = spkiSHA256Digest(certificate: cert) {
-                let swiftMatch = pinMaterial.containsRawDigest(spkiDigest)
-                let coreMatch = pinMaterial.containsRawDigestViaCore(spkiDigest)
-                if swiftMatch != coreMatch {
-                    recordPinning(
-                        host: host,
-                        kind: .pinValidatorDiverged,
-                        detail: [
-                            "swift_match": swiftMatch ? "1" : "0",
-                            "core_match": coreMatch ? "1" : "0",
-                        ]
-                    )
-                    completionHandler(.cancelAuthenticationChallenge, nil)
-                    return
-                }
-                if swiftMatch && coreMatch {
-                    completionHandler(.useCredential, URLCredential(trust: serverTrust))
-                    return
-                }
+        for (chainIndex, cert) in certificates.enumerated() {
+            guard let spkiDigest = spkiSHA256DigestFromCore(certificate: cert) else { continue }
+            let swiftMatch = pinMaterial.matchesLayeredDigest(spkiDigest, chainIndex: chainIndex)
+            let coreMatch = pinMaterial.matchesLayeredDigestViaCore(spkiDigest, chainIndex: chainIndex)
+            if swiftMatch != coreMatch {
+                recordPinning(
+                    host: host,
+                    kind: .pinValidatorDiverged,
+                    detail: [
+                        "swift_match": swiftMatch ? "1" : "0",
+                        "core_match": coreMatch ? "1" : "0",
+                    ]
+                )
+                completionHandler(.cancelAuthenticationChallenge, nil)
+                return
+            }
+            if swiftMatch && coreMatch {
+                completionHandler(.useCredential, URLCredential(trust: serverTrust))
+                return
             }
         }
 
@@ -229,75 +228,15 @@ public final class CertificatePinningSessionDelegate: NSObject, URLSessionDelega
         CertificatePinningTelemetry.shared.record(host: host, kind: kind, detail: detail)
     }
 
-    // ASN.1 SPKI headers for wrapping raw key bytes into DER SubjectPublicKeyInfo.
-    // Required so that SHA-256 hashes match those produced by standard tooling
-    // (e.g. `openssl x509 -pubkey | openssl pkey -pubin -outform der | sha256`).
-    // RSA-2048: PKCS#1 key data is 270 bytes
-    private static let rsa2048SPKIHeader: [UInt8] = [
-        0x30, 0x82, 0x01, 0x22, 0x30, 0x0D, 0x06, 0x09,
-        0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01,
-        0x01, 0x05, 0x00, 0x03, 0x82, 0x01, 0x0F, 0x00
-    ]
-    // RSA-4096: PKCS#1 key data is 526 bytes
-    private static let rsa4096SPKIHeader: [UInt8] = [
-        0x30, 0x82, 0x02, 0x22, 0x30, 0x0D, 0x06, 0x09,
-        0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01,
-        0x01, 0x05, 0x00, 0x03, 0x82, 0x02, 0x0F, 0x00
-    ]
-    // EC P-256: uncompressed point is 65 bytes
-    private static let ecP256SPKIHeader: [UInt8] = [
-        0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2A, 0x86,
-        0x48, 0xCE, 0x3D, 0x02, 0x01, 0x06, 0x08, 0x2A,
-        0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07, 0x03,
-        0x42, 0x00
-    ]
-    // EC P-384: uncompressed point is 97 bytes
-    private static let ecP384SPKIHeader: [UInt8] = [
-        0x30, 0x76, 0x30, 0x10, 0x06, 0x07, 0x2A, 0x86,
-        0x48, 0xCE, 0x3D, 0x02, 0x01, 0x06, 0x05, 0x2B,
-        0x81, 0x04, 0x00, 0x22, 0x03, 0x62, 0x00
-    ]
-
-    /// Extract raw SPKI SHA-256 digest bytes from a certificate.
-    private func spkiSHA256Digest(certificate: SecCertificate) -> Data? {
-        guard let publicKey = SecCertificateCopyKey(certificate) else { return nil }
-        var error: Unmanaged<CFError>?
-        guard let publicKeyData = SecKeyCopyExternalRepresentation(publicKey, &error) as Data? else {
-            _ = error?.takeRetainedValue()  // release to avoid leak
-            return nil
-        }
-
-        // Determine the appropriate SPKI header based on key type and size
-        let header: [UInt8]
-        if let attrs = SecKeyCopyAttributes(publicKey) as? [CFString: Any],
-           let type = attrs[kSecAttrKeyType] as? String {
-            if type == (kSecAttrKeyTypeRSA as String) {
-                switch publicKeyData.count {
-                case 270: header = Self.rsa2048SPKIHeader
-                case 526: header = Self.rsa4096SPKIHeader
-                default:
-                    Logger.log("spkiSHA256: unsupported RSA key size \(publicKeyData.count) bytes")
-                    header = []
-                }
-            } else if type == (kSecAttrKeyTypeECSECPrimeRandom as String) {
-                switch publicKeyData.count {
-                case 65: header = Self.ecP256SPKIHeader
-                case 97: header = Self.ecP384SPKIHeader
-                default:
-                    Logger.log("spkiSHA256: unsupported EC key size \(publicKeyData.count) bytes")
-                    header = []
-                }
-            } else {
-                Logger.log("spkiSHA256: unsupported key type")
-                header = []
-            }
-        } else {
-            header = []
-        }
-
-        var spkiData = Data(header)
-        spkiData.append(publicKeyData)
-        return Data(SHA256.hash(data: spkiData))
+    /// Extract raw SPKI SHA-256 digest bytes from a certificate (CRiskCore; SPKI DER + hash in C).
+    private func spkiSHA256DigestFromCore(certificate: SecCertificate) -> Data? {
+        var digest = [UInt8](repeating: 0, count: 32)
+        let rc = cprisk_spki_sha256_from_sec_certificate(
+            Unmanaged.passUnretained(certificate).toOpaque(),
+            &digest
+        )
+        guard rc == 0 else { return nil }
+        return Data(digest)
     }
 
     @available(iOS, deprecated: 15.0)

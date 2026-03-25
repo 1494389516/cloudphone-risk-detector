@@ -52,6 +52,46 @@ final class CertificatePinningTests: XCTestCase {
         XCTAssertFalse(material.containsRawDigestViaCore(other))
     }
 
+    func testLayeredLeafPinOnlyMatchesChainIndexZero() {
+        let digest = Data(repeating: 0x55, count: 32)
+        let pin = "leaf/sha256/" + digest.base64EncodedString()
+        let m = PinnedCertificatePinMaterial(pinStrings: Set([pin]))
+        XCTAssertTrue(m.matchesLayeredDigest(digest, chainIndex: 0))
+        XCTAssertFalse(m.matchesLayeredDigest(digest, chainIndex: 1))
+        XCTAssertTrue(m.matchesLayeredDigestViaCore(digest, chainIndex: 0))
+        XCTAssertFalse(m.matchesLayeredDigestViaCore(digest, chainIndex: 1))
+    }
+
+    func testLayeredIntermediatePinOnlyMatchesNonLeaf() {
+        let digest = Data(repeating: 0x66, count: 32)
+        let pin = "intermediate/sha256/" + digest.base64EncodedString()
+        let m = PinnedCertificatePinMaterial(pinStrings: Set([pin]))
+        XCTAssertFalse(m.matchesLayeredDigest(digest, chainIndex: 0))
+        XCTAssertTrue(m.matchesLayeredDigest(digest, chainIndex: 1))
+        XCTAssertTrue(m.matchesLayeredDigest(digest, chainIndex: 2))
+        XCTAssertFalse(m.matchesLayeredDigestViaCore(digest, chainIndex: 0))
+        XCTAssertTrue(m.matchesLayeredDigestViaCore(digest, chainIndex: 1))
+    }
+
+    func testExplicitAnyPrefixMatchesAllChainIndices() {
+        let digest = Data(repeating: 0x77, count: 32)
+        let pin = "any/sha256/" + digest.base64EncodedString()
+        let m = PinnedCertificatePinMaterial(pinStrings: Set([pin]))
+        XCTAssertTrue(m.matchesLayeredDigest(digest, chainIndex: 0))
+        XCTAssertTrue(m.matchesLayeredDigest(digest, chainIndex: 3))
+        XCTAssertTrue(m.matchesLayeredDigestViaCore(digest, chainIndex: 0))
+        XCTAssertTrue(m.matchesLayeredDigestViaCore(digest, chainIndex: 3))
+    }
+
+    func testCanonicalPinStringsIncludesLayerPrefixes() {
+        let b64 = Data(repeating: 0x88, count: 32).base64EncodedString()
+        let leaf = "leaf/sha256/\(b64)"
+        let intmd = "intermediate/sha256/\(b64)"
+        let any = "sha256/\(b64)"
+        let canon = PinnedCertificatePinMaterial.canonicalPinStrings(from: Set([leaf, intmd, any]))
+        XCTAssertEqual(Set([leaf, intmd, any]), canon)
+    }
+
     func testInvalidPinsProduceEmptyMaterial() {
         let m = PinnedCertificatePinMaterial(pinStrings: ["sha256/not-valid", "nope"])
         XCTAssertTrue(m.isEmpty)

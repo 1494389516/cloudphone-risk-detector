@@ -1035,6 +1035,23 @@ int cprisk_pinset_contains_sha256_digest(
     size_t pin_count
 );
 
+/// Compute SPKI SHA-256 from a `SecCertificateRef` (Apple Security.framework).
+/// On success writes 32 bytes to `out_digest` and returns 0. Negative codes: -1 null, -2 no key,
+/// -3 external representation failed, -4 unsupported key layout (non-Apple builds return -4).
+int cprisk_spki_sha256_from_sec_certificate(void *sec_certificate_ref, uint8_t out_digest[32]);
+
+/// Layered pin match: `scopes` has one byte per pin — 0 = any position, 1 = leaf only (`chain_index == 0`),
+/// 2 = intermediate / non-leaf (`chain_index >= 1`). `packed_pins` is `pin_count * 32` bytes.
+/// Returns 1 on match, 0 on no match, -1 on invalid input.
+int cprisk_pinset_match_layered_sha256_digest(
+    const uint8_t *candidate_digest,
+    size_t candidate_len,
+    const uint8_t *packed_pins,
+    size_t pin_count,
+    const uint8_t *scopes,
+    uint32_t chain_index
+);
+
 /// arm64: returns 1 if [fn, fn+len) contains at least one A64 `svc` opcode (Darwin syscall ABI).
 int cprisk_stub_contains_svc_opcode(const void *fn, size_t len);
 

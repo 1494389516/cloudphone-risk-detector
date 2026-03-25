@@ -437,11 +437,19 @@ public struct RiskDetectionEngine: Sendable {
                 if let action = forcedAction {
                     log("Force rule applied, action: \(action.rawValue)")
                 }
-                sink = IntermediateDecision(
-                    adjustedScore: adjustedScore,
+                let pinningFloor = applyCertificatePinningScenarioFloors(
+                    score: adjustedScore,
                     forcedAction: forcedAction,
+                    scenario: scenario,
+                    signals: collected.allSignals,
+                    scenarioPolicy: collected.scenarioPolicy
+                )
+                sink = IntermediateDecision(
+                    adjustedScore: pinningFloor.adjustedScore,
+                    forcedAction: pinningFloor.forcedAction,
                     rawFinalScore: finalScore,
-                    scoreComponents: scoreComponents
+                    scoreComponents: scoreComponents,
+                    decisionHints: pinningFloor.decisionHints
                 )
             } else {
                 poison = poison &* 0x100000001b3 &+ 0xC6A4A7935BD1E995
@@ -449,7 +457,8 @@ public struct RiskDetectionEngine: Sendable {
                     adjustedScore: collected.scenarioPolicy.criticalThreshold,
                     forcedAction: .block,
                     rawFinalScore: finalScore,
-                    scoreComponents: scoreComponents
+                    scoreComponents: scoreComponents,
+                    decisionHints: [:]
                 )
             }
             budget += 1
@@ -465,7 +474,8 @@ public struct RiskDetectionEngine: Sendable {
                 hardComponent: 0,
                 softComponent: 0,
                 tamperedCount: 0
-            )
+            ),
+            decisionHints: [:]
         )
     }
 
@@ -552,7 +562,13 @@ public struct RiskDetectionEngine: Sendable {
                     scenario: scenario,
                     compressedDigest: collected.compressResult.digest,
                     mappingVersion: collected.compressResult.mappingVersion,
-                    decisionMetadata: reconciliation.metadata.isEmpty ? nil : reconciliation.metadata
+                    decisionMetadata: mergedDecisionMetadata(
+                        intermediate.decisionHints,
+                        reconciliation.metadata
+                    ).isEmpty ? nil : mergedDecisionMetadata(
+                        intermediate.decisionHints,
+                        reconciliation.metadata
+                    )
                 )
             default:
                 poison = poison &* 0x9e3779b97f4a7c15 &+ 0xD6E8FEB86659FD93
@@ -1172,6 +1188,95 @@ public struct RiskDetectionEngine: Sendable {
         lhs.severity >= rhs.severity ? lhs : rhs
     }
 
+    private func applyCertificatePinningScenarioFloors(
+        score: Double,
+        forcedAction: RiskAction?,
+        scenario: RiskScenario,
+        signals: [RiskSignal],
+        scenarioPolicy: ScenarioPolicy
+    ) -> (adjustedScore: Double, forcedAction: RiskAction?, decisionHints: [String: String]) {
+        guard isCertificatePinningFloorScenario(scenario) else {
+            return (score, forcedAction, [:])
+        }
+
+        let pinSignals = signals.filter { $0.id == SignalID.certificatePinningAnomaly }
+        guard !pinSignals.isEmpty else {
+            return (score, forcedAction, [:])
+        }
+
+        enum Tier: Int {
+            case none = 0
+            case softTiming = 1
+            case hardIntegrity = 2
+            case tamperedPath = 3
+        }
+
+        var strongest: Tier = .none
+        for signal in pinSignals {
+            switch signal.state {
+            case .tampered?:
+                strongest = .tamperedPath
+            case .hard(let detected)? where detected:
+                if strongest.rawValue < Tier.hardIntegrity.rawValue {
+                    strongest = .hardIntegrity
+                }
+            case .soft(let confidence)? where confidence >= 0.5:
+                if strongest.rawValue < Tier.softTiming.rawValue {
+                    strongest = .softTiming
+                }
+            default:
+                continue
+            }
+        }
+
+        guard strongest != .none else {
+            return (score, forcedAction, [:])
+        }
+
+        var hints: [String: String] = [
+            "pinning_floor_applied": "1",
+            "pinning_floor_signal_count": "\(pinSignals.count)",
+        ]
+        var adjustedScore = score
+        var resolvedAction = forcedAction
+
+        switch strongest {
+        case .softTiming:
+            hints["pinning_floor_tier"] = "soft_timing"
+            adjustedScore = max(adjustedScore, scenarioPolicy.mediumThreshold)
+            let action: RiskAction = scenario == .payment ? .stepUpAuth : .challenge
+            resolvedAction = strictestAction(resolvedAction, action)
+        case .hardIntegrity:
+            hints["pinning_floor_tier"] = "hard_integrity"
+            adjustedScore = max(adjustedScore, scenarioPolicy.highThreshold)
+            let action: RiskAction = scenario == .payment ? .block : .stepUpAuth
+            resolvedAction = strictestAction(resolvedAction, action)
+        case .tamperedPath:
+            hints["pinning_floor_tier"] = "tampered_path"
+            adjustedScore = max(adjustedScore, scenarioPolicy.criticalThreshold)
+            resolvedAction = strictestAction(resolvedAction, .block)
+        case .none:
+            break
+        }
+
+        hints["pinning_floor_score"] = String(format: "%.1f", adjustedScore)
+        if let resolvedAction {
+            hints["pinning_floor_action"] = String(resolvedAction.rawValue)
+        }
+        return (adjustedScore, resolvedAction, hints)
+    }
+
+    private func isCertificatePinningFloorScenario(_ scenario: RiskScenario) -> Bool {
+        switch scenario {
+        case .payment, .register, .login, .accountChange, .sensitiveAction:
+            return true
+        case .query, .default, .apiAccess:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+
     /// 将「决策树 / ForceRule」的初步动作与 **分数档位策略动作**、**多源证据聚合升级**对齐，避免：
     /// - 越狱等单点 ForceRule 被绕过时，累计分已超过档位却仍被树路径放行；
     /// - 仅依赖某一 detector 的强制规则而忽略跨层/跨家族一致性。
@@ -1344,7 +1449,8 @@ public struct RiskDetectionEngine: Sendable {
             adjustedScore: effectiveScore,
             forcedAction: intermediate.forcedAction,
             rawFinalScore: max(baseVerdict.score, intermediate.rawFinalScore),
-            scoreComponents: intermediate.scoreComponents
+            scoreComponents: intermediate.scoreComponents,
+            decisionHints: intermediate.decisionHints
         )
         let preliminaryAction = strictestAction(
             baseVerdict.internalAction,
@@ -1359,7 +1465,7 @@ public struct RiskDetectionEngine: Sendable {
             context: context
         )
         let metadata = mergedDecisionMetadata(
-            baseVerdict.decisionMetadata,
+            mergedDecisionMetadata(baseVerdict.decisionMetadata, effectiveIntermediate.decisionHints),
             reconciliation.metadata
         )
         return RiskVerdict(
@@ -1751,6 +1857,7 @@ private struct IntermediateDecision: Sendable {
     let forcedAction: RiskAction?
     let rawFinalScore: Double
     let scoreComponents: ScoreComponents
+    let decisionHints: [String: String]
 }
 
 private struct DecisionReconciliation: Sendable {
