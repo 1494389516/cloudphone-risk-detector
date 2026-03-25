@@ -177,6 +177,7 @@ targets:
       configs:
         Release:
           SWIFT_REFLECTION_METADATA_LEVEL: minimal
+          SWIFT_COMPILATION_MODE: wholemodule
           SWIFT_SERIALIZE_DEBUGGING_OPTIONS: NO
           GCC_GENERATE_TESTING_SYMBOLS: NO
     dependencies:

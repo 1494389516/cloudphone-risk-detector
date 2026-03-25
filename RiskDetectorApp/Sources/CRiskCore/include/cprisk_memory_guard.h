@@ -70,6 +70,7 @@ int cprisk_advance_ucontext_pc(void *uap, uintptr_t advance_bytes);
  * Lightweight dyld / VM consistency tick:
  *   1. Dyld layout digest (v2: paths + bases + __TEXT bounds) vs baseline snapshot
  *   2. VM scan for executable mappings inconsistent with dyld image coverage / user_tag shape
+ *      (device-only; anonymous RX from the direct-syscall SVC stub reloc page is allow-listed)
  * Returns bitmask (see CPRISK_MEM_GUARD_TICK_*). Safe to call from hardened loops (watchdog).
  */
 #define CPRISK_MEM_GUARD_TICK_IMAGE_LIST_CHANGED 1u

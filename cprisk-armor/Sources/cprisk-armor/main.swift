@@ -102,7 +102,7 @@ func printUsage() {
       --pass3           Pass 3: Data Segment Encryption
       --pass4           Pass 4: Integrity Anchor
       --pass5           Pass 5: Structure Obfuscation
-      --pass6           Pass 6: Symbol Stripping (nlist obfuscation)
+      --pass6           Pass 6: Symbol Stripping + export trie scrub (MH_EXECUTE)
       --pass7           Pass 7: Anti-Debug Metadata Injection
       --pass8           Pass 8: Instruction Substitution
       --pass9           Pass 9: Control Flow Orchestrator (policy-guided binary rewrite)
@@ -338,6 +338,7 @@ do {
         (13, VMProtectorPass(policyFilePath: options.vmpPolicyPath)),
         (12, TextSegmentEncryptorPass()),
         (6, SymbolStripperPass()),
+        (6, ExportTrieScrubberPass()),
     ]
 
     for (index, pass) in passes {

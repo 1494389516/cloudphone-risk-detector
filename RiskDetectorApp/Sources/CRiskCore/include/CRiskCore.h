@@ -90,7 +90,7 @@ enum {
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_MPROTECT_MACH_DIVERGENCE = 1u << 27,
     /** Anonymous executable RX slab and/or Stalker-style PC↔VM cross-correlation (see CPRISK_DBI_MARKER_*). */
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DBI_VM_TRACE_CORREL = 1u << 28,
-    /** arm64e: PAC auth of watchdog thread main impl failed at pthread entry (see anti_debug_watchdog.c). */
+    /** arm64e: PAC auth of watchdog pthread thunk→bridge hop failed at thread entry (see anti_debug_watchdog.c). */
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_PAC_THREAD_ENTRY = 1u << 29,
     /** Dyld image path digest changed and/or executable VM region outside any loaded image (memory_guard tick). */
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_IMAGE_WHITELIST = 1u << 30,

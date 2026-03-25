@@ -118,9 +118,7 @@ static atomic_uint_fast32_t s_watchdog_mailbox_peer_seq_initialized[CPRISK_WATCH
  * indirection. Peer-liveness is additionally carried over per-worker Mach receive ports,
  * so the stall detector does not rely only on shared-memory heartbeats.
  */
-/* Private discriminator for PAC sign/auth of cprisk_watchdog_thread_main_impl (LE: "CPRISKWD"). */
-#define CPRISK_WATCHDOG_PTHREAD_MAIN_PAC_DISC 0x43505249534B5744ULL
-/* Intermediate bridge between pthread thunk and worker body (LE: "CPRISKBR") — second PAC hop. */
+/* Intermediate bridge between pthread thunk and worker body (LE: "CPRISKBR") — PAC hop before main_impl. */
 #define CPRISK_WATCHDOG_PTHREAD_BRIDGE_PAC_DISC 0x43505249534B4252ULL
 /* arm64e: pthread start_routine uses PAC-signed pointer to the thunk (not raw __TEXT address). */
 #define CPRISK_WATCHDOG_PTHREAD_THUNK_PAC_DISC 0x43505249534B5448ULL
