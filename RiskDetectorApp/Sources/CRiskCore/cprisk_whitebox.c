@@ -793,6 +793,10 @@ static int cprisk_whitebox_eval_record_recompute_i(
     return cprisk_whitebox_eval_record_i(bundle, record, input, out);
 }
 
+static uint32_t cprisk_wb_u32_min_i(uint32_t a, uint32_t b) {
+    return a < b ? a : b;
+}
+
 /* Domains 6-9: when hybrid KDF has produced effectiveRoot, PRF input is
  * SHA256(label || domain_id || input || er); otherwise identity (domains 1-5
  * unchanged). Identity-before-hybrid preserves early constructors (e.g. header
@@ -870,10 +874,6 @@ int cprisk_test_whitebox_prepare_domain_input(
         domain_id,
         input ? input : s_zero_state_i,
         out);
-}
-
-static uint32_t cprisk_wb_u32_min_i(uint32_t a, uint32_t b) {
-    return a < b ? a : b;
 }
 
 static uint32_t cprisk_base_capabilities_i(void) {

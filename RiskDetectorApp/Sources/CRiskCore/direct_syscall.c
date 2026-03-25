@@ -242,10 +242,6 @@ static int cprisk_svc_rx_page_mach_leaf_ok_i(void) {
         if ((sub.max_protection & VM_PROT_WRITE) != 0) {
             return 0;
         }
-        /* Private MAP_ANON page used for relocated stubs — not a shared pmap mapping. */
-        if (sub.is_shared != 0) {
-            return 0;
-        }
         return 1;
     }
     return 0;

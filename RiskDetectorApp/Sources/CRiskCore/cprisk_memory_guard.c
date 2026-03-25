@@ -27,10 +27,9 @@
 #endif
 #if defined(__APPLE__)
 #include <mach/vm_prot.h>
-#include <stdint.h>
 #endif
 
-#if defined(__APPLE__) && !(defined(TARGET_OS_SIMULATOR) && TARGET_OS_SIMULATOR)
+#if defined(__APPLE__)
 extern void cprisk_svc_reloc_rx_page_whitelist_bounds(uintptr_t *out_lo, uintptr_t *out_hi);
 #endif
 

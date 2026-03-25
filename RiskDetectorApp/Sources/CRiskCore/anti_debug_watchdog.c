@@ -120,6 +120,8 @@ static atomic_uint_fast32_t s_watchdog_mailbox_peer_seq_initialized[CPRISK_WATCH
  */
 /* Private discriminator for PAC sign/auth of cprisk_watchdog_thread_main_impl (LE: "CPRISKWD"). */
 #define CPRISK_WATCHDOG_PTHREAD_MAIN_PAC_DISC 0x43505249534B5744ULL
+/* Intermediate bridge between pthread thunk and worker body (LE: "CPRISKBR") — second PAC hop. */
+#define CPRISK_WATCHDOG_PTHREAD_BRIDGE_PAC_DISC 0x43505249534B4252ULL
 /* arm64e: pthread start_routine uses PAC-signed pointer to the thunk (not raw __TEXT address). */
 #define CPRISK_WATCHDOG_PTHREAD_THUNK_PAC_DISC 0x43505249534B5448ULL
 /* Bit in last_prologue_fail_mask when libsystem pthread_create prologue mismatches baseline. */
@@ -172,6 +174,7 @@ extern cprisk_vm_flow_t cprisk_vm_dispatch_leaf_wb_wrapped_i(
     cprisk_vm_oph_fn materialized);
 
 static void *cprisk_watchdog_pthread_thunk(void *arg);
+static void *cprisk_watchdog_thread_main_bridge(void *arg);
 static void *cprisk_watchdog_thread_main_impl(void *arg);
 static void cprisk_watchdog_reset_mailboxes_locked(void);
 static int cprisk_watchdog_init_mailboxes_locked(void);
@@ -180,14 +183,14 @@ static void cprisk_watchdog_mailbox_drain_i(uint32_t worker_id, uint64_t now_ns)
 static int cprisk_watchdog_mach_peer_verify_i(uint32_t worker_id);
 static void cprisk_watchdog_mark_peer_stall_i(void);
 
-static void *s_watchdog_main_signed_fp;
+static void *s_watchdog_bridge_signed_fp;
 static void *s_watchdog_thunk_signed_fp;
 
 __attribute__((constructor(4)))
 static void cprisk_watchdog_sign_main_entry_i(void) {
-    s_watchdog_main_signed_fp = cprisk_pac_sign_function_pointer(
-        (const void *)&cprisk_watchdog_thread_main_impl,
-        (uintptr_t)CPRISK_WATCHDOG_PTHREAD_MAIN_PAC_DISC);
+    s_watchdog_bridge_signed_fp = cprisk_pac_sign_function_pointer(
+        (const void *)&cprisk_watchdog_thread_main_bridge,
+        (uintptr_t)CPRISK_WATCHDOG_PTHREAD_BRIDGE_PAC_DISC);
     s_watchdog_thunk_signed_fp = cprisk_pac_sign_function_pointer(
         (const void *)&cprisk_watchdog_pthread_thunk,
         (uintptr_t)CPRISK_WATCHDOG_PTHREAD_THUNK_PAC_DISC);
@@ -258,10 +261,14 @@ static cprisk_anti_debug_watchdog_snapshot_t s_watchdog_snapshot = {
     .vm_mprotect_mach_trap_mismatch_total = 0u,
 };
 
+static void *cprisk_watchdog_thread_main_bridge(void *arg) {
+    return cprisk_watchdog_thread_main_impl(arg);
+}
+
 static void *cprisk_watchdog_pthread_thunk(void *arg) {
     void *fn = cprisk_pac_auth_function_pointer(
-        s_watchdog_main_signed_fp,
-        (uintptr_t)CPRISK_WATCHDOG_PTHREAD_MAIN_PAC_DISC);
+        s_watchdog_bridge_signed_fp,
+        (uintptr_t)CPRISK_WATCHDOG_PTHREAD_BRIDGE_PAC_DISC);
     if (fn == NULL) {
         const uint32_t wid = (uint32_t)(uintptr_t)arg;
         if (wid < CPRISK_WATCHDOG_THREAD_COUNT) {
@@ -320,7 +327,7 @@ static void cprisk_watchdog_fill_prologue_addrs_i(const void **addrs) {
     addrs[4] = (const void *)&cprisk_probe_debugger_via_signal;
     addrs[5] = (const void *)&cprisk_text_jit_decrypt;
     addrs[6] = (const void *)&cprisk_watchdog_pthread_thunk;
-    addrs[7] = (const void *)&cprisk_watchdog_pthread_thunk;
+    addrs[7] = (const void *)&cprisk_watchdog_thread_main_bridge;
     addrs[8] = (const void *)&cprisk_watchdog_thread_main_impl;
     addrs[9] = (const void *)&cprisk_vm_dispatch_leaf_wb_wrapped_i;
 }
@@ -1725,10 +1732,10 @@ int cprisk_start_anti_debug_watchdog(void) {
         void *thunk_expect = cprisk_pac_sign_function_pointer(
             (const void *)&cprisk_watchdog_pthread_thunk,
             (uintptr_t)CPRISK_WATCHDOG_PTHREAD_THUNK_PAC_DISC);
-        void *main_expect = cprisk_pac_sign_function_pointer(
-            (const void *)&cprisk_watchdog_thread_main_impl,
-            (uintptr_t)CPRISK_WATCHDOG_PTHREAD_MAIN_PAC_DISC);
-        if (s_watchdog_thunk_signed_fp != thunk_expect || s_watchdog_main_signed_fp != main_expect) {
+        void *bridge_expect = cprisk_pac_sign_function_pointer(
+            (const void *)&cprisk_watchdog_thread_main_bridge,
+            (uintptr_t)CPRISK_WATCHDOG_PTHREAD_BRIDGE_PAC_DISC);
+        if (s_watchdog_thunk_signed_fp != thunk_expect || s_watchdog_bridge_signed_fp != bridge_expect) {
             s_watchdog_state = CPRISK_WATCHDOG_STATE_STOPPED;
             s_watchdog_snapshot.running = 0u;
             s_watchdog_snapshot.anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_PAC_THREAD_ENTRY;
