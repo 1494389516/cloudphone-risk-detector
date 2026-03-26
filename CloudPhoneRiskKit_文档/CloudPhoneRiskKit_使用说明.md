@@ -1,6 +1,6 @@
-# CloudPhoneRiskKit 7.0 使用与构建说明
+# CloudPhoneRiskKit 7.3 使用与构建说明
 
-iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。6.0 引入自研壳（cprisk-armor）二进制保护与端云签名绑定；6.1 将壳升级为 5 Pass 工业化保护；6.2 对壳执行密码学重建（ABI v2：强制密钥注入 / HMAC 认证 / 随机 nonce / IntegrityAnchor HMAC），共 46 项漏洞修复；6.3 新增 Pass 6 符号表混淆、Codable 短别名 CodingKeys、ObjC selector 安全修复，壳升级为 6 Pass 全链路保护；6.4 将 SDK 架构改为 library.static + 全量 strip，IDA 中 SDK 函数全部显示为 sub_XXXX；6.5 引入白盒 PRF 引擎（5 域 S-box ~160KB，root key 不可逆提取）、AppSigningIdentityDetector 反重打包（TeamID/bundleID/entitlement 一致性 + 基线漂移检测）；6.6 新增 Pass 7 AntiDebugInjector、Pass 8 InstructionSubstitution、FridaModuleDetector、反篡改检测顺序稳定随机化；6.7 引入**控制流平坦化（CFF）**与**反去混淆**；6.8 补齐**反调试 runtime gate、Pass 10 ImportEncryptor、Pass 11 HeaderEncryptor、白盒 PRF 增强扩散**；7.0 进一步加入 **Pass 12 TextSegmentEncryptor** 与 **Pass 13 VMProtector(M3)**，并继续补强为「按页 text 恢复 + 空闲重加密 + guard page anti-dump + VM HMAC self-check + 双主循环解释器 + 白盒表 ASLR 绑定」这一代 13 Pass 壳链。cprisk-armor 当前支持 **13 Pass**。
+iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。**7.3** 为当前对外版本号（与 `Version.current` / 上报字段 `sdkVersion` 一致）。自研壳 **cprisk-armor** 已演进为 **13 Pass / ABI v2**（字符串与数据段加密、元数据抹除、完整性锚点、结构混淆、符号表混淆、反调试注入计划、ARM64 指令替换、CFF 编排、导入表与 Mach-O header 保护、`__TEXT` 页级加密、VMProtector 等），运行时由 **CRiskCore** 完成解密、白盒/legacy 双路径与完整性校验。各版本里程碑的摘要见仓库根目录 `README.md`「版本演进」表；本文聚焦接入、构建与壳工具使用。
 
 ---
 
@@ -41,7 +41,7 @@ open RiskDetectorApp.xcodeproj
 
 ### 2.4 壳工具链构建 (cprisk-armor)
 
-cprisk-armor 是编译后壳保护工具链，对 Mach-O 二进制执行 13 Pass 加固（字符串加密、Metadata 抹除、数据段加密、完整性锚点、结构混淆、符号表混淆、Pass 7 anti-debug 注入计划、Pass 8 ARM64 指令替换、Pass 9 ControlFlowOrchestrator、Pass 10 ImportEncryptor、Pass 11 HeaderEncryptor、Pass 12 TextSegmentEncryptor、Pass 13 VMProtector）。6.4 起 SDK 以静态库交付，壳对最终 App 二进制执行加固。6.5 起 Pass 4 写入白盒 PRF 四 section（`__swift5_awbm/awbc/awbd/awbt`），Pass 1/3/4 密钥通过白盒 PRF 派生，运行时优先走白盒路径。6.8 起 Pass 7 注入计划会被运行时真正消费为 inline patch gate；Pass 8 继续做 1:1 等长语义等价替换；Pass 9 结合 `cff_policy.yaml` 分配 CFF 计划并支持更多 dispatcher 风格；Pass 10 加密导入符号名到 `__swift5_dyrel`，Pass 11 加密并备份 Mach-O header 关键字段到 `__swift5_mhsav`；7.0 起 Pass 12 对 `__TEXT.__text` 做页级加密并写入 `__swift5_cgenc`，同时配套运行时按页按需解密与空闲重加密；Pass 13 则将 7 个高价值函数改写为 VM 跳板 + 自定义字节码，并在 `__swift5_mdvrt/__swift5_mdirt/__swift5_mdvsk` 中写入 dispatch/bytecode/self-expect 载荷。
+cprisk-armor 是编译后壳保护工具链，对 Mach-O 二进制执行 **13 Pass / ABI v2** 加固（字符串加密、Metadata 抹除、数据段加密、完整性锚点、结构混淆、符号表混淆、Pass 7 anti-debug 注入计划、Pass 8 ARM64 指令替换、Pass 9 ControlFlowOrchestrator、Pass 10 ImportEncryptor、Pass 11 HeaderEncryptor、Pass 12 TextSegmentEncryptor、Pass 13 VMProtector）。SDK 以静态库链入宿主，壳对**最终 App 可执行文件**执行加固；白盒 PRF 四 section（`__swift5_awbm/awbc/awbd/awbt`）由 Pass 4 写入，Pass 1/3/4 密钥经白盒派生；Pass 12 使用 `__swift5_cgenc`，Pass 13 使用 `__swift5_mdvrt` / `__swift5_mdirt` / self-check（`__swift5_mdvsi` 等）承载 dispatch、bytecode 与校验载荷。历史版本逐项说明见仓库根目录 `README.md`「版本演进」表。
 
 ```bash
 cd cprisk-armor
@@ -119,7 +119,7 @@ export CPRISK_ARMOR_KEY=<64-char-hex-string>
 2. `xcodebuild ... Release ...` 负责生成干净的最终 App 可执行文件；6.4 起建议对**最终 App 二进制**而不是 framework / static library 单独加壳。
 3. `cprisk-armor --all` 负责字符串加密、metadata 抹除、导入表加密、header 加密、text 页加密等全链路保护。
 
-**7.0+ 当前实现的额外说明：**
+**7.3 当前实现的额外说明：**
 
 - `SymbolStripper` 已在工具链内自动清空 `LC_SYMTAB/LC_DYSYMTAB` 关键字段，**不再需要**额外用 Python 手动修补 `symoff/nsyms` 才能让 IDA 正常显示 `sub_XXXX`。
 - `project.yml` 必须预留以下 section placeholder，否则 Pass 10/11/12/13 可能因尝试“追加 section”而失败：
@@ -346,9 +346,9 @@ let envelope = try await CPRiskKit.shared.buildSecureReportEnvelopeWithAttestati
 
 ---
 
-## 8.1 壳保护与 v2a 签名 (6.0-7.0)
+## 8.1 壳保护与 v2a 签名 (7.3)
 
-自研壳在运行时由 CRiskCore 自动完成 HMAC 验证、解密与完整性校验，无需调用方额外操作。SDK 在 `start()` / `evaluate()` 时自动初始化 armor runtime。6.1 新增 Anti-Dump 页面保护、密钥安全清零和运行时完整性重校验。6.2 升级 ABI v2：每个加密项附带 HMAC 认证标签 + 随机 nonce，解密前先验 HMAC 完整性；完整性锚点改为 HMAC 绑定 rootKey，无密钥不可恢复 fullHash。6.3 新增 Pass 6 符号表混淆与 Codable 短别名防御。6.4 壳对最终 App 二进制执行加固，配合全量 strip 实现 `sub_XXXX` 级别逆向对抗。6.5 引入白盒 PRF 引擎：anchor 校验、字符串解密密钥、数据段加载密钥、签名材料（runtime material）全部通过白盒 PRF 派生，root key 融入 ~160KB S-box 表不可逆提取，内存 dump 无法还原原始密钥；白盒不可用时自动 fallback 到 legacy HMAC 路径。6.8 进一步强化运行时链路：关键密码学路径会在被调试时静默毒化输出；watchdog 改为多频 worker + deadline 互监；Pass 7 `AntiDebugInjector` 的 injection plan 不再只是“预留 ABI”，而是会在运行时被消费为 `BRK #0xC0E0` inline gate；Pass 10 `ImportEncryptor` 负责加密导入符号名并由 `cprisk_import_resolver.c` 运行时解析；Pass 11 `HeaderEncryptor` 负责加密 Mach-O header 关键字段并由 `cprisk_header_restore.c` 做 sanity-checked 恢复；7.0 再新增 Pass 12 `TextSegmentEncryptor` 与 Pass 13 `VMProtector`：前者对 `__TEXT.__text` 执行页级加密，并由 `cprisk_jit_decrypt_page()`、`cprisk_text_encrypt_service_idle()` 与 guard page 形成“按需解密-空闲重加密-反 dump”闭环；后者将关键函数改写为 VM 跳板并由 `cprisk_vm_interpreter.c` 执行自定义字节码；VM 运行时已支持 handler 变体、VPC 仿射编码、opcode/immediate 双重加密、HMAC self-check、双主循环解释器、虚拟寄存器、VM 内部子调用，以及 M3 dead handler、opaque predicate chain、解释器自身 CFF 接线。白盒表当前还支持可选 ASLR 绑定，bootstrap 路径引入 mini-VM 保护关键初始化片段。
+自研壳在运行时由 CRiskCore 自动完成 HMAC 验证、解密与完整性校验，无需调用方额外操作。SDK 在 `start()` / `evaluate()` 时自动初始化 armor runtime。**7.3** 交付沿用 **ABI v2**：加密项带 HMAC 与随机 nonce；完整性锚点绑定 rootKey；白盒 PRF 负责 anchor / 字符串与数据段密钥 / runtime material（domain=5），不可用时 fallback legacy HMAC；Pass 12/13 分别提供 `__TEXT` 页级加密与 VM 解释执行（含 self-check、handler 散布、M3 反分析特性等）。Anti-Dump、guard page、import/header 恢复链与运行时毒化策略仍由 CRiskCore 统一实现。各里程碑的编年说明见 `README.md`「版本演进」。
 
 **ReportEnvelope v2a 签名**：壳完整性 material 会自动混入 `buildSecureReportEnvelope` 的 HMAC 签名密钥派生链：
 

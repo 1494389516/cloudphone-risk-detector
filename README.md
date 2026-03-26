@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
-  <img src="https://img.shields.io/badge/SDK-7.2-FF3B30?style=for-the-badge" alt="SDK">
+  <img src="https://img.shields.io/badge/SDK-7.3-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
   <img src="https://img.shields.io/badge/License-Proprietary-8E8E93?style=for-the-badge" alt="License">
 </p>
@@ -68,6 +68,7 @@
 | **7.0** | **TextSegmentEncryptor + VMProtector(M3) + 13 Pass 收口** | Pass 12 `TextSegmentEncryptor` 对 `__TEXT.__text` 做页级加密并写入 `__swift5_cgenc` 元数据，Pass 13 `VMProtector` 对 7 个高价值函数执行“ARM64 → 自定义字节码 + VM 入口跳板”虚拟化，运行时新增 `cprisk_vm_interpreter`、`__swift5_mdvrt/__swift5_mdirt` section、M2 handler 变体 / VPC 仿射编码 / 更多 ARM64 lift 覆盖，以及 M3 解释器自身 CFF 接线、dead handler 注入、VPC 不透明谓词链与可选自校验门控 |
 | **7.1** | **VM 自校验链路对齐 + dispatcher 跨单元散布 + 合规文档收口** | VM self-check 改为优先消费 `__swift5_mdvsi` span map 驱动注入与运行时校验，`cprisk-vm-self-expect` 同时支持 CPSF/CPSH（FNV/HMAC）产物写入；解释器主 dispatcher 延续函数指针表架构，并将 22 个 `cprisk_vm_oph_*` handler 拆分到多个 `.c` 编译单元，减少单文件语义聚合；同步更新 SDK 隐私声明与 App Store 合规文档，明确 7.1 加固升级不扩大 collected data / Required Reason API 边界 |
 | **7.2** | **MIE/MTE 姿态接入 + iPhoneOS 26 SDK 构建兼容** | Release 构建接入 `CPRISK_MTE_COMPILE_SUPPORT` 与 `ENABLE_ENHANCED_SECURITY`，新增 `cprisk_mte_guard` / `MIEPostureDetector`，通过 sysctl + 本地快照 + region canary 保守感知 Apple Memory Integrity Enforcement 姿态，并补齐 `HoneypotMemoryDetector` 在 iPhoneOS 26 SDK 下的 `ucontext_t` / PC 字段兼容路径，使 `xcodebuild -sdk iphoneos` 恢复全绿 |
+| **7.3** | **文档与版本收口** | README 移除冗长 6.x 独立章节；`CloudPhoneRiskKit_文档` 与合规/隐私声明统一为 7.3；`Version.current` 与对外 SDK 版本号对齐 |
 ## 架构概览
 
 ```
@@ -155,7 +156,7 @@
 
 ## 7.0 新增能力 — Pass 12/13 + VMP M3 收口
 
-7.0 在 6.8 的 runtime gate、Pass 10/11 与源码级 CFF 之上，完成了当前自研壳链路的两块关键拼图：第一，新增 **Pass 12 `TextSegmentEncryptor`**，对 `__TEXT.__text` 做页级加密并写入 `__swift5_cgenc` 元数据，使关键代码在静态视角下进一步密文化；第二，新增 **Pass 13 `VMProtector`**，对策略指定的 7 个高价值函数执行“原生 ARM64 指令 → 自定义 VM 字节码 + VM 入口跳板”的转换，运行时由 `CRiskCore` 中嵌入的 `cprisk_vm_interpreter.c` 解释执行；第三，在 VMP 基础上完成 **M3**：解释器自身纳入 CFF 接线、dispatch/bytecode 新增 dead handler 元数据与 VPC 不透明谓词链，运行时加入 dead bait handler、opaque predicate chain 与可选自校验门控，从而把对抗重点从“加密 + CFF”进一步推进到“虚拟化 + 反分析”。
+7.0 在既有壳链（runtime gate、Pass 10/11、源码级 CFF）之上，完成了当前自研壳链路的两块关键拼图：第一，新增 **Pass 12 `TextSegmentEncryptor`**，对 `__TEXT.__text` 做页级加密并写入 `__swift5_cgenc` 元数据，使关键代码在静态视角下进一步密文化；第二，新增 **Pass 13 `VMProtector`**，对策略指定的 7 个高价值函数执行“原生 ARM64 指令 → 自定义 VM 字节码 + VM 入口跳板”的转换，运行时由 `CRiskCore` 中嵌入的 `cprisk_vm_interpreter.c` 解释执行；第三，在 VMP 基础上完成 **M3**：解释器自身纳入 CFF 接线、dispatch/bytecode 新增 dead handler 元数据与 VPC 不透明谓词链，运行时加入 dead bait handler、opaque predicate chain 与可选自校验门控，从而把对抗重点从“加密 + CFF”进一步推进到“虚拟化 + 反分析”。
 
 ### 7.0 核心改动
 
@@ -171,188 +172,7 @@
 | **M3 dead handler 注入** | dispatch 表注入诱饵 raw opcode 映射，运行时存在 dead bait handler 路径，增加 pattern-based 语义恢复成本 |
 | **M3 opaque VPC 链** | 构建期写入 VPC predicate constants，运行时以不透明谓词链包裹 dispatch loop，使解释器 CFG 非线性化 |
 
----
-
-## 6.8 新增能力 — 反调试 Runtime Gate + Pass 10/11 + CFF/白盒强化
-
-6.8 在 6.7 的源码级 CFF 与 Pass 9 基础上，继续补齐三条关键链路：第一，反调试从“探针 + metadata”升级到“**最早期异常端口抢占 + AntiDebug plan 运行时 gate**”，实现 `__thread_init` 阶段注册、constructor 阶段回收校验，以及按 plan 对关键 patch site 注入 `BRK #0xC0E0` 的 inline runtime gate；第二，壳从 9 Pass 升级到 **11 Pass**，补齐 Pass 10 `ImportEncryptor` 与 Pass 11 `HeaderEncryptor`，并在运行时加入 import 解析缓存、header restore sanity fallback 与 dyld/OS 混合时序钩子；第三，CFF 与白盒继续强化，引入 `splitIndirect` dispatcher、`affine` 编码风格、CFF 覆盖建议器，以及白盒 PRF 的增强扩散层。
-
-### 6.8 核心改动
-
-| 改动 | 说明 |
-|------|------|
-| **早期异常端口抢占** | `__DATA,__thread_init` 阶段执行 `deny-attach + exception handler register`，并在 constructor 阶段做端口指纹对比与 hijack reclaim，缩小 Frida gadget 抢占窗口 |
-| **Runtime Gate 落地** | `AntiDebugInjector` 写入的 anti-debug plan 现在由运行时消费：解析 `patchSiteVMOffset`、在关键点写入 `BRK #0xC0E0`、由异常处理器在“非调试”路径透明跳过、在“调试/篡改”路径毒化 |
-| **Mach/Unix 双路径交叉校验** | `sysctl(P_TRACED)`、Mach exception ports、`task_info(TASK_EXTMOD_INFO)`、Mach port 数量异常联动，降低单一路径被 hook 时的盲区 |
-| **Frida 行为指纹升级** | 除固定端口/路径外，新增本地监听端口协议探测（`poll + AUTH/HTTP/NUL` 多探针）、D-Bus/Frida/Gum 响应指纹、可选全端口扫描与可插拔内存签名 hook |
-| **多频 watchdog** | watchdog 拆分为高/中/低频检查，加入 worker heartbeat / deadline 互监控与 peer stall 检测，覆盖“闪电 attach → 操作 → detach”窗口 |
-| **关键路径 timing canary** | 在完整性/密码学关键路径引入段间比例 timing canary，检测选择性单步与 DBI 导致的非线性时序膨胀 |
-| **Pass 10: ImportEncryptor** | 加密 bind/import 符号名写入 `__DATA.__swift5_dyrel`，运行时经白盒 domain 8 派生密钥解密并 `dlsym`，带完整性校验与解析缓存 |
-| **Pass 11: HeaderEncryptor** | 将 `mach_header_64` 关键字段加密备份到 `__DATA.__swift5_mhsav`，运行时优先还原，失败走 sanity-checked fallback 而非硬崩 |
-| **CFF 反模式识别强化** | `CFFDispatcher` 新增 `splitIndirect` 风格，状态编码新增 `affine`；Pass 9 增加 coverage advisor，帮助把更多高价值函数纳入 CFF 管理范围 |
-| **白盒 PRF 增强扩散** | 保持 ABI 四轮记录格式不变，但每轮执行双子轮 + 强扩散层（MDS-like byte mix），提升对白盒 DFA/CPA 的成本 |
-
----
-
-## 6.6 新增能力 — 反调试纵深 + Pass 7/8 + Frida 模块检测
-
-6.6 强化反调试与 Frida 对抗：cprisk-armor 新增 Pass 7 编译期 anti-debug 注入计划 ABI，并进一步加入 Pass 8 `InstructionSubstitution`，对 `__TEXT.__text` 中可安全替换的 ARM64 指令执行 1:1 等长语义等价改写；同时补齐关键密码学路径静默毒化、watchdog 多维探针、FridaModuleDetector 模块级检测和反篡改检测顺序稳定随机化。
-
-### 6.6 核心改动
-
-| 改动 | 说明 |
-|------|------|
-| **Pass 7: AntiDebugInjector** | 在 `__DATA,__cpr_adbg7` 写入可运行时消费的 anti-debug 注入计划 ABI（seed、probeImmediate、target identifier/hash、patchSiteVMOffset/fileOffset、policyBits、entryFlags、scatterSlot），为后续 inline patch / runtime gate 预留 |
-| **Pass 8: InstructionSubstitution** | 对 `__TEXT.__text` 中可安全改写的 ARM64 指令做 1:1 等长替换，当前覆盖 MOV alias、ADD/SUB #0、AND-self、ORR-self、NOP/XZR no-op、MOVZ/ORR logical immediate 等规则族，保持 section 大小不变并支持基于 seed 的稳定随机化 |
-| **关键路径静默毒化** | 白盒 PRF、字符串解密、数据段加载、签名材料在被调试时输出错误/毒化值，而非 crash，增加定位难度 |
-| **watchdog 多维探针** | 每 3s 执行 ptrace、exception port、SIGTRAP/BRK、csops(CS_DEBUGGED)、硬件断点、软件断点、可疑线程、TTY、Developer Disk Image、single-step timing trap、exception delivery timeout 等探针 |
-| **FridaModuleDetector** | 扫描 dyld image 名、可疑 Mach-O section 名、`__cstring/__const` 中 Frida/Gum/Gadget 字符串片段，与 FridaDetector 端口/文件/环境维度分工 |
-| **检测顺序随机化** | `MutationStrategy.shuffleChecks == true` 时，anti-tamper/debugger/frida 相关 detector 按 deviceID+scope+seed 稳定洗牌，同一设备顺序稳定、不同设备可变 |
-| **新 RiskSignal** | `software_breakpoint_detected`、`exception_delivery_timeout`、`frida_module_detected` 等参与评分 |
-
----
-
-## 6.5 新增能力 — 白盒加密 + 反重打包
-
-6.5 引入白盒 PRF 引擎，将 root key 嵌入 ~160KB S-box 查找表中不可逆提取，全链路替代 legacy HMAC 派生路径；同时新增 AppSigningIdentityDetector 反重打包检测。
-
-### 6.5 核心改动
-
-| 改动 | 说明 |
-|------|------|
-| **白盒 PRF 引擎** | 5 域 table-driven SPN（4 轮 S-box + permutation + finalMask），每域 ~32KB 查找表，总计 ~160KB 嵌入 `__swift5_awbc` section；root key 在构建时融入 S-box，运行时无法逆向还原 |
-| **5 域全链路白盒派生** | domain 1: anchor tag 校验、domain 2: Pass1 字符串解密密钥、domain 3: 数据段 accumulator seed、domain 4: loader key、domain 5: runtime material（签名基础密钥） |
-| **白盒 4 section 预埋** | `__swift5_awbm`（header 48B）、`__swift5_awbc`（S-box ~160KB）、`__swift5_awbd`（descriptor ~1.2KB）、`__swift5_awbt`（tag 32B）通过 `-Wl,-sectcreate` 占位符预埋，armor 更新而非追加 |
-| **白盒运行时校验矩阵** | overall tag → config digest → payload coverage → domain mask → permutation → record digest 六层校验，任一失败 bundle 不加载 |
-| **白盒 vs Legacy 自动降级** | `cprisk_whitebox_available()` 自动选择路径：白盒可用走 PRF 分支，不可用 fallback 到 legacy HMAC |
-| **AppSigningIdentityDetector** | macOS 上通过 `SecTaskCreateFromSelf` + `SecTaskCopyValueForEntitlement` 读取 TeamID / `application-identifier` / `get-task-allow`；iOS 上做 bundle 一致性校验 |
-| **签名身份基线漂移检测** | 首次运行存储 `IdentityBaseline`（teamIdentifier + applicationIdentifier + bundleIdentifier），后续运行检测变更字段，变更时注入 `app_signing_baseline_changed` 信号 |
-| **integrity poison 联动** | 签名异常时调用 `cprisk_force_integrity_poison()`，使 runtime material 不可信、v2a 签名链失效 |
-| **cprisk-armor 白盒集成** | IntegrityAnchorPass 写入白盒 metadata/code/data/tag 四个 section；StringEncryptor / DataSegmentEncryptor 通过白盒 PRF 派生密钥 |
-
-### 白盒 PRF 安全性对比
-
-| 维度 | Legacy 路径 | 白盒路径 (6.5) |
-|------|------------|----------------|
-| **密钥存在形式** | root_key 明文参与 HMAC/SHA256 | root_key 融入 S-box 表，运行时仅存在查找表 |
-| **内存 dump 攻击** | dump root_key 后全线沦陷 | dump 160KB S-box 表，无法还原 root_key |
-| **攻击者复现成本** | 提取 32 字节密钥即可离线重建所有派生 | 需完整提取并复现整个白盒引擎（S-box + permutation + finalMask + roundConstants） |
-| **anchor 校验** | `HMAC-SHA256(root_key, textHash)` | `WB_PRF(domain=1, textHash)` |
-| **签名材料** | `SHA256(root_key ‖ context)` | `WB_PRF(domain=5, anchorHash)` |
-
-### 反重打包检测矩阵
-
-| 检测项 | 信号 ID | 分数 | 触发条件 |
-|--------|---------|------|----------|
-| TeamID 为空 | `app_signing_identity_tampered` | 55 | entitlement 中无 team-identifier |
-| bundleID 不一致 | `app_signing_identity_tampered` | 60 | Bundle.main.bundleIdentifier ≠ Info.plist CFBundleIdentifier |
-| get-task-allow 为 true | `app_signing_identity_tampered` | 40 | Release 构建不应有 get-task-allow |
-| applicationIdentifier 缺失 | `app_signing_identity_tampered` | 50 | 无 application-identifier entitlement |
-| 基线漂移 | `app_signing_baseline_changed` | 44 | teamIdentifier / applicationIdentifier / bundleIdentifier 任一变更 |
-
----
-
-## 6.4 新增能力 — 静态库架构 + 全量符号剥离
-
-6.4 将 SDK 交付方式从动态 framework 转为 static library，消除 dyld 导出符号这一根本性暴露面，配合全量 strip 实现 Android .so 级别的逆向对抗效果。
-
-### 6.4 核心改动
-
-| 改动 | 说明 |
-|------|------|
-| **library.static 架构** | `CloudPhoneRiskKit` 与 `CloudPhoneRiskAppCore` 由 `type: framework` 改为 `type: library.static`，SDK 代码静态链入最终 App 二进制 |
-| **消除导出符号暴露面** | 动态 framework 必须通过 `__LINKEDIT` Export Trie 暴露公开 API 符号；静态库链入 App 后无需导出，所有 SDK 符号降为本地符号 |
-| **armor 壳对 App 执行** | `cprisk-armor` 的 `--sectcreate` placeholder 和 postBuildScripts 移至 `RiskDetectorApp` target，壳直接对最终二进制加固 |
-| **全量 strip** | `STRIP_STYLE=all` + 显式 `xcrun strip -x` / `xcrun strip`，剥离所有本地符号与调试信息 |
-| **IDA 效果** | SDK 函数全部显示为 `sub_XXXX`，类型名、方法名均不可见；仅剩系统 undefined imports（约 1448 个） |
-| **bundle 瘦身** | App bundle 不再包含 `Frameworks/` 目录，减少文件数与加载开销 |
-
-### 静态库 vs 动态 framework 逆向对抗对比
-
-| 维度 | 动态 framework | 静态库 (6.4) |
-|------|---------------|-------------|
-| **导出符号** | ~5310 个（含所有 public API + Swift metadata + protocol conformance） | 0 个 |
-| **IDA 函数名** | `CPRiskKit.evaluate()`、`RiskSignal.init()` 等完整可读 | `sub_10000ABCD` |
-| **`nm` 输出** | 数千条 `T` (text) 符号 | 0 条 SDK 符号 |
-| **Frameworks/ 目录** | 存在，可直接提取 .framework 分析 | 不存在 |
-| **strip 效果** | 只能删本地符号，导出符号由 dyld 强制保留 | 全部可删 |
-
----
-
-## 6.3 新增能力 — 逆向对抗纵深 + 符号表混淆
-
-6.3 针对 IDA 逆向分析中暴露的多层信息泄漏，新增 Pass 6 符号表混淆，并修复 ObjC selector 误伤、MetadataScrubber 白名单遗漏、Codable 指令流泄漏三项问题。
-
-### 6.3 核心改动
-
-| 改动 | 说明 |
-|------|------|
-| **Pass 6: SymbolStripper** | 解析 `LC_SYMTAB` 中的 `nlist` 条目，将包含 SDK 标记（`CPRisk`、`CloudPhone`、`Detection` 等）或 `outlined` 的本地符号名替换为等长随机 hex 字节 |
-| **ObjC selector 安全修复** | `MetadataScrubber.shouldObfuscateMethod()` 从"排除系统前缀白名单"改为"命中 SDK 标记才混淆"，杜绝系统 selector 被误伤导致 `unrecognized selector` crash |
-| **MetadataScrubber 全类型混淆** | 移除保护 `CPRisk`/`CloudPhone`/`Risk` 前缀的白名单，现在所有 Swift 类型名（>2 字符，非 `cprisk_` C 层）均被混淆 |
-| **Codable 短别名 CodingKeys** | 80+ 个 `Codable` struct 显式声明 `CodingKeys` enum，将 `threshold`→`t`、`mediumThreshold`→`mt` 等长属性名替换为 1-3 字符短别名，消除 Swift Small String Optimization 导致的 MOV 立即数字符串泄漏 |
-
-### 信息泄漏四层防御矩阵
-
-| 泄漏层 | 攻击面 | 防御手段 | strip 能处理？ |
-|--------|--------|----------|---------------|
-| **符号表** (`LC_SYMTAB`) | `nm` / IDA 函数列表 | Pass 6 + strip | 能 |
-| **元数据** (`__swift5_types` / `__swift5_reflstr`) | Swift Metadata 还原 | Pass 2 MetadataScrubber | 不能 |
-| **ObjC selector** (`__objc_methname`) | class-dump / IDA ObjC 分析 | Pass 2 SDK selector 混淆 | 不能 |
-| **指令流立即数** (`__text` MOV) | IDA 反编译 / Hex-Rays | 源码级短别名 CodingKeys | 不能 |
-
----
-
-## 6.2 新增能力 — 壳密码学重建 + 全栈安全加固
-
-6.2 对壳保护层执行密码学根本性重建（ABI v1→v2），同时对 CRiskCore C 层、SDK 运行时反篡改、配置/存储/密码学执行全栈安全加固，共计 46 项漏洞修复。
-
-### 6.2 新特性摘要
-
-| 能力域 | 核心改动 | 说明 |
-|--------|----------|------|
-| **壳 ABI v2 密码学重建** | CLI `--key` / `--key-file` / `CPRISK_ARMOR_KEY` | 强制外部密钥注入，无密钥拒绝执行；拒绝全零密钥 |
-| **HMAC 认证标签** | 每加密项 8B nonce + HMAC-SHA256 tag | 解密前先验 HMAC，失败返回 poison；消除 XOR 无认证缺陷 |
-| **IntegrityAnchor HMAC** | `HMAC-SHA256(rootKey, fullHash)` | 替代明文 mask 方案，无密钥不可恢复 fullHash |
-| **Salt 动态派生** | `SHA256(rootKey \|\| "salt-xor")[0]` | 替代固定 `0xA7`，运行时从 rootKey 动态派生 |
-| **密码学安全 seed** | `SecRandomCopyBytes` | 替代时间戳 seed，消除构建时间可预测性 |
-| **C 层边界安全（9 项）** | cprisk_decode_salt / page_span / section 上限 / 竞态 / mprotect 回滚 / nbyte / secure_zero / buffer / getentropy | 整数溢出、缓冲区越界、竞态条件、资源限制全面加固 |
-| **ServerSignals HMAC** | `setVerified(_:signature:)` | 服务端信号注入需 HMAC 验签，Release 下旧 `set()` 为 no-op |
-| **Evaluator 封印** | `ConditionExpression.sealCustomEvaluators()` | `start()` 后拒绝注册自定义条件求值器 |
-| **基线交叉验证** | UUID 变更 + TextSegment 联合判断 | UUID 变了但 hash 没变 → `sdk_binary_baseline_anomaly` (weight=85) |
-| **Challenge HMAC** | `ChallengeVerificationResult.hmac` | 服务端挑战结果需 HMAC 验签，失败产出 `challenge_hmac_mismatch` 信号 |
-| **结论签名 v2** | `SignedRiskConclusion` 签名域扩展 | signals 摘要纳入签名域，防止信号列表被替换 |
-| **动态可疑特征列表** | `DynamicFeatureList` + RemoteConfig 下发 | 可疑库/路径/端口支持服务端热更新，替代全硬编码 |
-| **DEBUG/Release 对齐** | ConfigSignatureVerifier / ConfigCache / JailbreakEngine | 未配置时统一返回 false，消除 DEBUG 放行路径 |
-| **Keychain 策略统一** | 全量 `AfterFirstUnlockThisDeviceOnly` | 10+ 个 Keychain 调用点策略统一 |
-| **行为数据用后清零** | TouchCapture / MotionSampler `clearSensitiveData()` | `stop()` 时 memset 零化敏感缓冲区 |
-| **18 项 Bug 修复** | loader 返回值 / flags 丢失 / decoySectionPool 拼写 / set(nil) / applyChallengeResult / checkBinarySize / ConfigCache rollback / KeychainDeviceID 并发 / SecItemAdd 返回值等 | 全量回归修复 |
-
----
-
-## 6.0 / 6.1 新增能力 — 自研壳保护 + 壳工业化
-
-6.0 引入编译后自研壳（cprisk-armor）工具链；6.1 将壳从概念验证升级为工业级全量保护，补齐 Pass 2 / Pass 5，并引入运行时加固与全链路测试。
-
-### 6.0 / 6.1 新特性摘要
-
-| 能力域 | 核心组件 | 说明 |
-|--------|----------|------|
-| **全量字符串加密 (Pass 1)** | `StringEncryptor` → `cprisk_string_decrypt.c` | 6.0 基础加密；6.1 升级为全量敏感字符串加密（18 关键词识别）+ 原位零化 `__cstring`，`strings` 工具提取归零 |
-| **Metadata 抹除 (Pass 2)** | `MetadataScrubber` | **6.1 新增**：Swift 类型名混淆、`__swift5_reflstr` 全段随机化、ObjC 方法名混淆，class-dump/dsdump 无法还原业务类名 |
-| **多 Section 数据段加密 (Pass 3)** | `DataSegmentEncryptor` → `cprisk_data_loader.c` | 6.0 单 blob 加密；6.1 升级为白名单多 Section 加密（`__const`/`__cfstring`/`__swift5_fieldmd`/`__swift5_assocty`），IDA 中 `__DATA` 显示全乱码 |
-| **完整性锚点 (Pass 4)** | `IntegrityAnchor` → `cprisk_integrity.c` | 多路径完整性哈希注入四个伪装 Section，运行时交叉校验；哈希参与 KDF 链 |
-| **结构混淆 (Pass 5)** | `StructureObfuscator` | **6.1 新增**：5-8 个假 Section 注入（Apple 风格命名）+ 结构化伪数据 + 随机 seed 布局，每次构建指纹不同 |
-| **内联 SHA-256** | `cprisk_sha256.h` | `always_inline` FIPS-180-4 SHA-256，消除 CommonCrypto Hook 面 |
-| **自包含 Mach-O 解析** | `cprisk_macho.h` | 不依赖 `dladdr`/`getsectiondata`/`_dyld_*`，阻断 Clean Copy 攻击 |
-| **密钥安全清零** | `cprisk_secure_zero()` | **6.1 新增**：统一 `volatile` 清零，覆盖全部解密密钥、keystream、中间哈希 |
-| **Anti-Dump 页面保护** | `cprisk_verify_page_protection()` | **6.1 新增**：`vm_region_64` 验证解密后数据页保护属性，检测攻击者重映射 |
-| **运行时完整性重校验** | `cprisk_recheck_integrity()` | **6.1 新增**：运行时重新计算 `__TEXT.__text` 哈希，不一致时静默毒化 material |
-| **v2a 验签修复** | `SecureEnvelopeValidator` | **6.1 修复**：v2a 验签时正确使用 armor material 派生密钥 |
-| **业务签名毒化 (v2a)** | `armorRuntimeMaterial()` → `ReportEnvelope` | armor material 混入 HMAC 签名密钥派生，篡改即签名失效 |
-| **Bug 修复** | 6.0: 9 项 + 6.1: 10 项 | rotl64 UB、整数溢出、loader key 过早清零、guard 页下溢、除零、v2a 验签、恒真断言等 |
-
-### 壳保护工作流
+## 壳保护工作流
 
 ```
 源码 → swift build → SDK (library.static) + App 链接
@@ -561,4 +381,4 @@ cd RiskDetectorApp && swift test --scratch-path "${TMPDIR:-/tmp}/cloudphone-risk
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 7.2 — MIE posture integration + iphoneos SDK compatibility</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 7.3 — documentation &amp; version alignment</sub></p>

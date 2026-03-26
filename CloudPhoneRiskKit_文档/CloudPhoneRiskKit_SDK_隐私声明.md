@@ -1,7 +1,7 @@
 # CloudPhoneRiskKit SDK 隐私声明
 
 > 文档定位：`CloudPhoneRiskKit` 的 SDK 级隐私声明  
-> 适用版本：SDK 7.2  
+> 适用版本：SDK 7.3  
 > 适用对象：SDK 接入方、法务/隐私团队、客户安全评审  
 > 适用范围：iOS / iPadOS 端集成 `CloudPhoneRiskKit` 的场景  
 > 说明：本文描述的是 **SDK 自身的处理边界**，不替代宿主 App 的隐私政策、App Privacy 标签或 App Review Information
@@ -81,11 +81,11 @@ SDK 当前自带的 privacy manifest 文件位于：
 - SDK **显式声明空的 `NSPrivacyTrackingDomains`**
 - SDK **不以广告追踪为目的**使用所采集数据
 
-### 3.4 7.2 版本升级是否改变隐私声明范围
+### 3.4 7.3 版本升级是否改变隐私声明范围
 
 不会。
 
-7.2 在 7.1 的 VM self-check / dispatcher 纵深基础上，继续新增并强化的是**设备安全姿态探测、运行时完整性校验和构建产物可见性收敛**，例如：
+7.3 继承 7.1 / 7.2 的 VM self-check / dispatcher / MIE 姿态等基线，对外文档与 `Version.current` 对齐；能力侧仍强调**设备安全姿态探测、运行时完整性校验和构建产物可见性收敛**，例如：
 
 - `MIEPostureDetector` / `cprisk_mte_guard`：通过 `sysctl` 读取设备级 MTE/PAuth 能力摘要，并配合本地 snapshot / canary 生成安全姿态信号
 - Pass 6 在 `MH_EXECUTE` 上扩展为 **符号表清理 + export trie scrub**，降低 IDA/Hopper 通过导出表恢复函数名的能力
@@ -94,7 +94,7 @@ SDK 当前自带的 privacy manifest 文件位于：
 - VM region image 白名单差异比对、`user_tag` 精细化扫描、SVC 桩代码页 hash 滚动校验
 - 白盒 PRF 与被动完整性信号、runtime material 的耦合进一步加强
 
-这些能力会增强 SDK 的反调试、反篡改和逆向对抗强度，并改变二进制在静态视角下的可见性，但**不会新增 privacy manifest 中的 collected data 类型，也不会新增 Required Reason API 类别**。因此从隐私边界上看，7.2 仍然以 `Device ID`、`UserDefaults`、`SystemBootTime` 这三项 manifest 事实为基线。
+这些能力会增强 SDK 的反调试、反篡改和逆向对抗强度，并改变二进制在静态视角下的可见性，但**不会新增 privacy manifest 中的 collected data 类型，也不会新增 Required Reason API 类别**。因此从隐私边界上看，7.3 仍然以 `Device ID`、`UserDefaults`、`SystemBootTime` 这三项 manifest 事实为基线。
 
 ---
 
@@ -153,7 +153,7 @@ SDK 可能处理以下环境风险数据：
 
 ### 4.2a 构建产物可见性收敛（新增）
 
-除运行时安全信号外，7.2 当前交付版还会在 Release / 壳后产物上体现一些**“可见性收敛”**能力，例如：
+除运行时安全信号外，7.3 当前交付版还会在 Release / 壳后产物上体现一些**“可见性收敛”**能力，例如：
 
 - Pass 6 对 `MH_EXECUTE` 执行 `LC_SYMTAB` 清理、旧 `LINKEDIT` payload 覆写，以及 export trie scrub
 - Swift Release 构建使用 `SWIFT_REFLECTION_METADATA_LEVEL=minimal`
@@ -291,7 +291,7 @@ SDK 可以在设备侧本地完成：
 
 - SDK 本地为了做风控而读取、计算、比对某些信号，并不等于这些信号一定会离开设备
 - 只有当宿主 App 选择上报 `CPRiskReport`、`ReportEnvelope`、`GrpcReportPayload` 或自定义抽取其中字段时，相关数据才进入宿主 App 的对外披露范围
-- 7.2 的 runtime gate / text 加密 / VMP 保护 / export trie scrub / Swift 可见性收敛 / MIE posture 只增强代码保护与本地安全姿态判断，不会单独增加新的用户数据出境路径
+- 7.3 交付中的 runtime gate / text 加密 / VMP 保护 / export trie scrub / Swift 可见性收敛 / MIE posture 只增强代码保护与本地安全姿态判断，不会单独增加新的用户数据出境路径
 
 ---
 
@@ -399,22 +399,22 @@ SDK 当前会在本地执行更强的运行时完整性探测，包括：
 
 尤其在当前项目以**静态库 / 源码集成**为主的情况下，接入方不能误以为“SDK 带了 manifest 就自动全部覆盖”。
 
-### 8.1 当前 7.2 版本的额外提醒
+### 8.1 当前 7.3 版本的额外提醒
 
-从当前 7.2 版本的整体风险结构看，接入方需要区分两件事：
+从当前 7.3 版本的整体风险结构看，接入方需要区分两件事：
 
 1. **隐私合规**
 2. **App Store 对二进制保护强度的接受度**
 
-就 SDK 隐私边界本身而言，当前 7.2 版本并没有因为 Pass 6 export trie scrub、Swift metadata 可见性收敛、Pass 12 `TextSegmentEncryptor`、Pass 13 `VMProtector`、CPSV span map 驱动 self-check、CPSH/HMAC expect blob、handler 跨编译单元散布、guard page anti-dump、白盒表 ASLR 绑定、Mach port watchdog、SVC page hash 或 bootstrap mini-VM 而新增新的 collected data 类型，也没有扩大 Required Reason API 范围。因此：
+就 SDK 隐私边界本身而言，当前 7.3 版本并没有因为 Pass 6 export trie scrub、Swift metadata 可见性收敛、Pass 12 `TextSegmentEncryptor`、Pass 13 `VMProtector`、CPSV span map 驱动 self-check、CPSH/HMAC expect blob、handler 跨编译单元散布、guard page anti-dump、白盒表 ASLR 绑定、Mach port watchdog、SVC page hash 或 bootstrap mini-VM 而新增新的 collected data 类型，也没有扩大 Required Reason API 范围。因此：
 
-- 7.2 的主要新增风险**不是隐私类型扩张**
+- 7.3 的主要新增风险**不是隐私类型扩张**
 - 而是宿主 App 是否选择启用更强的二进制保护后，带来额外的审核解释成本
 - 当前项目比早期 7.0/7.1 文档所描述的 Full Armor 更进一步，已经落到“符号表 + export 双路径可见性收敛、按页代码恢复、guard page 反 dump、CPSV/CPSH 驱动 self-check、白盒表绑定、跨 TU handler 散布、Mach port watchdog、SVC page hash”这一层，审核备注和交付说明需要比之前写得更明确
 
 也就是说：
 
-> **隐私文档回答的是“收什么、为什么收、谁来披露”；是否适合直接带 Full Armor 版本上架，则应优先参考 `CloudPhoneRiskKit_AppStore_合规指南.md` 中的 7.2 上架风险评估章节。**
+> **隐私文档回答的是“收什么、为什么收、谁来披露”；是否适合直接带 Full Armor 版本上架，则应优先参考 `CloudPhoneRiskKit_AppStore_合规指南.md` 中的 7.3 上架风险评估章节。**
 
 ---
 
