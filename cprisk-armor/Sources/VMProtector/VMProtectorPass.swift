@@ -51,6 +51,8 @@ public struct VMPolicyHardeningM3: Equatable, Sendable {
     public let bytecodeImmediateKeystream: Bool
     /// Emit `CPRISK_VMP_BC_FLAG_BC_SEG_RUNTIME_SHA256` for runtime bytecode segment SHA256 checks.
     public let bytecodeSegmentRuntimeSha256: Bool
+    /// Emit `CPRISK_VMP_BC_FLAG_ANTI_SYMBOLIC_HEAVY` (runtime anti-symbolic bait paths).
+    public let antiSymbolicHeavy: Bool
 
     public init(
         protectVmInterpreterWithCff: Bool = false,
@@ -60,7 +62,8 @@ public struct VMPolicyHardeningM3: Equatable, Sendable {
         interpreterCffTier: VMPInterpreterCffTier = .medium,
         dispatchTableKeystream: Bool = false,
         bytecodeImmediateKeystream: Bool = false,
-        bytecodeSegmentRuntimeSha256: Bool = false
+        bytecodeSegmentRuntimeSha256: Bool = false,
+        antiSymbolicHeavy: Bool = false
     ) {
         self.protectVmInterpreterWithCff = protectVmInterpreterWithCff
         self.enableDeadHandlerInjection = enableDeadHandlerInjection
@@ -70,6 +73,7 @@ public struct VMPolicyHardeningM3: Equatable, Sendable {
         self.dispatchTableKeystream = dispatchTableKeystream
         self.bytecodeImmediateKeystream = bytecodeImmediateKeystream
         self.bytecodeSegmentRuntimeSha256 = bytecodeSegmentRuntimeSha256
+        self.antiSymbolicHeavy = antiSymbolicHeavy
     }
 }
 
@@ -141,6 +145,7 @@ enum VMPolicyParser {
         var dispatchTableKs = false
         var bytecodeImmKs = false
         var bytecodeSegSha256 = false
+        var antiSymbolicHeavy = false
 
         for rawLine in contents.components(separatedBy: .newlines) {
             let sanitized = stripComment(rawLine).trimmingCharacters(in: .whitespaces)
@@ -189,6 +194,7 @@ enum VMPolicyParser {
                     parseBoolKey(sanitized, key: "dispatch_table_keystream", into: &dispatchTableKs)
                     parseBoolKey(sanitized, key: "bytecode_immediate_keystream", into: &bytecodeImmKs)
                     parseBoolKey(sanitized, key: "bytecode_segment_runtime_sha256", into: &bytecodeSegSha256)
+                    parseBoolKey(sanitized, key: "anti_symbolic_heavy", into: &antiSymbolicHeavy)
                     parseTierKey(sanitized, into: &interpreterCffTier)
                 default:
                     break
@@ -221,7 +227,8 @@ enum VMPolicyParser {
                 interpreterCffTier: interpreterCffTier,
                 dispatchTableKeystream: dispatchTableKs,
                 bytecodeImmediateKeystream: bytecodeImmKs,
-                bytecodeSegmentRuntimeSha256: bytecodeSegSha256
+                bytecodeSegmentRuntimeSha256: bytecodeSegSha256,
+                antiSymbolicHeavy: antiSymbolicHeavy
             )
         )
     }
@@ -335,7 +342,8 @@ public final class VMProtectorPass: ArmorPass {
             immediateKeystream: policy.hardening.bytecodeImmediateKeystream,
             immediateKeystreamMaterial: seedNonZero ^ 0x1CE0_00DE_F11E_0001,
             opcodeWireObfuscation: policy.hardening.bytecodeImmediateKeystream,
-            opcodeKeystreamMaterial: seedNonZero ^ 0x0BC0_4D45_4D4D_3258
+            opcodeKeystreamMaterial: seedNonZero ^ 0x0BC0_4D45_4D4D_3258,
+            antiSymbolicHeavy: policy.hardening.antiSymbolicHeavy
         )
         let lifter = ARM64Lifter()
         let emitter = VMBytecodeEmitter()
@@ -350,7 +358,7 @@ public final class VMProtectorPass: ArmorPass {
             String(format: "opcode_seed=0x%016llX", opcodeTable.seed),
             "m2: handler_dup=\(policy.antiAnalysis.handlerDuplication) opaque_vpc=\(policy.opaqueVpcEncoding.enabled)",
             "m3: interpreter_cff=\(policy.hardening.protectVmInterpreterWithCff) tier=\(policy.hardening.interpreterCffTier.rawValue) dead_handlers=\(policy.hardening.enableDeadHandlerInjection) vpc_pred=\(policy.hardening.opaqueVpcPredicateChain) self_integrity=\(policy.hardening.interpreterSelfIntegrityCheck)",
-            "emit: dispatch_ks=\(policy.hardening.dispatchTableKeystream) imm_ks_v3=\(policy.hardening.bytecodeImmediateKeystream) opcode_ks_v3=\(policy.hardening.bytecodeImmediateKeystream) bc_seg_sha256=\(policy.hardening.bytecodeSegmentRuntimeSha256)"
+            "emit: dispatch_ks=\(policy.hardening.dispatchTableKeystream) imm_ks_v3=\(policy.hardening.bytecodeImmediateKeystream) opcode_ks_v3=\(policy.hardening.bytecodeImmediateKeystream) bc_seg_sha256=\(policy.hardening.bytecodeSegmentRuntimeSha256) anti_sym=\(policy.hardening.antiSymbolicHeavy)"
         ]
         if policy.hardening.protectVmInterpreterWithCff {
             let tier = policy.hardening.interpreterCffTier.rawValue

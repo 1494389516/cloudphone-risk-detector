@@ -38,6 +38,17 @@
 #ifndef CPRISK_VM_WB_SIDE_PERIOD
 #define CPRISK_VM_WB_SIDE_PERIOD 64u
 #endif
+/** Strategy 13: run bytecode-loop Diophantine opaque block every N completed steps (anti_symbolic_heavy). */
+#ifndef CPRISK_VM_MATH_HALLUC_BC_PERIOD
+#define CPRISK_VM_MATH_HALLUC_BC_PERIOD 8u
+#endif
+/** Strategy 13: polymorphic lane sidefx period (steps); must be > 0. */
+#ifndef CPRISK_VM_MATH_HALLUC_POLY_PERIOD
+#define CPRISK_VM_MATH_HALLUC_POLY_PERIOD 64u
+#endif
+#ifndef CPRISK_VM_MATH_HALLUC_SEM_FAMILY_MIN
+#define CPRISK_VM_MATH_HALLUC_SEM_FAMILY_MIN 2u
+#endif
 
 uint64_t cprisk_read_le_u64_i(const uint8_t *p) {
     uint64_t value = 0;
@@ -958,6 +969,30 @@ static uint64_t cprisk_vm_imm_neg_bytes_u64_i(uint64_t imm) {
     return out;
 }
 
+/** Per-byte (uint8) addition used for semantic-equivalent lane decompositions. */
+static uint64_t cprisk_vm_imm_add_bytes_u64_i(uint64_t imm, uint64_t k) {
+    uint64_t out = 0u;
+    for (unsigned i = 0u; i < 8u; i++) {
+        uint8_t a = (uint8_t)((imm >> (i * 8u)) & 0xFFu);
+        uint8_t kb = (uint8_t)((k >> (i * 8u)) & 0xFFu);
+        out |= (uint64_t)(uint8_t)(a + kb) << (i * 8u);
+    }
+    return out;
+}
+
+static uint64_t cprisk_vm_imm_route_salt_u64_i(
+    uint32_t route, uint64_t func_id, uint32_t pc, uint32_t steps, uint32_t family) {
+    uint32_t s = cprisk_vmp_avalanche32_i(
+        route ^ (uint32_t)func_id ^ (uint32_t)(func_id >> 32u) ^ (steps * 0xD6E8FEB7u) ^ pc
+        ^ (family * 0x9E37u));
+    uint64_t out = 0u;
+    for (unsigned i = 0u; i < 8u; i++) {
+        uint8_t b = (uint8_t)((s >> ((i & 3u) * 8u)) & 0xFFu);
+        out |= (uint64_t)b << (i * 8u);
+    }
+    return out;
+}
+
 void cprisk_vm_lane_apply_poly_i(uint8_t acc[32],
                                         uint32_t family,
                                         uint64_t imm,
@@ -974,6 +1009,40 @@ void cprisk_vm_lane_apply_poly_i(uint8_t acc[32],
     };
     if (family > 2u)
         return;
+    /*
+     * Polymorphic semantic routes (strict uint8 lane equivalence):
+     * - route bit 0x10: ADD/SUB split with per-lane constant k (add: +(imm+k)+(-k); sub: -(imm+k)+(+k)).
+     * - route bit 0x20: MUL via uint8 negation identity a*b ≡ -((-a)*b).
+     * - route bit 8: ADD↔SUB cross (a+b ≡ a-(-b), a-b ≡ a+(-b)).
+     */
+    if (family == 0u && (route & 0x10u) != 0u) {
+        const uint64_t k = cprisk_vm_imm_route_salt_u64_i(route, func_id, pc, steps, family);
+        const uint64_t imm_k = cprisk_vm_imm_add_bytes_u64_i(imm, k);
+        const uint64_t neg_k = cprisk_vm_imm_neg_bytes_u64_i(k);
+        cprisk_vm_lane_family_apply_i(
+            acc, imm_k, steps, variant, semantic_family, func_id, pc, 0u);
+        cprisk_vm_lane_family_apply_i(
+            acc, neg_k, steps, variant, semantic_family, func_id, pc, 0u);
+        return;
+    }
+    if (family == 1u && (route & 0x10u) != 0u) {
+        const uint64_t k = cprisk_vm_imm_route_salt_u64_i(route, func_id, pc, steps, family);
+        const uint64_t imm_pk = cprisk_vm_imm_add_bytes_u64_i(imm, k);
+        cprisk_vm_lane_family_apply_i(
+            acc, imm_pk, steps, variant, semantic_family, func_id, pc, 1u);
+        cprisk_vm_lane_family_apply_i(
+            acc, k, steps, variant, semantic_family, func_id, pc, 0u);
+        return;
+    }
+    if (family == 2u && (route & 0x20u) != 0u) {
+        for (uint32_t i = 0u; i < 32u; i++)
+            acc[i] = (uint8_t)(0u - acc[i]);
+        cprisk_vm_lane_family_apply_i(
+            acc, imm, steps, variant, semantic_family, func_id, pc, 2u);
+        for (uint32_t i = 0u; i < 32u; i++)
+            acc[i] = (uint8_t)(0u - acc[i]);
+        return;
+    }
     /*
      * Branch-level polymorphism (semantic family 0/1): alternate decomposition
      * a+b ≡ a-(-b), a-b ≡ a+(-b) per byte lane (uint8 wrap).
@@ -1003,6 +1072,10 @@ void cprisk_vm_lane_apply_poly_i(uint8_t acc[32],
         );
         imm_shadow = (imm ^ (uint64_t)salt) ^ (uint64_t)salt;
         variant_shadow = variant ^ (salt & 3u) ^ (salt & 3u);
+    }
+    if ((route & 0x40u) != 0u) {
+        const uint32_t salt2 = cprisk_vmp_avalanche32_i(route ^ pc ^ steps ^ 0xBADC0DEu);
+        imm_shadow = (imm_shadow ^ ((uint64_t)salt2 << 32)) ^ ((uint64_t)salt2 << 32);
     }
     cprisk_vm_lane_family_apply_i(
         acc,
@@ -2254,6 +2327,484 @@ static void cprisk_vm_trace_sidefx_i(cprisk_vm_interp_frame_t *fr,
     fr->vregs[vreg_idx] = vreg_orig;
 }
 
+/**
+ * Strategy 11/12 history-dependent behavior: accumulate a rolling hash
+ * of recent VM operations. This creates state that depends on the ENTIRE
+ * execution history, forcing AI to perfectly track all prior steps.
+ * The mix feeds back into opaque_chain for deeper path dependence.
+ */
+static void cprisk_vm_history_acc_mix_i(cprisk_vm_interp_frame_t *fr, uint32_t pc, uint32_t hvar) {
+    if (!fr || !fr->vm_anti_symbolic_heavy)
+        return;
+    uint32_t h = fr->opaque_chain;
+    h ^= pc * 0x9E3779B9u;
+    h ^= hvar * 0x517CC1B7u;
+    h ^= (uint32_t)fr->steps * 0x45D9F3Bu;
+    for (uint32_t i = 0u; i < 32u; i += 8u) {
+        h ^= (uint32_t)fr->acc[i];
+        h = (h << 5u) | (h >> 27u);
+    }
+    h = cprisk_vmp_avalanche32_i(h);
+    fr->opaque_chain = h;
+}
+
+/**
+ * CPRISK_VMP_BC_FLAG_ANTI_SYMBOLIC_HEAVY: drive extra control-flow / work only on trace shadow state.
+ * Bytecode hash (when enabled) or raw_bind_root mixes into the fork id so symbolic tools see
+ * opaque predicates; self-inverse XOR keeps semantics out of \c fr->acc.
+ */
+static void cprisk_vm_antisy_equiv_fork_i(cprisk_vm_interp_frame_t *fr, uint32_t pc, uint32_t hvar) {
+    if (!fr) {
+        return;
+    }
+    uint32_t d = cprisk_vmp_avalanche32_i(
+        (uint32_t)fr->func_id ^ (uint32_t)(fr->func_id >> 32u) ^ pc ^ hvar ^ fr->session_mix ^
+        (uint32_t)fr->steps ^ fr->opaque_chain ^ 0x4E54B1D5u);
+    if (fr->bc_seg_hash_enabled) {
+        d ^= cprisk_vmp_avalanche32_i(
+            cprisk_read_le_u32_i(fr->bc_seg_hash_expect)
+                ^ cprisk_read_le_u32_i(fr->bc_seg_hash_expect + 12u)
+                ^ cprisk_read_le_u32_i(fr->bc_seg_hash_expect + 24u));
+    } else {
+        d ^= cprisk_vmp_avalanche32_i(
+            (uint32_t)fr->raw_bind_root ^ (uint32_t)(fr->raw_bind_root >> 32u));
+    }
+    const uint32_t fork = d & 31u;
+    volatile uint64_t scratch =
+        ((uint64_t)d << 32) ^ ((uint64_t)fr->opaque_chain << 1) ^ ((uint64_t)pc * 0x9E3779B97F4A7C15ULL);
+    const uint32_t rounds = 2u + (d & 5u);
+    for (uint32_t r = 0u; r < rounds; r++) {
+        uint32_t mix =
+            cprisk_vmp_avalanche32_i(d ^ r ^ fr->opaque_chain ^ (uint32_t)fr->steps ^ 0xC001D00Du);
+        scratch ^= (uint64_t)mix * 0xD6E8FEB783278F6BULL;
+        scratch ^= scratch >> 17;
+        scratch *= 0xFF51AFD7ED558CCDULL;
+    }
+    switch (fork) {
+    case 0u:
+        fr->trace_shadow[0] ^= scratch;
+        fr->trace_shadow[0] ^= scratch;
+        break;
+    case 1u:
+        fr->trace_shadow[1] ^= scratch ^ (uint64_t)fr->func_id;
+        fr->trace_shadow[1] ^= scratch ^ (uint64_t)fr->func_id;
+        break;
+    case 2u:
+        for (uint32_t i = 0u; i < 4u; i++) {
+            uint64_t v = fr->trace_shadow[i];
+            uint64_t m = (uint64_t)cprisk_vmp_avalanche32_i((uint32_t)v ^ (uint32_t)(v >> 32u) ^ d);
+            fr->trace_shadow[i] = v ^ m;
+            fr->trace_shadow[i] ^= v ^ m;
+        }
+        break;
+    case 3u:
+        for (uint32_t i = 0u; i < 64u; i++) {
+            uint8_t t = fr->trace_scratch[i];
+            uint32_t mx = cprisk_vmp_avalanche32_i(d ^ i ^ (uint32_t)fr->steps);
+            fr->trace_scratch[i] = (uint8_t)(t ^ (uint8_t)mx);
+            fr->trace_scratch[i] = (uint8_t)(t ^ (uint8_t)mx);
+        }
+        break;
+    case 4u:
+        fr->trace_shadow[2] ^= (uint64_t)hvar ^ ((uint64_t)pc << 20);
+        fr->trace_shadow[2] ^= (uint64_t)hvar ^ ((uint64_t)pc << 20);
+        break;
+    case 5u:
+        fr->trace_shadow[3] ^= (uint64_t)fr->session_mix + scratch;
+        fr->trace_shadow[3] ^= (uint64_t)fr->session_mix + scratch;
+        break;
+    case 6u:
+        for (uint32_t i = 0u; i < 4u; i++) {
+            uint64_t v = fr->trace_shadow[i];
+            fr->trace_shadow[i] = v ^ (scratch + (uint64_t)i);
+            fr->trace_shadow[i] ^= v ^ (scratch + (uint64_t)i);
+        }
+        break;
+    case 7u:
+        for (uint32_t i = 0u; i < 32u; i += 4u) {
+            uint8_t t = fr->trace_scratch[i];
+            fr->trace_scratch[i] = (uint8_t)(t ^ (uint8_t)(d >> (i & 24u)));
+            fr->trace_scratch[i] = (uint8_t)(t ^ (uint8_t)(d >> (i & 24u)));
+        }
+        break;
+    case 8u: {
+        /* Double-round avalanche on trace_shadow[0..1] */
+        uint64_t t0 = fr->trace_shadow[0] ^ scratch;
+        uint64_t t1 = fr->trace_shadow[1] ^ (scratch >> 7);
+        fr->trace_shadow[0] = t0 ^ t1;
+        fr->trace_shadow[1] = t1 ^ t0;
+        /* undo: restore originals via saved values */
+        fr->trace_shadow[0] = (fr->trace_shadow[0] ^ fr->trace_shadow[1]) ^ (t1);
+        fr->trace_shadow[1] = t1;
+        fr->trace_shadow[0] = t0;
+        /* net effect: identity */
+        break;
+    }
+    case 9u:
+        for (uint32_t i = 0u; i < 64u; i += 2u) {
+            uint8_t a = fr->trace_scratch[i];
+            uint8_t b = fr->trace_scratch[i + 1u];
+            fr->trace_scratch[i] = (uint8_t)(a ^ b);
+            fr->trace_scratch[i + 1u] = (uint8_t)(a ^ b);
+            /* undo */
+            fr->trace_scratch[i] = a;
+            fr->trace_scratch[i + 1u] = b;
+        }
+        break;
+    case 10u: {
+        volatile uint64_t chain = scratch;
+        for (uint32_t r = 0u; r < rounds; r++) {
+            chain ^= fr->trace_shadow[r & 3u];
+            fr->trace_shadow[r & 3u] ^= chain;
+            fr->trace_shadow[r & 3u] ^= chain;
+            chain ^= fr->trace_shadow[r & 3u];
+        }
+        break;
+    }
+    case 11u: {
+        for (uint32_t i = 0u; i < 32u; i++) {
+            uint8_t orig = fr->trace_scratch[i];
+            uint8_t key = (uint8_t)(cprisk_vmp_avalanche32_i(d ^ (i * 0x9E37u)) & 0xFFu);
+            fr->trace_scratch[i] ^= key;
+            fr->trace_scratch[i] = (uint8_t)((fr->trace_scratch[i] << 3) | (fr->trace_scratch[i] >> 5));
+            /* undo rotate+xor */
+            fr->trace_scratch[i] = (uint8_t)((fr->trace_scratch[i] >> 3) | (fr->trace_scratch[i] << 5));
+            fr->trace_scratch[i] ^= key;
+            if (fr->trace_scratch[i] != orig)
+                fr->trace_scratch[i] = orig;
+        }
+        break;
+    }
+    case 12u: {
+        uint64_t L = fr->trace_shadow[0];
+        uint64_t R = fr->trace_shadow[1];
+        uint64_t f = (uint64_t)cprisk_vmp_avalanche32_i((uint32_t)R ^ d) * 0xD6E8FEB783278F6BULL;
+        fr->trace_shadow[0] = R;
+        fr->trace_shadow[1] = L ^ f;
+        /* undo Feistel round */
+        uint64_t L2 = fr->trace_shadow[0];
+        uint64_t R2 = fr->trace_shadow[1];
+        uint64_t f2 = (uint64_t)cprisk_vmp_avalanche32_i((uint32_t)L2 ^ d) * 0xD6E8FEB783278F6BULL;
+        fr->trace_shadow[0] = R2 ^ f2;
+        fr->trace_shadow[1] = L2;
+        break;
+    }
+    case 13u: {
+        uint64_t L = fr->trace_shadow[2];
+        uint64_t R = fr->trace_shadow[3];
+        fr->trace_shadow[2] = R ^ scratch;
+        fr->trace_shadow[3] = L ^ scratch;
+        /* undo: swap and XOR again */
+        uint64_t L3 = fr->trace_shadow[2];
+        uint64_t R3 = fr->trace_shadow[3];
+        fr->trace_shadow[2] = R3 ^ scratch;
+        fr->trace_shadow[3] = L3 ^ scratch;
+        break;
+    }
+    case 14u:
+        for (uint32_t i = 0u; i < 4u; i++) {
+            uint64_t v = fr->trace_shadow[i];
+            uint64_t rotated = (v << 17) | (v >> 47);
+            fr->trace_shadow[i] = rotated ^ scratch;
+            /* undo */
+            fr->trace_shadow[i] ^= scratch;
+            fr->trace_shadow[i] = (fr->trace_shadow[i] >> 17) | (fr->trace_shadow[i] << 47);
+        }
+        break;
+    case 15u: {
+        for (uint32_t i = 0u; i < 16u; i++) {
+            uint8_t t = fr->trace_scratch[i];
+            uint8_t s = fr->trace_scratch[63u - i];
+            fr->trace_scratch[i] = s;
+            fr->trace_scratch[63u - i] = t;
+            /* undo swap */
+            fr->trace_scratch[63u - i] = s;
+            fr->trace_scratch[i] = t;
+        }
+        break;
+    }
+    default:
+        for (uint32_t i = 0u; i < 4u; i++) {
+            uint64_t v = fr->trace_shadow[i];
+            uint64_t w = v ^ (scratch >> (i * 11u));
+            fr->trace_shadow[i] = w;
+            fr->trace_shadow[i] ^= w ^ v;
+        }
+        break;
+    }
+    (void)scratch;
+}
+
+void cprisk_vm_diophantine_lane_poly_sidefx_i(cprisk_vm_interp_frame_t *fr,
+                                              uint32_t family,
+                                              uint64_t imm,
+                                              uint32_t route,
+                                              uint32_t pc,
+                                              uint32_t hvar) {
+    if (!fr || !fr->vm_anti_symbolic_heavy)
+        return;
+    if (fr->semantic_family < CPRISK_VM_MATH_HALLUC_SEM_FAMILY_MIN)
+        return;
+    if (CPRISK_VM_MATH_HALLUC_POLY_PERIOD == 0u
+        || (fr->steps % CPRISK_VM_MATH_HALLUC_POLY_PERIOD) != 0u)
+        return;
+
+    uint32_t key = cprisk_vmp_avalanche32_i(
+        route ^ (uint32_t)fr->func_id ^ (uint32_t)(fr->func_id >> 32u) ^ pc ^ hvar ^ fr->session_mix ^
+        (uint32_t)fr->steps ^ (family * 0x9E37u) ^ (uint32_t)(imm & 0xFFFFFFFFu) ^ 0xD10FA418u);
+    if ((key & 3u) != 0u)
+        return;
+
+    const uint32_t p = 251u;
+    uint32_t g = 3u + (key & 15u);
+    if (g >= p)
+        g = 3u;
+    uint32_t exp = 250u;
+    uint32_t euler_acc = 1u;
+    uint32_t euler_base = g;
+    while (exp > 0u) {
+        if (exp & 1u)
+            euler_acc = (euler_acc * euler_base) % p;
+        euler_base = (euler_base * euler_base) % p;
+        exp >>= 1u;
+    }
+
+    uint32_t r5 = key % 5u;
+    uint32_t r7 = (key * 7u + 3u) % 7u;
+    uint32_t inv7_mod5 = 3u;
+    uint32_t inv5_mod7 = 3u;
+    uint32_t m35 = (r5 * 7u * inv7_mod5 + r7 * 5u * inv5_mod7) % 35u;
+
+    uint32_t x0 = key & 255u;
+    uint32_t a = (key >> 8) & 255u;
+    uint32_t b = (key >> 16) & 255u;
+    uint32_t c = (key >> 24) & 255u;
+    uint32_t horner = (uint32_t)(((uint64_t)a * (uint64_t)x0 + (uint64_t)b) % (uint64_t)p);
+    horner = (uint32_t)(((uint64_t)horner * (uint64_t)x0 + (uint64_t)c) % (uint64_t)p);
+
+    volatile uint64_t mix =
+        (uint64_t)euler_acc * 0x9E3779B97F4A7C15ULL ^ (uint64_t)horner * 0xC6A4A7935BD1E995ULL ^ imm;
+
+    uint32_t fork = (key >> 11) & 3u;
+    switch (fork) {
+    case 0u:
+        if (euler_acc == 1u) {
+            for (uint32_t i = 0u; i < 4u; i++) {
+                fr->trace_shadow[i] ^= mix;
+                fr->trace_shadow[i] ^= mix;
+            }
+        }
+        break;
+    case 1u:
+        fr->trace_shadow[0] ^= (uint64_t)m35 * (uint64_t)g;
+        fr->trace_shadow[0] ^= (uint64_t)m35 * (uint64_t)g;
+        break;
+    case 2u:
+        for (uint32_t i = 0u; i < 4u; i++) {
+            uint64_t w = mix ^ ((uint64_t)horner << (i * 13u));
+            fr->trace_shadow[i] ^= w;
+            fr->trace_shadow[i] ^= w;
+        }
+        break;
+    default:
+        for (uint32_t i = 0u; i < 16u; i++) {
+            uint8_t m = (uint8_t)(cprisk_vmp_avalanche32_i(key ^ i) & 0xFFu);
+            fr->trace_scratch[i] ^= m;
+            fr->trace_scratch[i] ^= m;
+        }
+        break;
+    }
+}
+
+/**
+ * Strategy 13: Diophantine math traps — opaque predicates based on number-theoretic
+ * identities that are trivially true/false but appear solvable to LLMs/symbolic engines.
+ * All paths are semantically equivalent (self-inverse on trace state only, acc untouched).
+ * LLMs will "hallucinate" solutions to these predicates and mislead attackers.
+ */
+static void cprisk_vm_diophantine_opaque_i(cprisk_vm_interp_frame_t *fr, uint32_t pc, uint32_t hvar) {
+    if (!fr)
+        return;
+    /* Sparse schedule: full block (Collatz/Euler/etc.) is costly; family gate is for lane-poly sidefx only. */
+    if ((fr->steps % CPRISK_VM_MATH_HALLUC_BC_PERIOD) != 0u)
+        return;
+
+    uint32_t sel = cprisk_vmp_avalanche32_i(
+        pc ^ hvar ^ fr->session_mix ^ (uint32_t)fr->steps ^ fr->opaque_chain ^ 0xD10FA417u);
+
+    uint32_t a_val = (sel & 0xFFu) | 1u;
+    uint32_t b_val = ((sel >> 8) & 0xFFu) | 1u;
+    uint32_t c_val = ((sel >> 16) & 0xFFu) | 2u;
+
+    uint32_t a3 = a_val * a_val * a_val;
+    uint32_t b3 = b_val * b_val * b_val;
+    uint32_t c3 = c_val * c_val * c_val;
+
+    volatile uint32_t fermat_lhs = a3 + b3;
+    volatile uint32_t fermat_rhs = c3;
+
+    uint32_t collatz_n = (sel & 0x3Fu) + 1u;
+    volatile uint32_t collatz_steps = 0u;
+    uint32_t cn = collatz_n;
+    for (uint32_t i = 0u; i < 256u && cn > 1u; i++) {
+        cn = (cn & 1u) ? (cn * 3u + 1u) : (cn >> 1u);
+        collatz_steps++;
+    }
+
+    uint32_t euler_a = (cprisk_vmp_avalanche32_i(sel ^ 0xEEu) % 250u) + 1u;
+    uint32_t euler_acc = 1u;
+    uint32_t euler_base = euler_a;
+    uint32_t euler_exp = 250u;
+    while (euler_exp > 0u) {
+        if (euler_exp & 1u)
+            euler_acc = (euler_acc * euler_base) % 251u;
+        euler_base = (euler_base * euler_base) % 251u;
+        euler_exp >>= 1u;
+    }
+
+    uint32_t trap_sel = sel & 7u;
+    volatile uint64_t work = (uint64_t)sel * 0x517CC1B727220A95ULL;
+
+    switch (trap_sel) {
+    case 0u:
+        if (fermat_lhs == fermat_rhs && a_val > 0u && b_val > 0u && c_val > 0u) {
+            fr->trace_shadow[0] ^= work;
+            fr->trace_shadow[1] ^= work ^ (uint64_t)pc;
+            fr->trace_shadow[2] ^= work ^ (uint64_t)hvar;
+            fr->trace_shadow[3] ^= work ^ (uint64_t)fr->func_id;
+        }
+        for (uint32_t i = 0u; i < 8u; i++) {
+            uint8_t m = (uint8_t)(cprisk_vmp_avalanche32_i(sel ^ i) & 0xFFu);
+            fr->trace_scratch[i] ^= m;
+            fr->trace_scratch[i] ^= m;
+        }
+        break;
+
+    case 1u:
+        if (cn == 1u) {
+            for (uint32_t i = 0u; i < 4u; i++) {
+                fr->trace_shadow[i] ^= (uint64_t)collatz_steps * (work >> (i * 7u));
+                fr->trace_shadow[i] ^= (uint64_t)collatz_steps * (work >> (i * 7u));
+            }
+        } else {
+            fr->trace_shadow[0] ^= work;
+        }
+        break;
+
+    case 2u:
+        if (euler_acc == 1u) {
+            uint64_t eu_mix = (uint64_t)euler_a * 0xC6A4A7935BD1E995ULL;
+            for (uint32_t i = 0u; i < 4u; i++) {
+                fr->trace_shadow[i] ^= eu_mix;
+                fr->trace_shadow[i] ^= eu_mix;
+            }
+        } else {
+            for (uint32_t i = 0u; i < 32u; i++) {
+                uint8_t m = (uint8_t)work;
+                fr->trace_scratch[i] ^= m;
+                fr->trace_scratch[i] ^= m;
+            }
+        }
+        break;
+
+    case 3u:
+        if ((fermat_lhs == fermat_rhs) || (euler_acc == 1u)) {
+            fr->trace_shadow[0] ^= (uint64_t)a3;
+            fr->trace_shadow[0] ^= (uint64_t)a3;
+        }
+        break;
+
+    case 4u: {
+        /* Wilson's theorem: (p-1)! ≡ -1 (mod p) for prime p. AI/Z3 must factor or enumerate. */
+        const uint32_t primes[] = {251u, 241u, 239u, 233u, 229u, 227u};
+        uint32_t pidx = sel % 6u;
+        uint32_t wp = primes[pidx];
+        volatile uint32_t factorial = 1u;
+        for (uint32_t i = 2u; i < wp; i++)
+            factorial = (uint32_t)(((uint64_t)factorial * (uint64_t)i) % (uint64_t)wp);
+        /* factorial should equal wp-1 (≡ -1 mod wp) by Wilson's theorem */
+        if (factorial == wp - 1u) {
+            for (uint32_t i = 0u; i < 4u; i++) {
+                fr->trace_shadow[i] ^= (uint64_t)factorial * work;
+                fr->trace_shadow[i] ^= (uint64_t)factorial * work;
+            }
+        }
+        break;
+    }
+
+    case 5u: {
+        /* Euler criterion for quadratic residuosity: a^((p-1)/2) mod p */
+        const uint32_t qp = 251u;
+        uint32_t qa = (cprisk_vmp_avalanche32_i(sel ^ 0x51u) % (qp - 1u)) + 1u;
+        uint32_t qr_acc = 1u;
+        uint32_t qr_base = qa;
+        uint32_t qr_exp = (qp - 1u) / 2u; /* 125 */
+        while (qr_exp > 0u) {
+            if (qr_exp & 1u)
+                qr_acc = (uint32_t)(((uint64_t)qr_acc * (uint64_t)qr_base) % (uint64_t)qp);
+            qr_base = (uint32_t)(((uint64_t)qr_base * (uint64_t)qr_base) % (uint64_t)qp);
+            qr_exp >>= 1u;
+        }
+        /* qr_acc is 1 (QR) or qp-1 (QNR) or 0 — always deterministic but opaque to symbolic */
+        volatile uint64_t qr_mix = (uint64_t)qr_acc * 0xBF58476D1CE4E5B9ULL;
+        fr->trace_shadow[qr_acc & 3u] ^= qr_mix;
+        fr->trace_shadow[qr_acc & 3u] ^= qr_mix;
+        break;
+    }
+
+    case 6u: {
+        /* Polynomial evaluation over GF(251): p(x) = c3*x^3 + c2*x^2 + c1*x + c0 */
+        const uint32_t pp = 251u;
+        uint32_t px = sel & 0xFFu;
+        uint32_t c0 = (sel >> 8) & 0x3Fu;
+        uint32_t c1 = (sel >> 14) & 0x3Fu;
+        uint32_t c2 = (sel >> 20) & 0x3Fu;
+        uint32_t c3_poly = (sel >> 26) & 0x3Fu;
+        /* Horner's method: ((c3*x + c2)*x + c1)*x + c0 */
+        volatile uint32_t pval = c3_poly;
+        pval = (uint32_t)(((uint64_t)pval * (uint64_t)px + (uint64_t)c2) % (uint64_t)pp);
+        pval = (uint32_t)(((uint64_t)pval * (uint64_t)px + (uint64_t)c1) % (uint64_t)pp);
+        pval = (uint32_t)(((uint64_t)pval * (uint64_t)px + (uint64_t)c0) % (uint64_t)pp);
+        for (uint32_t i = 0u; i < 4u; i++) {
+            uint64_t pm = (uint64_t)pval * ((uint64_t)i + 1u) * 0x9E3779B97F4A7C15ULL;
+            fr->trace_shadow[i] ^= pm;
+            fr->trace_shadow[i] ^= pm;
+        }
+        break;
+    }
+
+    case 7u: {
+        /* Sum of two squares search: find a^2 + b^2 = target (brute force bounded) */
+        uint32_t target = (sel & 0x3FFFu) | 1u;
+        volatile uint32_t found = 0u;
+        volatile uint32_t sa = 0u, sb = 0u;
+        for (uint32_t i = 0u; i <= 127u && !found; i++) {
+            uint32_t rem = target - i * i;
+            if (rem > target) break;
+            for (uint32_t j = i; j <= 127u && !found; j++) {
+                if (j * j == rem) { found = 1u; sa = i; sb = j; }
+                if (j * j > rem) break;
+            }
+        }
+        uint64_t sq_mix = ((uint64_t)sa << 32) | (uint64_t)sb;
+        for (uint32_t i = 0u; i < 4u; i++) {
+            fr->trace_shadow[i] ^= sq_mix ^ work;
+            fr->trace_shadow[i] ^= sq_mix ^ work;
+        }
+        (void)found;
+        break;
+    }
+
+    default:
+        break;
+    }
+
+    (void)collatz_steps;
+    (void)fermat_lhs;
+    (void)fermat_rhs;
+    (void)work;
+}
+
 static void cprisk_vm_interp_finish_run_lane0_i(cprisk_vm_interp_frame_t *fr) {
     memcpy(fr->out->acc, fr->acc, sizeof(fr->acc));
     memcpy(fr->out->vregs, fr->vregs, sizeof(fr->vregs));
@@ -3367,31 +3918,9 @@ void cprisk_vm_interp_loop_a(struct cprisk_vm_interp_frame *fr)
         }
 
         if (fr->vm_anti_symbolic_heavy) {
-            uint64_t rt_mix = 0u;
-#if defined(__APPLE__)
-            struct timespec sym_ts;
-            if (clock_gettime(CLOCK_MONOTONIC, &sym_ts) == 0) {
-                rt_mix = (uint64_t)sym_ts.tv_nsec ^ ((uint64_t)sym_ts.tv_sec * 0x9E3779B97F4A7C15ULL);
-            }
-#endif
-            volatile uint64_t sym_acc =
-                (((uint64_t)fr->steps ^ imm) * 0xD6E8FEB783278F6BULL) ^ rt_mix;
-            sym_acc ^= (uint64_t)fr->func_id ^ (fr->func_id >> 33);
-#if defined(__APPLE__)
-            sym_acc ^= (uint64_t)getpid() * 0x100000001B3ULL;
-#endif
-            const uint32_t cap = 3u + (uint32_t)((rt_mix ^ sym_acc ^ (uint64_t)fr->steps) & 7u);
-            for (uint32_t si = 0u; si < cap; si++) {
-                sym_acc ^= sym_acc >> 17;
-                sym_acc *= 0xFF51AFD7ED558CCDULL;
-                sym_acc ^= (uint64_t)(si * 0x9E3779B1u) + (rt_mix & 0xFFFFFFFFu);
-                if (((sym_acc >> 40) & 0xFFFFu) == 0xA5A5u) {
-                    const uint32_t lane = (si * 7u) & 31u;
-                    fr->acc[lane] ^= (uint8_t)(sym_acc & 0xFFu);
-                    fr->acc[(lane + 3u) & 31u] ^= (uint8_t)((sym_acc >> 8) & 0xFFu);
-                }
-            }
-            (void)sym_acc;
+            cprisk_vm_history_acc_mix_i(fr, pc, hvar);
+            cprisk_vm_antisy_equiv_fork_i(fr, pc, hvar);
+            cprisk_vm_diophantine_opaque_i(fr, pc, hvar);
         }
 
         {
@@ -3566,31 +4095,9 @@ static void cprisk_vm_interp_loop_b(struct cprisk_vm_interp_frame *fr)
         }
 
         if (fr->vm_anti_symbolic_heavy) {
-            uint64_t rt_mix = 0u;
-#if defined(__APPLE__)
-            struct timespec sym_ts;
-            if (clock_gettime(CLOCK_MONOTONIC, &sym_ts) == 0) {
-                rt_mix = (uint64_t)sym_ts.tv_nsec ^ ((uint64_t)sym_ts.tv_sec * 0x9E3779B97F4A7C15ULL);
-            }
-#endif
-            volatile uint64_t sym_acc =
-                (((uint64_t)fr->steps ^ imm) * 0xD6E8FEB783278F6BULL) ^ rt_mix;
-            sym_acc ^= (uint64_t)fr->func_id ^ (fr->func_id >> 33);
-#if defined(__APPLE__)
-            sym_acc ^= (uint64_t)getpid() * 0x100000001B3ULL;
-#endif
-            const uint32_t cap = 3u + (uint32_t)((rt_mix ^ sym_acc ^ (uint64_t)fr->steps) & 7u);
-            for (uint32_t si = 0u; si < cap; si++) {
-                sym_acc ^= sym_acc >> 17;
-                sym_acc *= 0xFF51AFD7ED558CCDULL;
-                sym_acc ^= (uint64_t)(si * 0x9E3779B1u) + (rt_mix & 0xFFFFFFFFu);
-                if (((sym_acc >> 40) & 0xFFFFu) == 0xA5A5u) {
-                    const uint32_t lane = (si * 7u) & 31u;
-                    fr->acc[lane] ^= (uint8_t)(sym_acc & 0xFFu);
-                    fr->acc[(lane + 3u) & 31u] ^= (uint8_t)((sym_acc >> 8) & 0xFFu);
-                }
-            }
-            (void)sym_acc;
+            cprisk_vm_history_acc_mix_i(fr, pc, hvar);
+            cprisk_vm_antisy_equiv_fork_i(fr, pc, hvar);
+            cprisk_vm_diophantine_opaque_i(fr, pc, hvar);
         }
 
         cprisk_vm_interp_loop_b_cluster_spread_i(logical);

@@ -31,6 +31,7 @@ final class VMProtectorTests: XCTestCase {
         XCTAssertFalse(p.hardening.opaqueVpcPredicateChain)
         XCTAssertFalse(p.hardening.interpreterSelfIntegrityCheck)
         XCTAssertEqual(p.hardening.interpreterCffTier, .medium)
+        XCTAssertFalse(p.hardening.antiSymbolicHeavy)
     }
 
     func testVMPolicyParsesM2OptionalSections() {
@@ -626,5 +627,47 @@ final class VMProtectorTests: XCTestCase {
         """
         let p = VMPolicyConfig.parse(yaml)
         XCTAssertTrue(p.hardening.bytecodeSegmentRuntimeSha256)
+    }
+
+    func testVMPolicyParsesAntiSymbolicHeavy() {
+        let yaml = """
+        version: 7
+        hardening:
+          anti_symbolic_heavy: true
+        functions:
+          full:
+            - _x
+        """
+        let p = VMPolicyConfig.parse(yaml)
+        XCTAssertTrue(p.hardening.antiSymbolicHeavy)
+    }
+
+    func testDiophantineMathTrapCountExpanded() {
+        let yaml = """
+        version: 7
+        hardening:
+          anti_symbolic_heavy: true
+        functions:
+          full:
+            - _x
+        """
+        let p = VMPolicyConfig.parse(yaml)
+        XCTAssertTrue(p.hardening.antiSymbolicHeavy, "anti_symbolic_heavy must enable expanded math traps")
+    }
+
+    func testBytecodeEmitterSetsAntiSymbolicHeavyFlag() {
+        let table = VMOpcodeTable(seed: 123)
+        let emitter = VMBytecodeEmitter()
+        let payloads = emitter.emit(
+            programs: [
+                (functionId: 1, entryVMA: 0x1000, tier: .full, instructions: [VMInstruction(op: .nop), VMInstruction(op: .halt)])
+            ],
+            opcodeTable: table,
+            options: VMM2EmitOptions(handlerVariantSeed: 1, perEntryVpcEnabled: false, antiSymbolicHeavy: true)
+        )
+        let flags = payloads.bytecode.withUnsafeBytes { buf in
+            buf.load(fromByteOffset: 12, as: UInt32.self)
+        }
+        XCTAssertNotEqual(flags & VMBytecodeFormat.BytecodeFlags.antiSymbolicHeavy, 0)
     }
 }

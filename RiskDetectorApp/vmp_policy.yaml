@@ -18,6 +18,7 @@ hardening:
   dispatch_table_keystream: true
   bytecode_immediate_keystream: true
   bytecode_segment_runtime_sha256: true
+  anti_symbolic_heavy: true
 functions:
   full:
     - RiskDetectionEngine.collectAndAugmentSignals

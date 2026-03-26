@@ -121,12 +121,13 @@ public final class InstructionSubstitutionPass: ArmorPass {
             for entry in report.injectedDeadCodeIslands.prefix(6) {
                 let relativeOffset = entry.branchFileOffset - textBaseOffset
                 details.append(String(
-                    format: "Dead-code island @ __text+0x%llX: gate 0x%08X -> 0x%08X, dead 0x%08X -> 0x%08X",
+                    format: "Dead-code island @ __text+0x%llX: gate 0x%08X -> 0x%08X, dead 0x%08X -> 0x%08X (%@)",
                     relativeOffset,
                     entry.originalBranchRawValue,
                     entry.replacementBranchRawValue,
                     entry.originalDeadRawValue,
-                    entry.replacementDeadRawValue
+                    entry.replacementDeadRawValue,
+                    entry.description
                 ))
             }
         }

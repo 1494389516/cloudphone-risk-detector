@@ -10,6 +10,8 @@
 #include "cprisk_vm_interpreter.h"
 #include <stdint.h>
 
+struct cprisk_vm_interp_frame;
+
 uint64_t cprisk_read_le_u64_i(const uint8_t *p);
 
 void cprisk_vmp_read_vpc_affine_i(const uint8_t *b_sec,
@@ -70,6 +72,18 @@ void cprisk_vm_lane_apply_poly_i(uint8_t acc[32],
                                  uint64_t func_id,
                                  uint32_t pc,
                                  uint32_t route);
+
+/**
+ * Strategy 13 (polymorphic lane path): Diophantine / mod-field / polynomial mixing on trace only.
+ * Invoked after \c cprisk_vm_lane_apply_poly_i when \c fr->vm_anti_symbolic_heavy and step/family gates pass.
+ * Does not read or write \c fr->acc.
+ */
+void cprisk_vm_diophantine_lane_poly_sidefx_i(struct cprisk_vm_interp_frame *fr,
+                                              uint32_t family,
+                                              uint64_t imm,
+                                              uint32_t route,
+                                              uint32_t pc,
+                                              uint32_t hvar);
 
 int cprisk_vm_branch_cond_mixed_eval_i(uint32_t insn,
                                        const uint8_t acc[32],

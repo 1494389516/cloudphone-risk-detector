@@ -96,6 +96,8 @@ public struct VMM2EmitOptions: Equatable, Sendable {
     public var opcodeKeystreamMaterial: UInt64
     /// When true, set `BytecodeFlags.nonLinearVpc` and use the same 16-byte VPC slot as non-linear codec material (CRiskCore `CPRISK_VMP_BC_FLAG_VPC_NONLINEAR`).
     public var vpcNonlinearEncoding: Bool
+    /// Emit `CPRISK_VMP_BC_FLAG_ANTI_SYMBOLIC_HEAVY` (runtime anti-symbolic bait; CRiskCore interpreter).
+    public var antiSymbolicHeavy: Bool
 
     public init(
         opaqueVpcCategoryHigh32: Bool = false,
@@ -108,7 +110,8 @@ public struct VMM2EmitOptions: Equatable, Sendable {
         immediateKeystreamMaterial: UInt64 = 0,
         opcodeWireObfuscation: Bool = false,
         opcodeKeystreamMaterial: UInt64 = 0,
-        vpcNonlinearEncoding: Bool = true
+        vpcNonlinearEncoding: Bool = true,
+        antiSymbolicHeavy: Bool = false
     ) {
         self.opaqueVpcCategoryHigh32 = opaqueVpcCategoryHigh32
         self.handlerVariantSeed = handlerVariantSeed
@@ -121,6 +124,7 @@ public struct VMM2EmitOptions: Equatable, Sendable {
         self.opcodeWireObfuscation = opcodeWireObfuscation
         self.opcodeKeystreamMaterial = opcodeKeystreamMaterial
         self.vpcNonlinearEncoding = vpcNonlinearEncoding
+        self.antiSymbolicHeavy = antiSymbolicHeavy
     }
 }
 
@@ -166,6 +170,8 @@ public enum VMBytecodeFormat {
         public static let opcodeWireObfuscation: UInt32 = 1 << 6
         /// Runtime: SHA256 baseline + periodic bytecode segment integrity checks (CRiskCore `CPRISK_VMP_BC_FLAG_BC_SEG_RUNTIME_SHA256`).
         public static let bcSegmentRuntimeSha256: UInt32 = 1 << 11
+        /// Runtime: heavy anti-symbolic bait (CRiskCore `CPRISK_VMP_BC_FLAG_ANTI_SYMBOLIC_HEAVY`).
+        public static let antiSymbolicHeavy: UInt32 = 1 << 7
     }
 
     /// Dispatch header `flags` (M2 + M3 producer hints). CRiskCore does not branch on these today; safe to extend.
@@ -459,6 +465,9 @@ public struct VMBytecodeEmitter: Sendable {
         }
         if options.m3.bytecodeSegmentRuntimeSha256 {
             flags |= VMBytecodeFormat.BytecodeFlags.bcSegmentRuntimeSha256
+        }
+        if options.antiSymbolicHeavy {
+            flags |= VMBytecodeFormat.BytecodeFlags.antiSymbolicHeavy
         }
         if immKs {
             flags |= VMBytecodeFormat.BytecodeFlags.immediateKeystream

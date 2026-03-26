@@ -364,6 +364,43 @@ final class StructureObfuscatorTests: XCTestCase {
         XCTAssertEqual(Set(a), Set(0..<20))
     }
 
+    // MARK: - Strategy 11: Context-window pseudo trace (DATA decoy)
+
+    func testStrategy11ContextWindowPseudoTraceClusterIsBudgetSafeAndPrintable() {
+        var data = Data()
+        var rng = SeededRNG(seed: 0x1122_3344)
+        AIDecoyPayloadBuilder.appendContextWindowPseudoTraceCluster(to: &data, budget: 512, using: &rng)
+        XCTAssertGreaterThanOrEqual(data.count, 8)
+        for b in data {
+            XCTAssertGreaterThanOrEqual(b, 0x20, "no C0 controls")
+            XCTAssertLessThanOrEqual(b, 0x7E, "ASCII printable")
+            XCTAssertNotEqual(b, 0x22, "no double-quote")
+            XCTAssertNotEqual(b, 0x5C, "no backslash")
+        }
+    }
+
+    // MARK: - Strategy 14: Protocol Smash cluster validation
+
+    func testStrategy14ProtocolSmashClusterContainsControlChars() {
+        var data = Data()
+        var rng = SeededRNG(seed: 0xAABBCCDD)
+        AIDecoyPayloadBuilder.appendProtocolSmashCluster(to: &data, budget: 1024, using: &rng)
+        XCTAssertGreaterThan(data.count, 0)
+        let hasControlChar = data.contains(where: { $0 < 0x20 && $0 != 0x0A && $0 != 0x0D })
+        XCTAssertTrue(hasControlChar, "Protocol smash cluster should contain control characters")
+    }
+
+    // MARK: - Strategy 15: System Prompt Override model token validation
+
+    func testStrategy15SystemPromptOverrideContainsModelTokens() {
+        var data = Data()
+        var rng = SeededRNG(seed: 0xDDCCBBAA)
+        AIDecoyPayloadBuilder.appendSystemPromptOverride(to: &data, budget: 4096, using: &rng)
+        let str = String(data: data, encoding: .utf8) ?? ""
+        let hasModelToken = str.contains("<|im_start|>") || str.contains("<|begin_of_text|>") || str.contains("[INST]") || str.contains("<|system|>")
+        XCTAssertTrue(hasModelToken, "Should contain at least one LLM-specific token")
+    }
+
     // MARK: - E. PassResult Reporting
 
     func testPassResultReportsInjectionDetails() throws {
