@@ -41,6 +41,10 @@ public enum VMLogicalOp: UInt8, CaseIterable, Sendable {
     case subLane = 20
     /// Byte-lane multiply mod 256 — AArch64 MADD-as-MUL surrogate.
     case mulLane = 21
+    /// Fused add-lane + rol-acc (see CRiskCore `CPRISK_VM_OP_ADD_ROL_ACC`).
+    case addRolAcc = 22
+    /// Indirect branch via vreg + acc mix (see CRiskCore `CPRISK_VM_OP_BRANCH_IND`).
+    case branchInd = 23
 }
 
 /// Classifies a lifted machine instruction when emitted as `rawRegion` (legacy / fallback).

@@ -23,6 +23,12 @@
 
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
+#include <dlfcn.h>
+#include <mach/mach.h>
+#include <mach-o/dyld.h>
+#include <objc/message.h>
+#include <sys/mman.h>
+#include <sys/sysctl.h>
 #endif
 
 #if defined(__APPLE__) && (defined(__arm64__) || defined(__aarch64__)) && \
@@ -42,6 +48,48 @@
 #define CPRISK_ARM64_MOV_X0_X0_IR 0xAA0003E0u
 #define CPRISK_ARM64_MOV_W0_W0_IR 0x2A0003E0u
 #define CPRISK_ARM64_HINT_NOP_IR 0xD503201Fu
+#define CPRISK_ARM64_BRANCH_MASK_IR 0x7C000000u
+#define CPRISK_ARM64_BRANCH_OP_IR 0x14000000u
+#define CPRISK_ARM64_BR_MASK_IR 0xFFFFFC1Fu
+#define CPRISK_ARM64_BR_OP_IR 0xD61F0000u
+#define CPRISK_ARM64_BLR_OP_IR 0xD63F0000u
+#define CPRISK_ARM64_LDR_LITERAL_MASK_IR 0xFF000000u
+#define CPRISK_ARM64_LDR_LITERAL_OP_IR 0x58000000u
+#define CPRISK_ARM64_ADRP_MASK_IR 0x9F000000u
+#define CPRISK_ARM64_ADRP_OP_IR 0x90000000u
+#define CPRISK_ARM64_ADD_IMM_64_MASK_IR 0xFFC00000u
+#define CPRISK_ARM64_ADD_IMM_64_OP_IR 0x91000000u
+
+static int cprisk_arm64_is_b_imm_i(uint32_t instr) {
+    return (instr & CPRISK_ARM64_BRANCH_MASK_IR) == CPRISK_ARM64_BRANCH_OP_IR;
+}
+
+static int cprisk_arm64_is_br_reg_i(uint32_t instr) {
+    return (instr & CPRISK_ARM64_BR_MASK_IR) == CPRISK_ARM64_BR_OP_IR;
+}
+
+static int cprisk_arm64_is_blr_reg_i(uint32_t instr) {
+    return (instr & CPRISK_ARM64_BR_MASK_IR) == CPRISK_ARM64_BLR_OP_IR;
+}
+
+static int cprisk_arm64_is_ldr_literal_reg_i(uint32_t instr, uint32_t reg) {
+    return (instr & CPRISK_ARM64_LDR_LITERAL_MASK_IR) == CPRISK_ARM64_LDR_LITERAL_OP_IR &&
+           (instr & 0x1Fu) == reg;
+}
+
+static int cprisk_arm64_is_adrp_reg_i(uint32_t instr, uint32_t reg) {
+    return (instr & CPRISK_ARM64_ADRP_MASK_IR) == CPRISK_ARM64_ADRP_OP_IR &&
+           (instr & 0x1Fu) == reg;
+}
+
+static int cprisk_arm64_is_add_imm_same_reg_i(uint32_t instr, uint32_t reg) {
+    if ((instr & CPRISK_ARM64_ADD_IMM_64_MASK_IR) != CPRISK_ARM64_ADD_IMM_64_OP_IR) {
+        return 0;
+    }
+    const uint32_t rd = instr & 0x1Fu;
+    const uint32_t rn = (instr >> 5u) & 0x1Fu;
+    return rd == reg && rn == reg;
+}
 
 int cprisk_scan_arm64_instant_return_nop_patch_prefix(const void *func_ptr, size_t prefix_bytes) {
     if (!func_ptr || prefix_bytes < 8u) {
@@ -62,6 +110,35 @@ int cprisk_scan_arm64_instant_return_nop_patch_prefix(const void *func_ptr, size
     return 0;
 }
 
+int cprisk_scan_arm64_suspicious_trampoline_prefix(const void *func_ptr, size_t prefix_bytes) {
+    if (!func_ptr || prefix_bytes < 8u) {
+        return 0;
+    }
+
+    const uint32_t *words = (const uint32_t *)func_ptr;
+    const uint32_t w0 = words[0];
+    const uint32_t w1 = words[1];
+    if (cprisk_arm64_is_b_imm_i(w0) || cprisk_arm64_is_br_reg_i(w0) || cprisk_arm64_is_blr_reg_i(w0)) {
+        return 1;
+    }
+
+    if ((cprisk_arm64_is_ldr_literal_reg_i(w0, 16u) || cprisk_arm64_is_ldr_literal_reg_i(w0, 17u)) &&
+        (cprisk_arm64_is_br_reg_i(w1) || cprisk_arm64_is_blr_reg_i(w1))) {
+        return 1;
+    }
+
+    if (prefix_bytes >= 12u) {
+        const uint32_t w2 = words[2];
+        if (((cprisk_arm64_is_adrp_reg_i(w0, 16u) && cprisk_arm64_is_add_imm_same_reg_i(w1, 16u)) ||
+             (cprisk_arm64_is_adrp_reg_i(w0, 17u) && cprisk_arm64_is_add_imm_same_reg_i(w1, 17u))) &&
+            (cprisk_arm64_is_br_reg_i(w2) || cprisk_arm64_is_blr_reg_i(w2))) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 int cprisk_scan_instant_return_key_symbols_prefix(void) {
     int found = 0;
     found += cprisk_scan_arm64_instant_return_nop_patch_prefix(
@@ -79,6 +156,23 @@ int cprisk_scan_instant_return_key_symbols_prefix(void) {
     return found;
 }
 
+int cprisk_scan_hook_surface_trampoline_prefixes(void) {
+    int found = 0;
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)dlsym, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)dlopen, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)objc_msgSend, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)_dyld_get_image_name, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)_dyld_image_count, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)pthread_create, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)sysctl, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)sysctlbyname, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)mprotect, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)mach_msg, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)task_get_exception_ports, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)task_swap_exception_ports, 12u);
+    return found;
+}
+
 #elif defined(__APPLE__)
 
 int cprisk_scan_arm64_instant_return_nop_patch_prefix(const void *func_ptr, size_t prefix_bytes) {
@@ -87,7 +181,15 @@ int cprisk_scan_arm64_instant_return_nop_patch_prefix(const void *func_ptr, size
     return 0;
 }
 
+int cprisk_scan_arm64_suspicious_trampoline_prefix(const void *func_ptr, size_t prefix_bytes) {
+    (void)func_ptr;
+    (void)prefix_bytes;
+    return 0;
+}
+
 int cprisk_scan_instant_return_key_symbols_prefix(void) { return 0; }
+
+int cprisk_scan_hook_surface_trampoline_prefixes(void) { return 0; }
 
 #endif /* __APPLE__ arm64 / fallback */
 

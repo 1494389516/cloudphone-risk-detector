@@ -90,7 +90,7 @@ struct KernelHookSideChannel: Detector {
         ) {
             _ = cprisk_getpid_direct()
         } probe: {
-            _ = "/usr/lib/dyld".withCString { cprisk_access_direct($0, F_OK, nil) }
+            _ = SVCDirectCall.secureAccess("/usr/lib/dyld")
         }
 
         if let statProbe, statProbe.isAnomalous {

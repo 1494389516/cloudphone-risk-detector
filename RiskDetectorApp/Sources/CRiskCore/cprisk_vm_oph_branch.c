@@ -18,6 +18,43 @@ cprisk_vm_flow_t cprisk_vm_oph_branch_rel(cprisk_vm_interp_frame_t *fr,
     return CPRISK_VM_FLOW_CONTINUE;
 }
 
+cprisk_vm_flow_t cprisk_vm_oph_branch_ind(cprisk_vm_interp_frame_t *fr,
+                                          uint8_t op_raw,
+                                          uint8_t logical,
+                                          uint64_t imm,
+                                          uint32_t pc,
+                                          uint32_t hvar) {
+    (void)op_raw;
+    (void)logical;
+    (void)hvar;
+    const uint32_t vidx = (uint32_t)(imm & 7u);
+    const uint32_t acc_byte0 = (uint32_t)((imm >> 3) & 31u);
+    uint64_t mix = 0u;
+    uint64_t aux_mix = 0u;
+    for (uint32_t i = 0; i < 8u; i++) {
+        mix |= (uint64_t)fr->acc[(acc_byte0 + i) & 31u] << (i * 8u);
+        aux_mix |= (uint64_t)fr->acc_aux[(acc_byte0 + i * 3u) & 31u] << (i * 8u);
+    }
+    mix ^= (uint64_t)fr->semantic_family << 48;
+    mix ^= aux_mix ^ ((uint64_t)fr->session_mix << 17u);
+    uint64_t q = fr->vregs[vidx] ^ mix;
+    q ^= fr->func_id ^ (fr->func_id >> 32u);
+    const uint32_t insn_count = fr->blen / CPRISK_VM_INSN_WIDTH;
+    if (insn_count == 0u) {
+        fr->out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
+        fr->out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
+        return CPRISK_VM_FLOW_LEAVE;
+    }
+    const uint32_t target_insn = (uint32_t)(q % (uint64_t)insn_count);
+    const uint32_t target_pc = target_insn * CPRISK_VM_INSN_WIDTH;
+    const int64_t delta = (int64_t)(uint64_t)target_pc - (int64_t)(uint64_t)pc;
+    if (!cprisk_vm_set_branch_target_ctx_i(
+            fr->bh, &fr->encoded_pc, fr->vpc_a, fr->vpc_b, fr->blen, pc, delta, fr->out))
+        return CPRISK_VM_FLOW_LEAVE;
+    fr->steps += 1u;
+    return CPRISK_VM_FLOW_CONTINUE;
+}
+
 cprisk_vm_flow_t cprisk_vm_oph_branch_cond(cprisk_vm_interp_frame_t *fr,
                                            uint8_t op_raw,
                                            uint8_t logical,

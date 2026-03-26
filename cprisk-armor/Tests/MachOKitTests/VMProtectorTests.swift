@@ -2,6 +2,15 @@ import XCTest
 import VMProtector
 
 final class VMProtectorTests: XCTestCase {
+    func testVMFunctionIdMixedDependsOnBuildSeed() {
+        let sym = "RiskDetectionEngine.collectAndAugmentSignals"
+        let a = VMFunctionId.mixed(symbol: sym, buildSeed: 0x1111)
+        let b = VMFunctionId.mixed(symbol: sym, buildSeed: 0x2222)
+        XCTAssertNotEqual(a, b)
+        XCTAssertNotEqual(a, 0)
+        XCTAssertNotEqual(b, 0)
+    }
+
     func testVMPolicyParsesTiersAndNeverWins() {
         let yaml = """
         version: 2
@@ -70,6 +79,12 @@ final class VMProtectorTests: XCTestCase {
         XCTAssertTrue(p.hardening.opaqueVpcPredicateChain)
         XCTAssertTrue(p.hardening.interpreterSelfIntegrityCheck)
         XCTAssertEqual(p.hardening.interpreterCffTier, .heavy)
+    }
+
+    func testLogicalOpABIIncludesFusionAndIndirectBranch() {
+        XCTAssertEqual(VMLogicalOp.allCases.count, 24)
+        XCTAssertEqual(VMLogicalOp.addRolAcc.rawValue, 22)
+        XCTAssertEqual(VMLogicalOp.branchInd.rawValue, 23)
     }
 
     func testOpcodeTablePolymorphismIsDeterministicPerSeed() {

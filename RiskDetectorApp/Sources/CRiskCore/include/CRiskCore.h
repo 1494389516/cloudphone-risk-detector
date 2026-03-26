@@ -14,6 +14,7 @@
 #include "cprisk_swift_bridge.h"
 #include "cprisk_vm_interpreter.h"
 #include "cprisk_crypto_trace.h"
+#include "cprisk_cff.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -103,6 +104,10 @@ enum {
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXT_NONE = 0u,
     /** Main-thread heartbeat stale beyond threshold (runloop blocked / suspended / hook). */
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXT_MAIN_THREAD_STALL = 1u << 0,
+    /** __TEXT page re-encrypt / VM protection state drifted from runtime expectations. */
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXT_TEXT_ENCRYPT_DRIFT = 1u << 1,
+    /** dlsym/export-trie owner or trampoline drift on high-value runtime hook surface. */
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXT_RUNTIME_HOOK_EXPORT_DRIFT = 1u << 2,
 };
 
 enum {
@@ -266,10 +271,24 @@ int cprisk_stat_direct(const char *path, struct stat *sb, int *error_out);
 int cprisk_lstat_direct(const char *path, struct stat *sb, int *error_out);
 int cprisk_access_direct(const char *path, int amode, int *error_out);
 
+/// Decode a masked path into a short-lived stack buffer, then invoke the direct syscall path.
+/// `masked_len` must include the trailing NUL byte. Returns 0 on success, -1 on error.
+int cprisk_stat_masked(const uint8_t *masked_path, size_t masked_len, uint32_t seed,
+                       struct stat *sb, int *error_out);
+int cprisk_lstat_masked(const uint8_t *masked_path, size_t masked_len, uint32_t seed,
+                        struct stat *sb, int *error_out);
+int cprisk_access_masked(const uint8_t *masked_path, size_t masked_len, uint32_t seed,
+                         int amode, int *error_out);
+/// Same masked decode path, but probes standard libc `access()` to preserve errno semantics for
+/// anti-hook comparison lanes without exposing plaintext at the Swift call boundary.
+int cprisk_access_masked_libc(const uint8_t *masked_path, size_t masked_len, uint32_t seed,
+                              int amode, int *error_out);
+
 enum {
     CPRISK_PATH_PROBE_ACCESS = 1u << 0,
     CPRISK_PATH_PROBE_STAT = 1u << 1,
     CPRISK_PATH_PROBE_FOPEN = 1u << 2,
+    CPRISK_PATH_PROBE_LSTAT = 1u << 3,
 };
 
 typedef struct cprisk_path_probe_snapshot {
@@ -280,6 +299,14 @@ typedef struct cprisk_path_probe_snapshot {
 /// Probe path existence in C layer using access/stat/fopen.
 /// Returns 0 on success, -1 on invalid input.
 int cprisk_probe_path_snapshot(const char *path, cprisk_path_probe_snapshot_t *out_snapshot);
+/// Same probe as `cprisk_probe_path_snapshot`, but the path arrives masked and is decoded only
+/// inside short-lived C stack buffers before each probe.
+int cprisk_probe_path_snapshot_masked(const uint8_t *masked_path, size_t masked_len,
+                                      uint32_t seed, cprisk_path_probe_snapshot_t *out_snapshot);
+/// Secure-path multi-probe: one guarded masked decode window, then direct access/stat/lstat against
+/// the same ephemeral path buffer. `available_mask` uses `CPRISK_PATH_PROBE_ACCESS/STAT/LSTAT`.
+int cprisk_probe_secure_path_snapshot_masked(const uint8_t *masked_path, size_t masked_len,
+                                            uint32_t seed, cprisk_path_probe_snapshot_t *out_snapshot);
 
 /// Result of libc spawn-entry multi-path address comparison (RTLD_DEFAULT vs dlopen+dlsym vs export trie).
 typedef struct cprisk_spawn_iface_probe_result {
@@ -464,6 +491,19 @@ int cprisk_verify_dlsym_prologue(void);
 /// Bits for \c cprisk_get_anti_debug_watchdog_snapshot()->last_prologue_fail_mask (high-value external symbols).
 enum {
     /** Bits 0–9: internal CRiskCore slot index when the monitored in-image function mismatches baseline. */
+    CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_ACCESS = 1u << 10,
+    CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_STAT = 1u << 11,
+    CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_LSTAT = 1u << 12,
+    CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_OPEN = 1u << 13,
+    CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_SOCKET = 1u << 14,
+    CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_CONNECT = 1u << 15,
+    CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_DLOPEN = 1u << 16,
+    CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_SYSCTL = 1u << 17,
+    CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_SYSCTLBYNAME = 1u << 18,
+    CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_MPROTECT = 1u << 19,
+    CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_MACH_MSG = 1u << 20,
+    CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_TASK_GET_EXCEPTION_PORTS = 1u << 21,
+    CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_TASK_SWAP_EXCEPTION_PORTS = 1u << 22,
     CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_DYLD_IMAGE_COUNT = 1u << 28,
     CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_OBJC_MSGSEND = 1u << 29,
     CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_DLSYM = 1u << 30,
@@ -473,6 +513,9 @@ enum {
 /// Verify `objc_msgSend` + libdyld \c _dyld_image_count prologues against early ctor baselines (watchdog-aligned).
 /// Complements trust-hook / dlsym-only paths. Returns 1 if intact, 0 on mismatch. Simulator: no-op success.
 int cprisk_verify_runtime_hook_surface_prologues(void);
+/// Return the last-mile export/owner/trampoline drift mask for high-value runtime hook surfaces
+/// (`access`, `stat`, `mprotect`, exception-port Mach APIs, etc.). Zero means clean.
+uint32_t cprisk_runtime_hook_surface_export_drift_mask(void);
 
 /// Bits for \c cprisk_verify_trust_hook_surface_integrity() failure mask (TLS / Frida hook surface).
 enum {
@@ -561,6 +604,21 @@ int cprisk_text_on_demand_decrypt(void *addr);
 /// waiting for another fault. No-op on simulator / when Pass12 metadata is absent.
 void cprisk_text_encrypt_service_idle(void);
 
+enum {
+    CPRISK_TEXT_ENCRYPT_SELF_CHECK_FLAG_NONE = 0u,
+    CPRISK_TEXT_ENCRYPT_SELF_CHECK_FLAG_DECRYPTED_STALE = 1u << 0,
+    CPRISK_TEXT_ENCRYPT_SELF_CHECK_FLAG_DECRYPTED_PROTECTION_DRIFT = 1u << 1,
+    CPRISK_TEXT_ENCRYPT_SELF_CHECK_FLAG_ENCRYPTED_PROTECTION_DRIFT = 1u << 2,
+    CPRISK_TEXT_ENCRYPT_SELF_CHECK_FLAG_HONEYPOT_PROTECTION_DRIFT = 1u << 3,
+    CPRISK_TEXT_ENCRYPT_SELF_CHECK_FLAG_DECRYPTED_CONTENT_DRIFT = 1u << 4,
+    CPRISK_TEXT_ENCRYPT_SELF_CHECK_FLAG_ENCRYPTED_CONTENT_DRIFT = 1u << 5,
+};
+
+/// Validate that protected text pages are either RX-for-now (recently decrypted) or PROT_NONE
+/// (encrypted/guarded), and that no decrypted page lingers past the allowed dwell window.
+/// Returns a bitset of `CPRISK_TEXT_ENCRYPT_SELF_CHECK_FLAG_*`.
+uint32_t cprisk_text_encrypt_self_check(void);
+
 /// Return the current data integrity accumulator value.
 uint64_t cprisk_get_data_integrity_accumulator(void);
 
@@ -646,6 +704,18 @@ int cprisk_resolve_import(uint32_t symbol_index, void **out_addr);
 /// for libsystem_kernel (see cprisk_dlsym). For tests / diagnostics only.
 /// Returns 0 on match, 1 on mismatch, -1 if either lookup failed.
 int cprisk_verify_mprotect_dlsym_matches_export_trie(void);
+
+enum {
+    CPRISK_IMPORT_RESOLVE_PATH_NONE = 0u,
+    CPRISK_IMPORT_RESOLVE_PATH_TRIE_UNIQUE = 1u << 0,
+    CPRISK_IMPORT_RESOLVE_PATH_TRIE_AMBIGUOUS = 1u << 1,
+    CPRISK_IMPORT_RESOLVE_PATH_RTLD_FALLBACK = 1u << 2,
+    CPRISK_IMPORT_RESOLVE_PATH_CROSSCHECK_FAIL = 1u << 3,
+};
+
+/// Test-only helper: classify which resolver path a plaintext symbol would take on
+/// the import path (unique export-trie hit, ambiguity, RTLD fallback, cross-check failure).
+uint32_t cprisk_test_import_resolve_strategy_for_symbol(const char *symbol_name);
 
 /* ── White-box Frontend / Signing Helpers ─────────────────────────── */
 
@@ -882,7 +952,8 @@ uint32_t cprisk_get_signing_mix_fingerprint(void);
 /// Bitset folded into white-box domains 6–9 PRF input (alongside passive \c cprisk_collect_passive_signal_binding_bits):
 /// bit0=staged watchdog hits, bit1=staged anti-dump, bit2=passive trace|DBI,
 /// bit3=vm mprotect Mach↔POSIX cross-check mismatch, bit4=vm_protect trap mismatch,
-/// bit5=mprotect tamper latched, bit6=passive timing anomaly, bit7=TTY|developer disk|libc syscall fallback.
+/// bit5=mprotect tamper latched, bit6=passive timing anomaly, bit7=TTY|developer disk|libc syscall fallback,
+/// bit8=staged watchdog slow-poison wave (between first and second full threshold).
 uint32_t cprisk_integrity_wb_prf_pressure_mask(void);
 /// Domain-specific lanes (preferred over \c cprisk_force_integrity_poison for new call sites).
 void cprisk_integrity_poison_watchdog_lane(void);
@@ -943,6 +1014,11 @@ uint32_t cprisk_get_integrity_poison_lane_event_count(unsigned lane);
 /// Monotonic poison-wave counter (incremented on every poison side-effect batch).
 /// Returns 0 while deception mode is active to avoid exposing a local oracle.
 uint32_t cprisk_get_integrity_poison_epoch(void);
+
+/// Staged watchdog slow-poison: 0 = idle; 1 = one threshold completed (progressive mix only, full poison
+/// not yet committed). Resets to 0 on full commit or \c cprisk_integrity_poison_watchdog_lane_now.
+/// Returns 0 while deception mode is active (same policy as other poison counters).
+uint32_t cprisk_get_integrity_watchdog_slow_poison_phase(void);
 
 /// Fingerprint of which lanes fired and in what order (not only evt_a vs evt_b).
 /// Returns 0 while deception mode is active to avoid exposing a local oracle.
@@ -1102,6 +1178,15 @@ enum {
     CPRISK_FRIDA_RT_IMAGE = 1u << 0,
     CPRISK_FRIDA_RT_DLSYM = 1u << 1,
     CPRISK_FRIDA_RT_PROC = 1u << 2,
+    /** Behavior-layer hit: prologue drift / suspicious trampoline / foreign executable hook surface. */
+    CPRISK_FRIDA_RT_BEHAVIOR = 1u << 3,
+};
+
+enum {
+    CPRISK_FRIDA_RT_BEHAVIOR_PROLOGUE = 1u << 0,
+    CPRISK_FRIDA_RT_BEHAVIOR_TRAMPOLINE = 1u << 1,
+    CPRISK_FRIDA_RT_BEHAVIOR_FOREIGN_EXEC = 1u << 2,
+    CPRISK_FRIDA_RT_BEHAVIOR_TRUST_SURFACE = 1u << 3,
 };
 
 typedef struct cprisk_frida_runtime_snapshot {
@@ -1110,12 +1195,24 @@ typedef struct cprisk_frida_runtime_snapshot {
     uint32_t image_hit_count;
     uint32_t dlsym_hit_count;
     uint32_t proc_hit_count;
+    /** CPRISK_FRIDA_RT_BEHAVIOR_* detail bits when \c flags contains CPRISK_FRIDA_RT_BEHAVIOR. */
+    uint32_t behavior_flags;
+    uint32_t behavior_hit_count;
 } cprisk_frida_runtime_snapshot_t;
 
 /// Populate runtime Frida/Gum hints. On simulator, `supported` is 0.
 /// Returns 0 on success, -1 when `out` is NULL.
 int cprisk_frida_runtime_snapshot(cprisk_frida_runtime_snapshot_t *out);
 #define CPRISK_FRIDA_RUNTIME_SNAPSHOT_DECLARED 1
+
+/// arm64 entry-prefix hook scan for suspicious trampolines such as entry `b`, `br x16`,
+/// `ldr x16, literal; br x16`, or `adrp/add; br x16` veneers commonly used by Frida/Gum.
+/// Returns 1 on match, 0 otherwise.
+int cprisk_scan_arm64_suspicious_trampoline_prefix(const void *func_ptr, size_t prefix_bytes);
+
+/// Scan high-value hook surfaces (`dlsym`, `dlopen`, `objc_msgSend`, dyld entrypoints, etc.)
+/// for suspicious entry trampolines. Returns the number of suspicious symbols detected.
+int cprisk_scan_hook_surface_trampoline_prefixes(void);
 
 /// Decode a short literal using SHA256(label) as a repeating XOR mask (v1).
 /// Sensitive keywords are not stored as contiguous ASCII in the binary.

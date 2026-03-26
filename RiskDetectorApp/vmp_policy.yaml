@@ -28,7 +28,24 @@ functions:
     - ChallengeSession.markSubmitted
     - TrustChainManager.deriveSessionKey
     - TrustChainManager.buildKeyResolver
-  partial: []
+    - cprisk_verify_anchor_hmac
+    - cprisk_verify_with_derived_key
+    - cprisk_verify_with_derived_key_and_request_binding_digest
+    - cprisk_derive_device_key
+    - cprisk_frida_runtime_snapshot
+  partial:
+    - AnomalyDetector.detectRiskScoreAnomaly
+    - ReportEnvelope.buildSignatureInput
+    - PayloadCrypto.encrypt
+    - PayloadCrypto.decrypt
+    - ConfigSignatureVerifier.verify
+    - RemoteConfig.validate
+    - StorageIntegrityGuard.sign
+    - StorageIntegrityGuard.verify
+    - CPRiskKit.validateSecureReportEnvelope
+    - FridaDetector.detect
+    - AntiTamperingSignalProvider.signals
+    - CPRiskKit.evaluate
   never:
     - direct_syscall.cprisk_direct_syscall0
     - direct_syscall.cprisk_direct_syscall6

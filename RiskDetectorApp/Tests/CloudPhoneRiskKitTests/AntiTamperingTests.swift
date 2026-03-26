@@ -1069,6 +1069,86 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertTrue(secondText?.hasPrefix("AUTH EXTERNAL") ?? false)
     }
 
+    func testFridaDetectorFileArtifactProbeRequiresHigherEntropyHints() {
+        let detector = FridaDetector()
+        XCTAssertFalse(
+            detector.shouldProbeFileArtifacts(
+                envHit: false,
+                portBehaviorScore: 0,
+                runtimeChannelCount: 0,
+                memorySignatureHit: false,
+                hookSurfaceHit: false
+            )
+        )
+        XCTAssertTrue(
+            detector.shouldProbeFileArtifacts(
+                envHit: true,
+                portBehaviorScore: 0,
+                runtimeChannelCount: 0,
+                memorySignatureHit: false,
+                hookSurfaceHit: false
+            )
+        )
+        XCTAssertTrue(
+            detector.shouldProbeFileArtifacts(
+                envHit: false,
+                portBehaviorScore: 12,
+                runtimeChannelCount: 0,
+                memorySignatureHit: false,
+                hookSurfaceHit: false
+            )
+        )
+        XCTAssertTrue(
+            detector.shouldProbeFileArtifacts(
+                envHit: false,
+                portBehaviorScore: 0,
+                runtimeChannelCount: 2,
+                memorySignatureHit: false,
+                hookSurfaceHit: false
+            )
+        )
+        XCTAssertTrue(
+            detector.shouldProbeFileArtifacts(
+                envHit: false,
+                portBehaviorScore: 0,
+                runtimeChannelCount: 0,
+                memorySignatureHit: true,
+                hookSurfaceHit: false
+            )
+        )
+        XCTAssertTrue(
+            detector.shouldProbeFileArtifacts(
+                envHit: false,
+                portBehaviorScore: 0,
+                runtimeChannelCount: 0,
+                memorySignatureHit: false,
+                hookSurfaceHit: true
+            )
+        )
+    }
+
+    func testFridaDetectorHookSurfaceMappingCoversPatchAndBehaviorFamilies() {
+        let mapped = FridaDetector.mapHookSurfaceMethods(
+            prologueMethods: ["prologue_branch:open", "prologue_unreadable:stat"],
+            inlineMethods: ["memory_integrity:inline_hook:malloc", "memory_integrity:unreadable:objc_msgSend"],
+            dyldMethods: ["dyld_interpose:section_found:libx.dylib", "dyld_env:DYLD_INSERT_LIBRARIES"]
+        )
+
+        XCTAssertTrue(mapped.contains("frida:patch:prologue_branch:open"))
+        XCTAssertTrue(mapped.contains("frida:patch:prologue_unreadable:stat"))
+        XCTAssertTrue(mapped.contains("frida:patch:inline_hook:malloc"))
+        XCTAssertTrue(mapped.contains("frida:patch:inline_unreadable:objc_msgSend"))
+        XCTAssertTrue(mapped.contains("frida:behavior:dyld_interpose:section_found:libx.dylib"))
+        XCTAssertTrue(mapped.contains("frida:behavior:dyld_env:dyld_insert_libraries"))
+    }
+
+    func testFridaSocketDetectorSuspiciousPathProbeRequiresPriorHints() {
+        let detector = FridaSocketDetector()
+        XCTAssertFalse(detector.shouldProbeSuspiciousPaths(score: 0, methods: []))
+        XCTAssertTrue(detector.shouldProbeSuspiciousPaths(score: 12, methods: []))
+        XCTAssertTrue(detector.shouldProbeSuspiciousPaths(score: 0, methods: ["frida_socket:tmp_entry:gum-js-loop"]))
+    }
+
     func testCFridaRuntimeSnapshotAPI() {
         var snap = cprisk_frida_runtime_snapshot_t()
         XCTAssertEqual(cprisk_frida_runtime_snapshot(&snap), 0)
@@ -1227,6 +1307,20 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertTrue(stringHits.contains("frida_module:string:gum-js-loop"))
     }
 
+    func testFridaModuleDetectorImageOriginAnomalies() {
+        let detector = FridaModuleDetector()
+        let hits = detector.detectImageOriginAnomalies(in: [
+            "/private/var/mobile/Containers/Data/Application/UUID/tmp/libagent.dylib",
+            "/private/var/mobile/Containers/Data/Application/UUID/Documents/plug.framework/plug",
+            "/private/var/mobile/Containers/Data/Application/UUID/Library/Caches/libcache.dylib",
+        ])
+
+        XCTAssertTrue(hits.contains("frida_module:image:tmp_origin"))
+        XCTAssertTrue(hits.contains("frida_module:image:documents_origin"))
+        XCTAssertTrue(hits.contains("frida_module:image:caches_origin"))
+        XCTAssertTrue(hits.contains("frida_module:image:sandbox_data_origin"))
+    }
+
     func testFridaModuleDetectorSignalConversion() {
         let result = FridaModuleDetector.buildResult(
             imageHits: ["frida_module:image:frida-agent"],
@@ -1248,6 +1342,202 @@ final class AntiTamperingTests: XCTestCase {
             signals.first(where: { $0.id == SignalID.fridaModuleDetected })?.score ?? 0,
             28
         )
+    }
+
+    func testFridaModuleDetectorTrampolineMatching() {
+        let detector = FridaModuleDetector()
+        let hits = detector.detectTrampolineMarkers(in: [
+            .init(symbol: "objc_msgSend", firstInstruction: 0x58000010, secondInstruction: 0xD61F0000),
+            .init(symbol: "open", firstInstruction: 0x14000000, secondInstruction: nil),
+        ])
+
+        XCTAssertTrue(hits.contains("frida_module:trampoline:objc_msgSend:literal_branch"))
+        XCTAssertTrue(hits.contains("frida_module:trampoline:open:branch"))
+    }
+
+    func testFridaModuleDetectorSignalConversionIncludesTrampolineSignal() {
+        let result = FridaModuleDetector.buildResult(
+            imageHits: [],
+            sectionHits: [],
+            stringHits: [],
+            trampolineHits: ["frida_module:trampoline:objc_msgSend:literal_branch"]
+        )
+        let signals = FridaModuleDetector.asSignals(result: result)
+
+        XCTAssertTrue(signals.contains(where: { $0.id == SignalID.fridaModuleTrampoline }))
+        XCTAssertLessThanOrEqual(result.score, 44)
+    }
+
+    func testFridaCorrelationSignalsRequireBehavioralOrPatchFamily() {
+        let provider = AntiTamperingSignalProvider()
+        let drivers = [
+            RiskSignal(
+                id: ObfuscatedConstants.signalFridaDetected,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 42,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 80
+            ),
+            RiskSignal(
+                id: SignalID.fridaModuleDetected,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 24,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 78
+            ),
+        ]
+
+        XCTAssertTrue(provider.fridaCorrelationSignals(from: drivers).isEmpty)
+    }
+
+    func testFridaCorrelationSignalsFuseRuntimeBehaviorAndPatchFamilies() {
+        let provider = AntiTamperingSignalProvider()
+        let drivers = [
+            RiskSignal(
+                id: ObfuscatedConstants.signalFridaDetected,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 44,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 84
+            ),
+            RiskSignal(
+                id: ObfuscatedConstants.signalFridaUnixSocket,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 22,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 74
+            ),
+            RiskSignal(
+                id: SignalID.antiDebugWatchdogCriticalHookSurface,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 88,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 92
+            ),
+        ]
+
+        let consensus = provider.fridaCorrelationSignals(from: drivers)
+        XCTAssertEqual(consensus.count, 1)
+        XCTAssertEqual(consensus.first?.id, SignalID.fridaRuntimeConsensus)
+        XCTAssertTrue(consensus.first?.evidence["families"]?.contains("runtime_surface") ?? false)
+        XCTAssertTrue(consensus.first?.evidence["behavioral_families"]?.contains("socket_surface") ?? false)
+        XCTAssertEqual(consensus.first?.state, .tampered)
+    }
+
+    func testFridaCorrelationSignalsTreatFridaPatchSignalsAsPatchSurface() {
+        let provider = AntiTamperingSignalProvider()
+        let drivers = [
+            RiskSignal(
+                id: "frida_behavior_dyld_interpose_section_found_hooker",
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 26,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 70
+            ),
+            RiskSignal(
+                id: "frida_patch_inline_hook_malloc",
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 28,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 80
+            ),
+            RiskSignal(
+                id: ObfuscatedConstants.signalFridaUnixSocket,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 24,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 74
+            ),
+        ]
+
+        let consensus = provider.fridaCorrelationSignals(from: drivers)
+        XCTAssertEqual(consensus.count, 1)
+        XCTAssertEqual(consensus.first?.id, SignalID.fridaRuntimeConsensus)
+        XCTAssertTrue(consensus.first?.evidence["families"]?.contains("patch_surface") ?? false)
+    }
+
+    func testAntiDebugStrategySignalsFuseDebuggerWatchdogAndBreakpointFamilies() {
+        let provider = AntiTamperingSignalProvider()
+        let drivers = [
+            RiskSignal(
+                id: SignalID.debuggerDetected,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 36,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 70
+            ),
+            RiskSignal(
+                id: SignalID.antiDebugWatchdogAnomaly,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 48,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 82
+            ),
+            RiskSignal(
+                id: SignalID.softwareBreakpointDetected,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 52,
+                evidence: [:],
+                state: .tampered,
+                layer: 1,
+                weightHint: 78
+            ),
+        ]
+
+        let consensus = provider.antiDebugStrategySignals(from: drivers)
+        XCTAssertEqual(consensus.count, 1)
+        XCTAssertEqual(consensus.first?.id, SignalID.antiDebugRuntimeConsensus)
+        XCTAssertTrue(consensus.first?.evidence["families"]?.contains("watchdog_surface") ?? false)
+        XCTAssertEqual(consensus.first?.state, .tampered)
+    }
+
+    func testAntiDebugStrategySignalsTreatPlanSurfaceAsIndependentFamily() {
+        let provider = AntiTamperingSignalProvider()
+        let drivers = [
+            RiskSignal(
+                id: SignalID.debuggerDetected,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 36,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 70
+            ),
+            RiskSignal(
+                id: "antidebug_plan_policy_applied",
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 28,
+                evidence: [:],
+                state: .soft(confidence: 0.8),
+                layer: 2,
+                weightHint: 62
+            ),
+        ]
+
+        let consensus = provider.antiDebugStrategySignals(from: drivers)
+        XCTAssertEqual(consensus.count, 1)
+        XCTAssertEqual(consensus.first?.id, SignalID.antiDebugRuntimeConsensus)
+        XCTAssertTrue(consensus.first?.evidence["families"]?.contains("plan_surface") ?? false)
     }
 
     func testRWXMemoryScannerJitAssessmentFlagsStalkerCoexistence() {
@@ -1725,6 +2015,65 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertEqual(consensus.count, 1)
         XCTAssertTrue(consensus.first?.evidence["matched_signals"]?.contains(SignalID.dylibInjectImageCountLow) ?? false)
     }
+
+    func testFridaCorrelationSignalsIncludeTrampolineDrivenModuleFamily() {
+        let provider = AntiTamperingSignalProvider()
+        let drivers: [RiskSignal] = [
+            RiskSignal(
+                id: SignalID.fridaModuleTrampoline,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 18,
+                evidence: ["detail": "frida_module:trampoline:objc_msgSend:literal_branch"],
+                state: .tampered,
+                layer: 2,
+                weightHint: 84
+            ),
+            RiskSignal(
+                id: ObfuscatedConstants.signalFridaUnixSocket,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 20,
+                evidence: ["detail": "frida_socket:path:/tmp/frida"],
+                state: .tampered,
+                layer: 2,
+                weightHint: 75
+            ),
+        ]
+
+        let consensus = provider.fridaCorrelationSignals(from: drivers)
+        XCTAssertEqual(consensus.count, 1)
+        XCTAssertEqual(consensus.first?.id, SignalID.fridaRuntimeConsensus)
+        XCTAssertTrue(consensus.first?.evidence["matched_signals"]?.contains(SignalID.fridaModuleTrampoline) ?? false)
+    }
+
+    func testSigningChainSignalsRequireCodeSignatureAndIdentityDrivers() {
+        let provider = AntiTamperingSignalProvider()
+        let drivers: [RiskSignal] = [
+            RiskSignal(
+                id: "code_signature_invalid",
+                category: "integrity",
+                score: 42,
+                evidence: ["detector": "CodeSignatureValidator"],
+                state: .soft(confidence: 0.85),
+                layer: 2,
+                weightHint: 60
+            ),
+            RiskSignal(
+                id: ObfuscatedConstants.signalAppSigningIdentityTampered,
+                category: "integrity",
+                score: 48,
+                evidence: ["reason_codes": "app_team_identifier_mismatch"],
+                state: .tampered,
+                layer: 2,
+                weightHint: 92
+            ),
+        ]
+
+        let consensus = provider.signingChainSignals(from: drivers)
+        XCTAssertEqual(consensus.count, 1)
+        XCTAssertEqual(consensus.first?.id, SignalID.signingChainConsensus)
+        XCTAssertEqual(consensus.first?.category, "integrity")
+        XCTAssertTrue(consensus.first?.evidence["matched_signals"]?.contains("code_signature_invalid") ?? false)
+    }
 }
 
 /// Exercises `cprisk_hidden_mprotect` tolerance: streak-based tamper latch + test injection.
@@ -1816,7 +2165,7 @@ final class MprotectTamperThresholdTests: XCTestCase {
         XCTAssertFalse(signals.contains { $0.id == SignalID.mteCanaryTampered && $0.score > 0 })
     }
 
-    /// Staged watchdog lane poison (default threshold 3) should not surface full integrity poison immediately.
+    /// Staged watchdog: default threshold 3 triggers a slow-poison wave first; a second threshold (3 more hits) commits full poison.
     func testStagedWatchdogPoisonRequiresThresholdHits() {
         cprisk_test_reset_staged_poison_for_tests()
         XCTAssertEqual(cprisk_is_integrity_poisoned(), 0)
@@ -1828,7 +2177,29 @@ final class MprotectTamperThresholdTests: XCTestCase {
         XCTAssertEqual(cprisk_is_integrity_poisoned(), 0)
 
         cprisk_integrity_poison_watchdog_lane()
-        XCTAssertEqual(cprisk_is_integrity_poisoned(), 1)
+        /* Slow-poison wave: still no global integrity poison. */
+        XCTAssertEqual(cprisk_is_integrity_poisoned(), 0)
+
+        cprisk_integrity_poison_watchdog_lane()
+        XCTAssertEqual(cprisk_is_integrity_poisoned(), 0)
+
+        cprisk_integrity_poison_watchdog_lane()
+        XCTAssertEqual(cprisk_is_integrity_poisoned(), 0)
+
+        cprisk_integrity_poison_watchdog_lane()
+        let observablePoison = cprisk_is_integrity_poisoned()
+        if observablePoison == 0 {
+            let deceptionGuardActive =
+                cprisk_is_being_traced_redundant() != 0 ||
+                cprisk_is_mprotect_tampered() != 0 ||
+                cprisk_check_init_timing() != 0
+            XCTAssertTrue(
+                deceptionGuardActive,
+                "staged watchdog full-commit may be hidden only when deception guard is active"
+            )
+        } else {
+            XCTAssertEqual(observablePoison, 1)
+        }
 
         cprisk_test_reset_staged_poison_for_tests()
         XCTAssertEqual(cprisk_is_integrity_poisoned(), 0)

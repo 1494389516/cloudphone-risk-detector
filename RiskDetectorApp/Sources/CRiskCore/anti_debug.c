@@ -25,6 +25,14 @@
 #include "include/cprisk_instruction_cache.h"
 #endif
 
+#if (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__) && \
+    (defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE) && \
+    (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+#define CPRISK_DENY_ATTACH_DEVICE_AVAILABLE 1
+#else
+#define CPRISK_DENY_ATTACH_DEVICE_AVAILABLE 0
+#endif
+
 void cprisk_deny_attach(void) {
     (void)cprisk_deny_attach_status(NULL);
 }
@@ -32,7 +40,7 @@ void cprisk_deny_attach(void) {
 #define CPRISK_DENY_ATTACH_STUB_SNAPSHOT_BYTES 48u
 
 static int cprisk_deny_attach_status_template(int *error_out) {
-#if (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+#if CPRISK_DENY_ATTACH_DEVICE_AVAILABLE
     register long x0 __asm("x0") = 31;  /* PT_DENY_ATTACH */
     register long x1 __asm("x1") = 0;   /* pid = 0 (self) */
     register long x2 __asm("x2") = 0;   /* addr = 0 */
@@ -71,7 +79,7 @@ static int cprisk_deny_attach_status_template(int *error_out) {
 
 static int (*s_deny_attach_fn)(int *) = cprisk_deny_attach_status_template;
 
-#if (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+#if CPRISK_DENY_ATTACH_DEVICE_AVAILABLE
 
 static void *s_deny_rx_page;
 static size_t s_deny_rx_page_size;
@@ -153,7 +161,7 @@ static uint8_t s_deny_page_sha256_ref[32];
 
 __attribute__((constructor(8)))
 static void cprisk_svc_stub_capture_deny_attach_i(void) {
-#if (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+#if CPRISK_DENY_ATTACH_DEVICE_AVAILABLE
     const void *src = (s_deny_reloc_ready != 0 && s_deny_rx_page != NULL)
                            ? (const void *)((const uint8_t *)s_deny_rx_page + s_deny_rx_offset)
                            : (const void *)&cprisk_deny_attach_status_template;
@@ -177,7 +185,7 @@ uint32_t cprisk_deny_attach_stub_integrity_mask(void) {
     if (!s_cprisk_deny_attach_text_ready) {
         return 0u;
     }
-#if (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+#if CPRISK_DENY_ATTACH_DEVICE_AVAILABLE
     if (s_deny_reloc_ready != 0 && s_deny_rx_page != NULL) {
         uint64_t h = cprisk_deny_fnv1a64_i(s_deny_rx_page, s_deny_rx_page_size);
         h ^= (uint64_t)s_deny_rx_offset << 40;
@@ -246,7 +254,7 @@ uint32_t cprisk_deny_attach_stub_integrity_mask(void) {
             return 1u;
         }
     }
-#if (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+#if CPRISK_DENY_ATTACH_DEVICE_AVAILABLE
     if (!cprisk_stub_contains_svc_opcode((const void *)&cprisk_deny_attach_status_template, sizeof(live))) {
         return 1u;
     }
@@ -262,7 +270,7 @@ void cprisk_deny_attach_stub_page_sha256_digest(uint8_t out_digest[32]) {
     if (!out_digest) {
         return;
     }
-#if (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+#if CPRISK_DENY_ATTACH_DEVICE_AVAILABLE
     const void *src =
         (s_deny_reloc_ready != 0 && s_deny_rx_page != NULL)
             ? (const void *)((const uint8_t *)s_deny_rx_page + s_deny_rx_offset)
@@ -496,7 +504,7 @@ int cprisk_deny_attach_effective_verify(int deny_attach_rc, int deny_attach_errn
     if (detail_bits_out != NULL) {
         *detail_bits_out = 0u;
     }
-#if (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+#if CPRISK_DENY_ATTACH_DEVICE_AVAILABLE
     if (deny_attach_rc != 0) {
         return 0;
     }
@@ -589,7 +597,7 @@ void cprisk_amfi_entitlement_watchdog_probe(
         *amfi_anomaly_bits_out = 0u;
     }
 
-#if (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+#if CPRISK_DENY_ATTACH_DEVICE_AVAILABLE
 #ifndef CS_VALID
 #define CS_VALID 0x00000001u
 #endif

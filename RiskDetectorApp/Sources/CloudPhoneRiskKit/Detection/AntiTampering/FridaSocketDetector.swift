@@ -47,15 +47,7 @@ struct FridaSocketDetector: Detector {
 
         let suspiciousPaths = DynamicFeatureList.shared.suspiciousPaths
 
-        // Method 1: Check known paths using access()
-        for prefix in suspiciousPaths {
-            if access(prefix, F_OK) == 0 {
-                score += 12
-                methods.append("\(ObfuscatedConstants.methodPrefixFridaSocketPath)\(prefix)")
-            }
-        }
-
-        // Method 2: Enumerate /tmp directory for suspicious entries
+        // Method 1: Enumerate /tmp directory for suspicious entries
         if let dir = opendir("/tmp") {
             defer { closedir(dir) }
             while let entry = readdir(dir) {
@@ -75,7 +67,7 @@ struct FridaSocketDetector: Detector {
             }
         }
 
-        // Method 3: Check for Frida's default listening sockets by scanning file descriptors
+        // Method 2: Check for Frida's default listening sockets by scanning file descriptors
         for fd: Int32 in 3..<256 {
             var addr = sockaddr_un()
             var len = socklen_t(MemoryLayout<sockaddr_un>.size)
@@ -102,7 +94,27 @@ struct FridaSocketDetector: Detector {
             }
         }
 
+        // Method 3: Corroborate with direct-access path probes only after lower-noise runtime/socket hints.
+        if shouldProbeSuspiciousPaths(score: score, methods: methods) {
+            for prefix in suspiciousPaths where directFileExists(prefix) {
+                score += 12
+                methods.append("\(ObfuscatedConstants.methodPrefixFridaSocketPath)\(prefix)")
+            }
+        }
+
         return (min(score, 30), methods)
+    }
+
+    internal func shouldProbeSuspiciousPaths(score: Double, methods: [String]) -> Bool {
+        score > 0 || !methods.isEmpty
+    }
+
+    private func directFileExists(_ path: String) -> Bool {
+        if let exists = SVCDirectCall.secureAccess(path) {
+            return exists
+        }
+        Logger.log("[FridaSocketDetector] secure access probe unavailable")
+        return false
     }
 
     // MARK: - 2. Timing Side-Channel Detection
@@ -135,7 +147,7 @@ struct FridaSocketDetector: Detector {
             for _ in 0..<iterations {
                 for _ in 0..<6 { TimingRatioBaseline.samplingNoise() }
                 let start = mach_absolute_time()
-                _ = "/usr/lib/dyld".withCString { cprisk_access_direct($0, F_OK, nil) }
+                _ = SVCDirectCall.secureAccess("/usr/lib/dyld")
                 let end = mach_absolute_time()
                 statSamples.append(Self.nanoseconds(from: end - start))
             }

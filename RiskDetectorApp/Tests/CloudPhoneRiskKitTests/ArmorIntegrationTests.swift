@@ -395,6 +395,10 @@ final class ArmorIntegrationTests: XCTestCase {
         XCTAssertFalse(envelope.signature.isEmpty, "signature must not be empty")
         XCTAssertFalse(envelope.nonce.isEmpty, "nonce must not be empty")
         XCTAssertGreaterThan(envelope.ts, 0, "timestamp must be positive")
+        if envelope.sigVer == "v2a" {
+            XCTAssertEqual(envelope.bindingMode, "armor_request_binding_sha256_v1")
+            XCTAssertTrue(envelope.materialBindingObservation().isConsistent)
+        }
     }
 
     /// 验证 effectiveSigningKey 确实由 armor material 混入。
@@ -440,6 +444,8 @@ final class ArmorIntegrationTests: XCTestCase {
         let verified = envelope.verifySignature(expectedEffectiveKey, keyEncoding: .hex)
         XCTAssertTrue(verified,
                       "envelope signature must verify against runtime-material derivation plus request-binding digest re-key")
+        XCTAssertEqual(envelope.bindingMode, "armor_request_binding_sha256_v1")
+        XCTAssertTrue(envelope.materialBindingObservation().isConsistent)
 
         // 验证 validateSecureReportEnvelope 使用 baseKey 能正确验签 v2a 信封
         let validationResult = CPRiskKit.shared.validateSecureReportEnvelope(

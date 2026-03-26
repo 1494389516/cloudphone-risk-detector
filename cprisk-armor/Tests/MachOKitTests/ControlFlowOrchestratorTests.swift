@@ -118,7 +118,22 @@ final class ControlFlowOrchestratorTests: XCTestCase {
             "DetectorRegistry.detectAll",
             "ChallengeTrigger.shouldTriggerBlindChallenge",
             "AntiTamperingSignalProvider.signals",
-            "MutationPlanner.maybeShuffle"
+            "MutationPlanner.maybeShuffle",
+            "FridaDetector.detect",
+            "AppAttestSigner.generateAssertion",
+            "AppAttestSigner.resolveKeyId",
+            "SecureFileStore.read",
+            "SecureFileStore.write",
+            "cprisk_frida_runtime_snapshot",
+            "cprisk_detect_dbi_markers",
+            "cprisk_run_all_signal_probes",
+            "cprisk_probe_debugger_via_signal",
+            "cprisk_probe_exception_delivery_timeout",
+            "cprisk_detect_thread_exception_ports",
+            "cprisk_detect_hardware_breakpoints",
+            "cprisk_scan_instant_return_key_symbols_prefix",
+            "cprisk_scan_hook_surface_trampoline_prefixes",
+            "cprisk_is_being_traced_sysctl_only"
         ]
         let legacyNames: Set<String> = [
             "DetectorRegistry.dispatchSensitiveDetectors",
@@ -132,6 +147,27 @@ final class ControlFlowOrchestratorTests: XCTestCase {
         for symbol in expectedLight {
             XCTAssertEqual(policy.tier(for: symbol), .light)
         }
+    }
+
+    func testTierResolutionPrefersNeverOverHeavyWhenSymbolListedInBoth() {
+        let policy = FunctionCFFPolicy(
+            version: 2,
+            heavy: ["Example.duplicate"],
+            medium: [],
+            light: [],
+            never: ["Example.duplicate"],
+            regionOnly: [],
+            antiDeobfuscation: AntiDeobfuscationOptions()
+        )
+        XCTAssertEqual(policy.tier(for: "Example.duplicate"), .never)
+    }
+
+    func testCFFSBoxPermutation256IsBijectiveAndSeedDependent() {
+        let a = CFFSBoxPermutation256.generate(seed: 0xC0FFEE01)
+        let b = CFFSBoxPermutation256.generate(seed: 0xC0FFEE02)
+        XCTAssertTrue(CFFSBoxPermutation256.isBijection(a))
+        XCTAssertTrue(CFFSBoxPermutation256.isBijection(b))
+        XCTAssertNotEqual(a, b)
     }
 
     func testPass9RewritesManagedFunctionsAndKeepsNeverTierUntouched() throws {

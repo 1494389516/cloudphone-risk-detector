@@ -209,7 +209,16 @@ targets:
           BIN="$(cd "$TOOLROOT" && swift build -c release --show-bin-path)"
           TOOL="${BIN}/cprisk-vm-self-expect"
           if [ -x "$TOOL" ]; then
-            "$TOOL" --in "$EXEC" || echo "warning: cprisk-vm-self-expect: injection skipped for $EXEC" >&2
+            TOOL_OUTPUT="$("$TOOL" --in "$EXEC" 2>&1)"
+            TOOL_RC=$?
+            if [ "$TOOL_RC" -ne 0 ]; then
+              if [ -n "$TOOL_OUTPUT" ]; then
+                printf '%s\n' "$TOOL_OUTPUT" | /usr/bin/sed 's/error:/note:/g' >&2
+              fi
+              echo "warning: cprisk-vm-self-expect: injection skipped for $EXEC" >&2
+            elif [ -n "$TOOL_OUTPUT" ]; then
+              printf '%s\n' "$TOOL_OUTPUT"
+            fi
           fi
 
           /usr/bin/stat -f "%m %z" "$EXEC" > "$STAMP_PATH" || /bin/date -u +"%Y-%m-%dT%H:%M:%SZ" > "$STAMP_PATH"

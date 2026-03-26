@@ -737,4 +737,18 @@ public enum VMFunctionId {
         }
         return hash == 0 ? 1 : hash
     }
+
+    /// Per-build VM function id: FNV-1a(symbol) mixed with `buildSeed` via SplitMix64.
+    /// The value is embedded only in build artifacts (dispatch + bytecode); the interpreter dispatches by id, not by recomputing FNV from the symbol name at runtime.
+    public static func mixed(symbol: String, buildSeed: UInt64) -> UInt64 {
+        let base = fnv1a64(symbol: symbol)
+        let seed = buildSeed == 0 ? 1 : buildSeed
+        var mix = VMProtectorSplitMix64(seed: base ^ seed ^ 0x564D5F464E5F4944) // "VM_FN_ID"
+        let w = mix.next()
+        var out = base ^ w
+        if out == 0 {
+            out = 1
+        }
+        return out
+    }
 }

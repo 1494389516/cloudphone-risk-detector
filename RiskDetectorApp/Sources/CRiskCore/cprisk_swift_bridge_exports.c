@@ -414,6 +414,29 @@ CPRISK_ALIAS_VOID(cpra_0117, cprisk_test_reset_staged_poison_for_tests,
 CPRISK_ALIAS_RET(int, cpra_0118, cprisk_vm_dyld_image_layout_digest,
                  (uint8_t out_digest[32]),
                  (out_digest))
+CPRISK_ALIAS_RET(int, cpra_0119, cprisk_access_masked,
+                 (const uint8_t *masked_path, size_t masked_len, uint32_t seed,
+                  int amode, int *error_out),
+                 (masked_path, masked_len, seed, amode, error_out))
+CPRISK_ALIAS_RET(int, cpra_0120, cprisk_access_masked_libc,
+                 (const uint8_t *masked_path, size_t masked_len, uint32_t seed,
+                  int amode, int *error_out),
+                 (masked_path, masked_len, seed, amode, error_out))
+CPRISK_ALIAS_RET(int, cpra_0121, cprisk_stat_masked,
+                 (const uint8_t *masked_path, size_t masked_len, uint32_t seed,
+                  struct stat *sb, int *error_out),
+                 (masked_path, masked_len, seed, sb, error_out))
+CPRISK_ALIAS_RET(int, cpra_0122, cprisk_lstat_masked,
+                 (const uint8_t *masked_path, size_t masked_len, uint32_t seed,
+                  struct stat *sb, int *error_out),
+                 (masked_path, masked_len, seed, sb, error_out))
+CPRISK_ALIAS_RET(int, cpra_0123, cprisk_probe_path_snapshot_masked,
+                 (const uint8_t *masked_path, size_t masked_len, uint32_t seed,
+                  cprisk_path_probe_snapshot_t *out_snapshot),
+                 (masked_path, masked_len, seed, out_snapshot))
+CPRISK_ALIAS_RET(uint32_t, cpra_0124, cprisk_runtime_hook_surface_export_drift_mask,
+                 (void),
+                 ())
 
 static const void *const cprisk_swift_bridge_keepalive_i[] = {
     (const void *)&cpra_0001, (const void *)&cpra_0002, (const void *)&cpra_0003,
@@ -459,6 +482,12 @@ static const void *const cprisk_swift_bridge_keepalive_i[] = {
     (const void *)&cpra_0116,
     (const void *)&cpra_0117,
     (const void *)&cpra_0118,
+    (const void *)&cpra_0119,
+    (const void *)&cpra_0120,
+    (const void *)&cpra_0121,
+    (const void *)&cpra_0122,
+    (const void *)&cpra_0123,
+    (const void *)&cpra_0124,
 };
 
 void cprisk_swift_bridge_force_link(void) {

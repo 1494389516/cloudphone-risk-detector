@@ -397,6 +397,7 @@ do {
         verbose: verbose,
         encryptionKey: keyData,
         randomSeed: buildSeed.seed,
+        buildSeed: buildSeed.seed,
         swiftMetadataScrubLevel: metadataScrubLevel,
         swiftSemanticLeakOptions: swiftSemanticLeak
     )

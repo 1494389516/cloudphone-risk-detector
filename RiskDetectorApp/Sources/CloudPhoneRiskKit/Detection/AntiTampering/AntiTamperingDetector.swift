@@ -248,7 +248,7 @@ struct AntiTamperingDetector: Detector {
         statSamples.reserveCapacity(iterations)
         for _ in 0..<iterations {
             let start = DispatchTime.now().uptimeNanoseconds
-            _ = "/usr/lib/dyld".withCString { cprisk_access_direct($0, F_OK, nil) }
+            _ = SVCDirectCall.secureAccess("/usr/lib/dyld")
             let end = DispatchTime.now().uptimeNanoseconds
             statSamples.append(end - start)
         }

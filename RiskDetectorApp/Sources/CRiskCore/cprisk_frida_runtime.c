@@ -13,6 +13,13 @@ enum {
     CPRISK_FRIDA_RT_IMAGE = 1u << 0,
     CPRISK_FRIDA_RT_DLSYM = 1u << 1,
     CPRISK_FRIDA_RT_PROC = 1u << 2,
+    CPRISK_FRIDA_RT_BEHAVIOR = 1u << 3,
+};
+enum {
+    CPRISK_FRIDA_RT_BEHAVIOR_PROLOGUE = 1u << 0,
+    CPRISK_FRIDA_RT_BEHAVIOR_TRAMPOLINE = 1u << 1,
+    CPRISK_FRIDA_RT_BEHAVIOR_FOREIGN_EXEC = 1u << 2,
+    CPRISK_FRIDA_RT_BEHAVIOR_TRUST_SURFACE = 1u << 3,
 };
 typedef struct cprisk_frida_runtime_snapshot {
     uint32_t supported;
@@ -20,6 +27,8 @@ typedef struct cprisk_frida_runtime_snapshot {
     uint32_t image_hit_count;
     uint32_t dlsym_hit_count;
     uint32_t proc_hit_count;
+    uint32_t behavior_flags;
+    uint32_t behavior_hit_count;
 } cprisk_frida_runtime_snapshot_t;
 #endif
 
@@ -33,6 +42,7 @@ typedef struct cprisk_frida_runtime_snapshot {
 #include <TargetConditionals.h>
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
+#include <mach/vm_prot.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/sysctl.h>
@@ -293,6 +303,92 @@ static void cprisk_frida_scan_proc_table(uint32_t *flags_out, uint32_t *proc_hit
     }
 }
 
+static int cprisk_frida_addr_in_loaded_image_exec_i(const void *addr) {
+    if (!addr) {
+        return 0;
+    }
+    Dl_info info;
+    if (dladdr(addr, &info) == 0 || !info.dli_fbase) {
+        return 0;
+    }
+
+    const struct mach_header_64 *hdr = NULL;
+    intptr_t slide = 0;
+    const uint32_t image_count = _dyld_image_count();
+    for (uint32_t i = 0; i < image_count; i++) {
+        if ((const void *)_dyld_get_image_header(i) == info.dli_fbase) {
+            hdr = (const struct mach_header_64 *)_dyld_get_image_header(i);
+            slide = _dyld_get_image_vmaddr_slide(i);
+            break;
+        }
+    }
+    if (!hdr || hdr->magic != MH_MAGIC_64) {
+        return 0;
+    }
+
+    const uint8_t *cursor = (const uint8_t *)(hdr + 1);
+    for (uint32_t i = 0; i < hdr->ncmds; i++) {
+        const struct load_command *lc = (const struct load_command *)cursor;
+        if (lc->cmd == LC_SEGMENT_64 && lc->cmdsize >= sizeof(struct segment_command_64)) {
+            const struct segment_command_64 *seg = (const struct segment_command_64 *)cursor;
+            if ((seg->initprot & VM_PROT_EXECUTE) != 0 && seg->vmsize != 0) {
+                const uintptr_t start = (uintptr_t)((intptr_t)seg->vmaddr + slide);
+                const uintptr_t end = start + (uintptr_t)seg->vmsize;
+                const uintptr_t target = (uintptr_t)addr;
+                if (target >= start && target < end) {
+                    return 1;
+                }
+            }
+        }
+        cursor += lc->cmdsize;
+    }
+    return 0;
+}
+
+static void cprisk_frida_scan_behavior_i(
+    uint32_t *flags_out,
+    uint32_t *behavior_flags_out,
+    uint32_t *behavior_hits_out
+) {
+    uint32_t behavior_flags = 0u;
+    uint32_t hits = 0u;
+
+    if (cprisk_verify_runtime_hook_surface_prologues() != 1) {
+        behavior_flags |= CPRISK_FRIDA_RT_BEHAVIOR_PROLOGUE;
+        hits++;
+    }
+
+    const int trampoline_hits = cprisk_scan_hook_surface_trampoline_prefixes();
+    if (trampoline_hits > 0) {
+        behavior_flags |= CPRISK_FRIDA_RT_BEHAVIOR_TRAMPOLINE;
+        hits += (uint32_t)trampoline_hits;
+    }
+
+    void *objc_msgsend_addr = dlsym(RTLD_DEFAULT, "objc_msgSend");
+    if (!cprisk_frida_addr_in_loaded_image_exec_i((const void *)dlsym) ||
+        !cprisk_frida_addr_in_loaded_image_exec_i((const void *)dlopen) ||
+        (objc_msgsend_addr != NULL && !cprisk_frida_addr_in_loaded_image_exec_i(objc_msgsend_addr))) {
+        behavior_flags |= CPRISK_FRIDA_RT_BEHAVIOR_FOREIGN_EXEC;
+        hits++;
+    }
+
+    uint32_t trust_mask = 0u;
+    if (cprisk_verify_trust_hook_surface_integrity(&trust_mask) != 1) {
+        behavior_flags |= CPRISK_FRIDA_RT_BEHAVIOR_TRUST_SURFACE;
+        hits += (trust_mask != 0u) ? (uint32_t)__builtin_popcount(trust_mask) : 1u;
+    }
+
+    if (behavior_flags != 0u && flags_out) {
+        *flags_out |= CPRISK_FRIDA_RT_BEHAVIOR;
+    }
+    if (behavior_flags_out) {
+        *behavior_flags_out = behavior_flags;
+    }
+    if (behavior_hits_out) {
+        *behavior_hits_out = hits;
+    }
+}
+
 #endif /* Apple device */
 
 int cprisk_frida_runtime_snapshot(cprisk_frida_runtime_snapshot_t *out) {
@@ -306,6 +402,7 @@ int cprisk_frida_runtime_snapshot(cprisk_frida_runtime_snapshot_t *out) {
     cprisk_frida_scan_dyld_images(&flags, &out->image_hit_count);
     cprisk_frida_scan_dlsym(&flags, &out->dlsym_hit_count);
     cprisk_frida_scan_proc_table(&flags, &out->proc_hit_count);
+    cprisk_frida_scan_behavior_i(&flags, &out->behavior_flags, &out->behavior_hit_count);
     out->flags = flags;
 #else
     out->supported = 0u;

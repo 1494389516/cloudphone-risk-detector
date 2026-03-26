@@ -438,6 +438,44 @@ enum SVCDirectCall {
         }
     }
 
+    private struct MaskedPathEnvelope {
+        var bytes: [UInt8]
+        let seed: UInt32
+    }
+
+    @inline(__always)
+    private static func pathMaskLane(seed: UInt32, index: Int) -> UInt8 {
+        let shift = UInt32((index & 3) * 8)
+        var lane = UInt8(truncatingIfNeeded: seed >> shift)
+        lane ^= UInt8(truncatingIfNeeded: index &* 17 &+ 0x5D)
+        let rot = index & 7
+        if rot != 0 {
+            lane = (lane << rot) | (lane >> (8 - rot))
+        }
+        lane ^= UInt8(truncatingIfNeeded: index &* 29 &+ 0xA7)
+        return lane
+    }
+
+    private static func maskedPathEnvelope(_ path: String) -> MaskedPathEnvelope? {
+        var bytes = path.utf8CString.map { UInt8(bitPattern: $0) }
+        guard !bytes.isEmpty else { return nil }
+
+        let seed = UInt32(truncatingIfNeeded: mach_absolute_time())
+            ^ arc4random()
+            ^ UInt32(truncatingIfNeeded: bytes.count &* 0x45D9)
+
+        for index in bytes.indices {
+            bytes[index] ^= pathMaskLane(seed: seed, index: index)
+        }
+        return MaskedPathEnvelope(bytes: bytes, seed: seed)
+    }
+
+    private static func zeroizeMaskedPath(_ bytes: inout [UInt8]) {
+        for index in bytes.indices {
+            bytes[index] = 0
+        }
+    }
+
     /// 通过 CRiskCore 的 arm64 直 syscall 路径调用 sysctlbyname。
     /// 当直 syscall 不可用或失败时返回 nil，不静默回退到标准 libc，
     /// 以便 DualPathValidator 识别安全路径失效。
@@ -510,9 +548,11 @@ enum SVCDirectCall {
     /// 通过 CRiskCore 的 arm64 直 syscall 路径调用 stat。
     /// 直 syscall 不可用或失败时返回 nil（安全路径不可用），不静默回退到标准 libc。
     static func secureStat(_ path: String) -> Bool? {
-        return path.withCString { cPath in
+        guard var envelope = maskedPathEnvelope(path) else { return nil }
+        defer { zeroizeMaskedPath(&envelope.bytes) }
+        return envelope.bytes.withUnsafeBufferPointer { buffer in
             var rawErrno: CInt = 0
-            let result = cprisk_stat_direct(cPath, nil, &rawErrno)
+            let result = cprisk_stat_masked(buffer.baseAddress, buffer.count, envelope.seed, nil, &rawErrno)
             if result == 0 { return true }
             if rawErrno == ENOENT || rawErrno == ENOTDIR { return false }
             return nil
@@ -522,9 +562,11 @@ enum SVCDirectCall {
     /// 通过 CRiskCore 的 arm64 直 syscall 路径调用 lstat。
     /// 直 syscall 不可用或失败时返回 nil（安全路径不可用），不静默回退到标准 libc。
     static func secureLstat(_ path: String) -> Bool? {
-        return path.withCString { cPath in
+        guard var envelope = maskedPathEnvelope(path) else { return nil }
+        defer { zeroizeMaskedPath(&envelope.bytes) }
+        return envelope.bytes.withUnsafeBufferPointer { buffer in
             var rawErrno: CInt = 0
-            let result = cprisk_lstat_direct(cPath, nil, &rawErrno)
+            let result = cprisk_lstat_masked(buffer.baseAddress, buffer.count, envelope.seed, nil, &rawErrno)
             if result == 0 { return true }
             if rawErrno == ENOENT || rawErrno == ENOTDIR { return false }
             return nil
@@ -534,10 +576,12 @@ enum SVCDirectCall {
     /// 通过 direct lstat 读取 inode/st_dev/st_size，用于跨时间基线漂移检测。
     /// 失败时返回 nil，由上层回退为“无基线可用”逻辑而非崩溃。
     static func secureLstatDetail(path: String) -> (inode: UInt64, stDev: UInt32, stSize: Int64)? {
-        return path.withCString { cPath in
+        guard var envelope = maskedPathEnvelope(path) else { return nil }
+        defer { zeroizeMaskedPath(&envelope.bytes) }
+        return envelope.bytes.withUnsafeBufferPointer { buffer in
             var rawErrno: CInt = 0
             var sb = stat()
-            let result = cprisk_lstat_direct(cPath, &sb, &rawErrno)
+            let result = cprisk_lstat_masked(buffer.baseAddress, buffer.count, envelope.seed, &sb, &rawErrno)
             guard result == 0 else {
                 return nil
             }
@@ -558,8 +602,14 @@ enum SVCDirectCall {
     }
 
     static func standardPathProbeSnapshot(_ path: String) -> StandardPathProbeSnapshot {
+        guard var envelope = maskedPathEnvelope(path) else {
+            return StandardPathProbeSnapshot(access: nil, stat: nil, fopen: nil)
+        }
+        defer { zeroizeMaskedPath(&envelope.bytes) }
         var cSnapshot = cprisk_path_probe_snapshot_t(available_mask: 0, exists_mask: 0)
-        let status = path.withCString { cprisk_probe_path_snapshot($0, &cSnapshot) }
+        let status = envelope.bytes.withUnsafeBufferPointer {
+            cprisk_probe_path_snapshot_masked($0.baseAddress, $0.count, envelope.seed, &cSnapshot)
+        }
         guard status == 0 else {
             return StandardPathProbeSnapshot(access: nil, stat: nil, fopen: nil)
         }
@@ -579,12 +629,27 @@ enum SVCDirectCall {
     /// 通过 CRiskCore 的 arm64 直 syscall 路径调用 access。
     /// 直 syscall 不可用或失败时返回 nil（安全路径不可用），不静默回退到标准 libc。
     static func secureAccess(_ path: String, mode: CInt = F_OK) -> Bool? {
-        return path.withCString { cPath in
+        guard var envelope = maskedPathEnvelope(path) else { return nil }
+        defer { zeroizeMaskedPath(&envelope.bytes) }
+        return envelope.bytes.withUnsafeBufferPointer { buffer in
             var rawErrno: CInt = 0
-            let result = cprisk_access_direct(cPath, mode, &rawErrno)
+            let result = cprisk_access_masked(buffer.baseAddress, buffer.count, envelope.seed, mode, &rawErrno)
             if result == 0 { return true }
             if rawErrno == ENOENT || rawErrno == ENOTDIR || rawErrno == EACCES || rawErrno == EPERM { return false }
             return nil
+        }
+    }
+
+    static func standardAccessErrnoMasked(_ path: String, mode: CInt = F_OK) -> (exists: Bool, errno: Int32)? {
+        guard var envelope = maskedPathEnvelope(path) else { return nil }
+        defer { zeroizeMaskedPath(&envelope.bytes) }
+        return envelope.bytes.withUnsafeBufferPointer { buffer in
+            var rawErrno: CInt = 0
+            let result = cprisk_access_masked_libc(buffer.baseAddress, buffer.count, envelope.seed, mode, &rawErrno)
+            if result == 0 {
+                return (true, 0)
+            }
+            return (false, rawErrno)
         }
     }
 }

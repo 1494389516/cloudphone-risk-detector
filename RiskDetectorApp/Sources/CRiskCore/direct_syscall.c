@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <alloca.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -20,6 +21,7 @@
 #include <unistd.h>
 #include <stdatomic.h>
 #include "include/cprisk_instruction_cache.h"
+#include "include/cprisk_secure_zero.h"
 #include "include/cprisk_sha256.h"
 
 #if defined(__APPLE__)
@@ -28,7 +30,9 @@
 #include <mach/vm_region.h>
 #endif
 
-#if (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+#if (defined(__arm64__) || defined(__aarch64__)) && defined(__APPLE__) && \
+    (defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE) && \
+    (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
 #define CPRISK_DIRECT_SYSCALLS_AVAILABLE 1
 #else
 #define CPRISK_DIRECT_SYSCALLS_AVAILABLE 0
@@ -512,6 +516,338 @@ int cprisk_access_direct(const char *path, int amode, int *error_out) {
 #endif
 }
 
+static uint8_t cprisk_masked_path_lane_i(uint32_t seed, size_t index) {
+    const uint32_t shift = (uint32_t)((index & 3u) * 8u);
+    uint8_t lane = (uint8_t)((seed >> shift) & 0xFFu);
+    lane ^= (uint8_t)((index * 17u + 0x5Du) & 0xFFu);
+    {
+        const uint32_t rot = (uint32_t)(index & 7u);
+        if (rot != 0u) {
+            lane = (uint8_t)((uint8_t)(lane << rot) | (uint8_t)(lane >> (8u - rot)));
+        }
+    }
+    lane ^= (uint8_t)((index * 29u + 0xA7u) & 0xFFu);
+    return lane;
+}
+
+typedef struct cprisk_masked_path_scratch_i {
+    void *mapping;
+    size_t mapping_len;
+    char *path;
+    size_t path_len;
+    uint8_t heap_backed;
+} cprisk_masked_path_scratch_i;
+
+static size_t cprisk_masked_path_page_size_i(void) {
+    long page_size = sysconf(_SC_PAGESIZE);
+    if (page_size <= 0) {
+        return 4096u;
+    }
+    return (size_t)page_size;
+}
+
+static uint64_t cprisk_masked_path_entropy_i(size_t path_len) {
+    uint64_t value = 0u;
+    int err = 0;
+    if (cprisk_getentropy_direct(&value, sizeof(value), &err) == 0) {
+        return value ^ ((uint64_t)path_len * 0x9E3779B97F4A7C15ULL);
+    }
+    (void)err;
+    value = (uint64_t)mach_absolute_time();
+    value ^= ((uint64_t)(uintptr_t)&value << 19u);
+    value ^= ((uint64_t)path_len << 11u);
+    value ^= value >> 7u;
+    value ^= value << 13u;
+    return value;
+}
+
+static int cprisk_masked_path_scratch_alloc_i(
+    size_t path_len,
+    cprisk_masked_path_scratch_i *out_scratch
+) {
+    if (out_scratch == NULL || path_len == 0u) {
+        return -1;
+    }
+    memset(out_scratch, 0, sizeof(*out_scratch));
+
+    const size_t page_size = cprisk_masked_path_page_size_i();
+    if (path_len <= page_size) {
+        const size_t mapping_len = page_size * 3u;
+        uint8_t *mapping = (uint8_t *)mmap(
+            NULL,
+            mapping_len,
+            PROT_NONE,
+            MAP_PRIVATE | MAP_ANON,
+            -1,
+            0
+        );
+        if (mapping != MAP_FAILED) {
+            uint8_t *middle = mapping + page_size;
+            if (mprotect(middle, page_size, PROT_READ | PROT_WRITE) == 0) {
+                const size_t slack = page_size - path_len;
+                size_t offset = 0u;
+                if (slack > 0u) {
+                    offset = (size_t)(cprisk_masked_path_entropy_i(path_len) % (uint64_t)(slack + 1u));
+                    offset &= ~(size_t)0xFu;
+                    if (offset > slack) {
+                        offset = slack;
+                    }
+                }
+                memset(middle, 0, page_size);
+                out_scratch->mapping = mapping;
+                out_scratch->mapping_len = mapping_len;
+                out_scratch->path = (char *)(middle + offset);
+                out_scratch->path_len = path_len;
+                out_scratch->heap_backed = 0u;
+                return 0;
+            }
+            (void)munmap(mapping, mapping_len);
+        }
+    }
+
+    char *heap_buf = (char *)malloc(path_len);
+    if (heap_buf == NULL) {
+        return -1;
+    }
+    memset(heap_buf, 0, path_len);
+    out_scratch->path = heap_buf;
+    out_scratch->path_len = path_len;
+    out_scratch->heap_backed = 1u;
+    return 0;
+}
+
+static void cprisk_masked_path_scratch_release_i(cprisk_masked_path_scratch_i *scratch) {
+    if (scratch == NULL || scratch->path == NULL || scratch->path_len == 0u) {
+        return;
+    }
+    if (scratch->heap_backed != 0u) {
+        cprisk_secure_zero(scratch->path, scratch->path_len);
+        free(scratch->path);
+    } else if (scratch->mapping != NULL && scratch->mapping_len != 0u) {
+        const size_t page_size = cprisk_masked_path_page_size_i();
+        uint8_t *middle = (uint8_t *)scratch->mapping + page_size;
+        cprisk_secure_zero(middle, page_size);
+        (void)mprotect(middle, page_size, PROT_NONE);
+        (void)munmap(scratch->mapping, scratch->mapping_len);
+    }
+    memset(scratch, 0, sizeof(*scratch));
+}
+
+static int cprisk_decode_masked_path_i(
+    const uint8_t *masked_path,
+    size_t masked_len,
+    uint32_t seed,
+    char *path_buf,
+    size_t path_buf_len
+) {
+    if (masked_path == NULL || masked_len == 0u || masked_len > (size_t)PATH_MAX ||
+        path_buf == NULL || path_buf_len < masked_len) {
+        return -1;
+    }
+    for (size_t i = 0u; i < masked_len; i++) {
+        path_buf[i] = (char)(masked_path[i] ^ cprisk_masked_path_lane_i(seed, i));
+    }
+    if (path_buf[masked_len - 1u] != '\0') {
+        cprisk_secure_zero(path_buf, path_buf_len);
+        return -1;
+    }
+    return 0;
+}
+
+typedef int (*cprisk_masked_path_call_i)(const char *path, void *ctx, int *error_out);
+
+typedef struct cprisk_masked_access_ctx_i {
+    int amode;
+} cprisk_masked_access_ctx_i;
+
+typedef struct cprisk_masked_stat_ctx_i {
+    struct stat *sb;
+} cprisk_masked_stat_ctx_i;
+
+static int cprisk_masked_call_stat_i(const char *path, void *ctx, int *error_out) {
+    cprisk_masked_stat_ctx_i *stat_ctx = (cprisk_masked_stat_ctx_i *)ctx;
+    return cprisk_stat_direct(path, stat_ctx ? stat_ctx->sb : NULL, error_out);
+}
+
+static int cprisk_masked_call_lstat_i(const char *path, void *ctx, int *error_out) {
+    cprisk_masked_stat_ctx_i *stat_ctx = (cprisk_masked_stat_ctx_i *)ctx;
+    return cprisk_lstat_direct(path, stat_ctx ? stat_ctx->sb : NULL, error_out);
+}
+
+static int cprisk_masked_call_access_i(const char *path, void *ctx, int *error_out) {
+    cprisk_masked_access_ctx_i *access_ctx = (cprisk_masked_access_ctx_i *)ctx;
+    const int amode = access_ctx ? access_ctx->amode : F_OK;
+    return cprisk_access_direct(path, amode, error_out);
+}
+
+static int cprisk_masked_call_access_libc_i(const char *path, void *ctx, int *error_out) {
+    cprisk_masked_access_ctx_i *access_ctx = (cprisk_masked_access_ctx_i *)ctx;
+    const int amode = access_ctx ? access_ctx->amode : F_OK;
+    return cprisk_finish_errno(access(path, amode), error_out);
+}
+
+static int cprisk_masked_call_open_exists_i(const char *path, void *ctx, int *error_out) {
+    (void)ctx;
+    int fd = cprisk_open_direct(path, O_RDONLY, error_out);
+    if (fd < 0) {
+        return -1;
+    }
+    (void)cprisk_close_direct(fd, NULL);
+    return 0;
+}
+
+static int cprisk_with_decoded_masked_path_i(
+    const uint8_t *masked_path,
+    size_t masked_len,
+    uint32_t seed,
+    cprisk_masked_path_call_i call_fn,
+    void *ctx,
+    int *error_out
+) {
+    if (call_fn == NULL || masked_path == NULL || masked_len == 0u ||
+        masked_len > (size_t)PATH_MAX) {
+        if (error_out != NULL) {
+            *error_out = EINVAL;
+        }
+        return -1;
+    }
+
+    cprisk_masked_path_scratch_i scratch;
+    if (cprisk_masked_path_scratch_alloc_i(masked_len, &scratch) != 0) {
+        if (error_out != NULL) {
+            *error_out = ENOMEM;
+        }
+        return -1;
+    }
+    if (cprisk_decode_masked_path_i(masked_path, masked_len, seed, scratch.path, scratch.path_len) != 0) {
+        if (error_out != NULL) {
+            *error_out = EINVAL;
+        }
+        cprisk_masked_path_scratch_release_i(&scratch);
+        return -1;
+    }
+
+    const int rc = call_fn(scratch.path, ctx, error_out);
+    cprisk_masked_path_scratch_release_i(&scratch);
+    return rc;
+}
+
+static int cprisk_masked_call_probe_standard_snapshot_i(const char *path, void *ctx, int *error_out) {
+    cprisk_path_probe_snapshot_t *snapshot = (cprisk_path_probe_snapshot_t *)ctx;
+    if (snapshot == NULL || path == NULL) {
+        if (error_out != NULL) {
+            *error_out = EINVAL;
+        }
+        return -1;
+    }
+
+    snapshot->available_mask =
+        CPRISK_PATH_PROBE_ACCESS | CPRISK_PATH_PROBE_STAT | CPRISK_PATH_PROBE_FOPEN;
+    snapshot->exists_mask = 0u;
+
+    if (cprisk_access_direct(path, F_OK, NULL) == 0) {
+        snapshot->exists_mask |= CPRISK_PATH_PROBE_ACCESS;
+    }
+
+    struct stat sb;
+    memset(&sb, 0, sizeof(sb));
+    if (cprisk_stat_direct(path, &sb, NULL) == 0) {
+        snapshot->exists_mask |= CPRISK_PATH_PROBE_STAT;
+    }
+
+    int open_errno = 0;
+    int fd = cprisk_open_direct(path, O_RDONLY, &open_errno);
+    if (fd >= 0) {
+        snapshot->exists_mask |= CPRISK_PATH_PROBE_FOPEN;
+        (void)cprisk_close_direct(fd, NULL);
+    }
+    if (error_out != NULL) {
+        *error_out = 0;
+    }
+    return 0;
+}
+
+static int cprisk_masked_call_probe_secure_snapshot_i(const char *path, void *ctx, int *error_out) {
+    cprisk_path_probe_snapshot_t *snapshot = (cprisk_path_probe_snapshot_t *)ctx;
+    if (snapshot == NULL || path == NULL) {
+        if (error_out != NULL) {
+            *error_out = EINVAL;
+        }
+        return -1;
+    }
+
+    snapshot->available_mask =
+        CPRISK_PATH_PROBE_ACCESS | CPRISK_PATH_PROBE_STAT | CPRISK_PATH_PROBE_LSTAT;
+    snapshot->exists_mask = 0u;
+
+    if (cprisk_access_direct(path, F_OK, NULL) == 0) {
+        snapshot->exists_mask |= CPRISK_PATH_PROBE_ACCESS;
+    }
+
+    struct stat sb;
+    memset(&sb, 0, sizeof(sb));
+    if (cprisk_stat_direct(path, &sb, NULL) == 0) {
+        snapshot->exists_mask |= CPRISK_PATH_PROBE_STAT;
+    }
+
+    memset(&sb, 0, sizeof(sb));
+    if (cprisk_lstat_direct(path, &sb, NULL) == 0) {
+        snapshot->exists_mask |= CPRISK_PATH_PROBE_LSTAT;
+    }
+    if (error_out != NULL) {
+        *error_out = 0;
+    }
+    return 0;
+}
+
+int cprisk_stat_masked(
+    const uint8_t *masked_path,
+    size_t masked_len,
+    uint32_t seed,
+    struct stat *sb,
+    int *error_out
+) {
+    cprisk_masked_stat_ctx_i stat_ctx = {.sb = sb};
+    return cprisk_with_decoded_masked_path_i(
+        masked_path, masked_len, seed, cprisk_masked_call_stat_i, &stat_ctx, error_out);
+}
+
+int cprisk_lstat_masked(
+    const uint8_t *masked_path,
+    size_t masked_len,
+    uint32_t seed,
+    struct stat *sb,
+    int *error_out
+) {
+    cprisk_masked_stat_ctx_i stat_ctx = {.sb = sb};
+    return cprisk_with_decoded_masked_path_i(
+        masked_path, masked_len, seed, cprisk_masked_call_lstat_i, &stat_ctx, error_out);
+}
+
+int cprisk_access_masked(
+    const uint8_t *masked_path,
+    size_t masked_len,
+    uint32_t seed,
+    int amode,
+    int *error_out
+) {
+    cprisk_masked_access_ctx_i access_ctx = {.amode = amode};
+    return cprisk_with_decoded_masked_path_i(
+        masked_path, masked_len, seed, cprisk_masked_call_access_i, &access_ctx, error_out);
+}
+
+int cprisk_access_masked_libc(
+    const uint8_t *masked_path,
+    size_t masked_len,
+    uint32_t seed,
+    int amode,
+    int *error_out
+) {
+    cprisk_masked_access_ctx_i access_ctx = {.amode = amode};
+    return cprisk_with_decoded_masked_path_i(
+        masked_path, masked_len, seed, cprisk_masked_call_access_libc_i, &access_ctx, error_out);
+}
+
 int cprisk_probe_path_snapshot(const char *path, cprisk_path_probe_snapshot_t *out_snapshot) {
     if (path == NULL || out_snapshot == NULL) {
         return -1;
@@ -530,13 +866,54 @@ int cprisk_probe_path_snapshot(const char *path, cprisk_path_probe_snapshot_t *o
         out_snapshot->exists_mask |= CPRISK_PATH_PROBE_STAT;
     }
 
-    FILE *fp = fopen(path, "rb");
-    if (fp != NULL) {
+    int open_errno = 0;
+    int fd = cprisk_open_direct(path, O_RDONLY, &open_errno);
+    if (fd >= 0) {
         out_snapshot->exists_mask |= CPRISK_PATH_PROBE_FOPEN;
-        (void)fclose(fp);
+        (void)cprisk_close_direct(fd, NULL);
     }
 
     return 0;
+}
+
+int cprisk_probe_path_snapshot_masked(
+    const uint8_t *masked_path,
+    size_t masked_len,
+    uint32_t seed,
+    cprisk_path_probe_snapshot_t *out_snapshot
+) {
+    if (masked_path == NULL || out_snapshot == NULL) {
+        return -1;
+    }
+
+    return cprisk_with_decoded_masked_path_i(
+        masked_path,
+        masked_len,
+        seed,
+        cprisk_masked_call_probe_standard_snapshot_i,
+        out_snapshot,
+        NULL
+    );
+}
+
+int cprisk_probe_secure_path_snapshot_masked(
+    const uint8_t *masked_path,
+    size_t masked_len,
+    uint32_t seed,
+    cprisk_path_probe_snapshot_t *out_snapshot
+) {
+    if (masked_path == NULL || out_snapshot == NULL) {
+        return -1;
+    }
+
+    return cprisk_with_decoded_masked_path_i(
+        masked_path,
+        masked_len,
+        seed,
+        cprisk_masked_call_probe_secure_snapshot_i,
+        out_snapshot,
+        NULL
+    );
 }
 
 /* ── getpid / getppid / getuid ─────────────────────────────────────── */

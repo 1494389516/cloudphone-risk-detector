@@ -164,7 +164,11 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
 
         func finalizeSignals() -> [RiskSignal] {
             let merged = coalesceProtectedDuplicateSignals(signals)
-            let withCross = merged + crossConsistencySignals(from: merged)
+            let withCorrelation = merged
+                + fridaCorrelationSignals(from: merged)
+                + antiDebugStrategySignals(from: merged)
+                + signingChainSignals(from: merged)
+            let withCross = withCorrelation + crossConsistencySignals(from: withCorrelation)
             let weighted = applyMiePostureWeighting(withCross)
             return weighted.filter { $0.score >= configuration.minScoreThreshold }
         }
@@ -1004,7 +1008,9 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                 (ObfuscatedConstants.methodPrefixFridaEnv, "\(fridaPrefix)_environment", 25),
                 (ObfuscatedConstants.methodPrefixFridaMemorySig, "\(fridaPrefix)_memsig", 20),
                 (ObfuscatedConstants.methodPrefixFridaRuntime, "\(fridaPrefix)_runtime", 22),
-                (ObfuscatedConstants.methodPrefixFridaRuntimeFused, "\(fridaPrefix)_runtime_fused", 48)
+                (ObfuscatedConstants.methodPrefixFridaRuntimeFused, "\(fridaPrefix)_runtime_fused", 48),
+                (FridaDetector.methodPrefixPatch, "\(fridaPrefix)_patch", 28),
+                (FridaDetector.methodPrefixBehavior, "\(fridaPrefix)_behavior", 22),
             ]
             
             for method in result.methods {
@@ -2063,6 +2069,334 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         )
 
         return signals
+    }
+
+    internal func fridaCorrelationSignals(from signals: [RiskSignal]) -> [RiskSignal] {
+        let familyRules: [(family: String, threshold: Double, predicate: (RiskSignal) -> Bool)] = [
+            (
+                "runtime_surface",
+                22,
+                {
+                    $0.id == ObfuscatedConstants.signalFridaDetected
+                        || $0.id.hasPrefix("frida_port_")
+                        || $0.id.hasPrefix("frida_proto_")
+                        || $0.id.hasPrefix("frida_listen_")
+                        || $0.id.hasPrefix("frida_environment_")
+                        || $0.id.hasPrefix("frida_memsig_")
+                        || $0.id.hasPrefix("frida_runtime_")
+                        || $0.id.hasPrefix("frida_behavior_")
+                }
+            ),
+            (
+                "module_surface",
+                18,
+                {
+                    [
+                        SignalID.fridaModuleDetected,
+                        SignalID.fridaModuleImage,
+                        SignalID.fridaModuleSection,
+                        SignalID.fridaModuleString,
+                        SignalID.fridaModuleTrampoline,
+                    ].contains($0.id)
+                }
+            ),
+            (
+                "thread_surface",
+                18,
+                {
+                    $0.id == ObfuscatedConstants.signalThreadAnomaly
+                        || $0.id == ObfuscatedConstants.signalFridaExceptionPort
+                }
+            ),
+            (
+                "socket_surface",
+                16,
+                {
+                    $0.id == ObfuscatedConstants.signalFridaUnixSocket
+                        || $0.id == ObfuscatedConstants.signalFridaTimingAnomaly
+                        || $0.id == ObfuscatedConstants.signalFridaStalkerAmplified
+                }
+            ),
+            (
+                "exec_surface",
+                16,
+                {
+                    $0.id == ObfuscatedConstants.signalFridaJSEngineHeap
+                        || $0.id == ObfuscatedConstants.signalFridaStalkerJit
+                        || $0.id == SignalID.stalkerJitRWX
+                        || $0.id == SignalID.rwxJitCoexistence
+                }
+            ),
+            (
+                "patch_surface",
+                24,
+                {
+                    $0.id == SignalID.antiDebugWatchdogCriticalHookSurface
+                        || $0.id.hasPrefix("frida_patch_")
+                        || $0.id == ObfuscatedConstants.signalLibcInlineHookDetected
+                        || $0.id == SignalID.fridaModuleTrampoline
+                        || $0.id == "dyld_interpose_detected"
+                        || $0.id == SwiftRuntimeIntegrityDetector.metadataSignalID
+                        || $0.id == SwiftRuntimeIntegrityDetector.witnessSignalID
+                        || $0.id == SwiftRuntimeIntegrityDetector.closureSignalID
+                        || $0.id == SwiftRuntimeIntegrityDetector.existentialSignalID
+                }
+            ),
+            (
+                "loader_surface",
+                18,
+                {
+                    [
+                        SignalID.antiDebugWatchdogDyldInjection,
+                        SignalID.dylibInjectImageCountLow,
+                        SignalID.ifaceSpawnPathDivergence,
+                        "dyld_env_abuse",
+                        "dyld_image_overload",
+                        "dyld_monitor_suspicious_injection",
+                        "dyld_monitor_gen_anomaly",
+                        "dyld_monitor_image_removed",
+                        "dyld_monitor_silent_mutation",
+                        "dylib_inject_image_count",
+                        "dylib_inject_env_insert",
+                        "dylib_inject_out_of_sandbox",
+                        "dylib_inject_rootless_jailbreak",
+                        "dylib_inject_suspicious_keyword",
+                    ].contains($0.id)
+                }
+            ),
+        ]
+
+        var familyDrivers: [String: RiskSignal] = [:]
+        for rule in familyRules {
+            guard let strongest = strongestSignal(in: signals, threshold: rule.threshold, predicate: rule.predicate) else {
+                continue
+            }
+            familyDrivers[rule.family] = strongest
+        }
+
+        let families = familyDrivers.keys.sorted()
+        guard families.count >= 2 else { return [] }
+
+        let behavioralFamilies = families.filter {
+            ["thread_surface", "socket_surface", "exec_surface", "patch_surface", "loader_surface"].contains($0)
+        }
+        guard !behavioralFamilies.isEmpty else { return [] }
+
+        let matched = families.compactMap { familyDrivers[$0] }
+        let score = min(
+            58,
+            26
+                + Double(families.count) * 6
+                + Double(behavioralFamilies.count) * 4
+                + (families.contains("patch_surface") ? 6 : 0)
+        )
+        let confidence = min(0.92, 0.58 + Double(families.count) * 0.08 + Double(behavioralFamilies.count) * 0.04)
+        let consensusState: RiskSignalState = families.count >= 3 && behavioralFamilies.count >= 2
+            ? .tampered
+            : .soft(confidence: confidence)
+
+        return [
+            RiskSignal(
+                id: SignalID.fridaRuntimeConsensus,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: score,
+                evidence: [
+                    "mode": "frida_multi_surface_runtime_consensus",
+                    "families": families.joined(separator: ","),
+                    "behavioral_families": behavioralFamilies.joined(separator: ","),
+                    "matched_signals": matched.map(\.id).joined(separator: ","),
+                    "family_count": "\(families.count)",
+                    "behavioral_family_count": "\(behavioralFamilies.count)",
+                ],
+                state: consensusState,
+                layer: 3,
+                weightHint: min(88, score + 22)
+            ),
+        ]
+    }
+
+    internal func antiDebugStrategySignals(from signals: [RiskSignal]) -> [RiskSignal] {
+        let familyRules: [(family: String, threshold: Double, predicate: (RiskSignal) -> Bool)] = [
+            (
+                "debugger_surface",
+                18,
+                {
+                    $0.id == SignalID.debuggerDetected
+                        || $0.id.hasPrefix("debugger_parent_")
+                        || $0.id.hasPrefix("debugger_port_")
+                }
+            ),
+            (
+                "watchdog_surface",
+                20,
+                {
+                    [
+                        SignalID.antiDebugWatchdogAnomaly,
+                        SignalID.antiDebugWatchdogTraced,
+                        SignalID.antiDebugWatchdogDenyAttachFailed,
+                        SignalID.antiDebugWatchdogExceptionPort,
+                        SignalID.antiDebugWatchdogExceptionQuery,
+                        SignalID.antiDebugWatchdogDyldInjection,
+                        SignalID.antiDebugWatchdogDenyAttachVerify,
+                        SignalID.antiDebugWatchdogAMFICsFlags,
+                        SignalID.antiDebugWatchdogGetTaskAllow,
+                        SignalID.antiDebugWatchdogCriticalHookSurface,
+                        SignalID.antiDebugWatchdogPacThreadEntry,
+                        SignalID.antiDebugWatchdogVmImageLayoutDrift,
+                    ].contains($0.id)
+                }
+            ),
+            (
+                "breakpoint_surface",
+                18,
+                {
+                    [
+                        SignalID.softwareBreakpointDetected,
+                        SignalID.hardwareBreakpointDetected,
+                        SignalID.exceptionDeliveryTimeout,
+                        SignalID.csopsDebugged,
+                        SignalID.signalProbeDebugger,
+                    ].contains($0.id)
+                }
+            ),
+            (
+                "plan_surface",
+                18,
+                {
+                    [
+                        SignalID.antidebugPlanEscalated,
+                        "antidebug_plan_policy_applied",
+                        "antidebug_inline_patch_tamper",
+                    ].contains($0.id)
+                }
+            ),
+            (
+                "signing_surface",
+                18,
+                {
+                    [
+                        ObfuscatedConstants.signalAppSigningIdentityTampered,
+                        ObfuscatedConstants.signalAppSigningBaselineChanged,
+                        "app_get_task_allow_enabled",
+                        "code_signature_invalid",
+                    ].contains($0.id)
+                }
+            ),
+            (
+                "syscall_surface",
+                16,
+                {
+                    [
+                        SignalID.libcDirectSyscallFallback,
+                        ObfuscatedConstants.signalMemoryProtectionTampered,
+                        ObfuscatedConstants.signalMemoryProtectionSemanticBypass,
+                    ].contains($0.id)
+                }
+            ),
+        ]
+
+        var familyDrivers: [String: RiskSignal] = [:]
+        for rule in familyRules {
+            guard let strongest = strongestSignal(in: signals, threshold: rule.threshold, predicate: rule.predicate) else {
+                continue
+            }
+            familyDrivers[rule.family] = strongest
+        }
+
+        let families = familyDrivers.keys.sorted()
+        guard families.count >= 2 else { return [] }
+        let matched = families.compactMap { familyDrivers[$0] }
+        let confidence = min(0.90, 0.56 + Double(families.count) * 0.09)
+        let score = min(48, 20 + Double(families.count) * 7)
+        let state: RiskSignalState = families.count >= 3 ? .tampered : .soft(confidence: confidence)
+
+        return [
+            RiskSignal(
+                id: SignalID.antiDebugRuntimeConsensus,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: score,
+                evidence: [
+                    "mode": "anti_debug_multi_strategy_consensus",
+                    "families": families.joined(separator: ","),
+                    "family_count": "\(families.count)",
+                    "matched_signals": matched.map(\.id).joined(separator: ","),
+                    "driver_confidence": String(format: "%.2f", confidence),
+                ],
+                state: state,
+                layer: 3,
+                weightHint: min(84, score + 20)
+            ),
+        ]
+    }
+
+    internal func signingChainSignals(from signals: [RiskSignal]) -> [RiskSignal] {
+        let codeSignature = strongestSignal(in: signals, threshold: 22) {
+            [
+                "code_signature_invalid",
+                "signature_invalid",
+                "signature_resigned",
+                "signature_abnormal_permissions",
+                "sdk_code_signature_missing",
+            ].contains($0.id)
+        }
+        let signingIdentity = strongestSignal(in: signals, threshold: 18) {
+            [
+                ObfuscatedConstants.signalAppSigningIdentityTampered,
+                ObfuscatedConstants.signalAppSigningBaselineChanged,
+                "app_identifier_bundle_mismatch",
+                "app_team_identifier_mismatch",
+                "app_bundle_identifier_mismatch",
+                "app_get_task_allow_enabled",
+                "app_identifier_malformed",
+                "app_bundle_identifier_missing",
+            ].contains($0.id)
+        }
+
+        guard let codeSignature, let signingIdentity else { return [] }
+
+        let tamperedDrivers = [codeSignature, signingIdentity].filter { $0.state == .tampered }.count
+        let score = min(
+            56,
+            30 + max(codeSignature.score, signingIdentity.score) * 0.2 + Double(tamperedDrivers) * 6
+        )
+        let confidence = min(
+            0.94,
+            0.72 + Double(tamperedDrivers) * 0.10 + (signingIdentity.id == ObfuscatedConstants.signalAppSigningBaselineChanged ? 0.04 : 0)
+        )
+        let state: RiskSignalState = tamperedDrivers >= 1 ? .tampered : .soft(confidence: confidence)
+
+        return [
+            RiskSignal(
+                id: SignalID.signingChainConsensus,
+                category: "integrity",
+                score: score,
+                evidence: [
+                    "mode": "code_signature_signing_identity_consensus",
+                    "matched_signals": [codeSignature.id, signingIdentity.id].joined(separator: ","),
+                    "tampered_driver_count": "\(tamperedDrivers)",
+                    "code_signature_driver": codeSignature.id,
+                    "signing_identity_driver": signingIdentity.id,
+                ],
+                state: state,
+                layer: 3,
+                weightHint: min(88, score + 24)
+            ),
+        ]
+    }
+
+    private func strongestSignal(
+        in signals: [RiskSignal],
+        threshold: Double,
+        predicate: (RiskSignal) -> Bool
+    ) -> RiskSignal? {
+        signals
+            .filter { predicate($0) && (($0.state == .tampered) || $0.score >= threshold) }
+            .max { lhs, rhs in
+                if lhs.score == rhs.score {
+                    return lhs.weightHint < rhs.weightHint
+                }
+                return lhs.score < rhs.score
+            }
     }
 
     /// Lightweight multi-family consensus; `internal` for `@testable` regression tests.

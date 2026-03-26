@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import XCTest
 import CRiskCore
@@ -5,6 +6,22 @@ import CRiskCore
 
 final class ArmorRuntimeLifecycleTests: XCTestCase {
     private let armorRootKeyDefaultsKey = "com.cloudphone.riskkit.armor.root_key_hex"
+
+    private func textEncryptSelfCheckResult() throws -> UInt32 {
+        typealias SelfCheckFn = @convention(c) () -> UInt32
+
+        guard let handle = dlopen(nil, RTLD_NOW) else {
+            throw XCTSkip("dlopen(nil) unavailable for text encrypt self-check lookup")
+        }
+        defer { dlclose(handle) }
+
+        guard let symbol = dlsym(handle, "cprisk_text_encrypt_self_check") else {
+            throw XCTSkip("cprisk_text_encrypt_self_check is not linked in this test runtime")
+        }
+
+        let function = unsafeBitCast(symbol, to: SelfCheckFn.self)
+        return function()
+    }
 
     private func waitForWatchdogSnapshot(
         timeout: TimeInterval = 1.0
@@ -420,6 +437,45 @@ final class ArmorRuntimeLifecycleTests: XCTestCase {
         XCTAssertEqual(String(cString: buf), "frida")
     }
 
+    func testArm64SuspiciousTrampolinePrefixDetectorFlagsCommonHookStubs() {
+        let clean: [UInt32] = [0xA9BF7BFD, 0x910003FD, 0xA90153F3]
+        let branchStub: [UInt32] = [0x14000008, 0xD503201F, 0xD503201F]
+        let literalBrStub: [UInt32] = [0x58000010, 0xD61F0200, 0xD503201F]
+        let adrpAddBrStub: [UInt32] = [0x90000010, 0x91000210, 0xD61F0200]
+
+        func scan(_ words: [UInt32]) -> Int32 {
+            words.withUnsafeBytes { raw in
+                cprisk_scan_arm64_suspicious_trampoline_prefix(raw.baseAddress, raw.count)
+            }
+        }
+
+        XCTAssertEqual(scan(clean), 0)
+        XCTAssertEqual(scan(branchStub), 1)
+        XCTAssertEqual(scan(literalBrStub), 1)
+        XCTAssertEqual(scan(adrpAddBrStub), 1)
+    }
+
+    func testFridaRuntimeSnapshotBehaviorFieldsStayConsistent() {
+        var snapshot = cprisk_frida_runtime_snapshot_t()
+        XCTAssertEqual(cprisk_frida_runtime_snapshot(&snapshot), 0)
+        if snapshot.supported == 0 {
+            XCTAssertEqual(snapshot.flags, 0)
+            XCTAssertEqual(snapshot.behavior_flags, 0)
+            XCTAssertEqual(snapshot.behavior_hit_count, 0)
+            return
+        }
+
+        let behaviorBit = UInt32(CPRISK_FRIDA_RT_BEHAVIOR)
+        let behaviorSet = (snapshot.flags & behaviorBit) != 0
+        if behaviorSet {
+            XCTAssertNotEqual(snapshot.behavior_flags, 0)
+            XCTAssertGreaterThan(snapshot.behavior_hit_count, 0)
+        } else {
+            XCTAssertEqual(snapshot.behavior_flags, 0)
+            XCTAssertEqual(snapshot.behavior_hit_count, 0)
+        }
+    }
+
     func testVmMprotectCountersReadableAfterReset() {
         cprisk_test_mprotect_reset_tamper_state()
         XCTAssertEqual(cprisk_get_vm_mprotect_crosscheck_mismatch_count(), 0)
@@ -438,6 +494,56 @@ final class ArmorRuntimeLifecycleTests: XCTestCase {
 
     func testRuntimeHookSurfacePrologueVerifierReturnsSuccessOnThisPlatform() {
         XCTAssertEqual(cprisk_verify_runtime_hook_surface_prologues(), 1)
+    }
+
+    func testRuntimeHookSurfaceExportDriftMaskIsWithinKnownWatchdogBits() {
+        let mask = cprisk_runtime_hook_surface_export_drift_mask()
+        let allowed: UInt32 =
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_ACCESS) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_STAT) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_LSTAT) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_OPEN) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_SOCKET) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_CONNECT) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_DLOPEN) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_SYSCTL) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_SYSCTLBYNAME) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_MPROTECT) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_MACH_MSG) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_TASK_GET_EXCEPTION_PORTS) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_TASK_SWAP_EXCEPTION_PORTS)
+        XCTAssertEqual(mask & ~allowed, 0)
+    }
+
+    func testMaskedPathProbesResolveTemporaryFileAcrossSecureAndStandardPaths() throws {
+        let tempURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("cprisk-masked-probe-\(UUID().uuidString)")
+        try Data("ok".utf8).write(to: tempURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        let path = tempURL.path
+        XCTAssertEqual(SVCDirectCall.secureAccess(path), true)
+        XCTAssertEqual(SVCDirectCall.secureStat(path), true)
+        XCTAssertEqual(SVCDirectCall.secureLstat(path), true)
+
+        let secureSnapshot = SVCDirectCall.securePathProbeSnapshot(path)
+        XCTAssertEqual(secureSnapshot.access, true)
+        XCTAssertEqual(secureSnapshot.stat, true)
+        XCTAssertEqual(secureSnapshot.lstat, true)
+
+        let standardSnapshot = SVCDirectCall.standardPathProbeSnapshot(path)
+        XCTAssertEqual(standardSnapshot.access, true)
+        XCTAssertEqual(standardSnapshot.stat, true)
+        XCTAssertEqual(standardSnapshot.fopen, true)
+
+        let libcMasked = SVCDirectCall.standardAccessErrnoMasked(path)
+        XCTAssertEqual(libcMasked?.exists, true)
+        XCTAssertEqual(libcMasked?.errno, 0)
+    }
+
+    func testTextEncryptSelfCheckIsCleanOnCurrentTestBuild() throws {
+        let result = try textEncryptSelfCheckResult()
+        XCTAssertEqual(result, 0)
     }
 
     func testCsopsStatusFlagsReturnsConsistentResultShape() {

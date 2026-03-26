@@ -91,11 +91,14 @@ struct cprisk_vm_interp_frame {
      */
     uint32_t vm_wb_inline_done;
 
-    uint8_t acc[32];
+    uint8_t acc[CPRISK_VM_ACC_PRIMARY_BYTES];
+    uint8_t acc_aux[CPRISK_VM_ACC_AUX_BYTES];
     uint8_t trace_scratch[64];
     uint64_t trace_shadow[4];
 
     uint64_t steps;
+    /** Per-run step ceiling (function/session-derived); <= \c CPRISK_VM_MAX_STEPS. */
+    uint64_t step_limit_cap;
 };
 
 /**
@@ -114,8 +117,8 @@ typedef cprisk_vm_flow_t (*cprisk_vm_oph_fn)(cprisk_vm_interp_frame_t *fr,
                                              uint32_t pc,
                                              uint32_t hvar);
 
-/** Dense logical opcode indices 0..21 (see cprisk_vm_interpreter.h). POISON (0xFF) is not indexed here. */
-#define CPRISK_VM_OPH_TABLE_LEN 22u
+/** Dense logical opcode indices 0..23 (see cprisk_vm_interpreter.h). POISON (0xFF) is not indexed here. */
+#define CPRISK_VM_OPH_TABLE_LEN 24u
 
 /**
  * Opcode handlers are still split across \c cprisk_vm_oph_*.c, but the runtime no longer exposes a
@@ -196,6 +199,12 @@ cprisk_vm_flow_t cprisk_vm_oph_add(cprisk_vm_interp_frame_t *fr,
                                    uint64_t imm,
                                    uint32_t pc,
                                    uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_add_rol_acc(cprisk_vm_interp_frame_t *fr,
+                                            uint8_t op_raw,
+                                            uint8_t logical,
+                                            uint64_t imm,
+                                            uint32_t pc,
+                                            uint32_t hvar);
 cprisk_vm_flow_t cprisk_vm_oph_sub_lane(cprisk_vm_interp_frame_t *fr,
                                         uint8_t op_raw,
                                         uint8_t logical,
@@ -209,6 +218,12 @@ cprisk_vm_flow_t cprisk_vm_oph_mul_lane(cprisk_vm_interp_frame_t *fr,
                                         uint32_t pc,
                                         uint32_t hvar);
 cprisk_vm_flow_t cprisk_vm_oph_branch_rel(cprisk_vm_interp_frame_t *fr,
+                                          uint8_t op_raw,
+                                          uint8_t logical,
+                                          uint64_t imm,
+                                          uint32_t pc,
+                                          uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_branch_ind(cprisk_vm_interp_frame_t *fr,
                                           uint8_t op_raw,
                                           uint8_t logical,
                                           uint64_t imm,

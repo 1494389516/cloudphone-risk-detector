@@ -172,6 +172,8 @@ let cprisk_verify_dlsym_prologue: _CRiskTestIntFn0 =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_VERIFY_DLSYM_PROLOGUE), as: _CRiskTestIntFn0.self)
 let cprisk_verify_runtime_hook_surface_prologues: _CRiskTestIntFn0 =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_VERIFY_RUNTIME_HOOK_SURFACE_PROLOGUES), as: _CRiskTestIntFn0.self)
+let cprisk_runtime_hook_surface_export_drift_mask: _CRiskTestUInt32Fn0 =
+    CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_RUNTIME_HOOK_SURFACE_EXPORT_DRIFT_MASK), as: _CRiskTestUInt32Fn0.self)
 let cprisk_integrity_poison_watchdog_lane: _CRiskTestVoidFn0 =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_INTEGRITY_POISON_WATCHDOG_LANE), as: _CRiskTestVoidFn0.self)
 let cprisk_test_reset_staged_poison_for_tests: _CRiskTestVoidFn0 =

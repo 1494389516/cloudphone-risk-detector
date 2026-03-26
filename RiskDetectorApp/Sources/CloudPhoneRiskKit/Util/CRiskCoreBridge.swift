@@ -35,11 +35,14 @@ typealias _CRiskUidFn0 = @convention(c) () -> uid_t
 typealias _CRiskIntFnRawPtr = @convention(c) (UnsafeRawPointer?) -> CInt
 typealias _CRiskIntFnCStringIntErr = @convention(c) (UnsafePointer<CChar>?, CInt, UnsafeMutablePointer<CInt>?) -> CInt
 typealias _CRiskIntFnCStringStatErr = @convention(c) (UnsafePointer<CChar>?, UnsafeMutablePointer<stat>?, UnsafeMutablePointer<CInt>?) -> CInt
+typealias _CRiskIntFnMaskedIntErr = @convention(c) (UnsafePointer<UInt8>?, Int, UInt32, CInt, UnsafeMutablePointer<CInt>?) -> CInt
+typealias _CRiskIntFnMaskedStatErr = @convention(c) (UnsafePointer<UInt8>?, Int, UInt32, UnsafeMutablePointer<stat>?, UnsafeMutablePointer<CInt>?) -> CInt
 typealias _CRiskIntFnConnect = @convention(c) (CInt, UnsafePointer<sockaddr>?, socklen_t, UnsafeMutablePointer<CInt>?) -> CInt
 typealias _CRiskIntFnSysctlByName = @convention(c) (UnsafePointer<CChar>?, UnsafeMutableRawPointer?, UnsafeMutablePointer<Int>?, UnsafeRawPointer?, Int, UnsafeMutablePointer<CInt>?) -> CInt
 typealias _CRiskIntFnSysctl = @convention(c) (UnsafeMutablePointer<CInt>?, CUnsignedInt, UnsafeMutableRawPointer?, UnsafeMutablePointer<Int>?, UnsafeRawPointer?, Int, UnsafeMutablePointer<CInt>?) -> CInt
 typealias _CRiskPACFn = @convention(c) (UnsafeRawPointer?, UInt) -> UnsafeMutableRawPointer?
 typealias _CRiskIntFnPathProbe = @convention(c) (UnsafePointer<CChar>?, UnsafeMutablePointer<cprisk_path_probe_snapshot_t>?) -> CInt
+typealias _CRiskIntFnMaskedPathProbe = @convention(c) (UnsafePointer<UInt8>?, Int, UInt32, UnsafeMutablePointer<cprisk_path_probe_snapshot_t>?) -> CInt
 typealias _CRiskIntFnSpawnProbe = @convention(c) (UnsafeMutablePointer<cprisk_spawn_iface_probe_result_t>?) -> CInt
 typealias _CRiskIntFnWatchdogSnapshot = @convention(c) (UnsafeMutablePointer<cprisk_anti_debug_watchdog_snapshot_t>?) -> CInt
 typealias _CRiskIntFnPlanSnapshot = @convention(c) (UnsafeMutablePointer<cprisk_antidebug_plan_snapshot_t>?) -> CInt
@@ -61,6 +64,10 @@ typealias _CRiskWhiteboxEval = @convention(c) (UInt32, UnsafePointer<UInt8>?, Un
 
 let cprisk_access_direct: _CRiskIntFnCStringIntErr =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_ACCESS_DIRECT), as: _CRiskIntFnCStringIntErr.self)
+let cprisk_access_masked: _CRiskIntFnMaskedIntErr =
+    CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_ACCESS_MASKED), as: _CRiskIntFnMaskedIntErr.self)
+let cprisk_access_masked_libc: _CRiskIntFnMaskedIntErr =
+    CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_ACCESS_MASKED_LIBC), as: _CRiskIntFnMaskedIntErr.self)
 let cprisk_addr_in_any_image: _CRiskIntFnRawPtr =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_ADDR_IN_ANY_IMAGE), as: _CRiskIntFnRawPtr.self)
 let cprisk_advance_ucontext_pc: _CRiskIntFnAdvanceUContext =
@@ -125,6 +132,8 @@ let cprisk_is_mprotect_tampered: _CRiskIntFn0 =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_IS_MPROTECT_TAMPERED), as: _CRiskIntFn0.self)
 let cprisk_lstat_direct: _CRiskIntFnCStringStatErr =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_LSTAT_DIRECT), as: _CRiskIntFnCStringStatErr.self)
+let cprisk_lstat_masked: _CRiskIntFnMaskedStatErr =
+    CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_LSTAT_MASKED), as: _CRiskIntFnMaskedStatErr.self)
 let cprisk_mte_guard_snapshot: _CRiskIntFnMteSnapshot =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_MTE_GUARD_SNAPSHOT), as: _CRiskIntFnMteSnapshot.self)
 let cprisk_pac_auth_function_pointer: _CRiskPACFn =
@@ -137,6 +146,8 @@ let cprisk_probe_debugger_via_signal: _CRiskIntFn0 =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_PROBE_DEBUGGER_VIA_SIGNAL), as: _CRiskIntFn0.self)
 let cprisk_probe_path_snapshot: _CRiskIntFnPathProbe =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_PROBE_PATH_SNAPSHOT), as: _CRiskIntFnPathProbe.self)
+let cprisk_probe_path_snapshot_masked: _CRiskIntFnMaskedPathProbe =
+    CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_PROBE_PATH_SNAPSHOT_MASKED), as: _CRiskIntFnMaskedPathProbe.self)
 let cprisk_read_full_anchor_hash: _CRiskIntFnReadAnchor =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_READ_FULL_ANCHOR_HASH), as: _CRiskIntFnReadAnchor.self)
 let cprisk_recheck_integrity: _CRiskIntFn0 =
@@ -165,6 +176,8 @@ let cprisk_start_anti_dump_probe: @convention(c) (CInt) -> CInt =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_START_ANTI_DUMP_PROBE), as: (@convention(c) (CInt) -> CInt).self)
 let cprisk_stat_direct: _CRiskIntFnCStringStatErr =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_STAT_DIRECT), as: _CRiskIntFnCStringStatErr.self)
+let cprisk_stat_masked: _CRiskIntFnMaskedStatErr =
+    CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_STAT_MASKED), as: _CRiskIntFnMaskedStatErr.self)
 let cprisk_stop_anti_debug_watchdog: _CRiskVoidFn0 =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_STOP_ANTI_DEBUG_WATCHDOG), as: _CRiskVoidFn0.self)
 let cprisk_stop_anti_dump_probe: _CRiskVoidFn0 =

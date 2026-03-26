@@ -31,6 +31,7 @@
 #define CPRISK_ARMOR_SECTION_IMPORT_ENCRYPTED_TABLE "__swift5_dyrel"
 #define CPRISK_ARMOR_SECTION_HEADER_BACKUP "__swift5_mhsav"
 #define CPRISK_ARMOR_SECTION_CHAIN_META "__swift5_ptmap"
+#define CPRISK_ARMOR_SECTION_CHAIN_META_FALLBACK "__sw5_mdmap"
 #define CPRISK_ARMOR_SECTION_TEXT_ENCRYPT "__swift5_cgenc"
 #define CPRISK_ARMOR_SECTION_VMP_DISPATCH "__swift5_mdvrt"
 #define CPRISK_ARMOR_SECTION_VMP_BYTECODE "__swift5_mdirt"
@@ -106,6 +107,11 @@
 
 #define CPRISK_ARMOR_BOOTSTRAP_STRING_ID 1u
 
+#define CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_MAGIC 0x444D5043u /* "CPMD" */
+#define CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_ABI_VERSION 1u
+#define CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_HEADER_SIZE 32u
+#define CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_RECORD_SIZE 48u
+
 #define CPRISK_ARMOR_STRTAB_MAGIC 0x43505354u  /* table guard sentinel */
 #define CPRISK_ARMOR_LOADER_MAGIC 0x4350524Bu  /* descriptor guard sentinel */
 #define CPRISK_ARMOR_IMPORT_MAGIC 0x43494D50u  /* "CPIM" import table sentinel */
@@ -176,6 +182,15 @@ struct cprisk_armor_antidebug_entry {
     char target_name[CPRISK_ARMOR_ADBG_TARGET_NAME_SIZE];
 };
 
+struct cprisk_armor_swift_metadata_shuffle_header {
+    uint32_t magic;
+    uint32_t abi_version;
+    uint32_t flags;
+    uint32_t record_count;
+    uint64_t build_seed;
+    uint64_t reserved64;
+};
+
 struct cprisk_armor_whitebox_header {
     uint32_t magic;
     uint32_t version;
@@ -231,6 +246,9 @@ _Static_assert(sizeof(struct cprisk_armor_antidebug_header) == 48,
                "cprisk anti-debug header ABI drift");
 _Static_assert(sizeof(struct cprisk_armor_antidebug_entry) == 64,
                "cprisk anti-debug entry ABI drift");
+_Static_assert(sizeof(struct cprisk_armor_swift_metadata_shuffle_header) ==
+                   CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_HEADER_SIZE,
+               "cprisk swift metadata shuffle header ABI drift");
 _Static_assert(sizeof(struct cprisk_armor_whitebox_header) == CPRISK_ARMOR_WHITEBOX_HEADER_V2_SIZE,
                "cprisk whitebox header ABI drift");
 _Static_assert(sizeof(struct cprisk_text_encrypt_header) == 16,

@@ -75,6 +75,8 @@ static cprisk_vm_flow_t cprisk_vm_dispatch_lane_family_i(cprisk_vm_interp_frame_
     switch (logical) {
     case CPRISK_VM_OP_ADD:
         return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x21u, cprisk_vm_oph_add);
+    case CPRISK_VM_OP_ADD_ROL_ACC:
+        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x29u, cprisk_vm_oph_add_rol_acc);
     case CPRISK_VM_OP_SUB_LANE:
         return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x22u, cprisk_vm_oph_sub_lane);
     case CPRISK_VM_OP_MUL_LANE:
@@ -101,6 +103,8 @@ static cprisk_vm_flow_t cprisk_vm_dispatch_branch_family_i(cprisk_vm_interp_fram
     switch (logical) {
     case CPRISK_VM_OP_BRANCH_REL:
         return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x31u, cprisk_vm_oph_branch_rel);
+    case CPRISK_VM_OP_BRANCH_IND:
+        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x35u, cprisk_vm_oph_branch_ind);
     case CPRISK_VM_OP_BRANCH_COND:
         return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x32u, cprisk_vm_oph_branch_cond);
     case CPRISK_VM_OP_CALL:
@@ -159,10 +163,11 @@ cprisk_vm_flow_t cprisk_vm_dispatch_oph_materialized_i(cprisk_vm_interp_frame_t 
     if (logical <= CPRISK_VM_OP_HALT)
         return cprisk_vm_dispatch_core_family_i(fr, op_raw, logical, imm, pc, hvar);
     if (logical == CPRISK_VM_OP_ADD || logical == CPRISK_VM_OP_SUB_LANE || logical == CPRISK_VM_OP_MUL_LANE
+        || logical == CPRISK_VM_OP_ADD_ROL_ACC
         || (logical >= CPRISK_VM_OP_XOR_MIX && logical <= CPRISK_VM_OP_ROL_ACC)) {
         return cprisk_vm_dispatch_lane_family_i(fr, op_raw, logical, imm, pc, hvar);
     }
-    if (logical >= CPRISK_VM_OP_BRANCH_REL && logical <= CPRISK_VM_OP_CALL)
+    if ((logical >= CPRISK_VM_OP_BRANCH_REL && logical <= CPRISK_VM_OP_CALL) || logical == CPRISK_VM_OP_BRANCH_IND)
         return cprisk_vm_dispatch_branch_family_i(fr, op_raw, logical, imm, pc, hvar);
     if (logical >= CPRISK_VM_OP_MOV_WIDE && logical <= CPRISK_VM_OP_LOAD_STORE)
         return cprisk_vm_dispatch_emitter_family_i(fr, op_raw, logical, imm, pc, hvar);

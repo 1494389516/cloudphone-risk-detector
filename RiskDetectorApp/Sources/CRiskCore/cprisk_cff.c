@@ -1,9 +1,10 @@
-#include "cprisk_cff.h"
-
 #include "include/CRiskCore.h"
+#include "include/cprisk_macho.h"
 
+#include <stdatomic.h>
 #include <pthread.h>
 #include <string.h>
+#include <stdint.h>
 #include <time.h>
 #include <unistd.h>
 #include <mach-o/dyld.h>
@@ -111,8 +112,8 @@ static uint32_t cprisk_cff_mba_chain_xor_u32(uint32_t v, uint32_t key, uint32_t 
     if (L < 2u) {
         return v;
     }
-    if (L > 5u) {
-        L = 5u;
+    if (L > 8u) {
+        L = 8u;
     }
     uint32_t cur = v;
     for (uint8_t i = 0u; i < L; i++) {
@@ -125,6 +126,9 @@ static uint32_t cprisk_cff_mba_chain_xor_u32(uint32_t v, uint32_t key, uint32_t 
 
 static uint8_t cprisk_cff_normalize_mba_layers(uint32_t seed, uint8_t requested) {
     if (requested >= 2u && requested <= 5u) {
+        return requested;
+    }
+    if (requested >= CPRISK_CFF_MBA_LAYERS_HEAVY_MIN && requested <= CPRISK_CFF_MBA_LAYERS_HEAVY_MAX) {
         return requested;
     }
     if (requested == 1u) {
@@ -160,32 +164,183 @@ static uint32_t cprisk_cff_mod_inverse_odd32(uint32_t odd_value) {
 }
 
 /*
- * SPN byte substitution: runtime decodes a project-local 8-bit bijection.
- * The table is XOR-masked in rodata and intentionally does not preserve the
- * canonical AES SubBytes mapping.
+ * SPN byte substitution: 8-bit bijection generated at runtime from a UInt64 seed
+ * (CFFSBoxPermutation256 / SplitMix64 + Fisher–Yates). Matches CloudPhoneRiskKit.
  */
-static const uint8_t cprisk_cff_spn_sbox_mask[4] = {0xA7u, 0x38u, 0xC2u, 0x91u};
-static const uint8_t cprisk_cff_spn_sbox_enc[256] = {
-    0x4au, 0x45u, 0x34u, 0xc5u, 0xa9u, 0xecu, 0x69u, 0xa0u, 0x26u, 0x52u, 0xbeu, 0x48u, 0xa3u, 0x76u, 0x9eu, 0xe9u,
-    0x7bu, 0x2du, 0xd9u, 0x5bu, 0x9bu, 0x46u, 0xb1u, 0x7bu, 0x6au, 0xe8u, 0xeau, 0x0fu, 0x54u, 0x41u, 0xb5u, 0xe3u,
-    0x25u, 0x07u, 0x00u, 0x30u, 0x3eu, 0x6eu, 0x45u, 0x19u, 0x24u, 0xddu, 0x3cu, 0xbbu, 0xb1u, 0xb4u, 0xdbu, 0x73u,
-    0x40u, 0x0eu, 0xe1u, 0x70u, 0x71u, 0xcau, 0xc3u, 0x96u, 0x8cu, 0x37u, 0x9cu, 0xeeu, 0x6eu, 0xd6u, 0x89u, 0xf5u,
-    0xffu, 0x78u, 0xc0u, 0xbeu, 0x87u, 0x63u, 0xd3u, 0xb6u, 0x12u, 0x0fu, 0xf9u, 0x75u, 0x4eu, 0xf4u, 0xf2u, 0x8cu,
-    0xe6u, 0x5bu, 0x6fu, 0xacu, 0xc2u, 0x11u, 0x1du, 0xabu, 0x50u, 0x27u, 0x11u, 0x6cu, 0x36u, 0xbeu, 0xa2u, 0x5eu,
-    0x92u, 0x42u, 0x62u, 0x06u, 0xe1u, 0x8bu, 0x60u, 0x7au, 0x48u, 0x8cu, 0x7au, 0xd9u, 0xf4u, 0xabu, 0xcfu, 0x7du,
-    0x32u, 0x2cu, 0x2au, 0x0cu, 0xf5u, 0xc8u, 0x9du, 0x27u, 0x2au, 0x91u, 0xecu, 0x07u, 0xe5u, 0x7du, 0x4du, 0x60u,
-    0x08u, 0x5eu, 0x46u, 0xa8u, 0xd6u, 0x43u, 0x86u, 0x36u, 0x17u, 0xc7u, 0xdeu, 0x6bu, 0x60u, 0x77u, 0x07u, 0xcbu,
-    0xa1u, 0x0au, 0xceu, 0x98u, 0x19u, 0xc0u, 0x58u, 0x8bu, 0x0fu, 0x2bu, 0x95u, 0x5fu, 0x02u, 0x32u, 0x73u, 0xb0u,
-    0xc9u, 0x82u, 0x03u, 0x4bu, 0xf7u, 0xfcu, 0x7du, 0x14u, 0x1au, 0x9cu, 0x70u, 0xf0u, 0x9fu, 0x15u, 0xd2u, 0x1fu,
-    0xb5u, 0x48u, 0x49u, 0xf3u, 0xd1u, 0xc4u, 0xcau, 0x8fu, 0x27u, 0xb2u, 0xe0u, 0x91u, 0x37u, 0xcdu, 0x61u, 0x46u,
-    0xa4u, 0x0bu, 0xb7u, 0x18u, 0x44u, 0xaau, 0xc7u, 0xfau, 0x7fu, 0x14u, 0xafu, 0x5au, 0x67u, 0x8fu, 0xe4u, 0xa5u,
-    0xe4u, 0x92u, 0x97u, 0x3du, 0x1eu, 0x71u, 0xa5u, 0xb4u, 0xceu, 0x1cu, 0x59u, 0x71u, 0xbfu, 0x7fu, 0x10u, 0x4cu,
-    0xc8u, 0xccu, 0x6cu, 0xdbu, 0x79u, 0xe3u, 0x56u, 0x0du, 0x1cu, 0xdeu, 0x5au, 0x9au, 0xb0u, 0x9eu, 0x8fu, 0x2du,
-    0xcbu, 0x65u, 0x3bu, 0x52u, 0xebu, 0xc3u, 0x04u, 0xafu, 0x76u, 0x69u, 0x9bu, 0x44u, 0xcfu, 0x4cu, 0x0au, 0x0eu,
-};
+static uint8_t g_cff_spn_sbox_fwd[256];
+static pthread_once_t g_cff_spn_sbox_once = PTHREAD_ONCE_INIT;
+static atomic_uint_fast32_t g_cff_spn_sbox_custom = 0;
+static atomic_uint_fast64_t g_cff_spn_sbox_seed = 0;
+
+typedef struct cprisk_cff_split_mix64 {
+    uint64_t state;
+} cprisk_cff_split_mix64_t;
+
+static void cprisk_cff_split_mix64_init(cprisk_cff_split_mix64_t *rng, uint64_t seed) {
+    rng->state = seed == 0u ? 1u : seed;
+}
+
+static uint64_t cprisk_cff_split_mix64_next(cprisk_cff_split_mix64_t *rng) {
+    rng->state += 0x9E3779B97F4A7C15ull;
+    uint64_t z = rng->state;
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    return z ^ (z >> 31);
+}
+
+static int cprisk_cff_spn_is_bijection_u8(const uint8_t table[256]) {
+    uint8_t seen[256];
+    size_t i = 0u;
+
+    memset(seen, 0, sizeof(seen));
+    for (i = 0u; i < 256u; ++i) {
+        const uint8_t v = table[i];
+        if (seen[v] != 0u) {
+            return 0;
+        }
+        seen[v] = 1u;
+    }
+    return 1;
+}
+
+static void cprisk_cff_spn_sbox_build_from_seed(uint64_t seed) {
+    cprisk_cff_split_mix64_t rng;
+    int i;
+
+    cprisk_cff_split_mix64_init(&rng, seed);
+    for (i = 0; i < 256; ++i) {
+        g_cff_spn_sbox_fwd[i] = (uint8_t)i;
+    }
+    i = 255;
+    while (i > 0) {
+        const uint64_t r = cprisk_cff_split_mix64_next(&rng);
+        const int j = (int)(r % (uint64_t)(i + 1));
+        const uint8_t tmp = g_cff_spn_sbox_fwd[i];
+        g_cff_spn_sbox_fwd[i] = g_cff_spn_sbox_fwd[j];
+        g_cff_spn_sbox_fwd[j] = tmp;
+        i--;
+    }
+}
+
+static int cprisk_cff_resolve_chain_meta_seed_i(
+    const struct mach_header_64 *hdr,
+    const char *section_name,
+    uint64_t *out_seed
+) {
+    unsigned long sec_size = 0u;
+    const uint8_t *sec = cprisk_find_section(
+        hdr,
+        CPRISK_ARMOR_SEGMENT_DATA,
+        section_name,
+        &sec_size
+    );
+    if (sec == NULL || sec_size < CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_HEADER_SIZE) {
+        return 0;
+    }
+
+    struct cprisk_armor_swift_metadata_shuffle_header header;
+    memcpy(&header, sec, sizeof(header));
+    if (header.magic != CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_MAGIC ||
+        header.abi_version != CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_ABI_VERSION) {
+        return 0;
+    }
+
+    const size_t expected =
+        CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_HEADER_SIZE +
+        (size_t)header.record_count * CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_RECORD_SIZE;
+    if (expected > (size_t)sec_size) {
+        return 0;
+    }
+
+    *out_seed = header.build_seed != 0u ? header.build_seed : CPRISK_CFF_SPN_CANONICAL_SEED_U64;
+    return 1;
+}
+
+static uint64_t cprisk_cff_resolve_runtime_spn_seed_i(void) {
+    const struct mach_header_64 *hdr =
+        cprisk_find_own_header((const void *)(uintptr_t)&cprisk_cff_encode_state);
+    if (hdr != NULL) {
+        unsigned long sec_size = 0u;
+        const uint8_t *sec = cprisk_find_section(
+            hdr,
+            CPRISK_ARMOR_SEGMENT_DATA,
+            CPRISK_ARMOR_SECTION_ANTI_DEBUG_PLAN,
+            &sec_size
+        );
+        if (sec != NULL && sec_size >= sizeof(struct cprisk_armor_antidebug_header)) {
+            struct cprisk_armor_antidebug_header header;
+            memcpy(&header, sec, sizeof(header));
+            if (header.magic == CPRISK_ARMOR_ADBG_MAGIC &&
+                header.version == CPRISK_ARMOR_ADBG_ABI_VERSION &&
+                header.seed != 0u) {
+                return header.seed;
+            }
+        }
+
+        uint64_t chain_seed = 0u;
+        if (cprisk_cff_resolve_chain_meta_seed_i(hdr, CPRISK_ARMOR_SECTION_CHAIN_META, &chain_seed) != 0) {
+            return chain_seed;
+        }
+        if (cprisk_cff_resolve_chain_meta_seed_i(
+                hdr,
+                CPRISK_ARMOR_SECTION_CHAIN_META_FALLBACK,
+                &chain_seed) != 0) {
+            return chain_seed;
+        }
+    }
+    return CPRISK_CFF_SPN_CANONICAL_SEED_U64;
+}
+
+static void cprisk_cff_spn_sbox_init_default(void) {
+    if (atomic_load(&g_cff_spn_sbox_custom) != 0u) {
+        return;
+    }
+    const uint64_t seed = cprisk_cff_resolve_runtime_spn_seed_i();
+    atomic_store(&g_cff_spn_sbox_seed, (uint_fast64_t)seed);
+    cprisk_cff_spn_sbox_build_from_seed(seed);
+}
+
+void cprisk_cff_spn_sbox_install_from_seed(uint64_t seed) {
+    const uint64_t normalized = seed == 0u ? 1u : seed;
+    atomic_store(&g_cff_spn_sbox_custom, 1u);
+    atomic_store(&g_cff_spn_sbox_seed, (uint_fast64_t)normalized);
+    cprisk_cff_spn_sbox_build_from_seed(normalized);
+}
+
+void cprisk_cff_spn_sbox_install_from_bytes(const uint8_t forward256[256]) {
+    if (forward256 == NULL) {
+        return;
+    }
+    if (cprisk_cff_spn_is_bijection_u8(forward256) == 0) {
+        cprisk_cff_spn_sbox_install_from_seed(CPRISK_CFF_SPN_CANONICAL_SEED_U64);
+        return;
+    }
+    atomic_store(&g_cff_spn_sbox_custom, 1u);
+    atomic_store(&g_cff_spn_sbox_seed, 0u);
+    memcpy(g_cff_spn_sbox_fwd, forward256, 256u);
+}
+
+static void cprisk_cff_spn_sbox_ensure(void) {
+    (void)pthread_once(&g_cff_spn_sbox_once, cprisk_cff_spn_sbox_init_default);
+}
+
+uint64_t cprisk_cff_runtime_spn_sbox_seed(void) {
+    cprisk_cff_spn_sbox_ensure();
+    return (uint64_t)atomic_load(&g_cff_spn_sbox_seed);
+}
+
+int cprisk_cff_spn_sbox_copy_forward(uint8_t out_forward256[256]) {
+    if (out_forward256 == NULL) {
+        return -1;
+    }
+    cprisk_cff_spn_sbox_ensure();
+    memcpy(out_forward256, g_cff_spn_sbox_fwd, 256u);
+    return 0;
+}
 
 static uint8_t cprisk_cff_spn_sbox_byte(uint8_t idx) {
-    return (uint8_t)(cprisk_cff_spn_sbox_enc[idx] ^ cprisk_cff_spn_sbox_mask[idx & 3u]);
+    cprisk_cff_spn_sbox_ensure();
+    return g_cff_spn_sbox_fwd[idx];
 }
 
 static uint16_t cprisk_cff_shadow_noise16(uint16_t r, uint32_t rk, uint32_t salt, uint32_t round) {
@@ -286,16 +441,146 @@ static cprisk_cff_codec_style_t cprisk_cff_resolve_style(uint32_t seed, uint32_t
     }
 }
 
+static _Thread_local uint32_t cprisk_cff_tls_mix32 = 0u;
+static atomic_uint_fast32_t s_cff_vm_link_token = 0;
+static atomic_uint_fast32_t s_cff_chain_link = 0;
+
+static uint32_t cprisk_cff_chain_load_i(void) {
+    uint32_t chain = (uint32_t)atomic_load(&s_cff_chain_link);
+    if (chain == 0u) {
+        chain = 0x7F4A7C15u;
+        atomic_store(&s_cff_chain_link, (uint_fast32_t)chain);
+    }
+    return chain;
+}
+
+static void cprisk_cff_ctx_set_last_plain_i(cprisk_cff_context_t *context, uint32_t plain) {
+    const uint32_t split_mask = cprisk_cff_hdr_avalanche32(
+        cprisk_cff_ctx_mask_enc(context) ^ cprisk_cff_ctx_nonce_plain(context) ^ 0x5F3759DFu
+    );
+    context->state_share_a = cprisk_cff_avalanche32(
+        plain ^ cprisk_cff_ctx_seed_plain(context) ^ cprisk_cff_ctx_nonce_plain(context) ^ 0x1A2B3C4Du
+    );
+    context->state_share_b = plain ^ context->state_share_a ^ split_mask;
+}
+
+static void cprisk_cff_ctx_set_chain_plain_i(cprisk_cff_context_t *context, uint32_t chain) {
+    const uint32_t chain_mask = cprisk_cff_hdr_avalanche32(
+        cprisk_cff_ctx_storage_mask(context) ^ cprisk_cff_ctx_nonce_plain(context) ^ 0xC11A1E5Eu
+    );
+    context->chain_snapshot = chain ^ chain_mask;
+}
+
+static void cprisk_cff_ctx_set_entry_guard_plain_i(cprisk_cff_context_t *context, uint32_t guard) {
+    const uint32_t guard_mask = cprisk_cff_hdr_avalanche32(
+        cprisk_cff_ctx_storage_mask(context) ^ cprisk_cff_ctx_nonce_plain(context) ^ 0xE17A9A5Bu
+    );
+    context->entry_guard = guard ^ guard_mask;
+}
+
 static uint32_t cprisk_cff_opaque_selector_i(const cprisk_cff_context_t *context, uint32_t decoded_state) {
+    const uint32_t seed_p = cprisk_cff_ctx_seed_plain(context);
     uint32_t token = cprisk_cff_avalanche32(
-        context->encoded_state ^
+        cprisk_cff_ctx_encoded_plain(context) ^
         decoded_state ^
-        (context->runtime_salt * 0x9E3779B1u) ^
+        (cprisk_cff_ctx_salt_plain(context) * 0x9E3779B1u) ^
         ((uint32_t)context->codec_style << 24u) ^
         0x6C8E9CF5u
     );
-    token ^= cprisk_cff_rotate_left32(token, ((context->seed >> 27u) & 31u) | 1u);
+    token ^= cprisk_cff_rotate_left32(token, ((seed_p >> 27u) & 31u) | 1u);
+    token ^= cprisk_cff_tls_mix32;
     return token;
+}
+
+static void cprisk_cff_refresh_vm_link_token_i(const cprisk_cff_context_t *context) {
+    uint32_t t = cprisk_cff_avalanche32(
+        cprisk_cff_ctx_seed_plain(context) ^
+        cprisk_cff_ctx_encoded_plain(context) ^
+        cprisk_cff_ctx_salt_plain(context) ^
+        cprisk_cff_ctx_last_plain(context) ^
+        0xC0FFEE42u
+    );
+    if (t == 0u) {
+        t = 0x7F4A7C15u;
+    }
+    atomic_store(&s_cff_vm_link_token, (uint_fast32_t)t);
+}
+
+static void cprisk_cff_tls_bump_i(const cprisk_cff_context_t *context, uint32_t next_state) {
+    cprisk_cff_tls_mix32 = cprisk_cff_avalanche32(
+        cprisk_cff_tls_mix32 ^ cprisk_cff_ctx_seed_plain(context) ^ next_state ^ cprisk_cff_ctx_encoded_plain(context) ^
+        0x91E10DA5u
+    );
+}
+
+static void cprisk_cff_chain_advance_i(cprisk_cff_context_t *context, uint32_t basis) {
+    uint32_t next = cprisk_cff_avalanche32(
+        cprisk_cff_ctx_chain_plain(context) ^
+        cprisk_cff_ctx_seed_plain(context) ^
+        cprisk_cff_ctx_encoded_plain(context) ^
+        cprisk_cff_ctx_salt_plain(context) ^
+        basis ^
+        cprisk_cff_ctx_nonce_plain(context) ^
+        cprisk_cff_ctx_entry_guard_plain(context) ^
+        0x91E10DA5u
+    );
+    if (next == 0u) {
+        next = 0x7F4A7C15u;
+    }
+    atomic_store(&s_cff_chain_link, (uint_fast32_t)next);
+    cprisk_cff_ctx_set_chain_plain_i(context, next);
+}
+
+static void cprisk_cff_chain_finalize_i(cprisk_cff_context_t *context) {
+    cprisk_cff_chain_advance_i(context, cprisk_cff_ctx_last_plain(context));
+}
+
+void cprisk_cff_chain_begin(void) {
+    const uint32_t g = cprisk_cff_chain_load_i();
+    cprisk_cff_tls_mix32 = cprisk_cff_avalanche32(cprisk_cff_tls_mix32 ^ g ^ 0xCFF5B0E5u);
+}
+
+uint32_t cprisk_cff_get_chain_link(void) {
+    return cprisk_cff_chain_load_i();
+}
+
+uint32_t cprisk_cff_get_vm_link_token(void) {
+    return (uint32_t)atomic_load(&s_cff_vm_link_token);
+}
+
+int cprisk_cff_chain_entry_verify(const cprisk_cff_context_t *context) {
+    if (context == NULL) {
+        return 0;
+    }
+    const uint32_t observed = cprisk_cff_chain_load_i();
+    const uint32_t expected = cprisk_cff_avalanche32(
+        observed ^
+        cprisk_cff_ctx_seed_plain(context) ^
+        cprisk_cff_ctx_salt_plain(context) ^
+        cprisk_cff_ctx_nonce_plain(context) ^
+        cprisk_cff_ctx_last_plain(context) ^
+        0xC4A11E5Du
+    );
+    return expected == cprisk_cff_ctx_entry_guard_plain(context) &&
+            observed == cprisk_cff_ctx_chain_plain(context)
+        ? 1
+        : 0;
+}
+
+void cprisk_cff_run_fake_path_decoy(const cprisk_cff_context_t *context) {
+    if (context == NULL) {
+        return;
+    }
+    uint32_t w = cprisk_cff_ctx_seed_plain(context) ^ cprisk_cff_ctx_encoded_plain(context) ^
+        cprisk_cff_ctx_salt_plain(context) ^ cprisk_cff_ctx_last_plain(context);
+    for (uint32_t i = 0u; i < 16u; i++) {
+        w = cprisk_cff_avalanche32(w ^ i ^ (i * 0x9E3779B1u));
+        volatile uint32_t sink = w;
+        sink ^= cprisk_cff_rotate_left32(sink, (uint32_t)(i & 31u));
+        sink ^= cprisk_cff_avalanche32(sink ^ cprisk_cff_ctx_seed_plain(context) ^ (uint32_t)i);
+        (void)sink;
+    }
+    (void)cprisk_cff_os_mix32();
 }
 
 static uint32_t cprisk_cff_mix_seed(uint32_t seed, uint32_t entry_state) {
@@ -395,6 +680,26 @@ uint32_t cprisk_cff_encode_state_with_style(
     return cprisk_cff_encode_state_with_style_impl(state, key, salt, style, 1u);
 }
 
+void cprisk_cff_state_transition_commit(cprisk_cff_context_t *context, uint32_t next_state) {
+    if (context == NULL) {
+        return;
+    }
+    cprisk_cff_ctx_set_last_plain_i(context, next_state);
+    {
+        const uint32_t enc_plain = cprisk_cff_encode_state_with_style_impl(
+            next_state,
+            cprisk_cff_ctx_seed_plain(context),
+            cprisk_cff_ctx_salt_plain(context),
+            (cprisk_cff_codec_style_t)context->codec_style,
+            context->mba_layers
+        );
+        context->encoded_state = enc_plain ^ cprisk_cff_ctx_mask_enc(context);
+    }
+    cprisk_cff_chain_advance_i(context, next_state);
+    cprisk_cff_refresh_vm_link_token_i(context);
+    cprisk_cff_tls_bump_i(context, next_state);
+}
+
 static uint32_t cprisk_cff_decode_state_with_style_impl(
     uint32_t encoded_state,
     uint32_t key,
@@ -491,33 +796,74 @@ void cprisk_cff_init(cprisk_cff_context_t *context, const cprisk_cff_config_t *c
     }
 
     memset(context, 0, sizeof(*context));
-    context->seed = cprisk_cff_mix_seed(config->seed, config->entry_state);
-    context->runtime_salt = config->runtime_salt != 0u
-        ? config->runtime_salt
-        : cprisk_cff_runtime_salt(config->seed, config->entry_state ^ 0x13579BDFu);
-    context->iteration_budget = config->iteration_budget != 0u
-        ? config->iteration_budget
-        : CPRISK_CFF_ITERATION_BUDGET;
-    context->release_build = config->release_build;
-    context->enable_fake_states = config->enable_fake_states;
-    context->fake_state_budget = (uint8_t)((config->enable_fake_states != 0u && config->release_build != 0u) ? 2u : 0u);
-    context->codec_style = (uint8_t)cprisk_cff_resolve_style(
-        context->seed,
-        config->entry_state,
-        config->codec_style
-    );
-    context->mba_layers = cprisk_cff_normalize_mba_layers(context->seed, config->mba_layers);
-    context->dispatch_style = cprisk_cff_resolve_dispatch_style_u8(context->seed, config->dispatch_style);
-    context->symex_guard_budget = config->symex_guard_budget;
-    context->default_action = config->default_action;
-    context->encoded_state = cprisk_cff_encode_state_with_style_impl(
-        config->entry_state,
-        context->seed,
-        context->runtime_salt,
-        (cprisk_cff_codec_style_t)context->codec_style,
-        context->mba_layers
-    );
-    context->last_decoded_state = config->entry_state;
+    {
+        const uint32_t chain_plain = cprisk_cff_chain_load_i();
+        const uint32_t seed_plain = cprisk_cff_mix_seed(
+            config->seed ^ cprisk_cff_rotate_left32(chain_plain, 5u),
+            config->entry_state ^ chain_plain
+        );
+        const uint32_t salt_plain = config->runtime_salt != 0u
+            ? (config->runtime_salt ^ cprisk_cff_rotate_left32(chain_plain, 7u))
+            : cprisk_cff_runtime_salt(
+                config->seed ^ chain_plain,
+                config->entry_state ^ 0x13579BDFu ^ cprisk_cff_rotate_left32(chain_plain, 3u)
+            );
+        const uint32_t raw_nonce = cprisk_cff_avalanche32(
+            seed_plain ^
+            salt_plain ^
+            config->entry_state ^
+            chain_plain ^
+            cprisk_cff_tls_mix32 ^
+            (uint32_t)cprisk_cff_thread_fingerprint() ^
+            0xA91C5EEDu
+        );
+
+        context->iteration_budget = config->iteration_budget != 0u
+            ? config->iteration_budget
+            : CPRISK_CFF_ITERATION_BUDGET;
+        context->release_build = config->release_build;
+        context->enable_fake_states = config->enable_fake_states;
+        context->fake_state_budget = (uint8_t)((config->enable_fake_states != 0u && config->release_build != 0u) ? 7u : 0u);
+        context->codec_style = (uint8_t)cprisk_cff_resolve_style(
+            seed_plain,
+            config->entry_state,
+            config->codec_style
+        );
+        context->mba_layers = cprisk_cff_normalize_mba_layers(seed_plain, config->mba_layers);
+        context->dispatch_style = cprisk_cff_resolve_dispatch_style_u8(seed_plain, config->dispatch_style);
+        context->symex_guard_budget = config->symex_guard_budget;
+        context->default_action = config->default_action;
+        context->storage_nonce = raw_nonce ^ cprisk_cff_ctx_storage_mask(context);
+        cprisk_cff_ctx_set_chain_plain_i(context, chain_plain);
+
+        context->seed = seed_plain ^ cprisk_cff_ctx_mask_ptr(context);
+        context->runtime_salt = salt_plain ^ cprisk_cff_ctx_mask_salt(context);
+        cprisk_cff_ctx_set_last_plain_i(context, config->entry_state);
+        cprisk_cff_ctx_set_entry_guard_plain_i(
+            context,
+            cprisk_cff_avalanche32(
+                chain_plain ^
+                seed_plain ^
+                salt_plain ^
+                raw_nonce ^
+                config->entry_state ^
+                0xC4A11E5Du
+            )
+        );
+
+        {
+            const uint32_t enc_plain = cprisk_cff_encode_state_with_style_impl(
+                config->entry_state,
+                seed_plain,
+                salt_plain,
+                (cprisk_cff_codec_style_t)context->codec_style,
+                context->mba_layers
+            );
+            context->encoded_state = enc_plain ^ cprisk_cff_ctx_mask_enc(context);
+        }
+    }
+    cprisk_cff_refresh_vm_link_token_i(context);
+    cprisk_cff_tls_bump_i(context, config->entry_state);
 }
 
 void cprisk_cff_init_default(cprisk_cff_context_t *context, uint32_t seed, uint32_t entry_state) {
@@ -539,14 +885,15 @@ uint32_t cprisk_cff_current_state(cprisk_cff_context_t *context) {
         return 0u;
     }
 
-    context->last_decoded_state = cprisk_cff_decode_state_with_style_impl(
-        context->encoded_state,
-        context->seed,
-        context->runtime_salt,
+    const uint32_t decoded = cprisk_cff_decode_state_with_style_impl(
+        cprisk_cff_ctx_encoded_plain(context),
+        cprisk_cff_ctx_seed_plain(context),
+        cprisk_cff_ctx_salt_plain(context),
         (cprisk_cff_codec_style_t)context->codec_style,
         context->mba_layers
     );
-    return context->last_decoded_state;
+    cprisk_cff_ctx_set_last_plain_i(context, decoded);
+    return decoded;
 }
 
 uint32_t cprisk_cff_current_state_table(cprisk_cff_context_t *context) {
@@ -559,25 +906,27 @@ uint32_t cprisk_cff_current_state_table(cprisk_cff_context_t *context) {
      * normalized at init). Avoids masking style to 2 bits, which mis-routed
      * newer styles (e.g. Feistel) to XOR.
      */
-    context->last_decoded_state = cprisk_cff_decode_state_with_style_impl(
-        context->encoded_state,
-        context->seed,
-        context->runtime_salt,
+    const uint32_t decoded = cprisk_cff_decode_state_with_style_impl(
+        cprisk_cff_ctx_encoded_plain(context),
+        cprisk_cff_ctx_seed_plain(context),
+        cprisk_cff_ctx_salt_plain(context),
         (cprisk_cff_codec_style_t)context->codec_style,
         context->mba_layers
     );
-    return context->last_decoded_state;
+    cprisk_cff_ctx_set_last_plain_i(context, decoded);
+    return decoded;
 }
 
 static uint32_t cprisk_cff_dispatch_decode_direct_ctx(cprisk_cff_context_t *context) {
-    context->last_decoded_state = cprisk_cff_decode_state_with_style_impl(
-        context->encoded_state,
-        context->seed,
-        context->runtime_salt,
+    const uint32_t decoded = cprisk_cff_decode_state_with_style_impl(
+        cprisk_cff_ctx_encoded_plain(context),
+        cprisk_cff_ctx_seed_plain(context),
+        cprisk_cff_ctx_salt_plain(context),
         (cprisk_cff_codec_style_t)context->codec_style,
         context->mba_layers
     );
-    return context->last_decoded_state;
+    cprisk_cff_ctx_set_last_plain_i(context, decoded);
+    return decoded;
 }
 
 static uint32_t cprisk_cff_dispatch_decode_table_ctx(cprisk_cff_context_t *context) {
@@ -609,7 +958,7 @@ uint32_t cprisk_cff_current_state_dispatch(cprisk_cff_context_t *context) {
         cprisk_cff_dispatch_decode_table_ctx,
     };
     const uint32_t mix =
-        cprisk_cff_avalanche32(context->seed ^ context->runtime_salt ^ 0x8F82C945u);
+        cprisk_cff_avalanche32(cprisk_cff_ctx_seed_plain(context) ^ cprisk_cff_ctx_salt_plain(context) ^ 0x8F82C945u);
     const uint32_t pick = (mix ^ (uint32_t)context->codec_style ^ (uint32_t)context->mba_layers) & 1u;
     return k_dual[pick](context);
 }
@@ -629,14 +978,14 @@ void cprisk_cff_trigger_symbolic_explosion(cprisk_cff_context_t *context, uint32
     }
     uint32_t limit = (uint32_t)context->symex_guard_budget;
     if (limit == 0u) {
-        limit = 3u;
+        limit = 8u;
     }
     limit *= 1u + (risk_mask & 0xFFu);
-    if (limit > 96u) {
-        limit = 96u;
+    if (limit > 160u) {
+        limit = 160u;
     }
     struct timespec ts;
-    uint32_t acc = risk_mask ^ context->encoded_state ^ context->seed;
+    uint32_t acc = risk_mask ^ cprisk_cff_ctx_encoded_plain(context) ^ cprisk_cff_ctx_seed_plain(context);
     if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0) {
         acc ^= (uint32_t)ts.tv_nsec;
         acc = cprisk_cff_rotate_left32(acc, (uint32_t)(ts.tv_sec & 31u));
@@ -653,72 +1002,21 @@ void cprisk_cff_trigger_symbolic_explosion(cprisk_cff_context_t *context, uint32
     (void)cprisk_cff_os_mix32();
 }
 
-/*
- * Opaque predicates for transitions: MBA identities + runtime-tied mixing
- * (monotonic clock, pid) so static folding cannot eliminate the guard without
- * executing environment-dependent paths.
- */
-static int cprisk_cff_opaque_transition_ok(uint32_t from_decoded, uint32_t to_plain, uint32_t seed, uint32_t salt) {
-    struct timespec ts;
-    uint32_t rt = 0u;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0) {
-        rt = (uint32_t)ts.tv_nsec ^ ((uint32_t)ts.tv_sec * 0x9E3779B1u);
-    }
-    const uint32_t pid_mix = (uint32_t)getpid();
-    const uint32_t a = to_plain ^ salt ^ (rt & 0xFFFFu);
-    const uint32_t b = seed ^ from_decoded ^ cprisk_cff_rotate_left32(pid_mix, 3u);
-    const uint32_t x = a ^ b;
-    if (cprisk_cff_xor_mba_u32(a, b) != x) {
-        return 0;
-    }
-    if ((((a & ~b) | (~a & b)) != x)) {
-        return 0;
-    }
-    if (cprisk_cff_avalanche32(x ^ rt) !=
-        cprisk_cff_avalanche32(cprisk_cff_xor_mba_u32(a, b) ^ rt)) {
-        return 0;
-    }
-    {
-        const uint32_t chain = cprisk_cff_mba_chain_xor_u32(a, seed, salt, 3u);
-        uint32_t manual = a;
-        for (uint32_t layer = 0u; layer < 3u; layer++) {
-            const uint32_t ki =
-                cprisk_cff_avalanche32(seed ^ salt ^ ((uint32_t)layer * 0x9E3779B1u) ^ 0xD1B54A35u);
-            manual = cprisk_cff_xor_mba_layer_u32(manual, ki, layer);
-        }
-        if (chain != manual) {
-            return 0;
-        }
-    }
-    const uint32_t h = cprisk_cff_avalanche32(
-        seed ^ cprisk_cff_rotate_left32(to_plain, 5u) ^ 0xABADD00Du ^ (rt >> 3u)
-    );
-    const uint32_t p = 65521u;
-    const uint64_t r =
-        ((uint64_t)h + (uint64_t)pid_mix) * (uint64_t)(from_decoded ^ 0x13579BDFu ^ rt) % (uint64_t)p;
-    const uint64_t sq = (r * r) % (uint64_t)p;
-    const uint64_t sq_chk = ((uint64_t)r * (uint64_t)r) % (uint64_t)p;
-    return sq == sq_chk ? 1 : 0;
-}
-
 void cprisk_cff_set_state(cprisk_cff_context_t *context, uint32_t next_state) {
     if (context == NULL) {
         return;
     }
 
-    if (cprisk_cff_opaque_transition_ok(context->last_decoded_state, next_state, context->seed, context->runtime_salt) == 0) {
+    if (cprisk_cff_opaque_transition_ok_inline(
+            cprisk_cff_ctx_last_plain(context),
+            next_state,
+            cprisk_cff_ctx_seed_plain(context),
+            cprisk_cff_ctx_salt_plain(context)) == 0) {
         cprisk_cff_poison_default(context);
         return;
     }
 
-    context->last_decoded_state = next_state;
-    context->encoded_state = cprisk_cff_encode_state_with_style_impl(
-        next_state,
-        context->seed,
-        context->runtime_salt,
-        (cprisk_cff_codec_style_t)context->codec_style,
-        context->mba_layers
-    );
+    cprisk_cff_state_transition_commit(context, next_state);
 }
 
 void cprisk_cff_set_encoded_state(cprisk_cff_context_t *context, uint32_t encoded_state) {
@@ -726,14 +1024,19 @@ void cprisk_cff_set_encoded_state(cprisk_cff_context_t *context, uint32_t encode
         return;
     }
 
-    context->encoded_state = encoded_state;
-    context->last_decoded_state = cprisk_cff_decode_state_with_style_impl(
+    context->encoded_state = encoded_state ^ cprisk_cff_ctx_mask_enc(context);
+    {
+        const uint32_t decoded = cprisk_cff_decode_state_with_style_impl(
         encoded_state,
-        context->seed,
-        context->runtime_salt,
+        cprisk_cff_ctx_seed_plain(context),
+        cprisk_cff_ctx_salt_plain(context),
         (cprisk_cff_codec_style_t)context->codec_style,
         context->mba_layers
-    );
+        );
+        cprisk_cff_ctx_set_last_plain_i(context, decoded);
+    }
+    cprisk_cff_refresh_vm_link_token_i(context);
+    cprisk_cff_tls_bump_i(context, cprisk_cff_ctx_last_plain(context));
 }
 
 int cprisk_cff_should_visit_fake_state(const cprisk_cff_context_t *context, uint32_t decoded_state) {
@@ -749,7 +1052,7 @@ int cprisk_cff_should_visit_fake_state(const cprisk_cff_context_t *context, uint
         uint32_t h = 2166136261u;
         h ^= mixed;
         h *= 16777619u;
-        h ^= decoded_state ^ context->seed;
+        h ^= decoded_state ^ cprisk_cff_ctx_seed_plain(context);
         h *= 709607u;
         mixed ^= cprisk_cff_rotate_left32(h, (uint32_t)(context->codec_style + 3u));
     }
@@ -772,24 +1075,34 @@ void cprisk_cff_poison_default(cprisk_cff_context_t *context) {
         case CPRISK_CFF_DEFAULT_POISON:
             cprisk_integrity_poison_cff_lane();
             context->iteration_budget = 0u;
-            context->encoded_state = cprisk_cff_encode_state_with_style_impl(
-                0xFFFF0001u,
-                context->seed,
-                context->runtime_salt,
-                (cprisk_cff_codec_style_t)context->codec_style,
-                context->mba_layers
-            );
+            cprisk_cff_ctx_set_last_plain_i(context, 0xFFFF0001u);
+            {
+                const uint32_t enc_plain = cprisk_cff_encode_state_with_style_impl(
+                    0xFFFF0001u,
+                    cprisk_cff_ctx_seed_plain(context),
+                    cprisk_cff_ctx_salt_plain(context),
+                    (cprisk_cff_codec_style_t)context->codec_style,
+                    context->mba_layers
+                );
+                context->encoded_state = enc_plain ^ cprisk_cff_ctx_mask_enc(context);
+            }
+            cprisk_cff_refresh_vm_link_token_i(context);
             break;
         case CPRISK_CFF_DEFAULT_FAIL_CLOSED:
         default:
             context->iteration_budget = 0u;
-            context->encoded_state = cprisk_cff_encode_state_with_style_impl(
-                0xFFFF0000u,
-                context->seed,
-                context->runtime_salt,
-                (cprisk_cff_codec_style_t)context->codec_style,
-                context->mba_layers
-            );
+            cprisk_cff_ctx_set_last_plain_i(context, 0xFFFF0000u);
+            {
+                const uint32_t enc_plain = cprisk_cff_encode_state_with_style_impl(
+                    0xFFFF0000u,
+                    cprisk_cff_ctx_seed_plain(context),
+                    cprisk_cff_ctx_salt_plain(context),
+                    (cprisk_cff_codec_style_t)context->codec_style,
+                    context->mba_layers
+                );
+                context->encoded_state = enc_plain ^ cprisk_cff_ctx_mask_enc(context);
+            }
+            cprisk_cff_refresh_vm_link_token_i(context);
             break;
     }
 }
@@ -799,5 +1112,6 @@ void cprisk_cff_finalize(cprisk_cff_context_t *context) {
         return;
     }
 
+    cprisk_cff_chain_finalize_i(context);
     memset(context, 0, sizeof(*context));
 }

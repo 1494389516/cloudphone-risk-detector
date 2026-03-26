@@ -93,12 +93,19 @@ public enum SignalID {
     static let signalProbeDebugger = ObfuscatedConstants.signalSignalProbeDebugger
     /// Anti-debug plan section reported escalation / trap activity.
     static let antidebugPlanEscalated = ObfuscatedConstants.signalAntidebugPlanEscalated
+    /// Multiple anti-debug channels (watchdog / debugger / strategy plan) agree at runtime.
+    static let antiDebugRuntimeConsensus = "anti_debug_runtime_consensus"
+    /// Code-signature and signing-identity lanes both report suspicious drift/tamper.
+    static let signingChainConsensus = "signing_chain_consensus"
 
     // Frida module
+    /// Multiple Frida-facing detectors (runtime / module / thread / heap / socket / hook surfaces) agree.
+    static let fridaRuntimeConsensus = "frida_runtime_consensus"
     static let fridaModuleDetected = ObfuscatedConstants.signalFridaModuleDetected
     static let fridaModuleImage = ObfuscatedConstants.signalFridaModuleImage
     static let fridaModuleSection = ObfuscatedConstants.signalFridaModuleSection
     static let fridaModuleString = ObfuscatedConstants.signalFridaModuleString
+    static let fridaModuleTrampoline = "frida_module_trampoline"
 
     // RWX / JIT (Stalker-like)
     static let stalkerJitRWX = ObfuscatedConstants.signalStalkerJitRWX

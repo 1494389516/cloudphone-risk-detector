@@ -356,6 +356,7 @@ public final class VMProtectorPass: ArmorPass {
             "version: \(policy.version)",
             "full=\(policy.full.count) partial=\(policy.partial.count) never=\(policy.never.count)",
             String(format: "opcode_seed=0x%016llX", opcodeTable.seed),
+            "function_id=fnv1a64(symbol)^splitmix(buildSeed) (per-build)",
             "m2: handler_dup=\(policy.antiAnalysis.handlerDuplication) opaque_vpc=\(policy.opaqueVpcEncoding.enabled)",
             "m3: interpreter_cff=\(policy.hardening.protectVmInterpreterWithCff) tier=\(policy.hardening.interpreterCffTier.rawValue) dead_handlers=\(policy.hardening.enableDeadHandlerInjection) vpc_pred=\(policy.hardening.opaqueVpcPredicateChain) self_integrity=\(policy.hardening.interpreterSelfIntegrityCheck)",
             "emit: dispatch_ks=\(policy.hardening.dispatchTableKeystream) imm_ks_v3=\(policy.hardening.bytecodeImmediateKeystream) opcode_ks_v3=\(policy.hardening.bytecodeImmediateKeystream) bc_seg_sha256=\(policy.hardening.bytecodeSegmentRuntimeSha256) anti_sym=\(policy.hardening.antiSymbolicHeavy)"
@@ -407,7 +408,7 @@ public final class VMProtectorPass: ArmorPass {
             let rawSlice = Data(file.data[entryFileOff..<(entryFileOff + readLen)])
             let lifted = lifter.liftPrologue(bytes: rawSlice)
 
-            let fnId = VMFunctionId.fnv1a64(symbol: symbolName)
+            let fnId = VMFunctionId.mixed(symbol: symbolName, buildSeed: seedNonZero)
             let tierCode: VMBytecodeFormat.TierCode = tier == .full ? .full : .partial
             programs.append((functionId: fnId, entryVMA: entryVMA, tier: tierCode, instructions: lifted))
             items += 1

@@ -108,12 +108,14 @@ public final class CPRiskKit: NSObject {
         SignalID.fridaModuleImage,
         SignalID.fridaModuleSection,
         SignalID.fridaModuleString,
+        SignalID.fridaModuleTrampoline,
         ObfuscatedConstants.detectorIDFridaHeap, ObfuscatedConstants.signalFridaStalker, ObfuscatedConstants.detectorIDFridaSocket, ObfuscatedConstants.detectorIDFridaThread,
         ObfuscatedConstants.signalFridaJSEngineHeap, ObfuscatedConstants.signalFridaStalkerJit, ObfuscatedConstants.signalFridaUnixSocket, ObfuscatedConstants.signalFridaExceptionPort, ObfuscatedConstants.signalThreadAnomaly,
         SignalID.hookDetected, ObfuscatedConstants.detectorIDObjCSwizzle, "rwx_memory",
         ObfuscatedConstants.signalArmorRuntimeInitFailed, ObfuscatedConstants.signalIntegrityRuntimeTampered,
         "code_signature_invalid", ObfuscatedConstants.signalTextSegmentTampered,
         ObfuscatedConstants.signalAppSigningIdentityTampered, ObfuscatedConstants.signalAppSigningBaselineChanged,
+        SignalID.fridaRuntimeConsensus, SignalID.antiDebugRuntimeConsensus, SignalID.signingChainConsensus,
         ObfuscatedConstants.signalKernelHookTimingAnomaly, ObfuscatedConstants.signalKernelHookStalkerAmplified,
         "system_library_wx_mapping", "system_library_anonymous_exec_region",
         "app_image_segment_layout_anomaly",
@@ -130,6 +132,22 @@ public final class CPRiskKit: NSObject {
     ]
 
     private static let remoteConfigEndpointKey = "com.cloudphone.riskkit.remote.endpoint"
+    /// XCTest host marker: avoid carrying persisted protection-stability degradation state
+    /// across unit-test runs, which can silently force App Store safe mode and mask watchdog assertions.
+    private static let isRunningUnderXCTest: Bool = {
+        let env = ProcessInfo.processInfo.environment
+        if env["XCTestConfigurationFilePath"] != nil || env["XCTestSessionIdentifier"] != nil {
+            return true
+        }
+        let processName = ProcessInfo.processInfo.processName.lowercased()
+        if processName.contains("xctest") || processName.contains("swiftpm-xctest-helper") {
+            return true
+        }
+        if NSClassFromString("XCTestCase") != nil {
+            return true
+        }
+        return false
+    }()
     private static let remoteTrustLock = UnfairLock()
     /// Digest-backed pin material (no long-lived `Set<String>` of `sha256/...` literals in static storage).
     private static var pinnedCertificatePinMaterial: PinnedCertificatePinMaterial = .empty
@@ -349,12 +367,27 @@ public final class CPRiskKit: NSObject {
     /// 启动自动采集（全局触摸 + 传感器）。
     /// 建议在 `application(_:didFinishLaunchingWithOptions:)` 里尽早调用。
     @objc public func start() {
-        start(config: .default)
+        if Self.isRunningUnderXCTest {
+            // Keep XCTest deterministic: avoid mutable shared `CPRiskConfig.default` state bleed.
+            start(config: CPRiskConfig())
+        } else {
+            start(config: .default)
+        }
     }
 
     /// 与 `start()` 相同，但可指定 `CPRiskConfig.antiDebugRuntimeMode`（须在 armor 首次初始化前生效，见 `ensureArmorRuntimeStarted`）。
     @objc(startWithConfig:)
     public func start(config: CPRiskConfig) {
+        if Self.isRunningUnderXCTest {
+            ProtectionStabilityStore.shared.resetForTesting()
+            stateLock.withLock {
+                // Keep XCTest host deterministic: do not inherit persisted remote safe-profile flags.
+                latestRemoteConfig = nil
+                lastRemoteAppStoreSafeProfileFlag = false
+                lastEnableRemoteConfig = false
+            }
+        }
+
         let remoteVersion = currentRemoteConfig()?.version
         let remoteSafeFlag =
             config.enableRemoteConfig && (currentRemoteConfig()?.securityHardening?.enableAppStoreSafeProfile == true)
@@ -381,8 +414,12 @@ public final class CPRiskKit: NSObject {
 
         let startConfig = Self.duplicatingRiskConfig(
             config,
-            forceAppStoreSafe: ProtectionStabilityStore.shared.isLocalSafeProfileActive()
+            forceAppStoreSafe: Self.isRunningUnderXCTest ? false : ProtectionStabilityStore.shared.isLocalSafeProfileActive()
         )
+        if Self.isRunningUnderXCTest {
+            // Unit tests exercise watchdog/anti-debug paths; remote safe-profile override hides those assertions.
+            startConfig.enableRemoteConfig = false
+        }
 
         applyAntiDebugRuntimeConfigToCore(startConfig)
         let appStoreSafe = stateLock.withLock { lastAppliedEffectiveAntiDebugMode == .appStoreSafe }
@@ -500,6 +537,17 @@ public final class CPRiskKit: NSObject {
         motionSampler.stop()
         touchCapture.stop()
 #endif
+        if Self.isRunningUnderXCTest {
+            ProtectionStabilityStore.shared.resetForTesting()
+            stateLock.withLock {
+                latestRemoteConfig = nil
+                lastRemoteAppStoreSafeProfileFlag = false
+                lastEnableRemoteConfig = false
+                lastLocalAntiDebugMode = .production
+                lastAppliedEffectiveAntiDebugMode = .production
+            }
+            applyAntiDebugRuntimeModeToCore(.production)
+        }
     }
 
     private func installGraphFeedbackReEvaluateObserver() {
@@ -1123,6 +1171,7 @@ public final class CPRiskKit: NSObject {
         let armorSnapshot = ensureArmorRuntimeStarted(trigger: "build_envelope")
         let signatureVersion: String
         let signatureProvider: ((Data) throws -> String)?
+        let bindingMode: String
 
         if armorSnapshot.status == .active {
             let authentic = cprisk_is_integrity_poisoned() == 0
@@ -1141,6 +1190,7 @@ public final class CPRiskKit: NSObject {
                 #else
                 signatureVersion = "v2a"
                 #endif
+                bindingMode = "armor_request_binding_sha256_v1"
             } else if requireArmor {
                 Logger.log("buildSecureReportEnvelope: armor material marked poisoned by runtime state")
                 throw SecureUploadError.armorRuntimeUnavailable(reason: "material_poisoned")
@@ -1148,6 +1198,7 @@ public final class CPRiskKit: NSObject {
                 Logger.log("buildSecureReportEnvelope: armor material marked poisoned, degrading to v2d signature")
                 signatureProvider = nil
                 signatureVersion = "v2d"
+                bindingMode = "plain_hmac_fallback_v1"
             }
         } else if requireArmor {
             Logger.log("buildSecureReportEnvelope: armor unavailable status=\(armorSnapshot.status.rawValue) reason=\(armorSnapshot.reason)")
@@ -1156,6 +1207,7 @@ public final class CPRiskKit: NSObject {
             Logger.log("buildSecureReportEnvelope: armor unavailable, degrading to v2d signature (status=\(armorSnapshot.status.rawValue))")
             signatureProvider = nil
             signatureVersion = "v2d"
+            bindingMode = "plain_hmac_fallback_v1"
         }
 
         let envelopeConfig = ReportEnvelope.Config(signatureVersion: signatureVersion)
@@ -1170,7 +1222,8 @@ public final class CPRiskKit: NSObject {
             attestationKeyId: attestationKeyId,
             trustLevel: trustLevel,
             config: envelopeConfig,
-            signatureProvider: signatureProvider
+            signatureProvider: signatureProvider,
+            bindingMode: bindingMode
         )
     }
 

@@ -182,8 +182,21 @@ enum {
     CPRISK_VM_OP_SUB_LANE = 20u,
     /** Byte-lane multiply mod 256 — AArch64 MADD-as-MUL surrogate. */
     CPRISK_VM_OP_MUL_LANE = 21u,
+    /**
+     * Super-instruction: fused \c CPRISK_VM_OP_ADD (imm low 32) then \c CPRISK_VM_OP_ROL_ACC (imm high 32, rot & 31).
+     * Semantics match executing ADD then ROL in sequence at one PC step.
+     */
+    CPRISK_VM_OP_ADD_ROL_ACC = 22u,
+    /**
+     * Indirect unconditional branch: target PC byte offset = mixed(vreg[imm&7], 8 acc bytes at (imm>>3)&31) mod insn_count.
+     */
+    CPRISK_VM_OP_BRANCH_IND = 23u,
     CPRISK_VM_OP_POISON = 0xFFu
 };
+
+#define CPRISK_VM_ACC_PRIMARY_BYTES 32u
+#define CPRISK_VM_ACC_AUX_BYTES 32u
+#define CPRISK_VM_ACC_COMBINED_BYTES (CPRISK_VM_ACC_PRIMARY_BYTES + CPRISK_VM_ACC_AUX_BYTES)
 
 /** `cprisk_vmp_bytecode_entry_t::reserved` extended profile marker in bits 24...31. */
 #define CPRISK_VMP_ENTRY_PROFILE_MAGIC 0xA5u
@@ -222,12 +235,15 @@ typedef struct cprisk_vm_run_result {
     uint32_t status;
     uint32_t poison_flags;
     uint32_t whitebox_domain_rc;
-    uint8_t acc[32];
+    /** Folded / externally visible accumulator view derived from the 64-byte primary+aux state. */
+    uint8_t acc[CPRISK_VM_ACC_PRIMARY_BYTES];
     uint64_t steps;
     uint32_t last_opcode;
     uint32_t last_dispatch_class;
     /** Eight virtual 64-bit GPRs (interpreter-visible state at VM halt). */
     uint64_t vregs[8];
+    /** Auxiliary 32-byte bank; together with \c acc forms the 64-byte combined VM state. */
+    uint8_t acc_aux[CPRISK_VM_ACC_AUX_BYTES];
 } cprisk_vm_run_result_t;
 
 #if defined(__GNUC__)

@@ -4,6 +4,9 @@ import Darwin
 import Foundation
 
 struct FridaDetector: Detector {
+    static let methodPrefixPatch = "frida:patch:"
+    static let methodPrefixBehavior = "frida:behavior:"
+
     /// XOR+SHA256(label) decode — matches CRiskCore `cprisk_obf_decode_sha256_label` v1.
     private static func protoToken(label: String, enc: [UInt8]) -> String {
         let d = SHA256.hash(data: Data(label.utf8))
@@ -14,6 +17,11 @@ struct FridaDetector: Detector {
 
     let knownPorts: [Int] = [27042, 27043, 23946]
     let knownServerPaths: [String] = ObfuscatedConstants.fridaServerPaths
+    private let artifactNoisePaths: [String] = [
+        "/usr/lib/dyld",
+        "/System/Library/CoreServices/SystemVersion.plist",
+        "/bin/sh",
+    ]
     private let protocolProbeTimeoutMs: Int32 = 120
     private static let hookState = Mutex<[() -> String?]>([])
 
@@ -37,8 +45,10 @@ struct FridaDetector: Detector {
 #else
         var score: Double = 0
         var methods: [String] = []
+        let envHit = detectFridaEnv()
+        let hookSurface = detectHookedRuntimeSurfaces()
 
-        if let envHit = detectFridaEnv() {
+        if let envHit {
             score += 18
             methods.append("\(ObfuscatedConstants.methodPrefixFridaEnv)\(envHit)")
         }
@@ -47,17 +57,32 @@ struct FridaDetector: Detector {
         score += portBehavior.score
         methods.append(contentsOf: portBehavior.methods)
 
-        if detectFridaFileArtifact() {
-            score += 18
-            methods.append("\(ObfuscatedConstants.methodPrefixFridaFile)server")
-        }
+        score += hookSurface.score
+        methods.append(contentsOf: hookSurface.methods)
 
-        if let memSig = detectMemorySignatureHit() {
+        let memorySignatureHit = detectMemorySignatureHit()
+        if let memSig = memorySignatureHit {
             score += 10
             methods.append("\(ObfuscatedConstants.methodPrefixFridaMemorySig)\(memSig)")
         }
 
-        applyFridaRuntimeCRiskSignals(score: &score, methods: &methods)
+        let runtimeChannelCount = applyFridaRuntimeCRiskSignals(score: &score, methods: &methods)
+
+        // Reduce conspicuous Swift-layer path probes on clean devices.
+        // File artifact checks become a corroboration step after higher-entropy runtime/behavior hits.
+        if shouldProbeFileArtifacts(
+            envHit: envHit != nil,
+            portBehaviorScore: portBehavior.score,
+            runtimeChannelCount: runtimeChannelCount,
+            memorySignatureHit: memorySignatureHit != nil,
+            hookSurfaceHit: hookSurface.score > 0
+        ) {
+            let fileArtifact = detectFridaFileArtifactAssessment()
+            if fileArtifact.detected {
+                score += fileArtifact.score
+                methods.append(contentsOf: fileArtifact.methods)
+            }
+        }
 
         return DetectorResult(score: min(score, 45), methods: methods)
 #endif
@@ -76,10 +101,64 @@ struct FridaDetector: Detector {
     }
 
     func detectFridaFileArtifact() -> Bool {
-        for path in knownServerPaths where fileExists(path: path) {
-            return true
+#if targetEnvironment(simulator)
+        false
+#else
+        detectFridaFileArtifactAssessment().detected
+#endif
+    }
+
+    private func detectFridaFileArtifactAssessment() -> (detected: Bool, score: Double, methods: [String]) {
+#if targetEnvironment(simulator)
+        (false, 0, [])
+#else
+        struct ArtifactProbe {
+            let path: String
+            let real: Bool
         }
-        return false
+
+        var probes = knownServerPaths.map { ArtifactProbe(path: $0, real: true) }
+        probes.append(contentsOf: artifactNoisePaths.map { ArtifactProbe(path: $0, real: false) })
+        probes.shuffle()
+
+        var hitCount = 0
+        var maskedCount = 0
+
+        for probe in probes {
+            let accessExists = self.fileExists(path: probe.path)
+            let statExists = self.statFileExists(path: probe.path)
+            guard probe.real else { continue }
+
+            if accessExists || statExists {
+                hitCount += 1
+            }
+            if accessExists != statExists {
+                maskedCount += 1
+            }
+        }
+
+        var score: Double = 0
+        var methods: [String] = []
+        if hitCount > 0 {
+            score += min(18 + Double(max(0, hitCount - 1)) * 4, 26)
+            methods.append("\(ObfuscatedConstants.methodPrefixFridaFile)artifact_hits_\(hitCount)")
+        }
+        if maskedCount > 0 {
+            score += min(Double(maskedCount) * 6, 12)
+            methods.append("\(ObfuscatedConstants.methodPrefixFridaFile)artifact_masked_\(maskedCount)")
+        }
+        return (hitCount > 0 || maskedCount > 0, score, methods)
+#endif
+    }
+
+    internal func shouldProbeFileArtifacts(
+        envHit: Bool,
+        portBehaviorScore: Double,
+        runtimeChannelCount: Int,
+        memorySignatureHit: Bool,
+        hookSurfaceHit: Bool
+    ) -> Bool {
+        envHit || portBehaviorScore > 0 || runtimeChannelCount > 0 || memorySignatureHit || hookSurfaceHit
     }
 
     private var aggressivePortSweepEnabled: Bool {
@@ -370,10 +449,11 @@ struct FridaDetector: Detector {
     }
 
     /// CRiskCore 多路运行时信号：镜像路径 / dlsym(Gum) / 进程表；双通道及以上叠加 `runtime_fused` 提高置信。
-    private func applyFridaRuntimeCRiskSignals(score: inout Double, methods: inout [String]) {
+    @discardableResult
+    private func applyFridaRuntimeCRiskSignals(score: inout Double, methods: inout [String]) -> Int {
         var snap = cprisk_frida_runtime_snapshot_t()
         guard cprisk_frida_runtime_snapshot(&snap) == 0, snap.supported != 0 else {
-            return
+            return 0
         }
 
         let imageBit = UInt32(CPRISK_FRIDA_RT_IMAGE)
@@ -408,6 +488,67 @@ struct FridaDetector: Detector {
                 "\(ObfuscatedConstants.methodPrefixFridaRuntimeFused)channels_\(channelCount)"
             )
         }
+        return channelCount
+    }
+
+    private func detectHookedRuntimeSurfaces() -> DetectorResult {
+        let prologueResult = (try? PrologueBranchDetector().detect()) ?? .empty
+        let inlineResult = MemoryIntegrityChecker().detectInlineHookTraces()
+        let dyldResult = (try? DyldInterposeDetector().detect()) ?? .empty
+
+        let mappedMethods = Self.mapHookSurfaceMethods(
+            prologueMethods: prologueResult.methods,
+            inlineMethods: inlineResult.methods,
+            dyldMethods: dyldResult.methods
+        )
+        guard !mappedMethods.isEmpty else { return .empty }
+
+        let patchCount = mappedMethods.filter { $0.hasPrefix(Self.methodPrefixPatch) }.count
+        let behaviorCount = mappedMethods.filter { $0.hasPrefix(Self.methodPrefixBehavior) }.count
+        let totalScore = min(Double(patchCount) * 5 + Double(behaviorCount) * 4, 18)
+        return DetectorResult(score: totalScore, methods: mappedMethods)
+    }
+
+    internal static func mapHookSurfaceMethods(
+        prologueMethods: [String],
+        inlineMethods: [String],
+        dyldMethods: [String]
+    ) -> [String] {
+        var mapped = Set<String>()
+
+        for method in prologueMethods {
+            if let symbol = method.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: true).last {
+                if method.hasPrefix("prologue_branch:") {
+                    mapped.insert("\(methodPrefixPatch)prologue_branch:\(symbol)")
+                } else if method.hasPrefix("prologue_unreadable:") {
+                    mapped.insert("\(methodPrefixPatch)prologue_unreadable:\(symbol)")
+                }
+            }
+        }
+
+        for method in inlineMethods {
+            if let detail = method.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: true).last {
+                if method.hasPrefix("memory_integrity:inline_hook:") {
+                    mapped.insert("\(methodPrefixPatch)inline_hook:\(detail)")
+                } else if method.hasPrefix("memory_integrity:unreadable:") {
+                    mapped.insert("\(methodPrefixPatch)inline_unreadable:\(detail)")
+                }
+            }
+        }
+
+        for method in dyldMethods {
+            if let detail = method.dyldBehaviorDetail {
+                if method.hasPrefix("dyld_interpose:") {
+                    mapped.insert("\(methodPrefixBehavior)dyld_interpose:\(detail)")
+                } else if method.hasPrefix("dyld_env:") {
+                    mapped.insert("\(methodPrefixBehavior)dyld_env:\(detail.lowercased())")
+                } else if method.hasPrefix("dyld_image_count:") {
+                    mapped.insert("\(methodPrefixBehavior)dyld_image_count:\(detail)")
+                }
+            }
+        }
+
+        return mapped.sorted()
     }
 
     private func detectMemorySignatureHit() -> String? {
@@ -429,11 +570,19 @@ struct FridaDetector: Detector {
     }
 
     private func fileExists(path: String) -> Bool {
-        var rawErrno: CInt = 0
-        let result = path.withCString { cprisk_access_direct($0, F_OK, &rawErrno) }
-        if result == 0 { return true }
-        if rawErrno == ENOENT || rawErrno == ENOTDIR { return false }
-        Logger.log("[FD] fileExists(\(path)) errno=\(rawErrno), treating as non-existent")
-        return false
+        SVCDirectCall.secureAccess(path) == true
+    }
+
+    private func statFileExists(path: String) -> Bool {
+        SVCDirectCall.secureStat(path) == true
+    }
+}
+
+private extension String {
+    var dyldBehaviorDetail: String? {
+        let detail = split(separator: ":", maxSplits: 2, omittingEmptySubsequences: true)
+            .dropFirst()
+            .joined(separator: ":")
+        return detail.isEmpty ? nil : detail
     }
 }
