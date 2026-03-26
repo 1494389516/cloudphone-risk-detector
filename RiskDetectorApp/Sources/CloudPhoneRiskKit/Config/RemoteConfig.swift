@@ -238,6 +238,10 @@ public struct RemoteConfig: Codable, Sendable {
             warnings.append("killSwitchEnabled 为 true，当前策略处于降级保护模式")
         }
 
+        if securityHardening?.enableAppStoreSafeProfile == true {
+            warnings.append("enableAppStoreSafeProfile 已开启：客户端将启用 App Store safe 运行时路径（跳过 deny_attach / watchdog / anti_dump 等）")
+        }
+
         return ValidationResult(
             isValid: errors.isEmpty,
             errors: errors,
@@ -1199,26 +1203,52 @@ public struct SecurityHardeningConfig: Codable, Sendable {
     /// kill switch：紧急关闭高风险拦截
     public let killSwitchEnabled: Bool
 
+    /// 远程要求启用 App Store 审核友好运行时（与本地 `.appStoreSafe` 等价效果）
+    public let enableAppStoreSafeProfile: Bool
+
     private enum CodingKeys: String, CodingKey {
         case enableEnvelopeSignatureV2 = "es"
         case enforcePayloadFieldMapping = "ef"
         case enableChallengeBinding = "ec"
         case killSwitchEnabled = "ks"
+        case enableAppStoreSafeProfile = "as"
     }
 
     public init(
         enableEnvelopeSignatureV2: Bool = true,
         enforcePayloadFieldMapping: Bool = false,
         enableChallengeBinding: Bool = true,
-        killSwitchEnabled: Bool = false
+        killSwitchEnabled: Bool = false,
+        enableAppStoreSafeProfile: Bool = false
     ) {
         self.enableEnvelopeSignatureV2 = enableEnvelopeSignatureV2
         self.enforcePayloadFieldMapping = enforcePayloadFieldMapping
         self.enableChallengeBinding = enableChallengeBinding
         self.killSwitchEnabled = killSwitchEnabled
+        self.enableAppStoreSafeProfile = enableAppStoreSafeProfile
     }
 
     public static let `default` = SecurityHardeningConfig()
+}
+
+extension SecurityHardeningConfig {
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enableEnvelopeSignatureV2 = try c.decodeIfPresent(Bool.self, forKey: .enableEnvelopeSignatureV2) ?? true
+        enforcePayloadFieldMapping = try c.decodeIfPresent(Bool.self, forKey: .enforcePayloadFieldMapping) ?? false
+        enableChallengeBinding = try c.decodeIfPresent(Bool.self, forKey: .enableChallengeBinding) ?? true
+        killSwitchEnabled = try c.decodeIfPresent(Bool.self, forKey: .killSwitchEnabled) ?? false
+        enableAppStoreSafeProfile = try c.decodeIfPresent(Bool.self, forKey: .enableAppStoreSafeProfile) ?? false
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(enableEnvelopeSignatureV2, forKey: .enableEnvelopeSignatureV2)
+        try c.encode(enforcePayloadFieldMapping, forKey: .enforcePayloadFieldMapping)
+        try c.encode(enableChallengeBinding, forKey: .enableChallengeBinding)
+        try c.encode(killSwitchEnabled, forKey: .killSwitchEnabled)
+        try c.encode(enableAppStoreSafeProfile, forKey: .enableAppStoreSafeProfile)
+    }
 }
 
 // MARK: - RemoteConfig 扩展
@@ -1311,7 +1341,8 @@ extension SecurityHardeningConfig {
             enableEnvelopeSignatureV2: true,
             enforcePayloadFieldMapping: enforcePayloadFieldMapping,
             enableChallengeBinding: true,
-            killSwitchEnabled: killSwitchEnabled
+            killSwitchEnabled: killSwitchEnabled,
+            enableAppStoreSafeProfile: enableAppStoreSafeProfile
         )
     }
 }

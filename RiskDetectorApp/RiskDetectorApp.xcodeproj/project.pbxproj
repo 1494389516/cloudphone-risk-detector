@@ -109,6 +109,7 @@
 		4307251DFE0E380FA21BA66E /* FridaDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB93C98F8545FE79021AA9E8 /* FridaDetector.swift */; };
 		4314E4022D27851F21143FFE /* Sysctl.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADCD44CF2DC35DE6C9C4C113 /* Sysctl.swift */; };
 		44B9F52ED9614C964E495BE7 /* FreshnessAnchor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF87CEAA8C9B0EAD6515E2B1 /* FreshnessAnchor.swift */; };
+		F3A0C7A41E4B4C2D9A01B111 /* ProtectionStabilityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3A0C7A41E4B4C2D9A01B112 /* ProtectionStabilityStore.swift */; };
 		45C1D38C487759EF2B34BC63 /* TimePatternProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8B4E0B447075071DC9A9A9E /* TimePatternProvider.swift */; };
 		4711DD8395CFFE9C2DBBC018 /* cprisk_import_resolver.c in Sources */ = {isa = PBXBuildFile; fileRef = 2764BD5C10DD45C212AD8425 /* cprisk_import_resolver.c */; };
 		471760319F5214CE4152B071 /* SignalIDRuntimeContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C7046A6983DBC101C7CDFA4 /* SignalIDRuntimeContractTests.swift */; };
@@ -132,6 +133,8 @@
 		5717B71507EE86FCDADF5E2F /* JailbreakEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC4BFF614884CD3855108036 /* JailbreakEngineTests.swift */; };
 		574EEBFCD19CE49B728052CF /* SwiftRuntimeIntegrityDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D0E5F9EDBBBCE1DA0A5B454 /* SwiftRuntimeIntegrityDetectorTests.swift */; };
 		5861594BFD83BBB3F70CD454 /* ArmorRuntimeLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CD478A07EAEAFCB00CE0983 /* ArmorRuntimeLifecycleTests.swift */; };
+		F3A0C7A41E4B4C2D9A01B113 /* AppStoreSafeRuntimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3A0C7A41E4B4C2D9A01B114 /* AppStoreSafeRuntimeTests.swift */; };
+		F3A0C7A41E4B4C2D9A01B115 /* ProtectionStabilityStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3A0C7A41E4B4C2D9A01B116 /* ProtectionStabilityStoreTests.swift */; };
 		5BEFC05D5316D2295DA853E4 /* CloudPhoneLocalSignalsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 170ACEDDA37D00B3A179E56F /* CloudPhoneLocalSignalsTests.swift */; };
 		5C4D57E2236FA35F2D315E1E /* SecureBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73AD0F159D6DA55911AD1068 /* SecureBuffer.swift */; };
 		5CCB84D7DC86A944D48215AC /* cprisk_vm_oph_basic.c in Sources */ = {isa = PBXBuildFile; fileRef = 3E28AFF1DBC724A7AE8C12DA /* cprisk_vm_oph_basic.c */; };
@@ -531,6 +534,7 @@
 		4E891F1FF246E32A306061D1 /* RuntimeIntegrityValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeIntegrityValidator.swift; sourceTree = "<group>"; };
 		4F054166973FF8107B4CDEE8 /* RiskReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskReport.swift; sourceTree = "<group>"; };
 		5032B938125B2F81288B00B4 /* RiskHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskHistoryStore.swift; sourceTree = "<group>"; };
+		F3A0C7A41E4B4C2D9A01B112 /* ProtectionStabilityStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtectionStabilityStore.swift; sourceTree = "<group>"; };
 		531A1768F2F153A02E0C7D73 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		54B9FD3ADBA57BE9A197D026 /* DecisionEngineAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecisionEngineAdapter.swift; sourceTree = "<group>"; };
 		55456BD39C3898FA6C922964 /* ArmorIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArmorIntegrationTests.swift; sourceTree = "<group>"; };
@@ -565,6 +569,8 @@
 		6AEFA3BBB86F9B01E98F9278 /* SwiftRuntimeIntegrityDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftRuntimeIntegrityDetector.swift; sourceTree = "<group>"; };
 		6C5C8F2472390BBAC3E72AD6 /* RiskReportStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskReportStorage.swift; sourceTree = "<group>"; };
 		6CD478A07EAEAFCB00CE0983 /* ArmorRuntimeLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArmorRuntimeLifecycleTests.swift; sourceTree = "<group>"; };
+		F3A0C7A41E4B4C2D9A01B114 /* AppStoreSafeRuntimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreSafeRuntimeTests.swift; sourceTree = "<group>"; };
+		F3A0C7A41E4B4C2D9A01B116 /* ProtectionStabilityStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtectionStabilityStoreTests.swift; sourceTree = "<group>"; };
 		6E9551F88098CCDD74835704 /* AudioRouteProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRouteProvider.swift; sourceTree = "<group>"; };
 		6ECF49E84B30BFCFCD67891D /* CoreLocation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreLocation.framework; path = System/Library/Frameworks/CoreLocation.framework; sourceTree = SDKROOT; };
 		7139C612FDCF177DF58F02C6 /* CRiskCore-umbrella.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "CRiskCore-umbrella.h"; sourceTree = "<group>"; };
@@ -1228,6 +1234,7 @@
 			children = (
 				F16EF99079DDD86B1F017387 /* CPRiskStore.swift */,
 				AF87CEAA8C9B0EAD6515E2B1 /* FreshnessAnchor.swift */,
+				F3A0C7A41E4B4C2D9A01B112 /* ProtectionStabilityStore.swift */,
 				D8E2B7164FBEFA3074165739 /* RiskHistoryActor.swift */,
 				5032B938125B2F81288B00B4 /* RiskHistoryStore.swift */,
 				94FBC2E7F0DF1D7E32219AA8 /* SecureFileStore.swift */,
@@ -1359,6 +1366,7 @@
 				D43C15A976386E64A36F3F1E /* ActorFacadeTests.swift */,
 				CF8DDC8FD0343206896F10AA /* AnalysisAndUploadPolicyTests.swift */,
 				294024E02908D813AEFFAB38 /* AntiTamperingTests.swift */,
+				F3A0C7A41E4B4C2D9A01B114 /* AppStoreSafeRuntimeTests.swift */,
 				2B120C461DFD6BDC99D8BFA9 /* AppSigningIdentityDetectorTests.swift */,
 				55456BD39C3898FA6C922964 /* ArmorIntegrationTests.swift */,
 				6CD478A07EAEAFCB00CE0983 /* ArmorRuntimeLifecycleTests.swift */,
@@ -1399,6 +1407,7 @@
 				EFC2834E89630C039617CDC1 /* RiskScorerTests.swift */,
 				5FD9AACB1FE016CEF40026E8 /* RiskSignalTests.swift */,
 				437950A05C4272A3C114A6C2 /* RiskTypesTests.swift */,
+				F3A0C7A41E4B4C2D9A01B116 /* ProtectionStabilityStoreTests.swift */,
 				CEA59AC3C765718FE764A9FA /* RiskVerdictTests.swift */,
 				986DBEB62A2E2CE4C6CF6682 /* ScenarioPolicyTests.swift */,
 				3DEE738E2F550FD84954C405 /* ScorePipelineInvariantTests.swift */,
@@ -1752,6 +1761,7 @@
 				B6D92C4B8D3995AE2C2D2A1E /* FileDetector.swift in Sources */,
 				F227D7CCDC9DC03EBCB8DD0D /* FingerprintDeobfuscation.swift in Sources */,
 				44B9F52ED9614C964E495BE7 /* FreshnessAnchor.swift in Sources */,
+				F3A0C7A41E4B4C2D9A01B111 /* ProtectionStabilityStore.swift in Sources */,
 				F19E688B2E7AB6673DFDA204 /* FridaBuiltinMemorySignatureScanner.swift in Sources */,
 				4307251DFE0E380FA21BA66E /* FridaDetector.swift in Sources */,
 				E89B277DB719EB7BE3BA22A6 /* FridaHeapDetector.swift in Sources */,
@@ -1865,6 +1875,7 @@
 				2E55746FEDD584D1B9C3D935 /* ActorFacadeTests.swift in Sources */,
 				0E46DBC52893B0E6D49A5353 /* AnalysisAndUploadPolicyTests.swift in Sources */,
 				BB6959F6BD0A5C91BD97EC62 /* AntiTamperingTests.swift in Sources */,
+				F3A0C7A41E4B4C2D9A01B113 /* AppStoreSafeRuntimeTests.swift in Sources */,
 				3F9BFC2A55C70DCFFDDC8520 /* AppSigningIdentityDetectorTests.swift in Sources */,
 				10822ED55C539C6671848CF4 /* ArmorIntegrationTests.swift in Sources */,
 				5861594BFD83BBB3F70CD454 /* ArmorRuntimeLifecycleTests.swift in Sources */,
@@ -1905,6 +1916,7 @@
 				3EBDF46DDF95F9BE11EA0D88 /* RiskScorerTests.swift in Sources */,
 				6BEFC700FE298E149C0824AB /* RiskSignalTests.swift in Sources */,
 				121AA0F7B13C70D7FB109A90 /* RiskTypesTests.swift in Sources */,
+				F3A0C7A41E4B4C2D9A01B115 /* ProtectionStabilityStoreTests.swift in Sources */,
 				49E109E99B72A1217027FAF1 /* RiskVerdictTests.swift in Sources */,
 				610EE191702D4BA3D2EB252B /* SDK52ProviderTests.swift in Sources */,
 				6D064C3DB1B31F2E78A2B9EF /* SHA256MaskedRoundConstantsTests.swift in Sources */,

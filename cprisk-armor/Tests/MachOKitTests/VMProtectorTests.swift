@@ -670,4 +670,30 @@ final class VMProtectorTests: XCTestCase {
         }
         XCTAssertNotEqual(flags & VMBytecodeFormat.BytecodeFlags.antiSymbolicHeavy, 0)
     }
+
+    func testArmorSafetyProfileCLITokens() {
+        XCTAssertEqual(ArmorSafetyProfile(cliToken: "standard"), .standard)
+        XCTAssertEqual(ArmorSafetyProfile(cliToken: "appstore-safe"), .appStoreSafe)
+        XCTAssertNil(ArmorSafetyProfile(cliToken: "nope"))
+    }
+
+    func testAppStoreSafeBundledPolicyYAMLsExistAndParse() throws {
+        let repoRoot = URL(fileURLWithPath: #file)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let vmpURL = repoRoot.appendingPathComponent("RiskDetectorApp/vmp_policy_appstore_safe.yaml")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: vmpURL.path))
+        let vmpText = try String(contentsOf: vmpURL, encoding: .utf8)
+        let vmp = VMPolicyConfig.parse(vmpText)
+        XCTAssertFalse(vmp.hardening.protectVmInterpreterWithCff)
+        XCTAssertFalse(vmp.hardening.interpreterSelfIntegrityCheck)
+        XCTAssertFalse(vmp.hardening.antiSymbolicHeavy)
+        XCTAssertFalse(vmp.hardening.bytecodeSegmentRuntimeSha256)
+
+        let cffPath = ArmorPolicyPathResolver.resolveDefaultCffPolicyPath(profile: .appStoreSafe)
+        XCTAssertNotNil(cffPath)
+        XCTAssertTrue(cffPath!.contains("cff_policy_appstore_safe.yaml"))
+    }
 }

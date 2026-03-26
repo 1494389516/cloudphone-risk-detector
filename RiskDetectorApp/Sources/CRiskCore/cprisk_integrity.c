@@ -694,13 +694,15 @@ static uint64_t cprisk_compute_init_timing_threshold_ns_for_machine_i(
     if (machine && machine[0] != '\0')
         (void)cprisk_parse_apple_hw_major_generation_i(machine, &m);
     uint64_t t = CPRISK_INIT_TIMING_BASE_NS + cprisk_generation_slack_ns_i(m);
-    if (mode == CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA)
+    if (mode == CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA ||
+        mode == CPRISK_RUNTIME_HARDENING_APP_STORE_SAFE)
         t += CPRISK_INIT_TIMING_RELAXED_EXTRA_NS;
     return t;
 }
 
 static int cprisk_runtime_relaxed_dev_qa_i(void) {
-    return s_runtime_hardening_mode == CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA;
+    return s_runtime_hardening_mode == CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA ||
+        s_runtime_hardening_mode == CPRISK_RUNTIME_HARDENING_APP_STORE_SAFE;
 }
 
 static void cprisk_antidebug_apply_policies_i(uint32_t trigger_flags, int init_rc_hint, int integrity_rc_hint) {
@@ -2294,7 +2296,8 @@ uint64_t cprisk_get_init_elapsed_ns(void) {
 }
 
 void cprisk_set_runtime_hardening_mode(cprisk_runtime_hardening_mode_t mode) {
-    if (mode != CPRISK_RUNTIME_HARDENING_PRODUCTION && mode != CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA)
+    if (mode != CPRISK_RUNTIME_HARDENING_PRODUCTION && mode != CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA &&
+        mode != CPRISK_RUNTIME_HARDENING_APP_STORE_SAFE)
         mode = CPRISK_RUNTIME_HARDENING_PRODUCTION;
     s_runtime_hardening_mode = mode;
 }

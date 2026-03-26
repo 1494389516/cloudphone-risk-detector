@@ -320,9 +320,13 @@ public final class CPRiskKit: NSObject {
     }
 
     private var armorRuntimeSnapshot = ArmorRuntimeSnapshot.inactive
-    /// 最近一次下发到 CRiskCore 的 anti-debug mode；仅缓存必要字段，避免外部继续修改 CPRiskConfig
-    /// 实例后影响后续无参路径（如信封验签）。
-    private var lastArmorRuntimeAntiDebugMode: CPRiskAntiDebugRuntimeMode = .production
+    /// 最近一次 `CPRiskConfig.antiDebugRuntimeMode`（不含远程叠加）。
+    private var lastLocalAntiDebugMode: CPRiskAntiDebugRuntimeMode = .production
+    /// 最近一次实际下发到 CRiskCore 的有效模式（本地 + `enableAppStoreSafeProfile`）。
+    private var lastAppliedEffectiveAntiDebugMode: CPRiskAntiDebugRuntimeMode = .production
+    private var lastEnableRemoteConfig: Bool = true
+    /// 与 `latestRemoteConfig.securityHardening.enableAppStoreSafeProfile` 同步，用于远程变更后重算有效模式。
+    private var lastRemoteAppStoreSafeProfileFlag: Bool = false
 
     /// 启动自动采集（全局触摸 + 传感器）。
     /// 建议在 `application(_:didFinishLaunchingWithOptions:)` 里尽早调用。
@@ -333,23 +337,82 @@ public final class CPRiskKit: NSObject {
     /// 与 `start()` 相同，但可指定 `CPRiskConfig.antiDebugRuntimeMode`（须在 armor 首次初始化前生效，见 `ensureArmorRuntimeStarted`）。
     @objc(startWithConfig:)
     public func start(config: CPRiskConfig) {
-        applyAntiDebugRuntimeConfigToCore(config)
-        cprisk_deny_attach()
-        cprisk_register_exception_handler()
-        let watchdogStartResult = cprisk_start_anti_debug_watchdog()
-        if watchdogStartResult != 0 {
-            Logger.log("anti_debug_\(ObfuscatedConstants.keywordWatchdog).start failed rc=\(watchdogStartResult)")
+        let remoteVersion = currentRemoteConfig()?.version
+        let remoteSafeFlag =
+            config.enableRemoteConfig && (currentRemoteConfig()?.securityHardening?.enableAppStoreSafeProfile == true)
+        let effectiveForStability = Self.effectiveAntiDebugRuntimeMode(
+            localMode: config.antiDebugRuntimeMode,
+            remoteRequestsAppStoreSafeProfile: remoteSafeFlag
+        )
+        let bootstrap = ProtectionStabilityStore.shared.beginSession(
+            remoteConfigVersion: remoteVersion,
+            antiDebugMode: effectiveForStability,
+            safeProfileAlreadyActive: false
+        )
+        if bootstrap.didRollbackRemoteConfig {
+            refreshRemoteTrustState()
+            Logger.log(
+                "protection_stability: auto-rollback applied version=\(bootstrap.rolledBackToVersion.map { String($0) } ?? "nil")"
+            )
         }
-        let armorSnapshot = ensureArmorRuntimeStarted(trigger: "start", config: config)
+        if bootstrap.didEnterLocalSafeProfile || bootstrap.didActivateLocalStabilityKillSwitch {
+            Logger.log(
+                "protection_stability: degraded mode safeProfile=\(bootstrap.didEnterLocalSafeProfile) killSwitch=\(bootstrap.didActivateLocalStabilityKillSwitch)"
+            )
+        }
+
+        let startConfig = Self.duplicatingRiskConfig(
+            config,
+            forceAppStoreSafe: ProtectionStabilityStore.shared.isLocalSafeProfileActive()
+        )
+
+        applyAntiDebugRuntimeConfigToCore(startConfig)
+        let appStoreSafe = stateLock.withLock { lastAppliedEffectiveAntiDebugMode == .appStoreSafe }
+        if appStoreSafe {
+            Logger.log(
+                "app_store_safe_profile: enabled — skipping cprisk_deny_attach, exception handler registration, " +
+                "anti_debug_watchdog, anti_dump_probe, cprisk_erase_macho_header (armor + risk evaluation remain active)"
+            )
+        }
+
+        ProtectionStabilityStore.shared.markPhase(.antiDebugPrepare)
+
+        var watchdogStartResult: Int32 = 0
+        if !appStoreSafe {
+            cprisk_deny_attach()
+            cprisk_register_exception_handler()
+            watchdogStartResult = Int32(cprisk_start_anti_debug_watchdog())
+            if watchdogStartResult != 0 {
+                Logger.log("anti_debug_\(ObfuscatedConstants.keywordWatchdog).start failed rc=\(watchdogStartResult)")
+            }
+        }
+
+        ProtectionStabilityStore.shared.markPhase(.armorRuntimeInit)
+        let armorSnapshot = ensureArmorRuntimeStarted(trigger: "start", config: startConfig)
 #if os(iOS) && !targetEnvironment(macCatalyst)
-        if armorSnapshot.status == .active {
+        if !appStoreSafe, armorSnapshot.status == .active {
             cprisk_erase_macho_header()
         }
 #endif
-        let antiDumpStartResult = cprisk_start_anti_dump_probe(5)
-        if antiDumpStartResult != 0 {
-            Logger.log("anti_dump_probe.start failed rc=\(antiDumpStartResult)")
+
+        ProtectionStabilityStore.shared.markPhase(.antiDumpPrepare)
+        var antiDumpStartResult: Int32 = 0
+        if !appStoreSafe {
+            antiDumpStartResult = Int32(cprisk_start_anti_dump_probe(5))
+            if antiDumpStartResult != 0 {
+                Logger.log("anti_dump_probe.start failed rc=\(antiDumpStartResult)")
+            }
         }
+
+        let watchdogAnomalyFlags = antiDebugWatchdogSnapshot().anomalyFlags
+        ProtectionStabilityStore.shared.recordRuntimeHealth(
+            armorStatus: armorSnapshot.status.rawValue,
+            armorReason: armorSnapshot.reason,
+            watchdogStartResult: watchdogStartResult,
+            antiDumpStartResult: antiDumpStartResult,
+            watchdogAnomalyFlags: watchdogAnomalyFlags
+        )
+
         DyldImageMonitor.shared.start()
         BuildConfig.configureForRelease()
         let sid = stateLock.withLock { () -> String? in
@@ -362,7 +425,8 @@ public final class CPRiskKit: NSObject {
         if !AppAttestSignalProvider.isHardwareTrustSupported {
             Logger.log("app_attest: hardware_trust_unsupported (evaluate will emit signal weight=95)")
         }
-        registerProviders(for: config)
+        ProtectionStabilityStore.shared.markPhase(.providerRegistration)
+        registerProviders(for: startConfig)
         RiskSignalProviderRegistry.shared.seal()
         ConditionExpression.sealCustomEvaluators()
         installGraphFeedbackReEvaluateObserver()
@@ -371,6 +435,37 @@ public final class CPRiskKit: NSObject {
         motionSampler.start()
         PhysicalSensorProbe.prewarm()
 #endif
+        ProtectionStabilityStore.shared.markStartupCompleted(remoteConfigVersion: currentRemoteConfig()?.version)
+    }
+
+    /// 保护链路稳定性与崩溃归因快照（线上排障 / 测试）。
+    public func protectionStabilitySnapshot() -> ProtectionStabilitySnapshot {
+        ProtectionStabilityStore.shared.currentSnapshot()
+    }
+
+    private static func duplicatingRiskConfig(_ config: CPRiskConfig, forceAppStoreSafe: Bool) -> CPRiskConfig {
+        let c = CPRiskConfig()
+        c.enableBehaviorDetect = config.enableBehaviorDetect
+        c.enableNetworkSignals = config.enableNetworkSignals
+        c.threshold = config.threshold
+        c.jailbreakEnableFileDetect = config.jailbreakEnableFileDetect
+        c.jailbreakEnableDyldDetect = config.jailbreakEnableDyldDetect
+        c.jailbreakEnableEnvDetect = config.jailbreakEnableEnvDetect
+        c.jailbreakEnableSysctlDetect = config.jailbreakEnableSysctlDetect
+        c.jailbreakEnableSchemeDetect = config.jailbreakEnableSchemeDetect
+        c.jailbreakEnableHookDetect = config.jailbreakEnableHookDetect
+        c.jailbreakThreshold = config.jailbreakThreshold
+        c.enableRemoteConfig = config.enableRemoteConfig
+        c.defaultScenario = config.defaultScenario
+        c.enableTemporalAnalysis = config.enableTemporalAnalysis
+        c.enableAntiTamper = config.enableAntiTamper
+        c.remoteConfigURLString = config.remoteConfigURLString
+        if forceAppStoreSafe {
+            c.antiDebugRuntimeMode = .appStoreSafe
+        } else {
+            c.antiDebugRuntimeMode = config.antiDebugRuntimeMode
+        }
+        return c
     }
 
     @objc public func stop() {
@@ -601,7 +696,9 @@ public final class CPRiskKit: NSObject {
             remoteConfigProvider = nil
             remoteConfigEndpoint = nil
             latestRemoteConfig = nil
+            lastRemoteAppStoreSafeProfileFlag = false
         }
+        reapplyAntiDebugRuntimeModeAfterRemoteConfigChange()
 
         UserDefaults.standard.removeObject(forKey: Self.remoteConfigEndpointKey)
         Logger.log("remote_config.endpoint cleared")
@@ -702,16 +799,22 @@ public final class CPRiskKit: NSObject {
             RiskSignalProviderRegistry.shared.seal()
             ConditionExpression.sealCustomEvaluators()
         }
-        // Ensure CRiskCore and armor runtime are initialized even if start() was never called.
-        cprisk_deny_attach()
-        cprisk_register_exception_handler()
-        let armorRuntimeSnapshot = ensureArmorRuntimeStarted(trigger: "evaluate", config: config)
+        // Ensure CRiskCore mode matches config + remote before any attach/exception paths; production keeps deny_attach before armor init.
+        applyAntiDebugRuntimeConfigToCore(config)
+        let appStoreSafeEval = stateLock.withLock { lastAppliedEffectiveAntiDebugMode == .appStoreSafe }
+        if !appStoreSafeEval {
+            cprisk_deny_attach()
+            cprisk_register_exception_handler()
+        }
+        let armorRuntimeSnapshot = ensureArmorRuntimeStarted(trigger: "evaluate", config: nil)
         // Recheck integrity when armor runtime is active; on tampering, material may
         // silently switch to decoy bytes instead of surfacing a direct return-code oracle.
         if armorRuntimeSnapshot.status == .active {
             _ = cprisk_recheck_integrity()
         }
-        Self.maybeVerifyExceptionHandler()
+        if !appStoreSafeEval {
+            Self.maybeVerifyExceptionHandler()
+        }
 
         let context = buildRiskContext(config: runtimeConfig)
         let serverPolicy = PolicyManager.shared.activePolicy
@@ -1363,15 +1466,48 @@ public final class CPRiskKit: NSObject {
             cprisk_set_runtime_hardening_mode(cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_PRODUCTION))
         case .relaxedDevelopmentQA:
             cprisk_set_runtime_hardening_mode(cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA))
+        case .appStoreSafe:
+            cprisk_set_runtime_hardening_mode(cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_APP_STORE_SAFE))
         @unknown default:
             cprisk_set_runtime_hardening_mode(cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_PRODUCTION))
         }
     }
 
+    /// 合并本地 `antiDebugRuntimeMode` 与远程 `enableAppStoreSafeProfile`；本地 `.appStoreSafe` 优先且不要求远程。
+    internal static func effectiveAntiDebugRuntimeMode(
+        localMode: CPRiskAntiDebugRuntimeMode,
+        remoteRequestsAppStoreSafeProfile: Bool
+    ) -> CPRiskAntiDebugRuntimeMode {
+        if localMode == .appStoreSafe { return .appStoreSafe }
+        if remoteRequestsAppStoreSafeProfile { return .appStoreSafe }
+        return localMode
+    }
+
     private func applyAntiDebugRuntimeConfigToCore(_ config: CPRiskConfig) {
-        let mode = config.antiDebugRuntimeMode
-        stateLock.withLock { lastArmorRuntimeAntiDebugMode = mode }
-        applyAntiDebugRuntimeModeToCore(mode)
+        stateLock.withLock {
+            lastLocalAntiDebugMode = config.antiDebugRuntimeMode
+            lastEnableRemoteConfig = config.enableRemoteConfig
+        }
+        let remoteFlag = stateLock.withLock {
+            lastEnableRemoteConfig && lastRemoteAppStoreSafeProfileFlag
+        }
+        let effective = Self.effectiveAntiDebugRuntimeMode(
+            localMode: config.antiDebugRuntimeMode,
+            remoteRequestsAppStoreSafeProfile: remoteFlag
+        )
+        stateLock.withLock { lastAppliedEffectiveAntiDebugMode = effective }
+        applyAntiDebugRuntimeModeToCore(effective)
+    }
+
+    private func reapplyAntiDebugRuntimeModeAfterRemoteConfigChange() {
+        let local = stateLock.withLock { lastLocalAntiDebugMode }
+        let remote = stateLock.withLock { lastEnableRemoteConfig && lastRemoteAppStoreSafeProfileFlag }
+        let effective = Self.effectiveAntiDebugRuntimeMode(
+            localMode: local,
+            remoteRequestsAppStoreSafeProfile: remote
+        )
+        stateLock.withLock { lastAppliedEffectiveAntiDebugMode = effective }
+        applyAntiDebugRuntimeModeToCore(effective)
     }
 
     @discardableResult
@@ -1379,7 +1515,7 @@ public final class CPRiskKit: NSObject {
         if let config {
             applyAntiDebugRuntimeConfigToCore(config)
         } else {
-            let mode = stateLock.withLock { lastArmorRuntimeAntiDebugMode }
+            let mode = stateLock.withLock { lastAppliedEffectiveAntiDebugMode }
             applyAntiDebugRuntimeModeToCore(mode)
         }
 
@@ -1466,7 +1602,11 @@ public final class CPRiskKit: NSObject {
 
     private func resetArmorRuntime() {
         let shouldCleanup = stateLock.withLock {
-            lastArmorRuntimeAntiDebugMode = .production
+            lastLocalAntiDebugMode = .production
+            lastAppliedEffectiveAntiDebugMode = Self.effectiveAntiDebugRuntimeMode(
+                localMode: .production,
+                remoteRequestsAppStoreSafeProfile: lastEnableRemoteConfig && lastRemoteAppStoreSafeProfileFlag
+            )
             let cleanup = armorRuntimeSnapshot.status != .inactive || armorRuntimeSnapshot.attemptCount > 0
             armorRuntimeSnapshot = .inactive
             return cleanup
@@ -1476,6 +1616,9 @@ public final class CPRiskKit: NSObject {
             cprisk_cleanup_protection()
             Logger.log("armor_runtime.cleanup")
         }
+        applyAntiDebugRuntimeModeToCore(
+            stateLock.withLock { lastAppliedEffectiveAntiDebugMode }
+        )
     }
 
     private func buildChallengeBindingIfNeeded(
@@ -1800,7 +1943,8 @@ public final class CPRiskKit: NSObject {
         return EnginePolicy(
             name: remoteConfig.map { "remote_\($0.version)" } ?? "local_sdk3",
             version: remoteConfig.map { String($0.version) } ?? "3.0-local",
-            killSwitchEnabled: remoteConfig?.securityHardening?.killSwitchEnabled ?? false,
+            killSwitchEnabled: (remoteConfig?.securityHardening?.killSwitchEnabled ?? false)
+                || ProtectionStabilityStore.shared.isLocalStabilityKillSwitchEnabled(),
             enableNetworkSignals: runtimeConfig.enableNetworkSignals,
             enableBehaviorDetection: runtimeConfig.enableBehaviorDetect,
             enableDeviceFingerprint: true,
@@ -1947,36 +2091,45 @@ public final class CPRiskKit: NSObject {
             Logger.log("remote_config.\(source) warning: \(warning)")
         }
 
-        return stateLock.withLock {
-        if let currentVersion = latestRemoteConfig?.version {
-            if effectiveConfig.version < currentVersion, !Self.localRemoteConfigRollbackAllowed {
-                Logger.log(
-                    "remote_config.\(source) rejected: rollback detected " +
-                    "incoming=\(effectiveConfig.version) < current=\(currentVersion)"
-                )
-                return false
-            }
-            if effectiveConfig.version == currentVersion {
-                let currentHash = latestRemoteConfig.flatMap(Self.stableConfigHash)
-                let newHash = Self.stableConfigHash(effectiveConfig)
-                if let currentHash, currentHash == newHash {
-                    return true
+        let remoteSafe = effectiveConfig.securityHardening?.enableAppStoreSafeProfile ?? false
+
+        let accepted = stateLock.withLock { () -> Bool in
+            if let currentVersion = latestRemoteConfig?.version {
+                if effectiveConfig.version < currentVersion, !Self.localRemoteConfigRollbackAllowed {
+                    Logger.log(
+                        "remote_config.\(source) rejected: rollback detected " +
+                        "incoming=\(effectiveConfig.version) < current=\(currentVersion)"
+                    )
+                    return false
                 }
-                Logger.log("remote_config.\(source) rejected: same version but different content hash")
-                return false
+                if effectiveConfig.version == currentVersion {
+                    let currentHash = latestRemoteConfig.flatMap(Self.stableConfigHash)
+                    let newHash = Self.stableConfigHash(effectiveConfig)
+                    if let currentHash, currentHash == newHash {
+                        return true
+                    }
+                    Logger.log("remote_config.\(source) rejected: same version but different content hash")
+                    return false
+                }
             }
+
+            latestRemoteConfig = effectiveConfig
+
+            DynamicFeatureList.shared.applyRemoteConfig(
+                additionalSuspiciousLibraries: effectiveConfig.additionalSuspiciousLibraries,
+                additionalSuspiciousPaths: effectiveConfig.additionalSuspiciousPaths,
+                additionalSuspiciousPorts: effectiveConfig.additionalSuspiciousPorts
+            )
+
+            return true
         }
 
-        latestRemoteConfig = effectiveConfig
-
-        DynamicFeatureList.shared.applyRemoteConfig(
-            additionalSuspiciousLibraries: effectiveConfig.additionalSuspiciousLibraries,
-            additionalSuspiciousPaths: effectiveConfig.additionalSuspiciousPaths,
-            additionalSuspiciousPorts: effectiveConfig.additionalSuspiciousPorts
-        )
-
-        return true
+        if accepted {
+            stateLock.withLock { lastRemoteAppStoreSafeProfileFlag = remoteSafe }
+            reapplyAntiDebugRuntimeModeAfterRemoteConfigChange()
         }
+
+        return accepted
     }
 
     private func applyPinnedCertificateHashes(_ material: PinnedCertificatePinMaterial) {
@@ -1988,7 +2141,11 @@ public final class CPRiskKit: NSObject {
             provider.reloadCachedConfigTrustState()
             _ = applyRemoteConfigIfAccepted(provider.currentConfig, source: "trust_refresh", validateStrictly: false)
         } else {
-            stateLock.withLock { latestRemoteConfig = nil }
+            stateLock.withLock {
+                latestRemoteConfig = nil
+                lastRemoteAppStoreSafeProfileFlag = false
+            }
+            reapplyAntiDebugRuntimeModeAfterRemoteConfigChange()
         }
         PolicyManager.shared.reloadTrustedCacheState()
     }

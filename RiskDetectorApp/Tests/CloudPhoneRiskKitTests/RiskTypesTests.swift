@@ -6,14 +6,16 @@ final class RiskTypesTests: XCTestCase {
 
     /// ObjC runtime names from `@objc(CPR_…)` must stay stable for mixed ObjC / class-list tooling.
     func testPublicObjCRuntimeClassNames() {
-        let pairs: [(AnyClass, String)] = [
-            (CPRiskStore.self, "CPR_RiskStore"),
+        var pairs: [(AnyClass, String)] = [
             (CPRiskKit.self, "CPR_RiskKit"),
             (CPRiskReport.self, "CPR_RiskReport"),
             (CPRiskSignal.self, "CPR_RiskSignal"),
             (CPRiskConfig.self, "CPR_RiskConfig"),
             (CertificatePinningSessionDelegate.self, "CPR_PinSessionDelegate"),
         ]
+#if os(iOS)
+        pairs.insert((CPRiskStore.self, "CPR_RiskStore"), at: 0)
+#endif
         for (cls, expected) in pairs {
             XCTAssertEqual(NSStringFromClass(cls), expected)
             XCTAssertTrue(cls === NSClassFromString(expected), "NSClassFromString(\(expected)) should resolve to \(cls)")

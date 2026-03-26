@@ -224,17 +224,25 @@ final class ArmorRuntimeLifecycleTests: XCTestCase {
             machine,
             cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA)
         )
+        let appStoreSafe = cprisk_test_init_timing_threshold_ns_for_machine(
+            machine,
+            cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_APP_STORE_SAFE)
+        )
         XCTAssertGreaterThan(relaxed, prod)
+        XCTAssertEqual(appStoreSafe, relaxed)
     }
 
     func testAntiDebugRuntimeModeEnumAlignsWithCConstants() {
         XCTAssertEqual(CPRiskAntiDebugRuntimeMode.production.rawValue, Int(CPRISK_RUNTIME_HARDENING_PRODUCTION))
         XCTAssertEqual(CPRiskAntiDebugRuntimeMode.relaxedDevelopmentQA.rawValue, Int(CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA))
+        XCTAssertEqual(CPRiskAntiDebugRuntimeMode.appStoreSafe.rawValue, Int(CPRISK_RUNTIME_HARDENING_APP_STORE_SAFE))
     }
 
     func testRuntimeHardeningModeRoundTripInC() {
         cprisk_set_runtime_hardening_mode(cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA))
         XCTAssertEqual(Int(cprisk_get_runtime_hardening_mode()), Int(CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA))
+        cprisk_set_runtime_hardening_mode(cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_APP_STORE_SAFE))
+        XCTAssertEqual(Int(cprisk_get_runtime_hardening_mode()), Int(CPRISK_RUNTIME_HARDENING_APP_STORE_SAFE))
         cprisk_set_runtime_hardening_mode(cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_PRODUCTION))
         XCTAssertEqual(Int(cprisk_get_runtime_hardening_mode()), Int(CPRISK_RUNTIME_HARDENING_PRODUCTION))
     }

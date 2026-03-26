@@ -557,6 +557,8 @@ enum {
     CPRISK_RUNTIME_HARDENING_PRODUCTION = 0,
     /** Dev/QA: weak probes (TTY, Developer Disk, timing) do not inflate debugger scoring; init-timing bar is higher. */
     CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA = 1,
+    /** App Store / review-friendly: same relaxed weak-probe scoring as dev/QA; Swift layer skips aggressive attach/watchdog/dump/header paths. */
+    CPRISK_RUNTIME_HARDENING_APP_STORE_SAFE = 2,
 };
 
 typedef int cprisk_runtime_hardening_mode_t;

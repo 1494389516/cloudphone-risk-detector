@@ -1,0 +1,53 @@
+version: 2
+functions:
+  # 审核友好：收窄 heavy/medium，更多留在 light
+  heavy:
+    - ChallengeSession.transition
+    - TrustChainManager.buildKeyResolver
+
+  medium:
+    - ConditionNode.evaluate
+    - ConditionExpression.evaluate
+    - ScoreActionNode.evaluate
+
+  light:
+    - RiskDetectionEngine.fastDigestShortCircuit
+    - ChallengeSession.advance
+    - TrustChainManager.shouldRefreshAttestation
+    - ChallengeSession.markSubmitted
+    - anti_debug_watchdog.cprisk_watchdog_run_iteration
+    - RandomizedDetection.detect
+    - AntiTamperingDetector.detect
+    - DetectorRegistry.detectAll
+    - ChallengeTrigger.shouldTriggerBlindChallenge
+    - AntiTamperingSignalProvider.signals
+    - MutationPlanner.maybeShuffle
+    - cprisk_vm_entry
+    - _cprisk_vm_entry
+    - cprisk_vm_entry_alt1
+    - _cprisk_vm_entry_alt1
+    - cprisk_vm_entry_alt2
+    - _cprisk_vm_entry_alt2
+    - cprisk_vm_execute
+    - _cprisk_vm_execute
+
+  never:
+    - direct_syscall.cprisk_direct_syscall0
+    - direct_syscall.cprisk_direct_syscall6
+    - RiskDetectionEngine.collectAndAugmentSignals
+    - RiskDetectionEngine.scoreAndForceDecision
+    - RiskDetectionEngine.treeCommitVerdict
+    - DecisionTree.decide
+    - TrustChainManager.deriveSessionKey
+    - RiskDetectorApp.App
+    - CloudPhoneRiskKitTests
+
+  regionOnly:
+    - RiskDetectionEngine.evaluate
+
+anti_deobfuscation:
+  enable_runtime_salt: false
+  enable_fake_state_release_only: false
+  enable_multi_dispatcher: false
+  enable_default_poison_for_heavy: true
+  enable_pass8_cff_awareness: false

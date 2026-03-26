@@ -30,6 +30,8 @@ struct CLIOptions {
     var buildSeedRaw: String?
     /// Pass 2: `conservative` (default) or `aggressive` Swift metadata scrub.
     var metadataScrubLevelRaw: String?
+    /// `standard` (default) or `appstore-safe` — selects default CFF/VMP YAML when paths not overridden.
+    var safetyProfileRaw: String?
 }
 
 func parseArguments() -> CLIOptions {
@@ -77,6 +79,9 @@ func parseArguments() -> CLIOptions {
         case "--metadata-scrub-level":
             i += 1
             if i < args.count { options.metadataScrubLevelRaw = args[i] }
+        case "--safety-profile":
+            i += 1
+            if i < args.count { options.safetyProfileRaw = args[i] }
         case "--help":
             printUsage()
             exit(0)
@@ -113,6 +118,8 @@ func printUsage() {
       --all             Enable all passes
       --cff-policy      Override cff_policy.yaml path for Pass 9
       --vmp-policy      Override vmp_policy.yaml path for Pass 13 (default: RiskDetectorApp/vmp_policy.yaml search)
+      --safety-profile standard|appstore-safe
+                        Build policy profile: appstore-safe defaults to *_appstore_safe.yaml when --cff-policy/--vmp-policy omitted
       --build-seed      Build randomization seed (u64, decimal or 0x-prefixed hex)
       --metadata-scrub-level conservative|aggressive
                         Pass 2 Swift metadata: conservative (default, string payloads only)
@@ -301,6 +308,41 @@ do {
     exit(1)
 }
 
+let safetyProfile: ArmorSafetyProfile
+if let raw = options.safetyProfileRaw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+    guard let parsed = ArmorSafetyProfile(cliToken: raw) else {
+        fputs("Error: invalid --safety-profile '\(raw)' (use standard or appstore-safe)\n", stderr)
+        exit(1)
+    }
+    safetyProfile = parsed
+} else {
+    safetyProfile = .standard
+}
+
+let resolvedCffPolicyPath: String? = options.cffPolicyPath ?? (
+    safetyProfile == .appStoreSafe ? ArmorPolicyPathResolver.resolveDefaultCffPolicyPath(profile: safetyProfile) : nil
+)
+let resolvedVmpPolicyPath: String? = options.vmpPolicyPath ?? (
+    safetyProfile == .appStoreSafe ? ArmorPolicyPathResolver.resolveDefaultVmpPolicyPath(profile: safetyProfile) : nil
+)
+
+if safetyProfile == .appStoreSafe {
+    if enabledPasses.contains(9), resolvedCffPolicyPath == nil {
+        fputs(
+            "Error: --safety-profile appstore-safe requires cff_policy_appstore_safe.yaml (or pass --cff-policy)\n",
+            stderr
+        )
+        exit(1)
+    }
+    if enabledPasses.contains(13), resolvedVmpPolicyPath == nil {
+        fputs(
+            "Error: --safety-profile appstore-safe requires vmp_policy_appstore_safe.yaml (or pass --vmp-policy)\n",
+            stderr
+        )
+        exit(1)
+    }
+}
+
 do {
     let inputURL = URL(fileURLWithPath: inputPath)
     let outputURL = URL(fileURLWithPath: outputPath)
@@ -314,6 +356,9 @@ do {
         print("[*] Segments: \(try machoFile.segments().map(\.name).joined(separator: ", "))")
         if keyData != nil { print("[*] Encryption key: provided (\(ArmorABI.keySize) bytes)") }
         print(String(format: "[*] Build seed: 0x%016llX (%@)", buildSeed.seed, buildSeed.origin.rawValue))
+        print("[*] Safety profile: \(safetyProfile.rawValue)")
+        if let p = resolvedCffPolicyPath { print("[*] CFF policy path: \(p)") }
+        if let p = resolvedVmpPolicyPath { print("[*] VMP policy path: \(p)") }
     }
 
     let metadataScrubLevel = resolveSwiftMetadataScrubLevel(from: options)
@@ -333,9 +378,9 @@ do {
         (11, HeaderEncryptorPass()),
         (5, StructureObfuscatorPass()),
         (7, AntiDebugInjectorPass()),
-        (9, ControlFlowOrchestratorPass(policyFilePath: options.cffPolicyPath)),
+        (9, ControlFlowOrchestratorPass(policyFilePath: resolvedCffPolicyPath)),
         (10, ImportEncryptorPass()),
-        (13, VMProtectorPass(policyFilePath: options.vmpPolicyPath)),
+        (13, VMProtectorPass(policyFilePath: resolvedVmpPolicyPath)),
         (12, TextSegmentEncryptorPass()),
         (6, SymbolStripperPass()),
         (6, ExportTrieScrubberPass()),

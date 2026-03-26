@@ -5,6 +5,8 @@ import Foundation
 public enum CPRiskAntiDebugRuntimeMode: Int {
     case production = 0
     case relaxedDevelopmentQA = 1
+    /// 审核友好：Swift 层跳过 PT_DENY_ATTACH / 异常端口抢占 / watchdog / anti-dump / Mach-O 头擦除等高风险路径；C 层仍初始化 armor 与风控。
+    case appStoreSafe = 2
 }
 
 public struct RiskConfig: Sendable {
