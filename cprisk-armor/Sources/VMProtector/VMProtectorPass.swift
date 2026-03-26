@@ -33,6 +33,14 @@ public enum VMPInterpreterCffTier: String, Sendable, Equatable {
     case light
 }
 
+/// How producer-side synthetic `branchInd` instructions are materialized.
+public enum VMSyntheticBranchIndMode: String, Sendable, Equatable {
+    /// `branchRel` skips over an unreachable dead block that contains synthetic `branchInd` ops.
+    case unreachableSkip = "unreachable_skip"
+    /// `branchInd` executes at runtime but uses a reserved fallthrough/identity immediate contract.
+    case semiIdentity = "semi_identity"
+}
+
 /// M3 build-time hardening knobs (`hardening:` in `vmp_policy.yaml`). Omitted keys stay off / safe defaults.
 public struct VMPolicyHardeningM3: Equatable, Sendable {
     /// When true, pass details list interpreter symbols recommended for the configured CFF tier (observable wiring).
@@ -53,6 +61,16 @@ public struct VMPolicyHardeningM3: Equatable, Sendable {
     public let bytecodeSegmentRuntimeSha256: Bool
     /// Emit `CPRISK_VMP_BC_FLAG_ANTI_SYMBOLIC_HEAVY` (runtime anti-symbolic bait paths).
     public let antiSymbolicHeavy: Bool
+    /// Control AArch64 `addLane` + `rolAcc` peephole fusion in the producer/lifter.
+    public let fuseAddRolAcc: Bool
+    /// Requested synthetic `branchInd` candidate count per function before rate / cap filtering.
+    public let syntheticBranchIndBudget: Int
+    /// Deterministic keep rate for synthetic `branchInd` candidates (0...1).
+    public let syntheticBranchIndRate: Double
+    /// Hard cap for synthetic `branchInd` insertions per function; 0 means "no extra cap".
+    public let syntheticBranchIndMaxPerFunction: Int
+    /// Injection mode for synthetic `branchInd`.
+    public let syntheticBranchIndMode: VMSyntheticBranchIndMode
 
     public init(
         protectVmInterpreterWithCff: Bool = false,
@@ -63,7 +81,12 @@ public struct VMPolicyHardeningM3: Equatable, Sendable {
         dispatchTableKeystream: Bool = false,
         bytecodeImmediateKeystream: Bool = false,
         bytecodeSegmentRuntimeSha256: Bool = false,
-        antiSymbolicHeavy: Bool = false
+        antiSymbolicHeavy: Bool = false,
+        fuseAddRolAcc: Bool = true,
+        syntheticBranchIndBudget: Int = 0,
+        syntheticBranchIndRate: Double = 1.0,
+        syntheticBranchIndMaxPerFunction: Int = 0,
+        syntheticBranchIndMode: VMSyntheticBranchIndMode = .unreachableSkip
     ) {
         self.protectVmInterpreterWithCff = protectVmInterpreterWithCff
         self.enableDeadHandlerInjection = enableDeadHandlerInjection
@@ -74,6 +97,11 @@ public struct VMPolicyHardeningM3: Equatable, Sendable {
         self.bytecodeImmediateKeystream = bytecodeImmediateKeystream
         self.bytecodeSegmentRuntimeSha256 = bytecodeSegmentRuntimeSha256
         self.antiSymbolicHeavy = antiSymbolicHeavy
+        self.fuseAddRolAcc = fuseAddRolAcc
+        self.syntheticBranchIndBudget = max(0, syntheticBranchIndBudget)
+        self.syntheticBranchIndRate = min(max(syntheticBranchIndRate, 0), 1)
+        self.syntheticBranchIndMaxPerFunction = max(0, syntheticBranchIndMaxPerFunction)
+        self.syntheticBranchIndMode = syntheticBranchIndMode
     }
 }
 
@@ -146,6 +174,11 @@ enum VMPolicyParser {
         var bytecodeImmKs = false
         var bytecodeSegSha256 = false
         var antiSymbolicHeavy = false
+        var fuseAddRolAcc = true
+        var syntheticBranchIndBudget = 0
+        var syntheticBranchIndRate = 1.0
+        var syntheticBranchIndMaxPerFunction = 0
+        var syntheticBranchIndMode = VMSyntheticBranchIndMode.unreachableSkip
 
         for rawLine in contents.components(separatedBy: .newlines) {
             let sanitized = stripComment(rawLine).trimmingCharacters(in: .whitespaces)
@@ -195,6 +228,11 @@ enum VMPolicyParser {
                     parseBoolKey(sanitized, key: "bytecode_immediate_keystream", into: &bytecodeImmKs)
                     parseBoolKey(sanitized, key: "bytecode_segment_runtime_sha256", into: &bytecodeSegSha256)
                     parseBoolKey(sanitized, key: "anti_symbolic_heavy", into: &antiSymbolicHeavy)
+                    parseBoolKey(sanitized, key: "fuse_add_rol_acc", into: &fuseAddRolAcc)
+                    parseIntKey(sanitized, key: "synthetic_branch_ind_budget", into: &syntheticBranchIndBudget)
+                    parseDoubleKey(sanitized, key: "synthetic_branch_ind_rate", into: &syntheticBranchIndRate)
+                    parseIntKey(sanitized, key: "synthetic_branch_ind_max_per_function", into: &syntheticBranchIndMaxPerFunction)
+                    parseSyntheticBranchIndModeKey(sanitized, into: &syntheticBranchIndMode)
                     parseTierKey(sanitized, into: &interpreterCffTier)
                 default:
                     break
@@ -228,7 +266,12 @@ enum VMPolicyParser {
                 dispatchTableKeystream: dispatchTableKs,
                 bytecodeImmediateKeystream: bytecodeImmKs,
                 bytecodeSegmentRuntimeSha256: bytecodeSegSha256,
-                antiSymbolicHeavy: antiSymbolicHeavy
+                antiSymbolicHeavy: antiSymbolicHeavy,
+                fuseAddRolAcc: fuseAddRolAcc,
+                syntheticBranchIndBudget: syntheticBranchIndBudget,
+                syntheticBranchIndRate: syntheticBranchIndRate,
+                syntheticBranchIndMaxPerFunction: syntheticBranchIndMaxPerFunction,
+                syntheticBranchIndMode: syntheticBranchIndMode
             )
         )
     }
@@ -254,6 +297,39 @@ enum VMPolicyParser {
             target = true
         } else if rest == "false" || rest == "0" || rest == "no" {
             target = false
+        }
+    }
+
+    private static func parseIntKey(_ line: String, key: String, into target: inout Int) {
+        let prefix = "\(key):"
+        guard line.hasPrefix(prefix) else { return }
+        let rest = line.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
+        guard let parsed = Int(rest) else { return }
+        target = max(0, parsed)
+    }
+
+    private static func parseDoubleKey(_ line: String, key: String, into target: inout Double) {
+        let prefix = "\(key):"
+        guard line.hasPrefix(prefix) else { return }
+        let rest = line.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
+        guard let parsed = Double(rest) else { return }
+        target = min(max(parsed, 0), 1)
+    }
+
+    private static func parseSyntheticBranchIndModeKey(
+        _ line: String,
+        into target: inout VMSyntheticBranchIndMode
+    ) {
+        let prefix = "synthetic_branch_ind_mode:"
+        guard line.hasPrefix(prefix) else { return }
+        let rest = line.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces).lowercased()
+        switch rest {
+        case VMSyntheticBranchIndMode.semiIdentity.rawValue:
+            target = .semiIdentity
+        case VMSyntheticBranchIndMode.unreachableSkip.rawValue:
+            target = .unreachableSkip
+        default:
+            break
         }
     }
 
@@ -345,6 +421,11 @@ public final class VMProtectorPass: ArmorPass {
             opcodeKeystreamMaterial: seedNonZero ^ 0x0BC0_4D45_4D4D_3258,
             antiSymbolicHeavy: policy.hardening.antiSymbolicHeavy
         )
+        let liftConfig = ARMLiftConfig(
+            maxInstructions: 24,
+            termination: .atFirstRet,
+            fuseAddRolAcc: policy.hardening.fuseAddRolAcc
+        )
         let lifter = ARM64Lifter()
         let emitter = VMBytecodeEmitter()
 
@@ -359,7 +440,8 @@ public final class VMProtectorPass: ArmorPass {
             "function_id=fnv1a64(symbol)^splitmix(buildSeed) (per-build)",
             "m2: handler_dup=\(policy.antiAnalysis.handlerDuplication) opaque_vpc=\(policy.opaqueVpcEncoding.enabled)",
             "m3: interpreter_cff=\(policy.hardening.protectVmInterpreterWithCff) tier=\(policy.hardening.interpreterCffTier.rawValue) dead_handlers=\(policy.hardening.enableDeadHandlerInjection) vpc_pred=\(policy.hardening.opaqueVpcPredicateChain) self_integrity=\(policy.hardening.interpreterSelfIntegrityCheck)",
-            "emit: dispatch_ks=\(policy.hardening.dispatchTableKeystream) imm_ks_v3=\(policy.hardening.bytecodeImmediateKeystream) opcode_ks_v3=\(policy.hardening.bytecodeImmediateKeystream) bc_seg_sha256=\(policy.hardening.bytecodeSegmentRuntimeSha256) anti_sym=\(policy.hardening.antiSymbolicHeavy)"
+            "emit: dispatch_ks=\(policy.hardening.dispatchTableKeystream) imm_ks_v3=\(policy.hardening.bytecodeImmediateKeystream) opcode_ks_v3=\(policy.hardening.bytecodeImmediateKeystream) bc_seg_sha256=\(policy.hardening.bytecodeSegmentRuntimeSha256) anti_sym=\(policy.hardening.antiSymbolicHeavy)",
+            "producer: fuse_add_rol_acc=\(policy.hardening.fuseAddRolAcc) synthetic_branch_ind_budget=\(policy.hardening.syntheticBranchIndBudget) synthetic_branch_ind_rate=\(policy.hardening.syntheticBranchIndRate) synthetic_branch_ind_max=\(policy.hardening.syntheticBranchIndMaxPerFunction) synthetic_branch_ind_mode=\(policy.hardening.syntheticBranchIndMode.rawValue)"
         ]
         if policy.hardening.protectVmInterpreterWithCff {
             let tier = policy.hardening.interpreterCffTier.rawValue
@@ -406,11 +488,16 @@ public final class VMProtectorPass: ArmorPass {
             }
 
             let rawSlice = Data(file.data[entryFileOff..<(entryFileOff + readLen)])
-            let lifted = lifter.liftPrologue(bytes: rawSlice)
-
             let fnId = VMFunctionId.mixed(symbol: symbolName, buildSeed: seedNonZero)
+            let lifted = lifter.lift(bytes: rawSlice, config: liftConfig)
+            let hardened = Self.rewriteProducerInstructions(
+                lifted,
+                functionId: fnId,
+                seed: seedNonZero,
+                hardening: policy.hardening
+            )
             let tierCode: VMBytecodeFormat.TierCode = tier == .full ? .full : .partial
-            programs.append((functionId: fnId, entryVMA: entryVMA, tier: tierCode, instructions: lifted))
+            programs.append((functionId: fnId, entryVMA: entryVMA, tier: tierCode, instructions: hardened))
             items += 1
 
             if tier == .full {
@@ -551,6 +638,126 @@ public final class VMProtectorPass: ArmorPass {
         d.append(role)
         d.append(Data("pass13.vmp_slack.v1".utf8))
         return d
+    }
+
+    static func rewriteProducerInstructions(
+        _ instructions: [VMInstruction],
+        functionId: UInt64,
+        seed: UInt64,
+        hardening: VMPolicyHardeningM3
+    ) -> [VMInstruction] {
+        switch hardening.syntheticBranchIndMode {
+        case .unreachableSkip:
+            injectSyntheticBranchIndUnreachableBlock(
+                instructions,
+                functionId: functionId,
+                seed: seed,
+                budget: hardening.syntheticBranchIndBudget,
+                rate: hardening.syntheticBranchIndRate,
+                maxPerFunction: hardening.syntheticBranchIndMaxPerFunction
+            )
+        case .semiIdentity:
+            injectSyntheticBranchIndSemiIdentity(
+                instructions,
+                functionId: functionId,
+                seed: seed,
+                budget: hardening.syntheticBranchIndBudget,
+                rate: hardening.syntheticBranchIndRate,
+                maxPerFunction: hardening.syntheticBranchIndMaxPerFunction
+            )
+        }
+    }
+
+    static func injectSyntheticBranchIndUnreachableBlock(
+        _ instructions: [VMInstruction],
+        functionId: UInt64,
+        seed: UInt64,
+        budget: Int,
+        rate: Double,
+        maxPerFunction: Int
+    ) -> [VMInstruction] {
+        guard instructions.last?.op == .halt else { return instructions }
+        let injectedCount = syntheticBranchIndCount(
+            functionId: functionId,
+            seed: seed,
+            budget: budget,
+            rate: rate,
+            maxPerFunction: maxPerFunction
+        )
+        guard injectedCount > 0 else { return instructions }
+        var out = Array(instructions.dropLast())
+        out.append(VMInstruction(op: .branchRel, immediate: UInt64(injectedCount + 1) * vmInsnWidthBytes))
+        var rng = VMProtectorSplitMix64(seed: functionId ^ seed ^ 0x4252_494E_445F_5331) // "BRIND_S1"
+        for _ in 0..<injectedCount {
+            out.append(VMInstruction(op: .branchInd, immediate: syntheticBranchIndImmediate(rng: &rng)))
+        }
+        out.append(VMInstruction(op: .halt))
+        return out
+    }
+
+    static func injectSyntheticBranchIndSemiIdentity(
+        _ instructions: [VMInstruction],
+        functionId: UInt64,
+        seed: UInt64,
+        budget: Int,
+        rate: Double,
+        maxPerFunction: Int
+    ) -> [VMInstruction] {
+        guard instructions.last?.op == .halt else { return instructions }
+        let injectedCount = syntheticBranchIndCount(
+            functionId: functionId,
+            seed: seed,
+            budget: budget,
+            rate: rate,
+            maxPerFunction: maxPerFunction
+        )
+        guard injectedCount > 0 else { return instructions }
+        var out = Array(instructions.dropLast())
+        var rng = VMProtectorSplitMix64(seed: functionId ^ seed ^ 0x4252_494E_445F_4932) // "BRIND_I2"
+        for _ in 0..<injectedCount {
+            out.append(VMInstruction(op: .branchInd, immediate: syntheticBranchIndIdentityImmediate(rng: &rng)))
+        }
+        out.append(VMInstruction(op: .halt))
+        return out
+    }
+
+    private static let vmInsnWidthBytes: UInt64 = 9
+    private static let branchIndIdentityImmediateTag: UInt64 = 0xA100_0000_0000_0000
+
+    static func syntheticBranchIndCount(
+        functionId: UInt64,
+        seed: UInt64,
+        budget: Int,
+        rate: Double,
+        maxPerFunction: Int
+    ) -> Int {
+        guard budget > 0, rate > 0 else { return 0 }
+        let cap = maxPerFunction > 0 ? min(budget, maxPerFunction) : budget
+        guard cap > 0 else { return 0 }
+        let clampedRate = min(max(rate, 0), 1)
+        if clampedRate >= 1 {
+            return cap
+        }
+        let threshold = UInt64((clampedRate * 10_000).rounded(.down))
+        guard threshold > 0 else { return 0 }
+        var rng = VMProtectorSplitMix64(seed: functionId ^ seed ^ 0x4252_5241_5445_5331) // "BRRATES1"
+        var count = 0
+        for _ in 0..<cap {
+            if rng.next(upperBound: 10_000) < threshold {
+                count += 1
+            }
+        }
+        return count
+    }
+
+    static func syntheticBranchIndImmediate(rng: inout VMProtectorSplitMix64) -> UInt64 {
+        let vregIndex = rng.next(upperBound: 8)
+        let accBase = rng.next(upperBound: 32)
+        return vregIndex | (accBase << 3)
+    }
+
+    static func syntheticBranchIndIdentityImmediate(rng: inout VMProtectorSplitMix64) -> UInt64 {
+        branchIndIdentityImmediateTag | (rng.next() & 0x00FF_FFFF_FFFF_FFFF)
     }
 
     private static func normalizePolicySymbol(_ raw: String) -> [String] {

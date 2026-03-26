@@ -565,6 +565,49 @@ final class VMProtectorTests: XCTestCase {
         XCTAssertEqual(br.first?.rawCategory, VMRawRegionCategory.branchTest)
     }
 
+    func testLifterFusesAddLaneAndRolAccIntoSuperInstruction() {
+        let add = Data([0x00, 0x00, 0x00, 0x91]) // ADD X0, X0, #0
+        let rol = Data([0x00, 0x20, 0xC0, 0x9A]) // LSLV X0, X0, X0 (recognized as rolAcc surrogate)
+        var bytes = Data()
+        bytes.append(add)
+        bytes.append(rol)
+
+        let lifter = ARM64Lifter()
+        let lifted = lifter.liftPrologue(bytes: bytes, maxInstructions: 8)
+
+        XCTAssertEqual(lifted.count, 2)
+        XCTAssertEqual(lifted.first?.op, .addRolAcc)
+        XCTAssertEqual(lifted.first?.immediate, 0x9AC0_2000_9100_0000)
+        XCTAssertEqual(lifted.last?.op, .halt)
+    }
+
+    func testEmitterEncodesFusedAddRolLogicalClassAfterLiftFusion() {
+        let add = Data([0x00, 0x00, 0x00, 0x91])
+        let rol = Data([0x00, 0x20, 0xC0, 0x9A])
+        var bytes = Data()
+        bytes.append(add)
+        bytes.append(rol)
+
+        let lifter = ARM64Lifter()
+        let lifted = lifter.liftPrologue(bytes: bytes, maxInstructions: 8)
+        XCTAssertEqual(lifted.first?.op, .addRolAcc)
+
+        let table = VMOpcodeTable(seed: 0x1234_5678)
+        let emitter = VMBytecodeEmitter()
+        let payload = emitter.emit(
+            programs: [
+                (functionId: 0x44, entryVMA: 0x2000, tier: .partial, instructions: lifted)
+            ],
+            opcodeTable: table,
+            options: VMM2EmitOptions(handlerVariantSeed: 0x66, perEntryVpcEnabled: false)
+        )
+
+        let dispatch = dispatchClassTable(from: payload.dispatch)
+        let entry = parsedEntry(in: payload.bytecode, index: 0)
+        let raw0 = payload.bytecode[entry.bytecodeOffset]
+        XCTAssertEqual(dispatch[Int(raw0)], VMLogicalOp.addRolAcc.rawValue)
+    }
+
     func testBytecodePayloadAppendsProducerChunkManifest() {
         let table = VMOpcodeTable(seed: 0xBEEF)
         let emitter = VMBytecodeEmitter()

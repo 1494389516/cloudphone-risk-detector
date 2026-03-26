@@ -553,18 +553,7 @@ int cprisk_cff_chain_entry_verify(const cprisk_cff_context_t *context) {
         return 0;
     }
     const uint32_t observed = cprisk_cff_chain_load_i();
-    const uint32_t expected = cprisk_cff_avalanche32(
-        observed ^
-        cprisk_cff_ctx_seed_plain(context) ^
-        cprisk_cff_ctx_salt_plain(context) ^
-        cprisk_cff_ctx_nonce_plain(context) ^
-        cprisk_cff_ctx_last_plain(context) ^
-        0xC4A11E5Du
-    );
-    return expected == cprisk_cff_ctx_entry_guard_plain(context) &&
-            observed == cprisk_cff_ctx_chain_plain(context)
-        ? 1
-        : 0;
+    return cprisk_cff_chain_entry_verify_inline(context, observed);
 }
 
 void cprisk_cff_run_fake_path_decoy(const cprisk_cff_context_t *context) {
@@ -683,6 +672,13 @@ uint32_t cprisk_cff_encode_state_with_style(
 void cprisk_cff_state_transition_commit(cprisk_cff_context_t *context, uint32_t next_state) {
     if (context == NULL) {
         return;
+    }
+    {
+        const uint32_t observed = cprisk_cff_chain_load_i();
+        if (cprisk_cff_chain_snapshot_verify_inline(context, observed) == 0) {
+            cprisk_cff_poison_default(context);
+            return;
+        }
     }
     cprisk_cff_ctx_set_last_plain_i(context, next_state);
     {

@@ -120,6 +120,8 @@ typedef struct cprisk_cff_context {
     cprisk_cff_default_action_t default_action;
 } cprisk_cff_context_t;
 
+uint32_t cprisk_cff_get_chain_link(void);
+
 /**
  * Inlined opaque transition gate (MBA + runtime-tied mixing). Duplicated at macro call sites so a
  * single hook on a standalone C symbol cannot bypass the guard without patching each expansion.
@@ -192,6 +194,53 @@ static inline uint32_t cprisk_cff_ctx_entry_guard_plain(const cprisk_cff_context
         cprisk_cff_ctx_storage_mask(ctx) ^ cprisk_cff_ctx_nonce_plain(ctx) ^ 0xE17A9A5Bu
     );
     return ctx->entry_guard ^ guard_mask;
+}
+
+static inline uint32_t cprisk_cff_chain_entry_guard_expected_inline(
+    const cprisk_cff_context_t *ctx,
+    uint32_t observed_chain
+) {
+    return cprisk_cff_hdr_avalanche32(
+        observed_chain ^
+        cprisk_cff_ctx_seed_plain(ctx) ^
+        cprisk_cff_ctx_salt_plain(ctx) ^
+        cprisk_cff_ctx_nonce_plain(ctx) ^
+        cprisk_cff_ctx_last_plain(ctx) ^
+        0xC4A11E5Du
+    );
+}
+
+static inline int cprisk_cff_chain_snapshot_verify_inline(
+    const cprisk_cff_context_t *ctx,
+    uint32_t observed_chain
+) {
+    if (ctx == NULL) {
+        return 0;
+    }
+    return observed_chain == cprisk_cff_ctx_chain_plain(ctx) ? 1 : 0;
+}
+
+static inline int cprisk_cff_entry_guard_verify_inline(
+    const cprisk_cff_context_t *ctx,
+    uint32_t observed_chain
+) {
+    if (ctx == NULL) {
+        return 0;
+    }
+    return cprisk_cff_chain_entry_guard_expected_inline(ctx, observed_chain) ==
+            cprisk_cff_ctx_entry_guard_plain(ctx)
+        ? 1
+        : 0;
+}
+
+static inline int cprisk_cff_chain_entry_verify_inline(
+    const cprisk_cff_context_t *ctx,
+    uint32_t observed_chain
+) {
+    return cprisk_cff_chain_snapshot_verify_inline(ctx, observed_chain) != 0 &&
+            cprisk_cff_entry_guard_verify_inline(ctx, observed_chain) != 0
+        ? 1
+        : 0;
 }
 
 static inline uint32_t cprisk_cff_hdr_rotate_left32(uint32_t value, uint32_t shift) {
@@ -345,7 +394,13 @@ void cprisk_cff_run_fake_path_decoy(const cprisk_cff_context_t *context);
         cprisk_cff_context_t cpr_cff_storage_; \
         cprisk_cff_context_t *const cpr_cff_ctx = &cpr_cff_storage_; \
         cprisk_cff_init_default(cpr_cff_ctx, (uint32_t)(seed), (uint32_t)(entry)); \
-        if (cprisk_cff_chain_entry_verify(cpr_cff_ctx) == 0) { \
+        { \
+            const uint32_t cpr_cff_chain_observed_ = cprisk_cff_get_chain_link(); \
+            if (cprisk_cff_chain_entry_verify_inline(cpr_cff_ctx, cpr_cff_chain_observed_) == 0) { \
+                cprisk_cff_poison_default(cpr_cff_ctx); \
+            } \
+        } \
+        if (cprisk_cff_chain_snapshot_verify_inline(cpr_cff_ctx, cprisk_cff_get_chain_link()) == 0) { \
             cprisk_cff_poison_default(cpr_cff_ctx); \
         } \
         while (cpr_cff_ctx->iteration_budget > 0u) { \
@@ -360,7 +415,13 @@ void cprisk_cff_run_fake_path_decoy(const cprisk_cff_context_t *context);
         cprisk_cff_context_t *const cpr_cff_ctx = &cpr_cff_storage_; \
         cprisk_cff_config_t cpr_cff_config_ = (config_value); \
         cprisk_cff_init(cpr_cff_ctx, &cpr_cff_config_); \
-        if (cprisk_cff_chain_entry_verify(cpr_cff_ctx) == 0) { \
+        { \
+            const uint32_t cpr_cff_chain_observed_ = cprisk_cff_get_chain_link(); \
+            if (cprisk_cff_chain_entry_verify_inline(cpr_cff_ctx, cpr_cff_chain_observed_) == 0) { \
+                cprisk_cff_poison_default(cpr_cff_ctx); \
+            } \
+        } \
+        if (cprisk_cff_chain_snapshot_verify_inline(cpr_cff_ctx, cprisk_cff_get_chain_link()) == 0) { \
             cprisk_cff_poison_default(cpr_cff_ctx); \
         } \
         while (cpr_cff_ctx->iteration_budget > 0u) { \
@@ -372,6 +433,10 @@ void cprisk_cff_run_fake_path_decoy(const cprisk_cff_context_t *context);
 
 #define CPR_CFF_GOTO(x) \
     do { \
+        if (cprisk_cff_chain_snapshot_verify_inline((cpr_cff_ctx), cprisk_cff_get_chain_link()) == 0) { \
+            cprisk_cff_poison_default(cpr_cff_ctx); \
+            continue; \
+        } \
         if (cprisk_cff_opaque_transition_ok_inline( \
                 cprisk_cff_ctx_last_plain((cpr_cff_ctx)), \
                 (uint32_t)(x), \

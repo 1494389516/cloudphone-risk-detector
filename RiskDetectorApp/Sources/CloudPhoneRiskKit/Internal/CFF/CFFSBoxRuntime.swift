@@ -50,6 +50,12 @@ internal enum CFFSBoxRuntime {
     private static let lock = NSLock()
     private static var cachedForward: [UInt8]?
 
+    @inline(__always)
+    static func runtimeSeed() -> UInt64 {
+        let resolved = cprisk_cff_runtime_spn_sbox_seed()
+        return resolved == 0 ? CFFSBoxMaterial.canonicalSeed : resolved
+    }
+
     /// Lazily materialize; first access pins the table for the process lifetime.
     static func forwardTable() -> [UInt8] {
         lock.lock()
@@ -67,7 +73,8 @@ internal enum CFFSBoxRuntime {
             return runtimeForward
         }
 
-        let fallback = CFFSBoxPermutation256.generate(seed: CFFSBoxMaterial.canonicalSeed)
+        let fallbackSeed = runtimeSeed()
+        let fallback = CFFSBoxPermutation256.generate(seed: fallbackSeed)
         precondition(CFFSBoxPermutation256.isBijection(fallback), "CFF SPN S-box must be a bijection")
         cachedForward = fallback
         return fallback

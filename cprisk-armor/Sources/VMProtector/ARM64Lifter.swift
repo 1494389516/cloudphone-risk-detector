@@ -11,10 +11,16 @@ public enum LiftTermination: Sendable, Equatable {
 public struct ARMLiftConfig: Sendable, Equatable {
     public var maxInstructions: Int
     public var termination: LiftTermination
+    public var fuseAddRolAcc: Bool
 
-    public init(maxInstructions: Int = 256, termination: LiftTermination = .atFirstRet) {
+    public init(
+        maxInstructions: Int = 256,
+        termination: LiftTermination = .atFirstRet,
+        fuseAddRolAcc: Bool = true
+    ) {
         self.maxInstructions = max(1, maxInstructions)
         self.termination = termination
+        self.fuseAddRolAcc = fuseAddRolAcc
     }
 }
 
@@ -83,10 +89,11 @@ public struct ARM64Lifter: Sendable {
             insnCount += 1
         }
 
-        if terminationNeedsHalt(last: out.last) {
-            out.append(VMInstruction(op: .halt))
+        var optimized = fuseSuperInstructions(out, enableAddRolAccFusion: config.fuseAddRolAcc)
+        if terminationNeedsHalt(last: optimized.last) {
+            optimized.append(VMInstruction(op: .halt))
         }
-        return out
+        return optimized
     }
 
     private func terminationNeedsHalt(last: VMInstruction?) -> Bool {
@@ -191,6 +198,36 @@ public struct ARM64Lifter: Sendable {
         let addRd = add & 31
         guard adrpRd == addRn, adrpRd == addRd else { return nil }
         return UInt64(adrp) | (UInt64(add) << 32)
+    }
+
+    private func fuseSuperInstructions(
+        _ instructions: [VMInstruction],
+        enableAddRolAccFusion: Bool
+    ) -> [VMInstruction] {
+        guard enableAddRolAccFusion else { return instructions }
+        guard instructions.count >= 2 else { return instructions }
+        var fused: [VMInstruction] = []
+        fused.reserveCapacity(instructions.count)
+        var index = 0
+        while index < instructions.count {
+            if index + 1 < instructions.count,
+               let merged = tryFuseAddRolAcc(first: instructions[index], second: instructions[index + 1]) {
+                fused.append(merged)
+                index += 2
+                continue
+            }
+            fused.append(instructions[index])
+            index += 1
+        }
+        return fused
+    }
+
+    private func tryFuseAddRolAcc(first: VMInstruction, second: VMInstruction) -> VMInstruction? {
+        guard first.op == .addLane, second.op == .rolAcc else { return nil }
+        guard first.rawCategory == nil, second.rawCategory == nil else { return nil }
+        guard first.immediate <= UInt64(UInt32.max), second.immediate <= UInt64(UInt32.max) else { return nil }
+        let packed = first.immediate | (second.immediate << 32)
+        return VMInstruction(op: .addRolAcc, immediate: packed)
     }
 
     private func isMoveWide(_ insn: UInt32) -> Bool {

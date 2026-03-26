@@ -1095,6 +1095,16 @@ uint64_t cprisk_test_init_timing_threshold_ns_for_machine(
 /// Thin wrapper around cprisk_secure_zero() exposed for testing.
 void cprisk_test_secure_zero(void *buf, size_t len);
 
+/// Test-only smoke helper for the reserved `branchInd` identity mode.
+/// Builds a minimal linear-VPC frame, executes `cprisk_vm_oph_branch_ind`,
+/// and writes the resulting encoded PC / step count on success.
+/// Returns 0 on success, -1 on unexpected flow or state.
+int cprisk_test_vm_branch_ind_identity(
+    uint64_t imm,
+    uint64_t *out_encoded_pc_after,
+    uint64_t *out_steps
+);
+
 /// Inject a test-only white-box bundle so runtime probe/available/evaluate
 /// paths can exercise the real validator without requiring the current test
 /// process image to be linked with reserved white-box sections.

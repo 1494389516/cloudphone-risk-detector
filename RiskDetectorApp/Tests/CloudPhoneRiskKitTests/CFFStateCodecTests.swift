@@ -25,6 +25,38 @@ final class CFFStateCodecTests: XCTestCase {
         XCTAssertEqual(swiftTable, coreTable)
     }
 
+    func testChainEntryVerifyFailsAfterForeignContextAdvancesChain() {
+        cprisk_cff_chain_begin()
+
+        var primary = cprisk_cff_context_t()
+        var foreign = cprisk_cff_context_t()
+
+        cprisk_cff_init_default(&primary, 0x1357_9BDF, 1)
+        XCTAssertEqual(cprisk_cff_chain_entry_verify(&primary), 1)
+
+        cprisk_cff_init_default(&foreign, 0x2468_ACE0, 7)
+        cprisk_cff_set_state(&foreign, 9)
+
+        XCTAssertEqual(cprisk_cff_chain_entry_verify(&primary), 0)
+    }
+
+    func testSetStatePoisonsWhenChainSnapshotIsStale() {
+        cprisk_cff_chain_begin()
+
+        var primary = cprisk_cff_context_t()
+        var foreign = cprisk_cff_context_t()
+
+        cprisk_cff_init_default(&primary, 0xA5A5_5A5A, 3)
+        cprisk_cff_init_default(&foreign, 0x55AA_F00D, 11)
+        cprisk_cff_set_state(&foreign, 13)
+
+        cprisk_cff_set_state(&primary, 5)
+
+        XCTAssertEqual(primary.iteration_budget, 0)
+        let poisoned = cprisk_cff_current_state_fast(&primary)
+        XCTAssertTrue(poisoned == 0xFFFF_0000 || poisoned == 0xFFFF_0001)
+    }
+
     func testEncodeDecodeRoundTripAcrossRepresentativeInputs() {
         let states: [UInt32] = [0, 1, 0x11, 0x1234_5678, 0x7FFF_FFFF, 0xFFFF_FFFF]
         let seeds: [UInt32] = [0x1, 0x1234_ABCD, 0x8000_0001, 0xFFFF_FFFE]

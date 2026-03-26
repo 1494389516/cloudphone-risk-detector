@@ -177,8 +177,42 @@ internal enum CFFStateCodec {
     private static let feistelRounds: UInt32 = 8
 
     @inline(__always)
+    private static func buildSeed32() -> UInt32 {
+        let buildSeed = CFFSBoxRuntime.runtimeSeed()
+        let lo = UInt32(truncatingIfNeeded: buildSeed)
+        let hi = UInt32(truncatingIfNeeded: buildSeed >> 32)
+        return avalanche32(lo ^ hi)
+    }
+
+    @inline(__always)
+    private static func deriveTag32(
+        key: UInt32,
+        salt: UInt32,
+        chainMix: UInt32,
+        lane: UInt32
+    ) -> UInt32 {
+        let buildSeed = CFFSBoxRuntime.runtimeSeed()
+        let lo = UInt32(truncatingIfNeeded: buildSeed)
+        let hi = UInt32(truncatingIfNeeded: buildSeed >> 32)
+        let buildSeed32 = avalanche32(lo ^ hi)
+        let buildFold = lo ^ hi
+        let rotated = (chainMix ^ buildSeed32).rotatedLeft(by: Int((lane & 15) + 1))
+        return avalanche32(buildSeed32 ^ buildFold ^ key ^ salt ^ rotated ^ (lane &* 0x9E3779B1))
+    }
+
+    @inline(__always)
+    private static func codecChainMix(key: UInt32, salt: UInt32) -> UInt32 {
+        avalanche32(key ^ salt.rotatedLeft(by: 7) ^ buildSeed32())
+    }
+
+    @inline(__always)
+    private static func codecTag32(key: UInt32, salt: UInt32, lane: UInt32) -> UInt32 {
+        deriveTag32(key: key, salt: salt, chainMix: codecChainMix(key: key, salt: salt), lane: lane)
+    }
+
+    @inline(__always)
     private static func feistelRoundF(_ r: UInt16, key: UInt32, salt: UInt32, round: UInt32) -> UInt16 {
-        let roundKey = avalanche32(key ^ salt ^ (round &* 0x9E3779B9) ^ 0xDEADBEEF)
+        let roundKey = avalanche32(key ^ salt ^ (round &* 0x9E3779B9) ^ codecTag32(key: key, salt: salt, lane: 1))
         let b0 = UInt8(truncatingIfNeeded: r)
         let b1 = UInt8(truncatingIfNeeded: r >> 8)
         let s0 = UInt32(spnSboxByte(b0 ^ UInt8(truncatingIfNeeded: roundKey)))
@@ -191,8 +225,8 @@ internal enum CFFStateCodec {
 
     @inline(__always)
     private static func feistel32EncodeCore(state: UInt32, key: UInt32, salt: UInt32) -> UInt32 {
-        let prewhiten = avalanche32(key ^ salt ^ 0x0F1055A1)
-        let postwhiten = avalanche32(key ^ salt ^ 0x0ACC0DEC)
+        let prewhiten = avalanche32(key ^ salt ^ codecTag32(key: key, salt: salt, lane: 2))
+        let postwhiten = avalanche32(key ^ salt ^ codecTag32(key: key, salt: salt, lane: 3))
         var value = state ^ prewhiten
         var left = UInt16(truncatingIfNeeded: value >> 16)
         var right = UInt16(truncatingIfNeeded: value)
@@ -208,8 +242,8 @@ internal enum CFFStateCodec {
 
     @inline(__always)
     private static func feistel32DecodeCore(encodedState: UInt32, key: UInt32, salt: UInt32) -> UInt32 {
-        let prewhiten = avalanche32(key ^ salt ^ 0x0F1055A1)
-        let postwhiten = avalanche32(key ^ salt ^ 0x0ACC0DEC)
+        let prewhiten = avalanche32(key ^ salt ^ codecTag32(key: key, salt: salt, lane: 2))
+        let postwhiten = avalanche32(key ^ salt ^ codecTag32(key: key, salt: salt, lane: 3))
         var value = encodedState ^ postwhiten
         var left = UInt16(truncatingIfNeeded: value >> 16)
         var right = UInt16(truncatingIfNeeded: value)
