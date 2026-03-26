@@ -81,6 +81,7 @@
 		3428C9F26856F5E0219924BE /* RiskHistoryActor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8E2B7164FBEFA3074165739 /* RiskHistoryActor.swift */; };
 		35C66912D3A7AD23551C0838 /* ReportEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = F51F880AB576E598D8157761 /* ReportEnvelope.swift */; };
 		3697B20221FF9860C1A354C4 /* cprisk_integrity.c in Sources */ = {isa = PBXBuildFile; fileRef = 31DA55222448F3266C6CAADC /* cprisk_integrity.c */; };
+		A7E8E7D61B2A4F5E8D0C1234 /* cprisk_early_injection_probe.c in Sources */ = {isa = PBXBuildFile; fileRef = B7E8E7D61B2A4F5E8D0C1234 /* cprisk_early_injection_probe.c */; };
 		37DB319FFEB79BCF723566B9 /* CertificatePinningTelemetryProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B980E39EF607108B984450B3 /* CertificatePinningTelemetryProvider.swift */; };
 		3827842ED1A40FB19D4DC7CD /* libCloudPhoneRiskAppCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F5735099443C1033797D0597 /* libCloudPhoneRiskAppCore.a */; };
 		38CDE3681AA62AA658FA4A36 /* cprisk_image_check.c in Sources */ = {isa = PBXBuildFile; fileRef = 3176451921B95AF13576D4B2 /* cprisk_image_check.c */; };
@@ -497,6 +498,7 @@
 		3176451921B95AF13576D4B2 /* cprisk_image_check.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_image_check.c; sourceTree = "<group>"; };
 		318E954DFD88BDEDE80ED4A0 /* cprisk_vm_oph_lane.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_vm_oph_lane.c; sourceTree = "<group>"; };
 		31DA55222448F3266C6CAADC /* cprisk_integrity.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_integrity.c; sourceTree = "<group>"; };
+		B7E8E7D61B2A4F5E8D0C1234 /* cprisk_early_injection_probe.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_early_injection_probe.c; sourceTree = "<group>"; };
 		33E7074D6BF833148FD4E1F7 /* RiskAppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskAppConfig.swift; sourceTree = "<group>"; };
 		33EE9FDDEBDD1ED69679D6BB /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
 		33F201806182E1D2CDD71A72 /* SpawnIfaceProbeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpawnIfaceProbeTests.swift; sourceTree = "<group>"; };
@@ -1333,6 +1335,7 @@
 				3176451921B95AF13576D4B2 /* cprisk_image_check.c */,
 				2764BD5C10DD45C212AD8425 /* cprisk_import_resolver.c */,
 				31DA55222448F3266C6CAADC /* cprisk_integrity.c */,
+				B7E8E7D61B2A4F5E8D0C1234 /* cprisk_early_injection_probe.c */,
 				1993FC0908165253109FF0C1 /* cprisk_memory_guard.c */,
 				289ED78333A705AE5F4F806F /* cprisk_mte_guard.c */,
 				3A7871C81B5003C2817425C0 /* cprisk_pac.c */,
@@ -1976,6 +1979,7 @@
 				38CDE3681AA62AA658FA4A36 /* cprisk_image_check.c in Sources */,
 				4711DD8395CFFE9C2DBBC018 /* cprisk_import_resolver.c in Sources */,
 				3697B20221FF9860C1A354C4 /* cprisk_integrity.c in Sources */,
+				A7E8E7D61B2A4F5E8D0C1234 /* cprisk_early_injection_probe.c in Sources */,
 				9353E439F18F951002932537 /* cprisk_memory_guard.c in Sources */,
 				12323B1E1B240466B2B2CB20 /* cprisk_mte_guard.c in Sources */,
 				181F48FBA4D6FC41F515D768 /* cprisk_pac.c in Sources */,
@@ -2349,6 +2353,7 @@
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_REFLECTION_METADATA_LEVEL = minimal;
 				SWIFT_VERSION = 5.9;
 			};
 			name = Release;
@@ -2458,6 +2463,7 @@
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_REFLECTION_METADATA_LEVEL = minimal;
 				SWIFT_VERSION = 5.9;
 			};
 			name = Debug;

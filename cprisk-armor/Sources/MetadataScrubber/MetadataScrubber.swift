@@ -5,6 +5,12 @@ import MachOKit
 ///
 /// Strips or obfuscates type names, protocol conformance descriptors,
 /// and reflection metadata that are not required at runtime.
+///
+/// **Swift semantic leaks:** In addition to mangled symbols and module keywords, a curated list of
+/// substrings (e.g. `riskdetection`, `isvip`, `honeypot`) triggers conservative in-place rewrites of
+/// C-string bodies in `__const` and ancillary `__swift5_*` sections without touching relative-pointer
+/// tables. Optional ``PassConfig.swiftSemanticLeakOptions`` enables `__TEXT.__cstring` reporting,
+/// opt-in CString scrubbing, and unreferenced decoy sections — see CLI/env in `cprisk-armor` help.
 public final class MetadataScrubberPass: ArmorPass {
     public let name = "MetadataScrubber"
 
@@ -87,12 +93,139 @@ public final class MetadataScrubberPass: ArmorPass {
             details.append("__const module name strings scrubbed: \(constResult.scrubbed)/\(constResult.total)")
         }
 
+        let opt = config.swiftSemanticLeakOptions
+        if opt.reportCStringSemanticMatches || opt.scrubCStringSemanticMatches {
+            let cScan = try scanCStringSemanticLeaks(in: file)
+            if opt.reportCStringSemanticMatches, cScan.matches > 0 {
+                let preview = cScan.samples.prefix(3).joined(separator: "; ")
+                let line =
+                    "Swift semantic CString scan: \(cScan.matches) match(es)\(preview.isEmpty ? "" : " (e.g. \(preview))")"
+                details.append(line)
+                if config.verbose {
+                    fputs("[!] Pass 2: \(line)\n", stderr)
+                }
+            }
+            if opt.scrubCStringSemanticMatches, cScan.matches > 0 {
+                let scrubbed = try scrubCStringSemanticMatches(in: file, candidates: cScan.candidateOffsets)
+                itemsProcessed += scrubbed.strings
+                bytesModified += scrubbed.bytes
+                if scrubbed.strings > 0 {
+                    details.append(
+                        "Swift semantic CString scrub (opt-in): \(scrubbed.strings) string(s), \(scrubbed.bytes) bytes"
+                    )
+                }
+            }
+        }
+
+        if opt.injectSemanticDecoys {
+            let effectiveSeed = seed == 0 ? 0xC0DEDA57FBADC0FE : seed
+            switch try appendSemanticDecoySectionIfPossible(to: file, seed: effectiveSeed) {
+            case .appended(let bytes):
+                itemsProcessed += 1
+                bytesModified += bytes
+                details.append(
+                    "Swift semantic decoy section \(ArmorABI.MetadataSections.swiftSemanticDecoy): \(bytes) bytes"
+                )
+            case .skipped(let reason):
+                details.append("Swift semantic decoys skipped: \(reason)")
+            }
+        }
+
         return PassResult(
             passName: name,
             itemsProcessed: itemsProcessed,
             bytesModified: bytesModified,
             details: details
         )
+    }
+
+    // MARK: - Swift semantic CString scan / scrub (optional)
+
+    private struct CStringSemanticScan {
+        let matches: Int
+        let samples: [String]
+        let candidateOffsets: [UInt64]
+    }
+
+    /// Enumerate `__TEXT.__cstring` and find strings matching ``SwiftSemanticLeakCatalog``.
+    private func scanCStringSemanticLeaks(in file: MachOFile) throws -> CStringSemanticScan {
+        guard let section = try file.section(segment: "__TEXT", section: "__cstring") else {
+            return CStringSemanticScan(matches: 0, samples: [], candidateOffsets: [])
+        }
+        let content = try section.readContent(from: file.data)
+        guard !content.isEmpty else {
+            return CStringSemanticScan(matches: 0, samples: [], candidateOffsets: [])
+        }
+        let base = UInt64(section.offset)
+        var matches = 0
+        var samples = [String]()
+        var candidateOffsets = [UInt64]()
+        var position = 0
+        while position < content.count {
+            var end = position
+            while end < content.count && content[end] != 0 { end += 1 }
+            let length = end - position
+            if length > 0 {
+                let slice = content.subdata(in: position..<end)
+                let str = String(data: slice, encoding: .utf8)
+                    ?? String(data: slice, encoding: .isoLatin1)
+                    ?? ""
+                let hit: Bool
+                if !str.isEmpty {
+                    hit = SwiftSemanticLeakCatalog.matchesUTF8(str)
+                } else {
+                    hit = SwiftSemanticLeakCatalog.rawSliceMatches(slice, length: length)
+                }
+                if hit {
+                    matches += 1
+                    candidateOffsets.append(base + UInt64(position))
+                    if samples.count < 5 {
+                        let preview = str.isEmpty
+                            ? "<non-utf8 \(length)B>"
+                            : (str.count > 48 ? String(str.prefix(45)) + "…" : str)
+                        samples.append(preview)
+                    }
+                }
+            }
+            position = end + 1
+        }
+        return CStringSemanticScan(matches: matches, samples: samples, candidateOffsets: candidateOffsets)
+    }
+
+    private func scrubCStringSemanticMatches(in file: MachOFile, candidates: [UInt64]) throws -> (strings: Int, bytes: Int) {
+        var strings = 0
+        var bytes = 0
+        for off in candidates {
+            var end = Int(off)
+            while end < file.data.count && file.data[end] != 0 { end += 1 }
+            let length = end - Int(off)
+            guard length > 0 else { continue }
+            try file.replaceBytes(at: off, with: randomHexBytes(count: length))
+            strings += 1
+            bytes += length
+        }
+        return (strings, bytes)
+    }
+
+    private enum DecoyAppendResult {
+        case appended(bytes: Int)
+        case skipped(reason: String)
+    }
+
+    private func appendSemanticDecoySectionIfPossible(to file: MachOFile, seed: UInt64) throws -> DecoyAppendResult {
+        let payload = SwiftSemanticLeakCatalog.decoyPayload(seed: seed)
+        do {
+            _ = try file.addOrUpdateSection(
+                segment: "__TEXT",
+                section: ArmorABI.MetadataSections.swiftSemanticDecoy,
+                content: payload,
+                align: 2,
+                flags: 0
+            )
+            return .appended(bytes: payload.count)
+        } catch {
+            return .skipped(reason: String(describing: error))
+        }
     }
 
     // MARK: - A. Swift Type Name Obfuscation
@@ -194,6 +327,7 @@ public final class MetadataScrubberPass: ArmorPass {
         let lower = utf8.lowercased()
         if constSectionScrubKeywords.contains(where: { lower.contains($0.lowercased()) }) { return true }
         if utf8.count > riskSubstringMinLength, lower.contains("risk") { return true }
+        if SwiftSemanticLeakCatalog.matchesUTF8(utf8) { return true }
         return false
     }
 
@@ -265,6 +399,7 @@ public final class MetadataScrubberPass: ArmorPass {
                     scrub = shouldScrubUTF8(str)
                 } else {
                     scrub = Self.rawSliceContainsScrubKeyword(slice, length: length)
+                        || SwiftSemanticLeakCatalog.rawSliceMatches(slice, length: length)
                         || Self.rawLooksLikeSwiftManglingPrefix(slice)
                 }
 
@@ -409,11 +544,15 @@ public final class MetadataScrubberPass: ArmorPass {
     /// Rules (evaluated in order):
     /// 1. Exact keyword prefix/substring match against `constSectionScrubKeywords`.
     /// 2. Contains "Risk" and length > `riskSubstringMinLength` (catches RiskSignal, RiskDetector, etc.).
+    /// 3. Curated semantic-leak tokens (``SwiftSemanticLeakCatalog``), e.g. `isVip` / `RiskDetectionEngine` fragments.
     private static func shouldScrubConstString(_ string: String) -> Bool {
         for keyword in constSectionScrubKeywords where string.contains(keyword) {
             return true
         }
         if string.count > riskSubstringMinLength, string.contains("Risk") {
+            return true
+        }
+        if SwiftSemanticLeakCatalog.matchesUTF8(string) {
             return true
         }
         return false
@@ -487,8 +626,9 @@ public final class MetadataScrubberPass: ArmorPass {
                             || (lower.count > Self.riskSubstringMinLength && lower.contains("risk"))
                     }
                 } else {
-                    // Decoding failed: do raw byte-level keyword match to avoid missing hits.
+                    // Decoding failed: raw byte-level keyword match to avoid missing hits.
                     shouldScrub = Self.rawSliceContainsScrubKeyword(slice, length: length)
+                        || SwiftSemanticLeakCatalog.rawSliceMatches(slice, length: length)
                 }
                 if shouldScrub {
                     try file.replaceBytes(

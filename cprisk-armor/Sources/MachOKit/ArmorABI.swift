@@ -467,6 +467,9 @@ public enum ArmorABI {
 
         public static let swiftTypeRef = "__swift5_typeref"
 
+        /// Pass 2 optional read-only decoy blob: plausible Swift-mangled noise, not referenced by real metadata.
+        public static let swiftSemanticDecoy = "__cp5_swdec"
+
         /// Ancillary Swift metadata; `__swift5_types` is handled separately by type-descriptor scrubbing
         /// and must not be blindly bulk-overwritten (relative-pointer tables).
         public static let additionalScrubSections = [

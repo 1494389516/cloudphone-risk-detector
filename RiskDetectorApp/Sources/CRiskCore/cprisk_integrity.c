@@ -1980,6 +1980,7 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
         /* Keep anti-dump probe lifecycle tied to protection lifecycle,
          * while remaining idempotent when watchdog already started it. */
         (void)cprisk_start_anti_dump_probe(5);
+        cprisk_apply_deferred_early_injection_policy();
 #if defined(CPRISK_MTE_COMPILE_SUPPORT)
         if (cprisk_mte_available() != 0) {
             if (cprisk_mte_self_test() != 0) {
@@ -2232,6 +2233,42 @@ void cprisk_integrity_poison_watchdog_lane(void) {
 void cprisk_integrity_poison_watchdog_lane_now(void) {
     atomic_store(&s_staged_watchdog_hits, 0u);
     cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_WATCHDOG);
+}
+
+void cprisk_integrity_poison_high_signal_mixed(uint32_t path_tag) {
+    if (s_integrity_deception_active)
+        return;
+    /* Rotate full-lane commits so high-confidence responses are not dominated by a single lane id. */
+    const uint32_t pick =
+        (path_tag ^ (uint32_t)s_poison_epoch ^ (uint32_t)(s_poison_cause_mix >> 33)) % 5u;
+    switch (pick) {
+    case 0:
+        cprisk_integrity_poison_watchdog_lane_now();
+        break;
+    case 1:
+        cprisk_integrity_poison_antidebug_lane();
+        break;
+    case 2:
+        cprisk_integrity_poison_exception_lane();
+        break;
+    case 3:
+        cprisk_integrity_poison_svc_iface_lane();
+        break;
+    default:
+        cprisk_integrity_poison_data_loader_lane();
+        break;
+    }
+}
+
+void cprisk_apply_deferred_early_injection_policy(void) {
+    if (cprisk_get_early_injection_env_mask() == 0u) {
+        return;
+    }
+    if (cprisk_get_runtime_hardening_mode() != CPRISK_RUNTIME_HARDENING_PRODUCTION) {
+        return;
+    }
+    cprisk_integrity_poison_high_signal_mixed(0xE11A0001u);
+    cprisk_integrity_poison_watchdog_lane();
 }
 
 void cprisk_integrity_poison_code_signing_lane(void) {

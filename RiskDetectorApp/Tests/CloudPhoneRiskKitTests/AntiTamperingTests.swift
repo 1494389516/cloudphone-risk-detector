@@ -118,7 +118,15 @@ final class AntiTamperingTests: XCTestCase {
         vmMprotectCrosscheckMismatchTotal: UInt64 = 0,
         vmMprotectMachTrapMismatchTotal: UInt64 = 0,
         libcFallbackUsedMask: UInt32 = 0,
-        libcFallbackEventTotal: UInt32 = 0
+        libcFallbackEventTotal: UInt32 = 0,
+        watchdogStartPathMask: UInt32 = 0,
+        watchdogStartupLivenessOk: Bool = true,
+        mainThreadAliveMonotonicNs: UInt64 = 0,
+        earlyInjectionEnvMask: UInt32 = 0,
+        watchdogExtendedAnomalyFlags: UInt32 = 0,
+        mainThreadHeartbeatSeq: UInt64 = 0,
+        mainThreadHeartbeatStallCount: UInt64 = 0,
+        lastMainThreadHeartbeatStalled: Bool = false
     ) -> CPRiskKit.AntiDebugWatchdogSnapshot {
         CPRiskKit.AntiDebugWatchdogSnapshot(
             supported: supported,
@@ -183,8 +191,26 @@ final class AntiTamperingTests: XCTestCase {
             vmMprotectCrosscheckMismatchTotal: vmMprotectCrosscheckMismatchTotal,
             vmMprotectMachTrapMismatchTotal: vmMprotectMachTrapMismatchTotal,
             libcFallbackUsedMask: libcFallbackUsedMask,
-            libcFallbackEventTotal: libcFallbackEventTotal
+            libcFallbackEventTotal: libcFallbackEventTotal,
+            watchdogStartPathMask: watchdogStartPathMask,
+            watchdogStartupLivenessOk: watchdogStartupLivenessOk,
+            mainThreadAliveMonotonicNs: mainThreadAliveMonotonicNs,
+            earlyInjectionEnvMask: earlyInjectionEnvMask,
+            watchdogExtendedAnomalyFlags: watchdogExtendedAnomalyFlags,
+            mainThreadHeartbeatSeq: mainThreadHeartbeatSeq,
+            mainThreadHeartbeatStallCount: mainThreadHeartbeatStallCount,
+            lastMainThreadHeartbeatStalled: lastMainThreadHeartbeatStalled
         )
+    }
+
+    func testAntiDebugWatchdogSnapshotHasAnyAnomalyIncludesExtendedFlags() {
+        let stalled = makeWatchdogSnapshot(
+            anomalyFlags: 0,
+            watchdogExtendedAnomalyFlags: UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXT_MAIN_THREAD_STALL)
+        )
+        XCTAssertTrue(stalled.hasAnyAnomaly)
+        let clean = makeWatchdogSnapshot(anomalyFlags: 0, watchdogExtendedAnomalyFlags: 0)
+        XCTAssertFalse(clean.hasAnyAnomaly)
     }
 
     func testLibcDirectSyscallFallbackSignalEmittedWhenMaskNonZero() {

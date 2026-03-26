@@ -164,6 +164,28 @@ public enum SwiftMetadataScrubLevel: Int, Sendable {
     case aggressive = 1
 }
 
+/// Optional Pass 2 controls for Swift semantic-leak mitigation beyond default `__const` / ancillary metadata scrub.
+///
+/// **Safety:** `reportCStringSemanticMatches` only reads the binary. `scrubCStringSemanticMatches` rewrites
+/// `__TEXT.__cstring` payloads in place (same length) when they match curated high-value tokens — this can
+/// break logic that compares string literals at runtime; keep off unless you accept that risk.
+/// `injectSemanticDecoys` appends an unreferenced read-only section (best-effort; may be skipped on exotic layouts).
+public struct SwiftSemanticLeakOptions: Sendable {
+    public var reportCStringSemanticMatches: Bool
+    public var scrubCStringSemanticMatches: Bool
+    public var injectSemanticDecoys: Bool
+
+    public init(
+        reportCStringSemanticMatches: Bool = false,
+        scrubCStringSemanticMatches: Bool = false,
+        injectSemanticDecoys: Bool = false
+    ) {
+        self.reportCStringSemanticMatches = reportCStringSemanticMatches
+        self.scrubCStringSemanticMatches = scrubCStringSemanticMatches
+        self.injectSemanticDecoys = injectSemanticDecoys
+    }
+}
+
 public struct PassConfig {
     public let verbose: Bool
     public let encryptionKey: Data?
@@ -171,19 +193,23 @@ public struct PassConfig {
     public let buildSeed: UInt64
     /// Pass 2 only: Swift metadata scrub intensity (see ``SwiftMetadataScrubLevel``).
     public let swiftMetadataScrubLevel: SwiftMetadataScrubLevel
+    /// Pass 2 optional: CString scan / high-risk literal scrub / decoys (see ``SwiftSemanticLeakOptions``).
+    public let swiftSemanticLeakOptions: SwiftSemanticLeakOptions
 
     public init(
         verbose: Bool = false,
         encryptionKey: Data? = nil,
         randomSeed: UInt64? = nil,
         buildSeed: UInt64 = 0,
-        swiftMetadataScrubLevel: SwiftMetadataScrubLevel = .conservative
+        swiftMetadataScrubLevel: SwiftMetadataScrubLevel = .conservative,
+        swiftSemanticLeakOptions: SwiftSemanticLeakOptions = SwiftSemanticLeakOptions()
     ) {
         self.verbose = verbose
         self.encryptionKey = encryptionKey
         self.randomSeed = randomSeed
         self.buildSeed = buildSeed
         self.swiftMetadataScrubLevel = swiftMetadataScrubLevel
+        self.swiftSemanticLeakOptions = swiftSemanticLeakOptions
     }
 }
 

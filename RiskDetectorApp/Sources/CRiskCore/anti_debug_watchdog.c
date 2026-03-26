@@ -37,6 +37,15 @@
 #define CPRISK_WATCHDOG_RANDOM_TEXT_WINDOW_BYTES 768u
 #define CPRISK_WATCHDOG_SOFTWARE_BP_STRONG_THRESHOLD 4
 #define CPRISK_WATCHDOG_PEER_STALL_MIN_NS 3500000000ull
+#define CPRISK_WATCHDOG_START_GRACE_NS 800000000ull
+/** Main-thread runloop must refresh faster than this after the first ping (ns). */
+#define CPRISK_WATCHDOG_MAIN_THREAD_STALL_NS 10000000000ull
+/** Consecutive primary-loop observations with stale heartbeat before latch (reduces boundary races). */
+#define CPRISK_WATCHDOG_MAIN_THREAD_STALL_CONFIRM_TICKS 2u
+#define CPRISK_WATCHDOG_PATH_THUNK (1u << 0)
+#define CPRISK_WATCHDOG_PATH_BRIDGE (1u << 1)
+#define CPRISK_WATCHDOG_PATH_IMPL (1u << 2)
+#define CPRISK_WATCHDOG_PATH_SECONDARY_SHIFT 8u
 
 /* Integrity poison: high-confidence anomalies use immediate lane commit; the bundled weaker
  * probe hits in the primary iteration use staged escalation (see cprisk_integrity.c). */
@@ -180,9 +189,18 @@ static void cprisk_watchdog_mailbox_send_i(uint32_t worker_id);
 static void cprisk_watchdog_mailbox_drain_i(uint32_t worker_id, uint64_t now_ns);
 static int cprisk_watchdog_mach_peer_verify_i(uint32_t worker_id);
 static void cprisk_watchdog_mark_peer_stall_i(void);
+static void cprisk_watchdog_verify_main_thread_heartbeat_i(void);
+static void cprisk_watchdog_mark_main_thread_stall_i(void);
 
 static void *s_watchdog_bridge_signed_fp;
 static void *s_watchdog_thunk_signed_fp;
+static void *s_watchdog_impl_signed_fp;
+/* Intermediate signed pthread entry for main_impl (LE: "CPRISKIM"). */
+#define CPRISK_WATCHDOG_IMPL_PAC_DISC 0x43505249534B494DuLL
+static atomic_uint_fast64_t s_watchdog_main_alive_ns;
+static atomic_uint_fast64_t s_watchdog_main_heartbeat_seq;
+static atomic_uint_fast32_t s_watchdog_main_stall_consecutive;
+static atomic_uint_fast32_t s_watchdog_main_stall_latched;
 
 __attribute__((constructor(4)))
 static void cprisk_watchdog_sign_main_entry_i(void) {
@@ -192,6 +210,9 @@ static void cprisk_watchdog_sign_main_entry_i(void) {
     s_watchdog_thunk_signed_fp = cprisk_pac_sign_function_pointer(
         (const void *)&cprisk_watchdog_pthread_thunk,
         (uintptr_t)CPRISK_WATCHDOG_PTHREAD_THUNK_PAC_DISC);
+    s_watchdog_impl_signed_fp = cprisk_pac_sign_function_pointer(
+        (const void *)&cprisk_watchdog_thread_main_impl,
+        (uintptr_t)CPRISK_WATCHDOG_IMPL_PAC_DISC);
 }
 
 static cprisk_anti_debug_watchdog_snapshot_t s_watchdog_snapshot = {
@@ -257,6 +278,14 @@ static cprisk_anti_debug_watchdog_snapshot_t s_watchdog_snapshot = {
     .get_task_allow_anomaly_count = 0u,
     .vm_mprotect_crosscheck_mismatch_total = 0u,
     .vm_mprotect_mach_trap_mismatch_total = 0u,
+    .watchdog_start_path_mask = 0u,
+    .watchdog_startup_liveness_ok = 0u,
+    .main_thread_alive_monotonic_ns = 0u,
+    .early_injection_env_mask = 0u,
+    .watchdog_extended_anomaly_flags = 0u,
+    .main_thread_heartbeat_seq = 0u,
+    .main_thread_heartbeat_stall_count = 0u,
+    .last_main_thread_heartbeat_stalled = 0u,
 };
 
 static void *cprisk_watchdog_thread_main_bridge(void *arg) {
@@ -602,7 +631,7 @@ static void cprisk_watchdog_dyld_add_image_i(const struct mach_header *mh, intpt
     }
     atomic_fetch_or(&s_watchdog_dyld_flags, flags);
     atomic_fetch_add(&s_watchdog_dyld_suspicious_events, 1ull);
-    cprisk_integrity_poison_watchdog_lane_now();
+    cprisk_integrity_poison_high_signal_mixed(0xD1A10001u);
 }
 
 static void cprisk_watchdog_register_dyld_observer_once_i(void) {
@@ -779,6 +808,18 @@ static void cprisk_watchdog_reset_locked(void) {
     s_watchdog_snapshot.get_task_allow_anomaly_count = 0u;
     s_watchdog_snapshot.vm_mprotect_crosscheck_mismatch_total = 0u;
     s_watchdog_snapshot.vm_mprotect_mach_trap_mismatch_total = 0u;
+    s_watchdog_snapshot.watchdog_start_path_mask = 0u;
+    s_watchdog_snapshot.watchdog_startup_liveness_ok = 0u;
+    s_watchdog_snapshot.main_thread_alive_monotonic_ns = 0u;
+    s_watchdog_snapshot.early_injection_env_mask = 0u;
+    s_watchdog_snapshot.watchdog_extended_anomaly_flags = 0u;
+    s_watchdog_snapshot.main_thread_heartbeat_seq = 0u;
+    s_watchdog_snapshot.main_thread_heartbeat_stall_count = 0u;
+    s_watchdog_snapshot.last_main_thread_heartbeat_stalled = 0u;
+    atomic_store(&s_watchdog_main_alive_ns, 0u);
+    atomic_store(&s_watchdog_main_heartbeat_seq, 0u);
+    atomic_store(&s_watchdog_main_stall_consecutive, 0u);
+    atomic_store(&s_watchdog_main_stall_latched, 0u);
     atomic_store(&s_watchdog_dyld_flags, 0u);
     atomic_store(&s_watchdog_dyld_suspicious_events, 0ull);
     cprisk_watchdog_reset_mailboxes_locked();
@@ -1038,6 +1079,45 @@ static void cprisk_watchdog_mark_peer_stall_i(void) {
     pthread_mutex_unlock(&s_watchdog_mutex);
 }
 
+static void cprisk_watchdog_mark_main_thread_stall_i(void) {
+    pthread_mutex_lock(&s_watchdog_mutex);
+    s_watchdog_snapshot.watchdog_extended_anomaly_flags |=
+        CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXT_MAIN_THREAD_STALL;
+    s_watchdog_snapshot.last_main_thread_heartbeat_stalled = 1u;
+    s_watchdog_snapshot.main_thread_heartbeat_stall_count += 1u;
+    pthread_mutex_unlock(&s_watchdog_mutex);
+    cprisk_integrity_poison_watchdog_lane_now();
+}
+
+static void cprisk_watchdog_verify_main_thread_heartbeat_i(void) {
+    const uint64_t now_ns = cprisk_monotonic_time_ns();
+    const uint64_t last_ns = atomic_load_explicit(&s_watchdog_main_alive_ns, memory_order_acquire);
+    if (last_ns == 0u) {
+        return;
+    }
+    if (now_ns < last_ns) {
+        return;
+    }
+    const uint64_t age_ns = now_ns - last_ns;
+    if (age_ns <= CPRISK_WATCHDOG_MAIN_THREAD_STALL_NS) {
+        atomic_store_explicit(&s_watchdog_main_stall_consecutive, 0u, memory_order_relaxed);
+        atomic_store_explicit(&s_watchdog_main_stall_latched, 0u, memory_order_release);
+        pthread_mutex_lock(&s_watchdog_mutex);
+        s_watchdog_snapshot.last_main_thread_heartbeat_stalled = 0u;
+        pthread_mutex_unlock(&s_watchdog_mutex);
+        return;
+    }
+    const uint32_t streak =
+        atomic_fetch_add_explicit(&s_watchdog_main_stall_consecutive, 1u, memory_order_relaxed) + 1u;
+    if (streak < CPRISK_WATCHDOG_MAIN_THREAD_STALL_CONFIRM_TICKS) {
+        return;
+    }
+    if (atomic_exchange_explicit(&s_watchdog_main_stall_latched, 1u, memory_order_acq_rel) != 0u) {
+        return;
+    }
+    cprisk_watchdog_mark_main_thread_stall_i();
+}
+
 static uint32_t cprisk_watchdog_run_secondary_iteration_i(uint32_t inherited_flags) {
     const cprisk_shadow_token_t shadow_token = cprisk_shadow_push_i();
     uint32_t anomaly_flags =
@@ -1045,7 +1125,7 @@ static uint32_t cprisk_watchdog_run_secondary_iteration_i(uint32_t inherited_fla
 
     if (cprisk_is_being_traced_sysctl_only() != 0 || cprisk_mach_trace_suspicious() != 0) {
         anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACED;
-        cprisk_integrity_poison_watchdog_lane_now();
+        cprisk_integrity_poison_high_signal_mixed(0x5EC02u);
     }
 
     const int software_bp = cprisk_scan_software_breakpoints_randomized_text(
@@ -1079,7 +1159,7 @@ static uint32_t cprisk_watchdog_run_secondary_iteration_i(uint32_t inherited_fla
 
     if (anomaly_flags != CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_NONE) {
         if ((anomaly_flags & CPRISK_WD_HIGH_RISK_POISON_MASK) != 0u) {
-            cprisk_integrity_poison_watchdog_lane_now();
+            cprisk_integrity_poison_high_signal_mixed(0x5EC12u);
         } else {
             cprisk_integrity_poison_watchdog_lane();
         }
@@ -1183,7 +1263,7 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
     uint32_t svc_stub_anom = 0u;
     if (cprisk_verify_svc_stub_integrity() != 0u) {
         svc_stub_anom = CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SVC_STUB_INTEGRITY;
-        cprisk_integrity_poison_watchdog_lane_now();
+        cprisk_integrity_poison_high_signal_mixed(0xA001u);
     }
     uint32_t vm_image_whitelist_anom = 0u;
     const uint32_t vm_guard_tick = cprisk_memory_guard_image_vm_tick();
@@ -1191,13 +1271,13 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
                           CPRISK_MEM_GUARD_TICK_UNKNOWN_EXECUTABLE_RX |
                           CPRISK_MEM_GUARD_TICK_EXECUTABLE_WRITE)) != 0u) {
         vm_image_whitelist_anom = CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_IMAGE_WHITELIST;
-        cprisk_integrity_poison_watchdog_lane_now();
+        cprisk_integrity_poison_high_signal_mixed(0xA002u);
     }
     if (vm_image_whitelist_anom == 0u && low_checks) {
         const int layout_drift = cprisk_vm_dyld_image_layout_digest_differs_from_baseline();
         if (layout_drift == 1) {
             vm_image_whitelist_anom = CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_IMAGE_WHITELIST;
-            cprisk_integrity_poison_watchdog_lane_now();
+            cprisk_integrity_poison_high_signal_mixed(0xA003u);
         }
     }
     const uint32_t vm_cc_total = cprisk_get_vm_mprotect_crosscheck_mismatch_count();
@@ -1205,7 +1285,7 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
     uint32_t vm_mprotect_anom = 0u;
     if (vm_cc_total > 0u || vm_mt_total > 0u) {
         vm_mprotect_anom = CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_MPROTECT_MACH_DIVERGENCE;
-        cprisk_integrity_poison_watchdog_lane_now();
+        cprisk_integrity_poison_high_signal_mixed(0xA004u);
     }
     const uint32_t dyld_flags_now = (uint32_t)atomic_load(&s_watchdog_dyld_flags);
     cprisk_cff_config_t cff_config;
@@ -1255,7 +1335,7 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
             }
             if (deny_verify_suspicious != 0) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DENY_ATTACH_VERIFY;
-                cprisk_integrity_poison_watchdog_lane_now();
+                cprisk_integrity_poison_high_signal_mixed(0xB101u);
             }
             anomaly_flags |= cprisk_wd_amfi_flags_from_probe_bits_i(amfi_probe_bits);
             if (get_task_allow_suspect != 0u) {
@@ -1263,14 +1343,14 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
             }
             if ((anomaly_flags & (CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_AMFI_CS_FLAGS |
                                   CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GET_TASK_ALLOW)) != 0u) {
-                cprisk_integrity_poison_watchdog_lane_now();
+                cprisk_integrity_poison_high_signal_mixed(0xB102u);
             }
             if (traced != 0 || traced_sys != 0 || traced_mach != 0) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACED;
             }
             if ((traced_sys != 0 || traced_mach != 0) && traced == 0) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACED_PROBE_DIVERGENCE;
-                cprisk_integrity_poison_watchdog_lane_now();
+                cprisk_integrity_poison_high_signal_mixed(0xB103u);
             }
             if (trace_crosscheck != 0) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACE_CROSSCHECK;
@@ -1441,7 +1521,7 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_PAC_THREAD_ENTRY |
                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_IMAGE_WHITELIST)) != 0u) {
                 if ((anomaly_flags & CPRISK_WD_HIGH_RISK_POISON_MASK) != 0u) {
-                    cprisk_integrity_poison_watchdog_lane_now();
+                    cprisk_integrity_poison_high_signal_mixed(0xCFF15u ^ anomaly_flags);
                 } else if ((anomaly_flags & CPRISK_WD_POISON_TRIGGER_BUNDLE_MASK) != 0u) {
                     cprisk_integrity_poison_watchdog_lane();
                 }
@@ -1604,6 +1684,9 @@ static void *cprisk_watchdog_thread_main_impl(void *arg) {
             last_anomaly_flags |=
                 CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_WATCHDOG_PEER_STALL;
         }
+        if (worker_id == CPRISK_WATCHDOG_PRIMARY_ID) {
+            cprisk_watchdog_verify_main_thread_heartbeat_i();
+        }
 
         loop_counter += 1u;
         const int run_mid_checks =
@@ -1656,6 +1739,86 @@ static void *cprisk_watchdog_thread_main_impl(void *arg) {
     cprisk_watchdog_refresh_thread_active_locked();
     pthread_mutex_unlock(&s_watchdog_mutex);
     return NULL;
+}
+
+static int cprisk_watchdog_pthread_create_with_fallbacks_i(
+    uint32_t worker_id,
+    uint32_t *path_bits_out,
+    int *last_errno_out
+) {
+    void *const candidates[3] = {
+        s_watchdog_thunk_signed_fp,
+        s_watchdog_bridge_signed_fp,
+        s_watchdog_impl_signed_fp,
+    };
+    const uint32_t bits[3] = {
+        CPRISK_WATCHDOG_PATH_THUNK,
+        CPRISK_WATCHDOG_PATH_BRIDGE,
+        CPRISK_WATCHDOG_PATH_IMPL,
+    };
+    for (uint32_t i = 0u; i < 3u; i++) {
+        void *fn = candidates[i];
+        if (fn == NULL) {
+            continue;
+        }
+        typedef void *(*cprisk_wd_pthread_fn)(void *);
+        int rc = pthread_create(
+            &s_watchdog_threads[worker_id],
+            NULL,
+            (cprisk_wd_pthread_fn)fn,
+            (void *)(uintptr_t)worker_id);
+        if (rc == EAGAIN) {
+            struct timespec ts = {0, 10000000L};
+            nanosleep(&ts, NULL);
+            rc = pthread_create(
+                &s_watchdog_threads[worker_id],
+                NULL,
+                (cprisk_wd_pthread_fn)fn,
+                (void *)(uintptr_t)worker_id);
+        }
+        if (last_errno_out != NULL) {
+            *last_errno_out = rc;
+        }
+        if (rc == 0) {
+            *path_bits_out |= bits[i];
+            return 0;
+        }
+    }
+    return -1;
+}
+
+static void cprisk_watchdog_wait_startup_liveness_i(void) {
+    const uint64_t deadline = cprisk_monotonic_time_ns() + CPRISK_WATCHDOG_START_GRACE_NS;
+    while (cprisk_monotonic_time_ns() < deadline) {
+        pthread_mutex_lock(&s_watchdog_mutex);
+        const uint64_t ic = s_watchdog_snapshot.iteration_count;
+        const uint32_t ta = s_watchdog_snapshot.thread_active;
+        pthread_mutex_unlock(&s_watchdog_mutex);
+        if (ic > 0u || ta != 0u) {
+            pthread_mutex_lock(&s_watchdog_mutex);
+            s_watchdog_snapshot.watchdog_startup_liveness_ok = 1u;
+            pthread_mutex_unlock(&s_watchdog_mutex);
+            return;
+        }
+        struct timespec ts = {0, 5000000L};
+        nanosleep(&ts, NULL);
+    }
+    pthread_mutex_lock(&s_watchdog_mutex);
+    s_watchdog_snapshot.anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_STARTUP_LIVENESS;
+    s_watchdog_snapshot.watchdog_startup_liveness_ok = 0u;
+    cprisk_integrity_poison_watchdog_lane();
+    pthread_mutex_unlock(&s_watchdog_mutex);
+}
+
+void cprisk_watchdog_note_main_thread_alive(void) {
+    uint64_t t = cprisk_monotonic_time_ns();
+    atomic_store(&s_watchdog_main_alive_ns, t);
+    const uint64_t seq =
+        atomic_fetch_add_explicit(&s_watchdog_main_heartbeat_seq, 1ull, memory_order_relaxed) + 1ull;
+    pthread_mutex_lock(&s_watchdog_mutex);
+    s_watchdog_snapshot.main_thread_alive_monotonic_ns = t;
+    s_watchdog_snapshot.main_thread_heartbeat_seq = seq;
+    pthread_mutex_unlock(&s_watchdog_mutex);
 }
 
 int cprisk_start_anti_debug_watchdog(void) {
@@ -1733,7 +1896,11 @@ int cprisk_start_anti_debug_watchdog(void) {
         void *bridge_expect = cprisk_pac_sign_function_pointer(
             (const void *)&cprisk_watchdog_thread_main_bridge,
             (uintptr_t)CPRISK_WATCHDOG_PTHREAD_BRIDGE_PAC_DISC);
-        if (s_watchdog_thunk_signed_fp != thunk_expect || s_watchdog_bridge_signed_fp != bridge_expect) {
+        void *impl_expect = cprisk_pac_sign_function_pointer(
+            (const void *)&cprisk_watchdog_thread_main_impl,
+            (uintptr_t)CPRISK_WATCHDOG_IMPL_PAC_DISC);
+        if (s_watchdog_thunk_signed_fp != thunk_expect || s_watchdog_bridge_signed_fp != bridge_expect ||
+            s_watchdog_impl_signed_fp != impl_expect) {
             s_watchdog_state = CPRISK_WATCHDOG_STATE_STOPPED;
             s_watchdog_snapshot.running = 0u;
             s_watchdog_snapshot.anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_PAC_THREAD_ENTRY;
@@ -1744,37 +1911,37 @@ int cprisk_start_anti_debug_watchdog(void) {
         }
     }
 
-    void *(*wd_pthread_start)(void *) = (void *(*)(void *))s_watchdog_thunk_signed_fp;
-    const int rc_primary = pthread_create(&s_watchdog_threads[CPRISK_WATCHDOG_PRIMARY_ID],
-                                          NULL,
-                                          wd_pthread_start,
-                                          (void *)(uintptr_t)CPRISK_WATCHDOG_PRIMARY_ID);
-    if (rc_primary != 0) {
+    uint32_t path_mask = 0u;
+    int last_create_errno = 0;
+    if (cprisk_watchdog_pthread_create_with_fallbacks_i(
+            CPRISK_WATCHDOG_PRIMARY_ID, &path_mask, &last_create_errno) != 0) {
         s_watchdog_state = CPRISK_WATCHDOG_STATE_STOPPED;
         s_watchdog_snapshot.running = 0u;
         s_watchdog_snapshot.last_deny_attach_result = -1;
-        s_watchdog_snapshot.last_deny_attach_errno = rc_primary;
+        s_watchdog_snapshot.last_deny_attach_errno = last_create_errno;
         pthread_mutex_unlock(&s_watchdog_mutex);
         return -1;
     }
     s_watchdog_started_mask |= (1u << CPRISK_WATCHDOG_PRIMARY_ID);
 
-    const int rc_secondary = pthread_create(&s_watchdog_threads[CPRISK_WATCHDOG_SECONDARY_ID],
-                                            NULL,
-                                            wd_pthread_start,
-                                            (void *)(uintptr_t)CPRISK_WATCHDOG_SECONDARY_ID);
-    if (rc_secondary == 0) {
+    uint32_t sec_bits = 0u;
+    if (cprisk_watchdog_pthread_create_with_fallbacks_i(
+            CPRISK_WATCHDOG_SECONDARY_ID, &sec_bits, &last_create_errno) == 0) {
         s_watchdog_started_mask |= (1u << CPRISK_WATCHDOG_SECONDARY_ID);
     } else {
         /* Keep running with primary watchdog as compatibility fallback. */
         s_watchdog_snapshot.last_deny_attach_result = -1;
-        s_watchdog_snapshot.last_deny_attach_errno = rc_secondary;
+        s_watchdog_snapshot.last_deny_attach_errno = last_create_errno;
     }
+    path_mask |= (sec_bits << CPRISK_WATCHDOG_PATH_SECONDARY_SHIFT);
+    s_watchdog_snapshot.watchdog_start_path_mask = path_mask;
 
     cprisk_vm_dyld_image_layout_digest_baseline_snapshot();
 
     pthread_mutex_unlock(&s_watchdog_mutex);
+    cprisk_watchdog_wait_startup_liveness_i();
     (void)cprisk_start_anti_dump_probe(5);
+    cprisk_watchdog_note_main_thread_alive();
     return 0;
 }
 
@@ -1839,10 +2006,13 @@ int cprisk_get_anti_debug_watchdog_snapshot(
     /* Live libc fallback counters (not only on watchdog iteration). */
     out_snapshot->libc_fallback_used_mask = cprisk_get_libc_fallback_used_mask();
     out_snapshot->libc_fallback_event_total = cprisk_get_libc_fallback_event_total();
+    out_snapshot->early_injection_env_mask = cprisk_get_early_injection_env_mask();
     return 0;
 }
 
 #else
+
+void cprisk_watchdog_note_main_thread_alive(void) {}
 
 int cprisk_verify_dlsym_prologue(void) {
     return 1;
@@ -1875,6 +2045,7 @@ int cprisk_get_anti_debug_watchdog_snapshot(
     /* Keep libc fallback observability consistent with the full watchdog path. */
     out_snapshot->libc_fallback_used_mask = cprisk_get_libc_fallback_used_mask();
     out_snapshot->libc_fallback_event_total = cprisk_get_libc_fallback_event_total();
+    out_snapshot->early_injection_env_mask = cprisk_get_early_injection_env_mask();
     return 0;
 }
 

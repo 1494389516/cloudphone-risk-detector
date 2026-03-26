@@ -94,6 +94,8 @@ public final class CPRiskKit: NSObject {
     private var boundSceneTag: String?
     private var currentSessionId: String?
     private var graphFeedbackObserver: Any?
+    /// Repeating main-thread ping for `cprisk_watchdog_note_main_thread_alive` (skipped when App Store safe disables the watchdog).
+    private var mainThreadWatchdogHeartbeatTimer: Timer?
 
     /// Signal IDs from the previous evaluate() call, used for suppression detection.
     private var previousSignalIds: Set<String> = []
@@ -251,9 +253,25 @@ public final class CPRiskKit: NSObject {
         public let libcFallbackUsedMask: UInt32
         /// Monotonic fallback notifications since last mask reset (`cprisk_get_libc_fallback_event_total`).
         public let libcFallbackEventTotal: UInt32
+        /// Lower 8 bits = primary pthread entry path, next 8 = secondary (thunk/bridge/impl fallbacks).
+        public let watchdogStartPathMask: UInt32
+        /// First iteration / thread activity observed within startup grace window.
+        public let watchdogStartupLivenessOk: Bool
+        /// Last `cprisk_watchdog_note_main_thread_alive` monotonic timestamp (ns).
+        public let mainThreadAliveMonotonicNs: UInt64
+        /// Dyld injection-related env bits from earliest constructor scan.
+        public let earlyInjectionEnvMask: UInt32
+        /// Additional anomaly flags when `anomalyFlags` has no free bits (`CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXT_*`).
+        public let watchdogExtendedAnomalyFlags: UInt32
+        /// Incremented on each main-thread heartbeat ping (device watchdog path).
+        public let mainThreadHeartbeatSeq: UInt64
+        /// Cumulative latched main-thread stall episodes (C layer).
+        public let mainThreadHeartbeatStallCount: UInt64
+        /// Last primary iteration observed a latched main-thread heartbeat stall.
+        public let lastMainThreadHeartbeatStalled: Bool
 
         public var hasAnyAnomaly: Bool {
-            anomalyFlags != 0
+            anomalyFlags != 0 || watchdogExtendedAnomalyFlags != 0
         }
     }
 
@@ -384,6 +402,9 @@ public final class CPRiskKit: NSObject {
             watchdogStartResult = Int32(cprisk_start_anti_debug_watchdog())
             if watchdogStartResult != 0 {
                 Logger.log("anti_debug_\(ObfuscatedConstants.keywordWatchdog).start failed rc=\(watchdogStartResult)")
+                invalidateMainThreadWatchdogHeartbeat()
+            } else {
+                scheduleMainThreadWatchdogHeartbeat()
             }
         }
 
@@ -471,6 +492,7 @@ public final class CPRiskKit: NSObject {
     @objc public func stop() {
         Logger.log("sdk_stop")
         removeGraphFeedbackReEvaluateObserver()
+        invalidateMainThreadWatchdogHeartbeat()
         cprisk_stop_anti_dump_probe()
         cprisk_stop_anti_debug_watchdog()
         resetArmorRuntime()
@@ -497,6 +519,39 @@ public final class CPRiskKit: NSObject {
             NotificationCenter.default.removeObserver(obs)
             graphFeedbackObserver = nil
         }
+    }
+
+    private func scheduleMainThreadWatchdogHeartbeat() {
+        let install = { [weak self] in
+            guard let self else { return }
+            self.invalidateMainThreadWatchdogHeartbeatOnCurrentThread()
+            cprisk_watchdog_note_main_thread_alive()
+            let timer = Timer(timeInterval: 1.0, repeats: true) { _ in
+                cprisk_watchdog_note_main_thread_alive()
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            self.mainThreadWatchdogHeartbeatTimer = timer
+        }
+        if Thread.isMainThread {
+            install()
+        } else {
+            DispatchQueue.main.async(execute: install)
+        }
+    }
+
+    private func invalidateMainThreadWatchdogHeartbeat() {
+        if Thread.isMainThread {
+            invalidateMainThreadWatchdogHeartbeatOnCurrentThread()
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.invalidateMainThreadWatchdogHeartbeatOnCurrentThread()
+            }
+        }
+    }
+
+    private func invalidateMainThreadWatchdogHeartbeatOnCurrentThread() {
+        mainThreadWatchdogHeartbeatTimer?.invalidate()
+        mainThreadWatchdogHeartbeatTimer = nil
     }
 
     @objc public static func setLogEnabled(_ enabled: Bool) {
@@ -1411,7 +1466,15 @@ public final class CPRiskKit: NSObject {
             vmMprotectCrosscheckMismatchTotal: raw.vm_mprotect_crosscheck_mismatch_total,
             vmMprotectMachTrapMismatchTotal: raw.vm_mprotect_mach_trap_mismatch_total,
             libcFallbackUsedMask: raw.libc_fallback_used_mask,
-            libcFallbackEventTotal: raw.libc_fallback_event_total
+            libcFallbackEventTotal: raw.libc_fallback_event_total,
+            watchdogStartPathMask: raw.watchdog_start_path_mask,
+            watchdogStartupLivenessOk: raw.watchdog_startup_liveness_ok != 0,
+            mainThreadAliveMonotonicNs: raw.main_thread_alive_monotonic_ns,
+            earlyInjectionEnvMask: raw.early_injection_env_mask,
+            watchdogExtendedAnomalyFlags: raw.watchdog_extended_anomaly_flags,
+            mainThreadHeartbeatSeq: raw.main_thread_heartbeat_seq,
+            mainThreadHeartbeatStallCount: raw.main_thread_heartbeat_stall_count,
+            lastMainThreadHeartbeatStalled: raw.last_main_thread_heartbeat_stalled != 0
         )
     }
 

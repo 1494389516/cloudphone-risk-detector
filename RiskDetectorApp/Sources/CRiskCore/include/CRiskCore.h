@@ -94,6 +94,15 @@ enum {
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_PAC_THREAD_ENTRY = 1u << 29,
     /** Dyld image path digest changed and/or executable VM region outside any loaded image (memory_guard tick). */
     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_IMAGE_WHITELIST = 1u << 30,
+    /** Watchdog threads did not reach first iteration / active state within the post-start grace window. */
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_STARTUP_LIVENESS = 1u << 31,
+};
+
+/** Extended `watchdog_extended_anomaly_flags` (base `anomaly_flags` is full; use `cprisk_get_anti_debug_watchdog_snapshot`). */
+enum {
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXT_NONE = 0u,
+    /** Main-thread heartbeat stale beyond threshold (runloop blocked / suspended / hook). */
+    CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXT_MAIN_THREAD_STALL = 1u << 0,
 };
 
 enum {
@@ -187,6 +196,22 @@ typedef struct cprisk_anti_debug_watchdog_snapshot {
     uint32_t libc_fallback_used_mask;
     /** Count of fallback notifications since last mask reset; may exceed popcount(mask). */
     uint32_t libc_fallback_event_total;
+    /** Bits: lower 8 = primary pthread entry path, next 8 = secondary (see CPRISK_WATCHDOG_START_PATH_*). */
+    uint32_t watchdog_start_path_mask;
+    /** 1 if at least one worker reached active/iteration state within the startup grace window. */
+    uint32_t watchdog_startup_liveness_ok;
+    /** Last cprisk_watchdog_note_main_thread_alive() time (monotonic ns); 0 if never pinged. */
+    uint64_t main_thread_alive_monotonic_ns;
+    /** Copy of cprisk_get_early_injection_env_mask() for telemetry (dyld injection env at boot). */
+    uint32_t early_injection_env_mask;
+    /** Extended anomaly flags (see CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXT_*). */
+    uint32_t watchdog_extended_anomaly_flags;
+    /** Monotonic sequence: incremented on each cprisk_watchdog_note_main_thread_alive() (device watchdog path). */
+    uint64_t main_thread_heartbeat_seq;
+    /** Cumulative latched main-thread stall episodes (high-confidence). */
+    uint64_t main_thread_heartbeat_stall_count;
+    /** 1 when the last primary watchdog iteration observed a latched main-thread stall. */
+    uint32_t last_main_thread_heartbeat_stalled;
 } cprisk_anti_debug_watchdog_snapshot_t;
 
 typedef struct cprisk_antidebug_plan_snapshot {
@@ -411,6 +436,15 @@ int cprisk_get_exception_handler_snapshot(cprisk_exception_handler_snapshot_t *o
 /// repeated calls while running do not create additional threads.
 /// Returns 0 on success/already-running/no-op platforms, -1 on thread creation failure.
 int cprisk_start_anti_debug_watchdog(void);
+
+/// Main-thread / caller alive ping for mutual startup checks (updates snapshot timestamp).
+void cprisk_watchdog_note_main_thread_alive(void);
+
+/// Bitset from earliest getenv scan (constructor): DYLD_INSERT_LIBRARIES and related injection vectors.
+uint32_t cprisk_get_early_injection_env_mask(void);
+
+/// Apply fail-closed policy for early injection when runtime mode is production (skipped for App Store safe / relaxed QA).
+void cprisk_apply_deferred_early_injection_policy(void);
 
 /// Request the anti-debug watchdog to stop and wait for the thread to exit.
 /// Safe to call multiple times.
@@ -854,6 +888,8 @@ uint32_t cprisk_integrity_wb_prf_pressure_mask(void);
 void cprisk_integrity_poison_watchdog_lane(void);
 /// Fail-closed immediate watchdog lane poison (resets staged counter). Use for high-confidence signals.
 void cprisk_integrity_poison_watchdog_lane_now(void);
+/// High-confidence poison with rotated target lane (reduces single-lane response fingerprinting).
+void cprisk_integrity_poison_high_signal_mixed(uint32_t path_tag);
 void cprisk_integrity_poison_code_signing_lane(void);
 void cprisk_integrity_poison_svc_iface_lane(void);
 void cprisk_integrity_poison_antidebug_lane(void);

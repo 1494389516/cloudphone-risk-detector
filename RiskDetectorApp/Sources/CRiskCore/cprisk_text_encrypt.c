@@ -90,7 +90,8 @@ static int cprisk_text_derive_section_key_i(const uint8_t parent_key[CPRISK_ARMO
 /* Idle re-encrypt eligibility: min time a page may stay decrypted before XOR+PROT_NONE.
  * Hot __TEXT can remain fault-free for long stretches; pair with watchdog idle cadence
  * (primary + secondary) so plaintext is not gated only on ~1 Hz ticks. */
-#define CPRISK_TEXT_RECRYPT_NS 50000000ull
+/* Tighter idle re-encrypt: reduce plaintext dwell between JIT decrypt and service_idle sweep. */
+#define CPRISK_TEXT_RECRYPT_NS 32000000ull
 #define CPRISK_TEXT_SECTION_INDEX_BASE 100000u
 
 static pthread_mutex_t s_text_mutex = PTHREAD_MUTEX_INITIALIZER;
