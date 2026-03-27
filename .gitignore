@@ -41,3 +41,6 @@ sdk *.txt
 # CFF / anti-deobfuscation implementation reports (local tracking)
 CFF_IMPLEMENTATION_REPORT.md
 ANTI_DEOBFUSCATION_REPORT.md
+
+# CocoaPods podspec (local / private distribution only; not tracked)
+CloudPhoneRiskKit.podspec
