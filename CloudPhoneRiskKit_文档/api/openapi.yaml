@@ -1,0 +1,582 @@
+openapi: "3.0.3"
+info:
+  title: CloudPhoneRiskKit Server API
+  description: |
+    CloudPhoneRiskKit SDK 与风控服务端交互的 API 规范。
+    覆盖风险评估上报、配置下发、健康检查三大场景。
+  version: "1.0.0"
+  contact:
+    name: Risk SDK Team
+
+servers:
+  - url: https://risk-api.example.com
+    description: 生产环境
+  - url: https://risk-api-staging.example.com
+    description: 预发布环境
+
+paths:
+  /v1/risk/evaluate:
+    post:
+      operationId: evaluateRisk
+      summary: 实时风险评估
+      description: |
+        接收 SDK 上报的设备指纹、行为数据和信号集合，
+        返回服务端风险评分和决策建议。
+      tags: [Risk]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvaluateRequest"
+      responses:
+        "200":
+          description: 评估成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvaluateResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/risk/report:
+    post:
+      operationId: uploadRiskReport
+      summary: 上报风险报告信封
+      description: |
+        接收 SDK 构建的签名风险报告信封（ReportEnvelope），
+        服务端验签后入库用于离线分析和图计算。
+      tags: [Risk]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportEnvelope"
+      responses:
+        "200":
+          description: 上报成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportUploadResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          description: 验签失败
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/config/fetch:
+    post:
+      operationId: fetchRemoteConfig
+      summary: 拉取远程配置
+      description: |
+        SDK 定期拉取服务端下发的 RemoteConfig，包含策略权重、
+        阈值覆盖、安全加固选项等。支持签名校验防篡改。
+      tags: [Config]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigFetchRequest"
+      responses:
+        "200":
+          description: 配置拉取成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoteConfig"
+        "304":
+          description: 配置未变更（版本号一致）
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/health:
+    get:
+      operationId: healthCheck
+      summary: 服务健康检查
+      description: 返回服务端存活状态和版本信息
+      tags: [Health]
+      responses:
+        "200":
+          description: 服务健康
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          description: 服务不可用
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    BadRequest:
+      description: 请求参数无效
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: 认证失败
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    TooManyRequests:
+      description: 限流
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: 服务端错误
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    # ──────── Risk Evaluate ────────
+
+    EvaluateRequest:
+      type: object
+      required: [deviceId, sdkVersion, signals]
+      properties:
+        deviceId:
+          type: string
+          description: SDK 生成的设备唯一标识
+          example: "A1B2C3D4-E5F6-7890-ABCD-EF1234567890"
+        sdkVersion:
+          type: string
+          description: SDK 版本号
+          example: "6.5.0"
+        scenario:
+          type: string
+          description: 业务场景标识
+          example: "login"
+        accountId:
+          type: string
+          description: 绑定的业务账号 ID
+        sessionId:
+          type: string
+          description: 会话 ID
+        signals:
+          type: array
+          items:
+            $ref: "#/components/schemas/RiskSignal"
+          description: SDK 采集到的风险信号列表
+        deviceFingerprint:
+          $ref: "#/components/schemas/DeviceFingerprint"
+        serverSignals:
+          $ref: "#/components/schemas/ServerSignals"
+        graphNodeDescriptor:
+          $ref: "#/components/schemas/GraphNodeDescriptor"
+
+    EvaluateResponse:
+      type: object
+      properties:
+        requestId:
+          type: string
+        score:
+          type: number
+          format: double
+          description: 服务端风险分数 (0-100)
+        isHighRisk:
+          type: boolean
+        action:
+          type: string
+          enum: [allow, challenge, monitor, block]
+        reasons:
+          type: array
+          items:
+            type: string
+        serverRiskPolicy:
+          $ref: "#/components/schemas/ServerRiskPolicy"
+        graphRiskFeedback:
+          $ref: "#/components/schemas/GraphRiskFeedback"
+
+    # ──────── Report Upload ────────
+
+    ReportEnvelope:
+      type: object
+      required: [reportId, payload, nonce, timestamp, keyId, signature]
+      properties:
+        reportId:
+          type: string
+          format: uuid
+        payload:
+          type: string
+          description: Base64 编码的加密 payload
+        nonce:
+          type: string
+          description: 一次性随机值（防重放）
+        timestamp:
+          type: string
+          format: date-time
+        keyId:
+          type: string
+          description: 签名密钥标识
+        signatureVersion:
+          type: string
+          enum: [v1, v2a, v2d]
+          description: 签名版本
+        signature:
+          type: string
+          description: HMAC 签名（hex 编码）
+        bindingMode:
+          type: string
+          description: 签名绑定模式
+        trustLevel:
+          type: string
+          description: 信任链评估等级
+        attestationKeyId:
+          type: string
+          description: App Attest 密钥 ID
+        attestationAssertion:
+          type: string
+          description: App Attest assertion (Base64)
+        fieldMappingVersion:
+          type: string
+          description: 字段混淆映射版本
+
+    ReportUploadResponse:
+      type: object
+      properties:
+        requestId:
+          type: string
+        accepted:
+          type: boolean
+        signatureValid:
+          type: boolean
+        serverTimestamp:
+          type: string
+          format: date-time
+
+    # ──────── Config Fetch ────────
+
+    ConfigFetchRequest:
+      type: object
+      properties:
+        deviceId:
+          type: string
+        sdkVersion:
+          type: string
+        currentConfigVersion:
+          type: integer
+          description: 当前持有的配置版本号，用于增量更新
+
+    RemoteConfig:
+      type: object
+      properties:
+        version:
+          type: integer
+          description: 配置版本号（单调递增）
+        policy:
+          $ref: "#/components/schemas/RemoteConfigPolicy"
+        securityHardening:
+          $ref: "#/components/schemas/SecurityHardening"
+        payloadFieldMapping:
+          $ref: "#/components/schemas/PayloadFieldMapping"
+        textSegmentHashReference:
+          type: object
+          additionalProperties:
+            type: string
+          description: SDK 版本 → __TEXT.__text 参考哈希
+        additionalSuspiciousLibraries:
+          type: array
+          items:
+            type: string
+        additionalSuspiciousPaths:
+          type: array
+          items:
+            type: string
+        additionalSuspiciousPorts:
+          type: array
+          items:
+            type: integer
+        probeConfig:
+          type: object
+          description: CapabilityProbeEngine 远程配置
+        realtimeTelemetryAdaptive:
+          $ref: "#/components/schemas/RealtimeTelemetryAdaptiveConfig"
+        signature:
+          type: string
+          description: 服务端对配置 JSON 的 Ed25519 签名
+
+    RemoteConfigPolicy:
+      type: object
+      properties:
+        weights:
+          $ref: "#/components/schemas/SignalWeights"
+        mediumThreshold:
+          type: number
+        highThreshold:
+          type: number
+
+    SignalWeights:
+      type: object
+      properties:
+        jailbreak:
+          type: number
+          format: double
+        network:
+          type: number
+          format: double
+        behavior:
+          type: number
+          format: double
+        cloudPhone:
+          type: number
+          format: double
+        timePattern:
+          type: number
+          format: double
+
+    SecurityHardening:
+      type: object
+      properties:
+        enableAppStoreSafeProfile:
+          type: boolean
+        killSwitchEnabled:
+          type: boolean
+        enforcePayloadFieldMapping:
+          type: boolean
+        enableEnvelopeSignatureV2:
+          type: boolean
+        enableChallengeBinding:
+          type: boolean
+
+    PayloadFieldMapping:
+      type: object
+      properties:
+        version:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+        mapping:
+          type: object
+          additionalProperties:
+            type: string
+
+    RealtimeTelemetryAdaptiveConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        baseMinEvaluationIntervalMillis:
+          type: integer
+        highPressureMinEvaluationIntervalMillis:
+          type: integer
+        defaultWeightScaleBps:
+          type: integer
+        minWeightScaleBps:
+          type: integer
+        maxWeightScaleBps:
+          type: integer
+        feedbackTTLSeconds:
+          type: integer
+
+    # ──────── Shared Types ────────
+
+    RiskSignal:
+      type: object
+      required: [id, category, score]
+      properties:
+        id:
+          type: string
+        category:
+          type: string
+        score:
+          type: number
+          format: double
+        evidence:
+          type: object
+          additionalProperties:
+            type: string
+        state:
+          type: string
+          enum: [clear, soft, tampered, unavailable]
+        layer:
+          type: integer
+        weightHint:
+          type: number
+          format: double
+
+    DeviceFingerprint:
+      type: object
+      properties:
+        model:
+          type: string
+        systemVersion:
+          type: string
+        hardwareMachine:
+          type: string
+        kernelVersion:
+          type: string
+        screenWidth:
+          type: integer
+        screenHeight:
+          type: integer
+        totalDiskSpace:
+          type: integer
+          format: int64
+        totalMemory:
+          type: integer
+          format: int64
+
+    ServerSignals:
+      type: object
+      properties:
+        publicIP:
+          type: string
+        asn:
+          type: string
+        asOrg:
+          type: string
+        isDatacenter:
+          type: boolean
+        ipDeviceAgg:
+          type: integer
+        ipAccountAgg:
+          type: integer
+        geoCountry:
+          type: string
+        geoRegion:
+          type: string
+        riskTags:
+          type: array
+          items:
+            type: string
+
+    ServerRiskPolicy:
+      type: object
+      properties:
+        thresholds:
+          type: object
+          properties:
+            monitor:
+              type: number
+            challenge:
+              type: number
+            block:
+              type: number
+        signalWeights:
+          type: object
+          additionalProperties:
+            type: number
+        blocklist:
+          type: array
+          items:
+            type: string
+        blindChallenge:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            challengeSalt:
+              type: string
+            windowSeconds:
+              type: integer
+            challengeTTLMillis:
+              type: integer
+            probePool:
+              type: array
+              items:
+                type: string
+            rules:
+              type: array
+              items:
+                type: object
+        mutation:
+          type: object
+          properties:
+            seed:
+              type: integer
+            shuffleChecks:
+              type: boolean
+            thresholdJitterBps:
+              type: integer
+            scoreJitterBps:
+              type: integer
+        reAttestationChallenge:
+          type: string
+
+    GraphNodeDescriptor:
+      type: object
+      properties:
+        hwProfileHash:
+          type: string
+        signalFingerprint:
+          type: string
+
+    GraphRiskFeedback:
+      type: object
+      properties:
+        communityId:
+          type: string
+        communityRiskDensity:
+          type: number
+          format: double
+        hwProfileDegree:
+          type: integer
+        devicePageRank:
+          type: number
+          format: double
+        isInDenseSubgraph:
+          type: boolean
+        riskTags:
+          type: array
+          items:
+            type: string
+
+    # ──────── Health ────────
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        version:
+          type: string
+        uptime:
+          type: integer
+          description: 服务运行秒数
+
+    ErrorResponse:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        requestId:
+          type: string

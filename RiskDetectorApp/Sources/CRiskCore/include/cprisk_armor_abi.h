@@ -7,6 +7,37 @@
 #include "cprisk_sha256.h"
 #include "cprisk_secure_zero.h"
 
+/* ── ABI Semantic Version ─────────────────────────────────────────────
+ *  MAJOR: incompatible struct layout or symbol removal
+ *  MINOR: backward-compatible additions (new structs, new fields at end)
+ *  PATCH: bug-fix only, no layout change
+ *
+ *  Bump policy:
+ *    - Adding a new struct or appending fields → bump MINOR, reset PATCH
+ *    - Changing existing struct size/layout or removing a symbol → bump MAJOR
+ *    - Internal fix with no ABI surface change → bump PATCH
+ *
+ *  See docs/ABI_CONTRACT.md for the full compatibility matrix.
+ */
+#define CPRISK_ABI_VERSION_MAJOR 1u
+#define CPRISK_ABI_VERSION_MINOR 0u
+#define CPRISK_ABI_VERSION_PATCH 0u
+
+#define CPRISK_ABI_VERSION_ENCODE(ma, mi, pa) \
+    (((uint32_t)(ma) << 16) | ((uint32_t)(mi) << 8) | (uint32_t)(pa))
+
+#define CPRISK_ABI_VERSION_CURRENT \
+    CPRISK_ABI_VERSION_ENCODE(CPRISK_ABI_VERSION_MAJOR, \
+                              CPRISK_ABI_VERSION_MINOR, \
+                              CPRISK_ABI_VERSION_PATCH)
+
+/** Query the compiled ABI version at runtime.
+ *  Returns a packed uint32: (major<<16 | minor<<8 | patch). */
+static inline __attribute__((always_inline))
+uint32_t cprisk_abi_version(void) {
+    return CPRISK_ABI_VERSION_CURRENT;
+}
+
 #define CPRISK_ARMOR_ABI_VERSION 2u
 
 #define CPRISK_ARMOR_KEY_SIZE 32u

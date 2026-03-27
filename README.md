@@ -65,283 +65,340 @@
 | **6.6** | **反调试纵深 + Pass 7/8 + Frida 模块检测** | cprisk-armor Pass 7 AntiDebugInjector（`__DATA,__cpr_adbg7` 编译期注入计划 ABI）+ Pass 8 InstructionSubstitution（对 `__TEXT.__text` 做 1:1 等长语义等价替换）、关键密码学路径被调试时静默毒化、watchdog 多维探针（SIGTRAP/csops/硬件断点/软件断点/异常分发超时/可疑线程/TTY/Developer Disk）、FridaModuleDetector（image/section/字符串三路 Frida/Gum/Gadget 检测）、反篡改检测顺序稳定随机化（MutationStrategy.shuffleChecks）、`software_breakpoint_detected` / `exception_delivery_timeout` 等新 RiskSignal |
 | **6.7** | **控制流平坦化 + 反去混淆 + Pass 9** | 源码级 CFF 基础设施（CFFStateCodec / CFFDispatcher / CFFReturnSink / CFFRuntimeSalt）、DecisionTree / RiskDetectionEngine / ChallengeSession / TrustChainManager / anti_debug_watchdog 接入编码状态机、Pass 9 ControlFlowOrchestrator 策略编排（`cff_policy.yaml`）、异构 dispatcher（switch / if-else / dual-rail / region）、runtime salt 绑定、fail-closed 默认路径、避免 OLLVM 模板化特征 |
 | **6.8** | **反调试 Runtime Gate + Pass 10/11 + CFF/白盒强化** | `__thread_init` 早期异常端口抢占与竞态回收、AntiDebug plan 运行时 inline patch gate（`BRK #0xC0E0`）、Unix syscall vs Mach 路径交叉校验、Frida 协议指纹与可选全端口扫描、多频 watchdog + 互监 deadline、关键路径 timing canary、白盒 PRF 增强扩散层、Pass 10 ImportEncryptor、Pass 11 HeaderEncryptor、CFF 新增 `splitIndirect` dispatcher 与 `affine` 编码风格、CFF 覆盖建议器 |
-| **7.0** | **TextSegmentEncryptor + VMProtector(M3) + 13 Pass 收口** | Pass 12 `TextSegmentEncryptor` 对 `__TEXT.__text` 做页级加密并写入 `__swift5_cgenc` 元数据，Pass 13 `VMProtector` 对 7 个高价值函数执行“ARM64 → 自定义字节码 + VM 入口跳板”虚拟化，运行时新增 `cprisk_vm_interpreter`、`__swift5_mdvrt/__swift5_mdirt` section、M2 handler 变体 / VPC 仿射编码 / 更多 ARM64 lift 覆盖，以及 M3 解释器自身 CFF 接线、dead handler 注入、VPC 不透明谓词链与可选自校验门控 |
+| **7.0** | **TextSegmentEncryptor + VMProtector(M3) + 13 Pass 收口** | Pass 12 `TextSegmentEncryptor` 对 `__TEXT.__text` 做页级加密并写入 `__swift5_cgenc` 元数据，Pass 13 `VMProtector` 对 7 个高价值函数执行"ARM64 → 自定义字节码 + VM 入口跳板"虚拟化，运行时新增 `cprisk_vm_interpreter`、`__swift5_mdvrt/__swift5_mdirt` section、M2 handler 变体 / VPC 仿射编码 / 更多 ARM64 lift 覆盖，以及 M3 解释器自身 CFF 接线、dead handler 注入、VPC 不透明谓词链与可选自校验门控 |
 | **7.1** | **VM 自校验链路对齐 + dispatcher 跨单元散布 + 合规文档收口** | VM self-check 改为优先消费 `__swift5_mdvsi` span map 驱动注入与运行时校验，`cprisk-vm-self-expect` 同时支持 CPSF/CPSH（FNV/HMAC）产物写入；解释器主 dispatcher 延续函数指针表架构，并将 22 个 `cprisk_vm_oph_*` handler 拆分到多个 `.c` 编译单元，减少单文件语义聚合；同步更新 SDK 隐私声明与 App Store 合规文档，明确 7.1 加固升级不扩大 collected data / Required Reason API 边界 |
 | **7.2** | **MIE/MTE 姿态接入 + iPhoneOS 26 SDK 构建兼容** | Release 构建接入 `CPRISK_MTE_COMPILE_SUPPORT` 与 `ENABLE_ENHANCED_SECURITY`，新增 `cprisk_mte_guard` / `MIEPostureDetector`，通过 sysctl + 本地快照 + region canary 保守感知 Apple Memory Integrity Enforcement 姿态，并补齐 `HoneypotMemoryDetector` 在 iPhoneOS 26 SDK 下的 `ucontext_t` / PC 字段兼容路径，使 `xcodebuild -sdk iphoneos` 恢复全绿 |
-| **7.3** | **文档与版本收口** | README 移除冗长 6.x 独立章节；`CloudPhoneRiskKit_文档` 与合规/隐私声明统一为 7.3；`Version.current` 与对外 SDK 版本号对齐 |
-## 架构概览
+| **7.3** | **工程产品化 + 文档体系收口** | 多实例进程隔离（IsolationContext）、ABI 语义化版本契约（v1.0.0）、主入口模块拆分（2928→395 行 + 6 extension）、OpenAPI/Protobuf 服务端协议标准化、性能基准测试套件、XCFramework 构建指南、CocoaPods podspec、多租户密钥管理与轮换（TenantKeyManager）、SLA 文档（TPR≥99.2% / FPR≤0.05%）、标准 CHANGELOG（Keep a Changelog）、接入工时评估（<2h/<4h/<8h 三路径）、Objective-C 完整桥接层、SDK Portal 控制台设计规范、17 份文档归一化至 `CloudPhoneRiskKit_文档/` |
+
+---
+
+## 架构总览
 
 ```
-┌────────────────────────────────────────────────────────┐
-│        Layer 0: 自研壳 (cprisk-armor) ABI v2 / 13 Pass    │
-│   全量字符串加密+HMAC / 多 Section 数据段加密+HMAC       │
-│   完整性锚点 HMAC / Metadata 抹除 / 结构混淆 / Anti-Dump │
-│   Pass 6 符号表混淆 / Pass 7 Runtime Gate / Pass 8 指令替换 │
-│   Pass 9 CFF 编排 / Pass 10 ImportEncryptor / Pass 11 HeaderEncryptor │
-│   Pass 12 Text Encrypt / Pass 13 VMP(M3) / 全量 strip    │
-│   白盒 PRF (5域 S-box ~160KB, 强扩散) / 反重打包 TeamID │
-├────────────────────────────────────────────────────────┤
-│                   业务应用层                             │
-│            evaluate(scenario: .payment)                │
-├────────────────────────────────────────────────────────┤
-│               RiskDetectionEngine                      │
-│   场景策略 ─ 决策树 ─ 组合规则 ─ 盲挑战 ─ HMAC 签名    │
-│   安全地板强制 ─ 关键信号权重下限 ─ 异常容错链          │
-├──────────┬──────────────┬───────────┬───────────────────┤
-│ Layer 1  │   Layer 2    │  Layer 3  │     Layer 4       │
-│ 硬件指纹  │  一致性      │  行为熵    │   服务端聚合         │
-├──────────┼──────────────┼───────────┼───────────────────┤
-│ GPU 名称  │ PLT/GOT      │ 触摸熵    │  公网 IP / ASN    │
-│ DRM 等级  │ RWX 内存     │ 传感器熵   │  机房属性          │
-│ 设备型号  │ Hook 检测    │ 电压方差   │  IP 聚合度         │
-│ 电池计数器 │ 挂载点       │ 时序模式   │  图特征反哺        │
-│ Board ID │ SVC 双路     │ 耦合分析   │  风险标签          │
-│          │ 代码段哈希    │ 行为充足性  │  黑名单           │
-│          │ 线程枚举     │           │                   │
-│          │ 异常端口     │           │                   │
-│          │ V8 堆检测    │           │                   │
-│          │ ObjC Swizzle │           │                  │
-│          │ Socket 检测  │           │                   │
-│          │ 时序侧信道   │           │                    │
-│ 指纹突变  │DYLD Interpose│         │                    │
-   │          │ SDK 自校验   │           │                │
-│          │ ptrace 防附加 │           │                  │
-│          │ 多路径一致性  │           │                   │
-└──────────┴──────────────┴───────────┴───────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│  Layer 0 · cprisk-armor  (ABI v2 · 13 Pass · White-Box PRF 5域)   │
+│  字符串加密 │ Metadata 抹除 │ 数据段加密 │ 完整性锚点 │ 结构混淆    │
+│  符号混淆 │ Runtime Gate │ 指令替换 │ CFF 编排 │ 导入表/Header 加密  │
+│  __TEXT 页级加密 │ VMProtector (M3 · 自定义字节码解释器)            │
+│  白盒 PRF (160 KB S-box · 强扩散) │ 反重打包 TeamID/签名链          │
+├─────────────────────────────────────────────────────────────────────┤
+│  Layer 1 · 端侧决策引擎        RiskDetectionEngine                 │
+│  场景策略 ─ 决策树 ─ 组合规则 ─ 盲挑战 ─ HMAC v2a 签名             │
+│  安全地板强制 · 关键信号权重下限 · 超时 fail-closed · 三态熔断器     │
+├───────────┬───────────────┬────────────┬────────────────────────────┤
+│ 硬件指纹   │  一致性 & 对抗  │  行为熵     │  服务端聚合                │
+├───────────┼───────────────┼────────────┼────────────────────────────┤
+│ GPU 渲染   │ PLT/GOT       │ 触摸熵      │ 公网 IP / ASN             │
+│ DRM 等级   │ RWX 内存扫描   │ 传感器熵    │ 机房属性                  │
+│ 电池物理熵  │ ObjC Swizzle  │ 电压方差    │ IP 设备聚合度             │
+│ Board ID  │ DYLD Interpose │ 时序模式    │ 图特征反哺                │
+│ 设备型号   │ SVC 双路校验   │ 耦合分析    │ 风险标签                  │
+│ 指纹突变   │ 代码段哈希     │ 行为充足性   │ 黑名单                   │
+│ MIE 姿态   │ 线程枚举异常   │ 传感器回放   │                          │
+│           │ 异常端口劫持   │            │                           │
+│           │ V8 堆 / Socket │            │                          │
+│           │ 时序侧信道     │            │                           │
+│           │ ptrace 防附加  │            │                           │
+│           │ 多路径一致性   │            │                           │
+│           │ 内核 Hook 侧信道│           │                           │
+│           │ SDK 自校验     │            │                           │
+└───────────┴───────────────┴────────────┴────────────────────────────┘
 ```
 
-### 信号三分类
+### 信号分类与权重
 
-| 类型 | 判定方式 | 典型信号 | 权重 |
-|------|----------|----------|------|
-| **硬信号** | 本地独立判定，单点即可触发 | 越狱、DRM 降级、ChargeCounter 异常、PLT 篡改、ObjC Swizzle、异常端口劫持、SDK 二进制替换、DYLD Interpose | 80-100 |
-| **软信号** | 需结合场景综合评分 | VPN、行为异常、电压方差低、挂载点异常、时序侧信道、线程枚举异常、指纹突变、随机化检测、行为数据不足 | 30-75 |
-| **服务端信号** | 依赖外部聚合 | 机房 IP、ASN 黑名单、IP 设备聚合度、图社区风险、硬件画像聚集 | 55-100 |
-
----
-
-## 7.1 新增能力 — VM Self-Check 对齐 + Dispatcher 跨单元散布
-
-7.1 在 7.0 的 TextSegmentEncryptor、VMProtector(M3) 与解释器自保护基础上，继续把 VM runtime 本身往“更难静态切片、更难单点伪造”的方向推进，重点补齐三条链路：第一，**self-check expect blob 链路从硬编码符号窗口升级为 CPSV span map 驱动**，即由 `__DATA.__swift5_mdvsi` 记录的三段 TEXT 窗口统一驱动注入器与运行时校验，减少 producer / runtime 偏移；第二，**self-check CLI 同时支持 CPSF/FNV 与 CPSH/HMAC**，便于交付时直接生成两种 expect blob；第三，**全局 opcode dispatcher 在保留函数指针表架构的前提下，将 22 个 `cprisk_vm_oph_*` handler 拆分到多个编译单元**，降低单文件聚合语义暴露面，使 pattern-based 恢复更依赖跨 TU 还原。
-
-### 7.1 核心改动
-
-| 改动 | 说明 |
-|------|------|
-| **CPSV span map 驱动 self-check** | `VMSelfExpectInjector` 优先读取 `__swift5_mdvsi`（CPSV）而不是只依赖 `_cprisk_vm_execute / _cprisk_vm_interp_loop_a / _cprisk_vm_dispatch_lookup` 三符号硬编码布局，注入与 runtime hash/HMAC 共享同一窗口定义 |
-| **CPSF / CPSH 双路径 CLI** | `cprisk-vm-self-expect` 支持传统 CPSF/FNV 与 CPSH/HMAC 写入，可通过参数选择写入模式并在交付链路中显式控制 |
-| **runtime 自校验对齐 producer span** | `cprisk_vm_interpreter.c` 在 M3 self-check 时优先消费 `__swift5_mdvsi` 中记录的 span 布局，确保 observed bytes 与 post-link producer 注入字节源一致 |
-| **dispatcher 继续去 switch 化** | 主 opcode 路径现在走“family 分流 + single-access handler materialization”(`cprisk_vm_dispatch_oph_materialized_i(...)`)，不回退为大 `switch`，也不再暴露明文 `oph_table[logical]()` 指针总表 |
-| **handler 跨编译单元散布** | 22 个 `cprisk_vm_oph_*` handler 已拆到 `cprisk_vm_oph_basic/lane/branch/bitwise/vreg/nested.c` 与 `cprisk_vm_oph_table.c`，减少单文件语义聚合 |
-| **隐私/合规文档同步升级** | README、SDK 隐私声明、App Store 合规指南统一升级到 7.1，并明确这些 VM/runtime hardening 不会新增 privacy manifest 的 collected data 类型或 Required Reason API 类别 |
+| 类型 | 判定逻辑 | 典型信号 | 权重范围 |
+|------|----------|----------|----------|
+| **硬信号** | 本地独立判定，单点即可触发 | 越狱文件、DRM 降级、ChargeCounter 异常、PLT 篡改、ObjC Swizzle、异常端口劫持、SDK 二进制替换、DYLD Interpose、代码签名链断裂 | 80 – 100 |
+| **软信号** | 需结合场景综合评分 | VPN、行为异常、电压方差低、挂载点异常、时序侧信道、线程枚举异常、指纹突变、行为数据不足、传感器回放 | 30 – 75 |
+| **服务端信号** | 依赖外部聚合接口 | 机房 IP、ASN 黑名单、IP 设备聚合度、图社区风险、硬件画像聚集 | 55 – 100 |
 
 ---
 
-## 7.2 新增能力 — MIE/MTE 姿态接入 + iPhoneOS 26 SDK 构建兼容
+## 检测能力矩阵
 
-7.2 在 7.1 的 VM self-check / dispatcher 纵深基础上，开始把 Apple 近代硬件提供的内存完整性能力以“**保守接入、可降级、可解释**”的方式纳入 SDK：第一，Release 构建增加 `CPRISK_MTE_COMPILE_SUPPORT` 与 Xcode `ENABLE_ENHANCED_SECURITY` 路径，使 SDK 在支持设备上可以消费更强的系统内存完整性语义；第二，C 层新增 `cprisk_mte_guard`，通过 `hw.optional.arm.FEAT_MTE*` / `FEAT_PAuth` 等 `sysctl`、本地 self-test、关键区域 baseline hash + tag snapshot canary，对 `runtime material` 与完整性摘要做低侵入防护；第三，Swift 层新增 `MIEPostureDetector`，把设备姿态映射为 `mie_posture`、`mte_inactive_for_process`、`mte_canary_tampered` 等信号，并对高价值内存/注入类信号做轻量上下文加权；第四，同步修复 `HoneypotMemoryDetector` 在 iPhoneOS 26 SDK 下 `ucontext_t`/PC 字段形态变化导致的 `iphoneos` 构建失败问题，通过 C 层统一封装 signal context PC 前移逻辑，恢复 `xcodebuild -sdk iphoneos` 全绿。
+| 检测域 | 规模 | 关键技术 |
+|--------|------|----------|
+| 越狱检测 | 11 Detectors | 路径/符号/挂载点/沙盒/环境变量/dylib/链接器/URL Scheme/fork/写入测试/指针验证 |
+| 反篡改 & 抗绕过 | 33 Detectors | Frida 8 维全覆盖（线程/堆/模块/Socket/时序/运行时共识）、PLT/GOT、RWX、ObjC Swizzle/Inline Hook、DYLD Interpose、异常端口、SDK 二进制校验、代码段哈希、DualPathValidator 三路校验、SVC 直调、匿名内存隐写、fsid 隔离、指令计数器双路、AppSigningIdentity 反重打包、LLDB JIT、TaskPort Audit |
+| 反绕过增强 | 9 Detectors | LibcPrologueGuard、MultiPathConsistency、RuntimeIntegrityValidator、SDKBinaryIntegrity、TextSegmentIntegrity、FingerprintDeobfuscation、IntegrityBaselineEnvCheck、RandomizedDetection、MultiPathFileDetector |
+| 硬件信任根 | 2 | App Attest（TOCTOU 安全 + requireAttestation 强制）、Secure Enclave 硬件绑定签名 |
+| 执行流 & 内存 | 3 | CallStack ROP/JOP 链检测、Syscall Canary 探针致盲、HoneypotMemory 三页 + SIGBUS |
+| 内核 Hook 侧信道 | 4 策略 | 时序分布 / inode 一致性 / 时钟交叉 / 返回值熵 |
+| 物理环境探测 | 19 Providers | GPU 渲染指纹、DRM、电池熵、Board ID、IMU 噪声谱、传感器回放、显示 Mux、生物特征、音频路由、Baseband 隔离、网络接口、时间模式、设备年龄、硬件能力、环境一致性、分层一致性、VPhone 硬件 |
+| 行为信号 | 4 | 触摸捕获、运动采样、行为耦合、行为信号聚合 |
+| 服务端聚合 | 4 维 | 公网 IP/ASN、机房属性、IP 设备聚合度、图特征反哺 |
 
-### 7.2 核心改动
-
-| 改动 | 说明 |
-|------|------|
-| **Release 编译期开关接入 MIE** | `Package.swift` / Xcode Release 配置接入 `CPRISK_MTE_COMPILE_SUPPORT`，并为对应 target 打开 `ENABLE_ENHANCED_SECURITY`，使支持设备可暴露更强的 Memory Integrity Enforcement 能力 |
-| **C 层 `cprisk_mte_guard`** | 新增 `cprisk_mte_available()` / `cprisk_mte_self_test()` / `cprisk_mte_guard_snapshot()` 与 region-bound canary，围绕关键运行时材料做 baseline hash + top-byte tag 快照校验，在不支持设备上安全降级，不强行执行高风险 MTE 指令 |
-| **Swift 层 `MIEPostureDetector`** | 通过 `sysctl` + CRiskCore 本地快照评估 `none / pacOnly / miePartial / mieFull` 四级姿态，并输出 `mie_posture`、`mte_unavailable_on_capable_device`、`mte_inactive_for_process`、`mte_canary_tampered` 等信号 |
-| **反篡改权重上下文增强** | `AntiTamperingSignalProvider` 在 `miePartial / mieFull` 下对匿名可执行内存、Frida、文本段篡改等高价值信号做小幅上下文加权，同时把 `device_mie_level` 注入证据域，便于服务端解释 |
-| **隐私/合规文档同步升级** | README、SDK 隐私声明、App Store 合规指南、架构/威胁模型文档统一补充 MIE 能力边界，明确该能力通常只在 A17 / A17 Pro 及后续较新产品线上更可能观察到相关位形，且不新增 collected data 或用户内容采集 |
-| **iPhoneOS 26 SDK 兼容修复** | `HoneypotMemoryDetector` 不再在 Swift 中直接假设 `ucontext_t` 的 `__pc / __opaque_pc` 形态，而改为调用 C 层 `cprisk_advance_ucontext_pc(...)` 做统一适配，消除 arm64 / arm64e 下的新 SDK 接口差异 |
+> 检测器总计 **80+**，覆盖从硬件到内核到用户态到网络的完整攻击面。
 
 ---
-
-## 7.0 新增能力 — Pass 12/13 + VMP M3 收口
-
-7.0 在既有壳链（runtime gate、Pass 10/11、源码级 CFF）之上，完成了当前自研壳链路的两块关键拼图：第一，新增 **Pass 12 `TextSegmentEncryptor`**，对 `__TEXT.__text` 做页级加密并写入 `__swift5_cgenc` 元数据，使关键代码在静态视角下进一步密文化；第二，新增 **Pass 13 `VMProtector`**，对策略指定的 7 个高价值函数执行“原生 ARM64 指令 → 自定义 VM 字节码 + VM 入口跳板”的转换，运行时由 `CRiskCore` 中嵌入的 `cprisk_vm_interpreter.c` 解释执行；第三，在 VMP 基础上完成 **M3**：解释器自身纳入 CFF 接线、dispatch/bytecode 新增 dead handler 元数据与 VPC 不透明谓词链，运行时加入 dead bait handler、opaque predicate chain 与可选自校验门控，从而把对抗重点从“加密 + CFF”进一步推进到“虚拟化 + 反分析”。
-
-### 7.0 核心改动
-
-| 改动 | 说明 |
-|------|------|
-| **Pass 12: TextSegmentEncryptor** | 对 `__TEXT.__text` 内页做页粒度加密，元数据写入 `__DATA.__swift5_cgenc`，运行时按页恢复，增强静态反编译与字符串/控制流恢复难度 |
-| **Pass 13: VMProtector** | 构建期新增 ARM64 lifter、VMIR、opcode table、bytecode emitter、entry trampoline rewriter；运行时新增 `cprisk_vm_interpreter` 执行自定义字节码 |
-| **VMP section 伪装落地** | dispatch/bytecode 分别写入 `__DATA.__swift5_mdvrt` 与 `__DATA.__swift5_mdirt`，避免显式泄露壳结构语义 |
-| **7 个高价值函数虚拟化** | 当前 `vmp_policy.yaml` 将 `RiskDetectionEngine`、`DecisionTree`、`ChallengeSession`、`TrustChainManager` 的 7 个关键函数纳入 full tier |
-| **M2 指令扩展** | 覆盖 `MOVZ/MOVK`、`ADRP+ADD` 融合、`CSEL/CSET`、`CBZ/CBNZ`、`B.cond`、基础 `LDR/STR` 等模式，降低 VM 前导 lift 的回退率 |
-| **M2 反分析** | handler 变体池、多态 opcode table、VPC 仿射编码、per-entry/global affine metadata、dispatch tail 扩展 |
-| **M3 解释器自身加固** | `cff_policy.yaml` 将 `cprisk_vm_entry` / `cprisk_vm_execute` 纳入 medium tier，Pass 9 已能直接改写解释器入口指令 |
-| **M3 dead handler 注入** | dispatch 表注入诱饵 raw opcode 映射，运行时存在 dead bait handler 路径，增加 pattern-based 语义恢复成本 |
-| **M3 opaque VPC 链** | 构建期写入 VPC predicate constants，运行时以不透明谓词链包裹 dispatch loop，使解释器 CFG 非线性化 |
 
 ## 壳保护工作流
 
 ```
-源码 → swift build → SDK (library.static) + App 链接
-                          ↓
-                    App 二进制 (SDK 代码静态链入)
-                          ↓
-                    cprisk-armor CLI (13 Pass, ABI v2)
-                    --key <hex> / --key-file / CPRISK_ARMOR_KEY
-                    ┌─ Pass 1: StringEncryptor       (白盒 PRF 密钥 + HMAC + nonce)
-                    ├─ Pass 2: MetadataScrubber      (元数据抹除)
-                    ├─ Pass 8: InstructionSubstitution(1:1 等长指令替换)
-                    ├─ Pass 4: IntegrityAnchor       (HMAC 锚点 + 白盒 PRF 5域)
-                    ├─ Pass 3: DataSegmentEncryptor  (白盒 PRF 密钥 + HMAC + nonce)
-                    ├─ Pass 5: StructureObfuscator   (结构混淆, 安全随机)
-                    ├─ Pass 7: AntiDebugInjector     (anti-debug 注入计划 __cpr_adbg7)
-                    ├─ Pass 6: SymbolStripper        (SDK 符号表混淆)
-                    ├─ Pass 10: ImportEncryptor      (导入表加密)
-                    ├─ Pass 11: HeaderEncryptor      (Header 加密)
-                    ├─ Pass 12: TextSegmentEncryptor (__TEXT 页级加密)
-                    └─ Pass 13: VMProtector          (函数虚拟化 / VM 跳板)
-                          ↓
-                    xcrun strip -x && xcrun strip  (全量符号剥离)
-                          ↓
-                    App 二进制 (加固后, IDA 中 sub_XXXX)
-                          ↓
-                    运行时 CRiskCore
-                    白盒 PRF / HMAC 验证 → 解密 + 完整性校验 + Anti-Dump + VM 解释执行
-                    白盒派生 armor material → ReportEnvelope v2a
+源码 ──swift build──▶ SDK (library.static) ──Link──▶ App 二进制
+                                                        │
+                     cprisk-armor CLI  ◀────────────────┘
+                     (13 Pass · ABI v2 · CPRISK_ARMOR_KEY)
+                     ┌─ Pass  1  StringEncryptor         白盒 PRF + HMAC + nonce
+                     ├─ Pass  2  MetadataScrubber        元数据抹除
+                     ├─ Pass  8  InstructionSubstitution  1:1 等长语义等价替换
+                     ├─ Pass  4  IntegrityAnchor          HMAC 锚点 + 白盒 5域
+                     ├─ Pass  3  DataSegmentEncryptor     白盒 PRF + HMAC + nonce
+                     ├─ Pass  5  StructureObfuscator      假 Section + 随机布局
+                     ├─ Pass  7  AntiDebugInjector        __cpr_adbg7 注入计划
+                     ├─ Pass  6  SymbolStripper           nlist 符号混淆
+                     ├─ Pass 10  ImportEncryptor          导入表加密 + HMAC
+                     ├─ Pass 11  HeaderEncryptor          Mach-O header 加密
+                     ├─ Pass 12  TextSegmentEncryptor     __TEXT 页级加密
+                     └─ Pass 13  VMProtector              ARM64→VM 字节码虚拟化
+                                    │
+                     xcrun strip ◀──┘  → App 二进制 (IDA: sub_XXXX)
+                                    │
+                     运行时 CRiskCore ◀─┘
+                     白盒 PRF/HMAC 验证 → 解密 + 完整性校验 + Anti-Dump + VM 解释执行
+                     白盒派生 armor material → ReportEnvelope v2a 签名
 ```
 
-### 渗透式防护原理
+### 渗透式毒化
 
-传统壳检测到篡改后通常 crash 退出，容易被攻击者二分搜索定位。6.0 采用**渗透式毒化**：
+传统壳检测到篡改后 crash → 攻击者二分搜索定位。本 SDK 采用**静默毒化**：
 
-1. 完整性锚点哈希参与 KDF 派生解密密钥 → 篡改后密钥错误 → 字符串/数据解密失败
-2. armor runtime material 混入 ReportEnvelope HMAC 密钥 → 签名静默失效
-3. 服务端拒绝异常签名 → 攻击者无法区分"壳被绕过"还是"业务后端异常"
-4. 不产生显式 crash / abort → 攻击者无法通过 signal handler 或 exit code 定位防护点
-
-
-## 项目结构
-
-```
-.
-├── cprisk-armor/                         # 编译后壳工具链 (SPM CLI)
-│   ├── Sources/
-│   │   ├── cprisk-armor/                  # CLI 入口 (13 Pass 编排)
-│   │   ├── MachOKit/                     # Mach-O 读写库
-│   │   ├── StringEncryptor/              # Pass 1: 全量字符串加密
-│   │   ├── MetadataScrubber/             # Pass 2: Metadata 抹除
-│   │   ├── DataSegmentEncryptor/         # Pass 3: 多 Section 数据段加密
-│   │   ├── IntegrityAnchor/              # Pass 4: 完整性锚点
-│   │   ├── StructureObfuscator/          # Pass 5: 结构混淆
-│   │   ├── SymbolStripper/               # Pass 6: 符号表混淆
-│   │   ├── AntiDebugInjector/            # Pass 7: anti-debug 注入计划
-│   │   ├── InstructionSubstitution/      # Pass 8: ARM64 指令替换
-│   │   ├── ControlFlowOrchestrator/      # Pass 9: CFF 策略编排
-│   │   ├── TextSegmentEncryptor/         # Pass 12: __TEXT 页级加密
-│   │   └── VMProtector/                  # Pass 13: VMP 虚拟化
-│   └── Tests/                            # 99+ 项单元 + E2E + KDF 链 + WhiteBox + AntiDebugInjector + InstructionSubstitution 测试
-│
-├── RiskDetectorApp/
-│   ├── App/                              # SwiftUI 示例应用
-│   ├── Sources/
-│   │   ├── CRiskCore/                    # C 自保护核心
-│   │   │   ├── cprisk_string_decrypt.c   # 运行时字符串解密
-│   │   │   ├── cprisk_data_loader.c      # 运行时数据段加载/解密
-│   │   │   ├── cprisk_whitebox.c         # 白盒 PRF 引擎 (5域 S-box)
-│   │   │   ├── cprisk_integrity.c        # 完整性校验 + 主初始化 (白盒/legacy 双路径)
-│   │   │   ├── cprisk_memory_guard.c     # Anti-Dump 页面保护
-│   │   │   ├── cprisk_vm_interpreter.c   # Pass 13 VM 运行时解释器
-│   │   │   └── include/
-│   │   │       ├── cprisk_armor_abi.h    # 壳 ABI (Section 名/Magic/盐)
-│   │   │       ├── cprisk_sha256.h       # 内联 SHA-256 (无 CommonCrypto)
-│   │   │       └── cprisk_macho.h        # 自包含 Mach-O 基址解析
-│   │   ├── CloudPhoneRiskAppCore/        # 应用层编排 (配置/检测/摘要)
-│   │   └── CloudPhoneRiskKit/            # SDK 主体
-│   │       ├── Detection/
-│   │       │   ├── AntiBypass/           # 反篡改 & 抗绕过检测器
-│   │       │   ├── Behavior/            # 行为信号 (触摸/传感器/时序)
-│   │       │   ├── Environment/         # 环境检测 (越狱/挂载/沙盒)
-│   │       │   └── Hardware/            # 硬件信号 (GPU/DRM/电池/Board)
-│   │       ├── Device/                   # 设备标识 & Keychain
-│   │       ├── Engine/                   # 决策引擎 & 场景策略
-│   │       ├── Provider/                 # 信号 Provider 注册表
-│   │       ├── Risk/                     # 报告封装 & 签名验证 (v2a)
-│   │       ├── Storage/                  # 加密存储 & 历史管理
-│   │       └── Util/                     # 工具 (SVC直调/混淆/加密)
-│   └── Tests/                            # 单元测试 (301 tests)
-```
+1. **KDF 链路投毒** — 完整性锚点哈希参与密钥派生 → 篡改后密钥链断裂 → 字符串/数据解密得到错误明文
+2. **签名链路投毒** — armor runtime material 混入 HMAC 密钥 → 服务端验签静默失败
+3. **无 crash / 无 abort** — 不产生任何显式错误码 → 攻击者无法通过 signal / exit code 区分"绕过成功"与"后端异常"
+4. **多 Lane 独立投毒** — 15 条投毒 Lane（watchdog / code_signing / exception / anti_dump / whitebox / CFF ...），每条有独立 epoch 与去相关 XOR 窗口
 
 ---
 
-## 检测器总览
+## SDK 工程架构
 
-| 检测域 | 数量 | 说明 |
-|--------|------|------|
-| 越狱检测 | 11 个 Detector | 路径/符号/挂载点/沙盒/环境变量/文件权限/dylib/链接器/URL Scheme/fork/写入测试 |
-| 反篡改 & 抗绕过 | 23+ 个 Detector | PLT/GOT、RWX 内存、ObjC Swizzle、DYLD Interpose、线程枚举、异常端口、V8 堆、Socket、时序侧信道、SDK 二进制校验、代码段哈希、LibcPrologueGuard、DualPathValidator、SVC 直调、匿名内存隐写、ObjC Inline Hook 跳板、fsid 隔离探测、指令计数器双路校验、ptrace 反调试、**AppSigningIdentityDetector 反重打包** |
-| 设备 & 环境信号 | 5 个 Provider | GPU 深度探测、DRM 等级、电池物理熵、Board ID、指纹突变 / 随机化检测 |
-| 硬件信任根 | 2 个 | App Attest（TOCTOU 安全 + 强制模式）、Secure Enclave 硬件绑定签名 |
-| 执行流检测 | 2 个 | CallStack 回溯 ROP/JOP 链检测、Syscall Canary 探针致盲感知 |
-| 内存蜜罐 | 1 个 | HoneypotMemory 三页分散 + SIGBUS handler 自检 + 保护位验证 |
-| 内核 Hook 侧信道 | 4 策略 | KernelHookSideChannel — 时序分布 / inode 一致性 / 时钟交叉 / 返回值熵 |
-| 行为信号 | 3 个 Provider | 触摸熵、传感器熵、电压方差（含回放检测） |
-| 服务端聚合 | 4 维 | 公网 IP/ASN、机房属性、IP 设备聚合度、图特征反哺 |
+### 模块拆分
+
+主入口 `CPRiskKit` 采用 class + extension 拆分模式（主文件 395 行）：
+
+| 模块 | 职责 |
+|------|------|
+| `CPRiskKitConfiguration` | 信号 ID、混淆常量、自适应配置、Armor 状态枚举 |
+| `CPRiskKitLifecycle` | `start()` / `stop()` / 观察者绑定 / watchdog 心跳 / provider 注册 |
+| `CPRiskKitEvaluation` | `evaluate()` 管线 / 信号采集 / 评分 / 自适应节流 |
+| `CPRiskKitArmorBridge` | Armor 运行时初始化 / 材料派生 / anti-debug 模式 |
+| `CPRiskKitReporting` | 报告构建 / 安全上报 / 信封签名 / 远程配置 |
+| `CPRiskKitDiagnostics` | watchdog 快照 / armor 快照 / async-await 诊断 API |
+| `IsolationContext` | 多实例进程隔离 / App Group 共享 / Keychain 命名空间 |
+| `CPRiskKitObjCBridge` | Objective-C 完整桥接层（`@objc` enum 包装 + completion handler） |
+
+### 多实例隔离
+
+```swift
+// 主 App — 默认上下文
+let kit = CPRiskKit.shared
+
+// Keyboard Extension — 独立上下文
+let kbKit = CPRiskKit.scoped(
+    identifier: "com.app.keyboard",
+    group: "group.com.company.app"
+)
+```
+
+每个 `IsolationContext` 拥有独立的 Keychain prefix、存储路径、评估状态缓存和远程配置引用。
+
+### 多租户密钥管理
+
+`TenantKeyManager` 提供 Keychain-backed 的 per-tenant 密钥全生命周期管理：
+
+| 状态 | 含义 |
+|------|------|
+| `active` | 当前用于签名/加密的密钥 |
+| `pending` | 轮换目标 — grace period 后升格为 active |
+| `retired` | 前一版 active，grace period 内仍可用于验证 |
+| `revoked` | 紧急撤销 — 永不用于任何操作 |
+
+### C/Swift ABI 契约
+
+`cprisk_armor_abi.h` 声明语义化版本（`CPRISK_ABI_VERSION_MAJOR.MINOR.PATCH`），运行时可通过 `cprisk_abi_version()` 查询。完整兼容性矩阵见 `CloudPhoneRiskKit_文档/ABI_CONTRACT.md`。
 
 ---
 
 ## 灰度与降级机制
 
-SDK 在对抗安全的同时兼顾业务可用性，内置多层灰度与降级保护：
+### 紧急熔断（Kill Switch）
 
-### 紧急熔断开关（Kill Switch）
+`RemoteConfig.securityHardening.killSwitchEnabled` 远程下发 → 决策引擎强制 `score=0 / action=allow` → 所有拦截立即失效。`localKillSwitchOverride` 防止远程配置被劫持后一键关闭防护。
 
-通过 `RemoteConfig.securityHardening.killSwitchEnabled` 远程下发，启用后决策引擎强制返回 `score=0 / action=allow`，所有高风险拦截立即失效。用于线上误杀事故时快速止血，无需发版。
-
-### 远程配置熔断器（Circuit Breaker）
-
-`RemoteConfigProvider` 内置三态熔断器（closed → open → half-open）：
+### 三态熔断器（Circuit Breaker）
 
 | 状态 | 行为 |
 |------|------|
 | **closed** | 正常拉取远程配置 |
-| **open** | 连续失败 ≥3 次后触发，跳过拉取，直接返回当前配置 |
-| **half-open** | 冷却期（30s→60s→120s→300s 递增）过后允许一次探测请求 |
-
-熔断对调用方透明，`fetchLatest()` 在 open 状态下返回 `.success(currentConfig)` 而非错误。
+| **open** | 连续失败 ≥3 次后触发，跳过拉取，返回当前配置 |
+| **half-open** | 冷却期（30s→60s→120s→300s 指数递增）后允许一次探测 |
 
 ### 配置降级链
 
-远程配置不可用时，SDK 按以下优先级回退：
+1. **内存缓存** → 2. **磁盘已验签缓存** → 3. **本地默认配置** → 4. **安全地板强制**（Release 下关键开关始终开启）
 
-1. **内存缓存**：最近一次成功拉取的配置
-2. **磁盘缓存**：`ConfigCache` 持久化的 verified 配置（Release 下仅接受已验签且未过期的缓存）
-3. **本地默认配置**：`RemoteConfig.default` / `config.toSwift()`
-4. **安全地板强制**：无论使用哪层配置，Release 下关键检测开关始终强制开启
-
-配置过期（超过 `cacheValidityDuration`）时注入 `remote_config_stale` 软信号（weight=10），供服务端感知。
-
-### 签名降级（v2a → v2）
-
-`buildSecureReportEnvelope` 在 armor 运行时不可用时的行为：
+### 签名降级
 
 | `requireArmor` | armor 状态 | 行为 |
 |:---:|:---:|------|
-| `true`（默认） | 不可用 | 抛出 `armorRuntimeUnavailable`，调用方需处理 |
-| `false` | 不可用 | 降级为 v2 签名（不含 armor material），报告仍可提交 |
+| `true`（默认） | 不可用 | 抛出 `armorRuntimeUnavailable` |
+| `false` | 不可用 | 降级 v2 签名（服务端根据 `signatureVersion` 调整信任） |
 
-服务端应根据 `signatureVersion` 字段（`v2a` vs `v2`）调整信任评估。
-
-### 检测器容错
+### 检测器 Fail-Closed
 
 | 场景 | 降级行为 |
 |------|----------|
-| 检测器超时 / 异常 | 返回 `score=80`（高风险），避免静默放过 |
-| PhysicalSensorProbe 冷启动 | 返回 `pending_prewarm`（score=0），后台预热 |
-| Keychain 不可用 | 降级到 UserDefaults；两层都失败返回 `ephemeral:` 前缀 ID |
-| App Attest 不可用 | `requireAttestation=true` 时 throw；`false` 时降级为普通 HMAC |
+| 检测器超时 / 异常 | 返回 `score=80`（宁可误报不漏过） |
+| PhysicalSensorProbe 冷启 | `pending_prewarm`（score=0，后台预热） |
+| Keychain 不可用 | UserDefaults 降级 → `ephemeral:` 前缀 ID |
+| App Attest 不可用 | 强制模式 throw / 宽松模式降级 HMAC |
 
 ---
 
-## 文档索引
+## 服务端协议
 
-| 文档 | 路径 |
-|------|------|
-| SDK 使用与构建说明 | `CloudPhoneRiskKit_文档/CloudPhoneRiskKit_使用说明.md` |
-| SDK 隐私声明 | `CloudPhoneRiskKit_文档/CloudPhoneRiskKit_SDK_隐私声明.md` |
-| App Store / 接入合规指南 | `CloudPhoneRiskKit_文档/CloudPhoneRiskKit_AppStore_合规指南.md` |
+SDK 提供标准化的服务端对接规范：
+
+| 协议格式 | 路径 | 说明 |
+|---------|------|------|
+| OpenAPI 3.0 | `CloudPhoneRiskKit_文档/api/openapi.yaml` | REST 端点：evaluate / report / config / health |
+| Protobuf v3 | `CloudPhoneRiskKit_文档/api/risk_service.proto` | gRPC 服务定义 + 全部消息类型 |
+
+覆盖 `ReportEnvelope`、`ServerSignals`、`ServerRiskPolicy`、`RemoteConfig` 等所有交互结构。
+
+---
+
+## SLA 承诺
+
+| 指标 | 承诺值 |
+|------|--------|
+| 真阳性率 (TPR) | ≥ 99.2% |
+| 误杀率 (FPR) | ≤ 0.05% |
+| `evaluate()` P95 延迟 | < 200 ms |
+| 冷启动耗时 | < 500 ms |
+| Kill Switch 生效时间 | < 30s（配置拉取间隔内） |
+
+完整 SLA 含分场景精度、版本支持矩阵与升级程序，见 `CloudPhoneRiskKit_文档/SLA.md`。
+
+---
+
+## 项目结构
+
+```
+.
+├── cprisk-armor/                              # 编译后壳工具链 (SPM CLI · 46 源文件 · 19 测试)
+│   ├── Sources/
+│   │   ├── cprisk-armor/                       # CLI 入口 (13 Pass 编排)
+│   │   ├── MachOKit/                           # Mach-O 读写 + ABI + WhiteBox
+│   │   ├── StringEncryptor/                    # Pass 1
+│   │   ├── MetadataScrubber/                   # Pass 2
+│   │   ├── DataSegmentEncryptor/               # Pass 3
+│   │   ├── IntegrityAnchor/                    # Pass 4
+│   │   ├── StructureObfuscator/                # Pass 5
+│   │   ├── SymbolStripper/                     # Pass 6
+│   │   ├── AntiDebugInjector/                  # Pass 7
+│   │   ├── InstructionSubstitution/            # Pass 8
+│   │   ├── ControlFlowOrchestrator/            # Pass 9
+│   │   ├── ImportEncryptor/                    # Pass 10
+│   │   ├── HeaderEncryptor/                    # Pass 11
+│   │   ├── TextSegmentEncryptor/               # Pass 12
+│   │   └── VMProtector/                        # Pass 13
+│   └── Tests/MachOKitTests/                    # E2E + KDF + WhiteBox + VMP 测试
+│
+├── RiskDetectorApp/
+│   ├── App/                                    # SwiftUI 示例应用
+│   ├── Sources/
+│   │   ├── CRiskCore/                          # C 自保护核心 (38 .c · 16 .h)
+│   │   │   ├── cprisk_integrity.c              # 主初始化 + 完整性校验
+│   │   │   ├── cprisk_whitebox.c               # 白盒 PRF 引擎
+│   │   │   ├── cprisk_vm_interpreter.c         # VM 运行时解释器
+│   │   │   ├── cprisk_vm_oph_{basic,lane,branch,bitwise,vreg,nested,table}.c
+│   │   │   ├── cprisk_text_encrypt.c           # __TEXT 页级解密
+│   │   │   ├── cprisk_memory_guard.c           # Anti-Dump
+│   │   │   ├── cprisk_mte_guard.c              # MIE/MTE 姿态
+│   │   │   ├── direct_syscall.c                # SVC #0x80 直调
+│   │   │   └── include/ (16 headers)
+│   │   ├── CloudPhoneRiskAppCore/              # 应用层编排
+│   │   └── CloudPhoneRiskKit/                  # SDK 主体 (186 Swift 文件)
+│   │       ├── Core/                            # 主入口 + 6 extension + IsolationContext
+│   │       ├── Config/                          # 远程配置 + TenantKeyManager
+│   │       ├── Detection/
+│   │       │   ├── AntiTampering/ (33)          # 反篡改检测器
+│   │       │   ├── AntiBypass/ (9)              # 抗绕过检测器
+│   │       │   └── Adapter/                     # 检测器注册 & 适配
+│   │       ├── Jailbreak/Detectors/ (11)        # 越狱检测器
+│   │       ├── Providers/ (19)                  # 信号 Provider
+│   │       ├── Decision/                        # 决策引擎 + 场景策略
+│   │       ├── Risk/                            # 报告封装 + v2a 签名
+│   │       ├── Internal/CFF/                    # 源码级控制流平坦化
+│   │       ├── ObjCBridge/                      # Objective-C 桥接层
+│   │       ├── Storage/                         # AES-GCM 加密存储
+│   │       ├── TrustChain/                      # 端侧信任根链
+│   │       └── Util/                            # SVC 直调 / 混淆 / 加密
+│   └── Tests/ (67 files)                        # 单元测试
+│
+├── CloudPhoneRiskKit_文档/                      # 统一文档中心 (17 文件)
+│   ├── CloudPhoneRiskKit_使用说明.md
+│   ├── CloudPhoneRiskKit_SDK_隐私声明.md
+│   ├── CloudPhoneRiskKit_AppStore_合规指南.md
+│   ├── 架构设计文档.md / 威胁模型文档.md
+│   ├── ABI_CONTRACT.md                          # C/Swift ABI 兼容性契约
+│   ├── SLA.md                                   # 服务等级协议
+│   ├── CHANGELOG.md                             # 变更日志 (7.3→3.0)
+│   ├── PERFORMANCE_BENCHMARK.md                 # 性能基准报告
+│   ├── INTEGRATION_GUIDE.md                     # 集成指南
+│   ├── INTEGRATION_COST.md                      # 接入工时评估
+│   ├── XCFRAMEWORK_BUILD.md                     # XCFramework 构建
+│   ├── SDK_PORTAL_SPEC.md                       # Portal 控制台设计
+│   └── api/ (openapi.yaml + risk_service.proto) # 服务端协议规范
+│
+├── CloudPhoneRiskKit.podspec                    # CocoaPods
+└── README.md
+```
+
+---
+
+## 集成方式
+
+| 方式 | 适用场景 | 预估工时 |
+|------|---------|---------|
+| **Swift Package Manager** | 最推荐，Git URL 或本地路径 | < 30 min |
+| **CocoaPods** | `pod 'CloudPhoneRiskKit'`（Core / Full subspec） | < 1 h |
+| **XCFramework** | 预编译二进制分发，无需暴露源码 | < 1 h |
+| **手动集成** | 直接拖入源码 + CRiskCore | < 2 h |
+
+详见 `CloudPhoneRiskKit_文档/INTEGRATION_GUIDE.md`。
+
+### 快速开始
+
+```swift
+import CloudPhoneRiskKit
+
+// 1. 启动
+CPRiskKit.shared.start()
+
+// 2. 评估
+let report = CPRiskKit.shared.evaluate(scenario: .payment)
+print(report.riskLevel)   // .low / .medium / .high
+print(report.action)      // .allow / .challenge / .block
+
+// 3. 安全上报
+let envelope = try CPRiskKit.shared.buildSecureReportEnvelope(report: report)
+```
+
+### Objective-C 接入
+
+```objc
+#import <CloudPhoneRiskKit/CloudPhoneRiskKit-Swift.h>
+
+CPRiskKitObjCBridge *bridge = [[CPRiskKitObjCBridge alloc] init];
+[bridge startWithConfig:nil];
+[bridge evaluateAsyncWithScenario:CPRiskScenarioObjCPayment
+                       completion:^(CPEvaluationResult *result) {
+    NSLog(@"score=%ld level=%@", (long)result.score, result.levelName);
+}];
+```
 
 ---
 
@@ -351,27 +408,51 @@ SDK 在对抗安全的同时兼顾业务可用性，内置多层灰度与降级�
 cd RiskDetectorApp && swift build
 ```
 
-如需验证 Xcode 工程在设备 SDK 下的 Release 构建，可使用：
+Release（设备 SDK）：
 
 ```bash
-cd RiskDetectorApp && xcodebuild -project RiskDetectorApp.xcodeproj -target CloudPhoneRiskKit -configuration Release -sdk iphoneos build CODE_SIGNING_ALLOWED=NO
+cd RiskDetectorApp && xcodebuild \
+  -scheme CloudPhoneRiskKit \
+  -configuration Release \
+  -sdk iphoneos build CODE_SIGNING_ALLOWED=NO
 ```
 
 ## 测试
-
-单元测试通过 Swift Package Manager 运行。Xcode scheme 的 TestAction 若为空，默认可使用：
 
 ```bash
 cd RiskDetectorApp && swift test
 ```
 
-如需隔离构建目录（避免与并发任务共享 `.build`），可使用：
+隔离构建目录（CI 推荐）：
 
 ```bash
-cd RiskDetectorApp && swift test --scratch-path "${TMPDIR:-/tmp}/cloudphone-risk-detector-riskdetector-tests"
+cd RiskDetectorApp && swift test \
+  --scratch-path "${TMPDIR:-/tmp}/cprisk-tests"
 ```
 
-若使用 XcodeGen 生成工程（`xcodegen generate`），则 `CloudPhoneRiskKitTests` 与 `CloudPhoneRiskAppCoreTests` 会加入 scheme，可在 Xcode 中直接运行测试。
+当前测试规模：**67 个测试文件**，覆盖密码学链路、决策树边界、合规降级、反篡改、CFF 链完整性、armor 集成、性能基准。
+
+---
+
+## 文档索引
+
+| 分类 | 文档 | 路径 |
+|------|------|------|
+| **使用** | SDK 使用与构建说明 | `CloudPhoneRiskKit_文档/CloudPhoneRiskKit_使用说明.md` |
+| **使用** | 集成指南 (SPM/CocoaPods/XCFramework) | `CloudPhoneRiskKit_文档/INTEGRATION_GUIDE.md` |
+| **使用** | 接入工时评估 | `CloudPhoneRiskKit_文档/INTEGRATION_COST.md` |
+| **使用** | XCFramework 构建指南 | `CloudPhoneRiskKit_文档/XCFRAMEWORK_BUILD.md` |
+| **合规** | SDK 隐私声明 | `CloudPhoneRiskKit_文档/CloudPhoneRiskKit_SDK_隐私声明.md` |
+| **合规** | App Store 合规指南 | `CloudPhoneRiskKit_文档/CloudPhoneRiskKit_AppStore_合规指南.md` |
+| **架构** | 架构设计文档 | `CloudPhoneRiskKit_文档/架构设计文档.md` |
+| **架构** | 威胁模型文档 | `CloudPhoneRiskKit_文档/威胁模型文档.md` |
+| **协议** | C/Swift ABI 兼容性契约 | `CloudPhoneRiskKit_文档/ABI_CONTRACT.md` |
+| **协议** | OpenAPI 3.0 服务端规范 | `CloudPhoneRiskKit_文档/api/openapi.yaml` |
+| **协议** | Protobuf v3 消息定义 | `CloudPhoneRiskKit_文档/api/risk_service.proto` |
+| **运营** | 服务等级协议 (SLA) | `CloudPhoneRiskKit_文档/SLA.md` |
+| **运营** | 性能基准报告 | `CloudPhoneRiskKit_文档/PERFORMANCE_BENCHMARK.md` |
+| **运营** | 变更日志 (CHANGELOG) | `CloudPhoneRiskKit_文档/CHANGELOG.md` |
+| **运营** | SDK Portal 控制台设计 | `CloudPhoneRiskKit_文档/SDK_PORTAL_SPEC.md` |
 
 ---
 
@@ -381,4 +462,4 @@ cd RiskDetectorApp && swift test --scratch-path "${TMPDIR:-/tmp}/cloudphone-risk
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 7.3 — documentation &amp; version alignment</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 7.3 · 186 Swift · 38 C · 67 Tests · 13 Pass · 80+ Detectors · 17 Docs</sub></p>
