@@ -9,8 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - XCFramework 构建文档 (`docs/XCFRAMEWORK_BUILD.md`)
-- CocoaPods podspec 支持（Core / Full subspecs）
-- 集成指南 (`docs/INTEGRATION_GUIDE.md`)
+- 集成指南 (`CloudPhoneRiskKit_文档/INTEGRATION_GUIDE.md`，含 CocoaPods 自建 podspec；仓库根目录不跟踪 `CloudPhoneRiskKit.podspec`)
 - 多租户密钥管理 (`TenantKeyManager`)
 - SLA 文档 (`docs/SLA.md`)
 - 集成成本评估 (`docs/INTEGRATION_COST.md`)
