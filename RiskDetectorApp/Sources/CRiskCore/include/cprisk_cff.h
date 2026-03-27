@@ -136,9 +136,40 @@ static inline uint32_t cprisk_cff_hdr_avalanche32(uint32_t value) {
     return mixed;
 }
 
+static inline uint32_t cprisk_cff_hdr_rotate_left32(uint32_t value, uint32_t shift);
+static inline uint32_t cprisk_cff_hdr_const32(uint64_t domain, uint32_t seed, uint32_t salt, uint32_t base);
+static inline uint32_t cprisk_cff_hdr_const32_odd(uint64_t domain, uint32_t seed, uint32_t salt, uint32_t base);
+
+uint64_t cprisk_cff_runtime_spn_sbox_seed(void);
+
+static inline uint32_t cprisk_cff_hdr_build_seed32_i(void) {
+    uint64_t seed64 = cprisk_cff_runtime_spn_sbox_seed();
+    if (seed64 == 0u) {
+        seed64 = CPRISK_CFF_SPN_CANONICAL_SEED_U64;
+    }
+    return cprisk_cff_hdr_avalanche32(
+        (uint32_t)seed64 ^
+        ((uint32_t)(seed64 >> 32u) << 3) ^
+        0x48445242u
+    );
+}
+
+static inline uint32_t cprisk_cff_hdr_base_derive(uint64_t base_domain, uint32_t canonical_base) {
+    const uint32_t bs = cprisk_cff_hdr_build_seed32_i();
+    return cprisk_cff_hdr_const32(base_domain, bs, bs ^ canonical_base, canonical_base);
+}
+
 static inline uint32_t cprisk_cff_ctx_storage_mask(const cprisk_cff_context_t *ctx) {
     const uintptr_t p = (uintptr_t)ctx;
-    return cprisk_cff_hdr_avalanche32((uint32_t)p ^ (uint32_t)(p >> 32) ^ 0xC0FFEE42u);
+    const uint32_t ptr_mix = (uint32_t)p ^ (uint32_t)(p >> 32);
+    return cprisk_cff_hdr_avalanche32(
+        ptr_mix ^ cprisk_cff_hdr_const32(
+            0x4346465F43545831ull,
+            ptr_mix,
+            (uint32_t)sizeof(*ctx),
+            cprisk_cff_hdr_base_derive(0x4346465F42415331ull, 0xC0FFEE42u)
+        )
+    );
 }
 
 static inline uint32_t cprisk_cff_ctx_nonce_plain(const cprisk_cff_context_t *ctx) {
@@ -147,19 +178,34 @@ static inline uint32_t cprisk_cff_ctx_nonce_plain(const cprisk_cff_context_t *ct
 
 static inline uint32_t cprisk_cff_ctx_mask_ptr(const cprisk_cff_context_t *ctx) {
     return cprisk_cff_hdr_avalanche32(
-        cprisk_cff_ctx_storage_mask(ctx) ^ cprisk_cff_ctx_nonce_plain(ctx) ^ 0x71E58D4Bu
+        cprisk_cff_ctx_storage_mask(ctx) ^ cprisk_cff_ctx_nonce_plain(ctx) ^ cprisk_cff_hdr_const32(
+            0x4346465F43545832ull,
+            cprisk_cff_ctx_storage_mask(ctx),
+            cprisk_cff_ctx_nonce_plain(ctx),
+            cprisk_cff_hdr_base_derive(0x4346465F42415332ull, 0x71E58D4Bu)
+        )
     );
 }
 
 static inline uint32_t cprisk_cff_ctx_mask_salt(const cprisk_cff_context_t *ctx) {
     return cprisk_cff_hdr_avalanche32(
-        cprisk_cff_ctx_storage_mask(ctx) ^ cprisk_cff_ctx_nonce_plain(ctx) ^ 0x0ACC0DECu
+        cprisk_cff_ctx_storage_mask(ctx) ^ cprisk_cff_ctx_nonce_plain(ctx) ^ cprisk_cff_hdr_const32(
+            0x4346465F43545833ull,
+            cprisk_cff_ctx_storage_mask(ctx),
+            cprisk_cff_ctx_nonce_plain(ctx),
+            cprisk_cff_hdr_base_derive(0x4346465F42415333ull, 0x0ACC0DECu)
+        )
     );
 }
 
 static inline uint32_t cprisk_cff_ctx_mask_enc(const cprisk_cff_context_t *ctx) {
     return cprisk_cff_hdr_avalanche32(
-        cprisk_cff_ctx_storage_mask(ctx) ^ cprisk_cff_ctx_nonce_plain(ctx) ^ 0x5EEDB0E5u
+        cprisk_cff_ctx_storage_mask(ctx) ^ cprisk_cff_ctx_nonce_plain(ctx) ^ cprisk_cff_hdr_const32(
+            0x4346465F43545834ull,
+            cprisk_cff_ctx_storage_mask(ctx),
+            cprisk_cff_ctx_nonce_plain(ctx),
+            cprisk_cff_hdr_base_derive(0x4346465F42415334ull, 0x5EEDB0E5u)
+        )
     );
 }
 
@@ -177,21 +223,36 @@ static inline uint32_t cprisk_cff_ctx_encoded_plain(const cprisk_cff_context_t *
 
 static inline uint32_t cprisk_cff_ctx_last_plain(const cprisk_cff_context_t *ctx) {
     const uint32_t split_mask = cprisk_cff_hdr_avalanche32(
-        cprisk_cff_ctx_mask_enc(ctx) ^ cprisk_cff_ctx_nonce_plain(ctx) ^ 0x5F3759DFu
+        cprisk_cff_ctx_mask_enc(ctx) ^ cprisk_cff_ctx_nonce_plain(ctx) ^ cprisk_cff_hdr_const32(
+            0x4346465F43545835ull,
+            cprisk_cff_ctx_mask_enc(ctx),
+            cprisk_cff_ctx_nonce_plain(ctx),
+            cprisk_cff_hdr_base_derive(0x4346465F42415335ull, 0x5F3759DFu)
+        )
     );
     return ctx->state_share_a ^ ctx->state_share_b ^ split_mask;
 }
 
 static inline uint32_t cprisk_cff_ctx_chain_plain(const cprisk_cff_context_t *ctx) {
     const uint32_t chain_mask = cprisk_cff_hdr_avalanche32(
-        cprisk_cff_ctx_storage_mask(ctx) ^ cprisk_cff_ctx_nonce_plain(ctx) ^ 0xC11A1E5Eu
+        cprisk_cff_ctx_storage_mask(ctx) ^ cprisk_cff_ctx_nonce_plain(ctx) ^ cprisk_cff_hdr_const32(
+            0x4346465F43545836ull,
+            cprisk_cff_ctx_storage_mask(ctx),
+            cprisk_cff_ctx_nonce_plain(ctx),
+            cprisk_cff_hdr_base_derive(0x4346465F42415336ull, 0xC11A1E5Eu)
+        )
     );
     return ctx->chain_snapshot ^ chain_mask;
 }
 
 static inline uint32_t cprisk_cff_ctx_entry_guard_plain(const cprisk_cff_context_t *ctx) {
     const uint32_t guard_mask = cprisk_cff_hdr_avalanche32(
-        cprisk_cff_ctx_storage_mask(ctx) ^ cprisk_cff_ctx_nonce_plain(ctx) ^ 0xE17A9A5Bu
+        cprisk_cff_ctx_storage_mask(ctx) ^ cprisk_cff_ctx_nonce_plain(ctx) ^ cprisk_cff_hdr_const32(
+            0x4346465F43545837ull,
+            cprisk_cff_ctx_storage_mask(ctx),
+            cprisk_cff_ctx_nonce_plain(ctx),
+            cprisk_cff_hdr_base_derive(0x4346465F42415337ull, 0xE17A9A5Bu)
+        )
     );
     return ctx->entry_guard ^ guard_mask;
 }
@@ -206,7 +267,12 @@ static inline uint32_t cprisk_cff_chain_entry_guard_expected_inline(
         cprisk_cff_ctx_salt_plain(ctx) ^
         cprisk_cff_ctx_nonce_plain(ctx) ^
         cprisk_cff_ctx_last_plain(ctx) ^
-        0xC4A11E5Du
+        cprisk_cff_hdr_const32(
+            0x4346465F43545838ull,
+            cprisk_cff_ctx_seed_plain(ctx),
+            cprisk_cff_ctx_salt_plain(ctx) ^ observed_chain,
+            cprisk_cff_hdr_base_derive(0x4346465F42415338ull, 0xC4A11E5Du)
+        )
     );
 }
 
@@ -251,13 +317,33 @@ static inline uint32_t cprisk_cff_hdr_rotate_left32(uint32_t value, uint32_t shi
     return (value << amount) | (value >> (32u - amount));
 }
 
+static inline uint32_t cprisk_cff_hdr_const32(uint64_t domain, uint32_t seed, uint32_t salt, uint32_t base) {
+    const uint32_t lo = (uint32_t)(domain & 0xFFFFFFFFu);
+    const uint32_t hi = (uint32_t)(domain >> 32u);
+    const uint32_t spin = ((seed ^ hi ^ (salt >> 1u)) & 31u) | 1u;
+    const uint32_t lane = cprisk_cff_hdr_rotate_left32(seed ^ base ^ lo, spin);
+    const uint32_t mixed0 = cprisk_cff_hdr_avalanche32(seed ^ salt ^ lo ^ base);
+    const uint32_t mixed1 = cprisk_cff_hdr_avalanche32(lane ^ salt ^ hi ^ (base * (seed | 1u)));
+    return cprisk_cff_hdr_avalanche32(mixed0 ^ mixed1 ^ lo ^ hi) ^ base;
+}
+
+static inline uint32_t cprisk_cff_hdr_const32_odd(uint64_t domain, uint32_t seed, uint32_t salt, uint32_t base) {
+    return cprisk_cff_hdr_const32(domain, seed, salt, base) | 1u;
+}
+
 static inline uint32_t cprisk_cff_opq_inline_xor_mba_u32(uint32_t a, uint32_t b) {
     return (a | b) - (a & b);
 }
 
 static inline uint32_t cprisk_cff_opq_inline_xor_mba_layer_u32(uint32_t x, uint32_t k, uint32_t layer_ix) {
+    const uint32_t selector_mix = cprisk_cff_hdr_const32(
+        0x4346465F48445231ull,
+        k,
+        layer_ix,
+        cprisk_cff_hdr_base_derive(0x4346465F42415339ull, 0x13579BDFu)
+    );
     const uint32_t sel =
-        (layer_ix + cprisk_cff_hdr_avalanche32(k ^ 0x13579BDFu) + (k >> 17u)) & 3u;
+        (layer_ix + cprisk_cff_hdr_avalanche32(k ^ selector_mix) + (k >> 17u)) & 3u;
     switch (sel) {
         case 0u:
             return cprisk_cff_opq_inline_xor_mba_u32(x, k);
@@ -273,8 +359,20 @@ static inline uint32_t cprisk_cff_opq_inline_xor_mba_layer_u32(uint32_t x, uint3
 static inline uint32_t cprisk_cff_opq_inline_mba_chain_xor_u32(uint32_t v, uint32_t key, uint32_t salt) {
     uint32_t cur = v;
     for (uint32_t i = 0u; i < 3u; i++) {
+        const uint32_t step_mul = cprisk_cff_hdr_const32_odd(
+            0x4346465F48445232ull,
+            key,
+            salt,
+            cprisk_cff_hdr_base_derive(0x4346465F42415341ull, 0x9E3779B1u)
+        );
+        const uint32_t step_xor = cprisk_cff_hdr_const32(
+            0x4346465F48445233ull,
+            key ^ i,
+            salt,
+            cprisk_cff_hdr_base_derive(0x4346465F42415342ull, 0xD1B54A35u)
+        );
         const uint32_t ki =
-            cprisk_cff_hdr_avalanche32(key ^ salt ^ (i * 0x9E3779B1u) ^ 0xD1B54A35u);
+            cprisk_cff_hdr_avalanche32(key ^ salt ^ (i * step_mul) ^ step_xor);
         cur = cprisk_cff_opq_inline_xor_mba_layer_u32(cur, ki, i);
     }
     return cur;
@@ -289,7 +387,12 @@ static inline int cprisk_cff_opaque_transition_ok_inline(
     struct timespec ts;
     uint32_t rt = 0u;
     if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0) {
-        rt = (uint32_t)ts.tv_nsec ^ ((uint32_t)ts.tv_sec * 0x9E3779B1u);
+        rt = (uint32_t)ts.tv_nsec ^ ((uint32_t)ts.tv_sec * cprisk_cff_hdr_const32_odd(
+            0x4346465F48445234ull,
+            seed,
+            salt,
+            cprisk_cff_hdr_base_derive(0x4346465F42415343ull, 0x9E3779B1u)
+        ));
     }
     const uint32_t pid_mix = (uint32_t)getpid();
     const uint32_t a = to_plain ^ salt ^ (rt & 0xFFFFu);
@@ -309,8 +412,20 @@ static inline int cprisk_cff_opaque_transition_ok_inline(
         const uint32_t chain = cprisk_cff_opq_inline_mba_chain_xor_u32(a, seed, salt);
         uint32_t manual = a;
         for (uint32_t layer = 0u; layer < 3u; layer++) {
+            const uint32_t step_mul = cprisk_cff_hdr_const32_odd(
+                0x4346465F48445232ull,
+                seed,
+                salt,
+                cprisk_cff_hdr_base_derive(0x4346465F42415341ull, 0x9E3779B1u)
+            );
+            const uint32_t step_xor = cprisk_cff_hdr_const32(
+                0x4346465F48445233ull,
+                seed ^ layer,
+                salt,
+                cprisk_cff_hdr_base_derive(0x4346465F42415342ull, 0xD1B54A35u)
+            );
             const uint32_t ki =
-                cprisk_cff_hdr_avalanche32(seed ^ salt ^ (layer * 0x9E3779B1u) ^ 0xD1B54A35u);
+                cprisk_cff_hdr_avalanche32(seed ^ salt ^ (layer * step_mul) ^ step_xor);
             manual = cprisk_cff_opq_inline_xor_mba_layer_u32(manual, ki, layer);
         }
         if (chain != manual) {
@@ -318,11 +433,21 @@ static inline int cprisk_cff_opaque_transition_ok_inline(
         }
     }
     const uint32_t h = cprisk_cff_hdr_avalanche32(
-        seed ^ cprisk_cff_hdr_rotate_left32(to_plain, 5u) ^ 0xABADD00Du ^ (rt >> 3u)
+        seed ^ cprisk_cff_hdr_rotate_left32(to_plain, 5u) ^ cprisk_cff_hdr_const32(
+            0x4346465F48445235ull,
+            seed,
+            salt ^ to_plain,
+            cprisk_cff_hdr_base_derive(0x4346465F42415344ull, 0xABADD00Du)
+        ) ^ (rt >> 3u)
     );
     const uint32_t p = 65521u;
     const uint64_t r =
-        ((uint64_t)h + (uint64_t)pid_mix) * (uint64_t)(from_decoded ^ 0x13579BDFu ^ rt) % (uint64_t)p;
+        ((uint64_t)h + (uint64_t)pid_mix) * (uint64_t)(from_decoded ^ cprisk_cff_hdr_const32(
+            0x4346465F48445236ull,
+            seed,
+            salt ^ rt,
+            cprisk_cff_hdr_base_derive(0x4346465F42415345ull, 0x13579BDFu)
+        ) ^ rt) % (uint64_t)p;
     const uint64_t sq = (r * r) % (uint64_t)p;
     const uint64_t sq_chk = ((uint64_t)r * (uint64_t)r) % (uint64_t)p;
     return sq == sq_chk ? 1 : 0;

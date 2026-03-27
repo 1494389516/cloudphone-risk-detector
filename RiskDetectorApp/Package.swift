@@ -101,6 +101,7 @@ let package = Package(
             dependencies: [
                 "CloudPhoneRiskKit",
                 .product(name: "MachOKit", package: "cprisk-armor"),
+                .product(name: "VMProtector", package: "cprisk-armor"),
             ]
         ),
         .testTarget(

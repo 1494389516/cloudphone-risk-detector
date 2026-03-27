@@ -101,6 +101,10 @@ public final class CPRiskKit: NSObject {
     private var previousSignalIds: Set<String> = []
     /// SHA-256 digest of previous evaluate()'s full signal content (id+score+state).
     private var previousSignalsDigest: String?
+    /// Realtime telemetry adaptive cache: optional short-circuit return when server asks to reduce evaluation frequency.
+    private var adaptiveCachedReport: CPRiskReport?
+    private var adaptiveCachedKey: String?
+    private var adaptiveLastEvaluationAtEpochSeconds: TimeInterval = 0
     /// High-risk signal IDs that are candidates for suppression detection.
     private static let highRiskSignalIds: Set<String> = [
         ObfuscatedConstants.signalFridaDetected,
@@ -176,6 +180,21 @@ public final class CPRiskKit: NSObject {
     private struct CapabilityProbeRuntimeResult {
         let score: CapabilityScore
         let probes: [ProbeResult]
+    }
+
+    private struct RealtimeAdaptiveProfile {
+        let enabled: Bool
+        let minEvaluationIntervalMillis: Int
+        let defaultWeightScaleBps: Int
+        let categoryWeightScaleBps: [String: Int]
+        let source: String
+
+        var signature: String {
+            let ordered = categoryWeightScaleBps.keys.sorted().map {
+                "\($0):\(categoryWeightScaleBps[$0] ?? defaultWeightScaleBps)"
+            }
+            return "e=\(enabled ? 1 : 0)|i=\(minEvaluationIntervalMillis)|d=\(defaultWeightScaleBps)|s=\(source)|c=\(ordered.joined(separator: ","))"
+        }
     }
 
     private enum ArmorRootKeySource: String {
@@ -679,6 +698,50 @@ public final class CPRiskKit: NSObject {
         ExternalServerAggregateProvider.shared.clear()
     }
 
+    /// 注入实时遥测反馈（本地联调 / 服务端回注）：
+    /// - `riskPressure`: 0...1，越高越倾向高频评估。
+    /// - `minEvaluationIntervalMillis`: 覆盖最小评估间隔。
+    /// - `defaultWeightScaleBps`: 权重全局倍率（10000=1.0）。
+    /// - `*_WeightScaleBps`: 分类权重倍率覆盖。
+    /// - `ttlSeconds`: 反馈有效期，过期自动降级。
+    @objc(setRealtimeTelemetryFeedbackWithRiskPressure:minEvaluationIntervalMillis:defaultWeightScaleBps:jailbreakWeightScaleBps:networkWeightScaleBps:behaviorWeightScaleBps:deviceWeightScaleBps:timeWeightScaleBps:ttlSeconds:)
+    public static func setRealtimeTelemetryFeedback(
+        riskPressure: NSNumber?,
+        minEvaluationIntervalMillis: NSNumber?,
+        defaultWeightScaleBps: NSNumber?,
+        jailbreakWeightScaleBps: NSNumber?,
+        networkWeightScaleBps: NSNumber?,
+        behaviorWeightScaleBps: NSNumber?,
+        deviceWeightScaleBps: NSNumber?,
+        timeWeightScaleBps: NSNumber?,
+        ttlSeconds: NSNumber?
+    ) {
+        var categoryScales: [String: Int] = [:]
+        if let v = jailbreakWeightScaleBps?.intValue { categoryScales["jailbreak"] = v }
+        if let v = networkWeightScaleBps?.intValue { categoryScales["network"] = v }
+        if let v = behaviorWeightScaleBps?.intValue { categoryScales["behavior"] = v }
+        if let v = deviceWeightScaleBps?.intValue { categoryScales["device"] = v }
+        if let v = timeWeightScaleBps?.intValue { categoryScales["time"] = v }
+
+        let expiresAt = ttlSeconds.map {
+            Date().timeIntervalSince1970 + max(0, TimeInterval($0.intValue))
+        }
+
+        ExternalServerAggregateProvider.shared.setRealtimeTelemetryFeedback(
+            .init(
+                riskPressure: riskPressure?.doubleValue,
+                minEvaluationIntervalMillis: minEvaluationIntervalMillis?.intValue,
+                defaultWeightScaleBps: defaultWeightScaleBps?.intValue,
+                categoryWeightScaleBps: categoryScales,
+                expiresAtEpochSeconds: expiresAt
+            )
+        )
+    }
+
+    @objc public static func clearRealtimeTelemetryFeedback() {
+        ExternalServerAggregateProvider.shared.clearRealtimeTelemetryFeedback()
+    }
+
     /// 应用图风控反馈：服务端返回图计算结果后调用，注入到 ExternalServerAggregateProvider。
     /// 注入后会发送 `graphRiskFeedbackDidApplyNotification`，业务侧可观察该通知并调用 evaluate() 重新评估风险。
     /// - Parameter feedback: 图风控反馈（communityId、communityRiskDensity、hwProfileDegree 等）
@@ -889,6 +952,16 @@ public final class CPRiskKit: NSObject {
         var runtimeConfig = resolveRuntimeConfig(from: config)
         enforceSecurityFloor(&runtimeConfig)
         let remoteConfig = config.enableRemoteConfig ? currentRemoteConfig() : nil
+        let realtimeAdaptiveProfile = resolveRealtimeAdaptiveProfile(remoteConfig: remoteConfig)
+
+        if let cached = maybeReturnAdaptiveCachedReport(
+            profile: realtimeAdaptiveProfile,
+            scenario: scenario,
+            runtimeConfig: runtimeConfig,
+            remoteConfig: remoteConfig
+        ) {
+            return cached
+        }
 
         Logger.log(
             "evaluate(config,scenario): scenario=\(scenario.identifier) threshold=\(runtimeConfig.threshold) " +
@@ -1006,7 +1079,8 @@ public final class CPRiskKit: NSObject {
             runtimeConfig: runtimeConfig,
             remoteConfig: remoteConfig,
             enableTemporalAnalysis: config.enableTemporalAnalysis,
-            serverPolicy: serverPolicy
+            serverPolicy: serverPolicy,
+            realtimeAdaptiveProfile: realtimeAdaptiveProfile
         )
         if policy.killSwitchEnabled {
             Logger.log("⚠️ killSwitch is ACTIVE — evaluation will force low-risk/allow verdict")
@@ -1112,6 +1186,14 @@ public final class CPRiskKit: NSObject {
                 "probes=\(challengeBinding.probeIds.count) reason=\(challengeBinding.triggerReason ?? "n/a")"
             )
         }
+
+        updateAdaptiveCachedReport(
+            out,
+            profile: realtimeAdaptiveProfile,
+            scenario: scenario,
+            runtimeConfig: runtimeConfig,
+            remoteConfig: remoteConfig
+        )
 
         return out
     }
@@ -1982,7 +2064,8 @@ public final class CPRiskKit: NSObject {
         runtimeConfig: RiskConfig,
         remoteConfig: RemoteConfig?,
         enableTemporalAnalysis: Bool,
-        serverPolicy: ServerRiskPolicy?
+        serverPolicy: ServerRiskPolicy?,
+        realtimeAdaptiveProfile: RealtimeAdaptiveProfile?
     ) -> EnginePolicy {
         let remoteWeights = remoteConfig.map { config in
             SignalWeights(
@@ -2023,13 +2106,17 @@ public final class CPRiskKit: NSObject {
                     time: 0
                 )
             }
+            let adaptiveWeights = applyRealtimeAdaptiveWeightScale(
+                effectiveWeights,
+                profile: realtimeAdaptiveProfile
+            )
 
             scenarioPolicies[scenario] = ScenarioPolicy(
                 mediumThreshold: mediumThreshold,
                 highThreshold: highThreshold,
                 criticalThreshold: criticalThreshold,
                 actionMapping: base.actionMapping,
-                signalWeights: effectiveWeights,
+                signalWeights: adaptiveWeights,
                 comboRules: base.comboRules,
                 enableForceRules: base.enableForceRules,
                 compressedVerdictRules: base.compressedVerdictRules
@@ -2083,6 +2170,175 @@ public final class CPRiskKit: NSObject {
                 scoreJitterBps: mutation.scoreJitterBps
             )
         }
+    }
+
+    private func resolveRealtimeAdaptiveProfile(remoteConfig: RemoteConfig?) -> RealtimeAdaptiveProfile? {
+        let remoteAdaptive = remoteConfig?.realtimeTelemetryAdaptive?.enforcingReleaseSecurityFloor()
+        let feedback = ExternalServerAggregateProvider.shared.realtimeAdaptiveFeedbackSnapshot()
+        let enabled = (remoteAdaptive?.enabled ?? false) || (feedback != nil)
+        guard enabled else { return nil }
+
+        let safeAdaptive = remoteAdaptive ?? RealtimeTelemetryAdaptiveConfig(
+            enabled: true,
+            baseMinEvaluationIntervalMillis: 0,
+            highPressureMinEvaluationIntervalMillis: 0,
+            defaultWeightScaleBps: 10_000,
+            minWeightScaleBps: 7_000,
+            maxWeightScaleBps: 13_000,
+            feedbackTTLSeconds: 180
+        )
+        let minBps = safeAdaptive.minWeightScaleBps
+        let maxBps = max(safeAdaptive.maxWeightScaleBps, minBps)
+
+        let pressure = {
+            guard let value = feedback?.riskPressure, value.isFinite else { return 0.0 }
+            return min(max(value, 0), 1)
+        }()
+
+        let minIntervalMillis: Int
+        if let direct = feedback?.minEvaluationIntervalMillis {
+            minIntervalMillis = min(max(direct, 0), 60_000)
+        } else {
+            let base = max(0, safeAdaptive.baseMinEvaluationIntervalMillis)
+            let high = max(0, min(base, safeAdaptive.highPressureMinEvaluationIntervalMillis))
+            let interpolated = Double(base) - (Double(base - high) * pressure)
+            minIntervalMillis = Int(interpolated.rounded())
+        }
+
+        let defaultScale = min(
+            max(feedback?.defaultWeightScaleBps ?? safeAdaptive.defaultWeightScaleBps, minBps),
+            maxBps
+        )
+        var categoryScales: [String: Int] = [:]
+        let feedbackScales = feedback?.categoryWeightScaleBps ?? [:]
+        for key in ["jailbreak", "network", "behavior", "device", "time"] {
+            let raw = feedbackScales[key] ?? defaultScale
+            categoryScales[key] = min(max(raw, minBps), maxBps)
+        }
+
+        let source = [
+            remoteAdaptive != nil ? "remote_config" : "fallback",
+            feedback?.source
+        ]
+            .compactMap { $0 }
+            .joined(separator: "+")
+
+        return RealtimeAdaptiveProfile(
+            enabled: true,
+            minEvaluationIntervalMillis: minIntervalMillis,
+            defaultWeightScaleBps: defaultScale,
+            categoryWeightScaleBps: categoryScales,
+            source: source
+        )
+    }
+
+    private func adaptiveCacheKey(
+        scenario: RiskScenario,
+        runtimeConfig: RiskConfig,
+        remoteConfig: RemoteConfig?,
+        profile: RealtimeAdaptiveProfile?
+    ) -> String {
+        let threshold = String(format: "%.3f", runtimeConfig.threshold)
+        let remoteVersion = remoteConfig.map { String($0.version) } ?? "none"
+        let profileSignature = profile?.signature ?? "adaptive_off"
+        return [
+            "scn=\(scenario.identifier)",
+            "thr=\(threshold)",
+            "beh=\(runtimeConfig.enableBehaviorDetect ? 1 : 0)",
+            "net=\(runtimeConfig.enableNetworkSignals ? 1 : 0)",
+            "rv=\(remoteVersion)",
+            profileSignature
+        ].joined(separator: "|")
+    }
+
+    private func maybeReturnAdaptiveCachedReport(
+        profile: RealtimeAdaptiveProfile?,
+        scenario: RiskScenario,
+        runtimeConfig: RiskConfig,
+        remoteConfig: RemoteConfig?
+    ) -> CPRiskReport? {
+        guard let profile,
+              profile.enabled,
+              profile.minEvaluationIntervalMillis > 0 else {
+            return nil
+        }
+
+        let now = Date().timeIntervalSince1970
+        let key = adaptiveCacheKey(
+            scenario: scenario,
+            runtimeConfig: runtimeConfig,
+            remoteConfig: remoteConfig,
+            profile: profile
+        )
+
+        let (cachedReport, cachedKey, lastEvalAt) = stateLock.withLock {
+            (adaptiveCachedReport, adaptiveCachedKey, adaptiveLastEvaluationAtEpochSeconds)
+        }
+        guard let cachedReport, cachedKey == key else {
+            return nil
+        }
+
+        let elapsedMillis = Int((now - lastEvalAt) * 1000)
+        if elapsedMillis < profile.minEvaluationIntervalMillis {
+            Logger.log(
+                "adaptive.telemetry: reuse cached report elapsed_ms=\(elapsedMillis) " +
+                    "min_interval_ms=\(profile.minEvaluationIntervalMillis) source=\(profile.source)"
+            )
+            return cachedReport
+        }
+        return nil
+    }
+
+    private func updateAdaptiveCachedReport(
+        _ report: CPRiskReport,
+        profile: RealtimeAdaptiveProfile?,
+        scenario: RiskScenario,
+        runtimeConfig: RiskConfig,
+        remoteConfig: RemoteConfig?
+    ) {
+        guard let profile, profile.enabled else {
+            stateLock.withLock {
+                adaptiveCachedReport = nil
+                adaptiveCachedKey = nil
+                adaptiveLastEvaluationAtEpochSeconds = 0
+            }
+            return
+        }
+
+        let key = adaptiveCacheKey(
+            scenario: scenario,
+            runtimeConfig: runtimeConfig,
+            remoteConfig: remoteConfig,
+            profile: profile
+        )
+        let now = Date().timeIntervalSince1970
+        stateLock.withLock {
+            adaptiveCachedReport = report
+            adaptiveCachedKey = key
+            adaptiveLastEvaluationAtEpochSeconds = now
+        }
+    }
+
+    private func applyRealtimeAdaptiveWeightScale(
+        _ weights: SignalWeights,
+        profile: RealtimeAdaptiveProfile?
+    ) -> SignalWeights {
+        guard let profile, profile.enabled else { return weights }
+
+        func scaled(_ key: String, _ base: Double) -> Double {
+            let bps = profile.categoryWeightScaleBps[key] ?? profile.defaultWeightScaleBps
+            let candidate = base * (Double(bps) / 10_000.0)
+            guard candidate.isFinite else { return base }
+            return min(max(candidate, 0), 10)
+        }
+
+        return SignalWeights(
+            jailbreak: scaled("jailbreak", weights.jailbreak),
+            network: scaled("network", weights.network),
+            behavior: scaled("behavior", weights.behavior),
+            device: scaled("device", weights.device),
+            time: scaled("time", weights.time)
+        )
     }
 
     private func currentRemoteConfigProvider() -> RemoteConfigProvider? {

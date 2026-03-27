@@ -194,6 +194,23 @@ enum {
     CPRISK_VM_OP_POISON = 0xFFu
 };
 
+/**
+ * Reserved immediate contract for \c CPRISK_VM_OP_BRANCH_IND:
+ * - high byte \c 0xA1 means semi-identity mode and runtime must fall through by one instruction;
+ * - remaining low 56 bits are payload/entropy and must not alter the fallthrough behavior.
+ * - high byte \c 0xA2 means semi-semantic mode: runtime evaluates the full mix/vreg/\c acc path
+ *   to obtain \c q, then selects a controlled forward target within a producer-supplied nop sled.
+ *   Bits 8..15 encode \c forward_span (0..255): the number of nop instructions following the
+ *   \c branchInd. Runtime jumps \c (1 + q % (forward_span + 1)) * INSN_WIDTH forward.
+ *   All reachable targets are safe (nop or halt).
+ */
+#define CPRISK_VM_BRANCH_IND_SEMI_IDENTITY_TAG 0xA100000000000000ULL
+#define CPRISK_VM_BRANCH_IND_SEMI_IDENTITY_MASK 0xFF00000000000000ULL
+#define CPRISK_VM_BRANCH_IND_SEMI_IDENTITY_PAYLOAD_MASK 0x00FFFFFFFFFFFFFFULL
+
+#define CPRISK_VM_BRANCH_IND_SEMI_SEMANTIC_TAG 0xA200000000000000ULL
+#define CPRISK_VM_BRANCH_IND_SEMI_SEMANTIC_MASK 0xFF00000000000000ULL
+
 #define CPRISK_VM_ACC_PRIMARY_BYTES 32u
 #define CPRISK_VM_ACC_AUX_BYTES 32u
 #define CPRISK_VM_ACC_COMBINED_BYTES (CPRISK_VM_ACC_PRIMARY_BYTES + CPRISK_VM_ACC_AUX_BYTES)

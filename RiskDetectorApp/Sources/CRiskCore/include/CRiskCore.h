@@ -1105,6 +1105,16 @@ int cprisk_test_vm_branch_ind_identity(
     uint64_t *out_steps
 );
 
+/// Test-only smoke helper for `0xA2` semi-semantic `branchInd` with controlled
+/// target selection. Builds a frame with enough bytecode for the nop sled,
+/// verifies `q`-driven PC lands within the valid forward range.
+/// Returns 0 on success, -1 on unexpected flow, state, or out-of-range PC.
+int cprisk_test_vm_branch_ind_semi_semantic(
+    uint64_t imm,
+    uint64_t *out_encoded_pc_after,
+    uint64_t *out_steps
+);
+
 /// Inject a test-only white-box bundle so runtime probe/available/evaluate
 /// paths can exercise the real validator without requiring the current test
 /// process image to be linked with reserved white-box sections.

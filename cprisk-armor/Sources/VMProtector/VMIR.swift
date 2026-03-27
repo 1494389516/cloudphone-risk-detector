@@ -83,3 +83,58 @@ public enum VMImmediateLayout: Sendable {
         return base | (UInt64(category.rawValue) << categoryShift)
     }
 }
+
+/// Producer contract for `branchInd` immediate materialization.
+///
+/// Runtime today consumes:
+/// - low 3 bits as `vreg` index
+/// - bits 3...7 as `acc` start byte
+///
+/// Producer uses three wire shapes:
+/// - `synthetic`: unreachable block branch noise (safe-by-default)
+/// - `semiIdentity`: reserved high-byte tag for runtime-verified fallthrough/no-op semantics;
+///   producer may inject tagged instructions directly into reachable bytecode without behavior drift
+/// - `semiSemantic`: reserved high-byte `0xA2`; runtime runs the same mix path as full `branchInd` then
+///   forces the same single-instruction advance as `semiIdentity` (low 8 bits still materialize vreg/acc).
+public enum VMBranchIndImmediateContract: Sendable {
+    public static let vregMask: UInt64 = 0x7
+    public static let accBaseMask: UInt64 = 0x1F
+    public static let accBaseShift: UInt64 = 3
+
+    /// `0xA1` in high byte reserves the immediate for semi-identity mode.
+    public static let semiIdentityTag: UInt64 = 0xA100_0000_0000_0000
+    /// `0xA2` in high byte: semi-semantic (compute + controlled target selection within nop sled).
+    public static let semiSemanticTag: UInt64 = 0xA200_0000_0000_0000
+    public static let semiIdentityPayloadMask: UInt64 = 0x00FF_FFFF_FFFF_FFFF
+
+    /// Bits 8..15 of the immediate encode `forward_span` (0..255) for `0xA2` semi-semantic mode.
+    /// Runtime computes `skip = q % (forward_span + 1)` and jumps `(1 + skip) * INSN_WIDTH` forward.
+    public static let semiSemanticForwardSpanShift: UInt64 = 8
+    public static let semiSemanticForwardSpanMask: UInt64 = 0xFF
+
+    public static func synthetic(vregIndex: UInt64, accBase: UInt64) -> UInt64 {
+        let vreg = vregIndex & vregMask
+        let acc = accBase & accBaseMask
+        return vreg | (acc << accBaseShift)
+    }
+
+    public static func semiIdentity(entropy: UInt64) -> UInt64 {
+        semiIdentityTag | (entropy & semiIdentityPayloadMask)
+    }
+
+    /// Low 8 bits mirror `synthetic` (vreg/acc); bits 8..15 encode `forwardSpan` for nop-sled targeting.
+    public static func semiSemantic(entropy: UInt64, forwardSpan: UInt8 = 0) -> UInt64 {
+        var payload = entropy & semiIdentityPayloadMask
+        payload = (payload & ~(semiSemanticForwardSpanMask << semiSemanticForwardSpanShift))
+            | (UInt64(forwardSpan) << semiSemanticForwardSpanShift)
+        return semiSemanticTag | payload
+    }
+
+    public static func isSemiIdentity(_ immediate: UInt64) -> Bool {
+        (immediate & ~semiIdentityPayloadMask) == semiIdentityTag
+    }
+
+    public static func isSemiSemantic(_ immediate: UInt64) -> Bool {
+        (immediate & ~semiIdentityPayloadMask) == semiSemanticTag
+    }
+}

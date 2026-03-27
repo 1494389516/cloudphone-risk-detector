@@ -33,6 +33,24 @@ internal struct CFFRuntimeSaltInputs: Sendable, Equatable {
 }
 
 internal enum CFFRuntimeSalt {
+    @inline(__always)
+    private static func mix64(_ x: UInt64) -> UInt64 {
+        var z = x &+ 0x9E3779B97F4A7C15
+        z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
+        z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+        return z ^ (z >> 31)
+    }
+
+    @inline(__always)
+    private static func absorbWord(_ word: UInt64, hash: inout UInt64, prime: UInt64) {
+        var value = word
+        for _ in 0..<8 {
+            hash ^= value & 0xFF
+            hash = hash &* prime
+            value >>= 8
+        }
+    }
+
     static func derive(
         functionSeed: UInt64,
         inputs: CFFRuntimeSaltInputs = .init(),
@@ -48,17 +66,23 @@ internal enum CFFRuntimeSalt {
         return combine(words: words, strings: inputs.strings, flags: inputs.flags)
     }
 
-    static func combine(words: [UInt64] = [], strings: [String] = [], flags: [Bool] = []) -> UInt32 {
+    static func combine(
+        words: [UInt64] = [],
+        strings: [String] = [],
+        flags: [Bool] = [],
+        includeBuildContext: Bool = true
+    ) -> UInt32 {
         var hash: UInt64 = 0xCBF29CE484222325
         let prime: UInt64 = 0x100000001B3
 
+        if includeBuildContext {
+            let countsWord = (UInt64(words.count) << 40) ^ (UInt64(strings.count) << 20) ^ UInt64(flags.count)
+            let buildSeedWord = mix64(CFFSBoxRuntime.runtimeSeed() ^ 0x4346_4652_554E_5341 ^ countsWord)
+            absorbWord(buildSeedWord, hash: &hash, prime: prime)
+        }
+
         for word in words {
-            var value = word
-            for _ in 0..<8 {
-                hash ^= value & 0xFF
-                hash = hash &* prime
-                value >>= 8
-            }
+            absorbWord(word, hash: &hash, prime: prime)
         }
 
         for flag in flags {
@@ -82,13 +106,15 @@ internal enum CFFRuntimeSalt {
         let processInfo = ProcessInfo.processInfo
         let uptimeMillis = UInt64((processInfo.systemUptime * 1_000.0).rounded(.down))
         let pid = UInt64(processInfo.processIdentifier)
-        let debugMarker: UInt64
+        let debugMarkerBase: UInt64
 
         #if DEBUG
-        debugMarker = 0xD38B_D38B_D38B_D38B
+        debugMarkerBase = 0xD38B_D38B_D38B_D38B
         #else
-        debugMarker = 0xA11C_E551_A11C_E551
+        debugMarkerBase = 0xA11C_E551_A11C_E551
         #endif
+
+        let debugMarker = mix64(debugMarkerBase ^ CFFSBoxRuntime.runtimeSeed() ^ 0x4350_5249_534B_4442)
 
         return [pid, uptimeMillis, debugMarker]
     }

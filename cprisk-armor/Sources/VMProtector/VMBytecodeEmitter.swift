@@ -724,6 +724,60 @@ public struct VMBytecodeEmitter: Sendable {
         }
         return n
     }
+
+    /// Decode logical ops for one entry from emitted payloads.
+    ///
+    /// Notes:
+    /// - Requires clear (non-keystream-obfuscated) dispatch class table.
+    /// - Returns `nil` on malformed payload or unsupported encrypted dispatch table.
+    public static func decodeEntryLogicalOps(
+        bytecodePayload: Data,
+        dispatchPayload: Data,
+        entryIndex: Int
+    ) -> [VMLogicalOp]? {
+        guard entryIndex >= 0 else { return nil }
+        guard bytecodePayload.count >= 16, dispatchPayload.count >= 16 else { return nil }
+        guard VMBytecodeFormat.readUInt32LE(bytecodePayload, offset: 0) == VMBytecodeFormat.bytecodeMagic else { return nil }
+        guard VMBytecodeFormat.readUInt32LE(dispatchPayload, offset: 0) == VMBytecodeFormat.dispatchMagic else { return nil }
+
+        let dispatchVersion = VMBytecodeFormat.readUInt32LE(dispatchPayload, offset: 4)
+        let dispatchFlags = VMBytecodeFormat.readUInt32LE(dispatchPayload, offset: 12)
+        if (dispatchFlags & VMBytecodeFormat.DispatchHeaderFlags.classTableKeystream) != 0 {
+            return nil
+        }
+        let dispatchClassOffset = dispatchVersion >= VMBytecodeFormat.dispatchABIVersionV2
+            ? (16 + VMBytecodeFormat.dispatchSeedBytes)
+            : 16
+        guard dispatchPayload.count >= dispatchClassOffset + VMBytecodeFormat.dispatchTableSize else { return nil }
+        let dispatchTable = [UInt8](dispatchPayload[dispatchClassOffset..<(dispatchClassOffset + VMBytecodeFormat.dispatchTableSize)])
+
+        let bytecodeVersion = VMBytecodeFormat.readUInt32LE(bytecodePayload, offset: 4)
+        let entryCount = Int(VMBytecodeFormat.readUInt32LE(bytecodePayload, offset: 8))
+        let bytecodeFlags = VMBytecodeFormat.readUInt32LE(bytecodePayload, offset: 12)
+        guard entryIndex < entryCount else { return nil }
+        let headerTotal = bytecodeHeaderTotalBytes(version: bytecodeVersion, flags: bytecodeFlags)
+        let stride = VMBytecodeFormat.entryCoreSize
+            + (((bytecodeFlags & VMBytecodeFormat.BytecodeFlags.perEntryVpc) != 0) ? VMBytecodeFormat.vpcAffineBytes : 0)
+        let entryBase = headerTotal + entryIndex * stride
+        guard bytecodePayload.count >= entryBase + stride else { return nil }
+
+        let bytecodeOffset = Int(VMBytecodeFormat.readUInt32LE(bytecodePayload, offset: entryBase + 20))
+        let bytecodeLength = Int(VMBytecodeFormat.readUInt32LE(bytecodePayload, offset: entryBase + 24))
+        guard bytecodeOffset >= 0, bytecodeLength >= 0 else { return nil }
+        guard bytecodePayload.count >= bytecodeOffset + bytecodeLength else { return nil }
+        guard bytecodeLength % 9 == 0 else { return nil }
+
+        let opCount = bytecodeLength / 9
+        var decoded: [VMLogicalOp] = []
+        decoded.reserveCapacity(opCount)
+        for i in 0..<opCount {
+            let raw = bytecodePayload[bytecodeOffset + i * 9]
+            let logicalRaw = dispatchTable[Int(raw)]
+            guard let op = VMLogicalOp(rawValue: logicalRaw) else { return nil }
+            decoded.append(op)
+        }
+        return decoded
+    }
 }
 
 /// Stable 64-bit id for a symbol (FNV-1a 64).

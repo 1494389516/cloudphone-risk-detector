@@ -34,6 +34,37 @@ internal enum CFFOpaquePredicates {
         return residuePrimes[Int(selector % UInt32(residuePrimes.count))]
     }
 
+    @inline(__always)
+    private static func derivedBlendConst32(
+        domain: UInt64,
+        salt: UInt32,
+        blend: CFFContextBlend,
+        base: UInt32
+    ) -> UInt32 {
+        let seed = blend.dispatchXor32 ^ blend.splitSelectorPrime
+        let layoutWord = UInt32(blend.residueLayoutTag)
+            | (UInt32(blend.parityLayoutTag) &<< 8)
+            | (UInt32(blend.connectorLayoutTag) &<< 16)
+        let runtimeSalt = salt ^ blend.splitSaltXor ^ layoutWord
+        let contextWord = (UInt64(seed) &<< 32) ^ UInt64(layoutWord ^ base)
+        let derived = CFFSBoxRuntime.derivedWord32(
+            domain: domain ^ UInt64(base),
+            runtimeSalt: runtimeSalt,
+            contextWord: contextWord
+        )
+        return derived ^ base
+    }
+
+    @inline(__always)
+    private static func derivedBlendOddConst32(
+        domain: UInt64,
+        salt: UInt32,
+        blend: CFFContextBlend,
+        base: UInt32
+    ) -> UInt32 {
+        derivedBlendConst32(domain: domain, salt: salt, blend: blend, base: base) | 1
+    }
+
     /// One SPN round: SubWord → add round key → rotate (diffusion / avalanche).
     @inline(__always)
     private static func spnRound(_ x: UInt32, roundKey: UInt32, rot: UInt32) -> UInt32 {
@@ -53,10 +84,34 @@ internal enum CFFOpaquePredicates {
     /// Multi-round SPN mixing (substitution + P-layer via rotations / XOR of round keys).
     @inline(__always)
     private static func spnMix32(_ value: UInt32, salt: UInt32, blend: CFFContextBlend = .legacy) -> UInt32 {
-        let rk0 = salt &* 0x9e37_79b1
-        let rk1 = salt ^ 0x1357_9bdf
-        let rk2 = salt &* 0x27d4_eb2d
-        let rk3 = rk0 ^ rk2 ^ 0x517c_c1b7
+        let rk0Mul = derivedBlendOddConst32(
+            domain: 0x4346_465F_5350_4E30,
+            salt: salt,
+            blend: blend,
+            base: 0x9E37_79B1
+        )
+        let rk1Xor = derivedBlendConst32(
+            domain: 0x4346_465F_5350_4E31,
+            salt: salt,
+            blend: blend,
+            base: 0x1357_9BDF
+        )
+        let rk2Mul = derivedBlendOddConst32(
+            domain: 0x4346_465F_5350_4E32,
+            salt: salt,
+            blend: blend,
+            base: 0x27D4_EB2D
+        )
+        let rk3Xor = derivedBlendConst32(
+            domain: 0x4346_465F_5350_4E33,
+            salt: salt,
+            blend: blend,
+            base: 0x517C_C1B7
+        )
+        let rk0 = salt &* rk0Mul
+        let rk1 = salt ^ rk1Xor
+        let rk2 = salt &* rk2Mul
+        let rk3 = rk0 ^ rk2 ^ rk3Xor
         let (r0, r1, r2, r3) = spnRotations(for: blend)
 
         var x = value ^ salt
@@ -82,9 +137,27 @@ internal enum CFFOpaquePredicates {
     /// Ghost lanes: alternate round-key schedule / rotation schedule — masked to zero against semantic core.
     @inline(__always)
     private static func ghostSpnLane(_ value: UInt32, salt: UInt32, ghostTag: UInt8, blend: CFFContextBlend = .legacy) -> UInt32 {
-        let gSalt = salt ^ (UInt32(ghostTag) &* 0x1111_1111)
-        let rk0 = gSalt &+ UInt32(ghostTag) &* 0xa5a5_a5a5
-        let rk1 = gSalt ^ (~UInt32(ghostTag) &<< 5)
+        let gSaltMul = derivedBlendOddConst32(
+            domain: 0x4346_465F_4748_5330,
+            salt: salt,
+            blend: blend,
+            base: 0x1111_1111
+        )
+        let rk0Mul = derivedBlendOddConst32(
+            domain: 0x4346_465F_4748_5331,
+            salt: salt ^ UInt32(ghostTag),
+            blend: blend,
+            base: 0xA5A5_A5A5
+        )
+        let rk1Xor = derivedBlendConst32(
+            domain: 0x4346_465F_4748_5332,
+            salt: salt,
+            blend: blend,
+            base: 0xA24B_AED5
+        )
+        let gSalt = salt ^ (UInt32(ghostTag) &* gSaltMul)
+        let rk0 = gSalt &+ (UInt32(ghostTag) &* rk0Mul)
+        let rk1 = gSalt ^ (~UInt32(ghostTag) &<< 5) ^ rk1Xor
         let (r0, _, r2, r3) = spnRotations(for: blend)
         var x = value ^ gSalt ^ (UInt32(ghostTag) &<< 24)
         x = spnRound(x, roundKey: rk0, rot: r0)
@@ -114,15 +187,40 @@ internal enum CFFOpaquePredicates {
         let mirrorResidue: UInt32 = spnPrimeResidue32(mirrorSeed, salt: salt ^ blend.splitSaltXor, blend: blend)
         let mirrorMask = mirrorResidue & UInt32(blend.switchConnectorSelector | 1)
         let r: UInt32 = rCore ^ ghost ^ mirrorMask
-        let mixA = value &* UInt32(0x45d9_f3b)
-        let mixB = salt &* UInt32(0x119d_e1f3)
-        let mixC = r &* UInt32(0x9e37_79b1)
+        let mixA = value &* derivedBlendOddConst32(
+            domain: 0x4346_465F_5052_5441,
+            salt: salt,
+            blend: blend,
+            base: 0x045D_9F3B
+        )
+        let mixB = salt &* derivedBlendOddConst32(
+            domain: 0x4346_465F_5052_5442,
+            salt: salt,
+            blend: blend,
+            base: 0x119D_E1F3
+        )
+        let mixC = r &* derivedBlendOddConst32(
+            domain: 0x4346_465F_5052_5443,
+            salt: salt,
+            blend: blend,
+            base: 0x9E37_79B1
+        )
         let mixD = mirrorResidue &* (blend.dispatchXor32 | 1)
         let mixed0: UInt32 = mixA ^ mixB ^ mixC ^ mixD
         let z0 = opaqueZero32(value, salt)
         let z1 = opaqueZero32(salt, value)
-        let mixed1 = mixed0 ^ (z0 &* 0x517c_c1b7)
-        let mixed2 = mixed1 ^ (z1 &* 0x1656_67b1)
+        let mixed1 = mixed0 ^ (z0 &* derivedBlendOddConst32(
+            domain: 0x4346_465F_5052_5444,
+            salt: salt,
+            blend: blend,
+            base: 0x517C_C1B7
+        ))
+        let mixed2 = mixed1 ^ (z1 &* derivedBlendOddConst32(
+            domain: 0x4346_465F_5052_5445,
+            salt: salt,
+            blend: blend,
+            base: 0x1656_67B1
+        ))
         let mixed: UInt32
         switch blend.parityLayoutTag {
         case 0:
@@ -143,7 +241,12 @@ internal enum CFFOpaquePredicates {
         let diff = encodedState ^ salt
         let h = spnMix32(
             diff ^ blend.dispatchXor32,
-            salt: (salt &+ 0xdead_beef) ^ blend.splitSaltXor,
+            salt: (salt &+ derivedBlendConst32(
+                domain: 0x4346_465F_4347_5431,
+                salt: salt,
+                blend: blend,
+                base: 0xDEAD_BEEF
+            )) ^ blend.splitSaltXor,
             blend: blend
         )
         let b0 = spnSboxByte(UInt8(truncatingIfNeeded: h))
@@ -168,7 +271,12 @@ internal enum CFFOpaquePredicates {
 
     @inline(__always)
     static func maskedEquals(_ lhs: UInt32, _ rhs: UInt32, salt: UInt32) -> Bool {
-        let mask = (salt | 1) &* 0x9e37_79b1
+        let mask = (salt | 1) &* derivedBlendOddConst32(
+            domain: 0x4346_465F_4D45_5131,
+            salt: salt,
+            blend: .legacy,
+            base: 0x9E37_79B1
+        )
         return (lhs ^ mask) == (rhs ^ mask)
     }
 
@@ -181,14 +289,29 @@ internal enum CFFOpaquePredicates {
         let ghost: UInt32 = ghostLane & z
         let mirrorResidue: UInt32 = spnPrimeResidue32(byteSwap32(value), salt: salt ^ blend.dispatchXor32, blend: blend)
         let r: UInt32 = rCore ^ ghost
-        let folded = value &+ (salt &* UInt32(0x27d4_eb2d))
-        let mixed0: UInt32 = r ^ mirrorResidue ^ folded ^ UInt32(0x7f4a_7c15)
+        let folded = value &+ (salt &* derivedBlendOddConst32(
+            domain: 0x4346_465F_424E_4431,
+            salt: salt,
+            blend: blend,
+            base: 0x27D4_EB2D
+        ))
+        let mixed0: UInt32 = r ^ mirrorResidue ^ folded ^ derivedBlendConst32(
+            domain: 0x4346_465F_424E_4432,
+            salt: salt,
+            blend: blend,
+            base: 0x7F4A_7C15
+        )
         let mixed1: UInt32
         switch blend.residueLayoutTag {
         case 0:
             mixed1 = mixed0
         case 1:
-            mixed1 = mixed0 ^ (z &* 0x9e37_79b1)
+            mixed1 = mixed0 ^ (z &* derivedBlendOddConst32(
+                domain: 0x4346_465F_424E_4433,
+                salt: salt,
+                blend: blend,
+                base: 0x9E37_79B1
+            ))
         case 2:
             mixed1 = mixed0 &+ (z & (value ^ value))
         default:

@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "MachOKit", targets: ["MachOKit"]),
+        .library(name: "VMProtector", targets: ["VMProtector"]),
         .executable(name: "cprisk-armor", targets: ["cprisk-armor"]),
         .executable(name: "cprisk-vm-self-expect", targets: ["cprisk-vm-self-expect"])
     ],

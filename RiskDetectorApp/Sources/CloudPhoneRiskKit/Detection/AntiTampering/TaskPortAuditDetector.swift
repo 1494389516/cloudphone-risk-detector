@@ -7,11 +7,36 @@ import Foundation
 /// - Exception ports where current task only holds send right (receiver likely external debugger/injector)
 /// - Abnormal port-right distribution in port namespace
 struct TaskPortAuditDetector: Detector {
+    private typealias BootstrapLookupFn = @convention(c) (
+        mach_port_t,
+        UnsafePointer<CChar>,
+        UnsafeMutablePointer<mach_port_t>?
+    ) -> kern_return_t
+
+    private static let rtldDefault = UnsafeMutableRawPointer(bitPattern: -2)
+
     private enum Keys {
         static let taskPortPrefix = ObfuscatedConstants.keywordTaskPort
         static let unavailableSimulator = StringDeobfuscator.base64Decode("dGFza19wb3J0OnVuYXZhaWxhYmxlX3NpbXVsYXRvcg==")
         static let clean = StringDeobfuscator.base64Decode("dGFza19wb3J0OmNsZWFu")
         static let taskForPidUnexpectedSuccess = StringDeobfuscator.base64Decode("dGFza19wb3J0OnRhc2tfZm9yX3BpZF91bmV4cGVjdGVkX3N1Y2Nlc3M=")
+        static let debugserverServiceNames: [String] = [
+            StringDeobfuscator.base64Decode("Y29tLmFwcGxlLmRlYnVnc2VydmVy"),
+            StringDeobfuscator.base64Decode("Y29tLmFwcGxlLmR0LmRlYnVnc2VydmVy"),
+            StringDeobfuscator.base64Decode("Y29tLmFwcGxlLmRlYnVnc2VydmVyLkRWVFNlY3VyZVNvY2tldFByb3h5"),
+        ]
+    }
+
+    struct LLDBAuditHints {
+        let sendOnlyExceptionPortCount: Int
+        let taskForPidUnexpectedSuccess: Bool
+        let debugserverMachServiceHits: Int
+
+        static let empty = LLDBAuditHints(
+            sendOnlyExceptionPortCount: 0,
+            taskForPidUnexpectedSuccess: false,
+            debugserverMachServiceHits: 0
+        )
     }
 
     struct Snapshot {
@@ -23,6 +48,7 @@ struct TaskPortAuditDetector: Detector {
         let sendOnlyExceptionPortCount: Int
         let unknownExceptionPortCount: Int
         let taskForPidUnexpectedSuccess: Bool
+        let debugserverServiceHits: [String]
     }
 
     struct Assessment {
@@ -76,6 +102,17 @@ struct TaskPortAuditDetector: Detector {
         if snapshot.taskForPidUnexpectedSuccess {
             score += 55
             methods.append(Keys.taskForPidUnexpectedSuccess)
+        }
+
+        if !snapshot.debugserverServiceHits.isEmpty {
+            let hitCount = snapshot.debugserverServiceHits.count
+            score += min(28 + Double(hitCount - 1) * 9, 52)
+            methods.append("\(Keys.taskPortPrefix):debugserver_mach_service:\(hitCount)")
+        }
+
+        if snapshot.taskForPidUnexpectedSuccess, !snapshot.debugserverServiceHits.isEmpty {
+            score += 8
+            methods.append("\(Keys.taskPortPrefix):debugserver_tfpid_correlation")
         }
 
         if snapshot.sendOnceRightCount > 800 {
@@ -190,6 +227,8 @@ struct TaskPortAuditDetector: Detector {
             }
         }
 
+        let debugserverServiceHits = probeDebugserverMachServices()
+
         return Snapshot(
             totalPortNames: totalPortNames,
             sendRightCount: sendRightCount,
@@ -198,8 +237,70 @@ struct TaskPortAuditDetector: Detector {
             deadNameCount: deadNameCount,
             sendOnlyExceptionPortCount: sendOnlyExceptionPortCount,
             unknownExceptionPortCount: unknownExceptionPortCount,
-            taskForPidUnexpectedSuccess: taskForPidUnexpectedSuccess
+            taskForPidUnexpectedSuccess: taskForPidUnexpectedSuccess,
+            debugserverServiceHits: debugserverServiceHits
         )
+    }
+
+    func collectLLDBAuditHints() -> LLDBAuditHints {
+#if targetEnvironment(simulator)
+        return .empty
+#else
+        let snapshot = collectSnapshot()
+        return LLDBAuditHints(
+            sendOnlyExceptionPortCount: snapshot.sendOnlyExceptionPortCount,
+            taskForPidUnexpectedSuccess: snapshot.taskForPidUnexpectedSuccess,
+            debugserverMachServiceHits: snapshot.debugserverServiceHits.count
+        )
+#endif
+    }
+
+    private func probeDebugserverMachServices() -> [String] {
+        var bootstrapPort: mach_port_t = mach_port_t(MACH_PORT_NULL)
+        let bootstrapResult = task_get_special_port(
+            mach_task_self_,
+            Int32(TASK_BOOTSTRAP_PORT),
+            &bootstrapPort
+        )
+        guard bootstrapResult == KERN_SUCCESS, bootstrapPort != mach_port_t(MACH_PORT_NULL) else {
+            return []
+        }
+        defer {
+            mach_port_deallocate(mach_task_self_, bootstrapPort)
+        }
+
+        var hits: [String] = []
+        for serviceName in Keys.debugserverServiceNames {
+            var servicePort: mach_port_t = mach_port_t(MACH_PORT_NULL)
+            let lookupResult = Self.bootstrapLookUp(
+                bootstrapPort: bootstrapPort,
+                serviceName: serviceName,
+                servicePort: &servicePort
+            )
+
+            if lookupResult == KERN_SUCCESS, servicePort != mach_port_t(MACH_PORT_NULL) {
+                hits.append(serviceName)
+                mach_port_deallocate(mach_task_self_, servicePort)
+            }
+        }
+        return hits
+    }
+
+    private static func bootstrapLookUp(
+        bootstrapPort: mach_port_t,
+        serviceName: String,
+        servicePort: UnsafeMutablePointer<mach_port_t>?
+    ) -> kern_return_t {
+        guard let symbol = "bootstrap_look_up".withCString({ cString in
+            dlsym(rtldDefault, cString)
+        }) else {
+            return kern_return_t(KERN_FAILURE)
+        }
+
+        let function = unsafeBitCast(symbol, to: BootstrapLookupFn.self)
+        return serviceName.withCString { cString in
+            function(bootstrapPort, cString, servicePort)
+        }
     }
 
     private func hasRight(_ port: mach_port_name_t, _ right: mach_port_right_t) -> Bool {
@@ -226,6 +327,7 @@ extension TaskPortAuditDetector {
                         "send_only_exception_ports": "\(assessment.sendOnlyExceptionPortCount)",
                         "total_ports": "\(snapshot.totalPortNames)",
                         "\(ObfuscatedConstants.keywordTaskForPid)_unexpected_success": snapshot.taskForPidUnexpectedSuccess ? "1" : "0",
+                        "debugserver_mach_service_hits": "\(snapshot.debugserverServiceHits.count)",
                     ],
                     state: .tampered,
                     layer: 1,
@@ -247,6 +349,7 @@ extension TaskPortAuditDetector {
                         "send_once_rights": "\(snapshot.sendOnceRightCount)",
                         "dead_name_count": "\(snapshot.deadNameCount)",
                         "\(ObfuscatedConstants.keywordTaskForPid)_unexpected_success": snapshot.taskForPidUnexpectedSuccess ? "1" : "0",
+                        "debugserver_mach_services": snapshot.debugserverServiceHits.prefix(4).joined(separator: ","),
                         "methods": assessment.methods.joined(separator: ","),
                     ],
                     state: .soft(confidence: 0.72),

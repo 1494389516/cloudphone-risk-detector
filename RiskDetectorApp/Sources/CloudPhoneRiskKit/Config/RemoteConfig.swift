@@ -76,6 +76,12 @@ public struct RemoteConfig: Codable, Sendable {
     /// 高级配置选项
     public let advanced: AdvancedConfig?
 
+    // MARK: - 实时遥测自适应配置（7.x 新增）
+
+    /// 根据服务端实时反馈动态调整检测权重与评估频率。
+    /// 默认 nil（关闭），保持历史行为不变。
+    public let realtimeTelemetryAdaptive: RealtimeTelemetryAdaptiveConfig?
+
     // MARK: - 探针配置（beta.2 新增）
 
     /// 探针配置
@@ -116,6 +122,7 @@ public struct RemoteConfig: Codable, Sendable {
         case whitelist = "wl"
         case experiments = "ex"
         case advanced = "ad"
+        case realtimeTelemetryAdaptive = "rta"
         case probeConfig = "pc"
         case payloadFieldMapping = "pfm"
         case securityHardening = "sh"
@@ -137,6 +144,7 @@ public struct RemoteConfig: Codable, Sendable {
         whitelist: WhitelistRules,
         experiments: ExperimentConfig,
         advanced: AdvancedConfig? = nil,
+        realtimeTelemetryAdaptive: RealtimeTelemetryAdaptiveConfig? = nil,
         probeConfig: ProbeConfig? = nil,
         payloadFieldMapping: PayloadFieldMapping? = nil,
         securityHardening: SecurityHardeningConfig? = nil,
@@ -154,6 +162,7 @@ public struct RemoteConfig: Codable, Sendable {
         self.whitelist = whitelist
         self.experiments = experiments
         self.advanced = advanced
+        self.realtimeTelemetryAdaptive = realtimeTelemetryAdaptive
         self.probeConfig = probeConfig
         self.payloadFieldMapping = payloadFieldMapping
         self.securityHardening = securityHardening
@@ -176,6 +185,7 @@ public struct RemoteConfig: Codable, Sendable {
         whitelist: WhitelistRules.default,
         experiments: ExperimentConfig.default,
         advanced: AdvancedConfig.default,
+        realtimeTelemetryAdaptive: nil,
         probeConfig: nil,
         payloadFieldMapping: nil,
         securityHardening: .default,
@@ -193,6 +203,7 @@ public struct RemoteConfig: Codable, Sendable {
         whitelist: WhitelistRules.default,
         experiments: ExperimentConfig.default,
         advanced: AdvancedConfig.default,
+        realtimeTelemetryAdaptive: nil,
         probeConfig: nil,
         payloadFieldMapping: nil,
         securityHardening: .default,
@@ -240,6 +251,12 @@ public struct RemoteConfig: Codable, Sendable {
 
         if securityHardening?.enableAppStoreSafeProfile == true {
             warnings.append("enableAppStoreSafeProfile 已开启：客户端将启用 App Store safe 运行时路径（跳过 deny_attach / watchdog / anti_dump 等）")
+        }
+
+        if let adaptive = realtimeTelemetryAdaptive {
+            let adaptiveValidation = adaptive.validate()
+            errors.append(contentsOf: adaptiveValidation.errors)
+            warnings.append(contentsOf: adaptiveValidation.warnings)
         }
 
         return ValidationResult(
@@ -1136,6 +1153,104 @@ public struct AdvancedConfig: Codable, Sendable {
     public static let `default` = AdvancedConfig()
 }
 
+// MARK: - 实时遥测自适应配置
+
+/// 根据服务端实时反馈调整“权重 + 频率”。
+/// 设计原则：
+/// - fail-safe：字段缺失时回退到默认，不影响既有策略。
+/// - 可降级：仅作为增强层，关闭后行为与历史版本一致。
+public struct RealtimeTelemetryAdaptiveConfig: Codable, Sendable {
+    /// 开关：默认 false，避免对旧配置造成行为漂移。
+    public let enabled: Bool
+    /// 基础最小评估间隔（毫秒）。0 表示不节流。
+    public let baseMinEvaluationIntervalMillis: Int
+    /// 高风险压力下最小评估间隔（毫秒），通常小于等于 base。
+    public let highPressureMinEvaluationIntervalMillis: Int
+    /// 默认权重倍率（bps，10000=1.0）。
+    public let defaultWeightScaleBps: Int
+    /// 权重倍率下限（bps）。
+    public let minWeightScaleBps: Int
+    /// 权重倍率上限（bps）。
+    public let maxWeightScaleBps: Int
+    /// 反馈有效期（秒），用于过期自动降级。
+    public let feedbackTTLSeconds: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled = "e"
+        case baseMinEvaluationIntervalMillis = "bi"
+        case highPressureMinEvaluationIntervalMillis = "hi"
+        case defaultWeightScaleBps = "dw"
+        case minWeightScaleBps = "mn"
+        case maxWeightScaleBps = "mx"
+        case feedbackTTLSeconds = "tt"
+    }
+
+    public init(
+        enabled: Bool = false,
+        baseMinEvaluationIntervalMillis: Int = 0,
+        highPressureMinEvaluationIntervalMillis: Int = 0,
+        defaultWeightScaleBps: Int = 10_000,
+        minWeightScaleBps: Int = 7_000,
+        maxWeightScaleBps: Int = 13_000,
+        feedbackTTLSeconds: Int = 180
+    ) {
+        self.enabled = enabled
+        self.baseMinEvaluationIntervalMillis = baseMinEvaluationIntervalMillis
+        self.highPressureMinEvaluationIntervalMillis = highPressureMinEvaluationIntervalMillis
+        self.defaultWeightScaleBps = defaultWeightScaleBps
+        self.minWeightScaleBps = minWeightScaleBps
+        self.maxWeightScaleBps = maxWeightScaleBps
+        self.feedbackTTLSeconds = feedbackTTLSeconds
+    }
+
+    public static let `default` = RealtimeTelemetryAdaptiveConfig()
+
+    public func validate() -> ValidationResult {
+        var errors: [String] = []
+        var warnings: [String] = []
+
+        if baseMinEvaluationIntervalMillis < 0 {
+            errors.append("realtimeTelemetryAdaptive.baseMinEvaluationIntervalMillis 不能为负数")
+        }
+        if highPressureMinEvaluationIntervalMillis < 0 {
+            errors.append("realtimeTelemetryAdaptive.highPressureMinEvaluationIntervalMillis 不能为负数")
+        }
+        if highPressureMinEvaluationIntervalMillis > baseMinEvaluationIntervalMillis {
+            warnings.append("highPressureMinEvaluationIntervalMillis 大于 base，已按 base 解释")
+        }
+        if minWeightScaleBps <= 0 || maxWeightScaleBps <= 0 {
+            errors.append("realtimeTelemetryAdaptive.weightScaleBps 必须大于 0")
+        }
+        if minWeightScaleBps > maxWeightScaleBps {
+            errors.append("realtimeTelemetryAdaptive.minWeightScaleBps 不能大于 maxWeightScaleBps")
+        }
+        if feedbackTTLSeconds < 0 {
+            errors.append("realtimeTelemetryAdaptive.feedbackTTLSeconds 不能为负数")
+        }
+
+        return ValidationResult(isValid: errors.isEmpty, errors: errors, warnings: warnings)
+    }
+
+    func enforcingReleaseSecurityFloor() -> RealtimeTelemetryAdaptiveConfig {
+        let safeBase = max(0, min(baseMinEvaluationIntervalMillis, 60_000))
+        let safeHigh = max(0, min(highPressureMinEvaluationIntervalMillis, safeBase))
+        let safeMinBps = max(1_000, min(minWeightScaleBps, 20_000))
+        let safeMaxBps = max(safeMinBps, min(maxWeightScaleBps, 20_000))
+        let safeDefaultBps = min(max(defaultWeightScaleBps, safeMinBps), safeMaxBps)
+        let safeTTL = max(0, min(feedbackTTLSeconds, 3_600))
+
+        return RealtimeTelemetryAdaptiveConfig(
+            enabled: enabled,
+            baseMinEvaluationIntervalMillis: safeBase,
+            highPressureMinEvaluationIntervalMillis: safeHigh,
+            defaultWeightScaleBps: safeDefaultBps,
+            minWeightScaleBps: safeMinBps,
+            maxWeightScaleBps: safeMaxBps,
+            feedbackTTLSeconds: safeTTL
+        )
+    }
+}
+
 // MARK: - 探针配置
 
 /// 探针配置（beta.2 新增）
@@ -1265,6 +1380,7 @@ extension RemoteConfig {
             whitelist: whitelist,
             experiments: experiments,
             advanced: advanced,
+            realtimeTelemetryAdaptive: realtimeTelemetryAdaptive?.enforcingReleaseSecurityFloor(),
             probeConfig: probeConfig,
             payloadFieldMapping: payloadFieldMapping,
             securityHardening: (securityHardening ?? .default).enforcingReleaseSecurityFloor(),
@@ -1363,6 +1479,7 @@ extension RemoteConfig {
             whitelist: .default,
             experiments: .default,
             advanced: .default,
+            realtimeTelemetryAdaptive: nil,
             probeConfig: nil,
             payloadFieldMapping: nil,
             securityHardening: .default,

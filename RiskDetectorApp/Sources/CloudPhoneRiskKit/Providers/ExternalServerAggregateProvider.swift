@@ -18,6 +18,7 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
     private var current: ServerSignals?
     private var graphFeatures: GraphFeatures?
     private var serverSignalKey: SymmetricKey?
+    private var realtimeTelemetryFeedback: RealtimeTelemetryFeedback?
 
     struct GraphFeatures {
         var communityId: String?
@@ -28,9 +29,65 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
         var riskTags: [String]?
     }
 
+    struct RealtimeTelemetryFeedback: Sendable {
+        var riskPressure: Double?
+        var minEvaluationIntervalMillis: Int?
+        var defaultWeightScaleBps: Int?
+        var categoryWeightScaleBps: [String: Int]
+        var expiresAtEpochSeconds: TimeInterval?
+
+        init(
+            riskPressure: Double? = nil,
+            minEvaluationIntervalMillis: Int? = nil,
+            defaultWeightScaleBps: Int? = nil,
+            categoryWeightScaleBps: [String: Int] = [:],
+            expiresAtEpochSeconds: TimeInterval? = nil
+        ) {
+            self.riskPressure = riskPressure
+            self.minEvaluationIntervalMillis = minEvaluationIntervalMillis
+            self.defaultWeightScaleBps = defaultWeightScaleBps
+            self.categoryWeightScaleBps = categoryWeightScaleBps
+            self.expiresAtEpochSeconds = expiresAtEpochSeconds
+        }
+    }
+
+    struct RealtimeAdaptiveFeedbackSnapshot: Sendable {
+        let riskPressure: Double?
+        let minEvaluationIntervalMillis: Int?
+        let defaultWeightScaleBps: Int?
+        let categoryWeightScaleBps: [String: Int]
+        let source: String
+    }
+
+    private struct AdaptiveTagHints {
+        var riskPressure: Double?
+        var minEvaluationIntervalMillis: Int?
+        var defaultWeightScaleBps: Int?
+        var categoryWeightScaleBps: [String: Int] = [:]
+
+        var hasAny: Bool {
+            riskPressure != nil
+                || minEvaluationIntervalMillis != nil
+                || defaultWeightScaleBps != nil
+                || !categoryWeightScaleBps.isEmpty
+        }
+    }
+
     /// 清空图特征，避免跨账号/跨会话残留。
     func clearGraphFeatures() {
         lock.withLock { graphFeatures = nil }
+    }
+
+    /// 注入实时遥测反馈（本地联调或服务端回注）。
+    /// 该反馈用于动态调整评估频率与权重倍率。
+    func setRealtimeTelemetryFeedback(_ feedback: RealtimeTelemetryFeedback?) {
+        lock.withLock {
+            realtimeTelemetryFeedback = sanitizedRealtimeTelemetryFeedback(feedback)
+        }
+    }
+
+    func clearRealtimeTelemetryFeedback() {
+        lock.withLock { realtimeTelemetryFeedback = nil }
     }
 
     /// Configure the HMAC key used by `setVerified(_:signature:)`.
@@ -43,6 +100,7 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
         lock.withLock {
             current = nil
             graphFeatures = nil
+            realtimeTelemetryFeedback = nil
         }
         Logger.log("server_aggregate.clear")
     }
@@ -137,6 +195,59 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
         NotificationCenter.default.post(
             name: Self.graphRiskFeedbackDidApplyNotification,
             object: self
+        )
+    }
+
+    /// 生成“实时遥测自适应”快照：显式反馈优先，riskTags 可覆盖。
+    /// 若无可用反馈，返回 nil（调用方应回退到静态配置）。
+    func realtimeAdaptiveFeedbackSnapshot(nowEpochSeconds: TimeInterval = Date().timeIntervalSince1970) -> RealtimeAdaptiveFeedbackSnapshot? {
+        let (s, gf, explicitFeedback) = lock.withLock { (current, graphFeatures, realtimeTelemetryFeedback) }
+        var sourceTags: [String] = []
+
+        var riskPressure: Double?
+        var minEvaluationIntervalMillis: Int?
+        var defaultWeightScaleBps: Int?
+        var categoryWeightScaleBps: [String: Int] = [:]
+
+        if let explicitFeedback, !isExpired(explicitFeedback, nowEpochSeconds: nowEpochSeconds) {
+            riskPressure = explicitFeedback.riskPressure
+            minEvaluationIntervalMillis = explicitFeedback.minEvaluationIntervalMillis
+            defaultWeightScaleBps = explicitFeedback.defaultWeightScaleBps
+            categoryWeightScaleBps = explicitFeedback.categoryWeightScaleBps
+            sourceTags.append("explicit")
+        }
+
+        let mergedTags = (s?.riskTags ?? []) + (gf?.riskTags ?? [])
+        let tagHints = parseAdaptiveTagHints(from: mergedTags)
+        if tagHints.hasAny {
+            if let pressure = tagHints.riskPressure {
+                riskPressure = pressure
+            }
+            if let interval = tagHints.minEvaluationIntervalMillis {
+                minEvaluationIntervalMillis = interval
+            }
+            if let bps = tagHints.defaultWeightScaleBps {
+                defaultWeightScaleBps = bps
+            }
+            if !tagHints.categoryWeightScaleBps.isEmpty {
+                categoryWeightScaleBps.merge(tagHints.categoryWeightScaleBps) { _, rhs in rhs }
+            }
+            sourceTags.append("risk_tags")
+        }
+
+        guard riskPressure != nil
+            || minEvaluationIntervalMillis != nil
+            || defaultWeightScaleBps != nil
+            || !categoryWeightScaleBps.isEmpty else {
+            return nil
+        }
+
+        return RealtimeAdaptiveFeedbackSnapshot(
+            riskPressure: riskPressure,
+            minEvaluationIntervalMillis: minEvaluationIntervalMillis,
+            defaultWeightScaleBps: defaultWeightScaleBps,
+            categoryWeightScaleBps: categoryWeightScaleBps,
+            source: sourceTags.isEmpty ? "unknown" : sourceTags.joined(separator: "+")
         )
     }
 
@@ -286,5 +397,111 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
         }
 
         return out
+    }
+
+    private func sanitizedRealtimeTelemetryFeedback(_ feedback: RealtimeTelemetryFeedback?) -> RealtimeTelemetryFeedback? {
+        guard var feedback else { return nil }
+
+        feedback.riskPressure = sanitizedPressure(feedback.riskPressure)
+        feedback.minEvaluationIntervalMillis = sanitizedInterval(feedback.minEvaluationIntervalMillis)
+        feedback.defaultWeightScaleBps = sanitizedWeightBps(feedback.defaultWeightScaleBps)
+
+        if !feedback.categoryWeightScaleBps.isEmpty {
+            var sanitized: [String: Int] = [:]
+            for (rawKey, rawValue) in feedback.categoryWeightScaleBps {
+                guard let key = Self.normalizedWeightKey(rawKey),
+                      let value = sanitizedWeightBps(rawValue) else {
+                    continue
+                }
+                sanitized[key] = value
+            }
+            feedback.categoryWeightScaleBps = sanitized
+        }
+
+        return feedback
+    }
+
+    private func isExpired(_ feedback: RealtimeTelemetryFeedback, nowEpochSeconds: TimeInterval) -> Bool {
+        guard let expiresAt = feedback.expiresAtEpochSeconds else {
+            return false
+        }
+        return expiresAt < nowEpochSeconds
+    }
+
+    private func parseAdaptiveTagHints(from tags: [String]) -> AdaptiveTagHints {
+        guard !tags.isEmpty else { return AdaptiveTagHints() }
+
+        var hints = AdaptiveTagHints()
+        for rawTag in tags {
+            let tag = rawTag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if tag.isEmpty { continue }
+
+            if let value = parseDoubleTag(tag, prefix: "rt_pressure:") {
+                let normalized = value > 1.0 ? value / 100.0 : value
+                hints.riskPressure = sanitizedPressure(normalized)
+                continue
+            }
+            if let value = parseIntTag(tag, prefix: "rt_eval_ms:") {
+                hints.minEvaluationIntervalMillis = sanitizedInterval(value)
+                continue
+            }
+            if let value = parseIntTag(tag, prefix: "rt_weight_bps:") {
+                hints.defaultWeightScaleBps = sanitizedWeightBps(value)
+                continue
+            }
+
+            for key in Self.supportedWeightKeys {
+                let prefix = "rt_weight_\(key)_bps:"
+                if let value = parseIntTag(tag, prefix: prefix),
+                   let safeValue = sanitizedWeightBps(value) {
+                    hints.categoryWeightScaleBps[key] = safeValue
+                    break
+                }
+            }
+        }
+
+        return hints
+    }
+
+    private func parseDoubleTag(_ tag: String, prefix: String) -> Double? {
+        guard tag.hasPrefix(prefix) else { return nil }
+        let raw = String(tag.dropFirst(prefix.count))
+        return Double(raw)
+    }
+
+    private func parseIntTag(_ tag: String, prefix: String) -> Int? {
+        guard tag.hasPrefix(prefix) else { return nil }
+        let raw = String(tag.dropFirst(prefix.count))
+        return Int(raw)
+    }
+
+    private func sanitizedPressure(_ value: Double?) -> Double? {
+        guard let value, value.isFinite else { return nil }
+        return min(max(value, 0), 1)
+    }
+
+    private func sanitizedInterval(_ value: Int?) -> Int? {
+        guard let value else { return nil }
+        return min(max(value, 0), 60_000)
+    }
+
+    private func sanitizedWeightBps(_ value: Int?) -> Int? {
+        guard let value else { return nil }
+        return min(max(value, 1_000), 20_000)
+    }
+
+    private static let supportedWeightKeys: Set<String> = [
+        "jailbreak",
+        "network",
+        "behavior",
+        "device",
+        "time",
+    ]
+
+    private static func normalizedWeightKey(_ raw: String) -> String? {
+        let normalized = raw
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return supportedWeightKeys.contains(normalized) ? normalized : nil
     }
 }

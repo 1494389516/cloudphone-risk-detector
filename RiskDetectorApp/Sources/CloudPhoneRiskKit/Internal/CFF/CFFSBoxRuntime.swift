@@ -51,9 +51,31 @@ internal enum CFFSBoxRuntime {
     private static var cachedForward: [UInt8]?
 
     @inline(__always)
+    private static func splitMix64(_ x: UInt64) -> UInt64 {
+        var z = x &+ 0x9E3779B97F4A7C15
+        z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
+        z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+        return z ^ (z >> 31)
+    }
+
+    @inline(__always)
     static func runtimeSeed() -> UInt64 {
         let resolved = cprisk_cff_runtime_spn_sbox_seed()
         return resolved == 0 ? CFFSBoxMaterial.canonicalSeed : resolved
+    }
+
+    /// Derive a process-stable 32-bit word from the build/runtime seed and caller domain.
+    ///
+    /// This keeps constants deterministic for a build while avoiding fixed literal fingerprints.
+    @inline(__always)
+    static func derivedWord32(
+        domain: UInt64,
+        runtimeSalt: UInt32 = 0,
+        contextWord: UInt64 = 0
+    ) -> UInt32 {
+        let saltWord = UInt64(runtimeSalt) | (UInt64(runtimeSalt) << 32)
+        let mixed = splitMix64(runtimeSeed() ^ domain ^ contextWord ^ saltWord)
+        return UInt32(truncatingIfNeeded: mixed ^ (mixed >> 32))
     }
 
     /// Lazily materialize; first access pins the table for the process lifetime.
