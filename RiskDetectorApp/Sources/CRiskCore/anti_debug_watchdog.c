@@ -236,6 +236,8 @@ static cprisk_anti_debug_watchdog_snapshot_t s_watchdog_snapshot = {
     .last_exception_query_succeeded = 0u,
     .last_exception_reclaim_attempted = 0u,
     .last_exception_hijack_detected = 0u,
+    .last_exception_early_phase_captured = 0u,
+    .last_exception_startup_race_detected = 0u,
     .last_deny_attach_result = 0,
     .last_deny_attach_errno = 0,
     .last_exception_query_kern_return = 0,
@@ -245,6 +247,9 @@ static cprisk_anti_debug_watchdog_snapshot_t s_watchdog_snapshot = {
     .deny_attach_error_count = 0u,
     .exception_anomaly_count = 0u,
     .last_check_monotonic_ns = 0u,
+    .last_exception_verify_count = 0u,
+    .last_exception_reclaim_count = 0u,
+    .last_exception_startup_delta_ns = 0u,
     .last_signal_probe_result = 0u,
     .last_hardware_bp_detected = 0u,
     .last_software_bp_detected = 0u,
@@ -935,6 +940,8 @@ static void cprisk_watchdog_reset_locked(void) {
     s_watchdog_snapshot.last_exception_query_succeeded = 0u;
     s_watchdog_snapshot.last_exception_reclaim_attempted = 0u;
     s_watchdog_snapshot.last_exception_hijack_detected = 0u;
+    s_watchdog_snapshot.last_exception_early_phase_captured = 0u;
+    s_watchdog_snapshot.last_exception_startup_race_detected = 0u;
     s_watchdog_snapshot.last_deny_attach_result = 0;
     s_watchdog_snapshot.last_deny_attach_errno = 0;
     s_watchdog_snapshot.last_exception_query_kern_return = 0;
@@ -944,6 +951,9 @@ static void cprisk_watchdog_reset_locked(void) {
     s_watchdog_snapshot.deny_attach_error_count = 0u;
     s_watchdog_snapshot.exception_anomaly_count = 0u;
     s_watchdog_snapshot.last_check_monotonic_ns = 0u;
+    s_watchdog_snapshot.last_exception_verify_count = 0u;
+    s_watchdog_snapshot.last_exception_reclaim_count = 0u;
+    s_watchdog_snapshot.last_exception_startup_delta_ns = 0u;
     s_watchdog_snapshot.last_signal_probe_result = 0u;
     s_watchdog_snapshot.last_hardware_bp_detected = 0u;
     s_watchdog_snapshot.last_software_bp_detected = 0u;
@@ -1565,6 +1575,7 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
                 }
                 if (exception_snapshot.last_hijack_detected != 0u ||
                     exception_snapshot.last_reclaim_attempted != 0u ||
+                    exception_snapshot.last_race_detected != 0u ||
                     exception_snapshot.port_matches == 0u) {
                     anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_PORT;
                 }
@@ -1732,8 +1743,14 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
             s_watchdog_snapshot.last_exception_query_succeeded = exception_snapshot.last_query_succeeded;
             s_watchdog_snapshot.last_exception_reclaim_attempted = exception_snapshot.last_reclaim_attempted;
             s_watchdog_snapshot.last_exception_hijack_detected = exception_snapshot.last_hijack_detected;
+            s_watchdog_snapshot.last_exception_early_phase_captured = exception_snapshot.early_phase_captured;
+            s_watchdog_snapshot.last_exception_startup_race_detected = exception_snapshot.last_race_detected;
             s_watchdog_snapshot.last_exception_query_kern_return = exception_snapshot.last_query_kern_return;
             s_watchdog_snapshot.last_exception_register_kern_return = exception_snapshot.last_register_kern_return;
+            s_watchdog_snapshot.last_exception_verify_count = exception_snapshot.verify_count;
+            s_watchdog_snapshot.last_exception_reclaim_count = exception_snapshot.reclaim_count;
+            s_watchdog_snapshot.last_exception_startup_delta_ns =
+                exception_snapshot.first_register_verify_delta_ns;
             s_watchdog_snapshot.anomaly_flags = anomaly_flags;
             s_watchdog_snapshot.vm_mprotect_crosscheck_mismatch_total = (uint64_t)vm_cc_total;
             s_watchdog_snapshot.vm_mprotect_mach_trap_mismatch_total = (uint64_t)vm_mt_total;

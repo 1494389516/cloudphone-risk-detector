@@ -1709,15 +1709,26 @@ int cprisk_detect_single_stepping(void) {
 
 /* ── (g) Suspicious thread detection ──────────────────────────────── */
 
-int cprisk_detect_suspicious_threads(void) {
-    thread_act_array_t threads = NULL;
-    mach_msg_type_number_t thread_count = 0;
-
-    if (task_threads(mach_task_self(), &threads, &thread_count) != KERN_SUCCESS) {
-        return 0;
+int cprisk_thread_pc_exec_snapshot(
+    cprisk_thread_pc_exec_entry_t *out_entries,
+    uint32_t max_entries,
+    cprisk_thread_pc_exec_snapshot_t *out_snapshot
+) {
+    if (out_snapshot == NULL || (max_entries != 0u && out_entries == NULL)) {
+        return -1;
     }
 
-    int suspicious = 0;
+    thread_act_array_t threads = NULL;
+    mach_msg_type_number_t thread_count = 0;
+    memset(out_snapshot, 0, sizeof(*out_snapshot));
+    out_snapshot->version = 1u;
+
+    if (task_threads(mach_task_self(), &threads, &thread_count) != KERN_SUCCESS) {
+        return -1;
+    }
+
+    uint32_t suspicious = 0u;
+    const uint32_t entry_cap = max_entries;
 
     for (mach_msg_type_number_t i = 0; i < thread_count; i++) {
         arm_thread_state64_t ts;
@@ -1727,17 +1738,36 @@ int cprisk_detect_suspicious_threads(void) {
         kern_return_t kr = thread_get_state(
             threads[i], ARM_THREAD_STATE64, (thread_state_t)&ts, &count);
 
+        uintptr_t pc = 0u;
+        uint32_t in_exec_image = 0u;
+
         if (kr == KERN_SUCCESS) {
 #if defined(arm_thread_state64_get_pc)
-            uintptr_t pc = (uintptr_t)arm_thread_state64_get_pc(ts);
+            pc = (uintptr_t)arm_thread_state64_get_pc(ts);
 #else
-            uintptr_t pc = (uintptr_t)ts.__pc;
+            pc = (uintptr_t)ts.__pc;
 #endif
-            if (pc != 0 && !cprisk_addr_in_any_image_executable((const void *)pc)) {
+            if (pc != 0u) {
+                in_exec_image = cprisk_addr_in_any_image_executable((const void *)pc) != 0 ? 1u : 0u;
+            }
+            if (pc != 0u && in_exec_image == 0u) {
                 suspicious++;
             }
         }
+
+        if (out_entries != NULL && (uint32_t)i < entry_cap) {
+            out_entries[i].thread_port = (uint32_t)threads[i];
+            out_entries[i].pc_in_executable_image = in_exec_image;
+            out_entries[i].pc = (uint64_t)pc;
+            out_entries[i].thread_get_state_kern_return = (int32_t)kr;
+        }
     }
+
+    out_snapshot->total_threads = (uint32_t)thread_count;
+    out_snapshot->foreign_exec_threads = suspicious;
+    out_snapshot->entries_written = thread_count > (mach_msg_type_number_t)entry_cap
+        ? entry_cap
+        : (uint32_t)thread_count;
 
     for (mach_msg_type_number_t i = 0; i < thread_count; i++) {
         mach_port_deallocate(mach_task_self(), threads[i]);
@@ -1746,7 +1776,15 @@ int cprisk_detect_suspicious_threads(void) {
                   (vm_address_t)threads,
                   sizeof(thread_act_t) * thread_count);
 
-    return suspicious;
+    return 0;
+}
+
+int cprisk_detect_suspicious_threads(void) {
+    cprisk_thread_pc_exec_snapshot_t snapshot;
+    if (cprisk_thread_pc_exec_snapshot(NULL, 0u, &snapshot) != 0) {
+        return 0;
+    }
+    return (int)snapshot.foreign_exec_threads;
 }
 
 /* ── (h) Developer Disk Image detection ───────────────────────────── */
@@ -1892,6 +1930,20 @@ int cprisk_csops_status_flags(uint32_t *flags_out, int *error_out) {
     return -1;
 }
 int cprisk_detect_single_stepping(void) { return 0; }
+int cprisk_thread_pc_exec_snapshot(
+    cprisk_thread_pc_exec_entry_t *out_entries,
+    uint32_t max_entries,
+    cprisk_thread_pc_exec_snapshot_t *out_snapshot
+) {
+    (void)out_entries;
+    (void)max_entries;
+    if (out_snapshot == NULL) {
+        return -1;
+    }
+    memset(out_snapshot, 0, sizeof(*out_snapshot));
+    out_snapshot->version = 1u;
+    return 0;
+}
 int cprisk_detect_suspicious_threads(void) { return 0; }
 int cprisk_detect_developer_disk(void) { return 0; }
 int cprisk_detect_dbi_markers(void) { return 0; }

@@ -539,6 +539,19 @@ enum ObfuscatedConstants {
         StringDeobfuscator.base64Decode("ZnJpZGE6bGlzdGVuOg==")
     }
 
+    static var methodPrefixFridaAnomalousProto: String {
+        StringDeobfuscator.base64Decode("ZnJpZGE6YW5vbV9wcm90bzo=")
+    }
+
+    /// Neutral prefix for TCP listeners that are not Frida/D-Bus protocol (avoids false "frida" labels).
+    static var methodPrefixSuspiciousLocalListen: String {
+        StringDeobfuscator.base64Decode("c3VzcGljaW91czpsb2NhbF9saXN0ZW46")
+    }
+
+    static var envKeyCpriskFridaAnomScan: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX0ZSSURBX0FOT1NfU0NBTg==")
+    }
+
     static var methodPrefixFridaFile: String {
         StringDeobfuscator.base64Decode("ZnJpZGE6ZmlsZTo=")
     }
@@ -640,6 +653,10 @@ enum ObfuscatedConstants {
 
     static var signalFridaExceptionPort: String {
         StringDeobfuscator.base64Decode("ZnJpZGFfZXhjZXB0aW9uX3BvcnQ=")
+    }
+
+    static var signalFridaExceptionPortStartupRace: String {
+        StringDeobfuscator.base64Decode("ZnJpZGFfZXhjZXB0aW9uX3BvcnRfc3RhcnR1cF9yYWNl")
     }
 
     static var signalFridaDispatchQueue: String {
@@ -1229,6 +1246,10 @@ enum ObfuscatedConstants {
 
     static var detectorIDDylibInjection: String {
         StringDeobfuscator.base64Decode("ZHlsaWJfaW5qZWN0aW9u")
+    }
+
+    static var signalWatchdogAdaptiveHint: String {
+        StringDeobfuscator.base64Decode("d2F0Y2hkb2dfYWRhcHRpdmVfaGludA==")
     }
 }
 

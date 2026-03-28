@@ -101,6 +101,7 @@ public enum SignalID {
     // Frida module
     /// Multiple Frida-facing detectors (runtime / module / thread / heap / socket / hook surfaces) agree.
     static let fridaRuntimeConsensus = "frida_runtime_consensus"
+    static let fridaExceptionPortStartupRace = ObfuscatedConstants.signalFridaExceptionPortStartupRace
     static let fridaModuleDetected = ObfuscatedConstants.signalFridaModuleDetected
     static let fridaModuleImage = ObfuscatedConstants.signalFridaModuleImage
     static let fridaModuleSection = ObfuscatedConstants.signalFridaModuleSection

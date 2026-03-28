@@ -130,7 +130,22 @@ typedef struct cprisk_exception_handler_snapshot {
     int32_t last_register_kern_return;
     uint64_t verify_count;
     uint64_t reclaim_count;
+    uint64_t first_register_verify_delta_ns;
 } cprisk_exception_handler_snapshot_t;
+
+typedef struct cprisk_thread_pc_exec_entry {
+    uint32_t thread_port;
+    uint32_t pc_in_executable_image;
+    uint64_t pc;
+    int32_t thread_get_state_kern_return;
+} cprisk_thread_pc_exec_entry_t;
+
+typedef struct cprisk_thread_pc_exec_snapshot {
+    uint32_t version;
+    uint32_t total_threads;
+    uint32_t foreign_exec_threads;
+    uint32_t entries_written;
+} cprisk_thread_pc_exec_snapshot_t;
 
 typedef struct cprisk_anti_debug_watchdog_snapshot {
     uint32_t supported;
@@ -144,6 +159,8 @@ typedef struct cprisk_anti_debug_watchdog_snapshot {
     uint32_t last_exception_query_succeeded;
     uint32_t last_exception_reclaim_attempted;
     uint32_t last_exception_hijack_detected;
+    uint32_t last_exception_early_phase_captured;
+    uint32_t last_exception_startup_race_detected;
     int32_t last_deny_attach_result;
     int32_t last_deny_attach_errno;
     int32_t last_exception_query_kern_return;
@@ -153,6 +170,9 @@ typedef struct cprisk_anti_debug_watchdog_snapshot {
     uint64_t deny_attach_error_count;
     uint64_t exception_anomaly_count;
     uint64_t last_check_monotonic_ns;
+    uint64_t last_exception_verify_count;
+    uint64_t last_exception_reclaim_count;
+    uint64_t last_exception_startup_delta_ns;
     uint32_t last_signal_probe_result;
     uint32_t last_hardware_bp_detected;
     uint32_t last_software_bp_detected;
@@ -1303,6 +1323,52 @@ int cprisk_stub_contains_svc_opcode(const void *fn, size_t len);
 /// FNV-1a (64-bit) over 16 bytes of stub text, page-mixed via stub_fn_addr (4 KiB page base XOR-fold).
 uint64_t cprisk_svc_stub_chunk_hash_fnv16(const uint8_t *chunk16, uintptr_t stub_fn_addr);
 
+/* ── Dual-Path Syscall Cross-Verification ──────────────────────────── */
+
+enum {
+    CPRISK_CROSSCHECK_DIVERGE_PID    = 1u << 0,
+    CPRISK_CROSSCHECK_DIVERGE_UID    = 1u << 1,
+    CPRISK_CROSSCHECK_DIVERGE_PPID   = 1u << 2,
+    CPRISK_CROSSCHECK_DIVERGE_STAT   = 1u << 3,
+    CPRISK_CROSSCHECK_DIVERGE_ACCESS = 1u << 4,
+};
+
+/// Compare direct SVC syscall results against libc equivalents for getpid, getuid,
+/// getppid, stat, and access. Returns a bitmask of CPRISK_CROSSCHECK_DIVERGE_* flags
+/// indicating which syscall pairs returned different results. Non-zero suggests
+/// libc-level hook interposition. Returns 0 on simulator/non-arm64.
+uint32_t cprisk_syscall_crosscheck_probe(void);
+
+/* ── Errno Reasonableness Validation ───────────────────────────────── */
+
+enum {
+    CPRISK_ERRNO_PROBE_SYSCTL_EINTR       = 1u << 0,
+    CPRISK_ERRNO_PROBE_STAT_EINTR         = 1u << 1,
+    CPRISK_ERRNO_PROBE_ACCESS_ROOT_FAIL   = 1u << 2,
+    CPRISK_ERRNO_PROBE_PID_INVALID        = 1u << 3,
+};
+
+/// Validate that direct syscall results produce reasonable errno / return values.
+/// Returns a bitmask of CPRISK_ERRNO_PROBE_* flags indicating anomalies such as
+/// unexpected EINTR from sysctl, stat returning EINTR for "/", access failing on "/",
+/// or getpid returning a non-positive value. Returns 0 on simulator/non-arm64.
+uint32_t cprisk_syscall_errno_probe(void);
+
+/* ── Honeypot Syscall Behavioral Probe ─────────────────────────────── */
+
+enum {
+    CPRISK_HONEYPOT_PHANTOM_ACCESS_EXISTS   = 1u << 0,
+    CPRISK_HONEYPOT_PHANTOM_STAT_EXISTS     = 1u << 1,
+    CPRISK_HONEYPOT_ROOT_SVC_LIBC_DIVERGE_A = 1u << 2,
+    CPRISK_HONEYPOT_ROOT_SVC_LIBC_DIVERGE_B = 1u << 3,
+};
+
+/// Probe behavioral anomalies using random non-existent honeypot paths and
+/// known-good root path cross-checks. Returns a bitmask of CPRISK_HONEYPOT_*
+/// flags: phantom access/stat hits on random paths, or SVC/libc divergence on "/".
+/// Returns 0 on simulator/non-arm64.
+uint32_t cprisk_honeypot_syscall_probe(void);
+
 /* ── Signal Probe Bitmask ──────────────────────────────────────────── */
 
 enum {
@@ -1439,6 +1505,14 @@ int cprisk_detect_single_stepping(void);
 /// Enumerate Mach threads and check if any PC falls outside known images.
 /// Returns the count of suspicious threads (0 = normal).
 int cprisk_detect_suspicious_threads(void);
+
+/// Enumerate Mach threads and export each thread's PC/image-membership verdict.
+/// Returns 0 on success, -1 on invalid arguments or enumeration failure.
+int cprisk_thread_pc_exec_snapshot(
+    cprisk_thread_pc_exec_entry_t *out_entries,
+    uint32_t max_entries,
+    cprisk_thread_pc_exec_snapshot_t *out_snapshot
+);
 
 /// Check for Developer Disk Image paths (debugserver, libMainThreadChecker).
 /// Returns 1 if any developer tool path is accessible, 0 otherwise.

@@ -169,7 +169,20 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                 + antiDebugStrategySignals(from: merged)
                 + signingChainSignals(from: merged)
             let withCross = withCorrelation + crossConsistencySignals(from: withCorrelation)
-            let weighted = applyMiePostureWeighting(withCross)
+            var weighted = applyMiePostureWeighting(withCross)
+            injectSigningEpochNoise(&weighted)
+
+            let hintLevel = computeAdaptiveWatchdogHint(from: weighted)
+            weighted.append(RiskSignal(
+                id: ObfuscatedConstants.signalWatchdogAdaptiveHint,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 0,
+                evidence: ["hint": "\(hintLevel)"],
+                state: .soft(confidence: 0),
+                layer: 0,
+                weightHint: 0
+            ))
+
             return weighted.filter { $0.score >= configuration.minScoreThreshold }
         }
 
@@ -272,6 +285,20 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                 weightHint: 80
             ))
         }
+    }
+
+    private func injectSigningEpochNoise(_ signals: inout [RiskSignal]) {
+        guard !signals.isEmpty else { return }
+        let epochNonce = mach_absolute_time() / 30_000_000_000
+        guard let lowestIdx = signals.enumerated().min(by: { $0.element.score < $1.element.score })?.offset else { return }
+        signals[lowestIdx].score += Double(epochNonce % 7) * 0.01
+    }
+
+    private func computeAdaptiveWatchdogHint(from signals: [RiskSignal]) -> Int {
+        let tamperedCount = signals.filter { $0.state == .tampered }.count
+        if tamperedCount >= 3 { return 1 }
+        if tamperedCount >= 1 { return 2 }
+        return 3
     }
 
     func orderedRandomizedDetectorIDs(snapshot: RiskSnapshot) -> [String] {
@@ -977,9 +1004,9 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         var signals: [RiskSignal] = []
         
         let result = try FridaDetector().detect()
-        
+        let fridaPrefix = ObfuscatedConstants.keywordFrida
+
         if result.score > 0 {
-            let fridaPrefix = ObfuscatedConstants.keywordFrida
             signals.append(
                 RiskSignal(
                     id: "\(fridaPrefix)_detected",
@@ -995,41 +1022,58 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                     weightHint: 85
                 )
             )
-            
-            // 分解具体检测维度
-            let fridaCategories = [
-                (ObfuscatedConstants.methodPrefixFridaPort, "\(fridaPrefix)_port", 30),
-                (ObfuscatedConstants.methodPrefixFridaProto, "\(fridaPrefix)_proto", 34),
-                (ObfuscatedConstants.methodPrefixFridaListen, "\(fridaPrefix)_listen", 14),
-                (ObfuscatedConstants.methodPrefixFridaFile, "\(fridaPrefix)_file", 20),
-                (ObfuscatedConstants.methodPrefixFridaSymbol, "\(fridaPrefix)_symbol", 20),
-                (ObfuscatedConstants.methodPrefixFridaThread, "\(fridaPrefix)_thread", 20),
-                (ObfuscatedConstants.methodPrefixFridaProcess, "\(fridaPrefix)_process", 30),
-                (ObfuscatedConstants.methodPrefixFridaEnv, "\(fridaPrefix)_environment", 25),
-                (ObfuscatedConstants.methodPrefixFridaMemorySig, "\(fridaPrefix)_memsig", 20),
-                (ObfuscatedConstants.methodPrefixFridaRuntime, "\(fridaPrefix)_runtime", 22),
-                (ObfuscatedConstants.methodPrefixFridaRuntimeFused, "\(fridaPrefix)_runtime_fused", 48),
-                (FridaDetector.methodPrefixPatch, "\(fridaPrefix)_patch", 28),
-                (FridaDetector.methodPrefixBehavior, "\(fridaPrefix)_behavior", 22),
-            ]
-            
-            for method in result.methods {
-                for (prefix, signalID, baseScore) in fridaCategories {
-                    if method.hasPrefix(prefix) {
-                        let detail = method.replacingOccurrences(of: prefix, with: "")
-                        signals.append(
-                            RiskSignal(
-                                id: "\(signalID)_\(detail.replacingOccurrences(of: ":", with: "_"))",
-                                category: ObfuscatedConstants.categoryAntiTamper,
-                                score: Double(baseScore),
-                                evidence: ["detection_method": method]
-                            )
+        }
+
+        let fridaCategories = [
+            (ObfuscatedConstants.methodPrefixFridaPort, "\(fridaPrefix)_port", 30),
+            (ObfuscatedConstants.methodPrefixFridaProto, "\(fridaPrefix)_proto", 34),
+            (ObfuscatedConstants.methodPrefixFridaListen, "\(fridaPrefix)_listen", 14),
+            (ObfuscatedConstants.methodPrefixFridaAnomalousProto, "\(fridaPrefix)_anom_proto", 34),
+            (ObfuscatedConstants.methodPrefixFridaFile, "\(fridaPrefix)_file", 20),
+            (ObfuscatedConstants.methodPrefixFridaSymbol, "\(fridaPrefix)_symbol", 20),
+            (ObfuscatedConstants.methodPrefixFridaThread, "\(fridaPrefix)_thread", 20),
+            (ObfuscatedConstants.methodPrefixFridaProcess, "\(fridaPrefix)_process", 30),
+            (ObfuscatedConstants.methodPrefixFridaEnv, "\(fridaPrefix)_environment", 25),
+            (ObfuscatedConstants.methodPrefixFridaMemorySig, "\(fridaPrefix)_memsig", 20),
+            (ObfuscatedConstants.methodPrefixFridaRuntime, "\(fridaPrefix)_runtime", 22),
+            (ObfuscatedConstants.methodPrefixFridaRuntimeFused, "\(fridaPrefix)_runtime_fused", 48),
+            (FridaDetector.methodPrefixPatch, "\(fridaPrefix)_patch", 28),
+            (FridaDetector.methodPrefixBehavior, "\(fridaPrefix)_behavior", 22),
+        ]
+
+        for method in result.methods {
+            for (prefix, signalID, baseScore) in fridaCategories {
+                if method.hasPrefix(prefix) {
+                    let detail = method.replacingOccurrences(of: prefix, with: "")
+                    signals.append(
+                        RiskSignal(
+                            id: "\(signalID)_\(detail.replacingOccurrences(of: ":", with: "_"))",
+                            category: ObfuscatedConstants.categoryAntiTamper,
+                            score: Double(baseScore),
+                            evidence: ["detection_method": method]
                         )
-                    }
+                    )
                 }
             }
         }
-        
+
+        let suspiciousPrefix = ObfuscatedConstants.methodPrefixSuspiciousLocalListen
+        for method in result.methods where method.hasPrefix(suspiciousPrefix) {
+            let detail = method.replacingOccurrences(of: suspiciousPrefix, with: "")
+            let safeDetail = detail.replacingOccurrences(of: ":", with: "_")
+            signals.append(
+                RiskSignal(
+                    id: "suspicious_local_listen_\(safeDetail)",
+                    category: ObfuscatedConstants.categoryAntiTamper,
+                    score: 4,
+                    evidence: ["detection_method": method, "scope": "local_tcp_listen"],
+                    state: .soft(confidence: 0.35),
+                    layer: 1,
+                    weightHint: 12
+                )
+            )
+        }
+
         return signals
     }
 
@@ -1612,7 +1656,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         }
 
         if exceptionPortFlag {
-            let score = snapshot.lastExceptionHijackDetected ? 88.0 : 72.0
+            let score = snapshot.lastExceptionStartupRaceDetected ? 92.0 : (snapshot.lastExceptionHijackDetected ? 88.0 : 72.0)
             maxScore = max(maxScore, score)
             anomalyKinds.append("exception_port")
             signals.append(
@@ -1624,11 +1668,45 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                         "healthy": "\(snapshot.lastExceptionPortHealthy)",
                         "reclaim_attempted": "\(snapshot.lastExceptionReclaimAttempted)",
                         "hijack_detected": "\(snapshot.lastExceptionHijackDetected)",
+                        "early_phase_captured": "\(snapshot.lastExceptionEarlyPhaseCaptured)",
+                        "startup_race_detected": "\(snapshot.lastExceptionStartupRaceDetected)",
+                        "verify_count": "\(snapshot.lastExceptionVerifyCount)",
+                        "reclaim_count": "\(snapshot.lastExceptionReclaimCount)",
+                        "startup_delta_ns": "\(snapshot.lastExceptionStartupDeltaNs)",
                         "register_kr": "\(snapshot.lastExceptionRegisterKernReturn)",
                     ],
                     state: .tampered,
                     layer: 2,
                     weightHint: 95
+                )
+            )
+        }
+
+        if snapshot.lastExceptionStartupRaceDetected {
+            let score = 91.0
+            maxScore = max(maxScore, score)
+            anomalyKinds.append("exception_startup_race")
+            signals.append(
+                RiskSignal(
+                    id: SignalID.fridaExceptionPortStartupRace,
+                    category: ObfuscatedConstants.categoryAntiTamper,
+                    score: score,
+                    evidence: [
+                        "early_phase_captured": "\(snapshot.lastExceptionEarlyPhaseCaptured)",
+                        "startup_race_detected": "true",
+                        "verify_count": "\(snapshot.lastExceptionVerifyCount)",
+                        "reclaim_count": "\(snapshot.lastExceptionReclaimCount)",
+                        "startup_delta_ns": "\(snapshot.lastExceptionStartupDeltaNs)",
+                        "port_healthy": "\(snapshot.lastExceptionPortHealthy)",
+                        "hijack_detected": "\(snapshot.lastExceptionHijackDetected)",
+                        "reclaim_attempted": "\(snapshot.lastExceptionReclaimAttempted)",
+                        "register_kr": "\(snapshot.lastExceptionRegisterKernReturn)",
+                        "query_kr": "\(snapshot.lastExceptionQueryKernReturn)",
+                        "mechanism": "tls_constructor_exception_port_baseline_drift",
+                    ],
+                    state: .tampered,
+                    layer: 1,
+                    weightHint: 96
                 )
             )
         }
@@ -2080,6 +2158,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                     $0.id == ObfuscatedConstants.signalFridaDetected
                         || $0.id.hasPrefix("frida_port_")
                         || $0.id.hasPrefix("frida_proto_")
+                        || $0.id.hasPrefix("frida_anom_proto_")
                         || $0.id.hasPrefix("frida_listen_")
                         || $0.id.hasPrefix("frida_environment_")
                         || $0.id.hasPrefix("frida_memsig_")
@@ -2106,6 +2185,7 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                 {
                     $0.id == ObfuscatedConstants.signalThreadAnomaly
                         || $0.id == ObfuscatedConstants.signalFridaExceptionPort
+                        || $0.id == SignalID.fridaExceptionPortStartupRace
                 }
             ),
             (

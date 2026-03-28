@@ -82,9 +82,14 @@ extension CPRiskKit {
         public let lastExceptionQuerySucceeded: Bool
         public let lastExceptionReclaimAttempted: Bool
         public let lastExceptionHijackDetected: Bool
+        public let lastExceptionEarlyPhaseCaptured: Bool
+        public let lastExceptionStartupRaceDetected: Bool
         public let lastExceptionQueryKernReturn: Int32
         public let lastExceptionRegisterKernReturn: Int32
         public let lastCheckMonotonicNs: UInt64
+        public let lastExceptionVerifyCount: UInt64
+        public let lastExceptionReclaimCount: UInt64
+        public let lastExceptionStartupDeltaNs: UInt64
         public let signalProbeResult: Bool
         public let hardwareBpDetected: Bool
         public let softwareBreakpointDetected: Bool

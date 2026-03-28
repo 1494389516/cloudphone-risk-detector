@@ -137,6 +137,8 @@ final class PerformanceBenchmarkTests: XCTestCase {
 
     /// 测量 RiskScorer 评分计算耗时
     func testRiskScorerPerformance() {
+        let context = TestFixtures.makeRiskContext()
+        let config = TestFixtures.defaultRiskConfig
         let signals = (0..<20).map { i in
             RiskSignal(
                 id: "perf_test_signal_\(i)",
@@ -151,7 +153,7 @@ final class PerformanceBenchmarkTests: XCTestCase {
 
         measure {
             for _ in 0..<100 {
-                _ = RiskScorer.score(signals: signals)
+                _ = RiskScorer.score(context: context, config: config, extraSignals: signals)
             }
         }
     }

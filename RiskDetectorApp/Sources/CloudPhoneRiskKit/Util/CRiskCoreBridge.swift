@@ -47,6 +47,12 @@ typealias _CRiskIntFnSpawnProbe = @convention(c) (UnsafeMutablePointer<cprisk_sp
 typealias _CRiskIntFnWatchdogSnapshot = @convention(c) (UnsafeMutablePointer<cprisk_anti_debug_watchdog_snapshot_t>?) -> CInt
 typealias _CRiskIntFnPlanSnapshot = @convention(c) (UnsafeMutablePointer<cprisk_antidebug_plan_snapshot_t>?) -> CInt
 typealias _CRiskIntFnFridaSnapshot = @convention(c) (UnsafeMutablePointer<cprisk_frida_runtime_snapshot_t>?) -> CInt
+typealias _CRiskIntFnExceptionSnapshot = @convention(c) (UnsafeMutablePointer<cprisk_exception_handler_snapshot_t>?) -> CInt
+typealias _CRiskIntFnThreadExecSnapshot = @convention(c) (
+    UnsafeMutablePointer<cprisk_thread_pc_exec_entry_t>?,
+    UInt32,
+    UnsafeMutablePointer<cprisk_thread_pc_exec_snapshot_t>?
+) -> CInt
 typealias _CRiskIntFnMteSnapshot = @convention(c) (UnsafeMutablePointer<cprisk_mte_guard_snapshot_t>?) -> CInt
 typealias _CRiskIntFnInitProtection = @convention(c) (UnsafePointer<UInt8>?, Int) -> CInt
 typealias _CRiskVoidFnHardeningMode = @convention(c) (cprisk_runtime_hardening_mode_t) -> Void
@@ -106,6 +112,8 @@ let cprisk_get_anti_debug_watchdog_snapshot: _CRiskIntFnWatchdogSnapshot =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_GET_ANTI_DEBUG_WATCHDOG_SNAPSHOT), as: _CRiskIntFnWatchdogSnapshot.self)
 let cprisk_get_antidebug_plan_snapshot: _CRiskIntFnPlanSnapshot =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_GET_ANTIDEBUG_PLAN_SNAPSHOT), as: _CRiskIntFnPlanSnapshot.self)
+let cprisk_get_exception_handler_snapshot: _CRiskIntFnExceptionSnapshot =
+    CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_GET_EXCEPTION_HANDLER_SNAPSHOT), as: _CRiskIntFnExceptionSnapshot.self)
 let cprisk_get_mprotect_direct_failure_count: _CRiskUInt32Fn0 =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_GET_MPROTECT_DIRECT_FAILURE_COUNT), as: _CRiskUInt32Fn0.self)
 let cprisk_get_mprotect_fallback_success_count: _CRiskUInt32Fn0 =
@@ -192,3 +200,5 @@ let cprisk_verify_with_derived_key_and_request_binding_digest: _CRiskIntFnVerify
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_VERIFY_WITH_DERIVED_KEY_AND_REQUEST_BINDING_DIGEST), as: _CRiskIntFnVerify.self)
 let cprisk_whitebox_evaluate_domain: _CRiskWhiteboxEval =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_WHITEBOX_EVALUATE_DOMAIN), as: _CRiskWhiteboxEval.self)
+let cprisk_thread_pc_exec_snapshot: _CRiskIntFnThreadExecSnapshot =
+    CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_THREAD_PC_EXEC_SNAPSHOT), as: _CRiskIntFnThreadExecSnapshot.self)

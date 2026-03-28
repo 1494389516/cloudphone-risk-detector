@@ -72,9 +72,14 @@ final class AntiTamperingTests: XCTestCase {
         lastExceptionQuerySucceeded: Bool = true,
         lastExceptionReclaimAttempted: Bool = false,
         lastExceptionHijackDetected: Bool = false,
+        lastExceptionEarlyPhaseCaptured: Bool = false,
+        lastExceptionStartupRaceDetected: Bool = false,
         lastExceptionQueryKernReturn: Int32 = 0,
         lastExceptionRegisterKernReturn: Int32 = 0,
         lastCheckMonotonicNs: UInt64 = 0,
+        lastExceptionVerifyCount: UInt64 = 0,
+        lastExceptionReclaimCount: UInt64 = 0,
+        lastExceptionStartupDeltaNs: UInt64 = 0,
         signalProbeResult: Bool = false,
         hardwareBpDetected: Bool = false,
         softwareBreakpointDetected: Bool = false,
@@ -145,9 +150,14 @@ final class AntiTamperingTests: XCTestCase {
             lastExceptionQuerySucceeded: lastExceptionQuerySucceeded,
             lastExceptionReclaimAttempted: lastExceptionReclaimAttempted,
             lastExceptionHijackDetected: lastExceptionHijackDetected,
+            lastExceptionEarlyPhaseCaptured: lastExceptionEarlyPhaseCaptured,
+            lastExceptionStartupRaceDetected: lastExceptionStartupRaceDetected,
             lastExceptionQueryKernReturn: lastExceptionQueryKernReturn,
             lastExceptionRegisterKernReturn: lastExceptionRegisterKernReturn,
             lastCheckMonotonicNs: lastCheckMonotonicNs,
+            lastExceptionVerifyCount: lastExceptionVerifyCount,
+            lastExceptionReclaimCount: lastExceptionReclaimCount,
+            lastExceptionStartupDeltaNs: lastExceptionStartupDeltaNs,
             signalProbeResult: signalProbeResult,
             hardwareBpDetected: hardwareBpDetected,
             softwareBreakpointDetected: softwareBreakpointDetected,
@@ -598,6 +608,40 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertEqual(summary.evidence["anomaly_kinds"], "traced,deny_attach,exception_port,exception_query")
     }
 
+    func testAntiDebugWatchdogSignalsEmitFridaStartupRaceSignal() {
+        let provider = AntiTamperingSignalProvider()
+        let snapshot = makeWatchdogSnapshot(
+            anomalyFlags: UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_PORT),
+            lastExceptionPortHealthy: false,
+            lastExceptionReclaimAttempted: true,
+            lastExceptionHijackDetected: true,
+            lastExceptionEarlyPhaseCaptured: true,
+            lastExceptionStartupRaceDetected: true,
+            lastExceptionQueryKernReturn: 5,
+            lastExceptionRegisterKernReturn: 6,
+            lastExceptionVerifyCount: 3,
+            lastExceptionReclaimCount: 1,
+            lastExceptionStartupDeltaNs: 42_000
+        )
+
+        let signals = provider.antiDebugWatchdogSignals(from: snapshot)
+
+        guard let startupRace = signals.first(where: { $0.id == SignalID.fridaExceptionPortStartupRace }) else {
+            return XCTFail("missing frida startup race signal")
+        }
+        XCTAssertEqual(startupRace.state, RiskSignalState.tampered)
+        XCTAssertEqual(startupRace.layer, 1)
+        XCTAssertEqual(startupRace.evidence["early_phase_captured"], "true")
+        XCTAssertEqual(startupRace.evidence["startup_delta_ns"], "42000")
+
+        guard let exceptionPort = signals.first(where: { $0.id == SignalID.antiDebugWatchdogExceptionPort }) else {
+            return XCTFail("missing watchdog exception port signal")
+        }
+        XCTAssertEqual(exceptionPort.evidence["startup_race_detected"], "true")
+        XCTAssertEqual(exceptionPort.evidence["verify_count"], "3")
+        XCTAssertEqual(exceptionPort.evidence["reclaim_count"], "1")
+    }
+
     func testCRiskCoreDBIVmTraceMarkerFlagConstants() {
         XCTAssertEqual(UInt32(CPRISK_DBI_MARKER_ANON_EXEC_SLAB), 32)
         XCTAssertEqual(UInt32(CPRISK_DBI_MARKER_STALKER_CORREL), 64)
@@ -1023,6 +1067,8 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertEqual(ObfuscatedConstants.methodPrefixFridaMemorySig, "frida:memsig:")
         XCTAssertEqual(ObfuscatedConstants.methodPrefixFridaRuntime, "frida:runtime:")
         XCTAssertEqual(ObfuscatedConstants.methodPrefixFridaRuntimeFused, "frida:runtime_fused:")
+        XCTAssertEqual(FridaDetector.methodPrefixPatch, "frida:patch:")
+        XCTAssertEqual(FridaDetector.methodPrefixBehavior, "frida:behavior:")
     }
 
     func testFridaProtocolWireClassification_saslOk() {
@@ -1067,6 +1113,12 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertEqual(first?.first, 0x6c, "first proactive payload should be D-Bus-shaped wire bytes")
         let secondText = payloads.dropFirst().first.flatMap { String(data: $0, encoding: .utf8) }
         XCTAssertTrue(secondText?.hasPrefix("AUTH EXTERNAL") ?? false)
+    }
+
+    func testFridaDetectorHttpResponseClassificationForLocalListenExclusion() {
+        XCTAssertTrue(FridaDetector.httpResponseLooksLikeHttpForTesting(Data("HTTP/1.1 200 OK\r\n".utf8)))
+        XCTAssertTrue(FridaDetector.httpResponseLooksLikeHttpForTesting(Data("http/1.0 404\r\n".utf8)))
+        XCTAssertFalse(FridaDetector.httpResponseLooksLikeHttpForTesting(Data("REJECTED EXTERNAL ANONYMOUS\r\n".utf8)))
     }
 
     func testFridaDetectorFileArtifactProbeRequiresHigherEntropyHints() {
@@ -1140,6 +1192,16 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertTrue(mapped.contains("frida:patch:inline_unreadable:objc_msgSend"))
         XCTAssertTrue(mapped.contains("frida:behavior:dyld_interpose:section_found:libx.dylib"))
         XCTAssertTrue(mapped.contains("frida:behavior:dyld_env:dyld_insert_libraries"))
+    }
+
+    func testFridaDetectorRuntimeBehaviorMappingCoversGadgetLikeSignals() {
+        let flags = UInt32(CPRISK_FRIDA_RT_BEHAVIOR_PROLOGUE)
+            | UInt32(CPRISK_FRIDA_RT_BEHAVIOR_FOREIGN_EXEC)
+        let mapped = FridaDetector.mapRuntimeBehaviorMethodsForTesting(flags: flags, hitCount: 2)
+
+        XCTAssertTrue(mapped.contains("frida:behavior:runtime_prologue"))
+        XCTAssertTrue(mapped.contains("frida:behavior:runtime_foreign_exec"))
+        XCTAssertTrue(mapped.contains("frida:behavior:runtime_multi_surface"))
     }
 
     func testFridaSocketDetectorSuspiciousPathProbeRequiresPriorHints() {
@@ -1305,6 +1367,28 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertTrue(sectionHits.contains("frida_module:section:__gum"))
         XCTAssertTrue(stringHits.contains("frida_module:string:frida:rpc"))
         XCTAssertTrue(stringHits.contains("frida_module:string:gum-js-loop"))
+    }
+
+    func testFridaModuleDetectorMainBinaryMarkerWeighting() {
+        let detector = FridaModuleDetector()
+        let mainStringHits = detector.detectStringMarkers(
+            in: ["boot gum-js-loop frida:rpc"],
+            mainBinary: true
+        )
+        let baseline = FridaModuleDetector.buildResult(
+            imageHits: [],
+            sectionHits: [],
+            stringHits: ["frida_module:string:gum-js-loop"]
+        )
+        let weighted = FridaModuleDetector.buildResult(
+            imageHits: [],
+            sectionHits: [],
+            stringHits: mainStringHits
+        )
+
+        XCTAssertTrue(mainStringHits.contains("frida_module:string:main_binary:gum-js-loop"))
+        XCTAssertTrue(mainStringHits.contains("frida_module:string:main_binary:frida:rpc"))
+        XCTAssertGreaterThan(weighted.score, baseline.score)
     }
 
     func testFridaModuleDetectorImageOriginAnomalies() {
@@ -1647,6 +1731,26 @@ final class AntiTamperingTests: XCTestCase {
             XCTAssertEqual(signal.layer, 2)
             XCTAssertTrue(signal.id == "thread_anomaly" || signal.id == "frida_exception_port")
         }
+    }
+
+    func testFridaThreadForeignExecutionMethodRequiresRuntimeCorrelation() {
+        let detector = FridaThreadDetector()
+
+        XCTAssertNil(
+            detector.foreignExecutionMethodForTesting(
+                marker: "gum-js-loop",
+                hasForeignExecutableThread: false
+            )
+        )
+        XCTAssertEqual(
+            detector.foreignExecutionMethodForTesting(
+                marker: "gum-js-loop",
+                hasForeignExecutableThread: true,
+                threadPort: 0x41,
+                pc: 0x1234
+            ),
+            "frida_thread:foreign_exec:gum-js-loop:port_0x41:pc_0x1234"
+        )
     }
 
     // MARK: - FridaSocketDetector Tests

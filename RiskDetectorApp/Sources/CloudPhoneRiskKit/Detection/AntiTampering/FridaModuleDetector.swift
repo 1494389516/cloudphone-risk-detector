@@ -55,8 +55,13 @@ struct FridaModuleDetector: Detector {
             guard shouldInspectLayout else { continue }
 
             let layout = inspectModuleLayout(header: header, imageIndex: index)
+            let isMainExecutable = isMainExecutableImage(index: index, imageName: imageName)
             sectionHits.append(contentsOf: detectSectionMarkers(in: layout.sectionNames))
             stringHits.append(contentsOf: detectStringMarkers(in: layout.stringBlobs))
+            if isMainExecutable {
+                sectionHits.append(contentsOf: detectSectionMarkers(in: layout.sectionNames, mainBinary: true))
+                stringHits.append(contentsOf: detectStringMarkers(in: layout.stringBlobs, mainBinary: true))
+            }
         }
 
         return Self.buildResult(
@@ -107,26 +112,32 @@ struct FridaModuleDetector: Detector {
         return hits.sorted()
     }
 
-    func detectSectionMarkers(in sectionNames: [String]) -> [String] {
+    func detectSectionMarkers(in sectionNames: [String], mainBinary: Bool = false) -> [String] {
         var hits = Set<String>()
+        let prefix = mainBinary
+            ? "\(ObfuscatedConstants.methodPrefixFridaModuleSection)main_binary:"
+            : ObfuscatedConstants.methodPrefixFridaModuleSection
 
         for sectionName in sectionNames {
             let normalized = sectionName.lowercased()
             for marker in suspiciousSectionMarkers where normalized.contains(marker) {
-                hits.insert("\(ObfuscatedConstants.methodPrefixFridaModuleSection)\(marker)")
+                hits.insert("\(prefix)\(marker)")
             }
         }
 
         return hits.sorted()
     }
 
-    func detectStringMarkers(in blobs: [String]) -> [String] {
+    func detectStringMarkers(in blobs: [String], mainBinary: Bool = false) -> [String] {
         var hits = Set<String>()
+        let prefix = mainBinary
+            ? "\(ObfuscatedConstants.methodPrefixFridaModuleString)main_binary:"
+            : ObfuscatedConstants.methodPrefixFridaModuleString
 
         for blob in blobs {
             let normalized = blob.lowercased()
             for marker in suspiciousStringMarkers where normalized.contains(marker) {
-                hits.insert("\(ObfuscatedConstants.methodPrefixFridaModuleString)\(marker)")
+                hits.insert("\(prefix)\(marker)")
             }
         }
 
@@ -171,6 +182,8 @@ struct FridaModuleDetector: Detector {
         let uniqueSectionHits = Array(Set(sectionHits)).sorted()
         let uniqueStringHits = Array(Set(stringHits)).sorted()
         let uniqueTrampolineHits = Array(Set(trampolineHits)).sorted()
+        let mainBinarySectionHits = uniqueSectionHits.filter { $0.contains(":main_binary:") }
+        let mainBinaryStringHits = uniqueStringHits.filter { $0.contains(":main_binary:") }
 
         let imageScore = uniqueImageHits.isEmpty ? 0.0 : min(14.0 + Double(max(0, uniqueImageHits.count - 1)) * 3.0, 20.0)
         let sectionScore = uniqueSectionHits.isEmpty ? 0.0 : min(8.0 + Double(max(0, uniqueSectionHits.count - 1)) * 2.0, 12.0)
@@ -178,9 +191,13 @@ struct FridaModuleDetector: Detector {
         let trampolineScore = uniqueTrampolineHits.isEmpty
             ? 0.0
             : min(14.0 + Double(max(0, uniqueTrampolineHits.count - 1)) * 4.0, 18.0)
+        let mainBinaryBoost = min(
+            Double(mainBinarySectionHits.count) * 3.0 + Double(mainBinaryStringHits.count) * 4.0,
+            12.0
+        )
 
         return DetectorResult(
-            score: min(imageScore + sectionScore + stringScore + trampolineScore, 44),
+            score: min(imageScore + sectionScore + stringScore + trampolineScore + mainBinaryBoost, 44),
             methods: uniqueImageHits + uniqueSectionHits + uniqueStringHits + uniqueTrampolineHits
         )
     }
@@ -279,6 +296,16 @@ struct FridaModuleDetector: Detector {
                 secondInstruction: second
             )
         }
+    }
+
+    private func isMainExecutableImage(index: UInt32, imageName: String) -> Bool {
+        if index == 0 {
+            return true
+        }
+        if let executablePath = Bundle.main.executablePath {
+            return imageName == executablePath
+        }
+        return false
     }
 
     private func inspectModuleLayout(

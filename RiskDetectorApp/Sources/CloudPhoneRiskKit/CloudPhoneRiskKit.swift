@@ -80,6 +80,7 @@ public final class CPRiskKit: NSObject {
         ObfuscatedConstants.detectorIDFridaSocket, ObfuscatedConstants.detectorIDFridaThread,
         ObfuscatedConstants.signalFridaJSEngineHeap, ObfuscatedConstants.signalFridaStalkerJit,
         ObfuscatedConstants.signalFridaUnixSocket, ObfuscatedConstants.signalFridaExceptionPort,
+        SignalID.fridaExceptionPortStartupRace,
         ObfuscatedConstants.signalThreadAnomaly,
         SignalID.hookDetected, ObfuscatedConstants.detectorIDObjCSwizzle, "rwx_memory",
         ObfuscatedConstants.signalArmorRuntimeInitFailed, ObfuscatedConstants.signalIntegrityRuntimeTampered,

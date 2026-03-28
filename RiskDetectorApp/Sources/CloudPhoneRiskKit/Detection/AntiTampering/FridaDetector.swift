@@ -7,6 +7,13 @@ struct FridaDetector: Detector {
     static let methodPrefixPatch = "frida:patch:"
     static let methodPrefixBehavior = "frida:behavior:"
 
+    internal static func mapRuntimeBehaviorMethodsForTesting(
+        flags: UInt32,
+        hitCount: UInt32 = 0
+    ) -> [String] {
+        mapRuntimeBehaviorMethods(flags: flags, hitCount: hitCount)
+    }
+
     /// XOR+SHA256(label) decode — matches CRiskCore `cprisk_obf_decode_sha256_label` v1.
     private static func protoToken(label: String, enc: [UInt8]) -> String {
         let d = SHA256.hash(data: Data(label.utf8))
@@ -67,6 +74,18 @@ struct FridaDetector: Detector {
         }
 
         let runtimeChannelCount = applyFridaRuntimeCRiskSignals(score: &score, methods: &methods)
+
+        if shouldRunAnomalousPortScan(
+            envHit: envHit != nil,
+            portBehavior: portBehavior,
+            hookSurfaceScore: hookSurface.score,
+            memorySignatureHit: memorySignatureHit != nil,
+            runtimeChannelCount: runtimeChannelCount
+        ) {
+            let anomalousPorts = detectAnomalousListeningPorts()
+            score += anomalousPorts.score
+            methods.append(contentsOf: anomalousPorts.methods)
+        }
 
         // Reduce conspicuous Swift-layer path probes on clean devices.
         // File artifact checks become a corroboration step after higher-entropy runtime/behavior hits.
@@ -199,6 +218,31 @@ struct FridaDetector: Detector {
         return raw == "1" || raw == "true" || raw == "yes" || raw == "on"
     }
 
+    private var anomalousPortScanEnvEnabled: Bool {
+        guard let raw = ProcessInfo.processInfo.environment[ObfuscatedConstants.envKeyCpriskFridaAnomScan]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() else {
+            return false
+        }
+        return raw == "1" || raw == "true" || raw == "yes" || raw == "on"
+    }
+
+    private func shouldRunAnomalousPortScan(
+        envHit: Bool,
+        portBehavior: (score: Double, methods: [String], fridaProtocolDetected: Bool),
+        hookSurfaceScore: Double,
+        memorySignatureHit: Bool,
+        runtimeChannelCount: Int
+    ) -> Bool {
+        if anomalousPortScanEnvEnabled {
+            return true
+        }
+        if envHit || memorySignatureHit || hookSurfaceScore > 0 || runtimeChannelCount > 0 {
+            return true
+        }
+        return portBehavior.fridaProtocolDetected
+    }
+
     internal func candidatePortsForTesting() -> [Int] {
         candidatePorts()
     }
@@ -228,9 +272,10 @@ struct FridaDetector: Detector {
         return ports.sorted()
     }
 
-    private func detectFridaPortBehaviors() -> (score: Double, methods: [String]) {
+    private func detectFridaPortBehaviors() -> (score: Double, methods: [String], fridaProtocolDetected: Bool) {
         var score: Double = 0
         var methods: [String] = []
+        var fridaProtocolDetected = false
         let knownPortSet = Set(knownPorts)
 
         for port in candidatePorts() {
@@ -238,6 +283,7 @@ struct FridaDetector: Detector {
             guard probe.listening else { continue }
 
             if let token = probe.fingerprintToken {
+                fridaProtocolDetected = true
                 score += knownPortSet.contains(port) ? 22 : 14
                 methods.append("\(ObfuscatedConstants.methodPrefixFridaProto)\(port):\(token)")
             } else if knownPortSet.contains(port) {
@@ -249,7 +295,80 @@ struct FridaDetector: Detector {
             }
         }
 
+        return (score, methods, fridaProtocolDetected)
+    }
+
+    /// Ranges omit 8080–8090, 1080–1085, 5555–5560 (common legit local services on iOS).
+    private static let anomalousPortRanges: [(ClosedRange<Int>)] = [
+        9090...9100,
+        1337...1340,
+        4242...4250,
+        6666...6670,
+        7777...7780,
+        31337...31340,
+        42000...42010,
+        47000...47010,
+    ]
+
+    private func detectAnomalousListeningPorts() -> (score: Double, methods: [String]) {
+        let knownCandidates = Set(candidatePorts())
+        let anomalousTimeoutMs: Int32 = 50
+        var score: Double = 0
+        var methods: [String] = []
+
+        for range in Self.anomalousPortRanges {
+            for port in range {
+                guard !knownCandidates.contains(port) else { continue }
+                let probe = probeLocalPort(port, timeoutMs: anomalousTimeoutMs)
+                guard probe.listening else { continue }
+
+                if let token = probe.fingerprintToken {
+                    score += 16
+                    methods.append("\(ObfuscatedConstants.methodPrefixFridaAnomalousProto)\(port):\(token)")
+                    continue
+                }
+
+                if localServiceRespondsLikeHttp(port: port, timeoutMs: anomalousTimeoutMs) {
+                    continue
+                }
+
+                methods.append("\(ObfuscatedConstants.methodPrefixSuspiciousLocalListen)\(port)")
+            }
+        }
+
         return (score, methods)
+    }
+
+    private func localServiceRespondsLikeHttp(port: Int, timeoutMs: Int32) -> Bool {
+        guard let fd = connectLocalStream(port: port, timeoutMs: timeoutMs) else {
+            return false
+        }
+        defer { _ = cprisk_close_direct(fd, nil) }
+        applySocketTimeouts(fd: fd, timeoutMs: timeoutMs)
+
+        let req = "GET / HTTP/1.0\r\n\r\n"
+        guard let sent = req.data(using: .utf8) else { return false }
+        let writeCount = sent.withUnsafeBytes { raw -> Int in
+            guard let base = raw.baseAddress else { return -1 }
+            return send(fd, base, sent.count, 0)
+        }
+        guard writeCount == sent.count else { return false }
+
+        guard waitReadable(fd, timeoutMs: timeoutMs) else { return false }
+        var buffer = [UInt8](repeating: 0, count: 64)
+        let readCount = recv(fd, &buffer, buffer.count, 0)
+        guard readCount > 0 else { return false }
+        return Self.bufferLooksLikeHttpResponsePrefix(Array(buffer.prefix(Int(readCount))))
+    }
+
+    private static func bufferLooksLikeHttpResponsePrefix(_ raw: [UInt8]) -> Bool {
+        guard !raw.isEmpty else { return false }
+        let head = String(decoding: raw.prefix(min(32, raw.count)), as: UTF8.self)
+        return head.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("http/1.")
+    }
+
+    internal static func httpResponseLooksLikeHttpForTesting(_ data: Data) -> Bool {
+        bufferLooksLikeHttpResponsePrefix(Array(data))
     }
 
     private func probeLocalPort(_ port: Int, timeoutMs: Int32) -> (listening: Bool, fingerprintToken: String?) {
@@ -459,6 +578,7 @@ struct FridaDetector: Detector {
         let imageBit = UInt32(CPRISK_FRIDA_RT_IMAGE)
         let dlsymBit = UInt32(CPRISK_FRIDA_RT_DLSYM)
         let procBit = UInt32(CPRISK_FRIDA_RT_PROC)
+        let behaviorBit = UInt32(CPRISK_FRIDA_RT_BEHAVIOR)
 
         var channelCount = 0
         if (snap.flags & imageBit) != 0 {
@@ -481,6 +601,17 @@ struct FridaDetector: Detector {
             methods.append(
                 "\(ObfuscatedConstants.methodPrefixFridaRuntime)proc_hits_\(snap.proc_hit_count)"
             )
+        }
+        if (snap.flags & behaviorBit) != 0 {
+            channelCount += 1
+            let behaviorMethods = Self.mapRuntimeBehaviorMethods(
+                flags: snap.behavior_flags,
+                hitCount: snap.behavior_hit_count
+            )
+            if !behaviorMethods.isEmpty {
+                score += min(10 + Double(max(0, behaviorMethods.count - 1)) * 3, 18)
+                methods.append(contentsOf: behaviorMethods)
+            }
         }
         if channelCount >= 2 {
             score += 18
@@ -548,6 +679,31 @@ struct FridaDetector: Detector {
             }
         }
 
+        return mapped.sorted()
+    }
+
+    private static func mapRuntimeBehaviorMethods(
+        flags: UInt32,
+        hitCount: UInt32
+    ) -> [String] {
+        guard flags != 0 else { return [] }
+
+        var mapped = Set<String>()
+        if (flags & UInt32(CPRISK_FRIDA_RT_BEHAVIOR_PROLOGUE)) != 0 {
+            mapped.insert("\(methodPrefixBehavior)runtime_prologue")
+        }
+        if (flags & UInt32(CPRISK_FRIDA_RT_BEHAVIOR_TRAMPOLINE)) != 0 {
+            mapped.insert("\(methodPrefixBehavior)runtime_trampoline")
+        }
+        if (flags & UInt32(CPRISK_FRIDA_RT_BEHAVIOR_FOREIGN_EXEC)) != 0 {
+            mapped.insert("\(methodPrefixBehavior)runtime_foreign_exec")
+        }
+        if (flags & UInt32(CPRISK_FRIDA_RT_BEHAVIOR_TRUST_SURFACE)) != 0 {
+            mapped.insert("\(methodPrefixBehavior)runtime_trust_surface")
+        }
+        if mapped.count >= 2 || hitCount >= 2 {
+            mapped.insert("\(methodPrefixBehavior)runtime_multi_surface")
+        }
         return mapped.sorted()
     }
 

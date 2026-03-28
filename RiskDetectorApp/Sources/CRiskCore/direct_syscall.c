@@ -20,13 +20,12 @@
 #include <sys/sysctl.h>
 #include <unistd.h>
 #include <stdatomic.h>
-#include "include/cprisk_instruction_cache.h"
 #include "include/cprisk_secure_zero.h"
-#include "include/cprisk_sha256.h"
 
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
 #include <mach/mach.h>
+#include <mach/mach_time.h>
 #include <mach/vm_region.h>
 #endif
 
@@ -36,6 +35,10 @@
 #define CPRISK_DIRECT_SYSCALLS_AVAILABLE 1
 #else
 #define CPRISK_DIRECT_SYSCALLS_AVAILABLE 0
+#endif
+
+#if CPRISK_DIRECT_SYSCALLS_AVAILABLE
+#include "include/cprisk_sha256.h"
 #endif
 
 /* Snapshot sizes for SVC templates + RX relocation (keep in sync with integrity section). */
@@ -1518,4 +1521,148 @@ void cprisk_svc_reloc_rx_page_whitelist_bounds(uintptr_t *out_lo, uintptr_t *out
     if (out_hi != NULL) {
         *out_hi = hi;
     }
+}
+
+/* ── Dual-path syscall cross-verification ──────────────────────────── */
+
+uint32_t cprisk_syscall_crosscheck_probe(void) {
+#if CPRISK_DIRECT_SYSCALLS_AVAILABLE
+    uint32_t flags = 0u;
+
+    if (cprisk_getpid_direct() != getpid()) {
+        flags |= CPRISK_CROSSCHECK_DIVERGE_PID;
+    }
+
+    if (cprisk_getuid_direct() != getuid()) {
+        flags |= CPRISK_CROSSCHECK_DIVERGE_UID;
+    }
+
+    if (cprisk_getppid_direct() != getppid()) {
+        flags |= CPRISK_CROSSCHECK_DIVERGE_PPID;
+    }
+
+    {
+        struct stat sb_svc, sb_libc;
+        memset(&sb_svc, 0, sizeof(sb_svc));
+        memset(&sb_libc, 0, sizeof(sb_libc));
+        if (cprisk_stat_direct("/", &sb_svc, NULL) == 0 && stat("/", &sb_libc) == 0) {
+            if (sb_svc.st_dev != sb_libc.st_dev || sb_svc.st_ino != sb_libc.st_ino) {
+                flags |= CPRISK_CROSSCHECK_DIVERGE_STAT;
+            }
+        }
+    }
+
+    {
+        int svc_rc = cprisk_access_direct("/", F_OK, NULL);
+        int libc_rc = access("/", F_OK);
+        if (svc_rc != libc_rc) {
+            flags |= CPRISK_CROSSCHECK_DIVERGE_ACCESS;
+        }
+    }
+
+    return flags;
+#else
+    return 0u;
+#endif
+}
+
+/* ── Errno reasonableness validation ───────────────────────────────── */
+
+uint32_t cprisk_syscall_errno_probe(void) {
+#if CPRISK_DIRECT_SYSCALLS_AVAILABLE
+    uint32_t flags = 0u;
+
+    {
+        int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, (int)getpid() };
+        struct kinfo_proc kp;
+        memset(&kp, 0, sizeof(kp));
+        size_t kp_len = sizeof(kp);
+        int sysctl_err = 0;
+        cprisk_sysctl_direct(mib, 4, &kp, &kp_len, NULL, 0, &sysctl_err);
+        if (sysctl_err == EINTR
+#ifdef ERESTART
+            || sysctl_err == ERESTART
+#endif
+        ) {
+            flags |= CPRISK_ERRNO_PROBE_SYSCTL_EINTR;
+        }
+    }
+
+    {
+        struct stat sb;
+        memset(&sb, 0, sizeof(sb));
+        int stat_err = 0;
+        cprisk_stat_direct("/", &sb, &stat_err);
+        if (stat_err == EINTR) {
+            flags |= CPRISK_ERRNO_PROBE_STAT_EINTR;
+        }
+    }
+
+    {
+        int rc = cprisk_access_direct("/", F_OK, NULL);
+        if (rc == -1) {
+            flags |= CPRISK_ERRNO_PROBE_ACCESS_ROOT_FAIL;
+        }
+    }
+
+    {
+        pid_t pid = cprisk_getpid_direct();
+        if (pid <= 0) {
+            flags |= CPRISK_ERRNO_PROBE_PID_INVALID;
+        }
+    }
+
+    return flags;
+#else
+    return 0u;
+#endif
+}
+
+/* ── Honeypot syscall behavioral probe ─────────────────────────────── */
+
+uint32_t cprisk_honeypot_syscall_probe(void) {
+#if CPRISK_DIRECT_SYSCALLS_AVAILABLE
+    uint32_t flags = 0u;
+
+    uint8_t rand_bytes[8];
+    int ge = 0;
+    if (cprisk_getentropy_direct(rand_bytes, sizeof(rand_bytes), &ge) != 0) {
+        return 0u;
+    }
+
+    char hp_path[64];
+    snprintf(hp_path, sizeof(hp_path),
+             "/tmp/.cprisk_hp_%02x%02x%02x%02x%02x%02x%02x%02x",
+             rand_bytes[0], rand_bytes[1], rand_bytes[2], rand_bytes[3],
+             rand_bytes[4], rand_bytes[5], rand_bytes[6], rand_bytes[7]);
+
+    if (cprisk_access_direct(hp_path, F_OK, NULL) == 0) {
+        flags |= CPRISK_HONEYPOT_PHANTOM_ACCESS_EXISTS;
+    }
+
+    {
+        struct stat sb;
+        memset(&sb, 0, sizeof(sb));
+        if (cprisk_stat_direct(hp_path, &sb, NULL) == 0) {
+            flags |= CPRISK_HONEYPOT_PHANTOM_STAT_EXISTS;
+        }
+    }
+
+    {
+        int svc_rc = cprisk_access_direct("/", F_OK, NULL);
+        int libc_rc = access("/", F_OK);
+        if (svc_rc != 0 && libc_rc == 0) {
+            flags |= CPRISK_HONEYPOT_ROOT_SVC_LIBC_DIVERGE_A;
+        }
+        if (svc_rc == 0 && libc_rc != 0) {
+            flags |= CPRISK_HONEYPOT_ROOT_SVC_LIBC_DIVERGE_B;
+        }
+    }
+
+    cprisk_secure_zero(hp_path, sizeof(hp_path));
+
+    return flags;
+#else
+    return 0u;
+#endif
 }

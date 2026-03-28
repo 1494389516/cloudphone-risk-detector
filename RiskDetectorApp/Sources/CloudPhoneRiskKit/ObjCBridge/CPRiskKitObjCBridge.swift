@@ -13,14 +13,14 @@ public enum CPRiskLevelObjC: Int, CaseIterable {
     case high = 2
 
     public init(from level: PublicRiskLevel) {
-        self.init(rawValue: level.rawValue) ?? .low
+        self = CPRiskLevelObjC(rawValue: level.rawValue) ?? .low
     }
 
     public var toSwift: PublicRiskLevel {
         PublicRiskLevel(rawValue: rawValue) ?? .low
     }
 
-    @objc public var displayName: String {
+    public var displayName: String {
         toSwift.displayName
     }
 }
@@ -35,14 +35,14 @@ public enum CPRiskActionObjC: Int, CaseIterable {
     case block = 2
 
     public init(from action: PublicRiskAction) {
-        self.init(rawValue: action.rawValue) ?? .allow
+        self = CPRiskActionObjC(rawValue: action.rawValue) ?? .allow
     }
 
     public var toSwift: PublicRiskAction {
         PublicRiskAction(rawValue: rawValue) ?? .allow
     }
 
-    @objc public var displayName: String {
+    public var displayName: String {
         toSwift.displayName
     }
 }
@@ -62,14 +62,14 @@ public enum CPRiskScenarioObjC: Int, CaseIterable {
     case apiAccess = 7
 
     public init(from scenario: RiskScenario) {
-        self.init(rawValue: scenario.rawValue) ?? .defaultScenario
+        self = CPRiskScenarioObjC(rawValue: scenario.rawValue) ?? .defaultScenario
     }
 
     public var toSwift: RiskScenario {
         RiskScenario(rawValue: rawValue) ?? .default
     }
 
-    @objc public var displayName: String {
+    public var displayName: String {
         toSwift.displayName
     }
 }

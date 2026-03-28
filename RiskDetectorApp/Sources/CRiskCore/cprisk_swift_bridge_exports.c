@@ -437,6 +437,14 @@ CPRISK_ALIAS_RET(int, cpra_0123, cprisk_probe_path_snapshot_masked,
 CPRISK_ALIAS_RET(uint32_t, cpra_0124, cprisk_runtime_hook_surface_export_drift_mask,
                  (void),
                  ())
+CPRISK_ALIAS_RET(int, cpra_0125, cprisk_get_exception_handler_snapshot,
+                 (cprisk_exception_handler_snapshot_t *out_snapshot),
+                 (out_snapshot))
+CPRISK_ALIAS_RET(int, cpra_0126, cprisk_thread_pc_exec_snapshot,
+                 (cprisk_thread_pc_exec_entry_t *out_entries,
+                  uint32_t max_entries,
+                  cprisk_thread_pc_exec_snapshot_t *out_snapshot),
+                 (out_entries, max_entries, out_snapshot))
 
 static const void *const cprisk_swift_bridge_keepalive_i[] = {
     (const void *)&cpra_0001, (const void *)&cpra_0002, (const void *)&cpra_0003,
@@ -488,6 +496,8 @@ static const void *const cprisk_swift_bridge_keepalive_i[] = {
     (const void *)&cpra_0122,
     (const void *)&cpra_0123,
     (const void *)&cpra_0124,
+    (const void *)&cpra_0125,
+    (const void *)&cpra_0126,
 };
 
 void cprisk_swift_bridge_force_link(void) {
