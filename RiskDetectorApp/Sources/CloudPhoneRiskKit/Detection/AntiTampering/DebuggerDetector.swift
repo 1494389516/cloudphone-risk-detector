@@ -85,7 +85,11 @@ struct DebuggerDetector: Detector {
             methods.append("\(dp)developer_disk")
         }
 
-        if hasExceptionDeliveryTimeout(snapshot: watchdogSnapshot) {
+        if hasExceptionDeliveryTimeout(
+            anomalyFlags: watchdogSnapshot.anomalyFlags,
+            timeoutDetected: watchdogSnapshot.exceptionDeliveryTimeoutDetected,
+            timeoutAnomalyCount: watchdogSnapshot.exceptionDeliveryTimeoutAnomalyCount
+        ) {
             score += 14
             methods.append("\(dp)exception_delivery_timeout")
         }
@@ -127,11 +131,15 @@ struct DebuggerDetector: Detector {
         return cprisk_scan_software_breakpoints(probePtr, 256)
     }
 
-    private func hasExceptionDeliveryTimeout(snapshot: CPRiskKit.AntiDebugWatchdogSnapshot) -> Bool {
-        let timeoutFlag = (snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_DELIVERY_TIMEOUT)) != 0
+    private func hasExceptionDeliveryTimeout(
+        anomalyFlags: UInt32,
+        timeoutDetected: Bool,
+        timeoutAnomalyCount: UInt64
+    ) -> Bool {
+        let timeoutFlag = (anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_DELIVERY_TIMEOUT)) != 0
         return timeoutFlag ||
-            snapshot.exceptionDeliveryTimeoutDetected ||
-            snapshot.exceptionDeliveryTimeoutAnomalyCount > 0
+            timeoutDetected ||
+            timeoutAnomalyCount > 0
     }
 
     private func isPortOpen(_ port: Int) -> Bool {

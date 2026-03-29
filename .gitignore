@@ -2,6 +2,7 @@
 
 # Xcode
 DerivedData/
+RiskDetectorApp/com.apple.DeveloperTools/
 *.xcworkspace
 *.xcuserdata/
 *.xcuserstate

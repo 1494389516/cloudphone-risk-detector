@@ -110,4 +110,37 @@ struct PrologueBranchDetector: Detector {
         return (info.protection & VM_PROT_READ) != 0
     }
     #endif
+
+    #if !(arch(arm64) || arch(arm64e))
+    func readInstruction(_ p: UnsafeRawPointer) -> UInt32? {
+        _ = p
+        return nil
+    }
+
+    func isHooked(firstInstruction: UInt32, secondInstruction: UInt32?) -> Bool {
+        _ = firstInstruction
+        _ = secondInstruction
+        return false
+    }
+
+    func isUnconditionalBranch(_ ins: UInt32) -> Bool {
+        _ = ins
+        return false
+    }
+
+    func isRegisterBranch(_ ins: UInt32) -> Bool {
+        _ = ins
+        return false
+    }
+
+    func isLiteralLoad(_ ins: UInt32) -> Bool {
+        _ = ins
+        return false
+    }
+
+    func isReadableAddress(_ p: UnsafeRawPointer) -> Bool {
+        _ = p
+        return false
+    }
+    #endif
 }

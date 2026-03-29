@@ -16,6 +16,11 @@ public struct ServerRiskPolicy: Codable, Sendable {
     /// 服务端下发后，客户端用 App Attest key 签名并上报，用于周期性 attestation 刷新
     public let reAttestationChallenge: Data?
 
+    /// Enable Unix domain socket full-sweep detection (default: false).
+    /// When enabled, UnixSocketSweepDetector enumerates all Unix sockets
+    /// and checks for anomalous IPC channels that may indicate Frida.
+    public let enableUnixSocketSweep: Bool?
+
     private enum CodingKeys: String, CodingKey {
         case version = "v"
         case signalWeights = "sw"
@@ -26,6 +31,7 @@ public struct ServerRiskPolicy: Codable, Sendable {
         case blindChallenge = "bc"
         case keyRotationPolicy = "kr"
         case reAttestationChallenge = "ra"
+        case enableUnixSocketSweep = "us"
     }
 
     public struct PolicyThresholds: Codable, Sendable {
@@ -165,7 +171,8 @@ public struct ServerRiskPolicy: Codable, Sendable {
         mutation: MutationConfig? = nil,
         blindChallenge: BlindChallengeConfig? = nil,
         keyRotationPolicy: KeyRotationPolicy? = nil,
-        reAttestationChallenge: Data? = nil
+        reAttestationChallenge: Data? = nil,
+        enableUnixSocketSweep: Bool? = nil
     ) {
         self.version = version
         self.signalWeights = signalWeights
@@ -176,6 +183,7 @@ public struct ServerRiskPolicy: Codable, Sendable {
         self.blindChallenge = blindChallenge
         self.keyRotationPolicy = keyRotationPolicy
         self.reAttestationChallenge = reAttestationChallenge
+        self.enableUnixSocketSweep = enableUnixSocketSweep
     }
 }
 

@@ -619,6 +619,14 @@ enum ObfuscatedConstants {
         StringDeobfuscator.base64Decode("ZnJpZGFfc3RhbGtlcjo=")
     }
 
+    static var methodPrefixFridaMemoryLayout: String {
+        StringDeobfuscator.base64Decode("ZnJpZGFfbWVtb3J5X2xheW91dDo=")
+    }
+
+    static var signalFridaMemoryLayoutAnomaly: String {
+        StringDeobfuscator.base64Decode("ZnJpZGFfbWVtb3J5X2xheW91dF9hbm9tYWx5")
+    }
+
     static var signalFridaDetected: String {
         StringDeobfuscator.base64Decode("ZnJpZGFfZGV0ZWN0ZWQ=")
     }

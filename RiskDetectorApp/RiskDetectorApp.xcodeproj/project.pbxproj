@@ -18,6 +18,8 @@
 		07BFDAA026C20319AC37453D /* DecisionTreeEdgeCaseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 990F480DC6C27C49BEA664F0 /* DecisionTreeEdgeCaseTests.swift */; };
 		08AF25DA7A0589D0C85A45B8 /* NetworkSignals.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6753B88C61D99FC2A7C30733 /* NetworkSignals.swift */; };
 		0905597F33491C7D9B63BA06 /* TimingRatioBaseline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C73BDB714A6DE2BE3B2D80A /* TimingRatioBaseline.swift */; };
+		0AA660E49B67F38A9526FAC1 /* CPRiskKitEvaluation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AE1C408A2484EEBF0D2D355 /* CPRiskKitEvaluation.swift */; };
+		0ADD9558E52F433776243C6B /* CPRiskKitLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5330D616A81227AC6598D7DE /* CPRiskKitLifecycle.swift */; };
 		0BC60FDBA23DB4EC933CF99F /* MemoryIntegrityChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C8530FA86A3ECF0C624E26A /* MemoryIntegrityChecker.swift */; };
 		0BFAA526B2356BB9927DE1BA /* ReportEnvelopeNegativeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 437A04335928633755F8AA75 /* ReportEnvelopeNegativeTests.swift */; };
 		0C08DBB68FAA9A33C6BD1F51 /* DetectionResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09B10C6D5C693BE6B9AC9782 /* DetectionResult.swift */; };
@@ -56,6 +58,7 @@
 		1F2900E03B5C1CB455B41EB2 /* KernelHookSideChannelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09C6C0FE98C4FEAE2E500833 /* KernelHookSideChannelTests.swift */; };
 		1F537FF879417118E297872F /* ScorePipelineInvariantTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DEE738E2F550FD84954C405 /* ScorePipelineInvariantTests.swift */; };
 		1F65C906B6C1959BC29E9A08 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 122C65B018F0F048EB3D21A5 /* Security.framework */; };
+		206DD37AC35F6300BB3FDCF9 /* CPRiskKitDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5635F9ED9C7EC5DEBF52A4E /* CPRiskKitDiagnostics.swift */; };
 		20A9F2FEB003A6DD8E4A0A5D /* ProtectionStabilityStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66EEDC6505DC00F3D971686E /* ProtectionStabilityStoreTests.swift */; };
 		21619ADF16DA272F7B2ADB86 /* TemporalAnalyzerAndConfigTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B459A5860A10D1B5845C911F /* TemporalAnalyzerAndConfigTests.swift */; };
 		225F7BDBD954C1DC7DC24500 /* ScenarioPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4686830275C6F38E38A6CB47 /* ScenarioPolicy.swift */; };
@@ -70,6 +73,7 @@
 		28334657A159869DFB60E38C /* cprisk_text_tail_honeypot.c in Sources */ = {isa = PBXBuildFile; fileRef = 0007821953DE700465559CDE /* cprisk_text_tail_honeypot.c */; };
 		29C6D16538A7D9CF53F9CAD3 /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F36817EABC6A4ABA6A35AF4E /* AppIntents.framework */; settings = {ATTRIBUTES = (Weak, ); }; };
 		29E1344AFBB509A88514688E /* MutationPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC90395F02C42BE3A7699804 /* MutationPlanner.swift */; };
+		2D104909C30B81BC2BF7DC62 /* IsolationContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BFE76E3E56356B7A16CE6A8 /* IsolationContext.swift */; };
 		2E55746FEDD584D1B9C3D935 /* ActorFacadeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D43C15A976386E64A36F3F1E /* ActorFacadeTests.swift */; };
 		2E98DB842A63B5C4EE5B9BA6 /* SecureEnvelopeValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 598173145538A2F3D2A02E9A /* SecureEnvelopeValidator.swift */; };
 		2FA8ACEBC38AD3012DE6CF35 /* RemoteConfigProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59702B3105C9254CE7395804 /* RemoteConfigProvider.swift */; };
@@ -96,6 +100,7 @@
 		3CB754A9C58E340BB4EDD3C6 /* RiskReportStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C5C8F2472390BBAC3E72AD6 /* RiskReportStorage.swift */; };
 		3D7419B2D3E663698F729C5F /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 531A1768F2F153A02E0C7D73 /* ContentView.swift */; };
 		3D9641A9D39A003B4CCBF101 /* CRiskCoreBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB91C09EAD95CA647C699F45 /* CRiskCoreBridge.swift */; };
+		3DA56C67540BA0EFEA458F1D /* GumTrampolineDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49330919A5598FACC20F3EA4 /* GumTrampolineDetector.swift */; };
 		3DD3D77E67C12E2D2F8BDEC6 /* cprisk_string_decrypt.c in Sources */ = {isa = PBXBuildFile; fileRef = 3BCAE0226169ED0029336BF8 /* cprisk_string_decrypt.c */; };
 		3DF0C58C75AD735D3C71D0D8 /* AudioRouteProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E9551F88098CCDD74835704 /* AudioRouteProvider.swift */; };
 		3E446376FE2F866E11AA24F0 /* ChallengeSessionCFFTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D77334A31605E09FDD99F1AB /* ChallengeSessionCFFTests.swift */; };
@@ -117,10 +122,12 @@
 		47D6AE3FB3E170DFB9F49846 /* CRiskCoreBridgeTestShim.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8309821C2E2F309260744CFB /* CRiskCoreBridgeTestShim.swift */; };
 		48E34FADDAF18E6E68E0B3FA /* cprisk_vm_oph_lane.c in Sources */ = {isa = PBXBuildFile; fileRef = 318E954DFD88BDEDE80ED4A0 /* cprisk_vm_oph_lane.c */; };
 		49E109E99B72A1217027FAF1 /* RiskVerdictTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEA59AC3C765718FE764A9FA /* RiskVerdictTests.swift */; };
+		4A9632C83F16191147DA20A5 /* vm_antidebug_inline.c in Sources */ = {isa = PBXBuildFile; fileRef = 5EC08293B4F7CB972A6FCC72 /* vm_antidebug_inline.c */; };
 		4C14492CA727814792C09D3A /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A087EC82DBDA65A07B21344B /* SettingsViewModel.swift */; };
 		4C180CC854741F3FC8533132 /* DetectorRegistryProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DEDEAB05F3FB2C5212C8EDB /* DetectorRegistryProtocol.swift */; };
 		4C2FFCF075E3F52FF02862DF /* cprisk_mte_guard.h in CopyFiles */ = {isa = PBXBuildFile; fileRef = AE968B2FF471A525EF9060D3 /* cprisk_mte_guard.h */; };
 		4D8067FB5DAECC278D259D0D /* CPRiskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F16EF99079DDD86B1F017387 /* CPRiskStore.swift */; };
+		4D93AC537BD2BE8346D931F7 /* CPRiskKitConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86E7C526F70443942EC1BA1F /* CPRiskKitConfiguration.swift */; };
 		4E9B8569450020B96557E3F9 /* cprisk_data_loader.c in Sources */ = {isa = PBXBuildFile; fileRef = 759D5F5ED2FB7B1A511D0D5A /* cprisk_data_loader.c */; };
 		4EC267C06F8311E940360787 /* SecureFileStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DFA83FBF04DC999E82BDC49 /* SecureFileStoreTests.swift */; };
 		4F3543FFEC7C724C5BF5C757 /* HookDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75805CC4891842ED8BE91E9B /* HookDetector.swift */; };
@@ -131,10 +138,13 @@
 		53103DECF5A6FA9987930E44 /* JailbreakConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7570F56428467B28E9957F88 /* JailbreakConfig.swift */; };
 		55EEAFB20740467CE7DE67DA /* CRiskCore.h in CopyFiles */ = {isa = PBXBuildFile; fileRef = 4CCF168EF1E28CA37A0D59AA /* CRiskCore.h */; };
 		56AF3FA4677C13A01CB17DA2 /* cprisk_cff.h in CopyFiles */ = {isa = PBXBuildFile; fileRef = 8E0A943F5C8164479FD3AE15 /* cprisk_cff.h */; };
+		56B09F1152E36B638D46829E /* CPRiskKitObjCBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22FDEF0D820437F255CCA6F2 /* CPRiskKitObjCBridge.swift */; };
 		56CAA55A5685EEEA431B3AC5 /* DeviceHardwareProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F497DEBAAA1D3B0196F7B62 /* DeviceHardwareProvider.swift */; };
 		5717B71507EE86FCDADF5E2F /* JailbreakEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC4BFF614884CD3855108036 /* JailbreakEngineTests.swift */; };
 		574EEBFCD19CE49B728052CF /* SwiftRuntimeIntegrityDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D0E5F9EDBBBCE1DA0A5B454 /* SwiftRuntimeIntegrityDetectorTests.swift */; };
+		582583F41C1E8A8302C2D053 /* vm_stack_crypto.c in Sources */ = {isa = PBXBuildFile; fileRef = D65C7F5510B2DC369157BE27 /* vm_stack_crypto.c */; };
 		5861594BFD83BBB3F70CD454 /* ArmorRuntimeLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CD478A07EAEAFCB00CE0983 /* ArmorRuntimeLifecycleTests.swift */; };
+		5ACD852260D71A2D42B808FA /* UnixSocketSweepDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74DAA4EFBDC61ADFF762D2F9 /* UnixSocketSweepDetector.swift */; };
 		5BEFC05D5316D2295DA853E4 /* CloudPhoneLocalSignalsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 170ACEDDA37D00B3A179E56F /* CloudPhoneLocalSignalsTests.swift */; };
 		5C4D57E2236FA35F2D315E1E /* SecureBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73AD0F159D6DA55911AD1068 /* SecureBuffer.swift */; };
 		5CCB84D7DC86A944D48215AC /* cprisk_vm_oph_basic.c in Sources */ = {isa = PBXBuildFile; fileRef = 3E28AFF1DBC724A7AE8C12DA /* cprisk_vm_oph_basic.c */; };
@@ -157,12 +167,14 @@
 		668FDE1691C1C58E7BE5C060 /* DebuggerDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 667023207C57647299BB9B74 /* DebuggerDetector.swift */; };
 		68333C2AFA83B3EA01E38F0C /* DeviceAgeProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = C27855A535C3EBF2D32A0817 /* DeviceAgeProvider.swift */; };
 		69819F3B40673091A5A1DCB5 /* RiskConclusionSigner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7E6D55A68269BCE4E5446E6 /* RiskConclusionSigner.swift */; };
+		6A3F934123E9FB0FBC644591 /* CPRiskKitReporting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7244FC2BCEDD19CA1E361FBE /* CPRiskKitReporting.swift */; };
 		6BA4031DFB6E5A39BE42708B /* ScenarioPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 986DBEB62A2E2CE4C6CF6682 /* ScenarioPolicyTests.swift */; };
 		6BCAC64A378A2B8C175EC4C3 /* RiskDetectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8239F00953F9C401C9352E3 /* RiskDetectionService.swift */; };
 		6BD08CF858F2AC0F8EEC7E1C /* HardwareCapabilityProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03137621B5254A9B61E3C408 /* HardwareCapabilityProvider.swift */; };
 		6BEFC700FE298E149C0824AB /* RiskSignalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FD9AACB1FE016CEF40026E8 /* RiskSignalTests.swift */; };
 		6C232E7025ADD4B6DA702964 /* cprisk_frida_runtime.c in Sources */ = {isa = PBXBuildFile; fileRef = F04029FD4C35DA46C1ECB855 /* cprisk_frida_runtime.c */; };
 		6C7A32F565263DB7D251C6B6 /* cprisk_vm_interpreter_ops.h in CopyFiles */ = {isa = PBXBuildFile; fileRef = C3F35A36C92E144F2A5BF197 /* cprisk_vm_interpreter_ops.h */; };
+		6C98384218D6E17BB1EB8AC4 /* cprisk_vm_hardening.c in Sources */ = {isa = PBXBuildFile; fileRef = 4F27C4760D7BF4C3D312C059 /* cprisk_vm_hardening.c */; };
 		6CAB93D00333F6BFF901F093 /* MockDetectorRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD77C2C92D98DAFADC98BA71 /* MockDetectorRegistry.swift */; };
 		6CFBD96138B9C24D675048E7 /* MIEPostureDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13BBEE909E42822B52CDC707 /* MIEPostureDetector.swift */; };
 		6D064C3DB1B31F2E78A2B9EF /* SHA256MaskedRoundConstantsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CAC58068C6B9A2D013F1041 /* SHA256MaskedRoundConstantsTests.swift */; };
@@ -175,6 +187,7 @@
 		72069CE92FA2BE7A11633A4D /* cprisk_hardware_key.c in Sources */ = {isa = PBXBuildFile; fileRef = 8B47AFF021F17E9037C1FF07 /* cprisk_hardware_key.c */; };
 		7223EBC099A44CC90EC0B71D /* libCloudPhoneRiskKit.a in Frameworks */ = {isa = PBXBuildFile; fileRef = E66D15874FB490E8F7FEC61A /* libCloudPhoneRiskKit.a */; };
 		73873A19805224091CC89A0B /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B3B1DDEE88FD05961EBC98C5 /* Metal.framework */; };
+		73B2379E17DA26038D20B31F /* vm_function_ctx.c in Sources */ = {isa = PBXBuildFile; fileRef = C9B5E7F3778A74594B5BF135 /* vm_function_ctx.c */; };
 		73FE6899B0C376B939ABEFFF /* SwiftRuntimeIntegrityDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AEFA3BBB86F9B01E98F9278 /* SwiftRuntimeIntegrityDetector.swift */; };
 		7497E3A7A7583541B74D4A7E /* DynamicFeatureList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 069AA140F29B43DE64B2BF73 /* DynamicFeatureList.swift */; };
 		752749887F12C717D38B2B08 /* SchemeDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE9B1F7E7BD6D43575FAF8C /* SchemeDetector.swift */; };
@@ -191,9 +204,11 @@
 		7C7BFA23F83D1FB756F581E0 /* libCloudPhoneRiskKit.a in Frameworks */ = {isa = PBXBuildFile; fileRef = E66D15874FB490E8F7FEC61A /* libCloudPhoneRiskKit.a */; };
 		7CAD8AD31AC40FDF6B8BAC0B /* MultiPathFileDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF0418999C4C782A532C7B15 /* MultiPathFileDetector.swift */; };
 		7D1E59CFE148C0561A512B54 /* WhitelistRulesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3792ADFBBFBD0FF4BBF2C316 /* WhitelistRulesTests.swift */; };
+		7D35730D8CB28C51946E5497 /* FridaMemoryLayoutDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CA01238478AB7004163B8C5 /* FridaMemoryLayoutDetector.swift */; };
 		7D5B41908D8E1FD9954D6D1A /* MutexTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C34EC351796B368A35743F6F /* MutexTests.swift */; };
 		7DAB28D63F0363E74DD0252E /* CertificatePinningTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 418B676FE8B33701E9BCE3DE /* CertificatePinningTests.swift */; };
 		7EBA8E7B4A129247DE805351 /* StorageIntegrityGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21B7CDC08568AD0C016DD5C3 /* StorageIntegrityGuard.swift */; };
+		7F65D94F1742DB282F8F8E7A /* vm_cff_fusion.c in Sources */ = {isa = PBXBuildFile; fileRef = E83E50F817CE0FEE92C3B19A /* vm_cff_fusion.c */; };
 		822DD89B5A942D5E5524E0AA /* ConfigSignatureVerifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93D8E0606F061141D6644A15 /* ConfigSignatureVerifier.swift */; };
 		826C9C1D06250810C58FCEE0 /* BasebandIsolationProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07827A3D3D5FA7611F40BD30 /* BasebandIsolationProvider.swift */; };
 		845D8A027EE89DBC5843A591 /* cprisk_memory_guard.h in CopyFiles */ = {isa = PBXBuildFile; fileRef = 83AFB3C9B75C937C51C1D441 /* cprisk_memory_guard.h */; };
@@ -202,6 +217,7 @@
 		8600B1974819AFA62E7B80B3 /* RiskReportSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAAABA0C9CD0C798E0066839 /* RiskReportSummary.swift */; };
 		869AC1CE34B5B76932955BBA /* RiskSignalProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BA95BB56D482BFDD40167DF /* RiskSignalProvider.swift */; };
 		86F654E9DD01D7A8442710C4 /* CallStackUnwinder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25D5685440DEF8CE18FC7089 /* CallStackUnwinder.swift */; };
+		87081653D21D614BA3388FD5 /* vm_path_explosion.c in Sources */ = {isa = PBXBuildFile; fileRef = F20306591CC2C8EDC0E1B402 /* vm_path_explosion.c */; };
 		87361A46B1A772C9C1CD9B4D /* RiskDeviceHistoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38B75463ABBB98581F6B6C9B /* RiskDeviceHistoryTests.swift */; };
 		87980A3A3B6214C910FB9B13 /* SDKIntegrityChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = F02DB668F8391D2A9495C3BD /* SDKIntegrityChecker.swift */; };
 		8835844EF2C0D60C3D1B7B6A /* ChallengeTriggerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFA0BD2A13FDB4554E691EF2 /* ChallengeTriggerTests.swift */; };
@@ -214,6 +230,7 @@
 		8E5E4AD73C83A539B8C3ABE0 /* ConfigTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 735BFE0BD97A90C8A9464437 /* ConfigTests.swift */; };
 		8F285C21BA61AD386B431939 /* CustomPadMacRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80D5F8F9073B0C0F34EE06A3 /* CustomPadMacRegressionTests.swift */; };
 		90C4E2C837F670A4E260EC95 /* GraphModuleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD6A868017C5B541FC2926BB /* GraphModuleTests.swift */; };
+		917029122CE1130523B70CEC /* CPRiskKitArmorBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DE2F14C923E064B9F57FDB3 /* CPRiskKitArmorBridge.swift */; };
 		91E242680339B6377482D3AC /* HoneypotMemoryDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FC0413E53415EBCFE879432 /* HoneypotMemoryDetector.swift */; };
 		920B8254320C0F272BDE29A2 /* CFFStateCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1D8F21F6A155BF4561834B2 /* CFFStateCodec.swift */; };
 		924F9265427DBB1A0832F4C0 /* RiskDetectorAppApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4B412448EA04BD2B3489174 /* RiskDetectorAppApp.swift */; };
@@ -231,11 +248,13 @@
 		9B89538DA3B5CE8FDF4A1890 /* BehaviorSignals.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A089D69D2F1BCDD0D37127E /* BehaviorSignals.swift */; };
 		9C2A2D83969905DDA3A01876 /* PrologueBranchDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7631FA492794D92183EA9554 /* PrologueBranchDetector.swift */; };
 		9D32D4A66C956AD84D172803 /* module.modulemap in CopyFiles */ = {isa = PBXBuildFile; fileRef = 47AC5992D8A98BDD5A9CBAED /* module.modulemap */; };
+		9F750CC6339B9E11B635F83A /* RealtimeTelemetryAdaptiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FF8609061DAF5CF12A5F02D /* RealtimeTelemetryAdaptiveTests.swift */; };
 		A05FD317CBB63082235B1905 /* DTraceKDebugDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F9DE6DB5362487F44304B2 /* DTraceKDebugDetector.swift */; };
 		A13F6B003400F74EEC0D2824 /* CapabilityProbeEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 759EA568BD8E2AB75C5BB127 /* CapabilityProbeEngine.swift */; };
 		A1DF5EDBFF4589A443477A78 /* LocalAuthentication.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FC312D930707E1A8501141A7 /* LocalAuthentication.framework */; };
 		A224765D90154AAA5EEEC8B6 /* RiskDetectionRunResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 693FD12906EA441BF3ACD561 /* RiskDetectionRunResult.swift */; };
 		A2E78D877131293B618FDF1B /* KeychainDeviceID.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB7C9C13F45C4B3E0149EC92 /* KeychainDeviceID.swift */; };
+		A30F1A16ABF71A3E068B87DE /* vm_integrity.c in Sources */ = {isa = PBXBuildFile; fileRef = AA266E86483122FE5800C1CA /* vm_integrity.c */; };
 		A46A2FFBE08C46DC2D835699 /* TextSegmentIntegrityChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79FA01ECF015809EA071846D /* TextSegmentIntegrityChecker.swift */; };
 		A47F56142A976DD0AD40DBAC /* cprisk_exception_handler.c in Sources */ = {isa = PBXBuildFile; fileRef = 56F91A8001337633371A2035 /* cprisk_exception_handler.c */; };
 		A49EDC193395D7120B1C0F7B /* BatteryEntropyProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B291F2B219159A9D12BDF40 /* BatteryEntropyProvider.swift */; };
@@ -244,8 +263,10 @@
 		A739D5EF4FCFE98D9B4AD62C /* Detector.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC0381761BD047E4BC2D453E /* Detector.swift */; };
 		A7F2845E29063B3B30A66054 /* UnfairLock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 854D16C66C64B2E9825FBB3C /* UnfairLock.swift */; };
 		A8FE9C098117E706930049E5 /* ChallengeTrigger.swift in Sources */ = {isa = PBXBuildFile; fileRef = F682F4274B9FE9DB66A2B85E /* ChallengeTrigger.swift */; };
+		A9462D6DD35DB279E9E2A375 /* PerformanceBenchmarkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4EEEFA055276C107F95D57F /* PerformanceBenchmarkTests.swift */; };
 		A9E96C9FC1AB46CEDA2F1EE1 /* cprisk_vm_oph_bitwise.c in Sources */ = {isa = PBXBuildFile; fileRef = A65590B1B232D9542EBD734D /* cprisk_vm_oph_bitwise.c */; };
 		AD8D168AE206265BC0C155CF /* DualPathBaselineStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F08541E79CA6D642F135D021 /* DualPathBaselineStore.swift */; };
+		ADAB10E7AE2E0A55F3A34360 /* VMBranchIndRuntimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 131EECB78FFF97797EDEBDCD /* VMBranchIndRuntimeTests.swift */; };
 		AE222584A6C68E15FC65CB6C /* CFFRuntimeSaltTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9E9AA24F690D3AED5F13AC4 /* CFFRuntimeSaltTests.swift */; };
 		AEFE72B546A45959E756524B /* cprisk_sha256.h in CopyFiles */ = {isa = PBXBuildFile; fileRef = 2EDFBE024C5A1E1DBE25E319 /* cprisk_sha256.h */; };
 		AF4F79B86813D82283D5C17F /* RiskTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56CBF7CFB891F881DCEC8E84 /* RiskTypes.swift */; };
@@ -273,11 +294,14 @@
 		BF1A626DFEF844AB5A1FF53E /* BehaviorFingerprintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7503FE92DAD9784C3FD03B4 /* BehaviorFingerprintTests.swift */; };
 		BF8019CEDDAFC3E3E51B9F6D /* cprisk_secure_zero.h in CopyFiles */ = {isa = PBXBuildFile; fileRef = 8DCEF66BF5EC84D2AE63B3B4 /* cprisk_secure_zero.h */; };
 		BFEB382AC0CC1FEB40CD3893 /* CloudPhoneRiskKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ECD06ED3A5B2C35D55205F5 /* CloudPhoneRiskKit.swift */; };
+		C1537629711405010F2E7E3C /* vm_dynamic_const.c in Sources */ = {isa = PBXBuildFile; fileRef = 368B641B54B2A92F2BBC4106 /* vm_dynamic_const.c */; };
 		C1B4AD9ACE37509E301367DA /* PayloadFieldObfuscator.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD77BDAD9006E5E1B5DBDB67 /* PayloadFieldObfuscator.swift */; };
 		C283D0606C31CD31EF12C5A4 /* cprisk_crypto_trace.h in CopyFiles */ = {isa = PBXBuildFile; fileRef = E5D55E12397E3387667AA069 /* cprisk_crypto_trace.h */; };
 		C2CF57F279CEC0BBEFD2E170 /* ExternalServerAggregateProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4829802E1A3519560C651066 /* ExternalServerAggregateProvider.swift */; };
 		C3F26A4A7E20EFD32D5AD280 /* cprisk_vm_interpreter_limits.h in CopyFiles */ = {isa = PBXBuildFile; fileRef = 767D12A7A18BD645A8D0E81B /* cprisk_vm_interpreter_limits.h */; };
 		C5D2FFA55685E037CEBB5678 /* libCRiskCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CADFFA2F83EA30EB6D6C003 /* libCRiskCore.a */; };
+		C696AC4FE92FEA90B4A7CD26 /* TenantKeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EAF5CD697CB15EA8D711AFA /* TenantKeyManager.swift */; };
+		C6B026CDA0632275963C2696 /* vm_whitebox_bind.c in Sources */ = {isa = PBXBuildFile; fileRef = 67571A8A63A1945EB82FDF72 /* vm_whitebox_bind.c */; };
 		C99A6E2C2648037623594B09 /* CFFSBoxMaterial.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8021B718E11E31B594B7A4CE /* CFFSBoxMaterial.swift */; };
 		CB6630A5879F4CD1FF312313 /* UploadPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2361FCB9A55605A2BC932EC4 /* UploadPolicy.swift */; };
 		CC623130E21F180B7DD4ADE7 /* AppStoreSafeRuntimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DC08C49D503D00C74D1B1AF /* AppStoreSafeRuntimeTests.swift */; };
@@ -307,7 +331,9 @@
 		DE6FF62D98C3CDA78343FA8C /* DualPathBaselineStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F22368DF51357D64694B6E12 /* DualPathBaselineStoreTests.swift */; };
 		DF654B485219AA98A9E5892C /* DecisionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0471F1EF9EB9CC17005831DB /* DecisionEngine.swift */; };
 		DFE6DE481E0D8BAC0052BE9F /* CryptoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C0A6881A919D82D2EAD92E2 /* CryptoTests.swift */; };
+		E107547A28FF1B4E0D881633 /* vm_encrypted_chunk.c in Sources */ = {isa = PBXBuildFile; fileRef = C126DA827DF59EF836936E61 /* vm_encrypted_chunk.c */; };
 		E4D3630DF22CBA518D4FCE95 /* JailbreakEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = E49C4EC3FCA42CB35D754B2F /* JailbreakEngine.swift */; };
+		E5DC6D231D771DCC7D920006 /* cprisk_vm_branch_ind_smoke.c in Sources */ = {isa = PBXBuildFile; fileRef = CD68A7AE48004479429C889D /* cprisk_vm_branch_ind_smoke.c */; };
 		E89B277DB719EB7BE3BA22A6 /* FridaHeapDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D57C175E829F3B44BA788D0 /* FridaHeapDetector.swift */; };
 		E9666D84AE0AD06AB97649EC /* NetworkInterfaceProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 754D2737E0A18EFE5A886556 /* NetworkInterfaceProvider.swift */; };
 		EA1DF84032ACC3058E91F759 /* cprisk_vm_interpreter_internal.h in CopyFiles */ = {isa = PBXBuildFile; fileRef = 55F863513C0722B6DD35EBC7 /* cprisk_vm_interpreter_internal.h */; };
@@ -315,6 +341,7 @@
 		EABED71D1F74D4986194A81D /* FridaSocketDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67BD910E9D24C6C1E4B26BB9 /* FridaSocketDetector.swift */; };
 		EB01399D181CD8487D81A2F5 /* PhysicalSensorProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F09AF7053772B13DAED91FB /* PhysicalSensorProbe.swift */; };
 		ECE63DD66A38C198EB540A6F /* cprisk_vm_oph_nested.c in Sources */ = {isa = PBXBuildFile; fileRef = B31D9E485D8D14E7AF33D2F1 /* cprisk_vm_oph_nested.c */; };
+		ED062E04C7D64B2CB2042A22 /* vm_encoding.c in Sources */ = {isa = PBXBuildFile; fileRef = 2BCC4490CB80E7793B81216B /* vm_encoding.c */; };
 		EEC85CEDF7375D4AD9E0130B /* PACValidationDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02B3A4B31F39D596A5A4ED14 /* PACValidationDetector.swift */; };
 		EEDCF29126AFE9DF667C01AC /* SDKBinaryIntegrityChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38CE61D23119AE10A1FCA635 /* SDKBinaryIntegrityChecker.swift */; };
 		EEE3429ABC6F6ADDE85C559B /* CompressedVerdictRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D0301A4FED9FAE0FD803B49 /* CompressedVerdictRule.swift */; };
@@ -463,6 +490,7 @@
 		12030BF9ABE93008721C1366 /* CoreMotion.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMotion.framework; path = System/Library/Frameworks/CoreMotion.framework; sourceTree = SDKROOT; };
 		122C65B018F0F048EB3D21A5 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		12CCC62051B22F01C9FDEF38 /* CloudPhoneRiskAppCoreTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = CloudPhoneRiskAppCoreTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		131EECB78FFF97797EDEBDCD /* VMBranchIndRuntimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VMBranchIndRuntimeTests.swift; sourceTree = "<group>"; };
 		138481D112BED0EA9C5192F1 /* PathRandomizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PathRandomizer.swift; sourceTree = "<group>"; };
 		13BBEE909E42822B52CDC707 /* MIEPostureDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MIEPostureDetector.swift; sourceTree = "<group>"; };
 		16D4F3A599182ED4FB7C45E4 /* TrustChainManagerCFFTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrustChainManagerCFFTests.swift; sourceTree = "<group>"; };
@@ -483,6 +511,7 @@
 		21B7CDC08568AD0C016DD5C3 /* StorageIntegrityGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageIntegrityGuard.swift; sourceTree = "<group>"; };
 		22548B25A19875E1C360476E /* GraphRiskFeedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GraphRiskFeedback.swift; sourceTree = "<group>"; };
 		22C2BE57A99AE261AAB05D7C /* RiskDetectionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskDetectionEngine.swift; sourceTree = "<group>"; };
+		22FDEF0D820437F255CCA6F2 /* CPRiskKitObjCBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CPRiskKitObjCBridge.swift; sourceTree = "<group>"; };
 		2361FCB9A55605A2BC932EC4 /* UploadPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UploadPolicy.swift; sourceTree = "<group>"; };
 		240DE5E6D7CB873FDBF5546A /* CFFDispatcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CFFDispatcherTests.swift; sourceTree = "<group>"; };
 		24B2C2A29B1770C31AD8FF5D /* DeviceCheck.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = DeviceCheck.framework; path = System/Library/Frameworks/DeviceCheck.framework; sourceTree = SDKROOT; };
@@ -494,6 +523,7 @@
 		294024E02908D813AEFFAB38 /* AntiTamperingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AntiTamperingTests.swift; sourceTree = "<group>"; };
 		2B120C461DFD6BDC99D8BFA9 /* AppSigningIdentityDetectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSigningIdentityDetectorTests.swift; sourceTree = "<group>"; };
 		2B291F2B219159A9D12BDF40 /* BatteryEntropyProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatteryEntropyProvider.swift; sourceTree = "<group>"; };
+		2BCC4490CB80E7793B81216B /* vm_encoding.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = vm_encoding.c; sourceTree = "<group>"; };
 		2C89D2CD04773DFE362AED74 /* AppAttestSigner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppAttestSigner.swift; sourceTree = "<group>"; };
 		2DC08C49D503D00C74D1B1AF /* AppStoreSafeRuntimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreSafeRuntimeTests.swift; sourceTree = "<group>"; };
 		2DFA83FBF04DC999E82BDC49 /* SecureFileStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureFileStoreTests.swift; sourceTree = "<group>"; };
@@ -507,6 +537,7 @@
 		33EE9FDDEBDD1ED69679D6BB /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
 		33F201806182E1D2CDD71A72 /* SpawnIfaceProbeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpawnIfaceProbeTests.swift; sourceTree = "<group>"; };
 		33F6A9718D0F858752F0E952 /* ObjCIMPDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjCIMPDetector.swift; sourceTree = "<group>"; };
+		368B641B54B2A92F2BBC4106 /* vm_dynamic_const.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = vm_dynamic_const.c; sourceTree = "<group>"; };
 		37105343CA9585AC3135C86B /* cprisk_early_injection_probe.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_early_injection_probe.c; sourceTree = "<group>"; };
 		3792ADFBBFBD0FF4BBF2C316 /* WhitelistRulesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhitelistRulesTests.swift; sourceTree = "<group>"; };
 		38B75463ABBB98581F6B6C9B /* RiskDeviceHistoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskDeviceHistoryTests.swift; sourceTree = "<group>"; };
@@ -535,13 +566,17 @@
 		4829802E1A3519560C651066 /* ExternalServerAggregateProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalServerAggregateProvider.swift; sourceTree = "<group>"; };
 		48AB5D72E9713F386077E475 /* cprisk_instruction_cache.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = cprisk_instruction_cache.h; sourceTree = "<group>"; };
 		48F4612138C58ECEE2F34091 /* cprisk_vm_oph_table.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_vm_oph_table.c; sourceTree = "<group>"; };
+		49330919A5598FACC20F3EA4 /* GumTrampolineDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GumTrampolineDetector.swift; sourceTree = "<group>"; };
 		4CCF168EF1E28CA37A0D59AA /* CRiskCore.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CRiskCore.h; sourceTree = "<group>"; };
 		4DEDEAB05F3FB2C5212C8EDB /* DetectorRegistryProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetectorRegistryProtocol.swift; sourceTree = "<group>"; };
 		4E1E0F2D36CA223DF4668DFD /* DetectorManifestTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetectorManifestTests.swift; sourceTree = "<group>"; };
 		4E891F1FF246E32A306061D1 /* RuntimeIntegrityValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeIntegrityValidator.swift; sourceTree = "<group>"; };
 		4F054166973FF8107B4CDEE8 /* RiskReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskReport.swift; sourceTree = "<group>"; };
+		4F27C4760D7BF4C3D312C059 /* cprisk_vm_hardening.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_vm_hardening.c; sourceTree = "<group>"; };
+		4FF8609061DAF5CF12A5F02D /* RealtimeTelemetryAdaptiveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeTelemetryAdaptiveTests.swift; sourceTree = "<group>"; };
 		5032B938125B2F81288B00B4 /* RiskHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskHistoryStore.swift; sourceTree = "<group>"; };
 		531A1768F2F153A02E0C7D73 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		5330D616A81227AC6598D7DE /* CPRiskKitLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CPRiskKitLifecycle.swift; sourceTree = "<group>"; };
 		54B9FD3ADBA57BE9A197D026 /* DecisionEngineAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecisionEngineAdapter.swift; sourceTree = "<group>"; };
 		55456BD39C3898FA6C922964 /* ArmorIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArmorIntegrationTests.swift; sourceTree = "<group>"; };
 		55F863513C0722B6DD35EBC7 /* cprisk_vm_interpreter_internal.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = cprisk_vm_interpreter_internal.h; sourceTree = "<group>"; };
@@ -550,10 +585,12 @@
 		58A0227E9DD912CECD60ED3B /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
 		59702B3105C9254CE7395804 /* RemoteConfigProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteConfigProvider.swift; sourceTree = "<group>"; };
 		598173145538A2F3D2A02E9A /* SecureEnvelopeValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureEnvelopeValidator.swift; sourceTree = "<group>"; };
+		5AE1C408A2484EEBF0D2D355 /* CPRiskKitEvaluation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CPRiskKitEvaluation.swift; sourceTree = "<group>"; };
 		5C73BDB714A6DE2BE3B2D80A /* TimingRatioBaseline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimingRatioBaseline.swift; sourceTree = "<group>"; };
 		5CC85DA5D09D4208FC880E66 /* CloudPhoneRiskKitTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = CloudPhoneRiskKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5E2C442F2E650CF7EE633EE8 /* SysctlDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SysctlDetector.swift; sourceTree = "<group>"; };
 		5E3277186C92E2AD32950403 /* IsaSwizzleDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IsaSwizzleDetector.swift; sourceTree = "<group>"; };
+		5EC08293B4F7CB972A6FCC72 /* vm_antidebug_inline.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = vm_antidebug_inline.c; sourceTree = "<group>"; };
 		5FD9AACB1FE016CEF40026E8 /* RiskSignalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskSignalTests.swift; sourceTree = "<group>"; };
 		600C3CA962CF516E13016651 /* TestFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestFixtures.swift; sourceTree = "<group>"; };
 		6098DC6AB32B424339300871 /* DRMCapabilityProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DRMCapabilityProvider.swift; sourceTree = "<group>"; };
@@ -567,6 +604,7 @@
 		66971E07A62341BB73473F20 /* Mutex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mutex.swift; sourceTree = "<group>"; };
 		66EEDC6505DC00F3D971686E /* ProtectionStabilityStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtectionStabilityStoreTests.swift; sourceTree = "<group>"; };
 		6753B88C61D99FC2A7C30733 /* NetworkSignals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkSignals.swift; sourceTree = "<group>"; };
+		67571A8A63A1945EB82FDF72 /* vm_whitebox_bind.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = vm_whitebox_bind.c; sourceTree = "<group>"; };
 		67BD910E9D24C6C1E4B26BB9 /* FridaSocketDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FridaSocketDetector.swift; sourceTree = "<group>"; };
 		683D5E0E9879A860257962BE /* RandomizedDetection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RandomizedDetection.swift; sourceTree = "<group>"; };
 		686EDB0578D71E1EA31053D3 /* EnhancedDeviceFingerprint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnhancedDeviceFingerprint.swift; sourceTree = "<group>"; };
@@ -575,15 +613,20 @@
 		6AD90EBBE47693998E6F978B /* DylibInjectionDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DylibInjectionDetector.swift; sourceTree = "<group>"; };
 		6AEFA3BBB86F9B01E98F9278 /* SwiftRuntimeIntegrityDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftRuntimeIntegrityDetector.swift; sourceTree = "<group>"; };
 		6C5C8F2472390BBAC3E72AD6 /* RiskReportStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskReportStorage.swift; sourceTree = "<group>"; };
+		6CA01238478AB7004163B8C5 /* FridaMemoryLayoutDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FridaMemoryLayoutDetector.swift; sourceTree = "<group>"; };
 		6CD478A07EAEAFCB00CE0983 /* ArmorRuntimeLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArmorRuntimeLifecycleTests.swift; sourceTree = "<group>"; };
+		6DE2F14C923E064B9F57FDB3 /* CPRiskKitArmorBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CPRiskKitArmorBridge.swift; sourceTree = "<group>"; };
 		6E9551F88098CCDD74835704 /* AudioRouteProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRouteProvider.swift; sourceTree = "<group>"; };
+		6EAF5CD697CB15EA8D711AFA /* TenantKeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TenantKeyManager.swift; sourceTree = "<group>"; };
 		6ECF49E84B30BFCFCD67891D /* CoreLocation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreLocation.framework; path = System/Library/Frameworks/CoreLocation.framework; sourceTree = SDKROOT; };
 		7139C612FDCF177DF58F02C6 /* CRiskCore-umbrella.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "CRiskCore-umbrella.h"; sourceTree = "<group>"; };
+		7244FC2BCEDD19CA1E361FBE /* CPRiskKitReporting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CPRiskKitReporting.swift; sourceTree = "<group>"; };
 		72BCF499B1D034107174B76A /* DetectorRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetectorRegistry.swift; sourceTree = "<group>"; };
 		735BFE0BD97A90C8A9464437 /* ConfigTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigTests.swift; sourceTree = "<group>"; };
 		73AD0F159D6DA55911AD1068 /* SecureBuffer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureBuffer.swift; sourceTree = "<group>"; };
 		740A3FA0FDCB1824A0C35911 /* IMUNoiseSpectrumProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMUNoiseSpectrumProvider.swift; sourceTree = "<group>"; };
 		74939E5810374C1A0CABB9B5 /* AntiTamperingSignalProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AntiTamperingSignalProvider.swift; sourceTree = "<group>"; };
+		74DAA4EFBDC61ADFF762D2F9 /* UnixSocketSweepDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnixSocketSweepDetector.swift; sourceTree = "<group>"; };
 		754D2737E0A18EFE5A886556 /* NetworkInterfaceProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkInterfaceProvider.swift; sourceTree = "<group>"; };
 		7570F56428467B28E9957F88 /* JailbreakConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JailbreakConfig.swift; sourceTree = "<group>"; };
 		757E6358BEF786A86421F4D5 /* DeviceFingerprint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceFingerprint.swift; sourceTree = "<group>"; };
@@ -614,12 +657,14 @@
 		84F83BF2C87743CEF86C753A /* AudioToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioToolbox.framework; path = System/Library/Frameworks/AudioToolbox.framework; sourceTree = SDKROOT; };
 		854D16C66C64B2E9825FBB3C /* UnfairLock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnfairLock.swift; sourceTree = "<group>"; };
 		85F797EBC0F59AF96A5B3C24 /* RiskDetectorApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = RiskDetectorApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		86E7C526F70443942EC1BA1F /* CPRiskKitConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CPRiskKitConfiguration.swift; sourceTree = "<group>"; };
 		87F103C9B2D8C7A10982A511 /* LoggerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoggerTests.swift; sourceTree = "<group>"; };
 		89839D2C929635E11BD0B26C /* cprisk_whitebox.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_whitebox.c; sourceTree = "<group>"; };
 		8A261BCE14D0B29758D748F1 /* TestFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestFixtures.swift; sourceTree = "<group>"; };
 		8A8B74F26802927694BE95E5 /* ConfigProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigProvider.swift; sourceTree = "<group>"; };
 		8B163CE62E70C39372E9483C /* BehaviorBaseline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BehaviorBaseline.swift; sourceTree = "<group>"; };
 		8B47AFF021F17E9037C1FF07 /* cprisk_hardware_key.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_hardware_key.c; sourceTree = "<group>"; };
+		8BFE76E3E56356B7A16CE6A8 /* IsolationContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IsolationContext.swift; sourceTree = "<group>"; };
 		8C0689AF7525C7E0A32C7B75 /* DynamicSymbolResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DynamicSymbolResolverTests.swift; sourceTree = "<group>"; };
 		8C0B6E2311EA1422F67847E7 /* DyldDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DyldDetector.swift; sourceTree = "<group>"; };
 		8C8530FA86A3ECF0C624E26A /* MemoryIntegrityChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryIntegrityChecker.swift; sourceTree = "<group>"; };
@@ -661,6 +706,7 @@
 		A795412F4B429E96455B7CF3 /* RiskSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskSnapshot.swift; sourceTree = "<group>"; };
 		A795E48AC609BA1CFA0E171B /* ConfigSignatureVerifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigSignatureVerifierTests.swift; sourceTree = "<group>"; };
 		A7E6D55A68269BCE4E5446E6 /* RiskConclusionSigner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskConclusionSigner.swift; sourceTree = "<group>"; };
+		AA266E86483122FE5800C1CA /* vm_integrity.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = vm_integrity.c; sourceTree = "<group>"; };
 		AC4BFF614884CD3855108036 /* JailbreakEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JailbreakEngineTests.swift; sourceTree = "<group>"; };
 		AC84770311124C2726A63D09 /* CertificatePinningScenarioFloorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CertificatePinningScenarioFloorTests.swift; sourceTree = "<group>"; };
 		ADCD44CF2DC35DE6C9C4C113 /* Sysctl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sysctl.swift; sourceTree = "<group>"; };
@@ -696,6 +742,7 @@
 		BF57A2B7C3737F382767A79C /* DecisionTreeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecisionTreeTests.swift; sourceTree = "<group>"; };
 		BFDD0E9A3EA0531480536726 /* cprisk_swift_bridge_exports.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_swift_bridge_exports.c; sourceTree = "<group>"; };
 		C0B7467AD392FA0E3DD421A4 /* MountPointProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MountPointProvider.swift; sourceTree = "<group>"; };
+		C126DA827DF59EF836936E61 /* vm_encrypted_chunk.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = vm_encrypted_chunk.c; sourceTree = "<group>"; };
 		C20BFBD7CC2151EDE22E8BF3 /* TouchCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TouchCapture.swift; sourceTree = "<group>"; };
 		C27855A535C3EBF2D32A0817 /* DeviceAgeProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceAgeProvider.swift; sourceTree = "<group>"; };
 		C34EC351796B368A35743F6F /* MutexTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MutexTests.swift; sourceTree = "<group>"; };
@@ -704,9 +751,11 @@
 		C411E644E9A4D259D09F16FC /* TextSegmentReferenceResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextSegmentReferenceResolver.swift; sourceTree = "<group>"; };
 		C45FA9C63E2041C28FB8D888 /* AppAttestSignalProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppAttestSignalProvider.swift; sourceTree = "<group>"; };
 		C78679C685EC91C3B2F621B3 /* StorageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageTests.swift; sourceTree = "<group>"; };
+		C9B5E7F3778A74594B5BF135 /* vm_function_ctx.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = vm_function_ctx.c; sourceTree = "<group>"; };
 		CAAABA0C9CD0C798E0066839 /* RiskReportSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskReportSummary.swift; sourceTree = "<group>"; };
 		CC90395F02C42BE3A7699804 /* MutationPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MutationPlanner.swift; sourceTree = "<group>"; };
 		CD4F4C02F9E7BDC40796BCFB /* CFFStateCodecTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CFFStateCodecTests.swift; sourceTree = "<group>"; };
+		CD68A7AE48004479429C889D /* cprisk_vm_branch_ind_smoke.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_vm_branch_ind_smoke.c; sourceTree = "<group>"; };
 		CD6A868017C5B541FC2926BB /* GraphModuleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GraphModuleTests.swift; sourceTree = "<group>"; };
 		CE21944F1F14FD90A1DB1132 /* cprisk_cff.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_cff.c; sourceTree = "<group>"; };
 		CEA59AC3C765718FE764A9FA /* RiskVerdictTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskVerdictTests.swift; sourceTree = "<group>"; };
@@ -716,6 +765,7 @@
 		D3E2F6FCD40ECD05F7200B3C /* GrpcReportPayload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrpcReportPayload.swift; sourceTree = "<group>"; };
 		D43C15A976386E64A36F3F1E /* ActorFacadeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActorFacadeTests.swift; sourceTree = "<group>"; };
 		D656E276D12B8A6988EC89F5 /* GraphNodeDescriptor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GraphNodeDescriptor.swift; sourceTree = "<group>"; };
+		D65C7F5510B2DC369157BE27 /* vm_stack_crypto.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = vm_stack_crypto.c; sourceTree = "<group>"; };
 		D7503FE92DAD9784C3FD03B4 /* BehaviorFingerprintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BehaviorFingerprintTests.swift; sourceTree = "<group>"; };
 		D75DBFACD8AA4D275A953225 /* RiskEvaluationActor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskEvaluationActor.swift; sourceTree = "<group>"; };
 		D77334A31605E09FDD99F1AB /* ChallengeSessionCFFTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChallengeSessionCFFTests.swift; sourceTree = "<group>"; };
@@ -726,9 +776,11 @@
 		DD1759C6E1C612F7FEF1C0E1 /* EnvironmentConsistencyProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvironmentConsistencyProvider.swift; sourceTree = "<group>"; };
 		DD77BDAD9006E5E1B5DBDB67 /* PayloadFieldObfuscator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PayloadFieldObfuscator.swift; sourceTree = "<group>"; };
 		E49C4EC3FCA42CB35D754B2F /* JailbreakEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JailbreakEngine.swift; sourceTree = "<group>"; };
+		E5635F9ED9C7EC5DEBF52A4E /* CPRiskKitDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CPRiskKitDiagnostics.swift; sourceTree = "<group>"; };
 		E5D55E12397E3387667AA069 /* cprisk_crypto_trace.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = cprisk_crypto_trace.h; sourceTree = "<group>"; };
 		E66D15874FB490E8F7FEC61A /* libCloudPhoneRiskKit.a */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = archive.ar; path = libCloudPhoneRiskKit.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		E74F08C0F64B11C0F12DDA9E /* DecoyFieldInjector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecoyFieldInjector.swift; sourceTree = "<group>"; };
+		E83E50F817CE0FEE92C3B19A /* vm_cff_fusion.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = vm_cff_fusion.c; sourceTree = "<group>"; };
 		E8FD9EDBE87605CDBAF11A76 /* cprisk_signal_probe.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_signal_probe.c; sourceTree = "<group>"; };
 		EB035CDC835B575A26274DE7 /* CFFConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CFFConfig.swift; sourceTree = "<group>"; };
 		EB3AE03F4EBD2169DCB784DC /* cprisk_vm_oph_branch.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_vm_oph_branch.c; sourceTree = "<group>"; };
@@ -746,12 +798,14 @@
 		F0D6988D1AAF9A2136CE78B3 /* PinnedCertificatePinMaterial.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedCertificatePinMaterial.swift; sourceTree = "<group>"; };
 		F16EF99079DDD86B1F017387 /* CPRiskStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CPRiskStore.swift; sourceTree = "<group>"; };
 		F1D8F21F6A155BF4561834B2 /* CFFStateCodec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CFFStateCodec.swift; sourceTree = "<group>"; };
+		F20306591CC2C8EDC0E1B402 /* vm_path_explosion.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = vm_path_explosion.c; sourceTree = "<group>"; };
 		F22368DF51357D64694B6E12 /* DualPathBaselineStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DualPathBaselineStoreTests.swift; sourceTree = "<group>"; };
 		F22F1BCFF84D579DA6B860BB /* SystemLibrarySegmentLayoutDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemLibrarySegmentLayoutDetector.swift; sourceTree = "<group>"; };
 		F2483684AF7DD7EBE7FF50CD /* TemporalAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemporalAnalyzer.swift; sourceTree = "<group>"; };
 		F2DF9688C8FB14662E37658C /* cprisk_certificate_pinning.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_certificate_pinning.c; sourceTree = "<group>"; };
 		F36817EABC6A4ABA6A35AF4E /* AppIntents.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppIntents.framework; path = System/Library/Frameworks/AppIntents.framework; sourceTree = SDKROOT; };
 		F4983507C632F30D10765168 /* FridaThreadDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FridaThreadDetector.swift; sourceTree = "<group>"; };
+		F4EEEFA055276C107F95D57F /* PerformanceBenchmarkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceBenchmarkTests.swift; sourceTree = "<group>"; };
 		F51F880AB576E598D8157761 /* ReportEnvelope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportEnvelope.swift; sourceTree = "<group>"; };
 		F5735099443C1033797D0597 /* libCloudPhoneRiskAppCore.a */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = archive.ar; path = libCloudPhoneRiskAppCore.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		F682F4274B9FE9DB66A2B85E /* ChallengeTrigger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChallengeTrigger.swift; sourceTree = "<group>"; };
@@ -849,10 +903,12 @@
 				FCCECA588CDAC1FD3B8D2EAC /* FridaBuiltinMemorySignatureScanner.swift */,
 				FB93C98F8545FE79021AA9E8 /* FridaDetector.swift */,
 				7D57C175E829F3B44BA788D0 /* FridaHeapDetector.swift */,
+				6CA01238478AB7004163B8C5 /* FridaMemoryLayoutDetector.swift */,
 				A4257DBB67142A2481082C64 /* FridaModuleDetector.swift */,
 				67BD910E9D24C6C1E4B26BB9 /* FridaSocketDetector.swift */,
 				F4983507C632F30D10765168 /* FridaThreadDetector.swift */,
 				9A464CB9592425E7E50571B8 /* GPURenderProbe.swift */,
+				49330919A5598FACC20F3EA4 /* GumTrampolineDetector.swift */,
 				2FC0413E53415EBCFE879432 /* HoneypotMemoryDetector.swift */,
 				5E3277186C92E2AD32950403 /* IsaSwizzleDetector.swift */,
 				436DD69E9801FAF12CBEA907 /* KernelHookSideChannel.swift */,
@@ -869,6 +925,7 @@
 				F22F1BCFF84D579DA6B860BB /* SystemLibrarySegmentLayoutDetector.swift */,
 				1EBAD7CADD9C11A0337A5D6D /* TaskPortAuditDetector.swift */,
 				5C73BDB714A6DE2BE3B2D80A /* TimingRatioBaseline.swift */,
+				74DAA4EFBDC61ADFF762D2F9 /* UnixSocketSweepDetector.swift */,
 				90187864B69DF61B5F19D03B /* VMRemapDetector.swift */,
 			);
 			path = AntiTampering;
@@ -975,7 +1032,14 @@
 		54804280F9519DE0C9DB81C2 /* Core */ = {
 			isa = PBXGroup;
 			children = (
+				6DE2F14C923E064B9F57FDB3 /* CPRiskKitArmorBridge.swift */,
+				86E7C526F70443942EC1BA1F /* CPRiskKitConfiguration.swift */,
+				E5635F9ED9C7EC5DEBF52A4E /* CPRiskKitDiagnostics.swift */,
+				5AE1C408A2484EEBF0D2D355 /* CPRiskKitEvaluation.swift */,
+				5330D616A81227AC6598D7DE /* CPRiskKitLifecycle.swift */,
+				7244FC2BCEDD19CA1E361FBE /* CPRiskKitReporting.swift */,
 				6245B983E37D76D011C2BC81 /* DetectorRegistryActor.swift */,
+				8BFE76E3E56356B7A16CE6A8 /* IsolationContext.swift */,
 				D75DBFACD8AA4D275A953225 /* RiskEvaluationActor.swift */,
 				8BE51D6593CB33458ED243C6 /* Models */,
 				70DEFE63CC4820CAE1D8A0BA /* Protocols */,
@@ -1024,6 +1088,7 @@
 				A0F957601FA62A9E0A7A4AF2 /* Internal */,
 				C08B2A472056E61AA00EFACC /* Jailbreak */,
 				59F4D31C5506C19BC11EA6C4 /* Network */,
+				68CE6E9C2419C029E5E55B97 /* ObjCBridge */,
 				A339AFDC354318402A8C20C7 /* Providers */,
 				0C3F09454F3C98CB111341A2 /* Risk */,
 				AD32844FA00E77249E8082D4 /* Storage */,
@@ -1031,6 +1096,14 @@
 				979E7D8CD6791E27CC6E9BA5 /* Util */,
 			);
 			path = CloudPhoneRiskKit;
+			sourceTree = "<group>";
+		};
+		68CE6E9C2419C029E5E55B97 /* ObjCBridge */ = {
+			isa = PBXGroup;
+			children = (
+				22FDEF0D820437F255CCA6F2 /* CPRiskKitObjCBridge.swift */,
+			);
+			path = ObjCBridge;
 			sourceTree = "<group>";
 		};
 		6AAA3684E9E288ED6B80EDE0 /* Behavior */ = {
@@ -1156,6 +1229,7 @@
 				93D8E0606F061141D6644A15 /* ConfigSignatureVerifier.swift */,
 				118EB77B088D98A208883122 /* RemoteConfig.swift */,
 				59702B3105C9254CE7395804 /* RemoteConfigProvider.swift */,
+				6EAF5CD697CB15EA8D711AFA /* TenantKeyManager.swift */,
 				C411E644E9A4D259D09F16FC /* TextSegmentReferenceResolver.swift */,
 			);
 			path = Config;
@@ -1358,6 +1432,8 @@
 				0007821953DE700465559CDE /* cprisk_text_tail_honeypot.c */,
 				BB4FBACBB5015902987454CF /* cprisk_tls_init.c */,
 				7BA49EA76A6332A9D4F69108 /* cprisk_trust_hook_surface.c */,
+				CD68A7AE48004479429C889D /* cprisk_vm_branch_ind_smoke.c */,
+				4F27C4760D7BF4C3D312C059 /* cprisk_vm_hardening.c */,
 				A6C61B085480D381D7B6E03B /* cprisk_vm_interpreter.c */,
 				3E28AFF1DBC724A7AE8C12DA /* cprisk_vm_oph_basic.c */,
 				A65590B1B232D9542EBD734D /* cprisk_vm_oph_bitwise.c */,
@@ -1368,6 +1444,16 @@
 				FC1D13C69A4C52329652C359 /* cprisk_vm_oph_vreg.c */,
 				89839D2C929635E11BD0B26C /* cprisk_whitebox.c */,
 				954C0DFE170A1AA14F3FC453 /* direct_syscall.c */,
+				5EC08293B4F7CB972A6FCC72 /* vm_antidebug_inline.c */,
+				E83E50F817CE0FEE92C3B19A /* vm_cff_fusion.c */,
+				368B641B54B2A92F2BBC4106 /* vm_dynamic_const.c */,
+				2BCC4490CB80E7793B81216B /* vm_encoding.c */,
+				C126DA827DF59EF836936E61 /* vm_encrypted_chunk.c */,
+				C9B5E7F3778A74594B5BF135 /* vm_function_ctx.c */,
+				AA266E86483122FE5800C1CA /* vm_integrity.c */,
+				F20306591CC2C8EDC0E1B402 /* vm_path_explosion.c */,
+				D65C7F5510B2DC369157BE27 /* vm_stack_crypto.c */,
+				67571A8A63A1945EB82FDF72 /* vm_whitebox_bind.c */,
 				747AB6E16DF3AA22DBB630A0 /* include */,
 			);
 			path = CRiskCore;
@@ -1414,7 +1500,9 @@
 				87F103C9B2D8C7A10982A511 /* LoggerTests.swift */,
 				BD77C2C92D98DAFADC98BA71 /* MockDetectorRegistry.swift */,
 				C34EC351796B368A35743F6F /* MutexTests.swift */,
+				F4EEEFA055276C107F95D57F /* PerformanceBenchmarkTests.swift */,
 				66EEDC6505DC00F3D971686E /* ProtectionStabilityStoreTests.swift */,
+				4FF8609061DAF5CF12A5F02D /* RealtimeTelemetryAdaptiveTests.swift */,
 				437A04335928633755F8AA75 /* ReportEnvelopeNegativeTests.swift */,
 				38B75463ABBB98581F6B6C9B /* RiskDeviceHistoryTests.swift */,
 				1C1795B210E8B98FA6BBC310 /* RiskEvaluationActorTests.swift */,
@@ -1435,6 +1523,7 @@
 				600C3CA962CF516E13016651 /* TestFixtures.swift */,
 				16D4F3A599182ED4FB7C45E4 /* TrustChainManagerCFFTests.swift */,
 				1186752263D0067327FB187F /* UncoveredProviderTests.swift */,
+				131EECB78FFF97797EDEBDCD /* VMBranchIndRuntimeTests.swift */,
 				3792ADFBBFBD0FF4BBF2C316 /* WhitelistRulesTests.swift */,
 			);
 			path = CloudPhoneRiskKitTests;
@@ -1724,6 +1813,13 @@
 				C99A6E2C2648037623594B09 /* CFFSBoxMaterial.swift in Sources */,
 				79F9D718E37C2A150055BE68 /* CFFSBoxRuntime.swift in Sources */,
 				920B8254320C0F272BDE29A2 /* CFFStateCodec.swift in Sources */,
+				917029122CE1130523B70CEC /* CPRiskKitArmorBridge.swift in Sources */,
+				4D93AC537BD2BE8346D931F7 /* CPRiskKitConfiguration.swift in Sources */,
+				206DD37AC35F6300BB3FDCF9 /* CPRiskKitDiagnostics.swift in Sources */,
+				0AA660E49B67F38A9526FAC1 /* CPRiskKitEvaluation.swift in Sources */,
+				0ADD9558E52F433776243C6B /* CPRiskKitLifecycle.swift in Sources */,
+				56B09F1152E36B638D46829E /* CPRiskKitObjCBridge.swift in Sources */,
+				6A3F934123E9FB0FBC644591 /* CPRiskKitReporting.swift in Sources */,
 				4D8067FB5DAECC278D259D0D /* CPRiskStore.swift in Sources */,
 				3D9641A9D39A003B4CCBF101 /* CRiskCoreBridge.swift in Sources */,
 				86F654E9DD01D7A8442710C4 /* CallStackUnwinder.swift in Sources */,
@@ -1779,6 +1875,7 @@
 				F19E688B2E7AB6673DFDA204 /* FridaBuiltinMemorySignatureScanner.swift in Sources */,
 				4307251DFE0E380FA21BA66E /* FridaDetector.swift in Sources */,
 				E89B277DB719EB7BE3BA22A6 /* FridaHeapDetector.swift in Sources */,
+				7D35730D8CB28C51946E5497 /* FridaMemoryLayoutDetector.swift in Sources */,
 				6F4136C7D178E365FECBA50C /* FridaModuleDetector.swift in Sources */,
 				EABED71D1F74D4986194A81D /* FridaSocketDetector.swift in Sources */,
 				D9AE745AC4C6B1CFA05ADE99 /* FridaThreadDetector.swift in Sources */,
@@ -1788,6 +1885,7 @@
 				FFEF1D18EF1FF0C9394C811A /* GraphNodeDescriptor.swift in Sources */,
 				2380BDFE2A0E6AC85A888675 /* GraphRiskFeedback.swift in Sources */,
 				DCC7080ACFBEE71A3951A671 /* GrpcReportPayload.swift in Sources */,
+				3DA56C67540BA0EFEA458F1D /* GumTrampolineDetector.swift in Sources */,
 				6BD08CF858F2AC0F8EEC7E1C /* HardwareCapabilityProvider.swift in Sources */,
 				91E242680339B6377482D3AC /* HoneypotMemoryDetector.swift in Sources */,
 				4F3543FFEC7C724C5BF5C757 /* HookDetector.swift in Sources */,
@@ -1797,6 +1895,7 @@
 				39B4FB638F3002299E676F52 /* IndirectSymbolPointerDetector.swift in Sources */,
 				509F05A7DDC7564114760BBD /* IntegrityBaselineEnvCheck.swift in Sources */,
 				2FAA00494804805FE370D2AF /* IsaSwizzleDetector.swift in Sources */,
+				2D104909C30B81BC2BF7DC62 /* IsolationContext.swift in Sources */,
 				1C8CE09EEC592152C08392A7 /* JSON.swift in Sources */,
 				53103DECF5A6FA9987930E44 /* JailbreakConfig.swift in Sources */,
 				E4D3630DF22CBA518D4FCE95 /* JailbreakEngine.swift in Sources */,
@@ -1870,6 +1969,7 @@
 				186A392EB5C3F2E9582C362B /* TaskPortAuditDetector.swift in Sources */,
 				14375053C3C6602FF03FD9E6 /* TemporalAnalyzer.swift in Sources */,
 				3C3586F7CBC1BE7C3682BBB4 /* TemporalFeatures.swift in Sources */,
+				C696AC4FE92FEA90B4A7CD26 /* TenantKeyManager.swift in Sources */,
 				A46A2FFBE08C46DC2D835699 /* TextSegmentIntegrityChecker.swift in Sources */,
 				97D268113DDF22119EC618F4 /* TextSegmentReferenceResolver.swift in Sources */,
 				45C1D38C487759EF2B34BC63 /* TimePatternProvider.swift in Sources */,
@@ -1877,6 +1977,7 @@
 				71C6B8E2E02702027396A59E /* TouchCapture.swift in Sources */,
 				F3170B87680760B78F0869F4 /* TrustChainManager.swift in Sources */,
 				A7F2845E29063B3B30A66054 /* UnfairLock.swift in Sources */,
+				5ACD852260D71A2D42B808FA /* UnixSocketSweepDetector.swift in Sources */,
 				CB6630A5879F4CD1FF312313 /* UploadPolicy.swift in Sources */,
 				11B30FEE869D9B877BEC4F1A /* VMRemapDetector.swift in Sources */,
 				65595D14ED0DA377012BCC52 /* VPhoneHardwareProvider.swift in Sources */,
@@ -1925,7 +2026,9 @@
 				1D7706A5FFE63B91C90569D2 /* LoggerTests.swift in Sources */,
 				6CAB93D00333F6BFF901F093 /* MockDetectorRegistry.swift in Sources */,
 				7D5B41908D8E1FD9954D6D1A /* MutexTests.swift in Sources */,
+				A9462D6DD35DB279E9E2A375 /* PerformanceBenchmarkTests.swift in Sources */,
 				20A9F2FEB003A6DD8E4A0A5D /* ProtectionStabilityStoreTests.swift in Sources */,
+				9F750CC6339B9E11B635F83A /* RealtimeTelemetryAdaptiveTests.swift in Sources */,
 				0BFAA526B2356BB9927DE1BA /* ReportEnvelopeNegativeTests.swift in Sources */,
 				87361A46B1A772C9C1CD9B4D /* RiskDeviceHistoryTests.swift in Sources */,
 				42DBA9CCAA6F14DECB72E79D /* RiskEvaluationActorTests.swift in Sources */,
@@ -1946,6 +2049,7 @@
 				F94D9E79C37E2D5A44A1378D /* TestFixtures.swift in Sources */,
 				109B944675DC63FADD2A5EF6 /* TrustChainManagerCFFTests.swift in Sources */,
 				96FE4D58CC3064323E50066E /* UncoveredProviderTests.swift in Sources */,
+				ADAB10E7AE2E0A55F3A34360 /* VMBranchIndRuntimeTests.swift in Sources */,
 				7D1E59CFE148C0561A512B54 /* WhitelistRulesTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -2004,6 +2108,8 @@
 				28334657A159869DFB60E38C /* cprisk_text_tail_honeypot.c in Sources */,
 				EFE8C7AAA15F4ECADE3D6707 /* cprisk_tls_init.c in Sources */,
 				A515EA0325767C37C409B506 /* cprisk_trust_hook_surface.c in Sources */,
+				E5DC6D231D771DCC7D920006 /* cprisk_vm_branch_ind_smoke.c in Sources */,
+				6C98384218D6E17BB1EB8AC4 /* cprisk_vm_hardening.c in Sources */,
 				40C5860EC1D7A10F652ACDA7 /* cprisk_vm_interpreter.c in Sources */,
 				5CCB84D7DC86A944D48215AC /* cprisk_vm_oph_basic.c in Sources */,
 				A9E96C9FC1AB46CEDA2F1EE1 /* cprisk_vm_oph_bitwise.c in Sources */,
@@ -2014,6 +2120,16 @@
 				14799718C7BE42F6D96DFFD6 /* cprisk_vm_oph_vreg.c in Sources */,
 				4129D5317D1F20D3A0E32E29 /* cprisk_whitebox.c in Sources */,
 				2FF0007AD08478C0AE5D0DA7 /* direct_syscall.c in Sources */,
+				4A9632C83F16191147DA20A5 /* vm_antidebug_inline.c in Sources */,
+				7F65D94F1742DB282F8F8E7A /* vm_cff_fusion.c in Sources */,
+				C1537629711405010F2E7E3C /* vm_dynamic_const.c in Sources */,
+				ED062E04C7D64B2CB2042A22 /* vm_encoding.c in Sources */,
+				E107547A28FF1B4E0D881633 /* vm_encrypted_chunk.c in Sources */,
+				73B2379E17DA26038D20B31F /* vm_function_ctx.c in Sources */,
+				A30F1A16ABF71A3E068B87DE /* vm_integrity.c in Sources */,
+				87081653D21D614BA3388FD5 /* vm_path_explosion.c in Sources */,
+				582583F41C1E8A8302C2D053 /* vm_stack_crypto.c in Sources */,
+				C6B026CDA0632275963C2696 /* vm_whitebox_bind.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

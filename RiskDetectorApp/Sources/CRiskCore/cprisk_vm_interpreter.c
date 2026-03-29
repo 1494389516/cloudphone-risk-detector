@@ -6,6 +6,7 @@
 #include "include/cprisk_macho.h"
 #include "include/cprisk_sha256.h"
 #include "include/cprisk_secure_zero.h"
+#include "cprisk_vm_hardening.h"
 
 #include <stdatomic.h>
 #include <string.h>
@@ -4015,6 +4016,24 @@ void cprisk_vm_interp_loop_a(struct cprisk_vm_interp_frame *fr)
             cprisk_vm_diophantine_opaque_i(fr, pc, hvar);
         }
 
+        /* -- Integrated hardening hooks -- */
+        /* Task 3: verify bytecode block integrity before fetch */
+        cprisk_vm_hardening_ondemand_decrypt(fr, pc);
+        /* Task 1: update integrity state after decode */
+        cprisk_vm_hardening_integrity_checkpoint(fr, pc, (uint32_t)logical);
+        /* Task 4: path explosion checkpoint (periodic) */
+        if ((fr->steps & 0xFu) == 0u)
+            cprisk_vm_hardening_path_explosion(fr, pc);
+        /* Task 2: fake dependency injection (periodic) */
+        if ((fr->steps & 0x7u) == 0u)
+            cprisk_vm_hardening_fake_dep_inject(fr, pc, hvar);
+        /* Task 5: CFF transition (every 32 steps on fall-through) */
+        if ((fr->steps & 0x1Fu) == 0u)
+            cprisk_vm_hardening_cff_transition(fr, pc, pc + CPRISK_VM_INSN_WIDTH, 0);
+        /* Task 5: CFF integrity verify (every 128 steps) */
+        if ((fr->steps & 0x7Fu) == 0u)
+            cprisk_vm_hardening_cff_verify(fr);
+
         {
             const cprisk_vm_flow_t flow =
                 cprisk_vm_dispatch_oph_core_i(fr, op, logical, imm, pc, hvar);
@@ -4193,6 +4212,24 @@ static void cprisk_vm_interp_loop_b(struct cprisk_vm_interp_frame *fr)
         }
 
         cprisk_vm_interp_loop_b_cluster_spread_i(logical);
+
+        /* -- Integrated hardening hooks -- */
+        /* Task 3: verify bytecode block integrity before fetch */
+        cprisk_vm_hardening_ondemand_decrypt(fr, pc);
+        /* Task 1: update integrity state after decode */
+        cprisk_vm_hardening_integrity_checkpoint(fr, pc, (uint32_t)logical);
+        /* Task 4: path explosion checkpoint (periodic) */
+        if ((fr->steps & 0xFu) == 0u)
+            cprisk_vm_hardening_path_explosion(fr, pc);
+        /* Task 2: fake dependency injection (periodic) */
+        if ((fr->steps & 0x7u) == 0u)
+            cprisk_vm_hardening_fake_dep_inject(fr, pc, hvar);
+        /* Task 5: CFF transition (every 32 steps on fall-through) */
+        if ((fr->steps & 0x1Fu) == 0u)
+            cprisk_vm_hardening_cff_transition(fr, pc, pc + CPRISK_VM_INSN_WIDTH, 0);
+        /* Task 5: CFF integrity verify (every 128 steps) */
+        if ((fr->steps & 0x7Fu) == 0u)
+            cprisk_vm_hardening_cff_verify(fr);
 
         {
             const cprisk_vm_flow_t flow =
@@ -4433,6 +4470,8 @@ static int cprisk_vm_prepare_program_i(const struct mach_header_64 *hdr,
     cprisk_vm_aux_init_i(fr);
     cprisk_vm_opaque_runtime_init_i(fr);
     fr->steps = 0u;
+    /* Initialize integrated hardening modules */
+    cprisk_vm_hardening_init(fr);
     return 1;
 }
 
@@ -4471,10 +4510,12 @@ static void cprisk_vm_run_prelude_lane2_i(cprisk_vm_interp_frame_t *fr) {
 }
 
 static void cprisk_vm_run_finish_lane0_i(cprisk_vm_interp_frame_t *fr, uint8_t acc[32]) {
+    cprisk_vm_hardening_cleanup(fr);
     cprisk_vm_merge_banks_i(acc, fr->acc, fr->acc_aux, fr->session_mix ^ fr->opaque_chain);
 }
 
 static void cprisk_vm_run_finish_lane1_i(cprisk_vm_interp_frame_t *fr, uint8_t acc[32]) {
+    cprisk_vm_hardening_cleanup(fr);
     fr->opaque_thread_mix = cprisk_vmp_avalanche32_i(
         fr->opaque_thread_mix ^
         fr->opaque_chain ^
@@ -4485,6 +4526,7 @@ static void cprisk_vm_run_finish_lane1_i(cprisk_vm_interp_frame_t *fr, uint8_t a
 }
 
 static void cprisk_vm_run_finish_lane2_i(cprisk_vm_interp_frame_t *fr, uint8_t acc[32]) {
+    cprisk_vm_hardening_cleanup(fr);
     fr->opaque_runtime_fold = cprisk_vmp_avalanche32_i(
         fr->opaque_runtime_fold ^
         fr->opaque_chain ^

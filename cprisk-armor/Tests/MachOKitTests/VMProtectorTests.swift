@@ -1161,4 +1161,44 @@ final class VMProtectorTests: XCTestCase {
         XCTAssertNotNil(cffPath)
         XCTAssertTrue(cffPath!.contains("cff_policy_appstore_safe.yaml"))
     }
+
+    func testBundledPoliciesCoverNewFridaDetectorsAndSyntheticBranchIndProfiles() throws {
+        let repoRoot = URL(fileURLWithPath: #file)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let standardURL = repoRoot.appendingPathComponent("RiskDetectorApp/vmp_policy.yaml")
+        let appStoreURL = repoRoot.appendingPathComponent("RiskDetectorApp/vmp_policy_appstore_safe.yaml")
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: standardURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: appStoreURL.path))
+
+        let standard = VMPolicyConfig.parse(try String(contentsOf: standardURL, encoding: .utf8))
+        let appStore = VMPolicyConfig.parse(try String(contentsOf: appStoreURL, encoding: .utf8))
+        let requiredFull: Set<String> = [
+            "GumTrampolineDetector.detect",
+            "FridaMemoryLayoutDetector.detect",
+        ]
+        let requiredPartial: Set<String> = [
+            "UnixSocketSweepDetector.detect",
+        ]
+
+        XCTAssertTrue(requiredFull.isSubset(of: Set(standard.full)))
+        XCTAssertTrue(requiredFull.isSubset(of: Set(appStore.full)))
+        XCTAssertTrue(requiredPartial.isSubset(of: Set(standard.partial)))
+        XCTAssertTrue(requiredPartial.isSubset(of: Set(appStore.partial)))
+
+        XCTAssertEqual(standard.hardening.syntheticBranchIndBudget, 3)
+        XCTAssertEqual(standard.hardening.syntheticBranchIndRate, 0.75, accuracy: 0.0001)
+        XCTAssertEqual(standard.hardening.syntheticBranchIndMaxPerFunction, 2)
+        XCTAssertEqual(standard.hardening.syntheticBranchIndMode, .semiSemantic)
+        XCTAssertEqual(standard.hardening.syntheticBranchIndForwardSpan, 6)
+
+        XCTAssertEqual(appStore.hardening.syntheticBranchIndBudget, 1)
+        XCTAssertEqual(appStore.hardening.syntheticBranchIndRate, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(appStore.hardening.syntheticBranchIndMaxPerFunction, 1)
+        XCTAssertEqual(appStore.hardening.syntheticBranchIndMode, .semiIdentity)
+        XCTAssertEqual(appStore.hardening.syntheticBranchIndForwardSpan, 0)
+    }
 }

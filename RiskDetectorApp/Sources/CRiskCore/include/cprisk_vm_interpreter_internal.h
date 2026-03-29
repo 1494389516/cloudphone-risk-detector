@@ -99,6 +99,49 @@ struct cprisk_vm_interp_frame {
     uint64_t steps;
     /** Per-run step ceiling (function/session-derived); <= \c CPRISK_VM_MAX_STEPS. */
     uint64_t step_limit_cap;
+
+    /* ── Integrated hardening modules (Tasks 1-5) ── */
+
+    /** Task 1: VM state integrity (vm_integrity.h) */
+    uint32_t vm_integrity_magic;        /* VM_INT_MAGIC_ACTIVE marker */
+    uint32_t vm_integrity_version;      /* version seed */
+    uint64_t vm_integrity_exec_count;   /* monotonic execution count */
+    uint64_t vm_integrity_checksum;     /* FNV-1a variant chain */
+    uint8_t  vm_integrity_tag[8];       /* integrity label */
+    uint8_t  vm_integrity_corrupted;    /* tamper detected flag */
+
+    /** Task 3: Runtime on-demand decryption context */
+    uint32_t decrypt_current_block;     /* currently decrypted basic block ID */
+    uint32_t decrypt_block_count;       /* total basic blocks */
+    uint64_t decrypt_block_key;         /* per-block XOR key derived from func_id */
+    uint8_t  decrypt_block_map[64];     /* bit map: block is currently decrypted */
+    uint8_t  decrypt_code_copy[256];    /* scratch for decrypt-encrypt cycle */
+
+    /** Task 4: Path explosion context (vm_path_explosion.h) */
+    uint64_t pe_func_id;               /* function id for path explosion */
+    uint32_t pe_bytecode_hash;          /* condensed hash of bytecode */
+    uint32_t pe_fork_counter;           /* number of fork checkpoints passed */
+    uint32_t pe_decoy_counter;          /* number of decoy sequences executed */
+    uint32_t pe_mba_accumulator;        /* MBA state accumulator */
+    uint32_t pe_mba_xor_mask;           /* MBA xor mask */
+    uint8_t  pe_path_marker[32];        /* per-path marker bytes */
+
+    /** Anti-debug inline context (vm_antidebug_inline.h)
+     *  Opaque storage sized to hold vm_antidebug_ctx_t; accessed via (vm_antidebug_ctx_t*) cast. */
+    uint8_t  adb_ctx_storage[48];  /* >= sizeof(vm_antidebug_ctx_t), aligned via uint64_t below */
+    uint32_t adb_stall_count;
+    uint64_t adb_ctx_align_;       /* alignment padding */
+
+    /** Task 5: VM×CFF deep fusion (vm_cff_fusion.h) */
+    uint32_t cff_rk[8];                /* Feistel round keys */
+    uint32_t cff_encoded_state;        /* CFF encoded state */
+    uint32_t cff_magic;                /* CFF init marker */
+    uint32_t cff_trace_buffer[16];     /* encoded PC trace */
+    uint32_t cff_trace_pos;            /* trace position */
+    uint8_t  cff_bytecode_hash[32];    /* hash for key derivation */
+    uint8_t  cff_state_encoded;        /* 1 if encoding active */
+    uint8_t  cff_corruption_detected;  /* integrity violation flag */
+    uint64_t cff_vpc;                  /* CFF-managed virtual PC */
 };
 
 /**
