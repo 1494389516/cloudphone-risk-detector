@@ -15,6 +15,32 @@ public enum RiskReportStorage {
         applicationSupportDirectories: [URL],
         cachesDirectories: [URL],
         temporaryDirectory: URL
+    ) -> URL? {
+        if let appSupport = applicationSupportDirectories.first {
+            return appSupport.appendingPathComponent("CloudPhoneRiskKit", isDirectory: true)
+        }
+        if let caches = cachesDirectories.first {
+            return caches.appendingPathComponent("CloudPhoneRiskKit", isDirectory: true)
+        }
+        return temporaryDirectory.appendingPathComponent("CloudPhoneRiskKit", isDirectory: true)
+    }
+
+    static func resolveBaseDirectory(fileManager: FileManager = .default) -> URL? {
+        resolveBaseDirectory(
+            applicationSupportDirectories: fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask),
+            cachesDirectories: fileManager.urls(for: .cachesDirectory, in: .userDomainMask),
+            temporaryDirectory: fileManager.temporaryDirectory
+        )
+    }
+
+        let base = resolveBaseDirectory()
+            throw NSError(
+                domain: "CloudPhoneRiskAppCore",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "storage base directory unavailable"]
+            )
+        return base.appendingPathComponent("reports", isDirectory: true)
+        temporaryDirectory: URL
     ) -> URL {
         if let applicationSupportDirectory = applicationSupportDirectories.first {
             return applicationSupportDirectory.appendingPathComponent("CloudPhoneRiskKit", isDirectory: true)

@@ -14,10 +14,7 @@ final class RiskReportStorageResolutionTests: XCTestCase {
             temporaryDirectory: temp
         )
 
-        XCTAssertEqual(
-            resolved,
-            appSupport.appendingPathComponent("CloudPhoneRiskKit", isDirectory: true)
-        )
+        XCTAssertEqual(resolved, appSupport.appendingPathComponent("CloudPhoneRiskKit", isDirectory: true))
     }
 
     func testResolveBaseDirectoryFallsBackToCaches() {
@@ -30,10 +27,7 @@ final class RiskReportStorageResolutionTests: XCTestCase {
             temporaryDirectory: temp
         )
 
-        XCTAssertEqual(
-            resolved,
-            caches.appendingPathComponent("CloudPhoneRiskKit", isDirectory: true)
-        )
+        XCTAssertEqual(resolved, caches.appendingPathComponent("CloudPhoneRiskKit", isDirectory: true))
     }
 
     func testResolveBaseDirectoryFallsBackToTemporaryDirectory() {
@@ -45,9 +39,6 @@ final class RiskReportStorageResolutionTests: XCTestCase {
             temporaryDirectory: temp
         )
 
-        XCTAssertEqual(
-            resolved,
-            temp.appendingPathComponent("CloudPhoneRiskKit", isDirectory: true)
-        )
+        XCTAssertEqual(resolved, temp.appendingPathComponent("CloudPhoneRiskKit", isDirectory: true))
     }
 }

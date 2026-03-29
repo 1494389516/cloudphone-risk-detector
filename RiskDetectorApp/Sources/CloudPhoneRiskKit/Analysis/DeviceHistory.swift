@@ -186,11 +186,7 @@ public final class DeviceHistory {
 
     private init() {
         let storageDirectory = Self.resolveStorageDirectory(fileManager: fileManager)
-        do {
-            try fileManager.createDirectory(
                 at: storageDirectory,
-                withIntermediateDirectories: true,
-                attributes: [FileAttributeKey.protectionKey: FileProtectionType.complete]
             )
         } catch {
             Logger.log("DeviceHistory: failed to create storage directory - \(error.localizedDescription)")
@@ -199,6 +195,30 @@ public final class DeviceHistory {
         self.hmacURL = storageDirectory.appendingPathComponent("cloudphone_device_history_v2.json.hmac")
         migrateFromDocumentsIfNeeded()
         loadFromDisk()
+    }
+
+    static func resolveStorageDirectory(
+        applicationSupportDirectories: [URL],
+        cachesDirectories: [URL],
+        temporaryDirectory: URL
+    ) -> URL {
+        if let appSupport = applicationSupportDirectories.first {
+            return appSupport
+        }
+        if let caches = cachesDirectories.first {
+            Logger.log("DeviceHistory: applicationSupportDirectory unavailable, falling back to cachesDirectory")
+            return caches.appendingPathComponent("CloudPhoneRiskKit", isDirectory: true)
+        }
+        Logger.log("DeviceHistory: applicationSupportDirectory unavailable, falling back to temporaryDirectory")
+        return temporaryDirectory.appendingPathComponent("CloudPhoneRiskKit", isDirectory: true)
+    }
+
+    static func resolveStorageDirectory(fileManager: FileManager = .default) -> URL {
+        resolveStorageDirectory(
+            applicationSupportDirectories: fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask),
+            cachesDirectories: fileManager.urls(for: .cachesDirectory, in: .userDomainMask),
+            temporaryDirectory: fileManager.temporaryDirectory
+        )
     }
 
     static func resolveStorageDirectory(
