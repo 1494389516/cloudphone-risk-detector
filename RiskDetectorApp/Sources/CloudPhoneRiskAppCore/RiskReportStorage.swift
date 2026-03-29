@@ -25,16 +25,13 @@ public enum RiskReportStorage {
         return temporaryDirectory.appendingPathComponent("CloudPhoneRiskKit", isDirectory: true)
     }
 
-    static func resolveBaseDirectory(fileManager: FileManager = .default) -> URL? {
-        resolveBaseDirectory(
+    public static func reportsDirectoryURL() throws -> URL {
+        let fileManager = FileManager.default
+        let base = resolveBaseDirectory(
             applicationSupportDirectories: fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask),
             cachesDirectories: fileManager.urls(for: .cachesDirectory, in: .userDomainMask),
             temporaryDirectory: fileManager.temporaryDirectory
         )
-    }
-
-        let base = resolveBaseDirectory()
-            throw NSError(
                 domain: "CloudPhoneRiskAppCore",
                 code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "storage base directory unavailable"]

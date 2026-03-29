@@ -185,7 +185,11 @@ public final class DeviceHistory {
     private var isDirty = false
 
     private init() {
-        let storageDirectory = Self.resolveStorageDirectory(fileManager: fileManager)
+        let storageDirectory = Self.resolveStorageDirectory(
+            applicationSupportDirectories: fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask),
+            cachesDirectories: fileManager.urls(for: .cachesDirectory, in: .userDomainMask),
+            temporaryDirectory: fileManager.temporaryDirectory
+        )
                 at: storageDirectory,
             )
         } catch {
@@ -211,14 +215,6 @@ public final class DeviceHistory {
         }
         Logger.log("DeviceHistory: applicationSupportDirectory unavailable, falling back to temporaryDirectory")
         return temporaryDirectory.appendingPathComponent("CloudPhoneRiskKit", isDirectory: true)
-    }
-
-    static func resolveStorageDirectory(fileManager: FileManager = .default) -> URL {
-        resolveStorageDirectory(
-            applicationSupportDirectories: fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask),
-            cachesDirectories: fileManager.urls(for: .cachesDirectory, in: .userDomainMask),
-            temporaryDirectory: fileManager.temporaryDirectory
-        )
     }
 
     static func resolveStorageDirectory(
