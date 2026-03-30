@@ -362,6 +362,7 @@ static void register_locked(int reclaiming) {
     s_status.last_register_kern_return = (int32_t)kr;
 
     if (kr != KERN_SUCCESS) {
+        mach_port_deallocate(mach_task_self(), s_exception_port);
         mach_port_mod_refs(mach_task_self(), s_exception_port, MACH_PORT_RIGHT_RECEIVE, -1);
         s_exception_port = MACH_PORT_NULL;
         return;
@@ -375,6 +376,7 @@ static void register_locked(int reclaiming) {
     pthread_t th;
     int rc = pthread_create(&th, NULL, exception_handler_thread, NULL);
     if (rc != 0) {
+        mach_port_deallocate(mach_task_self(), s_exception_port);
         mach_port_mod_refs(mach_task_self(), s_exception_port, MACH_PORT_RIGHT_RECEIVE, -1);
         s_exception_port = MACH_PORT_NULL;
         atomic_store(&s_registered, 0);
