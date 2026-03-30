@@ -155,7 +155,7 @@ int cprisk_mach_trace_suspicious(void) {
         const uint32_t baseline = atomic_load(&s_mach_port_baseline);
         if (baseline == 0u) {
             atomic_store(&s_mach_port_baseline, observed_count);
-        } else if (observed_count > baseline + 64u) {
+        } else if (observed_count > baseline && (observed_count - baseline) > 64u) {
             /* A sudden Mach port surge often appears after debugger/injector attach. */
             suspicious += 1;
         }

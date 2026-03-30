@@ -592,9 +592,11 @@ public struct ReportEnvelope: Codable, Sendable {
         let rhsBytes = Array(rhs.utf8)
         // 必须比较字节数而非字符数，否则多字节字符会导致越界崩溃
         var result: UInt8 = lhsBytes.count == rhsBytes.count ? 0 : 1
-        let count = min(lhsBytes.count, rhsBytes.count)
-        for i in 0..<count {
-            result |= lhsBytes[i] ^ rhsBytes[i]
+        let maxCount = max(lhsBytes.count, rhsBytes.count)
+        let lhsN = max(lhsBytes.count, 1)
+        let rhsN = max(rhsBytes.count, 1)
+        for i in 0..<maxCount {
+            result |= lhsBytes[i % lhsN] ^ rhsBytes[i % rhsN]
         }
 
         return result == 0
