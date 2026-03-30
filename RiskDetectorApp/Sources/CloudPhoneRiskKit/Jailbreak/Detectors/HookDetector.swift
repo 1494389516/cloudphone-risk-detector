@@ -73,7 +73,7 @@ struct HookDetector: Detector {
         score += meta.score
         methods.append(contentsOf: meta.methods)
 
-        return DetectorResult(score: score, methods: methods)
+        return DetectorResult(score: min(score, 100), methods: methods)
     }
 
     func isSuspiciousImagePath(_ path: String) -> Bool {

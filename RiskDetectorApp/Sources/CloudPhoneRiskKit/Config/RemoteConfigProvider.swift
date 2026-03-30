@@ -343,26 +343,22 @@ public final class RemoteConfigProvider: @unchecked Sendable {
 
         let schedule: () -> Void = { [weak self] in
             guard let self else { return }
-            let shouldCreate: Bool = self.lock.withLock {
+            self.lock.withLock {
                 // 二次检查：确保 Timer 仍未被创建（防止两次 async 同时执行）
-                guard self.timer == nil else { return false }
-                return true
-            }
-            guard shouldCreate else { return }
-            let t = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-                guard let self else { return }
-                self.fetchLatest { result in
-                    if case .failure(let error) = result {
-                        Logger.log("remote_config.periodic_update failed: \(error.localizedDescription)")
-                        if self.isConfigStale {
-                            Logger.log("remote_config: config is stale (age=\(Int(self.configAge))s), falling back to default")
-                            self.reloadCachedConfigTrustState()
+                guard self.timer == nil else { return }
+                let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+                    guard let self else { return }
+                    self.fetchLatest { result in
+                        if case .failure(let error) = result {
+                            Logger.log("remote_config.periodic_update failed: \(error.localizedDescription)")
+                            if self.isConfigStale {
+                                Logger.log("remote_config: config is stale (age=\(Int(self.configAge))s), falling back to default")
+                                self.reloadCachedConfigTrustState()
+                            }
                         }
                     }
                 }
-            }
-            RunLoop.main.add(t, forMode: .common)
-            self.lock.withLock {
+                RunLoop.main.add(t, forMode: .common)
                 self.timer = t
                 self._schedulingTimer = false
             }

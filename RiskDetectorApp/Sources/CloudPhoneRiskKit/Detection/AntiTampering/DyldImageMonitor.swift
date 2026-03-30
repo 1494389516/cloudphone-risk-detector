@@ -107,7 +107,7 @@ final class DyldImageMonitor: @unchecked Sendable {
         }
 
         // 2. Generation jump: images added since baseline beyond visible suspicious set
-        let genDelta = snapshot.gen - snapshot.baseGen
+        let genDelta = snapshot.gen &- snapshot.baseGen
         let visibleNewCount = UInt64(snapshot.additions.count)
         if genDelta > visibleNewCount &+ 2 {
             score += 50

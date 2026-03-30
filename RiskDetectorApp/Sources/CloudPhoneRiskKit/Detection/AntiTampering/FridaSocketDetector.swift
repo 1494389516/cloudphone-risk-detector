@@ -10,14 +10,16 @@ import Foundation
 ///    Uses dynamic baseline ratio (probe_median/getpid_median > 15), aligned with KernelHookSideChannel.
 struct FridaSocketDetector: Detector {
 
-    private static var timebaseInfo: mach_timebase_info_data_t = {
+    private static let timebaseInfo: mach_timebase_info_data_t = {
         var info = mach_timebase_info_data_t()
         mach_timebase_info(&info)
         return info
     }()
 
     private static func nanoseconds(from ticks: UInt64) -> UInt64 {
-        ticks * UInt64(timebaseInfo.numer) / UInt64(max(timebaseInfo.denom, 1))
+        let denom = max(UInt64(timebaseInfo.denom), 1)
+        let (product, overflow) = ticks.multipliedReportingOverflow(by: UInt64(timebaseInfo.numer))
+        return overflow ? UInt64.max : product / denom
     }
 
     func detect() throws -> DetectorResult {

@@ -423,10 +423,12 @@ extension ChallengeSession {
     private func timingSafeCompare(_ lhs: String, _ rhs: String) -> Bool {
         let lhsBytes = Array(lhs.utf8)
         let rhsBytes = Array(rhs.utf8)
-        guard lhsBytes.count == rhsBytes.count else { return false }
-        var result: UInt8 = 0
-        for i in 0..<lhsBytes.count {
-            result |= lhsBytes[i] ^ rhsBytes[i]
+        var result: UInt8 = lhsBytes.count == rhsBytes.count ? 0 : 1
+        let maxCount = max(lhsBytes.count, rhsBytes.count)
+        let lhsN = max(lhsBytes.count, 1)
+        let rhsN = max(rhsBytes.count, 1)
+        for i in 0..<maxCount {
+            result |= lhsBytes[i % lhsN] ^ rhsBytes[i % rhsN]
         }
         return result == 0
     }

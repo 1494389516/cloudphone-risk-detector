@@ -14,6 +14,7 @@
 #include <string.h>
 #include <time.h>
 #include <stdatomic.h>
+#include <pthread.h>
 #include <sys/mman.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
@@ -1999,10 +2000,15 @@ int cprisk_verify_anchor_hmac(const uint8_t root_material[CPRISK_ARMOR_KEY_SIZE]
     return result;
 }
 
+static mach_timebase_info_data_t s_integrity_tb;
+static pthread_once_t s_integrity_tb_once = PTHREAD_ONCE_INIT;
+static void cprisk_integrity_tb_init(void) {
+    mach_timebase_info(&s_integrity_tb);
+}
+
 static uint64_t cprisk_monotonic_ns(void) {
-    static mach_timebase_info_data_t tb;
-    if (tb.denom == 0)
-        mach_timebase_info(&tb);
+    pthread_once(&s_integrity_tb_once, cprisk_integrity_tb_init);
+    mach_timebase_info_data_t tb = s_integrity_tb;
     if (tb.denom == 0)
         return 0;
     uint64_t abs_time = mach_absolute_time();

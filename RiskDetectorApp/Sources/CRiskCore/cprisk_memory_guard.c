@@ -130,7 +130,10 @@ static void cprisk_forward_prev_sigbus(int sig, siginfo_t *info, void *uap) {
         }
     }
 
-    signal(SIGBUS, SIG_DFL);
+    struct sigaction dfl_action;
+    memset(&dfl_action, 0, sizeof(dfl_action));
+    dfl_action.sa_handler = SIG_DFL;
+    sigaction(SIGBUS, &dfl_action, NULL);
     raise(SIGBUS);
 }
 
