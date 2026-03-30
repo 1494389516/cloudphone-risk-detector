@@ -827,7 +827,6 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
             if (!cprisk_shadow_check_i(shadow_token)) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SHADOW_STACK;
                 shadow_mismatch = 1;
-                atomic_store(&s_watchdog_shadow_stack_latch, 1u);
             }
             if (atomic_exchange(&s_watchdog_peer_stall_latch, 0u) != 0u) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_WATCHDOG_PEER_STALL;
@@ -894,7 +893,7 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
             s_watchdog_snapshot.last_exception_hijack_detected = exception_snapshot.last_hijack_detected;
             s_watchdog_snapshot.last_exception_query_kern_return = exception_snapshot.last_query_kern_return;
             s_watchdog_snapshot.last_exception_register_kern_return = exception_snapshot.last_register_kern_return;
-            s_watchdog_snapshot.anomaly_flags = anomaly_flags;
+            s_watchdog_snapshot.anomaly_flags |= anomaly_flags;
             if (deny_result != 0) {
                 s_watchdog_snapshot.deny_attach_error_count += 1u;
             }

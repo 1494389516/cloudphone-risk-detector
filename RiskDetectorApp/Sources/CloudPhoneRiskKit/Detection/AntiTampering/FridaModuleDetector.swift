@@ -170,13 +170,13 @@ struct FridaModuleDetector: Detector {
         header: UnsafePointer<mach_header>,
         imageIndex: UInt32
     ) -> (sectionNames: [String], stringBlobs: [String]) {
+        guard header.pointee.magic == MH_MAGIC_64 || header.pointee.magic == MH_CIGAM_64 else {
+            return ([], [])
+        }
+
         let rawHeader = UnsafeRawPointer(header)
         let header64 = rawHeader.assumingMemoryBound(to: mach_header_64.self)
         let slide = Int64(_dyld_get_image_vmaddr_slide(imageIndex))
-
-        guard header64.pointee.magic == MH_MAGIC_64 || header64.pointee.magic == MH_CIGAM_64 else {
-            return ([], [])
-        }
 
         var sectionNames: [String] = []
         var stringBlobs: [String] = []

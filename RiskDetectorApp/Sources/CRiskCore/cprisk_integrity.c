@@ -14,6 +14,7 @@
 #include <string.h>
 #include <time.h>
 #include <stdatomic.h>
+#include <pthread.h>
 #include <sys/mman.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
