@@ -311,18 +311,7 @@ struct RuntimeIntegrityValidator: Detector {
 
         let callStack = Thread.callStackSymbols
 
-        let suspiciousPatterns = [
-            "MobileSubstrate",
-            "SubstrateLoader",
-            "substitute",
-            "FridaGadget",
-            "frida-agent",
-            "cycript",
-            "SSLKillSwitch",
-            "libReveal",
-            "Shadow.dylib",
-            "TweakInject",
-        ]
+        let suspiciousPatterns = ObfuscatedConstants.runtimeIntegrityStackSuspiciousNeedles
 
         for frame in callStack {
             for pattern in suspiciousPatterns {

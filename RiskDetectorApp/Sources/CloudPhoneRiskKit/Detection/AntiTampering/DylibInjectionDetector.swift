@@ -20,6 +20,8 @@ struct DylibInjectionDetector: Detector {
 
     private static let imageCountSoftLimit: UInt32 = 400
     private static let imageCountHardLimit: UInt32 = 500
+    private static let imageCountLowSoftLimit: UInt32 = 180
+    private static let imageCountLowHardLimit: UInt32 = 120
 
     // MARK: - Known-bad keywords (lowercase)
 
@@ -73,14 +75,21 @@ struct DylibInjectionDetector: Detector {
 
     // MARK: - 1a. Abnormal image count
 
-    private func detectAbnormalImageCount() -> (score: Double, methods: [String]) {
-        let count = _dyld_image_count()
-        if count > Self.imageCountHardLimit {
+    static func classifyImageCount(_ count: UInt32) -> (score: Double, methods: [String]) {
+        if count > imageCountHardLimit {
             return (20, ["dylib_inject:image_count_hard:\(count)"])
-        } else if count > Self.imageCountSoftLimit {
+        } else if count > imageCountSoftLimit {
             return (10, ["dylib_inject:image_count_soft:\(count)"])
+        } else if count < imageCountLowHardLimit {
+            return (14, ["dylib_inject:image_count_low_hard:\(count)"])
+        } else if count < imageCountLowSoftLimit {
+            return (8, ["dylib_inject:image_count_low_soft:\(count)"])
         }
         return (0, [])
+    }
+
+    private func detectAbnormalImageCount() -> (score: Double, methods: [String]) {
+        Self.classifyImageCount(_dyld_image_count())
     }
 
     // MARK: - 1b. Suspicious dylib path keywords
@@ -159,15 +168,33 @@ extension DylibInjectionDetector {
         var signals: [RiskSignal] = []
 
         let countMethods = result.methods.filter { $0.hasPrefix("dylib_inject:image_count") }
-        if !countMethods.isEmpty {
+        let isLowImageCountMethod: (String) -> Bool = {
+            $0.contains("image_count_low_hard") || $0.contains("image_count_low_soft")
+        }
+        let highCountMethods = countMethods.filter { !isLowImageCountMethod($0) }
+        if !highCountMethods.isEmpty {
             signals.append(RiskSignal(
                 id: "dylib_inject_image_count",
                 category: ObfuscatedConstants.categoryAntiTamper,
-                score: min(Double(countMethods.count) * 15, 20),
-                evidence: ["detail": countMethods.joined(separator: ",")],
+                score: min(Double(highCountMethods.count) * 15, 20),
+                evidence: ["detail": highCountMethods.joined(separator: ",")],
                 state: .soft(confidence: 0.6),
                 layer: 2,
                 weightHint: 55
+            ))
+        }
+
+        let lowCountMethods = countMethods.filter { isLowImageCountMethod($0) }
+        if !lowCountMethods.isEmpty {
+            let hardLow = lowCountMethods.contains { $0.contains("low_hard") }
+            signals.append(RiskSignal(
+                id: SignalID.dylibInjectImageCountLow,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: hardLow ? 18 : 10,
+                evidence: ["detail": lowCountMethods.joined(separator: ",")],
+                state: .soft(confidence: hardLow ? 0.82 : 0.7),
+                layer: 2,
+                weightHint: hardLow ? 62 : 48
             ))
         }
 

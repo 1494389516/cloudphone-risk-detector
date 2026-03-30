@@ -339,3 +339,18 @@ extension CPRiskKit {
         }
     }
 }
+
+public extension SecureEnvelopeValidationError {
+    var reasonCode: String {
+        switch self {
+        case .invalidEnvelopeJSON:
+            return "invalid_envelope_json"
+        case .unsupportedSignatureVersion:
+            return "unsupported_signature_version"
+        case .unknownKeyId:
+            return "unknown_key_id"
+        case .reportEnvelope(let error):
+            return "report_envelope.\(error.reasonCode)"
+        }
+    }
+}

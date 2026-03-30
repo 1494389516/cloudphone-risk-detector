@@ -1,4 +1,5 @@
 import Darwin
+import CRiskCore
 import Foundation
 import MachO
 
@@ -8,6 +9,11 @@ import MachO
 /// 1. 线程枚举异常 — 检测 Frida 的 GumJS/GLib 额外线程（gum-js-loop、gmain、gdbus 等）
 /// 2. Mach 异常端口劫持 — 检测 Frida 劫持的异常处理端口
 struct FridaThreadDetector: Detector {
+    private struct ThreadExecObservation {
+        let threadPort: mach_port_t
+        let pc: UInt64
+        let isForeignExecutable: Bool
+    }
 
     func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)
@@ -49,6 +55,7 @@ struct FridaThreadDetector: Detector {
         }
 
         let suspiciousNames = ObfuscatedConstants.fridaThreadNameMarkers
+        let threadExecObservations = loadThreadExecObservations(capacity: Int(threadCount))
 
         for i in 0..<Int(threadCount) {
             let thread = threads[i]
@@ -106,11 +113,16 @@ struct FridaThreadDetector: Detector {
             let threadName = String(cString: name).lowercased()
             guard !threadName.isEmpty else { continue }
 
-            for marker in suspiciousNames {
-                if threadName.contains(marker) {
+            if let marker = suspiciousThreadMarker(in: threadName, markers: suspiciousNames) {
+                if let foreignExecMethod = foreignExecutionMethod(
+                    marker: marker,
+                    observation: threadExecObservations[thread]
+                ) {
+                    score += 24
+                    methods.append(foreignExecMethod)
+                } else {
                     score += 15
                     methods.append("\(ObfuscatedConstants.methodPrefixFridaThreadName)\(marker)")
-                    break
                 }
             }
         }
@@ -122,6 +134,18 @@ struct FridaThreadDetector: Detector {
         }
 
         return (min(score, 40), methods)
+    }
+
+    internal func foreignExecutionMethodForTesting(
+        marker: String,
+        hasForeignExecutableThread: Bool,
+        threadPort: mach_port_t = 0,
+        pc: UInt64 = 0
+    ) -> String? {
+        let observation = hasForeignExecutableThread
+            ? ThreadExecObservation(threadPort: threadPort, pc: pc, isForeignExecutable: true)
+            : nil
+        return foreignExecutionMethod(marker: marker, observation: observation)
     }
 
     // MARK: - 2. Mach 异常端口劫持检测
@@ -163,6 +187,53 @@ struct FridaThreadDetector: Detector {
         }
 
         return (score, methods)
+    }
+
+    private func suspiciousThreadMarker(in threadName: String, markers: [String]) -> String? {
+        for marker in markers where threadName.contains(marker) {
+            return marker
+        }
+        return nil
+    }
+
+    private func loadThreadExecObservations(capacity: Int) -> [mach_port_t: ThreadExecObservation] {
+        guard capacity > 0 else { return [:] }
+        var snapshot = cprisk_thread_pc_exec_snapshot_t()
+        var entries = Array(repeating: cprisk_thread_pc_exec_entry_t(), count: capacity)
+        let rc = entries.withUnsafeMutableBufferPointer { buffer in
+            cprisk_thread_pc_exec_snapshot(buffer.baseAddress, UInt32(buffer.count), &snapshot)
+        }
+        guard rc == 0 else {
+            return [:]
+        }
+
+        let written = min(Int(snapshot.entries_written), entries.count)
+        var observations: [mach_port_t: ThreadExecObservation] = [:]
+        observations.reserveCapacity(written)
+        for entry in entries.prefix(written) {
+            let threadPort = mach_port_t(entry.thread_port)
+            guard threadPort != MACH_PORT_NULL else { continue }
+            let isForeignExecutable =
+                entry.thread_get_state_kern_return == KERN_SUCCESS
+                && entry.pc != 0
+                && entry.pc_in_executable_image == 0
+            observations[threadPort] = ThreadExecObservation(
+                threadPort: threadPort,
+                pc: entry.pc,
+                isForeignExecutable: isForeignExecutable
+            )
+        }
+        return observations
+    }
+
+    private func foreignExecutionMethod(
+        marker: String,
+        observation: ThreadExecObservation?
+    ) -> String? {
+        guard let observation, observation.isForeignExecutable else { return nil }
+        let portHex = String(observation.threadPort, radix: 16)
+        let pcHex = String(observation.pc, radix: 16)
+        return "\(ObfuscatedConstants.methodPrefixFridaThreadName)foreign_exec:\(marker):port_0x\(portHex):pc_0x\(pcHex)"
     }
 }
 

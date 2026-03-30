@@ -13,6 +13,22 @@ private let lldbJitAnonymousTags: Set<UInt32> = [240, 241, 242, 243, 244, 245]
 /// - small chunks (typically 4KB~256KB)
 /// - outside loaded images
 struct LLDBJITDetector: Detector {
+    struct AuditHints {
+        let sendOnlyExceptionPortCount: Int
+        let taskForPidUnexpectedSuccess: Bool
+        let debugserverMachServiceHits: Int
+
+        init(
+            sendOnlyExceptionPortCount: Int = 0,
+            taskForPidUnexpectedSuccess: Bool = false,
+            debugserverMachServiceHits: Int = 0
+        ) {
+            self.sendOnlyExceptionPortCount = sendOnlyExceptionPortCount
+            self.taskForPidUnexpectedSuccess = taskForPidUnexpectedSuccess
+            self.debugserverMachServiceHits = debugserverMachServiceHits
+        }
+    }
+
     struct RegionObservation {
         let address: UInt64
         let size: UInt64
@@ -26,6 +42,8 @@ struct LLDBJITDetector: Detector {
         let methods: [String]
         let suspiciousRegionCount: Int
         let totalSuspiciousSize: UInt64
+        let debugserverMachServiceHits: Int
+        let taskForPidUnexpectedSuccess: Bool
     }
 
     func detect() throws -> DetectorResult {
@@ -33,21 +51,32 @@ struct LLDBJITDetector: Detector {
         return DetectorResult(score: 0, methods: ["lldb_jit:unavailable_simulator"])
 #else
         let observations = scanSmallAnonymousRWX()
-        let assessment = assess(observations: observations)
+        let taskPortHints = TaskPortAuditDetector().collectLLDBAuditHints()
+        let auditHints = AuditHints(
+            sendOnlyExceptionPortCount: taskPortHints.sendOnlyExceptionPortCount,
+            taskForPidUnexpectedSuccess: taskPortHints.taskForPidUnexpectedSuccess,
+            debugserverMachServiceHits: taskPortHints.debugserverMachServiceHits
+        )
+        let assessment = assess(observations: observations, auditHints: auditHints)
         return DetectorResult(score: assessment.score, methods: assessment.methods)
 #endif
     }
 
-    func assess(observations: [RegionObservation]) -> Assessment {
+    func assess(observations: [RegionObservation], auditHints: AuditHints = AuditHints()) -> Assessment {
         let count = observations.count
         let totalSize = observations.reduce(UInt64(0)) { $0 &+ $1.size }
 
-        guard count > 0 else {
+        guard count > 0
+            || auditHints.debugserverMachServiceHits > 0
+            || auditHints.taskForPidUnexpectedSuccess
+            || auditHints.sendOnlyExceptionPortCount > 0 else {
             return Assessment(
                 score: 0,
                 methods: ["lldb_jit:clean"],
                 suspiciousRegionCount: 0,
-                totalSuspiciousSize: 0
+                totalSuspiciousSize: 0,
+                debugserverMachServiceHits: 0,
+                taskForPidUnexpectedSuccess: false
             )
         }
 
@@ -73,11 +102,37 @@ struct LLDBJITDetector: Detector {
             methods.append("lldb_jit:tag_diversity:\(tagSet.count)")
         }
 
+        if auditHints.debugserverMachServiceHits > 0 {
+            score += min(26 + Double(auditHints.debugserverMachServiceHits - 1) * 8, 46)
+            methods.append("lldb_jit:debugserver_mach_service_hits:\(auditHints.debugserverMachServiceHits)")
+        }
+
+        if auditHints.taskForPidUnexpectedSuccess {
+            score += 24
+            methods.append("lldb_jit:task_for_pid_unexpected_success")
+        }
+
+        if auditHints.sendOnlyExceptionPortCount > 0 {
+            score += min(12 + Double(auditHints.sendOnlyExceptionPortCount - 1) * 4, 20)
+            methods.append("lldb_jit:exception_send_only:\(auditHints.sendOnlyExceptionPortCount)")
+        }
+
+        let hasAuditSurface =
+            auditHints.debugserverMachServiceHits > 0
+            || auditHints.taskForPidUnexpectedSuccess
+            || auditHints.sendOnlyExceptionPortCount > 0
+        if count > 0, hasAuditSurface {
+            score += 10
+            methods.append("lldb_jit:cross_surface_correlation")
+        }
+
         return Assessment(
-            score: min(score, 72),
+            score: min(score, 88),
             methods: methods,
             suspiciousRegionCount: count,
-            totalSuspiciousSize: totalSize
+            totalSuspiciousSize: totalSize,
+            debugserverMachServiceHits: auditHints.debugserverMachServiceHits,
+            taskForPidUnexpectedSuccess: auditHints.taskForPidUnexpectedSuccess
         )
     }
 
@@ -165,15 +220,26 @@ struct LLDBJITDetector: Detector {
 extension LLDBJITDetector {
     func asSignals() -> [RiskSignal] {
         let observations = scanSmallAnonymousRWX()
-        let assessment = assess(observations: observations)
+        let taskPortHints = TaskPortAuditDetector().collectLLDBAuditHints()
+        let assessment = assess(
+            observations: observations,
+            auditHints: AuditHints(
+                sendOnlyExceptionPortCount: taskPortHints.sendOnlyExceptionPortCount,
+                taskForPidUnexpectedSuccess: taskPortHints.taskForPidUnexpectedSuccess,
+                debugserverMachServiceHits: taskPortHints.debugserverMachServiceHits
+            )
+        )
         guard assessment.score > 0 else { return [] }
 
         let addresses = observations
             .prefix(8)
             .map { String(format: "0x%llx", $0.address) }
             .joined(separator: ",")
+        let tamperedByAudit =
+            assessment.debugserverMachServiceHits > 0
+            || assessment.taskForPidUnexpectedSuccess
 
-        if assessment.suspiciousRegionCount >= 3 {
+        if assessment.suspiciousRegionCount >= 3 || tamperedByAudit {
             return [
                 RiskSignal(
                     id: SignalID.lldbJitSmallRWX,
@@ -183,6 +249,8 @@ extension LLDBJITDetector {
                         "region_count": "\(assessment.suspiciousRegionCount)",
                         "total_size_kb": "\(assessment.totalSuspiciousSize / 1024)",
                         "addresses": addresses,
+                        "debugserver_mach_service_hits": "\(assessment.debugserverMachServiceHits)",
+                        "task_for_pid_unexpected_success": assessment.taskForPidUnexpectedSuccess ? "1" : "0",
                     ],
                     state: .tampered,
                     layer: 2,
@@ -200,6 +268,8 @@ extension LLDBJITDetector {
                     "region_count": "\(assessment.suspiciousRegionCount)",
                     "total_size_kb": "\(assessment.totalSuspiciousSize / 1024)",
                     "addresses": addresses,
+                    "debugserver_mach_service_hits": "\(assessment.debugserverMachServiceHits)",
+                    "task_for_pid_unexpected_success": assessment.taskForPidUnexpectedSuccess ? "1" : "0",
                 ],
                 state: .soft(confidence: 0.58),
                 layer: 3,

@@ -24,7 +24,6 @@
 #include <pthread.h>
 #include <time.h>
 #include <mach-o/dyld.h>
-#include <sys/sysctl.h>
 
 #include "include/cprisk_macho.h"
 #include "include/cprisk_sha256.h"
@@ -120,7 +119,8 @@ static int cprisk_header_fields_sane_i(const struct mach_header_64 *hdr) {
 static uint32_t cprisk_runtime_os_mix_i(void) {
     char osrelease[128];
     size_t len = sizeof(osrelease);
-    if (sysctlbyname("kern.osrelease", osrelease, &len, NULL, 0) != 0 || len == 0) {
+    int err = 0;
+    if (cprisk_sysctlbyname_direct("kern.osrelease", osrelease, &len, NULL, 0, &err) != 0 || len == 0) {
         return 0xA24BAED5u;
     }
     uint32_t mix = 0x811C9DC5u;

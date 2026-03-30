@@ -22,19 +22,73 @@ internal enum CFFStateCodec {
         case .feistelSpn:
             return feistel32EncodeCore(state: state, key: key, salt: salt)
         case .xorRotate:
-            let mix = avalanche32(key ^ salt ^ 0x9E3779B9)
+            let mix = avalanche32(key ^ salt ^ codecConst32(
+                domain: 0x4346_465F_5354_5831,
+                key: key,
+                salt: salt,
+                base: 0x9E37_79B9
+            ))
             let shift = Int((mix & 0x1F) | 1)
-            let masked = state ^ mix ^ (salt &* 0x45D9F3B)
-            return masked.rotatedLeft(by: shift) &+ (key &* 0x27D4EB2D)
+            let masked = state ^ mix ^ (salt &* codecOddConst32(
+                domain: 0x4346_465F_5354_5832,
+                key: key,
+                salt: salt,
+                base: 0x045D_9F3B
+            ))
+            return masked.rotatedLeft(by: shift) &+ (key &* codecOddConst32(
+                domain: 0x4346_465F_5354_5833,
+                key: key,
+                salt: salt,
+                base: 0x27D4_EB2D
+            ))
         case .addRotateXor:
-            let addend = avalanche32(key &+ salt &+ 0x7F4A7C15)
+            let addend = avalanche32(key &+ salt &+ codecConst32(
+                domain: 0x4346_465F_5354_4131,
+                key: key,
+                salt: salt,
+                base: 0x7F4A_7C15
+            ))
             let shift = Int((((key &>> 3) ^ salt) & 0x1F) | 1)
             let mixed = (state &+ addend).rotatedLeft(by: shift)
-            return mixed ^ avalanche32(key ^ 0xA24BAED5) ^ (salt &* 0x165667B1)
+            return mixed ^ avalanche32(key ^ codecConst32(
+                domain: 0x4346_465F_5354_4132,
+                key: key,
+                salt: salt,
+                base: 0xA24B_AED5
+            )) ^ (salt &* codecOddConst32(
+                domain: 0x4346_465F_5354_4133,
+                key: key,
+                salt: salt,
+                base: 0x1656_67B1
+            ))
         case .affine:
-            let mask = avalanche32(key &+ salt &+ 0x51ED270B)
-            let multiplier = (avalanche32(key ^ salt.rotatedLeft(by: 7) ^ 0xD1B54A35) | 1)
-            let addend = avalanche32((key &* 0x9E3779B1) ^ salt ^ 0x94D049BB)
+            let mask = avalanche32(key &+ salt &+ codecConst32(
+                domain: 0x4346_465F_5354_4631,
+                key: key,
+                salt: salt,
+                base: 0x51ED_270B
+            ))
+            let multiplier = avalanche32(
+                key ^ salt.rotatedLeft(by: 7) ^ codecConst32(
+                    domain: 0x4346_465F_5354_4632,
+                    key: key,
+                    salt: salt,
+                    base: 0xD1B5_4A35
+                )
+            ) | 1
+            let addend = avalanche32(
+                (key &* codecOddConst32(
+                    domain: 0x4346_465F_5354_4633,
+                    key: key,
+                    salt: salt,
+                    base: 0x9E37_79B1
+                )) ^ salt ^ codecConst32(
+                    domain: 0x4346_465F_5354_4634,
+                    key: key,
+                    salt: salt,
+                    base: 0x94D0_49BB
+                )
+            )
             let masked = state ^ mask
             return (masked &* multiplier &+ addend) ^ key.rotatedLeft(by: Int((salt & 0x1F) | 1))
         }
@@ -51,20 +105,74 @@ internal enum CFFStateCodec {
         case .feistelSpn:
             return feistel32DecodeCore(encodedState: state, key: key, salt: salt)
         case .xorRotate:
-            let mix = avalanche32(key ^ salt ^ 0x9E3779B9)
+            let mix = avalanche32(key ^ salt ^ codecConst32(
+                domain: 0x4346_465F_5354_5831,
+                key: key,
+                salt: salt,
+                base: 0x9E37_79B9
+            ))
             let shift = Int((mix & 0x1F) | 1)
-            let unshifted = (state &- (key &* 0x27D4EB2D)).rotatedRight(by: shift)
-            return unshifted ^ mix ^ (salt &* 0x45D9F3B)
+            let unshifted = (state &- (key &* codecOddConst32(
+                domain: 0x4346_465F_5354_5833,
+                key: key,
+                salt: salt,
+                base: 0x27D4_EB2D
+            ))).rotatedRight(by: shift)
+            return unshifted ^ mix ^ (salt &* codecOddConst32(
+                domain: 0x4346_465F_5354_5832,
+                key: key,
+                salt: salt,
+                base: 0x045D_9F3B
+            ))
         case .addRotateXor:
-            let addend = avalanche32(key &+ salt &+ 0x7F4A7C15)
+            let addend = avalanche32(key &+ salt &+ codecConst32(
+                domain: 0x4346_465F_5354_4131,
+                key: key,
+                salt: salt,
+                base: 0x7F4A_7C15
+            ))
             let shift = Int((((key &>> 3) ^ salt) & 0x1F) | 1)
-            let unmasked = state ^ avalanche32(key ^ 0xA24BAED5) ^ (salt &* 0x165667B1)
+            let unmasked = state ^ avalanche32(key ^ codecConst32(
+                domain: 0x4346_465F_5354_4132,
+                key: key,
+                salt: salt,
+                base: 0xA24B_AED5
+            )) ^ (salt &* codecOddConst32(
+                domain: 0x4346_465F_5354_4133,
+                key: key,
+                salt: salt,
+                base: 0x1656_67B1
+            ))
             return unmasked.rotatedRight(by: shift) &- addend
         case .affine:
-            let mask = avalanche32(key &+ salt &+ 0x51ED270B)
-            let multiplier = (avalanche32(key ^ salt.rotatedLeft(by: 7) ^ 0xD1B54A35) | 1)
+            let mask = avalanche32(key &+ salt &+ codecConst32(
+                domain: 0x4346_465F_5354_4631,
+                key: key,
+                salt: salt,
+                base: 0x51ED_270B
+            ))
+            let multiplier = avalanche32(
+                key ^ salt.rotatedLeft(by: 7) ^ codecConst32(
+                    domain: 0x4346_465F_5354_4632,
+                    key: key,
+                    salt: salt,
+                    base: 0xD1B5_4A35
+                )
+            ) | 1
             let inverse = modularInverse32(multiplier)
-            let addend = avalanche32((key &* 0x9E3779B1) ^ salt ^ 0x94D049BB)
+            let addend = avalanche32(
+                (key &* codecOddConst32(
+                    domain: 0x4346_465F_5354_4633,
+                    key: key,
+                    salt: salt,
+                    base: 0x9E37_79B1
+                )) ^ salt ^ codecConst32(
+                    domain: 0x4346_465F_5354_4634,
+                    key: key,
+                    salt: salt,
+                    base: 0x94D0_49BB
+                )
+            )
             let unxored = state ^ key.rotatedLeft(by: Int((salt & 0x1F) | 1))
             let unscaled = (unxored &- addend) &* inverse
             return unscaled ^ mask
@@ -78,7 +186,22 @@ internal enum CFFStateCodec {
         config: CFFConfig
     ) -> UInt32 {
         let flavorSeed = stableHash64(config.buildFlavor == .release ? "rel" : "dbg")
-        let flavorMarker = avalanche64(flavorSeed ^ config.functionSeed ^ 0x9E37_79B9_7F4A_7C15)
+        let functionLo = UInt32(truncatingIfNeeded: config.functionSeed)
+        let functionHi = UInt32(truncatingIfNeeded: config.functionSeed >> 32)
+        let flavorConstHi = UInt64(codecConst32(
+            domain: 0x4346_465F_5354_4448,
+            key: functionLo,
+            salt: functionHi,
+            base: 0x9E37_79B9
+        ))
+        let flavorConstLo = UInt64(codecConst32(
+            domain: 0x4346_465F_5354_444C,
+            key: functionLo,
+            salt: functionHi,
+            base: 0x7F4A_7C15
+        ))
+        let flavorMarkerConst = (flavorConstHi << 32) | flavorConstLo
+        let flavorMarker = avalanche64(flavorSeed ^ config.functionSeed ^ flavorMarkerConst)
         let namespaceHash = stableHash64(namespace ?? "CloudPhoneRiskKit")
         let functionHash = stableHash64(function)
         let tierBits = config.protectionTier.rawValue.utf8.reduce(UInt64(0)) { partialResult, byte in
@@ -99,8 +222,23 @@ internal enum CFFStateCodec {
             return nil
         }
 
-        let raw = avalanche32(UInt32(ordinal) &+ key &+ (salt &* 0x9E3779B1)) | 1
-        return encode(state: raw, key: key ^ 0x6C8E9CF5, salt: salt, style: config.codecStyle)
+        let raw = avalanche32(UInt32(ordinal) &+ key &+ (salt &* codecOddConst32(
+            domain: 0x4346_465F_4641_4B31,
+            key: key,
+            salt: salt,
+            base: 0x9E37_79B1
+        ))) | 1
+        return encode(
+            state: raw,
+            key: key ^ codecConst32(
+                domain: 0x4346_465F_4641_4B32,
+                key: key,
+                salt: salt,
+                base: 0x6C8E_9CF5
+            ),
+            salt: salt,
+            style: config.codecStyle
+        )
     }
 
     @inline(__always)
@@ -111,7 +249,13 @@ internal enum CFFStateCodec {
         config: CFFConfig
     ) -> UInt32 {
         let key = deriveSeed(function: function, config: config)
-        let effectiveSalt = config.enableRuntimeSalt ? salt : salt ^ 0x13579BDF
+        let fallbackSaltXor = codecConst32(
+            domain: 0x4346_465F_454E_5331,
+            key: key,
+            salt: salt,
+            base: 0x1357_9BDF
+        )
+        let effectiveSalt = config.enableRuntimeSalt ? salt : salt ^ fallbackSaltXor
         return encode(state: rawState, key: key, salt: effectiveSalt, style: config.codecStyle)
     }
 
@@ -123,7 +267,13 @@ internal enum CFFStateCodec {
         config: CFFConfig
     ) -> UInt32 {
         let key = deriveSeed(function: function, config: config)
-        let effectiveSalt = config.enableRuntimeSalt ? salt : salt ^ 0x13579BDF
+        let fallbackSaltXor = codecConst32(
+            domain: 0x4346_465F_4445_5331,
+            key: key,
+            salt: salt,
+            base: 0x1357_9BDF
+        )
+        let effectiveSalt = config.enableRuntimeSalt ? salt : salt ^ fallbackSaltXor
         return decode(state: encodedState, key: key, salt: effectiveSalt, style: config.codecStyle)
     }
 
@@ -169,34 +319,82 @@ internal enum CFFStateCodec {
         return inverse
     }
 
-    private static let spnSbox: [UInt8] = [
-        0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
-        0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0,
-        0xb7, 0xfd, 0x93, 0x26, 0x36, 0x3f, 0xf7, 0xcc, 0x34, 0xa5, 0xe5, 0xf1, 0x71, 0xd8, 0x31, 0x15,
-        0x04, 0xc7, 0x23, 0xc3, 0x18, 0x96, 0x05, 0x9a, 0x07, 0x12, 0x80, 0xe2, 0xeb, 0x27, 0xb2, 0x75,
-        0x09, 0x83, 0x2c, 0x1a, 0x1b, 0x6e, 0x5a, 0xa0, 0x52, 0x3b, 0xd6, 0xb3, 0x29, 0xe3, 0x2f, 0x84,
-        0x53, 0xd1, 0x00, 0xed, 0x20, 0xfc, 0xb1, 0x5b, 0x6a, 0xcb, 0xbe, 0x39, 0x4a, 0x4c, 0x58, 0xcf,
-        0xd0, 0xef, 0xaa, 0xfb, 0x43, 0x4d, 0x33, 0x85, 0x45, 0xf9, 0x02, 0x7f, 0x50, 0x3c, 0x9f, 0xa8,
-        0x51, 0xa3, 0x40, 0x8f, 0x92, 0x9d, 0x38, 0xf5, 0xbc, 0xb6, 0xda, 0x21, 0x10, 0xff, 0xf3, 0xd2,
-        0xcd, 0x0c, 0x13, 0xec, 0x5f, 0x97, 0x44, 0x17, 0xc4, 0xa7, 0x7e, 0x3d, 0x64, 0x5d, 0x19, 0x73,
-        0x60, 0x81, 0x4f, 0xdc, 0x22, 0x2a, 0x90, 0x88, 0x46, 0xee, 0xb8, 0x14, 0xde, 0x5e, 0x0b, 0xdb,
-        0xe0, 0x32, 0x3a, 0x0a, 0x49, 0x06, 0x24, 0x5c, 0xc2, 0xd3, 0xac, 0x62, 0x91, 0x95, 0xe4, 0x79,
-        0xe7, 0xc8, 0x37, 0x6d, 0x8d, 0xd5, 0x4e, 0xa9, 0x6c, 0x56, 0xf4, 0xea, 0x65, 0x7a, 0xae, 0x08,
-        0xba, 0x78, 0x25, 0x2e, 0x1c, 0xa6, 0xb4, 0xc6, 0xe8, 0xdd, 0x74, 0x1f, 0x4b, 0xbd, 0x8b, 0x8a,
-        0x70, 0x3e, 0xb5, 0x66, 0x48, 0x03, 0xf6, 0x0e, 0x61, 0x35, 0x57, 0xb9, 0x86, 0xc1, 0x1d, 0x9e,
-        0xe1, 0xf8, 0x98, 0x11, 0x69, 0xd9, 0x8e, 0x94, 0x9b, 0x1e, 0x87, 0xe9, 0xce, 0x55, 0x28, 0xdf,
-        0x8c, 0xa1, 0x89, 0x0d, 0xbf, 0xe6, 0x42, 0x68, 0x41, 0x99, 0x2d, 0x0f, 0xb0, 0x54, 0xbb, 0x16,
-    ]
+    @inline(__always)
+    private static func codecConst32(domain: UInt64, key: UInt32, salt: UInt32, base: UInt32) -> UInt32 {
+        let lo = UInt32(truncatingIfNeeded: domain)
+        let hi = UInt32(truncatingIfNeeded: domain >> 32)
+        let spin = Int(((key ^ hi ^ (salt >> 1)) & 31) | 1)
+        let lane = (key ^ base ^ lo).rotatedLeft(by: spin)
+        let mixed0 = avalanche32(key ^ salt ^ lo ^ base)
+        let mixed1 = avalanche32(lane ^ salt ^ hi ^ (base &* (key | 1)))
+        return avalanche32(mixed0 ^ mixed1 ^ lo ^ hi) ^ base
+    }
+
+    @inline(__always)
+    private static func codecOddConst32(domain: UInt64, key: UInt32, salt: UInt32, base: UInt32) -> UInt32 {
+        codecConst32(domain: domain, key: key, salt: salt, base: base) | 1
+    }
+
+    @inline(__always)
+    private static func spnSboxByte(_ idx: UInt8) -> UInt8 {
+        CFFSBoxRuntime.spnSboxByte(idx)
+    }
 
     private static let feistelRounds: UInt32 = 8
 
     @inline(__always)
+    private static func buildSeed32() -> UInt32 {
+        let buildSeed = CFFSBoxRuntime.runtimeSeed()
+        let lo = UInt32(truncatingIfNeeded: buildSeed)
+        let hi = UInt32(truncatingIfNeeded: buildSeed >> 32)
+        return avalanche32(lo ^ hi)
+    }
+
+    @inline(__always)
+    private static func deriveTag32(
+        key: UInt32,
+        salt: UInt32,
+        chainMix: UInt32,
+        lane: UInt32
+    ) -> UInt32 {
+        let buildSeed = CFFSBoxRuntime.runtimeSeed()
+        let lo = UInt32(truncatingIfNeeded: buildSeed)
+        let hi = UInt32(truncatingIfNeeded: buildSeed >> 32)
+        let buildSeed32 = avalanche32(lo ^ hi)
+        let buildFold = lo ^ hi
+        let rotated = (chainMix ^ buildSeed32).rotatedLeft(by: Int((lane & 15) + 1))
+        let laneMul = codecOddConst32(
+            domain: 0x4346_465F_5441_4731,
+            key: key ^ lane,
+            salt: salt ^ chainMix,
+            base: 0x9E37_79B1
+        )
+        return avalanche32(buildSeed32 ^ buildFold ^ key ^ salt ^ rotated ^ (lane &* laneMul))
+    }
+
+    @inline(__always)
+    private static func codecChainMix(key: UInt32, salt: UInt32) -> UInt32 {
+        avalanche32(key ^ salt.rotatedLeft(by: 7) ^ buildSeed32())
+    }
+
+    @inline(__always)
+    private static func codecTag32(key: UInt32, salt: UInt32, lane: UInt32) -> UInt32 {
+        deriveTag32(key: key, salt: salt, chainMix: codecChainMix(key: key, salt: salt), lane: lane)
+    }
+
+    @inline(__always)
     private static func feistelRoundF(_ r: UInt16, key: UInt32, salt: UInt32, round: UInt32) -> UInt16 {
-        let roundKey = avalanche32(key ^ salt ^ (round &* 0x9E3779B9) ^ 0xDEADBEEF)
+        let roundMul = codecOddConst32(
+            domain: 0x4346_465F_4653_5231,
+            key: key,
+            salt: salt,
+            base: 0x9E37_79B9
+        )
+        let roundKey = avalanche32(key ^ salt ^ (round &* roundMul) ^ codecTag32(key: key, salt: salt, lane: 1))
         let b0 = UInt8(truncatingIfNeeded: r)
         let b1 = UInt8(truncatingIfNeeded: r >> 8)
-        let s0 = UInt32(spnSbox[Int(b0 ^ UInt8(truncatingIfNeeded: roundKey))])
-        let s1 = UInt32(spnSbox[Int(b1 ^ UInt8(truncatingIfNeeded: roundKey >> 8))]) << 8
+        let s0 = UInt32(spnSboxByte(b0 ^ UInt8(truncatingIfNeeded: roundKey)))
+        let s1 = UInt32(spnSboxByte(b1 ^ UInt8(truncatingIfNeeded: roundKey >> 8))) << 8
         var piece = s0 ^ s1
         piece ^= roundKey ^ (roundKey >> 16)
         piece = avalanche32(piece)
@@ -205,8 +403,8 @@ internal enum CFFStateCodec {
 
     @inline(__always)
     private static func feistel32EncodeCore(state: UInt32, key: UInt32, salt: UInt32) -> UInt32 {
-        let prewhiten = avalanche32(key ^ salt ^ 0x0F1055A1)
-        let postwhiten = avalanche32(key ^ salt ^ 0x0ACC0DEC)
+        let prewhiten = avalanche32(key ^ salt ^ codecTag32(key: key, salt: salt, lane: 2))
+        let postwhiten = avalanche32(key ^ salt ^ codecTag32(key: key, salt: salt, lane: 3))
         var value = state ^ prewhiten
         var left = UInt16(truncatingIfNeeded: value >> 16)
         var right = UInt16(truncatingIfNeeded: value)
@@ -222,8 +420,8 @@ internal enum CFFStateCodec {
 
     @inline(__always)
     private static func feistel32DecodeCore(encodedState: UInt32, key: UInt32, salt: UInt32) -> UInt32 {
-        let prewhiten = avalanche32(key ^ salt ^ 0x0F1055A1)
-        let postwhiten = avalanche32(key ^ salt ^ 0x0ACC0DEC)
+        let prewhiten = avalanche32(key ^ salt ^ codecTag32(key: key, salt: salt, lane: 2))
+        let postwhiten = avalanche32(key ^ salt ^ codecTag32(key: key, salt: salt, lane: 3))
         var value = encodedState ^ postwhiten
         var left = UInt16(truncatingIfNeeded: value >> 16)
         var right = UInt16(truncatingIfNeeded: value)

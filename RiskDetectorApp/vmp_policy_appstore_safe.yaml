@@ -1,0 +1,58 @@
+# Pass 13 — VMProtector policy (App Store safe / conservative)
+# 保留基础 VM 混淆能力，关闭易触发审核/兼容性质疑的高阶加固项。
+
+version: 1
+anti_analysis:
+  handler_duplication: true
+opaque_vpc_encoding:
+  enabled: true
+hardening:
+  protect_vm_interpreter_with_cff: false
+  enable_dead_handler_injection: true
+  opaque_vpc_predicate_chain: true
+  interpreter_self_integrity_check: false
+  interpreter_cff_tier: light
+  dispatch_table_keystream: true
+  bytecode_immediate_keystream: true
+  bytecode_segment_runtime_sha256: false
+  anti_symbolic_heavy: false
+  synthetic_branch_ind_budget: 1
+  synthetic_branch_ind_rate: 0.5
+  synthetic_branch_ind_max_per_function: 1
+  synthetic_branch_ind_mode: semi_identity
+functions:
+  full:
+    - RiskDetectionEngine.collectAndAugmentSignals
+    - RiskDetectionEngine.scoreAndForceDecision
+    - RiskDetectionEngine.treeCommitVerdict
+    - DecisionTree.decide
+    - ChallengeSession.markSubmitted
+    - TrustChainManager.deriveSessionKey
+    - TrustChainManager.buildKeyResolver
+    - cprisk_verify_anchor_hmac
+    - cprisk_verify_with_derived_key
+    - cprisk_verify_with_derived_key_and_request_binding_digest
+    - cprisk_derive_device_key
+    - cprisk_frida_runtime_snapshot
+    - GumTrampolineDetector.detect
+    - FridaMemoryLayoutDetector.detect
+  partial:
+    - AnomalyDetector.detectRiskScoreAnomaly
+    - ReportEnvelope.buildSignatureInput
+    - PayloadCrypto.encrypt
+    - PayloadCrypto.decrypt
+    - ConfigSignatureVerifier.verify
+    - RemoteConfig.validate
+    - StorageIntegrityGuard.sign
+    - StorageIntegrityGuard.verify
+    - CPRiskKit.validateSecureReportEnvelope
+    - FridaDetector.detect
+    - AntiTamperingSignalProvider.signals
+    - CPRiskKit.evaluate
+    - UnixSocketSweepDetector.detect
+  never:
+    - direct_syscall.cprisk_direct_syscall0
+    - direct_syscall.cprisk_direct_syscall6
+    - cprisk_vm_entry
+    - cprisk_vm_entry_alt1
+    - cprisk_vm_entry_alt2

@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 
@@ -113,5 +114,85 @@ enum SecureScope {
         var mutable = bytes
         defer { secureZero(&mutable) }
         return mutable.withUnsafeBufferPointer { body($0) }
+    }
+}
+
+internal enum CPRiskMessageAuth {
+    private static let blockSize = 64
+    private static let innerPadByte: UInt8 = 0x6D
+    private static let outerPadByte: UInt8 = 0xA3
+
+    static func authenticationCode(for message: Data, using key: SymmetricKey) -> Data {
+        var keyData = key.withUnsafeBytes { Data($0) }
+        defer { secureZeroData(&keyData) }
+        return authenticationCode(for: message, keyData: keyData)
+    }
+
+    static func authenticationCode(for message: Data, keyData: Data) -> Data {
+        var normalizedKey = [UInt8](repeating: 0, count: blockSize)
+        if keyData.count > blockSize {
+            let digest = Data(SHA256.hash(data: keyData))
+            normalizedKey.replaceSubrange(0..<digest.count, with: digest)
+        } else {
+            normalizedKey.replaceSubrange(0..<keyData.count, with: keyData)
+        }
+
+        var innerKey = normalizedKey
+        var outerKey = normalizedKey
+        for index in 0..<blockSize {
+            innerKey[index] ^= innerPadByte
+            outerKey[index] ^= outerPadByte
+        }
+
+        var innerInput = Data(innerKey)
+        innerInput.append(message)
+        var innerDigest = Data(SHA256.hash(data: innerInput))
+
+        var outerInput = Data(outerKey)
+        outerInput.append(innerDigest)
+        let digest = Data(SHA256.hash(data: outerInput))
+
+        secureZeroBytes(&normalizedKey)
+        secureZeroBytes(&innerKey)
+        secureZeroBytes(&outerKey)
+        secureZeroData(&innerInput)
+        secureZeroData(&outerInput)
+        secureZeroData(&innerDigest)
+        return digest
+    }
+
+    static func isValidAuthenticationCode(
+        _ signature: Data,
+        authenticating message: Data,
+        using key: SymmetricKey
+    ) -> Bool {
+        let expected = authenticationCode(for: message, using: key)
+        return timingSafeEquals(expected, signature)
+    }
+
+    static func isValidAuthenticationCode(
+        _ signature: Data,
+        authenticating message: Data,
+        keyData: Data
+    ) -> Bool {
+        let expected = authenticationCode(for: message, keyData: keyData)
+        return timingSafeEquals(expected, signature)
+    }
+
+    static func authenticationCodeHex(for message: Data, using key: SymmetricKey) -> String {
+        authenticationCode(for: message, using: key).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func authenticationCodeHex(for message: Data, keyData: Data) -> String {
+        authenticationCode(for: message, keyData: keyData).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func timingSafeEquals(_ lhs: Data, _ rhs: Data) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        var diff: UInt8 = 0
+        for index in lhs.indices {
+            diff |= lhs[index] ^ rhs[index]
+        }
+        return diff == 0
     }
 }

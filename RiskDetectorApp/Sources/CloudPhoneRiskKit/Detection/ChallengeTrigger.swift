@@ -480,9 +480,7 @@ extension ChallengeTrigger {
             return nil
         }
         defer { secureZeroData(&keyData) }
-        let key = SymmetricKey(data: keyData)
-        let digest = HMAC<SHA256>.authenticationCode(for: messageData, using: key)
-        return digest.map { String(format: "%02x", $0) }.joined()
+        return CPRiskMessageAuth.authenticationCodeHex(for: messageData, keyData: keyData)
     }
 
     /// challenge 绑定签名校验

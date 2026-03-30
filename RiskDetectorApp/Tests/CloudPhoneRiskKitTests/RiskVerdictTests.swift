@@ -136,4 +136,21 @@ final class RiskVerdictTests: XCTestCase {
         XCTAssertEqual(decoded.internalAction, verdict.internalAction)
         XCTAssertEqual(decoded.scenario, verdict.scenario)
     }
+
+    func testVerdictCodableRoundTripWithDecisionMetadata() throws {
+        let verdict = RiskVerdict(
+            score: 88,
+            internalLevel: .critical,
+            internalAction: .block,
+            confidence: 0.9,
+            primaryReasons: ["anti_tamper_x"],
+            signals: [],
+            scenario: .default,
+            decisionMetadata: ["policy_score_floor": "1", "aggregate_rule": "frida_cluster"]
+        )
+        let data = try JSONEncoder().encode(verdict)
+        let decoded = try JSONDecoder().decode(RiskVerdict.self, from: data)
+        XCTAssertEqual(decoded.decisionMetadata?["policy_score_floor"], "1")
+        XCTAssertEqual(decoded.decisionMetadata?["aggregate_rule"], "frida_cluster")
+    }
 }

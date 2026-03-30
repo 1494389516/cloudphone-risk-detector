@@ -366,4 +366,83 @@ final class TemporalFeaturesRegressionTests: XCTestCase {
     XCTAssertEqual(resolved, temp.appendingPathComponent("CloudPhoneRiskKit", isDirectory: true))
   }
 
+  func testDeviceDetectionSnapshotPreservesLibcFallbackTelemetryWhenPresent() {
+    let snapshot = RiskSnapshot(
+      deviceID: "device-history-libc",
+      device: TestFixtures.makeDeviceFingerprint(),
+      network: TestFixtures.makeNetworkSignals(),
+      behavior: TestFixtures.makeBehaviorSignals(),
+      jailbreak: TestFixtures.makeDetectionResult(),
+      mutationStrategy: nil,
+      antiDebugWatchdogSupported: false,
+      libcFallbackUsedMask: 0x84,
+      libcFallbackEventTotal: 5
+    )
+    let report = RiskScoreReport(
+      score: 22,
+      isHighRisk: false,
+      signals: [],
+      summary: "libc_fallback_observed",
+      compressedDigest: nil,
+      mappingVersion: nil
+    )
+
+    let historySnapshot = DeviceDetectionSnapshot.from(snapshot: snapshot, report: report)
+
+    XCTAssertEqual(historySnapshot.libcFallbackMaskHex, "84")
+    XCTAssertEqual(historySnapshot.libcFallbackEventTotal, 5)
+    XCTAssertEqual(historySnapshot.libcFallbackWatchdogSupported, false)
+  }
+
+}
+
+// MARK: - RiskVerdict decisionMetadata（上报侧可观测）
+
+final class RiskVerdictDecisionMetadataObservabilityTests: XCTestCase {
+
+  func testExtrasFlattensDecisionMetadataForTelemetry() {
+    let verdict = RiskVerdict(
+      score: 90,
+      internalLevel: .critical,
+      internalAction: .block,
+      confidence: 1.0,
+      primaryReasons: [],
+      signals: [],
+      scenario: .default,
+      decisionMetadata: ["aggregate_rule": "frida_cluster", "policy_score_floor": "1"]
+    )
+    XCTAssertEqual(verdict.extras["dm.aggregate_rule"], "frida_cluster")
+    XCTAssertEqual(verdict.extras["dm.policy_score_floor"], "1")
+  }
+
+  func testCPRiskReportPayloadIncludesActionReasonsAndDecisionMetadata() throws {
+    let context = RiskContext(
+      device: TestFixtures.makeDeviceFingerprint(),
+      deviceID: "device-telemetry",
+      network: TestFixtures.makeNetworkSignals(),
+      behavior: TestFixtures.makeBehaviorSignals(),
+      jailbreak: TestFixtures.makeDetectionResult()
+    )
+    let report = RiskScoreReport(
+      score: 88,
+      isHighRisk: true,
+      signals: [],
+      summary: "blocked(critical)",
+      compressedDigest: nil,
+      mappingVersion: nil,
+      action: .block,
+      primaryReasons: ["engine:aggregate_escalation", "anti_tamper_sdk_binary_replaced"],
+      decisionMetadata: ["aggregate_rule": "anti_tamper_cluster", "policy_score_floor": "1"]
+    )
+
+    let payloadData = CPRiskReport(context: context, report: report).unencryptedPayloadData()
+    let payload = try XCTUnwrap(
+      try JSONSerialization.jsonObject(with: payloadData) as? [String: Any]
+    )
+
+    XCTAssertEqual(payload["ia"] as? Int, RiskAction.block.rawValue)
+    XCTAssertEqual(payload["rr"] as? [String], report.primaryReasons)
+    XCTAssertEqual((payload["md"] as? [String: String])?["aggregate_rule"], "anti_tamper_cluster")
+    XCTAssertEqual((payload["md"] as? [String: String])?["policy_score_floor"], "1")
+  }
 }

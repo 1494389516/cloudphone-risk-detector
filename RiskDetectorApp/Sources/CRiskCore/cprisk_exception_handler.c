@@ -12,6 +12,7 @@
 #include <mach/mach.h>
 #include <mach/exception_types.h>
 #include <mach/exc.h>
+#include <mach/mach_time.h>
 #include <mach/ndr.h>
 #include <mach/arm/thread_status.h>
 #include <mach/thread_status.h>
@@ -43,10 +44,32 @@ static cprisk_exception_handler_snapshot_t s_status = {
     .last_register_kern_return = (int32_t)KERN_FAILURE,
     .verify_count = 0u,
     .reclaim_count = 0u,
+    .first_register_verify_delta_ns = 0u,
 };
 static uint64_t s_early_port_fingerprint = 0u;
 static uint32_t s_early_port_fingerprint_valid = 0u;
 static uint32_t s_late_phase_checked = 0u;
+static uint64_t s_first_register_monotonic_ns = 0u;
+
+static uint64_t cprisk_exception_monotonic_time_ns_i(void) {
+    static atomic_uint_fast64_t s_timebase = 0u;
+    uint64_t cached = atomic_load(&s_timebase);
+    if (cached == 0u) {
+        mach_timebase_info_data_t info;
+        if (mach_timebase_info(&info) != KERN_SUCCESS || info.numer == 0u || info.denom == 0u) {
+            return mach_absolute_time();
+        }
+        cached = ((uint64_t)info.numer << 32u) | (uint64_t)info.denom;
+        atomic_store(&s_timebase, cached);
+    }
+    const uint32_t numer = (uint32_t)(cached >> 32u);
+    const uint32_t denom = (uint32_t)(cached & 0xffffffffu);
+    const uint64_t ticks = mach_absolute_time();
+    if (denom == 0u) {
+        return ticks;
+    }
+    return (ticks * (uint64_t)numer) / (uint64_t)denom;
+}
 
 #define EXC_EXCEPTION_RAISE_STATE_IDENTITY 2403
 #define MACH_EXCEPTION_RAISE_STATE_IDENTITY 2407
@@ -387,6 +410,9 @@ static void register_locked(int reclaiming) {
     atomic_store(&s_registered, 1);
     s_status.registered = 1u;
     s_status.port_matches = 1u;
+    if (s_first_register_monotonic_ns == 0u) {
+        s_first_register_monotonic_ns = cprisk_exception_monotonic_time_ns_i();
+    }
     if (reclaiming) {
         s_status.reclaim_count += 1u;
     }
@@ -408,10 +434,13 @@ void cprisk_capture_early_exception_ports(void) {
         s_early_port_fingerprint_valid = 1u;
         s_late_phase_checked = 0u;
         s_status.early_phase_captured = 1u;
+        s_status.last_race_detected = 0u;
+        s_status.first_register_verify_delta_ns = 0u;
     } else {
         s_early_port_fingerprint = 0u;
         s_early_port_fingerprint_valid = 0u;
         s_status.early_phase_captured = 0u;
+        s_status.first_register_verify_delta_ns = 0u;
     }
     pthread_mutex_unlock(&s_mutex);
 }
@@ -448,6 +477,12 @@ void cprisk_verify_exception_handler(void) {
     s_status.last_query_succeeded = 0u;
     s_status.last_reclaim_attempted = 0u;
     s_status.last_hijack_detected = 0u;
+    if (s_status.first_register_verify_delta_ns == 0u && s_first_register_monotonic_ns != 0u) {
+        const uint64_t now_ns = cprisk_exception_monotonic_time_ns_i();
+        if (now_ns >= s_first_register_monotonic_ns) {
+            s_status.first_register_verify_delta_ns = now_ns - s_first_register_monotonic_ns;
+        }
+    }
 
     exception_mask_t mask = EXC_MASK_BREAKPOINT | EXC_MASK_BAD_ACCESS;
     exception_mask_t masks[EXC_TYPES_COUNT];
@@ -472,7 +507,7 @@ void cprisk_verify_exception_handler(void) {
         s_late_phase_checked = 1u;
         if (current_fingerprint != s_early_port_fingerprint) {
             s_status.last_race_detected = 1u;
-            cprisk_force_integrity_poison();
+            cprisk_integrity_poison_exception_lane();
         }
     }
 

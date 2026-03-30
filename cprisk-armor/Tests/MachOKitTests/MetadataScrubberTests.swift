@@ -205,7 +205,91 @@ final class MetadataScrubberTests: XCTestCase {
         XCTAssertEqual(result.bytesModified, 107)
     }
 
+    // MARK: - Swift semantic leak (CString + catalog)
+
+    func testCStringSemanticReportAndScrub() throws {
+        let (file, url) = try Self.makeMachOWithRiskCString()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let report = try MetadataScrubberPass().execute(
+            on: file,
+            config: PassConfig(
+                swiftSemanticLeakOptions: SwiftSemanticLeakOptions(
+                    reportCStringSemanticMatches: true,
+                    scrubCStringSemanticMatches: false
+                )
+            )
+        )
+        XCTAssertTrue(report.details.contains { $0.contains("Swift semantic CString scan: 1 match") })
+
+        let (file2, url2) = try Self.makeMachOWithRiskCString()
+        defer { try? FileManager.default.removeItem(at: url2) }
+        _ = try MetadataScrubberPass().execute(
+            on: file2,
+            config: PassConfig(
+                swiftSemanticLeakOptions: SwiftSemanticLeakOptions(
+                    reportCStringSemanticMatches: true,
+                    scrubCStringSemanticMatches: true
+                )
+            )
+        )
+        let strings = try file2.findCStrings()
+        XCTAssertFalse(strings.contains { $0.value.contains("RiskDetection") })
+    }
+
+    func testSemanticDecoySectionBestEffort() throws {
+        var d = MachOKitTests.makeMinimalMachO(cstringOffset: 256, fileSize: 512)
+        let payload = "RiskDetectionEngineProbe\0"
+        let pb = Data(payload.utf8)
+        d.replaceSubrange(256..<(256+12), with: pb)
+        Self.patchUInt64LE(&d, offset: 144, value: UInt64(pb.count))
+        let newSize = UInt64(d.count)
+        Self.patchUInt64LE(&d, offset: 64, value: newSize)
+        Self.patchUInt64LE(&d, offset: 80, value: newSize)
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("decoy_\(UUID().uuidString).macho")
+        try d.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let file = try MachOFile(url: url)
+        let result = try MetadataScrubberPass().execute(
+            on: file,
+            config: PassConfig(
+                randomSeed: 0xC0FFEE,
+                swiftSemanticLeakOptions: SwiftSemanticLeakOptions(injectSemanticDecoys: true)
+            )
+        )
+        XCTAssertTrue(
+            result.details.contains { $0.contains("Swift semantic decoy section __cp5_swdec") }
+                || result.details.contains { $0.contains("Swift semantic decoys skipped") }
+        )
+    }
+
     // MARK: - Helpers
+
+    private static func patchUInt64LE(_ data: inout Data, offset: Int, value: UInt64) {
+        var le = value.littleEndian
+        withUnsafeBytes(of: &le) { buf in
+            data.replaceSubrange(offset..<(offset + 8), with: buf)
+        }
+    }
+
+    /// Minimal dylib with `__TEXT.__cstring` containing a `riskdetection`-style literal (patched from `makeMinimalMachO`).
+    private static func makeMachOWithRiskCString() throws -> (MachOFile, URL) {
+        var d = MachOKitTests.makeMinimalMachO(cstringOffset: 256, fileSize: 512)
+        let payload = "RiskDetectionEngineProbe\0"
+        let pb = Data(payload.utf8)
+        d.replaceSubrange(256..<(256+12), with: pb)
+        patchUInt64LE(&d, offset: 144, value: UInt64(pb.count))
+        let newSize = UInt64(d.count)
+        patchUInt64LE(&d, offset: 64, value: newSize)
+        patchUInt64LE(&d, offset: 80, value: newSize)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cstring_sem_\(UUID().uuidString).macho")
+        try d.write(to: url)
+        return (try MachOFile(url: url), url)
+    }
 
     private static func loadFixture(
         named label: String,
@@ -504,7 +588,8 @@ final class MetadataScrubberTests: XCTestCase {
         d.append(Data(count: 728 - d.count))
 
         // ── __swift5_capture content (16 bytes of fake capture descriptor data) ──
-        d.append(contentsOf: "RiskSignalCapt\0\0".utf8)
+        // Includes `isVip` fragment to exercise Swift semantic-leak catalog (not only generic "Risk").
+        d.append(contentsOf: "isVipOnlyX\0\0\0\0\0\0".utf8)
         assert(d.count == 744)
 
         d.append(Data(count: 2048 - d.count))

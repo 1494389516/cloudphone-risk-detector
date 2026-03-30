@@ -1,7 +1,16 @@
 import XCTest
-import VMProtector
+@testable import VMProtector
 
 final class VMProtectorTests: XCTestCase {
+    func testVMFunctionIdMixedDependsOnBuildSeed() {
+        let sym = "RiskDetectionEngine.collectAndAugmentSignals"
+        let a = VMFunctionId.mixed(symbol: sym, buildSeed: 0x1111)
+        let b = VMFunctionId.mixed(symbol: sym, buildSeed: 0x2222)
+        XCTAssertNotEqual(a, b)
+        XCTAssertNotEqual(a, 0)
+        XCTAssertNotEqual(b, 0)
+    }
+
     func testVMPolicyParsesTiersAndNeverWins() {
         let yaml = """
         version: 2
@@ -31,6 +40,7 @@ final class VMProtectorTests: XCTestCase {
         XCTAssertFalse(p.hardening.opaqueVpcPredicateChain)
         XCTAssertFalse(p.hardening.interpreterSelfIntegrityCheck)
         XCTAssertEqual(p.hardening.interpreterCffTier, .medium)
+        XCTAssertFalse(p.hardening.antiSymbolicHeavy)
     }
 
     func testVMPolicyParsesM2OptionalSections() {
@@ -69,6 +79,316 @@ final class VMProtectorTests: XCTestCase {
         XCTAssertTrue(p.hardening.opaqueVpcPredicateChain)
         XCTAssertTrue(p.hardening.interpreterSelfIntegrityCheck)
         XCTAssertEqual(p.hardening.interpreterCffTier, .heavy)
+    }
+
+    func testLogicalOpABIIncludesFusionAndIndirectBranch() {
+        XCTAssertEqual(VMLogicalOp.allCases.count, 24)
+        XCTAssertEqual(VMLogicalOp.addRolAcc.rawValue, 22)
+        XCTAssertEqual(VMLogicalOp.branchInd.rawValue, 23)
+    }
+
+    func testVMPolicyParsesSyntheticBranchIndHardeningKeys() {
+        let yaml = """
+        version: 8
+        hardening:
+          synthetic_branch_ind_budget: 5
+          synthetic_branch_ind_rate: 0.4
+          synthetic_branch_ind_max_per_function: 2
+          synthetic_branch_ind_mode: semi_identity
+        functions:
+          full:
+            - _x
+        """
+        let p = VMPolicyConfig.parse(yaml)
+        XCTAssertEqual(p.hardening.syntheticBranchIndBudget, 5)
+        XCTAssertEqual(p.hardening.syntheticBranchIndRate, 0.4, accuracy: 0.0001)
+        XCTAssertEqual(p.hardening.syntheticBranchIndMaxPerFunction, 2)
+        XCTAssertEqual(p.hardening.syntheticBranchIndMode, .semiIdentity)
+    }
+
+    func testVMPolicyParsesSyntheticBranchIndSemiSemanticMode() {
+        let yaml = """
+        version: 9
+        hardening:
+          synthetic_branch_ind_mode: semi_semantic
+        functions:
+          full:
+            - _x
+        """
+        let p = VMPolicyConfig.parse(yaml)
+        XCTAssertEqual(p.hardening.syntheticBranchIndMode, .semiSemantic)
+    }
+
+    func testRewriteProducerInstructionsAppliesFullTierAutoBranchIndFloor() {
+        let ins = [VMInstruction(op: .nop), VMInstruction(op: .halt)]
+        let hardening = VMPolicyHardeningM3()
+        let rewritten = VMProtectorPass.rewriteProducerInstructions(
+            ins,
+            functionId: 0x101,
+            seed: 0x202,
+            tier: .full,
+            hardening: hardening
+        )
+        XCTAssertTrue(rewritten.autoBudgetApplied)
+        XCTAssertEqual(rewritten.effectiveBudget, 1)
+        XCTAssertEqual(rewritten.syntheticBranchIndInserted, 1)
+        XCTAssertEqual(rewritten.instructions.map(\.op), [.nop, .branchRel, .branchInd, .halt])
+        XCTAssertEqual(rewritten.instructions[1].immediate, 18)
+    }
+
+    func testRewriteProducerInstructionsDoesNotAutoInjectForPartialTier() {
+        let ins = [VMInstruction(op: .nop), VMInstruction(op: .halt)]
+        let hardening = VMPolicyHardeningM3()
+        let rewritten = VMProtectorPass.rewriteProducerInstructions(
+            ins,
+            functionId: 0x777,
+            seed: 0x888,
+            tier: .partial,
+            hardening: hardening
+        )
+        XCTAssertFalse(rewritten.autoBudgetApplied)
+        XCTAssertEqual(rewritten.effectiveBudget, 0)
+        XCTAssertEqual(rewritten.syntheticBranchIndInserted, 0)
+        XCTAssertEqual(rewritten.instructions, ins)
+    }
+
+    func testRewriteProducerInstructionsSemiIdentityModeUsesExplicitBudget() {
+        let ins = [VMInstruction(op: .nop), VMInstruction(op: .halt)]
+        let hardening = VMPolicyHardeningM3(
+            syntheticBranchIndBudget: 3,
+            syntheticBranchIndRate: 1,
+            syntheticBranchIndMaxPerFunction: 2,
+            syntheticBranchIndMode: .semiIdentity
+        )
+        let rewritten = VMProtectorPass.rewriteProducerInstructions(
+            ins,
+            functionId: 0xAA,
+            seed: 0xBB,
+            tier: .full,
+            hardening: hardening
+        )
+        XCTAssertFalse(rewritten.autoBudgetApplied)
+        XCTAssertEqual(rewritten.effectiveBudget, 3)
+        XCTAssertEqual(rewritten.syntheticBranchIndInserted, 2)
+        XCTAssertEqual(rewritten.instructions.map(\.op), [.nop, .branchInd, .branchInd, .halt])
+        for imm in rewritten.instructions.dropFirst().dropLast().map(\.immediate) {
+            XCTAssertTrue(VMBranchIndImmediateContract.isSemiIdentity(imm))
+        }
+    }
+
+    func testRewriteProducerInstructionsSemiIdentityModeGetsFullTierAutoFloor() {
+        let ins = [VMInstruction(op: .nop), VMInstruction(op: .halt)]
+        let hardening = VMPolicyHardeningM3(
+            syntheticBranchIndMode: .semiIdentity
+        )
+        let rewritten = VMProtectorPass.rewriteProducerInstructions(
+            ins,
+            functionId: 0x606,
+            seed: 0x707,
+            tier: .full,
+            hardening: hardening
+        )
+        XCTAssertTrue(rewritten.autoBudgetApplied)
+        XCTAssertEqual(rewritten.effectiveBudget, 1)
+        XCTAssertEqual(rewritten.syntheticBranchIndInserted, 1)
+        XCTAssertEqual(rewritten.instructions.map(\.op), [.nop, .branchInd, .halt])
+        XCTAssertTrue(VMBranchIndImmediateContract.isSemiIdentity(rewritten.instructions[1].immediate))
+    }
+
+    func testRewriteProducerInstructionsSemiSemanticModeMaterializesSemiSemanticContract() {
+        let ins = [VMInstruction(op: .nop), VMInstruction(op: .halt)]
+        let hardening = VMPolicyHardeningM3(
+            syntheticBranchIndBudget: 1,
+            syntheticBranchIndRate: 1,
+            syntheticBranchIndMaxPerFunction: 1,
+            syntheticBranchIndMode: .semiSemantic
+        )
+        let rewritten = VMProtectorPass.rewriteProducerInstructions(
+            ins,
+            functionId: 0xA2A2,
+            seed: 0xB3B3,
+            tier: .full,
+            hardening: hardening
+        )
+        XCTAssertEqual(rewritten.appliedMode, .semiSemantic)
+        let defaultSpan = Int(VMProtectorPass.semiSemanticDefaultForwardSpan)
+        let ops = rewritten.instructions.map(\.op)
+        XCTAssertEqual(ops.first, .nop)
+        XCTAssertEqual(ops[1], .branchInd)
+        XCTAssertEqual(ops.last, .halt)
+        let sledOps = Array(ops[2..<(2 + defaultSpan)])
+        XCTAssertEqual(sledOps.count, defaultSpan)
+        for sledOp in sledOps {
+            XCTAssertTrue(sledOp == .nop || sledOp == .rolAcc, "sled must contain only nop or rolAcc(0)")
+        }
+        let imm = rewritten.instructions[1].immediate
+        XCTAssertTrue(VMBranchIndImmediateContract.isSemiSemantic(imm))
+        XCTAssertFalse(VMBranchIndImmediateContract.isSemiIdentity(imm))
+        XCTAssertNotEqual(imm & 0xFF, 0, "low byte should carry synthetic vreg/acc material")
+        let encodedSpan = UInt8((imm >> VMBranchIndImmediateContract.semiSemanticForwardSpanShift) & VMBranchIndImmediateContract.semiSemanticForwardSpanMask)
+        XCTAssertEqual(encodedSpan, VMProtectorPass.semiSemanticDefaultForwardSpan)
+    }
+
+    func testSemiSemanticNopSledCountMatchesForwardSpan() {
+        let ins = [VMInstruction(op: .nop), VMInstruction(op: .halt)]
+        let hardening = VMPolicyHardeningM3(
+            syntheticBranchIndBudget: 2,
+            syntheticBranchIndRate: 1,
+            syntheticBranchIndMaxPerFunction: 2,
+            syntheticBranchIndMode: .semiSemantic
+        )
+        let rewritten = VMProtectorPass.rewriteProducerInstructions(
+            ins,
+            functionId: 0xF0F0,
+            seed: 0xE0E0,
+            tier: .full,
+            hardening: hardening
+        )
+        let defaultSpan = Int(VMProtectorPass.semiSemanticDefaultForwardSpan)
+        let ops = rewritten.instructions.map(\.op)
+        var branchIndCount = 0
+        for (i, op) in ops.enumerated() {
+            guard op == .branchInd else { continue }
+            branchIndCount += 1
+            let sledSlice = Array(ops[(i + 1)...].prefix(defaultSpan))
+            XCTAssertEqual(sledSlice.count, defaultSpan,
+                "branchInd at index \(i) should be followed by \(defaultSpan) sled ops")
+            for sledOp in sledSlice {
+                XCTAssertTrue(sledOp == .nop || sledOp == .rolAcc,
+                    "sled op at branchInd index \(i) must be nop or rolAcc")
+            }
+        }
+        XCTAssertEqual(branchIndCount, 2)
+    }
+
+    func testSyntheticBranchIndCountRespectsRateAndMaxCap() {
+        let count = VMProtectorPass.syntheticBranchIndCount(
+            functionId: 0xDEAD,
+            seed: 0xBEEF,
+            budget: 9,
+            rate: 1,
+            maxPerFunction: 3
+        )
+        XCTAssertEqual(count, 3)
+        let zero = VMProtectorPass.syntheticBranchIndCount(
+            functionId: 0xDEAD,
+            seed: 0xBEEF,
+            budget: 9,
+            rate: 0,
+            maxPerFunction: 0
+        )
+        XCTAssertEqual(zero, 0)
+    }
+
+    func testDecodeEntryLogicalOpsRecognizesBranchIndFromPayload() {
+        let table = VMOpcodeTable(seed: 0x5151)
+        let emitter = VMBytecodeEmitter()
+        let payloads = emitter.emit(
+            programs: [
+                (
+                    functionId: 0x55,
+                    entryVMA: 0x1000,
+                    tier: .full,
+                    instructions: [
+                        VMInstruction(op: .nop),
+                        VMInstruction(op: .branchRel, immediate: 18),
+                        VMInstruction(op: .branchInd, immediate: VMBranchIndImmediateContract.synthetic(vregIndex: 1, accBase: 7)),
+                        VMInstruction(op: .halt),
+                    ]
+                )
+            ],
+            opcodeTable: table,
+            options: VMM2EmitOptions(handlerVariantSeed: 0x99, perEntryVpcEnabled: false)
+        )
+        let ops = VMBytecodeEmitter.decodeEntryLogicalOps(
+            bytecodePayload: payloads.bytecode,
+            dispatchPayload: payloads.dispatch,
+            entryIndex: 0
+        )
+        XCTAssertEqual(ops, [.nop, .branchRel, .branchInd, .halt])
+    }
+
+    func testUnreachableSkipProducerEmitDecodeRoundTripsWireImmediates() {
+        let ins = [VMInstruction(op: .nop), VMInstruction(op: .halt)]
+        let hardening = VMPolicyHardeningM3()
+        let rewritten = VMProtectorPass.rewriteProducerInstructions(
+            ins,
+            functionId: 0x3_03,
+            seed: 0x4_04,
+            tier: .full,
+            hardening: hardening
+        )
+        XCTAssertEqual(rewritten.appliedMode, .unreachableSkip)
+        XCTAssertEqual(rewritten.instructions.map(\.op), [.nop, .branchRel, .branchInd, .halt])
+
+        let emitOpts = VMM2EmitOptions(handlerVariantSeed: 0xAB, perEntryVpcEnabled: false)
+        let table = VMOpcodeTable(seed: 0x6161)
+        let emitter = VMBytecodeEmitter()
+        let fid = UInt64(0x3_03)
+        let payloads = emitter.emit(
+            programs: [(functionId: fid, entryVMA: 0x2000, tier: .full, instructions: rewritten.instructions)],
+            opcodeTable: table,
+            options: emitOpts
+        )
+        let ops = VMBytecodeEmitter.decodeEntryLogicalOps(
+            bytecodePayload: payloads.bytecode,
+            dispatchPayload: payloads.dispatch,
+            entryIndex: 0
+        )
+        XCTAssertEqual(ops, [.nop, .branchRel, .branchInd, .halt])
+
+        let imms = VMProtectorPass.decodeEntryWireImmediates(
+            bytecodePayload: payloads.bytecode,
+            dispatchPayload: payloads.dispatch,
+            entryIndex: 0,
+            functionId: fid,
+            options: emitOpts
+        )
+        XCTAssertEqual(imms?.count, 4)
+        XCTAssertEqual(imms?[0], 0)
+        XCTAssertEqual(imms?[1], rewritten.instructions[1].immediate)
+        XCTAssertEqual(imms?[2], rewritten.instructions[2].immediate)
+        XCTAssertEqual(imms?[3], 0)
+    }
+
+    func testRewriteProducerInstructionsSemiIdentityInjectionIsReachable() {
+        let ins = [VMInstruction(op: .nop), VMInstruction(op: .halt)]
+        let hardening = VMPolicyHardeningM3(
+            syntheticBranchIndBudget: 1,
+            syntheticBranchIndRate: 1,
+            syntheticBranchIndMaxPerFunction: 1,
+            syntheticBranchIndMode: .semiIdentity
+        )
+        let rewritten = VMProtectorPass.rewriteProducerInstructions(
+            ins,
+            functionId: 0x101,
+            seed: 0x202,
+            tier: .full,
+            hardening: hardening
+        )
+        XCTAssertEqual(rewritten.instructions.map(\.op), [.nop, .branchInd, .halt])
+        XCTAssertTrue(VMBranchIndImmediateContract.isSemiIdentity(rewritten.instructions[1].immediate))
+
+        let table = VMOpcodeTable(seed: 0x5151)
+        let emitter = VMBytecodeEmitter()
+        let payloads = emitter.emit(
+            programs: [
+                (
+                    functionId: 0xAB,
+                    entryVMA: 0x2000,
+                    tier: .full,
+                    instructions: rewritten.instructions
+                )
+            ],
+            opcodeTable: table,
+            options: VMM2EmitOptions(handlerVariantSeed: 0x99, perEntryVpcEnabled: false)
+        )
+        let ops = VMBytecodeEmitter.decodeEntryLogicalOps(
+            bytecodePayload: payloads.bytecode,
+            dispatchPayload: payloads.dispatch,
+            entryIndex: 0
+        )
+        XCTAssertEqual(ops, [.nop, .branchInd, .halt])
     }
 
     func testOpcodeTablePolymorphismIsDeterministicPerSeed() {
@@ -549,6 +869,49 @@ final class VMProtectorTests: XCTestCase {
         XCTAssertEqual(br.first?.rawCategory, VMRawRegionCategory.branchTest)
     }
 
+    func testLifterFusesAddLaneAndRolAccIntoSuperInstruction() {
+        let add = Data([0x00, 0x00, 0x00, 0x91]) // ADD X0, X0, #0
+        let rol = Data([0x00, 0x20, 0xC0, 0x9A]) // LSLV X0, X0, X0 (recognized as rolAcc surrogate)
+        var bytes = Data()
+        bytes.append(add)
+        bytes.append(rol)
+
+        let lifter = ARM64Lifter()
+        let lifted = lifter.liftPrologue(bytes: bytes, maxInstructions: 8)
+
+        XCTAssertEqual(lifted.count, 2)
+        XCTAssertEqual(lifted.first?.op, .addRolAcc)
+        XCTAssertEqual(lifted.first?.immediate, 0x9AC0_2000_9100_0000)
+        XCTAssertEqual(lifted.last?.op, .halt)
+    }
+
+    func testEmitterEncodesFusedAddRolLogicalClassAfterLiftFusion() {
+        let add = Data([0x00, 0x00, 0x00, 0x91])
+        let rol = Data([0x00, 0x20, 0xC0, 0x9A])
+        var bytes = Data()
+        bytes.append(add)
+        bytes.append(rol)
+
+        let lifter = ARM64Lifter()
+        let lifted = lifter.liftPrologue(bytes: bytes, maxInstructions: 8)
+        XCTAssertEqual(lifted.first?.op, .addRolAcc)
+
+        let table = VMOpcodeTable(seed: 0x1234_5678)
+        let emitter = VMBytecodeEmitter()
+        let payload = emitter.emit(
+            programs: [
+                (functionId: 0x44, entryVMA: 0x2000, tier: .partial, instructions: lifted)
+            ],
+            opcodeTable: table,
+            options: VMM2EmitOptions(handlerVariantSeed: 0x66, perEntryVpcEnabled: false)
+        )
+
+        let dispatch = dispatchClassTable(from: payload.dispatch)
+        let entry = parsedEntry(in: payload.bytecode, index: 0)
+        let raw0 = payload.bytecode[entry.bytecodeOffset]
+        XCTAssertEqual(dispatch[Int(raw0)], VMLogicalOp.addRolAcc.rawValue)
+    }
+
     func testBytecodePayloadAppendsProducerChunkManifest() {
         let table = VMOpcodeTable(seed: 0xBEEF)
         let emitter = VMBytecodeEmitter()
@@ -592,5 +955,250 @@ final class VMProtectorTests: XCTestCase {
         let version = VMBytecodeFormat.readUInt32LE(dispatch, offset: 4)
         let classOffset = version >= VMBytecodeFormat.dispatchABIVersionV2 ? (16 + VMBytecodeFormat.dispatchSeedBytes) : 16
         return [UInt8](dispatch[classOffset..<(classOffset + VMBytecodeFormat.dispatchTableSize)])
+    }
+
+    func testBytecodeSegmentRuntimeSha256FlagEmitted() {
+        let table = VMOpcodeTable(seed: 77)
+        let emitter = VMBytecodeEmitter()
+        let programs: [(functionId: UInt64, entryVMA: UInt64, tier: VMBytecodeFormat.TierCode, instructions: [VMInstruction])] = [
+            (1, 0x1000, .full, [VMInstruction(op: .nop), VMInstruction(op: .halt)])
+        ]
+        let payloads = emitter.emit(
+            programs: programs,
+            opcodeTable: table,
+            options: VMM2EmitOptions(
+                handlerVariantSeed: 1,
+                perEntryVpcEnabled: false,
+                m3: VMM3EmitOptions(bytecodeSegmentRuntimeSha256: true)
+            )
+        )
+        let flags = payloads.bytecode.withUnsafeBytes { buf in
+            buf.load(fromByteOffset: 12, as: UInt32.self)
+        }
+        XCTAssertNotEqual(flags & VMBytecodeFormat.BytecodeFlags.bcSegmentRuntimeSha256, 0)
+    }
+
+    func testVMPolicyParsesBytecodeSegmentRuntimeSha256() {
+        let yaml = """
+        version: 6
+        hardening:
+          bytecode_segment_runtime_sha256: true
+        functions:
+          full:
+            - _x
+        """
+        let p = VMPolicyConfig.parse(yaml)
+        XCTAssertTrue(p.hardening.bytecodeSegmentRuntimeSha256)
+    }
+
+    func testVMPolicyParsesAntiSymbolicHeavy() {
+        let yaml = """
+        version: 7
+        hardening:
+          anti_symbolic_heavy: true
+        functions:
+          full:
+            - _x
+        """
+        let p = VMPolicyConfig.parse(yaml)
+        XCTAssertTrue(p.hardening.antiSymbolicHeavy)
+    }
+
+    func testDiophantineMathTrapCountExpanded() {
+        let yaml = """
+        version: 7
+        hardening:
+          anti_symbolic_heavy: true
+        functions:
+          full:
+            - _x
+        """
+        let p = VMPolicyConfig.parse(yaml)
+        XCTAssertTrue(p.hardening.antiSymbolicHeavy, "anti_symbolic_heavy must enable expanded math traps")
+    }
+
+    func testBytecodeEmitterSetsAntiSymbolicHeavyFlag() {
+        let table = VMOpcodeTable(seed: 123)
+        let emitter = VMBytecodeEmitter()
+        let payloads = emitter.emit(
+            programs: [
+                (functionId: 1, entryVMA: 0x1000, tier: .full, instructions: [VMInstruction(op: .nop), VMInstruction(op: .halt)])
+            ],
+            opcodeTable: table,
+            options: VMM2EmitOptions(handlerVariantSeed: 1, perEntryVpcEnabled: false, antiSymbolicHeavy: true)
+        )
+        let flags = payloads.bytecode.withUnsafeBytes { buf in
+            buf.load(fromByteOffset: 12, as: UInt32.self)
+        }
+        XCTAssertNotEqual(flags & VMBytecodeFormat.BytecodeFlags.antiSymbolicHeavy, 0)
+    }
+
+    func testArmorSafetyProfileCLITokens() {
+        XCTAssertEqual(ArmorSafetyProfile(cliToken: "standard"), .standard)
+        XCTAssertEqual(ArmorSafetyProfile(cliToken: "appstore-safe"), .appStoreSafe)
+        XCTAssertNil(ArmorSafetyProfile(cliToken: "nope"))
+    }
+
+    func testVMPolicyParsesSyntheticBranchIndForwardSpan() {
+        let yaml = """
+        version: 10
+        hardening:
+          synthetic_branch_ind_forward_span: 4
+          synthetic_branch_ind_mode: semi_semantic
+        functions:
+          full:
+            - _x
+        """
+        let p = VMPolicyConfig.parse(yaml)
+        XCTAssertEqual(p.hardening.syntheticBranchIndForwardSpan, 4)
+        XCTAssertEqual(p.hardening.syntheticBranchIndMode, .semiSemantic)
+
+        let yamlClamped = """
+        version: 10
+        hardening:
+          synthetic_branch_ind_forward_span: 99
+        functions:
+          full:
+            - _x
+        """
+        let pc = VMPolicyConfig.parse(yamlClamped)
+        XCTAssertEqual(pc.hardening.syntheticBranchIndForwardSpan, 16, "forward_span must clamp to 16")
+
+        let yamlDefault = """
+        version: 10
+        functions:
+          full:
+            - _x
+        """
+        let pd = VMPolicyConfig.parse(yamlDefault)
+        XCTAssertEqual(pd.hardening.syntheticBranchIndForwardSpan, 0)
+    }
+
+    func testSemiSemanticForwardSpanOverriddenByPolicy() {
+        let ins = [VMInstruction(op: .nop), VMInstruction(op: .halt)]
+        let hardening = VMPolicyHardeningM3(
+            syntheticBranchIndBudget: 1,
+            syntheticBranchIndRate: 1,
+            syntheticBranchIndMaxPerFunction: 1,
+            syntheticBranchIndMode: .semiSemantic,
+            syntheticBranchIndForwardSpan: 4
+        )
+        XCTAssertEqual(hardening.syntheticBranchIndForwardSpan, 4)
+        let rewritten = VMProtectorPass.rewriteProducerInstructions(
+            ins,
+            functionId: 0xCC01,
+            seed: 0xDD02,
+            tier: .full,
+            hardening: hardening
+        )
+        XCTAssertEqual(rewritten.appliedMode, .semiSemantic)
+        XCTAssertEqual(rewritten.syntheticBranchIndInserted, 1)
+        let ops = rewritten.instructions.map(\.op)
+        XCTAssertEqual(ops.first, .nop)
+        XCTAssertEqual(ops[1], .branchInd)
+        XCTAssertEqual(ops.last, .halt)
+        let sledOps = Array(ops[2..<(ops.count - 1)])
+        XCTAssertEqual(sledOps.count, 4, "sled length must match policy forward_span=4")
+        for sledOp in sledOps {
+            XCTAssertTrue(sledOp == .nop || sledOp == .rolAcc)
+        }
+        let imm = rewritten.instructions[1].immediate
+        let encodedSpan = UInt8((imm >> VMBranchIndImmediateContract.semiSemanticForwardSpanShift) & VMBranchIndImmediateContract.semiSemanticForwardSpanMask)
+        XCTAssertEqual(encodedSpan, 4, "immediate must encode forward_span=4")
+    }
+
+    func testSemiSemanticSledContainsMixedOps() {
+        let ins = [VMInstruction(op: .nop), VMInstruction(op: .halt)]
+        let hardening = VMPolicyHardeningM3(
+            syntheticBranchIndBudget: 8,
+            syntheticBranchIndRate: 1,
+            syntheticBranchIndMaxPerFunction: 8,
+            syntheticBranchIndMode: .semiSemantic,
+            syntheticBranchIndForwardSpan: 10
+        )
+        let rewritten = VMProtectorPass.rewriteProducerInstructions(
+            ins,
+            functionId: 0xFACE_0001,
+            seed: 0xBEEF_0002,
+            tier: .full,
+            hardening: hardening
+        )
+        XCTAssertGreaterThan(rewritten.syntheticBranchIndInserted, 0)
+        var nopCount = 0
+        var rolCount = 0
+        let ops = rewritten.instructions
+        for (i, insn) in ops.enumerated() {
+            guard insn.op == .branchInd else { continue }
+            let sledStart = i + 1
+            let sledEnd = min(sledStart + 10, ops.count)
+            for j in sledStart..<sledEnd {
+                if ops[j].op == .nop { nopCount += 1 }
+                else if ops[j].op == .rolAcc { rolCount += 1 }
+            }
+        }
+        let total = nopCount + rolCount
+        XCTAssertGreaterThan(total, 0)
+        XCTAssertGreaterThan(nopCount, 0, "sled should contain at least one nop")
+        XCTAssertGreaterThan(rolCount, 0, "sled should contain at least one rolAcc(0) to avoid nop-only pattern")
+    }
+
+    func testAppStoreSafeBundledPolicyYAMLsExistAndParse() throws {
+        let repoRoot = URL(fileURLWithPath: #file)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let vmpURL = repoRoot.appendingPathComponent("RiskDetectorApp/vmp_policy_appstore_safe.yaml")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: vmpURL.path))
+        let vmpText = try String(contentsOf: vmpURL, encoding: .utf8)
+        let vmp = VMPolicyConfig.parse(vmpText)
+        XCTAssertFalse(vmp.hardening.protectVmInterpreterWithCff)
+        XCTAssertFalse(vmp.hardening.interpreterSelfIntegrityCheck)
+        XCTAssertFalse(vmp.hardening.antiSymbolicHeavy)
+        XCTAssertFalse(vmp.hardening.bytecodeSegmentRuntimeSha256)
+
+        let cffPath = ArmorPolicyPathResolver.resolveDefaultCffPolicyPath(profile: .appStoreSafe)
+        XCTAssertNotNil(cffPath)
+        XCTAssertTrue(cffPath!.contains("cff_policy_appstore_safe.yaml"))
+    }
+
+    func testBundledPoliciesCoverNewFridaDetectorsAndSyntheticBranchIndProfiles() throws {
+        let repoRoot = URL(fileURLWithPath: #file)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let standardURL = repoRoot.appendingPathComponent("RiskDetectorApp/vmp_policy.yaml")
+        let appStoreURL = repoRoot.appendingPathComponent("RiskDetectorApp/vmp_policy_appstore_safe.yaml")
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: standardURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: appStoreURL.path))
+
+        let standard = VMPolicyConfig.parse(try String(contentsOf: standardURL, encoding: .utf8))
+        let appStore = VMPolicyConfig.parse(try String(contentsOf: appStoreURL, encoding: .utf8))
+        let requiredFull: Set<String> = [
+            "GumTrampolineDetector.detect",
+            "FridaMemoryLayoutDetector.detect",
+        ]
+        let requiredPartial: Set<String> = [
+            "UnixSocketSweepDetector.detect",
+        ]
+
+        XCTAssertTrue(requiredFull.isSubset(of: Set(standard.full)))
+        XCTAssertTrue(requiredFull.isSubset(of: Set(appStore.full)))
+        XCTAssertTrue(requiredPartial.isSubset(of: Set(standard.partial)))
+        XCTAssertTrue(requiredPartial.isSubset(of: Set(appStore.partial)))
+
+        XCTAssertEqual(standard.hardening.syntheticBranchIndBudget, 3)
+        XCTAssertEqual(standard.hardening.syntheticBranchIndRate, 0.75, accuracy: 0.0001)
+        XCTAssertEqual(standard.hardening.syntheticBranchIndMaxPerFunction, 2)
+        XCTAssertEqual(standard.hardening.syntheticBranchIndMode, .semiSemantic)
+        XCTAssertEqual(standard.hardening.syntheticBranchIndForwardSpan, 6)
+
+        XCTAssertEqual(appStore.hardening.syntheticBranchIndBudget, 1)
+        XCTAssertEqual(appStore.hardening.syntheticBranchIndRate, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(appStore.hardening.syntheticBranchIndMaxPerFunction, 1)
+        XCTAssertEqual(appStore.hardening.syntheticBranchIndMode, .semiIdentity)
+        XCTAssertEqual(appStore.hardening.syntheticBranchIndForwardSpan, 0)
     }
 }

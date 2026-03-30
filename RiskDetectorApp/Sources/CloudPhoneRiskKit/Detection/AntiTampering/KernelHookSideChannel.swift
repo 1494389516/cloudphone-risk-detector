@@ -22,6 +22,10 @@ struct KernelHookSideChannel: Detector {
         var totalScore: Double = 0
         var methods: [String] = []
 
+        let (s0, m0) = detectCryptoTraceOrthogonal()
+        totalScore += s0
+        methods.append(contentsOf: m0)
+
         let (s1, m1) = detectTimingAnomaly()
         totalScore += s1
         methods.append(contentsOf: m1)
@@ -46,6 +50,33 @@ struct KernelHookSideChannel: Detector {
 #endif
     }
 
+    // MARK: - Strategy 0: Crypto-trace orthogonal (CNTPCT vs Mach + digest)
+
+    /// 复用 `cprisk_crypto_trace` 的确定性微负载：与纯 syscall 时序比值正交，覆盖「只对齐自然时钟」类对抗。
+    private func detectCryptoTraceOrthogonal() -> (Double, [String]) {
+#if targetEnvironment(simulator)
+        return (0, [])
+#else
+        cprisk_crypto_trace_primitive_enter_i()
+        let flags = cprisk_crypto_trace_peek_flags_i()
+        var score: Double = 0
+        var methods: [String] = []
+
+        if (flags & UInt32(CPRISK_CRYPTO_TRACE_FLAG_CNT_MACH_SKEW)) != 0 {
+            score += 28
+            methods.append(
+                "kernel_hook_crypto_trace_skew:flags=\(flags)_last_ns=\(cprisk_crypto_trace_last_ns_i())"
+            )
+        }
+        if (flags & UInt32(CPRISK_CRYPTO_TRACE_FLAG_INVARIANT_FAIL)) != 0 {
+            score += 85
+            methods.append("kernel_hook_crypto_trace_invariant:flags=\(flags)")
+        }
+
+        return (score, methods)
+#endif
+    }
+
     // MARK: - Strategy 1: Syscall Timing Distribution
 
     private func detectTimingAnomaly() -> (Double, [String]) {
@@ -61,7 +92,7 @@ struct KernelHookSideChannel: Detector {
         ) {
             _ = cprisk_getpid_direct()
         } probe: {
-            _ = "/usr/lib/dyld".withCString { cprisk_access_direct($0, F_OK, nil) }
+            _ = SVCDirectCall.secureAccess("/usr/lib/dyld")
         }
 
         if let statProbe, statProbe.isAnomalous {
@@ -269,6 +300,35 @@ extension KernelHookSideChannel {
                 state: .soft(confidence: 0.72),
                 layer: 2,
                 weightHint: 72
+            ))
+        }
+
+        let cryptoSkewMethods = result.methods.filter { $0.hasPrefix("kernel_hook_crypto_trace_skew") }
+        if !cryptoSkewMethods.isEmpty {
+            signals.append(RiskSignal(
+                id: "kernel_hook_crypto_trace_skew",
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 28,
+                evidence: [
+                    "detail": cryptoSkewMethods.joined(separator: ","),
+                    "mechanism": "cntpct_mach_crypto_trace",
+                ],
+                state: .soft(confidence: 0.74),
+                layer: 2,
+                weightHint: 74
+            ))
+        }
+
+        let cryptoInvMethods = result.methods.filter { $0.hasPrefix("kernel_hook_crypto_trace_invariant") }
+        if !cryptoInvMethods.isEmpty {
+            signals.append(RiskSignal(
+                id: "kernel_hook_crypto_trace_invariant",
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 85,
+                evidence: ["detail": cryptoInvMethods.joined(separator: ",")],
+                state: .tampered,
+                layer: 2,
+                weightHint: 96
             ))
         }
 

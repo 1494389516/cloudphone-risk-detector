@@ -390,12 +390,12 @@ public struct ChallengeVerificationResult: Codable, Sendable {
 // MARK: - Challenge HMAC Verification
 
 extension ChallengeSession {
-    /// Configure the HMAC key used to verify `ChallengeVerificationResult`.
+    /// Configure the MAC key used to verify `ChallengeVerificationResult`.
     public func configureChallengeKey(_ key: Data) {
         lock.withLock { _challengeKey = SymmetricKey(data: key) }
     }
 
-    /// Verify the HMAC on a `ChallengeVerificationResult`.
+    /// Verify the custom SHA-256 MAC on a `ChallengeVerificationResult`.
     /// Returns a `challenge_hmac_mismatch` signal if verification fails, or nil on success / no key configured.
     public func verifyResult(_ result: ChallengeVerificationResult) -> RiskSignal? {
         let key: SymmetricKey? = lock.withLock { _challengeKey }
@@ -410,11 +410,10 @@ extension ChallengeSession {
         let scoreStr = result.adjustedScore.map { String(format: "%.6f", $0) } ?? "nil"
         let input = "\(result.challengeId)|\(scoreStr)|\(result.passed)"
         let inputData = Data(input.utf8)
-        let expected = HMAC<SHA256>.authenticationCode(for: inputData, using: key)
-        let expectedHex = Data(expected).map { String(format: "%02x", $0) }.joined()
+        let expectedHex = CPRiskMessageAuth.authenticationCodeHex(for: inputData, using: key)
 
         guard timingSafeCompare(hmacHex.lowercased(), expectedHex.lowercased()) else {
-            Logger.log("ChallengeSession.verifyResult: HMAC mismatch for challengeId=\(result.challengeId)")
+            Logger.log("ChallengeSession.verifyResult: MAC mismatch for challengeId=\(result.challengeId)")
             return makeMismatchSignal(challengeId: result.challengeId, reason: "hmac_mismatch")
         }
 

@@ -7,6 +7,37 @@
 #include "cprisk_sha256.h"
 #include "cprisk_secure_zero.h"
 
+/* ── ABI Semantic Version ─────────────────────────────────────────────
+ *  MAJOR: incompatible struct layout or symbol removal
+ *  MINOR: backward-compatible additions (new structs, new fields at end)
+ *  PATCH: bug-fix only, no layout change
+ *
+ *  Bump policy:
+ *    - Adding a new struct or appending fields → bump MINOR, reset PATCH
+ *    - Changing existing struct size/layout or removing a symbol → bump MAJOR
+ *    - Internal fix with no ABI surface change → bump PATCH
+ *
+ *  See docs/ABI_CONTRACT.md for the full compatibility matrix.
+ */
+#define CPRISK_ABI_VERSION_MAJOR 1u
+#define CPRISK_ABI_VERSION_MINOR 0u
+#define CPRISK_ABI_VERSION_PATCH 0u
+
+#define CPRISK_ABI_VERSION_ENCODE(ma, mi, pa) \
+    (((uint32_t)(ma) << 16) | ((uint32_t)(mi) << 8) | (uint32_t)(pa))
+
+#define CPRISK_ABI_VERSION_CURRENT \
+    CPRISK_ABI_VERSION_ENCODE(CPRISK_ABI_VERSION_MAJOR, \
+                              CPRISK_ABI_VERSION_MINOR, \
+                              CPRISK_ABI_VERSION_PATCH)
+
+/** Query the compiled ABI version at runtime.
+ *  Returns a packed uint32: (major<<16 | minor<<8 | patch). */
+static inline __attribute__((always_inline))
+uint32_t cprisk_abi_version(void) {
+    return CPRISK_ABI_VERSION_CURRENT;
+}
+
 #define CPRISK_ARMOR_ABI_VERSION 2u
 
 #define CPRISK_ARMOR_KEY_SIZE 32u
@@ -31,6 +62,7 @@
 #define CPRISK_ARMOR_SECTION_IMPORT_ENCRYPTED_TABLE "__swift5_dyrel"
 #define CPRISK_ARMOR_SECTION_HEADER_BACKUP "__swift5_mhsav"
 #define CPRISK_ARMOR_SECTION_CHAIN_META "__swift5_ptmap"
+#define CPRISK_ARMOR_SECTION_CHAIN_META_FALLBACK "__sw5_mdmap"
 #define CPRISK_ARMOR_SECTION_TEXT_ENCRYPT "__swift5_cgenc"
 #define CPRISK_ARMOR_SECTION_VMP_DISPATCH "__swift5_mdvrt"
 #define CPRISK_ARMOR_SECTION_VMP_BYTECODE "__swift5_mdirt"
@@ -38,6 +70,15 @@
 #define CPRISK_ARMOR_SECTION_VMP_DISPATCH_SHARD "__swift5_mdvsh"
 /** Optional 8-byte blob: magic (LE u32) + expected M3 FNV-1a (LE u32) for \c CPRISK_VMP_BC_FLAG_M3_SELFCHK. */
 #define CPRISK_ARMOR_SECTION_VMP_SELF_EXPECT "__swift5_mdvsk"
+/** Optional self-check span map for producer-side expect injection (header + LE records of vmaddr/length/kind). */
+#define CPRISK_ARMOR_SECTION_VMP_SELF_SPANS "__swift5_mdvsi"
+
+#define CPRISK_VMP_SELF_SPAN_MAGIC 0x56535043u /* "CPSV" little-endian */
+#define CPRISK_VMP_SELF_SPAN_VERSION 1u
+#define CPRISK_VMP_SELF_SPAN_KIND_EXEC 1u
+#define CPRISK_VMP_SELF_SPAN_KIND_LOOP_A 2u
+#define CPRISK_VMP_SELF_SPAN_KIND_DISPATCH 3u
+/** Span byte lengths match \c CPRISK_VM_M3_SELF_* in \c cprisk_vm_interpreter.h (exec+loop+dispatch concat). */
 
 #define CPRISK_TEXT_ENCRYPT_MAGIC 0x45545043u /* "CPTE" little-endian */
 #define CPRISK_TEXT_ENCRYPT_ABI_VERSION 1u
@@ -96,6 +137,11 @@
 #define CPRISK_ARMOR_HEX_ENCODED_HASH_SIZE (CPRISK_ARMOR_HASH_SIZE * 2u)
 
 #define CPRISK_ARMOR_BOOTSTRAP_STRING_ID 1u
+
+#define CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_MAGIC 0x444D5043u /* "CPMD" */
+#define CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_ABI_VERSION 1u
+#define CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_HEADER_SIZE 32u
+#define CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_RECORD_SIZE 48u
 
 #define CPRISK_ARMOR_STRTAB_MAGIC 0x43505354u  /* table guard sentinel */
 #define CPRISK_ARMOR_LOADER_MAGIC 0x4350524Bu  /* descriptor guard sentinel */
@@ -167,6 +213,15 @@ struct cprisk_armor_antidebug_entry {
     char target_name[CPRISK_ARMOR_ADBG_TARGET_NAME_SIZE];
 };
 
+struct cprisk_armor_swift_metadata_shuffle_header {
+    uint32_t magic;
+    uint32_t abi_version;
+    uint32_t flags;
+    uint32_t record_count;
+    uint64_t build_seed;
+    uint64_t reserved64;
+};
+
 struct cprisk_armor_whitebox_header {
     uint32_t magic;
     uint32_t version;
@@ -222,6 +277,9 @@ _Static_assert(sizeof(struct cprisk_armor_antidebug_header) == 48,
                "cprisk anti-debug header ABI drift");
 _Static_assert(sizeof(struct cprisk_armor_antidebug_entry) == 64,
                "cprisk anti-debug entry ABI drift");
+_Static_assert(sizeof(struct cprisk_armor_swift_metadata_shuffle_header) ==
+                   CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_HEADER_SIZE,
+               "cprisk swift metadata shuffle header ABI drift");
 _Static_assert(sizeof(struct cprisk_armor_whitebox_header) == CPRISK_ARMOR_WHITEBOX_HEADER_V2_SIZE,
                "cprisk whitebox header ABI drift");
 _Static_assert(sizeof(struct cprisk_text_encrypt_header) == 16,
@@ -234,14 +292,21 @@ _Static_assert(CPRISK_ARMOR_ANCHOR_LANE_COUNT * CPRISK_ARMOR_ANCHOR_LANE_SIZE ==
                    CPRISK_ARMOR_HASH_SIZE,
                "split anchor sections must reconstruct a 32-byte hash");
 
-/* ── HMAC-SHA256 ───────────────────────────────────────────────────── */
+/* ── Custom-pad SHA-256 MAC ───────────────────────────────────────── */
 
 #define CPRISK_HMAC_BLOCK_SIZE 64
+
+/* Custom service-coordinated pad bytes; split to avoid a single literal fingerprint. */
+#define CPRISK_HMAC_IPAD_XOR_A ((uint8_t)0xD7u)
+#define CPRISK_HMAC_IPAD_XOR_B ((uint8_t)0xBAu) /* A^B = 0x6D */
+#define CPRISK_HMAC_OPAD_XOR_A ((uint8_t)0x4Cu)
+#define CPRISK_HMAC_OPAD_XOR_B ((uint8_t)0xEFu) /* A^B = 0xA3 */
 
 static inline __attribute__((always_inline))
 void cprisk_hmac_sha256(const uint8_t *key, size_t key_len,
                         const uint8_t *msg, size_t msg_len,
                         uint8_t out[CPRISK_ARMOR_HASH_SIZE]) {
+    cprisk_crypto_trace_primitive_enter_i();
     uint8_t k_norm[CPRISK_HMAC_BLOCK_SIZE];
     memset(k_norm, 0, CPRISK_HMAC_BLOCK_SIZE);
     if (key_len > CPRISK_HMAC_BLOCK_SIZE) {
@@ -253,8 +318,8 @@ void cprisk_hmac_sha256(const uint8_t *key, size_t key_len,
     uint8_t ipad[CPRISK_HMAC_BLOCK_SIZE];
     uint8_t opad[CPRISK_HMAC_BLOCK_SIZE];
     for (int i = 0; i < CPRISK_HMAC_BLOCK_SIZE; i++) {
-        ipad[i] = k_norm[i] ^ 0x36;
-        opad[i] = k_norm[i] ^ 0x5C;
+        ipad[i] = (uint8_t)(k_norm[i] ^ CPRISK_HMAC_IPAD_XOR_A ^ CPRISK_HMAC_IPAD_XOR_B);
+        opad[i] = (uint8_t)(k_norm[i] ^ CPRISK_HMAC_OPAD_XOR_A ^ CPRISK_HMAC_OPAD_XOR_B);
     }
 
     cprisk_sha256_ctx ctx;

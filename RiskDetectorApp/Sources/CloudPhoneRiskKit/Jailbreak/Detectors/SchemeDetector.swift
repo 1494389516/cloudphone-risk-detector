@@ -10,8 +10,22 @@ struct SchemeDetector: Detector {
         ("filza://", 15),
         ("undecimus://", 20),
     ]
+    private static let canOpenURLHookSurfaceIndicators: Set<String> = [
+        "objc_imp:uiapp_canOpenURL",
+        "runtime_integrity:selector_unresolved:canOpenURL:",
+        "runtime_integrity:selector_nil_imp:canOpenURL:",
+        "runtime_integrity:selector_imp_outside_system:canOpenURL:",
+    ]
 
     func detect() throws -> DetectorResult {
+        let suspiciousSurfaceMethods = canOpenURLHookSurfaceMethods()
+        guard suspiciousSurfaceMethods.isEmpty else {
+            return DetectorResult(
+                score: 0,
+                methods: suspiciousSurfaceMethods.map { "scheme_probe_skipped:\($0)" }
+            )
+        }
+
         var score: Double = 0
         var methods: [String] = []
 
@@ -25,6 +39,24 @@ struct SchemeDetector: Detector {
         }
 
         return DetectorResult(score: score, methods: methods)
+    }
+
+    private func canOpenURLHookSurfaceMethods() -> [String] {
+        var hits = Set<String>()
+
+        if let objcResult = try? ObjCIMPDetector().detect() {
+            for method in objcResult.methods where Self.canOpenURLHookSurfaceIndicators.contains(method) {
+                hits.insert(method)
+            }
+        }
+
+        if let runtimeResult = try? RuntimeIntegrityValidator().detect() {
+            for method in runtimeResult.methods where Self.canOpenURLHookSurfaceIndicators.contains(method) {
+                hits.insert(method)
+            }
+        }
+
+        return hits.sorted()
     }
 
     private func canOpenURL(_ url: URL) -> Bool {

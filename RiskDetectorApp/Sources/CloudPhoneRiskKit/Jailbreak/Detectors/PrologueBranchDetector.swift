@@ -14,6 +14,7 @@ struct PrologueBranchDetector: Detector {
         ("access", 10),
         ("faccessat", 10),
         ("dlopen", 12),
+        ("_dyld_image_count", 12),
         ("sysctl", 10),
         ("syscall", 15),
         ("__syscall", 15),
@@ -107,6 +108,39 @@ struct PrologueBranchDetector: Detector {
         }
         guard result == KERN_SUCCESS else { return false }
         return (info.protection & VM_PROT_READ) != 0
+    }
+    #endif
+
+    #if !(arch(arm64) || arch(arm64e))
+    func readInstruction(_ p: UnsafeRawPointer) -> UInt32? {
+        _ = p
+        return nil
+    }
+
+    func isHooked(firstInstruction: UInt32, secondInstruction: UInt32?) -> Bool {
+        _ = firstInstruction
+        _ = secondInstruction
+        return false
+    }
+
+    func isUnconditionalBranch(_ ins: UInt32) -> Bool {
+        _ = ins
+        return false
+    }
+
+    func isRegisterBranch(_ ins: UInt32) -> Bool {
+        _ = ins
+        return false
+    }
+
+    func isLiteralLoad(_ ins: UInt32) -> Bool {
+        _ = ins
+        return false
+    }
+
+    func isReadableAddress(_ p: UnsafeRawPointer) -> Bool {
+        _ = p
+        return false
     }
     #endif
 }

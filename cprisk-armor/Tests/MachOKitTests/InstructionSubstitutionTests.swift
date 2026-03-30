@@ -196,6 +196,58 @@ final class InstructionSubstitutionTests: XCTestCase {
         XCTAssertGreaterThan(report.bytesModified, 0, "injection mode should modify bytes")
         XCTAssertGreaterThan(report.injectedOpaquePredicates.count, 0, "opaque predicates should be injected")
         XCTAssertGreaterThan(report.injectedDeadCodeIslands.count, 0, "dead-code islands should be injected")
+        XCTAssertTrue(
+            report.injectedDeadCodeIslands.contains(where: { $0.description.contains("text-mimic island") }),
+            "dense no-effect runs should produce at least one __text mimic island"
+        )
+    }
+
+    func testTextMimicTemplatesCoverAllExpectedVariants() throws {
+        let inputURL = try Self.writeFixture(
+            named: "subst_template_variants",
+            textInstructions: Self.denseNoEffectInstructions
+        )
+        defer { try? FileManager.default.removeItem(at: inputURL) }
+
+        // The 16-instruction fixture can host templates up to 15 dead slots (1 branch + N dead < 16).
+        // megamorphicDataflow (16 dead slots) needs a larger fixture; the remaining 5 fit.
+        let fittableFragments = [
+            "jailbreak probe",
+            "compare helper",
+            "frame/call stub",
+            "deep call chain",
+            "vtable dispatch",
+        ]
+
+        var allDescriptions = Set<String>()
+        for seed: UInt64 in 1...200 {
+            let file = try MachOFile(url: inputURL)
+            let engine = SubstitutionEngine()
+            let report = try engine.apply(
+                to: file,
+                configuration: SubstitutionEngine.Configuration(
+                    replacementRate: 0,
+                    opaquePredicateRate: 0,
+                    deadCodeIslandRate: 1.0,
+                    seed: seed
+                )
+            )
+            for island in report.injectedDeadCodeIslands {
+                allDescriptions.insert(island.description)
+            }
+        }
+
+        let mimicDescriptions = allDescriptions.filter { $0.contains("text-mimic island") }
+        XCTAssertGreaterThanOrEqual(
+            mimicDescriptions.count, 5,
+            "TextMimicTemplate should produce at least 5 distinct mimic variants in a 16-slot fixture; found: \(mimicDescriptions.count)"
+        )
+        for fragment in fittableFragments {
+            XCTAssertTrue(
+                allDescriptions.contains(where: { $0.contains(fragment) }),
+                "Missing template variant containing \"\(fragment)\" in descriptions: \(allDescriptions)"
+            )
+        }
     }
 
     func testPassReportsOpaquePredicateAndDeadCodeStatistics() throws {

@@ -170,9 +170,10 @@ final class ReportEnvelopeNegativeTests: XCTestCase {
 
         let signatureInput = "v2|\(nonce)|\(oldTs)|session-exp|report-exp|key-1|||{\"test\":1}"
         let signatureData = signatureInput.data(using: .utf8)!
-        let key = CryptoKit.SymmetricKey(data: Data(signingKey.utf8))
-        let digest = CryptoKit.HMAC<CryptoKit.SHA256>.authenticationCode(for: signatureData, using: key)
-        let signatureHex = digest.map { String(format: "%02x", $0) }.joined()
+        let signatureHex = CPRiskMessageAuth.authenticationCodeHex(
+            for: signatureData,
+            keyData: Data(signingKey.utf8)
+        )
 
         let expired = ReportEnvelope(
             nonce: nonce,
@@ -239,12 +240,76 @@ final class ReportEnvelopeNegativeTests: XCTestCase {
             "错误的 hex 编码密钥验签应失败")
     }
 
+    func testMaterialBindingObservationPresentForNewEnvelope() throws {
+        let envelope = try makeEnvelope()
+        let observation = envelope.materialBindingObservation()
+
+        XCTAssertTrue(observation.isPresent)
+        XCTAssertTrue(observation.isConsistent)
+        XCTAssertEqual(observation.mode, "plain_hmac_v1")
+        XCTAssertEqual(observation.envelopeDigestHex, observation.recomputedDigestHex)
+    }
+
+    func testTamperedBindingDigestFailsVerification() throws {
+        let envelope = try makeEnvelope()
+        let tampered = ReportEnvelope(
+            nonce: envelope.nonce,
+            ts: envelope.ts,
+            sessionToken: envelope.sessionToken,
+            payload: envelope.payload,
+            reportId: envelope.reportId,
+            sigVer: envelope.sigVer,
+            keyId: envelope.keyId,
+            fieldMappingVersion: envelope.fieldMappingVersion,
+            signature: envelope.signature,
+            attestationKeyId: envelope.attestationKeyId,
+            attestationAssertion: envelope.attestationAssertion,
+            trustLevel: envelope.trustLevel,
+            reAttestationAssertion: envelope.reAttestationAssertion,
+            bindingMode: envelope.bindingMode,
+            bindingDigest: String(repeating: "0", count: envelope.bindingDigest?.count ?? 64)
+        )
+
+        let observation = tampered.materialBindingObservation()
+        XCTAssertFalse(observation.isConsistent)
+        XCTAssertEqual(observation.failureReason, "binding_digest_mismatch")
+        XCTAssertFalse(tampered.verifySignature(signingKey))
+    }
+
+    func testIncompleteBindingMetadataFailsVerification() throws {
+        let envelope = try makeEnvelope()
+        let tampered = ReportEnvelope(
+            nonce: envelope.nonce,
+            ts: envelope.ts,
+            sessionToken: envelope.sessionToken,
+            payload: envelope.payload,
+            reportId: envelope.reportId,
+            sigVer: envelope.sigVer,
+            keyId: envelope.keyId,
+            fieldMappingVersion: envelope.fieldMappingVersion,
+            signature: envelope.signature,
+            attestationKeyId: envelope.attestationKeyId,
+            attestationAssertion: envelope.attestationAssertion,
+            trustLevel: envelope.trustLevel,
+            reAttestationAssertion: envelope.reAttestationAssertion,
+            bindingMode: envelope.bindingMode,
+            bindingDigest: nil
+        )
+
+        let observation = tampered.materialBindingObservation()
+        XCTAssertFalse(observation.isConsistent)
+        XCTAssertEqual(observation.failureReason, "binding_metadata_incomplete")
+        XCTAssertFalse(tampered.verifySignature(signingKey))
+    }
+
     // MARK: - TrustLevel
 
     func testWithTrustLevel() throws {
         let envelope = try makeEnvelope()
         let hardware = envelope.withTrustLevel(.hardware)
         XCTAssertEqual(hardware.trustLevel, .hardware)
+        XCTAssertEqual(hardware.bindingMode, envelope.bindingMode)
+        XCTAssertEqual(hardware.bindingDigest, envelope.bindingDigest)
         XCTAssertTrue(hardware.verifySignature(signingKey),
             "设置 trustLevel 不应影响签名")
     }
@@ -271,6 +336,17 @@ final class ReportEnvelopeNegativeTests: XCTestCase {
         )
         XCTAssertTrue(withBoth.hasHardwareAttestation)
     }
-}
 
-import CryptoKit
+    func testEnvelopeAndSecureValidationReasonCodesAreStable() {
+        XCTAssertEqual(ReportEnvelope.ReportEnvelopeError.signatureMismatch.reasonCode, "signature_mismatch")
+        XCTAssertEqual(ReportEnvelope.ReportEnvelopeError.attestationIncomplete.reasonCode, "attestation_incomplete")
+        XCTAssertEqual(
+            SecureEnvelopeValidationError.reportEnvelope(.attestationIncomplete).reasonCode,
+            "report_envelope.attestation_incomplete"
+        )
+        XCTAssertEqual(
+            SecureEnvelopeValidationError.unsupportedSignatureVersion(actual: "v9", allowed: ["v2"]).reasonCode,
+            "unsupported_signature_version"
+        )
+    }
+}

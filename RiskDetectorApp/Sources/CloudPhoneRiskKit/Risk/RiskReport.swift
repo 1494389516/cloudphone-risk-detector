@@ -12,6 +12,8 @@ public enum SignalID {
     static let vpnActive = ObfuscatedConstants.requiredSignalVpnActive
     static let proxyEnabled = "proxy_enabled"
     static let networkInterfaceAnomaly = "network_interface_anomaly"
+    /// 证书固定路径侧信道（Trust 交叉校验、完整性、stub、时序等）
+    static let certificatePinningAnomaly = "certificate_pinning_anomaly"
 
     // Behavior
     static let touchSpreadLow = "touch_spread_low"
@@ -71,33 +73,71 @@ public enum SignalID {
     static let antiDebugWatchdogDenyAttachFailed = ObfuscatedConstants.signalAntiDebugWatchdogDenyAttachFailed
     static let antiDebugWatchdogExceptionPort = ObfuscatedConstants.signalAntiDebugWatchdogExceptionPort
     static let antiDebugWatchdogExceptionQuery = ObfuscatedConstants.signalAntiDebugWatchdogExceptionQuery
-    static let softwareBreakpointDetected = "software_breakpoint_detected"
-    static let exceptionDeliveryTimeout = "exception_delivery_timeout"
+    static let antiDebugWatchdogDyldInjection = ObfuscatedConstants.signalAntiDebugWatchdogDyldInjection
+    static let antiDebugWatchdogDenyAttachVerify = ObfuscatedConstants.signalAntiDebugWatchdogDenyAttachVerify
+    static let antiDebugWatchdogAMFICsFlags = ObfuscatedConstants.signalAntiDebugWatchdogAMFICsFlags
+    static let antiDebugWatchdogGetTaskAllow = ObfuscatedConstants.signalAntiDebugWatchdogGetTaskAllow
+    /// objc_msgSend / libdyld prologue baseline mismatch (watchdog-aligned).
+    static let antiDebugWatchdogCriticalHookSurface = ObfuscatedConstants.signalAntiDebugWatchdogCriticalHookSurface
+    static let antiDebugWatchdogPacThreadEntry = ObfuscatedConstants.signalAntiDebugWatchdogPacThreadEntry
+    static let antiDebugWatchdogVmImageLayoutDrift = ObfuscatedConstants.signalAntiDebugWatchdogVmImageLayoutDrift
+    static let whiteboxPrfProbeDegraded = ObfuscatedConstants.signalWhiteboxPrfProbeDegraded
+    static let softwareBreakpointDetected = ObfuscatedConstants.signalSoftwareBreakpointDetected
+    static let exceptionDeliveryTimeout = ObfuscatedConstants.signalExceptionDeliveryTimeout
+    /// CRiskCore recorded at least one libc (or arc4random) path because direct syscall was unavailable for this API surface.
+    static let libcDirectSyscallFallback = ObfuscatedConstants.signalLibcDirectSyscallFallback
+    /// `DebuggerDetector` aggregate signal.
+    static let debuggerDetected = ObfuscatedConstants.signalDebuggerDetected
+    static let csopsDebugged = ObfuscatedConstants.signalCsopsDebugged
+    static let hardwareBreakpointDetected = ObfuscatedConstants.signalHardwareBreakpointDetected
+    static let signalProbeDebugger = ObfuscatedConstants.signalSignalProbeDebugger
+    /// Anti-debug plan section reported escalation / trap activity.
+    static let antidebugPlanEscalated = ObfuscatedConstants.signalAntidebugPlanEscalated
+    /// Multiple anti-debug channels (watchdog / debugger / strategy plan) agree at runtime.
+    static let antiDebugRuntimeConsensus = "anti_debug_runtime_consensus"
+    /// Code-signature and signing-identity lanes both report suspicious drift/tamper.
+    static let signingChainConsensus = "signing_chain_consensus"
 
     // Frida module
+    /// Multiple Frida-facing detectors (runtime / module / thread / heap / socket / hook surfaces) agree.
+    static let fridaRuntimeConsensus = "frida_runtime_consensus"
+    static let fridaExceptionPortStartupRace = ObfuscatedConstants.signalFridaExceptionPortStartupRace
     static let fridaModuleDetected = ObfuscatedConstants.signalFridaModuleDetected
     static let fridaModuleImage = ObfuscatedConstants.signalFridaModuleImage
     static let fridaModuleSection = ObfuscatedConstants.signalFridaModuleSection
     static let fridaModuleString = ObfuscatedConstants.signalFridaModuleString
+    static let fridaModuleTrampoline = "frida_module_trampoline"
 
     // RWX / JIT (Stalker-like)
-    static let stalkerJitRWX = "stalker_jit_rwx"
-    static let rwxJitCoexistence = "rwx_jit_coexistence"
+    static let stalkerJitRWX = ObfuscatedConstants.signalStalkerJitRWX
+    static let rwxJitCoexistence = ObfuscatedConstants.signalRwxJitCoexistence
 
     // Multi-path consistency / vm_remap / PAC / task-port / dtrace-kdebug / LLDB JIT / dyld shared cache
-    static let multiPathCrossInconsistency = "multipath_cross_inconsistency"
+    static let multiPathCrossInconsistency = ObfuscatedConstants.signalMultipathCrossInconsistency
     static let vmRemapSharedAnonymous = ObfuscatedConstants.signalVMRemapSharedAnonymous
     static let vmRemapImageAlias = ObfuscatedConstants.signalVMRemapImageAlias
-    static let pacDisabled = "pac_disabled"
-    static let pacPointerInvalid = "pac_pointer_invalid"
+    static let pacDisabled = ObfuscatedConstants.signalPacDisabled
+    static let pacPointerInvalid = ObfuscatedConstants.signalPacPointerInvalid
+
+    /// MIE / MTE（含 EMTE sysctl 形状）设备姿态：仅 sysctl 观测，保守分级。
+    static let miePosture = "mie_posture"
+    /// 窄条件：sysctl 子集之间出现与“基位/扩展位”不一致的形状（不推断具体攻击）。
+    static let mteUnavailableOnCapable = "mte_unavailable_on_capable_device"
+    /// 进程级 MTE tagging 无法仅从 sysctl 断言；iOS 上作说明性软信号。
+    static let mteInactiveForProcess = "mte_inactive_for_process"
+    /// 预留：native MTE canary 链路与 CRiskCore 对齐后由底层填充；Swift 层不伪造。
+    static let mteCanaryTampered = "mte_canary_tampered"
     static let taskPortExceptionHijack = ObfuscatedConstants.signalTaskPortExceptionHijack
     static let taskPortRightsAnomaly = ObfuscatedConstants.signalTaskPortRightsAnomaly
-    static let dtraceKdebugActivity = "dtrace_kdebug_activity"
-    static let lldbJitSmallRWX = "lldb_jit_small_rwx"
-    static let dyldSharedCacheIntegrity = "dyld_shared_cache_integrity"
-    static let dyldSharedCacheUUIDMismatch = "dyld_shared_cache_uuid_mismatch"
-    static let dyldSharedCacheSlideMismatch = "dyld_shared_cache_slide_mismatch"
-    static let dyldSharedCacheSymbolMismatch = "dyld_shared_cache_symbol_mismatch"
+    static let dtraceKdebugActivity = ObfuscatedConstants.signalDtraceKdebugActivity
+    static let lldbJitSmallRWX = ObfuscatedConstants.signalLldbJitSmallRWX
+    static let dyldSharedCacheIntegrity = ObfuscatedConstants.signalDyldSharedCacheIntegrity
+    static let dyldSharedCacheUUIDMismatch = ObfuscatedConstants.signalDyldSharedCacheUUIDMismatch
+    static let dyldSharedCacheSlideMismatch = ObfuscatedConstants.signalDyldSharedCacheSlideMismatch
+    static let dyldSharedCacheSymbolMismatch = ObfuscatedConstants.signalDyldSharedCacheSymbolMismatch
+    static let dylibInjectImageCountLow = ObfuscatedConstants.signalDylibInjectImageCountLow
+    /// Multi-path libc spawn entry resolution mismatch (RTLD_DEFAULT / dlopen+dlsym / export trie) or prologue anomaly.
+    static let ifaceSpawnPathDivergence = ObfuscatedConstants.signalIfaceSpawnPathDivergence
 }
 
 // MARK: - Signal Categories
@@ -129,6 +169,12 @@ public struct RiskScoreReport: Sendable {
     public var compressedDigest: Data?
     /// 信号到 bit 映射表版本
     public var mappingVersion: String?
+    /// 最终动作，供上报链路与服务端联动使用。
+    public var action: RiskAction? = nil
+    /// 引擎提炼后的主要原因，便于静默标记与审计对齐。
+    public var primaryReasons: [String] = []
+    /// 引擎聚合/底线决策的可观测元数据。
+    public var decisionMetadata: [String: String]? = nil
 }
 
 public enum RiskSignalState: Sendable, Codable, Equatable {
@@ -227,7 +273,7 @@ public struct RiskSignal: Sendable, Codable {
     }
 }
 
-@objc(CPRiskSignal)
+@objc(CPR_RiskSignal)
 public final class CPRiskSignal: NSObject {
     @objc public let id: String
     @objc public let category: String
@@ -254,7 +300,7 @@ public final class CPRiskSignal: NSObject {
     }
 }
 
-@objc(CPRiskReport)
+@objc(CPR_RiskReport)
 public final class CPRiskReport: NSObject {
     @objc public let deviceID: String
     /// 设备指纹（用于 TrustChainManager.evaluateTrustLevel 等）
@@ -406,6 +452,9 @@ private struct Payload: Codable {
     var summary: String
     var signals: [RiskSignal]
     var tamperedCount: Int
+    var actionRaw: Int?
+    var primaryReasons: [String]?
+    var decisionMetadata: [String: String]?
 
     var compressedDigestHex: String?
     var signalMappingVersion: String?
@@ -430,6 +479,9 @@ private struct Payload: Codable {
     var sessionId: String?
     var sceneTag: String?
     var behaviorVector: [Double]?
+    var libcFallbackMaskHex: String?
+    var libcFallbackEventTotal: UInt32?
+    var libcFallbackWatchdogSupported: Bool?
 
     var graphNode: GraphNodeDescriptor?
 
@@ -450,6 +502,9 @@ private struct Payload: Codable {
         case summary = "sm"
         case signals = "sg"
         case tamperedCount = "tc"
+        case actionRaw = "ia"
+        case primaryReasons = "rr"
+        case decisionMetadata = "md"
         case compressedDigestHex = "cd"
         case signalMappingVersion = "mv"
         case signalsDigest = "sd"
@@ -467,6 +522,9 @@ private struct Payload: Codable {
         case sessionId = "si"
         case sceneTag = "st"
         case behaviorVector = "bv"
+        case libcFallbackMaskHex = "lfm"
+        case libcFallbackEventTotal = "lfe"
+        case libcFallbackWatchdogSupported = "lfs"
         case graphNode = "gd"
         case textSegmentIntegrity = "ti"
     }
@@ -486,6 +544,9 @@ private struct Payload: Codable {
         self.summary = report.summary
         self.signals = report.signals
         self.tamperedCount = report.signals.filter { $0.state == .tampered }.count
+        self.actionRaw = report.action?.rawValue
+        self.primaryReasons = report.primaryReasons.isEmpty ? nil : report.primaryReasons
+        self.decisionMetadata = report.decisionMetadata
         self.compressedDigestHex = report.compressedDigest.map { $0.map { String(format: "%02x", $0) }.joined() }
         self.signalMappingVersion = report.mappingVersion
         self.signalsDigest = SignalDigest.computeFullDigest(report.signals)
@@ -503,8 +564,29 @@ private struct Payload: Codable {
         self.sessionId = nil
         self.sceneTag = nil
         self.behaviorVector = Self.computeBehaviorVector(from: context.behavior)
+        let libcFallbackTelemetry = Self.extractLibcFallbackTelemetry(from: report.signals)
+        self.libcFallbackMaskHex = libcFallbackTelemetry?.maskHex
+        self.libcFallbackEventTotal = libcFallbackTelemetry?.eventTotal
+        self.libcFallbackWatchdogSupported = libcFallbackTelemetry?.watchdogSupported
         self.graphNode = nil
         self.textSegmentIntegrity = Self.buildTextSegmentIntegrityPayload()
+    }
+
+    private static func extractLibcFallbackTelemetry(
+        from signals: [RiskSignal]
+    ) -> (maskHex: String, eventTotal: UInt32?, watchdogSupported: Bool?)? {
+        guard let signal = signals.first(where: { $0.id == SignalID.libcDirectSyscallFallback }) else {
+            return nil
+        }
+        guard
+            let maskHex = signal.evidence["mask_hex"] ?? signal.evidence["libc_fallback_used_mask"],
+            !maskHex.isEmpty
+        else {
+            return nil
+        }
+        let eventTotal = signal.evidence["libc_fallback_event_total"].flatMap(UInt32.init)
+        let watchdogSupported = signal.evidence["watchdog_snapshot_supported"].map { $0 == "1" }
+        return (maskHex: maskHex, eventTotal: eventTotal, watchdogSupported: watchdogSupported)
     }
 
     private static func buildTextSegmentIntegrityPayload() -> TextSegmentIntegrityPayload? {
@@ -791,7 +873,7 @@ private struct DetectionResultPayload: Codable {
 }
 
 enum Version {
-    static let current = "6.7.0"
+    static let current = "7.3.0"
 }
 
 // MARK: - Signal Digest

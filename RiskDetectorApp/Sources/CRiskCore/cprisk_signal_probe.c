@@ -3,11 +3,16 @@
  * hardware breakpoint detection, timing analysis, Mach thread inspection,
  * csops CS_DEBUGGED check, and Developer Disk Image detection.
  *
+ * Mach vs POSIX memory protection divergence is surfaced via
+ * cprisk_get_vm_mprotect_* counters and the anti-debug watchdog snapshot.
+ *
  * All functions return 0 (safe default) on simulator / non-arm64 platforms.
  */
 
 #include "include/CRiskCore.h"
+#include "include/cprisk_crypto_trace.h"
 
+#include <errno.h>
 #include <signal.h>
 #include <setjmp.h>
 #include <stdatomic.h>
@@ -18,7 +23,12 @@
 
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
-#include <sys/syscall.h>
+#include <dlfcn.h>
+#include <mach/mach.h>
+#include <mach-o/dyld.h>
+#include <objc/message.h>
+#include <sys/mman.h>
+#include <sys/sysctl.h>
 #endif
 
 #if defined(__APPLE__) && (defined(__arm64__) || defined(__aarch64__)) && \
@@ -28,14 +38,172 @@
 #define CPRISK_SIGNAL_PROBE_AVAILABLE 0
 #endif
 
+/*
+ * ARM64 instant-return prefix scan (pure opcode match). Kept outside
+ * CPRISK_SIGNAL_PROBE_AVAILABLE so iOS Simulator tests can validate patterns
+ * without enabling Mach/signal probes.
+ */
+#if defined(__APPLE__) && (defined(__arm64__) || defined(__aarch64__))
+#define CPRISK_ARM64_INSTR_RET_IR 0xD65F03C0u
+#define CPRISK_ARM64_MOV_X0_X0_IR 0xAA0003E0u
+#define CPRISK_ARM64_MOV_W0_W0_IR 0x2A0003E0u
+#define CPRISK_ARM64_HINT_NOP_IR 0xD503201Fu
+#define CPRISK_ARM64_BRANCH_MASK_IR 0x7C000000u
+#define CPRISK_ARM64_BRANCH_OP_IR 0x14000000u
+#define CPRISK_ARM64_BR_MASK_IR 0xFFFFFC1Fu
+#define CPRISK_ARM64_BR_OP_IR 0xD61F0000u
+#define CPRISK_ARM64_BLR_OP_IR 0xD63F0000u
+#define CPRISK_ARM64_LDR_LITERAL_MASK_IR 0xFF000000u
+#define CPRISK_ARM64_LDR_LITERAL_OP_IR 0x58000000u
+#define CPRISK_ARM64_ADRP_MASK_IR 0x9F000000u
+#define CPRISK_ARM64_ADRP_OP_IR 0x90000000u
+#define CPRISK_ARM64_ADD_IMM_64_MASK_IR 0xFFC00000u
+#define CPRISK_ARM64_ADD_IMM_64_OP_IR 0x91000000u
+
+static int cprisk_arm64_is_b_imm_i(uint32_t instr) {
+    return (instr & CPRISK_ARM64_BRANCH_MASK_IR) == CPRISK_ARM64_BRANCH_OP_IR;
+}
+
+static int cprisk_arm64_is_br_reg_i(uint32_t instr) {
+    return (instr & CPRISK_ARM64_BR_MASK_IR) == CPRISK_ARM64_BR_OP_IR;
+}
+
+static int cprisk_arm64_is_blr_reg_i(uint32_t instr) {
+    return (instr & CPRISK_ARM64_BR_MASK_IR) == CPRISK_ARM64_BLR_OP_IR;
+}
+
+static int cprisk_arm64_is_ldr_literal_reg_i(uint32_t instr, uint32_t reg) {
+    return (instr & CPRISK_ARM64_LDR_LITERAL_MASK_IR) == CPRISK_ARM64_LDR_LITERAL_OP_IR &&
+           (instr & 0x1Fu) == reg;
+}
+
+static int cprisk_arm64_is_adrp_reg_i(uint32_t instr, uint32_t reg) {
+    return (instr & CPRISK_ARM64_ADRP_MASK_IR) == CPRISK_ARM64_ADRP_OP_IR &&
+           (instr & 0x1Fu) == reg;
+}
+
+static int cprisk_arm64_is_add_imm_same_reg_i(uint32_t instr, uint32_t reg) {
+    if ((instr & CPRISK_ARM64_ADD_IMM_64_MASK_IR) != CPRISK_ARM64_ADD_IMM_64_OP_IR) {
+        return 0;
+    }
+    const uint32_t rd = instr & 0x1Fu;
+    const uint32_t rn = (instr >> 5u) & 0x1Fu;
+    return rd == reg && rn == reg;
+}
+
+int cprisk_scan_arm64_instant_return_nop_patch_prefix(const void *func_ptr, size_t prefix_bytes) {
+    if (!func_ptr || prefix_bytes < 8u) {
+        return 0;
+    }
+
+    const uint32_t *words = (const uint32_t *)func_ptr;
+    const uint32_t w0 = words[0];
+    const uint32_t w1 = words[1];
+    if (w1 != CPRISK_ARM64_INSTR_RET_IR) {
+        return 0;
+    }
+    if (w0 == CPRISK_ARM64_MOV_X0_X0_IR ||
+        w0 == CPRISK_ARM64_MOV_W0_W0_IR ||
+        w0 == CPRISK_ARM64_HINT_NOP_IR) {
+        return 1;
+    }
+    return 0;
+}
+
+int cprisk_scan_arm64_suspicious_trampoline_prefix(const void *func_ptr, size_t prefix_bytes) {
+    if (!func_ptr || prefix_bytes < 8u) {
+        return 0;
+    }
+
+    const uint32_t *words = (const uint32_t *)func_ptr;
+    const uint32_t w0 = words[0];
+    const uint32_t w1 = words[1];
+    if (cprisk_arm64_is_b_imm_i(w0) || cprisk_arm64_is_br_reg_i(w0) || cprisk_arm64_is_blr_reg_i(w0)) {
+        return 1;
+    }
+
+    if ((cprisk_arm64_is_ldr_literal_reg_i(w0, 16u) || cprisk_arm64_is_ldr_literal_reg_i(w0, 17u)) &&
+        (cprisk_arm64_is_br_reg_i(w1) || cprisk_arm64_is_blr_reg_i(w1))) {
+        return 1;
+    }
+
+    if (prefix_bytes >= 12u) {
+        const uint32_t w2 = words[2];
+        if (((cprisk_arm64_is_adrp_reg_i(w0, 16u) && cprisk_arm64_is_add_imm_same_reg_i(w1, 16u)) ||
+             (cprisk_arm64_is_adrp_reg_i(w0, 17u) && cprisk_arm64_is_add_imm_same_reg_i(w1, 17u))) &&
+            (cprisk_arm64_is_br_reg_i(w2) || cprisk_arm64_is_blr_reg_i(w2))) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+int cprisk_scan_instant_return_key_symbols_prefix(void) {
+    int found = 0;
+    found += cprisk_scan_arm64_instant_return_nop_patch_prefix(
+        (const void *)cprisk_deny_attach, 8u);
+    found += cprisk_scan_arm64_instant_return_nop_patch_prefix(
+        (const void *)cprisk_deny_attach_status, 8u);
+    found += cprisk_scan_arm64_instant_return_nop_patch_prefix(
+        (const void *)cprisk_probe_debugger_via_signal, 8u);
+    found += cprisk_scan_arm64_instant_return_nop_patch_prefix(
+        (const void *)cprisk_probe_exception_delivery_timeout, 8u);
+    found += cprisk_scan_arm64_instant_return_nop_patch_prefix(
+        (const void *)cprisk_register_exception_handler, 8u);
+    found += cprisk_scan_arm64_instant_return_nop_patch_prefix(
+        (const void *)cprisk_verify_exception_handler, 8u);
+    return found;
+}
+
+int cprisk_scan_hook_surface_trampoline_prefixes(void) {
+    int found = 0;
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)dlsym, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)dlopen, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)objc_msgSend, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)_dyld_get_image_name, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)_dyld_image_count, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)pthread_create, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)sysctl, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)sysctlbyname, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)mprotect, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)mach_msg, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)task_get_exception_ports, 12u);
+    found += cprisk_scan_arm64_suspicious_trampoline_prefix((const void *)task_swap_exception_ports, 12u);
+    return found;
+}
+
+#elif defined(__APPLE__)
+
+int cprisk_scan_arm64_instant_return_nop_patch_prefix(const void *func_ptr, size_t prefix_bytes) {
+    (void)func_ptr;
+    (void)prefix_bytes;
+    return 0;
+}
+
+int cprisk_scan_arm64_suspicious_trampoline_prefix(const void *func_ptr, size_t prefix_bytes) {
+    (void)func_ptr;
+    (void)prefix_bytes;
+    return 0;
+}
+
+int cprisk_scan_instant_return_key_symbols_prefix(void) { return 0; }
+
+int cprisk_scan_hook_surface_trampoline_prefixes(void) { return 0; }
+
+#endif /* __APPLE__ arm64 / fallback */
+
 /* ===================================================================== */
 #if CPRISK_SIGNAL_PROBE_AVAILABLE
 /* ===================================================================== */
 
+#include <TargetConditionals.h>
 #include <mach/mach.h>
 #include <mach/arm/thread_status.h>
 #include <mach/mach_time.h>
+#if !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
 #include <mach/mach_vm.h>
+#endif
 #include <mach-o/dyld.h>
 #include <crt_externs.h>
 #include <sys/fcntl.h>
@@ -54,6 +222,38 @@
 #define CPRISK_TIMING_JITTER_DIVISOR 4ull
 #define CPRISK_SOFTWARE_BP_RANDOM_DEFAULT_WINDOWS 8u
 #define CPRISK_SOFTWARE_BP_RANDOM_DEFAULT_WINDOW_BYTES 768u
+#define CPRISK_DBI_EXECMEM_REGION_BUDGET 8192u
+#define CPRISK_DBI_EXECMEM_TIME_BUDGET_NS 20000000ull
+
+#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+typedef vm_address_t cprisk_vm_region_address_t;
+typedef vm_size_t cprisk_vm_region_size_t;
+#define CPRISK_VM_REGION_MIN_ADDRESS_I ((vm_address_t)VM_MIN_ADDRESS)
+static kern_return_t cprisk_vm_region_recurse_i(
+    vm_map_t target_task,
+    cprisk_vm_region_address_t *address,
+    cprisk_vm_region_size_t *size,
+    natural_t *nesting_depth,
+    vm_region_recurse_info_t info,
+    mach_msg_type_number_t *info_count
+) {
+    return vm_region_recurse(target_task, address, size, nesting_depth, info, info_count);
+}
+#else
+typedef mach_vm_address_t cprisk_vm_region_address_t;
+typedef mach_vm_size_t cprisk_vm_region_size_t;
+#define CPRISK_VM_REGION_MIN_ADDRESS_I ((mach_vm_address_t)MACH_VM_MIN_ADDRESS)
+static kern_return_t cprisk_vm_region_recurse_i(
+    vm_map_t target_task,
+    cprisk_vm_region_address_t *address,
+    cprisk_vm_region_size_t *size,
+    natural_t *nesting_depth,
+    vm_region_recurse_info_t info,
+    mach_msg_type_number_t *info_count
+) {
+    return mach_vm_region_recurse(target_task, address, size, nesting_depth, info, info_count);
+}
+#endif
 
 /* ── (a) SIGTRAP signal probe ─────────────────────────────────────── */
 
@@ -75,6 +275,8 @@ static atomic_uint_fast32_t s_timing_last_anomaly_flags = 0;
 static atomic_uint_fast64_t s_timing_last_median_ns = 0;
 static atomic_uint_fast64_t s_timing_last_max_ns = 0;
 static atomic_uint_fast64_t s_timing_last_threshold_ns = 0;
+
+int cprisk_watchdog_probe_should_stop(void);
 
 #if defined(__APPLE__) && (defined(__arm64__) || defined(__aarch64__)) && \
     (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
@@ -190,70 +392,197 @@ static int cprisk_contains_any_token_i(
     return 0;
 }
 
-static uint32_t cprisk_detect_dbi_env_markers_i(int *hit_count_out) {
-    static const char *const strict_env_keys[] = {
-        "PIN_VM",
-        "PIN_ROOT",
-        "PIN_CRT",
-        "PIN_APP_DYLIB",
-        "DYNAMORIO_OPTIONS",
-        "DYNAMORIO_HOME",
-        "DYNAMORIO_LOGDIR",
-        "VALGRIND_LAUNCHER",
-        "VALGRIND_LIB",
-        "VALGRIND_OPTS",
-        /* QBDI / QuarkslaB DBI (desktop + some embedded runners expose these). */
-        "QBDI_PRELOAD",
-        "QBDI_LOG",
-        "QBDI_LIB",
-        "QBDI_MAX_INST_COUNT",
-        "QBDI_APPEND",
-        "QBDI_FRIDA",
-        "QBDI_STOCK_FILE_REMOVE",
-    };
-    static const char *const tokenized_env_keys[] = {
-        "DYLD_INSERT_LIBRARIES",
-        "DYLD_LIBRARY_PATH",
-        "LD_PRELOAD",
-    };
-    static const char *const dbi_tokens[] = {
-        "pinvm",
-        "pincrt",
-        "/pin/",
-        "dynamorio",
-        "libdynamorio",
-        "drrun",
-        "valgrind",
-        "vgpreload",
-        "memcheck",
-        "helgrind",
-        "drmemory",
-        /* QBDI */
-        "qbdi",
-        "libqbdi",
-        "qbdipreload",
-        "/qbdi/",
-        "quarkslab",
-    };
+typedef struct {
+    uint32_t key_id;
+    const uint8_t *enc;
+    size_t enc_len;
+} cprisk_obf_token_ref_t;
 
+static int cprisk_contains_any_obf_token_i(
+    const char *text,
+    const cprisk_obf_token_ref_t *tokens,
+    size_t token_count
+) {
+    if (!text || !tokens || token_count == 0u) {
+        return 0;
+    }
+    for (size_t i = 0u; i < token_count; i++) {
+        char buf[64];
+        memset(buf, 0, sizeof(buf));
+        if (tokens[i].enc_len + 1u > sizeof(buf)) {
+            continue;
+        }
+        if (cprisk_obf_decode_sha256_tag(
+                CPRISK_OBF_TAG_DOMAIN_SIGNAL_DBI,
+                tokens[i].key_id,
+                tokens[i].enc,
+                tokens[i].enc_len,
+                buf,
+                sizeof(buf)) != 0) {
+            cprisk_secure_zero(buf, sizeof(buf));
+            continue;
+        }
+        const int hit = cprisk_contains_token_ascii_i(text, buf);
+        cprisk_secure_zero(buf, sizeof(buf));
+        if (hit) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int cprisk_getenv_obf_nonempty_i(const cprisk_obf_token_ref_t *token) {
+    if (!token || !token->enc || token->enc_len == 0u) {
+        return 0;
+    }
+    char key[64];
+    memset(key, 0, sizeof(key));
+    if (token->enc_len + 1u > sizeof(key)) {
+        return 0;
+    }
+    if (cprisk_obf_decode_sha256_tag(
+            CPRISK_OBF_TAG_DOMAIN_SIGNAL_DBI,
+            token->key_id,
+            token->enc,
+            token->enc_len,
+            key,
+            sizeof(key)) != 0) {
+        cprisk_secure_zero(key, sizeof(key));
+        return 0;
+    }
+    const char *value = getenv(key);
+    cprisk_secure_zero(key, sizeof(key));
+    return (value && value[0] != '\0') ? 1 : 0;
+}
+
+static const uint8_t e1[] = {0x60, 0x9b, 0x38, 0x23, 0x09, 0x05};
+static const uint8_t e2[] = {0x63, 0x00, 0x98, 0x2c, 0x05, 0xd8, 0x55, 0xdf};
+static const uint8_t e3[] = {0x11, 0x0f, 0x34, 0x3a, 0xec, 0x9a, 0xae};
+static const uint8_t e4[] = {0x9c, 0x3a, 0x07, 0x7f, 0x25, 0xdf, 0x19, 0x08, 0x7e, 0x83, 0xfa, 0x1e, 0x6f};
+static const uint8_t e5[] = {0x2f, 0xbd, 0xe0, 0x2c, 0x76, 0x5f, 0xeb, 0xd9, 0x3a, 0x7b, 0xf4, 0x78, 0x7f, 0xdb, 0x22, 0x24, 0x4a};
+static const uint8_t e6[] = {0x66, 0x25, 0x6c, 0x08, 0x6b, 0x0f, 0x00, 0xaf, 0x6a, 0x3f, 0xd1, 0xf4, 0x6b, 0x8f};
+static const uint8_t e7[] = {0x13, 0xd9, 0x7a, 0x1a, 0xfa, 0x8b, 0x4c, 0xac, 0x2e, 0x0e, 0x12, 0xc9, 0xee, 0xb7, 0xb6, 0x14};
+static const uint8_t e8[] = {0x66, 0x04, 0xd7, 0x14, 0x1f, 0xb2, 0x78, 0xfb, 0x74, 0x1a, 0x70, 0x58, 0x7d, 0x1a, 0x36, 0xa0, 0xe1};
+static const uint8_t e9[] = {0x70, 0x2a, 0x6b, 0x64, 0xf6, 0x3e, 0x5c, 0x42, 0xa1, 0x3f, 0x0b, 0x76};
+static const uint8_t e10[] = {0x02, 0xda, 0x25, 0x2d, 0x67, 0x6d, 0x2e, 0x69, 0xeb, 0xf4, 0xd6, 0xd2, 0x9f};
+static const uint8_t e11[] = {0x8e, 0x80, 0xd0, 0xcc, 0xbe, 0x13, 0xab, 0xbf, 0x4a, 0x9c, 0x00, 0x3b};
+static const uint8_t e12[] = {0x6b, 0xac, 0xb0, 0x6c, 0x20, 0xaa, 0x3b, 0xc2};
+static const uint8_t e13[] = {0x38, 0xc4, 0x3b, 0xa9, 0x1f, 0x42, 0x5b, 0x13};
+static const uint8_t e14[] = {0x4c, 0x57, 0xdc, 0x4d, 0x0a, 0xcb, 0x40, 0x81, 0x9a, 0x73, 0x3f, 0x84, 0xed, 0xf4, 0x88, 0xf6, 0x4a, 0x48, 0x2a};
+static const uint8_t e15[] = {0xcf, 0x74, 0x0c, 0x5c, 0x1c, 0x55, 0x7e, 0x81, 0x52, 0xe9, 0x86};
+static const uint8_t e16[] = {0xb4, 0xe2, 0xc6, 0xad, 0x9f, 0x8c, 0x69, 0xd8, 0x26, 0x84};
+static const uint8_t e17[] = {0x06, 0x2b, 0x8d, 0x58, 0x98, 0x43, 0xe7, 0x91, 0x67, 0x0f, 0x6a, 0x53, 0x5e, 0x62, 0xad, 0xf4, 0x38, 0x93, 0x63, 0x0a, 0x7d, 0xd3};
+static const uint8_t e18[] = {0x20, 0x2d, 0x0e, 0xf7, 0xf3, 0x7f, 0x11, 0x45, 0xff, 0xca, 0x1d, 0x0e};
+static const uint8_t e19[] = {0xaf, 0xd1, 0x5a, 0x2b, 0x88, 0x12, 0xa6, 0x5a, 0x06, 0x5d, 0x21, 0x5a};
+static const uint8_t e20[] = {0xcd, 0x17, 0x66, 0x0a, 0xe8, 0xb6, 0x73, 0xf1, 0x57, 0x05, 0x59};
+static const uint8_t e21[] = {0x29, 0xfd, 0x76, 0x34, 0xdd, 0x4d, 0xc5, 0xaf, 0xe4, 0x67, 0x0e, 0x3c, 0xa9};
+static const uint8_t e22[] = {0x2a, 0x9c, 0xc6, 0x21, 0x41, 0x6e, 0xe9, 0x50, 0xae, 0x0c, 0xfb, 0x92, 0x14, 0x45};
+static const uint8_t e23[] = {0x8b, 0x52, 0x2c, 0x9a, 0xa5, 0xe3, 0xa7, 0xa3, 0x37, 0x44, 0x76, 0xd6, 0x5b, 0x7e};
+static const uint8_t e24[] = {0x0b, 0x0a, 0x62, 0xbd, 0x9e, 0x2b, 0xf0, 0xf7};
+static const uint8_t e25[] = {0x89, 0x64, 0x04, 0x92, 0xa2, 0x8e, 0xb1, 0xca, 0x9c, 0x1f, 0x71, 0x7e, 0xc7, 0xd7, 0xb7, 0x9d, 0xc2, 0xdc, 0x49, 0xb8, 0x46};
+static const uint8_t e26[] = {0x75, 0x1d, 0x28, 0x17, 0x32, 0x19, 0xe7, 0xff, 0xcd, 0xad, 0xbc, 0x33, 0x6c, 0xd5, 0x59, 0x80, 0x4c};
+static const uint8_t e27[] = {0x04, 0x4c, 0x3a, 0x0c, 0xa6, 0x56, 0xe7, 0x15, 0x39, 0x5f};
+static const uint8_t e28[] = {0x3e, 0x7c, 0x2d, 0x5d, 0x7b};
+static const uint8_t e29[] = {0xa0, 0x27, 0xfe, 0x2e, 0x7d, 0xd3};
+static const uint8_t e30[] = {0xfe, 0x05, 0x46, 0xc9, 0x22};
+static const uint8_t e31[] = {0x4f, 0x13, 0x7a, 0x9f, 0x8f, 0x0c, 0xd4, 0x80, 0x2e};
+static const uint8_t e32[] = {0x54, 0xf8, 0x8a, 0xd5, 0xbd, 0x92, 0x90, 0x66, 0x5b, 0xc0, 0x5b, 0x7f};
+static const uint8_t e33[] = {0xe8, 0xdb, 0x6c, 0x57, 0xa4};
+static const uint8_t e34[] = {0x8e, 0x67, 0x5e, 0x6a, 0x23, 0x53, 0xcf, 0x6f};
+static const uint8_t e35[] = {0x3f, 0x37, 0x6b, 0x4f, 0x08, 0x24, 0xc4, 0xe8, 0xf5};
+static const uint8_t e36[] = {0xe7, 0xff, 0x8f, 0x49, 0x69, 0x67, 0xaa, 0xdc};
+static const uint8_t e37[] = {0x16, 0x2c, 0xb5, 0xe8, 0xc8, 0xa0, 0x48, 0x38};
+static const uint8_t e38[] = {0xc2, 0x18, 0xb2, 0x6f, 0x03, 0x11, 0x47, 0x4a};
+static const uint8_t e39[] = {0x93, 0x24, 0xe7, 0xe9};
+static const uint8_t e40[] = {0x9b, 0xd3, 0x39, 0x06, 0x93, 0x3a, 0x2c};
+static const uint8_t e41[] = {0x28, 0xd3, 0xe5, 0xc5, 0x54, 0x72, 0x7f, 0x96, 0x16, 0xca, 0xc6};
+static const uint8_t e42[] = {0x46, 0x03, 0x16, 0x14, 0x2a, 0x6a};
+static const uint8_t e43[] = {0x75, 0x9c, 0xbb, 0x2c, 0x41, 0xb1, 0xfc, 0x53, 0xba};
+static const uint8_t e44[] = {0xd8, 0x6e, 0x52, 0x5c, 0xf7, 0xaa, 0x57};
+static const uint8_t e45[] = {0x87, 0x09, 0xfe, 0x64, 0x17, 0xf5, 0x8b, 0xda, 0x52, 0x19};
+static const uint8_t e46[] = {0x41, 0x36, 0x01, 0x47, 0x1a, 0x26, 0xa3, 0x98, 0xd7};
+static const uint8_t e47[] = {0x69, 0xe4, 0x8f, 0xa7, 0x17, 0x8d};
+static const uint8_t e48[] = {0xbb, 0xed, 0xd0, 0x91, 0x6c, 0x27, 0x0c, 0x48, 0x2a};
+static const uint8_t e49[] = {0xe0, 0xa1, 0xa4, 0x05, 0xea, 0x13, 0x05, 0xa1};
+static const uint8_t e50[] = {0x7a, 0xc8, 0x15, 0xd2};
+static const uint8_t e51[] = {0x43, 0xfe, 0x15, 0xb5, 0xda, 0x99, 0x2a, 0x64, 0xef, 0xa8, 0x39, 0xc2};
+static const uint8_t e52[] = {0x19, 0xd5, 0x96, 0xfa, 0xe2, 0x2f, 0x0c, 0xdb, 0xff, 0xe7, 0x68};
+static const uint8_t e53[] = {0x58, 0xda, 0xcf, 0x2c, 0xa6, 0x6e, 0x21, 0x02};
+static const uint8_t e54[] = {0xb5, 0x01, 0xf1, 0xf9, 0x8c, 0x01, 0x69, 0x38, 0x10, 0xe0};
+static const uint8_t e55[] = {0xc8, 0xd3, 0x9a, 0x1f, 0xb3, 0x24, 0xbe, 0x4b};
+
+#define CPRISK_OBF_ROW(id) { id##u, e##id, sizeof(e##id) }
+
+static const cprisk_obf_token_ref_t k_dbi_strict_env_rows[] = {
+    CPRISK_OBF_ROW(1),  CPRISK_OBF_ROW(2),  CPRISK_OBF_ROW(3),  CPRISK_OBF_ROW(4),
+    CPRISK_OBF_ROW(5),  CPRISK_OBF_ROW(6),  CPRISK_OBF_ROW(7),  CPRISK_OBF_ROW(8),
+    CPRISK_OBF_ROW(9),  CPRISK_OBF_ROW(10), CPRISK_OBF_ROW(11), CPRISK_OBF_ROW(12),
+    CPRISK_OBF_ROW(13), CPRISK_OBF_ROW(14), CPRISK_OBF_ROW(15), CPRISK_OBF_ROW(16),
+    CPRISK_OBF_ROW(17), CPRISK_OBF_ROW(18), CPRISK_OBF_ROW(19), CPRISK_OBF_ROW(20),
+    CPRISK_OBF_ROW(21), CPRISK_OBF_ROW(22), CPRISK_OBF_ROW(23), CPRISK_OBF_ROW(24),
+};
+
+static const cprisk_obf_token_ref_t k_dbi_tokenized_env_rows[] = {
+    CPRISK_OBF_ROW(25), CPRISK_OBF_ROW(26), CPRISK_OBF_ROW(27),
+};
+
+static const cprisk_obf_token_ref_t k_dbi_env_token_rows[] = {
+    CPRISK_OBF_ROW(28), CPRISK_OBF_ROW(29), CPRISK_OBF_ROW(30), CPRISK_OBF_ROW(31),
+    CPRISK_OBF_ROW(32), CPRISK_OBF_ROW(33), CPRISK_OBF_ROW(34), CPRISK_OBF_ROW(35),
+    CPRISK_OBF_ROW(36), CPRISK_OBF_ROW(37), CPRISK_OBF_ROW(38), CPRISK_OBF_ROW(39),
+    CPRISK_OBF_ROW(40), CPRISK_OBF_ROW(41), CPRISK_OBF_ROW(42), CPRISK_OBF_ROW(43),
+    CPRISK_OBF_ROW(44), CPRISK_OBF_ROW(45), CPRISK_OBF_ROW(46), CPRISK_OBF_ROW(47),
+    CPRISK_OBF_ROW(48), CPRISK_OBF_ROW(49), CPRISK_OBF_ROW(50), CPRISK_OBF_ROW(51),
+    CPRISK_OBF_ROW(52),
+};
+
+static const cprisk_obf_token_ref_t k_dbi_image_rows[] = {
+    CPRISK_OBF_ROW(28), CPRISK_OBF_ROW(29), CPRISK_OBF_ROW(31), CPRISK_OBF_ROW(32),
+    CPRISK_OBF_ROW(33), CPRISK_OBF_ROW(34), CPRISK_OBF_ROW(35), CPRISK_OBF_ROW(36),
+    CPRISK_OBF_ROW(37), CPRISK_OBF_ROW(38), CPRISK_OBF_ROW(39), CPRISK_OBF_ROW(40),
+    CPRISK_OBF_ROW(41), CPRISK_OBF_ROW(42), CPRISK_OBF_ROW(44), CPRISK_OBF_ROW(45),
+    CPRISK_OBF_ROW(46), CPRISK_OBF_ROW(47), CPRISK_OBF_ROW(48), CPRISK_OBF_ROW(49),
+    CPRISK_OBF_ROW(50), CPRISK_OBF_ROW(51), CPRISK_OBF_ROW(52),
+};
+
+static const cprisk_obf_token_ref_t k_dbi_thread_rows[] = {
+    CPRISK_OBF_ROW(31), CPRISK_OBF_ROW(33), CPRISK_OBF_ROW(53), CPRISK_OBF_ROW(38),
+    CPRISK_OBF_ROW(34), CPRISK_OBF_ROW(36), CPRISK_OBF_ROW(37), CPRISK_OBF_ROW(28),
+    CPRISK_OBF_ROW(54), CPRISK_OBF_ROW(55), CPRISK_OBF_ROW(39), CPRISK_OBF_ROW(41),
+    CPRISK_OBF_ROW(44), CPRISK_OBF_ROW(47), CPRISK_OBF_ROW(50),
+};
+
+static uint32_t cprisk_detect_dbi_env_markers_i(int *hit_count_out) {
     int hit_count = 0;
     uint32_t flags = 0u;
 
-    for (size_t i = 0u; i < sizeof(strict_env_keys) / sizeof(strict_env_keys[0]); i++) {
-        const char *value = getenv(strict_env_keys[i]);
-        if (value && value[0] != '\0') {
+    for (size_t i = 0u; i < sizeof(k_dbi_strict_env_rows) / sizeof(k_dbi_strict_env_rows[0]); i++) {
+        if (cprisk_getenv_obf_nonempty_i(&k_dbi_strict_env_rows[i])) {
             flags |= CPRISK_DBI_MARKER_ENV;
             hit_count++;
         }
     }
 
-    for (size_t i = 0u; i < sizeof(tokenized_env_keys) / sizeof(tokenized_env_keys[0]); i++) {
-        const char *value = getenv(tokenized_env_keys[i]);
+    for (size_t i = 0u; i < sizeof(k_dbi_tokenized_env_rows) / sizeof(k_dbi_tokenized_env_rows[0]); i++) {
+        char key[64];
+        memset(key, 0, sizeof(key));
+        if (cprisk_obf_decode_sha256_tag(
+                CPRISK_OBF_TAG_DOMAIN_SIGNAL_DBI,
+                k_dbi_tokenized_env_rows[i].key_id,
+                k_dbi_tokenized_env_rows[i].enc,
+                k_dbi_tokenized_env_rows[i].enc_len,
+                key,
+                sizeof(key)) != 0) {
+            cprisk_secure_zero(key, sizeof(key));
+            continue;
+        }
+        const char *value = getenv(key);
+        cprisk_secure_zero(key, sizeof(key));
         if (!value || value[0] == '\0') {
             continue;
         }
-        if (cprisk_contains_any_token_i(
-                value, dbi_tokens, sizeof(dbi_tokens) / sizeof(dbi_tokens[0]))) {
+        if (cprisk_contains_any_obf_token_i(
+                value, k_dbi_env_token_rows, sizeof(k_dbi_env_token_rows) / sizeof(k_dbi_env_token_rows[0]))) {
             flags |= CPRISK_DBI_MARKER_ENV;
             hit_count++;
         }
@@ -270,25 +599,6 @@ static uint32_t cprisk_detect_dbi_env_markers_i(int *hit_count_out) {
  * Catches renamed or custom env vars that strict-key checks miss.
  */
 static uint32_t cprisk_detect_dbi_environ_scan_i(int *hit_count_out) {
-    static const char *const scan_tokens[] = {
-        "pinvm",
-        "pincrt",
-        "/pin/",
-        "dynamorio",
-        "libdynamorio",
-        "drrun",
-        "valgrind",
-        "vgpreload",
-        "memcheck",
-        "helgrind",
-        "drmemory",
-        "qbdi",
-        "libqbdi",
-        "qbdipreload",
-        "/qbdi/",
-        "quarkslab",
-    };
-
     int hit_count = 0;
     uint32_t flags = 0u;
 
@@ -312,10 +622,10 @@ static uint32_t cprisk_detect_dbi_environ_scan_i(int *hit_count_out) {
         if (walk >= 4096u) {
             continue;
         }
-        if (cprisk_contains_any_token_i(
+        if (cprisk_contains_any_obf_token_i(
                 line,
-                scan_tokens,
-                sizeof(scan_tokens) / sizeof(scan_tokens[0]))) {
+                k_dbi_env_token_rows,
+                sizeof(k_dbi_env_token_rows) / sizeof(k_dbi_env_token_rows[0]))) {
             flags |= CPRISK_DBI_MARKER_ENVIRON_SCAN;
             hit_count++;
             break;
@@ -329,23 +639,6 @@ static uint32_t cprisk_detect_dbi_environ_scan_i(int *hit_count_out) {
 }
 
 static uint32_t cprisk_detect_dbi_image_markers_i(int *hit_count_out) {
-    static const char *const image_tokens[] = {
-        "pinvm",
-        "pincrt",
-        "libdynamorio",
-        "dynamorio",
-        "drrun",
-        "valgrind",
-        "vgpreload",
-        "memcheck",
-        "helgrind",
-        "drmemory",
-        "qbdi",
-        "libqbdi",
-        "qbdipreload",
-        "/qbdi/",
-    };
-
     uint32_t flags = 0u;
     int hit_count = 0;
     const uint32_t image_count = _dyld_image_count();
@@ -354,8 +647,8 @@ static uint32_t cprisk_detect_dbi_image_markers_i(int *hit_count_out) {
         if (!name || name[0] == '\0') {
             continue;
         }
-        if (cprisk_contains_any_token_i(
-                name, image_tokens, sizeof(image_tokens) / sizeof(image_tokens[0]))) {
+        if (cprisk_contains_any_obf_token_i(
+                name, k_dbi_image_rows, sizeof(k_dbi_image_rows) / sizeof(k_dbi_image_rows[0]))) {
             flags |= CPRISK_DBI_MARKER_IMAGE;
             hit_count++;
         }
@@ -368,21 +661,6 @@ static uint32_t cprisk_detect_dbi_image_markers_i(int *hit_count_out) {
 }
 
 static uint32_t cprisk_detect_dbi_thread_markers_i(int *hit_count_out) {
-    static const char *const thread_tokens[] = {
-        "dynamorio",
-        "drrun",
-        "drhelper",
-        "drmemory",
-        "valgrind",
-        "memcheck",
-        "helgrind",
-        "pinvm",
-        "pin-worker",
-        "pin-tool",
-        "qbdi",
-        "qbdipreload",
-    };
-
     uint32_t flags = 0u;
     int hit_count = 0;
     thread_act_array_t threads = NULL;
@@ -404,8 +682,8 @@ static uint32_t cprisk_detect_dbi_thread_markers_i(int *hit_count_out) {
         if (pthread_getname_np(pthread_handle, name, sizeof(name)) != 0 || name[0] == '\0') {
             continue;
         }
-        if (cprisk_contains_any_token_i(
-                name, thread_tokens, sizeof(thread_tokens) / sizeof(thread_tokens[0]))) {
+        if (cprisk_contains_any_obf_token_i(
+                name, k_dbi_thread_rows, sizeof(k_dbi_thread_rows) / sizeof(k_dbi_thread_rows[0]))) {
             flags |= CPRISK_DBI_MARKER_THREAD;
             hit_count++;
         }
@@ -425,17 +703,42 @@ static uint32_t cprisk_detect_dbi_thread_markers_i(int *hit_count_out) {
     return flags;
 }
 
+/*
+ * Anonymous VM user tags used for MAP_ANON regions on Darwin (see vm_statistics.h VM_MEMORY_*).
+ * Matches CloudPhoneRiskKit RWXMemoryScanner anonymousUserTags (240–245).
+ */
+static int cprisk_vm_user_tag_is_anonymous_i(unsigned int user_tag) {
+    return (user_tag >= 240u && user_tag <= 245u) ? 1 : 0;
+}
+
 static uint32_t cprisk_detect_dbi_execmem_i(int *hit_count_out) {
     uint32_t flags = 0u;
-    int hit_count = 0;
-    mach_vm_address_t addr = MACH_VM_MIN_ADDRESS;
+    int exec_write_hits = 0;
+    int anon_exec_slab_hits = 0;
+    int foreign_mapped_exec_hits = 0;
+    cprisk_vm_region_address_t addr = CPRISK_VM_REGION_MIN_ADDRESS_I;
+    uint32_t scanned_regions = 0u;
+    const uint64_t start_ns = cprisk_monotonic_now_ns_i();
 
     while (1) {
-        mach_vm_size_t region_size = 0u;
-        uint32_t depth = 0u;
+        if (cprisk_watchdog_probe_should_stop()) {
+            break;
+        }
+        if (scanned_regions >= CPRISK_DBI_EXECMEM_REGION_BUDGET) {
+            break;
+        }
+        if (start_ns != 0u) {
+            const uint64_t now_ns = cprisk_monotonic_now_ns_i();
+            if (now_ns > start_ns &&
+                now_ns - start_ns >= CPRISK_DBI_EXECMEM_TIME_BUDGET_NS) {
+                break;
+            }
+        }
+        cprisk_vm_region_size_t region_size = 0u;
+        natural_t depth = 0u;
         vm_region_submap_info_data_64_t info;
         mach_msg_type_number_t info_count = VM_REGION_SUBMAP_INFO_COUNT_64;
-        kern_return_t kr = mach_vm_region_recurse(
+        kern_return_t kr = cprisk_vm_region_recurse_i(
             mach_task_self(),
             &addr,
             &region_size,
@@ -446,28 +749,71 @@ static uint32_t cprisk_detect_dbi_execmem_i(int *hit_count_out) {
         if (kr != KERN_SUCCESS) {
             break;
         }
+        scanned_regions += 1u;
         if (info.is_submap) {
             depth += 1u;
             continue;
         }
-        if ((info.protection & VM_PROT_EXECUTE) != 0 &&
-            (info.protection & VM_PROT_WRITE) != 0) {
+        const vm_prot_t prot = info.protection;
+        const int has_x = (prot & VM_PROT_EXECUTE) != 0;
+        const int has_w = (prot & VM_PROT_WRITE) != 0;
+
+        if (has_x && has_w) {
             flags |= CPRISK_DBI_MARKER_EXEC_WRITE;
-            hit_count++;
-            if (hit_count >= 4) {
-                break;
+            exec_write_hits++;
+        }
+
+        /*
+         * File-backed or non-anonymous RX mapping whose sample points all fall outside
+         * dyld-reported Mach-O segments (whitelist diff vs task VM).
+         */
+        if (has_x && !has_w && region_size > 0u &&
+            !cprisk_vm_user_tag_is_anonymous_i(info.user_tag)) {
+            const uintptr_t a0 = (uintptr_t)addr;
+            const uintptr_t a1 = a0 + (uintptr_t)(region_size >> 1);
+            const uintptr_t a2 = a0 + (uintptr_t)(region_size - 1u);
+            if (cprisk_addr_in_any_image_executable((const void *)a0) == 0 &&
+                cprisk_addr_in_any_image_executable((const void *)a1) == 0 &&
+                cprisk_addr_in_any_image_executable((const void *)a2) == 0) {
+                flags |= CPRISK_DBI_MARKER_FOREIGN_MAPPED_EXEC;
+                foreign_mapped_exec_hits++;
             }
         }
+
+        /*
+         * Stalker/Gum often materialize trampolines or finalized trace slabs as private
+         * anonymous RX (W^X) mappings outside any dyld image — distinct from generic RWX.
+         */
+        if (has_x && !has_w && region_size > 0u &&
+            region_size <= (cprisk_vm_region_size_t)(512u * 1024u) &&
+            cprisk_vm_user_tag_is_anonymous_i(info.user_tag) != 0 &&
+            (info.share_mode == 0u || info.share_mode == 3u) &&
+            cprisk_addr_in_any_image_executable((const void *)(uintptr_t)addr) == 0) {
+            flags |= CPRISK_DBI_MARKER_ANON_EXEC_SLAB;
+            anon_exec_slab_hits++;
+        }
+
+        if (exec_write_hits >= 4 || anon_exec_slab_hits >= 1 || foreign_mapped_exec_hits >= 1) {
+            break;
+        }
+
         if (region_size == 0u || addr > UINT64_MAX - region_size) {
             break;
         }
         addr += region_size;
     }
 
+    const int hit_total = exec_write_hits + anon_exec_slab_hits + foreign_mapped_exec_hits;
     if (hit_count_out) {
-        *hit_count_out = hit_count;
+        *hit_count_out = hit_total;
     }
     return flags;
+}
+
+int cprisk_vm_probe_anonymous_exec_outside_images(void) {
+    int hits = 0;
+    const uint32_t f = cprisk_detect_dbi_execmem_i(&hits);
+    return (f & CPRISK_DBI_MARKER_ANON_EXEC_SLAB) != 0u ? 1 : 0;
 }
 
 static uint64_t cprisk_mul_u64_saturating_i(uint64_t a, uint64_t b) {
@@ -488,14 +834,31 @@ int cprisk_detect_dbi_markers(void) {
     int execmem_hits = 0;
 
     uint32_t marker_flags = 0u;
+    if (_dyld_image_count() < 6u) {
+        marker_flags |= CPRISK_DBI_MARKER_DYLD_IMAGE_COUNT_LOW;
+    }
     marker_flags |= cprisk_detect_dbi_env_markers_i(&env_hits);
     marker_flags |= cprisk_detect_dbi_environ_scan_i(&environ_scan_hits);
     marker_flags |= cprisk_detect_dbi_image_markers_i(&image_hits);
     marker_flags |= cprisk_detect_dbi_thread_markers_i(&thread_hits);
     marker_flags |= cprisk_detect_dbi_execmem_i(&execmem_hits);
 
+    /*
+     * Cross-correlate Mach thread PCs outside any image with anonymous exec / RWX JIT surfaces.
+     * This matches Frida Stalker-style "foreign code" threads feeding off Gum slabs.
+     */
+    if (cprisk_detect_suspicious_threads() > 0 &&
+        (marker_flags & (CPRISK_DBI_MARKER_ANON_EXEC_SLAB | CPRISK_DBI_MARKER_EXEC_WRITE)) != 0u) {
+        marker_flags |= CPRISK_DBI_MARKER_STALKER_CORREL;
+    }
+
+    int correl_hit = 0;
+    if ((marker_flags & CPRISK_DBI_MARKER_STALKER_CORREL) != 0u) {
+        correl_hit = 1;
+    }
+
     const int total_hits =
-        env_hits + environ_scan_hits + image_hits + thread_hits + execmem_hits;
+        env_hits + environ_scan_hits + image_hits + thread_hits + execmem_hits + correl_hit;
     atomic_store(&s_dbi_last_marker_flags, marker_flags);
     atomic_store(&s_dbi_last_hit_count, total_hits > 0 ? (uint32_t)total_hits : 0u);
     return total_hits;
@@ -510,7 +873,18 @@ int cprisk_get_last_dbi_marker_hit_count(void) {
 }
 
 uint32_t cprisk_get_last_timing_anomaly_flags(void) {
-    return atomic_load(&s_timing_last_anomaly_flags);
+    uint32_t flags = atomic_load(&s_timing_last_anomaly_flags);
+    const uint32_t crypto = cprisk_crypto_trace_peek_flags_i();
+    if ((crypto & CPRISK_CRYPTO_TRACE_FLAG_SLOW) != 0u) {
+        flags |= CPRISK_TIMING_ANOMALY_CRYPTO_TRACE;
+    }
+    if ((crypto & CPRISK_CRYPTO_TRACE_FLAG_CNT_MACH_SKEW) != 0u) {
+        flags |= CPRISK_TIMING_ANOMALY_CRYPTO_TRACE_SKEW;
+    }
+    if ((crypto & CPRISK_CRYPTO_TRACE_FLAG_INVARIANT_FAIL) != 0u) {
+        flags |= CPRISK_TIMING_ANOMALY_CRYPTO_TRACE_INVARIANT;
+    }
+    return flags;
 }
 
 uint64_t cprisk_get_last_timing_probe_median_ns(void) {
@@ -518,11 +892,15 @@ uint64_t cprisk_get_last_timing_probe_median_ns(void) {
 }
 
 uint64_t cprisk_get_last_timing_probe_max_ns(void) {
-    return atomic_load(&s_timing_last_max_ns);
+    const uint64_t probe_max = atomic_load(&s_timing_last_max_ns);
+    const uint64_t crypto_max = cprisk_crypto_trace_last_ns_i();
+    return probe_max > crypto_max ? probe_max : crypto_max;
 }
 
 uint64_t cprisk_get_last_timing_probe_threshold_ns(void) {
-    return atomic_load(&s_timing_last_threshold_ns);
+    const uint64_t probe_threshold = atomic_load(&s_timing_last_threshold_ns);
+    const uint64_t crypto_threshold = cprisk_crypto_trace_threshold_ns_i();
+    return probe_threshold > crypto_threshold ? probe_threshold : crypto_threshold;
 }
 
 static void cprisk_reset_exception_delivery_probe_state_i(void) {
@@ -965,10 +1343,6 @@ int cprisk_detect_tty_debug(void) {
 
 /* ── (e) csops CS_DEBUGGED check ──────────────────────────────────── */
 
-#ifndef SYS_csops
-#define SYS_csops 169
-#endif
-
 #ifndef CS_OPS_STATUS
 #define CS_OPS_STATUS 0
 #endif
@@ -977,33 +1351,13 @@ int cprisk_detect_tty_debug(void) {
 #define CS_DEBUGGED 0x10000000u
 #endif
 
-static long cprisk_csops_syscall_i(pid_t pid, unsigned int ops,
-                                   void *useraddr, size_t usersize) {
-    register long x0 __asm("x0") = (long)pid;
-    register long x1 __asm("x1") = (long)ops;
-    register long x2 __asm("x2") = (long)(uintptr_t)useraddr;
-    register long x3 __asm("x3") = (long)usersize;
-    register long x16 __asm("x16") = SYS_csops;
-    unsigned int did_error = 0;
-
-    __asm__ volatile(
-        "svc #0x80\n"
-        "cset %w[did_error], cs\n"
-        : "+r"(x0), [did_error] "=r"(did_error)
-        : "r"(x1), "r"(x2), "r"(x3), "r"(x16)
-        : "cc", "memory"
-    );
-
-    if (did_error) return -1;
-    return x0;
-}
-
 int cprisk_csops_debug_check(void) {
     uint32_t flags = 0;
     pid_t pid = cprisk_getpid_direct();
+    int err = 0;
 
-    long result = cprisk_csops_syscall_i(pid, CS_OPS_STATUS, &flags, sizeof(flags));
-    if (result != 0) return 0;
+    if (cprisk_csops_direct(pid, CS_OPS_STATUS, &flags, sizeof(flags), &err) != 0)
+        return 0;
 
     return (flags & CS_DEBUGGED) ? 1 : 0;
 }
@@ -1019,10 +1373,10 @@ int cprisk_csops_status_flags(uint32_t *flags_out, int *error_out) {
         *error_out = 0;
     }
 
-    long result = cprisk_csops_syscall_i(pid, CS_OPS_STATUS, &flags, sizeof(flags));
-    if (result != 0) {
+    int err = 0;
+    if (cprisk_csops_direct(pid, CS_OPS_STATUS, &flags, sizeof(flags), &err) != 0) {
         if (error_out != NULL) {
-            *error_out = (int)result;
+            *error_out = err;
         }
         return -1;
     }
@@ -1355,15 +1709,26 @@ int cprisk_detect_single_stepping(void) {
 
 /* ── (g) Suspicious thread detection ──────────────────────────────── */
 
-int cprisk_detect_suspicious_threads(void) {
-    thread_act_array_t threads = NULL;
-    mach_msg_type_number_t thread_count = 0;
-
-    if (task_threads(mach_task_self(), &threads, &thread_count) != KERN_SUCCESS) {
-        return 0;
+int cprisk_thread_pc_exec_snapshot(
+    cprisk_thread_pc_exec_entry_t *out_entries,
+    uint32_t max_entries,
+    cprisk_thread_pc_exec_snapshot_t *out_snapshot
+) {
+    if (out_snapshot == NULL || (max_entries != 0u && out_entries == NULL)) {
+        return -1;
     }
 
-    int suspicious = 0;
+    thread_act_array_t threads = NULL;
+    mach_msg_type_number_t thread_count = 0;
+    memset(out_snapshot, 0, sizeof(*out_snapshot));
+    out_snapshot->version = 1u;
+
+    if (task_threads(mach_task_self(), &threads, &thread_count) != KERN_SUCCESS) {
+        return -1;
+    }
+
+    uint32_t suspicious = 0u;
+    const uint32_t entry_cap = max_entries;
 
     for (mach_msg_type_number_t i = 0; i < thread_count; i++) {
         arm_thread_state64_t ts;
@@ -1373,17 +1738,36 @@ int cprisk_detect_suspicious_threads(void) {
         kern_return_t kr = thread_get_state(
             threads[i], ARM_THREAD_STATE64, (thread_state_t)&ts, &count);
 
+        uintptr_t pc = 0u;
+        uint32_t in_exec_image = 0u;
+
         if (kr == KERN_SUCCESS) {
 #if defined(arm_thread_state64_get_pc)
-            uintptr_t pc = (uintptr_t)arm_thread_state64_get_pc(ts);
+            pc = (uintptr_t)arm_thread_state64_get_pc(ts);
 #else
-            uintptr_t pc = (uintptr_t)ts.__pc;
+            pc = (uintptr_t)ts.__pc;
 #endif
-            if (pc != 0 && !cprisk_addr_in_any_image((const void *)pc)) {
+            if (pc != 0u) {
+                in_exec_image = cprisk_addr_in_any_image_executable((const void *)pc) != 0 ? 1u : 0u;
+            }
+            if (pc != 0u && in_exec_image == 0u) {
                 suspicious++;
             }
         }
+
+        if (out_entries != NULL && (uint32_t)i < entry_cap) {
+            out_entries[i].thread_port = (uint32_t)threads[i];
+            out_entries[i].pc_in_executable_image = in_exec_image;
+            out_entries[i].pc = (uint64_t)pc;
+            out_entries[i].thread_get_state_kern_return = (int32_t)kr;
+        }
     }
+
+    out_snapshot->total_threads = (uint32_t)thread_count;
+    out_snapshot->foreign_exec_threads = suspicious;
+    out_snapshot->entries_written = thread_count > (mach_msg_type_number_t)entry_cap
+        ? entry_cap
+        : (uint32_t)thread_count;
 
     for (mach_msg_type_number_t i = 0; i < thread_count; i++) {
         mach_port_deallocate(mach_task_self(), threads[i]);
@@ -1392,16 +1776,51 @@ int cprisk_detect_suspicious_threads(void) {
                   (vm_address_t)threads,
                   sizeof(thread_act_t) * thread_count);
 
-    return suspicious;
+    return 0;
+}
+
+int cprisk_detect_suspicious_threads(void) {
+    cprisk_thread_pc_exec_snapshot_t snapshot;
+    if (cprisk_thread_pc_exec_snapshot(NULL, 0u, &snapshot) != 0) {
+        return 0;
+    }
+    return (int)snapshot.foreign_exec_threads;
 }
 
 /* ── (h) Developer Disk Image detection ───────────────────────────── */
 
+static void cprisk_xor_dec_path_i(const uint8_t *enc, size_t enc_len, uint8_t xor_key, char *out, size_t out_cap) {
+    if (!enc || !out || enc_len + 1u > out_cap || out_cap == 0u) {
+        if (out && out_cap > 0u) {
+            out[0] = '\0';
+        }
+        return;
+    }
+    for (size_t i = 0u; i < enc_len; i++) {
+        out[i] = (char)(enc[i] ^ xor_key);
+    }
+    out[enc_len] = '\0';
+}
+
 int cprisk_detect_developer_disk(void) {
-    if (cprisk_access_direct("/Developer/usr/bin/debugserver", F_OK, NULL) == 0)
+    /* XOR-obfuscated paths (0x5A) — avoid contiguous ASCII literals in __TEXT/__cstring. */
+    static const uint8_t k_p1[] = {
+        117, 30, 63, 44, 63, 54, 53, 42, 63, 40, 117, 47, 41, 40, 117, 56, 51, 52, 117, 62, 63, 56, 47, 61, 41, 63, 40, 44, 63, 40};
+    static const uint8_t k_p2[] = {
+        117, 30, 63, 44, 63, 54, 53, 42, 63, 40, 117, 47, 41, 40, 117, 54, 51, 56, 117, 54, 51, 56, 23, 59, 51, 52, 14, 50, 40, 63, 59, 62, 25, 50, 63, 57, 49, 63, 40, 116, 62, 35, 54, 51, 56};
+    char buf[64];
+    cprisk_xor_dec_path_i(k_p1, sizeof(k_p1), 0x5Au, buf, sizeof(buf));
+    if (buf[0] != '\0' && cprisk_access_direct(buf, F_OK, NULL) == 0) {
+        cprisk_secure_zero(buf, sizeof(buf));
         return 1;
-    if (cprisk_access_direct("/Developer/usr/lib/libMainThreadChecker.dylib", F_OK, NULL) == 0)
+    }
+    cprisk_secure_zero(buf, sizeof(buf));
+    cprisk_xor_dec_path_i(k_p2, sizeof(k_p2), 0x5Au, buf, sizeof(buf));
+    if (buf[0] != '\0' && cprisk_access_direct(buf, F_OK, NULL) == 0) {
+        cprisk_secure_zero(buf, sizeof(buf));
         return 1;
+    }
+    cprisk_secure_zero(buf, sizeof(buf));
     return 0;
 }
 
@@ -1431,6 +1850,10 @@ uint32_t cprisk_run_all_signal_probes(void) {
 #endif
     if (software_bp != 0) {
         result |= CPRISK_PROBE_SOFTWARE_BP;
+    }
+
+    if (cprisk_scan_instant_return_key_symbols_prefix() != 0) {
+        result |= CPRISK_PROBE_INSTANT_RETURN_PATCH;
     }
 
     if (cprisk_detect_tty_debug())
@@ -1502,21 +1925,59 @@ int cprisk_csops_status_flags(uint32_t *flags_out, int *error_out) {
         *flags_out = 0u;
     }
     if (error_out != NULL) {
-        *error_out = 0;
+        *error_out = ENOTSUP;
     }
     return -1;
 }
 int cprisk_detect_single_stepping(void) { return 0; }
+int cprisk_thread_pc_exec_snapshot(
+    cprisk_thread_pc_exec_entry_t *out_entries,
+    uint32_t max_entries,
+    cprisk_thread_pc_exec_snapshot_t *out_snapshot
+) {
+    (void)out_entries;
+    (void)max_entries;
+    if (out_snapshot == NULL) {
+        return -1;
+    }
+    memset(out_snapshot, 0, sizeof(*out_snapshot));
+    out_snapshot->version = 1u;
+    return 0;
+}
 int cprisk_detect_suspicious_threads(void) { return 0; }
 int cprisk_detect_developer_disk(void) { return 0; }
 int cprisk_detect_dbi_markers(void) { return 0; }
+int cprisk_vm_probe_anonymous_exec_outside_images(void) { return 0; }
 uint32_t cprisk_get_last_dbi_marker_flags(void) { return 0u; }
 int cprisk_get_last_dbi_marker_hit_count(void) { return 0; }
-uint32_t cprisk_get_last_timing_anomaly_flags(void) { return 0u; }
+uint32_t cprisk_get_last_timing_anomaly_flags(void) {
+    uint32_t f = 0u;
+    const uint32_t c = cprisk_crypto_trace_peek_flags_i();
+    if ((c & CPRISK_CRYPTO_TRACE_FLAG_SLOW) != 0u) {
+        f |= CPRISK_TIMING_ANOMALY_CRYPTO_TRACE;
+    }
+    if ((c & CPRISK_CRYPTO_TRACE_FLAG_CNT_MACH_SKEW) != 0u) {
+        f |= CPRISK_TIMING_ANOMALY_CRYPTO_TRACE_SKEW;
+    }
+    if ((c & CPRISK_CRYPTO_TRACE_FLAG_INVARIANT_FAIL) != 0u) {
+        f |= CPRISK_TIMING_ANOMALY_CRYPTO_TRACE_INVARIANT;
+    }
+    return f;
+}
 uint64_t cprisk_get_last_timing_probe_median_ns(void) { return 0u; }
-uint64_t cprisk_get_last_timing_probe_max_ns(void) { return 0u; }
-uint64_t cprisk_get_last_timing_probe_threshold_ns(void) { return 0u; }
-uint32_t cprisk_run_all_signal_probes(void) { return 0; }
+uint64_t cprisk_get_last_timing_probe_max_ns(void) { return cprisk_crypto_trace_last_ns_i(); }
+uint64_t cprisk_get_last_timing_probe_threshold_ns(void) { return cprisk_crypto_trace_threshold_ns_i(); }
+uint32_t cprisk_run_all_signal_probes(void) {
+#if defined(__arm64__) || defined(__aarch64__)
+    uint32_t r = 0u;
+    if (cprisk_scan_instant_return_key_symbols_prefix() != 0) {
+        r |= CPRISK_PROBE_INSTANT_RETURN_PATCH;
+    }
+    return r;
+#else
+    return 0u;
+#endif
+}
 int cprisk_is_cntpct_clock_available(void) { return 0; }
 
 #endif /* CPRISK_SIGNAL_PROBE_AVAILABLE */

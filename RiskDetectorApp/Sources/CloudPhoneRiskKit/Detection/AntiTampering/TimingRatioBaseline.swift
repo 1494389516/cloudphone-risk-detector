@@ -92,7 +92,7 @@ struct TimingRatioBaseline {
                 let start = mach_absolute_time()
                 _ = fn()
                 let end = mach_absolute_time()
-                getpidSamples.append(end &- start)
+                getpidSamples.append(max(1, end &- start))
             }
         }
 
@@ -104,9 +104,9 @@ struct TimingRatioBaseline {
                 let pathIdx = i & 1
                 let path = pathIdx == 0 ? "/usr/lib/dyld" : "/etc/passwd"
                 let start = mach_absolute_time()
-                _ = path.withCString { cprisk_access_direct($0, F_OK, nil) }
+                _ = SVCDirectCall.secureAccess(path)
                 let end = mach_absolute_time()
-                statSamples.append(end &- start)
+                statSamples.append(max(1, end &- start))
             }
         }
 

@@ -45,13 +45,31 @@ final class DynamicFeatureList: @unchecked Sendable {
 
     // MARK: - Suspicious ports (reserved for future TCP-based detection)
 
-    private static let defaultSuspiciousPorts: [Int] = [
-        27042, 27043, 4444
-    ]
+    private static var defaultSuspiciousPorts: [Int] { ObfuscatedConstants.suspiciousRuntimePorts }
+
+    /// Built-in offline fallback (non-default listen ports); merged before remote `additionalPorts`, deduped.
+    private static var builtinFallbackSuspiciousPorts: [Int] { ObfuscatedConstants.suspiciousPortsBuiltinFallback }
+
+    private static func orderedUniquePorts(_ segments: [[Int]]) -> [Int] {
+        var seen = Set<Int>()
+        var out: [Int] = []
+        for seg in segments {
+            for p in seg {
+                guard (1...65535).contains(p), !seen.contains(p) else { continue }
+                seen.insert(p)
+                out.append(p)
+            }
+        }
+        return out
+    }
 
     var suspiciousPorts: [Int] {
         stateLock.withLock {
-            Self.defaultSuspiciousPorts + state.additionalPorts
+            Self.orderedUniquePorts([
+                Self.defaultSuspiciousPorts,
+                Self.builtinFallbackSuspiciousPorts,
+                state.additionalPorts,
+            ])
         }
     }
 

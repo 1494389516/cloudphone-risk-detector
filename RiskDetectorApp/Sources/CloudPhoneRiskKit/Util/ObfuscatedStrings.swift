@@ -146,6 +146,85 @@ enum ObfuscatedConstants {
         StringDeobfuscator.base64Decode("d2F0Y2hkb2c=")
     }
 
+    /// `debugger:` method prefix for `DebuggerDetector` (avoid raw prefix in TEXT).
+    static var methodPrefixDebugger: String {
+        StringDeobfuscator.base64Decode("ZGVidWdnZXI6")
+    }
+
+    /// Debugger / Frida-adjacent ports checked by `DebuggerDetector`.
+    static var debuggerPorts: [Int] {
+        let key: UInt16 = 0x5A5A
+        let encoded: [UInt16] = [0x6A63, 0x5373, 0x33F8, 0x33F9, 0x07D0]
+        return encoded.map { Int($0 ^ key) }
+    }
+
+    /// Suspicious TCP ports reserved for Frida/socket-based detectors.
+    static var suspiciousRuntimePorts: [Int] {
+        let key: UInt16 = 0x5A5A
+        let encoded: [UInt16] = [0x33F8, 0x33F9, 0x4B06]
+        return encoded.map { Int($0 ^ key) }
+    }
+
+    /// Offline fallback: commonly seen non-default Frida / gadget listen ports (merged + deduped in `DynamicFeatureList`).
+    static var suspiciousPortsBuiltinFallback: [Int] {
+        let key: UInt16 = 0x5A5A
+        let encoded: [UInt16] = [
+            0x33FB, 0x33FE, 0x78E2, 0x79D8, 0x5F63, 0x2033, 0xFB9C, 0x4B06,
+            0xE834, 0x990A, 0x8E6B, 0x8359, 0xA7B2, 0x9A5A, 0x7AA1, 0x20ED,
+            0x3075, 0x7D55,
+        ]
+        return encoded.map { Int($0 ^ key) }
+    }
+
+    /// `fish` + `hook` stack needle for `CapabilityProbeEngine` (not a literal `fish` prefix in source).
+    static var hookFrameworkFishhookToken: String {
+        StringDeobfuscator.xorDecode([0x36, 0x3d, 0x3a, 0x27], key: 0x55)
+    }
+
+    /// Honeypot bait lines (base64; decoded only when arming pages).
+    static var honeypotBaitRows: [[String]] {
+        [
+            [
+                StringDeobfuscator.base64Decode("QUVTLTI1Ni1LZXktQ2xvdWRQaG9uZS1TZWN1cmU="),
+                StringDeobfuscator.base64Decode("TWFzdGVyS2V5LVJTQS00MDk2LUludGVybmFs"),
+            ],
+            [
+                StringDeobfuscator.base64Decode("RGV2aWNlLUlELUNsb3VkUGhvbmUtUmlzay1TREs="),
+                StringDeobfuscator.base64Decode("U2Vzc2lvbi1Ub2tlbi1JbnRlcm5hbC1TZWNyZXQ="),
+            ],
+            [
+                StringDeobfuscator.base64Decode("UHJpdmF0ZUtleS1FQy1QMjU2LVNpZ25pbmc="),
+                StringDeobfuscator.base64Decode("Q2VydGlmaWNhdGUtQ2hhaW4tUm9vdC1DQS1Qcm9k"),
+            ],
+        ]
+    }
+
+    /// Critical jailbreak paths used by multi-path consensus detectors.
+    static var jailbreakConsensusCriticalPaths: [String] {
+        [
+            StringDeobfuscator.base64Decode("L0FwcGxpY2F0aW9ucy9DeWRpYS5hcHA="),
+            StringDeobfuscator.base64Decode("L0FwcGxpY2F0aW9ucy9TaWxlby5hcHA="),
+            StringDeobfuscator.base64Decode("L3Zhci9qYg=="),
+            StringDeobfuscator.base64Decode("L0xpYnJhcnkvTW9iaWxlU3Vic3RyYXRlL01vYmlsZVN1YnN0cmF0ZS5keWxpYg=="),
+        ]
+    }
+
+    /// Call-stack substring needles for `RuntimeIntegrityValidator` (stack frame scan).
+    static var runtimeIntegrityStackSuspiciousNeedles: [String] {
+        [
+            StringDeobfuscator.base64Decode("TW9iaWxlU3Vic3RyYXRl"),
+            StringDeobfuscator.base64Decode("U3Vic3RyYXRlTG9hZGVy"),
+            StringDeobfuscator.base64Decode("c3Vic3RpdHV0ZQ=="),
+            StringDeobfuscator.base64Decode("RnJpZGFHYWRnZXQ="),
+            StringDeobfuscator.base64Decode("ZnJpZGEtYWdlbnQ="),
+            StringDeobfuscator.base64Decode("Y3ljcmlwdA=="),
+            StringDeobfuscator.base64Decode("U1NMS2lsbFN3aXRjaA=="),
+            StringDeobfuscator.base64Decode("bGliUmV2ZWFs"),
+            StringDeobfuscator.base64Decode("U2hhZG93LmR5bGli"),
+            StringDeobfuscator.base64Decode("VHdlYWtJbmplY3Q="),
+        ]
+    }
+
     static var keywordTaskPort: String {
         StringDeobfuscator.base64Decode("dGFza19wb3J0")
     }
@@ -184,6 +263,132 @@ enum ObfuscatedConstants {
 
     static var signalAntiDebugWatchdogExceptionQuery: String {
         StringDeobfuscator.base64Decode("YW50aV9kZWJ1Z193YXRjaGRvZ19leGNlcHRpb25fcXVlcnk=")
+    }
+
+    /// Protocol-stable `SignalID` values (decoded at runtime; avoid plaintext in `SignalID` enum).
+    static var signalAntiDebugWatchdogDyldInjection: String {
+        StringDeobfuscator.base64Decode("YW50aV9kZWJ1Z193YXRjaGRvZ19keWxkX2luamVjdGlvbg==")
+    }
+
+    static var signalAntiDebugWatchdogDenyAttachVerify: String {
+        StringDeobfuscator.base64Decode("YW50aV9kZWJ1Z193YXRjaGRvZ19kZW55X2F0dGFjaF92ZXJpZnk=")
+    }
+
+    static var signalAntiDebugWatchdogAMFICsFlags: String {
+        StringDeobfuscator.base64Decode("YW50aV9kZWJ1Z193YXRjaGRvZ19hbWZpX2NzX2ZsYWdz")
+    }
+
+    static var signalAntiDebugWatchdogGetTaskAllow: String {
+        StringDeobfuscator.base64Decode("YW50aV9kZWJ1Z193YXRjaGRvZ19nZXRfdGFza19hbGxvdw==")
+    }
+
+    /// Watchdog memcmp prologue drift on objc_msgSend / libdyld (runtime Frida surface).
+    static var signalAntiDebugWatchdogCriticalHookSurface: String {
+        StringDeobfuscator.base64Decode("YW50aV9kZWJ1Z193YXRjaGRvZ19jcml0aWNhbF9ob29rX3N1cmZhY2U=")
+    }
+
+    static var signalAntiDebugWatchdogPacThreadEntry: String {
+        StringDeobfuscator.base64Decode("YW50aV9kZWJ1Z193YXRjaGRvZ19wYWNfdGhyZWFkX2VudHJ5")
+    }
+
+    static var signalAntiDebugWatchdogVmImageLayoutDrift: String {
+        StringDeobfuscator.base64Decode("YW50aV9kZWJ1Z193YXRjaGRvZ192bV9pbWFnZV9sYXlvdXRfZHJpZnQ=")
+    }
+
+    static var signalWhiteboxPrfProbeDegraded: String {
+        StringDeobfuscator.base64Decode("d2hpdGVib3hfcHJmX3Byb2JlX2RlZ3JhZGVk")
+    }
+
+    static var signalSoftwareBreakpointDetected: String {
+        StringDeobfuscator.base64Decode("c29mdHdhcmVfYnJlYWtwb2ludF9kZXRlY3RlZA==")
+    }
+
+    static var signalExceptionDeliveryTimeout: String {
+        StringDeobfuscator.base64Decode("ZXhjZXB0aW9uX2RlbGl2ZXJ5X3RpbWVvdXQ=")
+    }
+
+    /// Protocol-stable `SignalID` for CRiskCore libc fallback when direct syscalls are unavailable.
+    static var signalLibcDirectSyscallFallback: String {
+        StringDeobfuscator.base64Decode("bGliY19kaXJlY3Rfc3lzY2FsbF9mYWxsYmFjaw==")
+    }
+
+    /// Evidence `mechanism` value for libc / arc4random fallback (avoid plaintext in binary).
+    static var evidenceMechanismLibcDirectSyscallFallback: String {
+        StringDeobfuscator.base64Decode(
+            "bGliY19vcl9hcmM0X2ZhbGxiYWNrX2FmdGVyX2RpcmVjdF9zeXNjYWxsX3VuYXZhaWxhYmxl"
+        )
+    }
+
+    static var signalDebuggerDetected: String {
+        StringDeobfuscator.base64Decode("ZGVidWdnZXJfZGV0ZWN0ZWQ=")
+    }
+
+    static var signalCsopsDebugged: String {
+        StringDeobfuscator.base64Decode("Y3NvcHNfZGVidWdnZWQ=")
+    }
+
+    static var signalHardwareBreakpointDetected: String {
+        StringDeobfuscator.base64Decode("aGFyZHdhcmVfYnJlYWtwb2ludF9kZXRlY3RlZA==")
+    }
+
+    static var signalSignalProbeDebugger: String {
+        StringDeobfuscator.base64Decode("c2lnbmFsX3Byb2JlX2RlYnVnZ2Vy")
+    }
+
+    static var signalAntidebugPlanEscalated: String {
+        StringDeobfuscator.base64Decode("YW50aWRlYnVnX3BsYW5fZXNjYWxhdGVk")
+    }
+
+    static var signalStalkerJitRWX: String {
+        StringDeobfuscator.base64Decode("c3RhbGtlcl9qaXRfcnd4")
+    }
+
+    static var signalRwxJitCoexistence: String {
+        StringDeobfuscator.base64Decode("cnd4X2ppdF9jb2V4aXN0ZW5jZQ==")
+    }
+
+    static var signalMultipathCrossInconsistency: String {
+        StringDeobfuscator.base64Decode("bXVsdGlwYXRoX2Nyb3NzX2luY29uc2lzdGVuY3k=")
+    }
+
+    static var signalPacDisabled: String {
+        StringDeobfuscator.base64Decode("cGFjX2Rpc2FibGVk")
+    }
+
+    static var signalPacPointerInvalid: String {
+        StringDeobfuscator.base64Decode("cGFjX3BvaW50ZXJfaW52YWxpZA==")
+    }
+
+    static var signalDtraceKdebugActivity: String {
+        StringDeobfuscator.base64Decode("ZHRyYWNlX2tkZWJ1Z19hY3Rpdml0eQ==")
+    }
+
+    static var signalLldbJitSmallRWX: String {
+        StringDeobfuscator.base64Decode("bGxkYl9qaXRfc21hbGxfcnd4")
+    }
+
+    static var signalDyldSharedCacheIntegrity: String {
+        StringDeobfuscator.base64Decode("ZHlsZF9zaGFyZWRfY2FjaGVfaW50ZWdyaXR5")
+    }
+
+    static var signalDyldSharedCacheUUIDMismatch: String {
+        StringDeobfuscator.base64Decode("ZHlsZF9zaGFyZWRfY2FjaGVfdXVpZF9taXNtYXRjaA==")
+    }
+
+    static var signalDyldSharedCacheSlideMismatch: String {
+        StringDeobfuscator.base64Decode("ZHlsZF9zaGFyZWRfY2FjaGVfc2xpZGVfbWlzbWF0Y2g=")
+    }
+
+    static var signalDyldSharedCacheSymbolMismatch: String {
+        StringDeobfuscator.base64Decode("ZHlsZF9zaGFyZWRfY2FjaGVfc3ltYm9sX21pc21hdGNo")
+    }
+
+    static var signalDylibInjectImageCountLow: String {
+        StringDeobfuscator.base64Decode("ZHlsaWJfaW5qZWN0X2ltYWdlX2NvdW50X2xvdw==")
+    }
+
+    static var signalIfaceSpawnPathDivergence: String {
+        StringDeobfuscator.base64Decode("aWZhY2Vfc3Bhd25fcGF0aF9kaXZlcmdlbmNl")
     }
 
     static var signalFridaModuleDetected: String {
@@ -334,6 +539,19 @@ enum ObfuscatedConstants {
         StringDeobfuscator.base64Decode("ZnJpZGE6bGlzdGVuOg==")
     }
 
+    static var methodPrefixFridaAnomalousProto: String {
+        StringDeobfuscator.base64Decode("ZnJpZGE6YW5vbV9wcm90bzo=")
+    }
+
+    /// Neutral prefix for TCP listeners that are not Frida/D-Bus protocol (avoids false "frida" labels).
+    static var methodPrefixSuspiciousLocalListen: String {
+        StringDeobfuscator.base64Decode("c3VzcGljaW91czpsb2NhbF9saXN0ZW46")
+    }
+
+    static var envKeyCpriskFridaAnomScan: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX0ZSSURBX0FOT1NfU0NBTg==")
+    }
+
     static var methodPrefixFridaFile: String {
         StringDeobfuscator.base64Decode("ZnJpZGE6ZmlsZTo=")
     }
@@ -357,6 +575,11 @@ enum ObfuscatedConstants {
     /// CRiskCore `cprisk_frida_runtime_snapshot` channels (dyld / dlsym / proc).
     static var methodPrefixFridaRuntime: String {
         StringDeobfuscator.base64Decode("ZnJpZGE6cnVudGltZTo=")
+    }
+
+    /// `honeypot:` detector method prefix (Swift honeypot module).
+    static var methodPrefixHoneypot: String {
+        StringDeobfuscator.base64Decode("aG9uZXlwb3Q6")
     }
 
     /// Emitted when two or more runtime channels agree (higher confidence).
@@ -396,6 +619,14 @@ enum ObfuscatedConstants {
         StringDeobfuscator.base64Decode("ZnJpZGFfc3RhbGtlcjo=")
     }
 
+    static var methodPrefixFridaMemoryLayout: String {
+        StringDeobfuscator.base64Decode("ZnJpZGFfbWVtb3J5X2xheW91dDo=")
+    }
+
+    static var signalFridaMemoryLayoutAnomaly: String {
+        StringDeobfuscator.base64Decode("ZnJpZGFfbWVtb3J5X2xheW91dF9hbm9tYWx5")
+    }
+
     static var signalFridaDetected: String {
         StringDeobfuscator.base64Decode("ZnJpZGFfZGV0ZWN0ZWQ=")
     }
@@ -430,6 +661,10 @@ enum ObfuscatedConstants {
 
     static var signalFridaExceptionPort: String {
         StringDeobfuscator.base64Decode("ZnJpZGFfZXhjZXB0aW9uX3BvcnQ=")
+    }
+
+    static var signalFridaExceptionPortStartupRace: String {
+        StringDeobfuscator.base64Decode("ZnJpZGFfZXhjZXB0aW9uX3BvcnRfc3RhcnR1cF9yYWNl")
     }
 
     static var signalFridaDispatchQueue: String {
@@ -478,6 +713,10 @@ enum ObfuscatedConstants {
 
     static var detectorNameAntiTamperingDetector: String {
         StringDeobfuscator.base64Decode("QW50aVRhbXBlcmluZ0RldGVjdG9y")
+    }
+
+    static var detectorNameDebuggerDetector: String {
+        StringDeobfuscator.base64Decode("RGVidWdnZXJEZXRlY3Rvcg==")
     }
 
     static var signalLibcInlineHookDetected: String {
@@ -539,6 +778,184 @@ enum ObfuscatedConstants {
 
     static var fridaEnvNeedleUpper: String {
         StringDeobfuscator.base64Decode("RlJJREE=")
+    }
+
+    // MARK: - Frida detector tuning (process env keys; values must match launchd/shell at runtime)
+
+    static var envKeyCpriskFridaPortSweep: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX0ZSSURBX1BPUlRfU1dFRVA=")
+    }
+
+    static var envKeyCpriskFridaPortSweepAll: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX0ZSSURBX1BPUlRfU1dFRVBfQUxM")
+    }
+
+    static var envKeyCpriskFridaPortSweepMax: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX0ZSSURBX1BPUlRfU1dFRVBfTUFY")
+    }
+
+    static var envKeyCpriskFridaMemsig: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX0ZSSURBX01FTVNJRw==")
+    }
+
+    static var envKeyCpriskFridaMemsigBuiltin: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX0ZSSURBX01FTVNJR19CVUlMVElO")
+    }
+
+    static var envKeyCpriskFridaMemsigIntervalMs: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX0ZSSURBX01FTVNJR19JTlRFUlZBTF9NUw==")
+    }
+
+    static var envKeyCpriskFridaMemsigMaxPages: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX0ZSSURBX01FTVNJR19NQVhfUEFHRVM=")
+    }
+
+    static var envKeyCpriskFridaMemsigMaxRegionBytes: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX0ZSSURBX01FTVNJR19NQVhfUkVHSU9OX0JZVEVT")
+    }
+
+    static var envKeyCpriskFridaMemsigChunkBytes: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX0ZSSURBX01FTVNJR19DSFVOS19CWVRFUw==")
+    }
+
+    static var envKeyCpriskFridaMemsigMaxRegionIter: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX0ZSSURBX01FTVNJR19NQVhfUkVHSU9OX0lURVI=")
+    }
+
+    /// XOR+SHA256(label) seeds for `FridaDetector.protoToken` (must stay stable vs on-disk enc blobs).
+    static var fridaProtoLabelFnFrida: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX0ZOX0ZSSURB")
+    }
+
+    static var fridaProtoLabelGum: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX1BST1RPX0dVTQ==")
+    }
+
+    static var fridaProtoLabelReFrida: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX1BST1RPX1JFX0ZSSURB")
+    }
+
+    static var fridaProtoLabelDbus: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX1BST1RPX0RCVVM=")
+    }
+
+    static var fridaProtoLabelAuth: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX1BST1RPX0FVVEg=")
+    }
+
+    static var fridaProtoLabelReject: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX1BST1RPX1JFSkVDVA==")
+    }
+
+    static var fridaProtoLabelDbusAuth: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX1BST1RPX0RCVVNfQVVUSA==")
+    }
+
+    static var fridaProtoLabelSaslOK: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX1BST1RPX1NBU0xfT0s=")
+    }
+
+    static var fridaProtoLabelSaslRej: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX1BST1RPX1NBU0xfUkVK")
+    }
+
+    static var fridaProtoLabelDbusWire: String {
+        StringDeobfuscator.base64Decode("Q1BSSVNLX1BST1RPX0RCVVNfV0lSRQ==")
+    }
+
+    /// Main-binary `dlsym` probe for honeypot (Mach-O C symbol; not exported by the app when clean).
+    static var honeypotFridaAgentMainSymbol: String {
+        StringDeobfuscator.base64Decode("X2ZyaWRhX2FnZW50X21haW4=")
+    }
+
+    /// Localhost Frida protocol probes (wire bytes; not protocol-stable identifiers).
+    static var fridaProtocolProbePayloads: [String] {
+        [
+            StringDeobfuscator.base64Decode("QVVUSA0K"),
+            StringDeobfuscator.base64Decode("R0VUIC8gSFRUUC8xLjANCg0K"),
+            StringDeobfuscator.base64Decode("AA=="),
+        ]
+    }
+
+    /// Active D-Bus/SASL/HTTP/null probes (order matters). Used with per-probe TCP connections in `FridaDetector`.
+    static var fridaProtocolActiveWirePayloads: [String] {
+        [
+            StringDeobfuscator.base64Decode("QVVUSCBFWFRFUk5BTA0K"),
+            StringDeobfuscator.base64Decode("QVVUSCBBTk9OWU1PVVMgDQo="),
+            StringDeobfuscator.base64Decode("QVVUSA0K"),
+            StringDeobfuscator.base64Decode("R0VUIC8gSFRUUC8xLjANCg0K"),
+            StringDeobfuscator.base64Decode("AA=="),
+        ]
+    }
+
+    /// dyld / libc symbol names resolved via `dlsym` for PLT integrity baselines.
+    static var symbolSysctl: String {
+        StringDeobfuscator.base64Decode("c3lzY3Rs")
+    }
+
+    static var symbolStat: String {
+        StringDeobfuscator.base64Decode("c3RhdA==")
+    }
+
+    static var symbolAccess: String {
+        StringDeobfuscator.base64Decode("YWNjZXNz")
+    }
+
+    static var symbolDlsym: String {
+        StringDeobfuscator.base64Decode("ZGxzeW0=")
+    }
+
+    static var symbolGetenv: String {
+        StringDeobfuscator.base64Decode("Z2V0ZW52")
+    }
+
+    static var symbolDyldImageCount: String {
+        StringDeobfuscator.base64Decode("X2R5bGRfaW1hZ2VfY291bnQ=")
+    }
+
+    static var symbolDyldGetImageName: String {
+        StringDeobfuscator.base64Decode("X2R5bGRfZ2V0X2ltYWdlX25hbWU=")
+    }
+
+    static var symbolDyldGetImageHeader: String {
+        StringDeobfuscator.base64Decode("X2R5bGRfZ2V0X2ltYWdlX2hlYWRlcg==")
+    }
+
+    /// Parent process / path needles (anti-debug / anti-tamper heuristics).
+    static var antiTamperSuspiciousParentNeedles: [String] {
+        [
+            keywordLldb,
+            StringDeobfuscator.base64Decode("Z2Ri"),
+            StringDeobfuscator.base64Decode("ZGVidWdzZXJ2ZXI="),
+            keywordFrida,
+            StringDeobfuscator.base64Decode("aG9wcGVy"),
+            StringDeobfuscator.base64Decode("aWRh"),
+            StringDeobfuscator.base64Decode("Y3ljcmlwdA=="),
+        ]
+    }
+
+    /// Standard `DYLD_INSERT_LIBRARIES` env name (dyld injection probes).
+    static var envKeyDyldInsertLibraries: String {
+        StringDeobfuscator.base64Decode("RFlMRF9JTlNFUlRfTElCUkFSSUVT")
+    }
+
+    static var antiTamperingDebugEnvironmentKeys: [String] {
+        [
+            envKeyDyldInsertLibraries,
+            StringDeobfuscator.base64Decode("RFlMRF9GT1JDRV9GTEFUX05BTUVTUEFDRQ=="),
+            StringDeobfuscator.base64Decode("TWFsbG9jU3RhY2tMb2dnaW5n"),
+            StringDeobfuscator.base64Decode("TlNVbmJ1ZmZlcmVkSU8="),
+            StringDeobfuscator.base64Decode("T1NfQUNUSVZJVFlfRFRfTU9ERQ=="),
+        ]
+    }
+
+    static var debuggerInstrumentationEnvironmentKeys: [String] {
+        [
+            envKeyDyldInsertLibraries,
+            StringDeobfuscator.base64Decode("T1NfQUNUSVZJVFlfRFRfTU9ERQ=="),
+            StringDeobfuscator.base64Decode("TlNab21iaWVFbmFibGVk"),
+            StringDeobfuscator.base64Decode("TWFsbG9jU3RhY2tMb2dnaW5n"),
+        ]
     }
 
     static var fridaModuleMarkers: [String] {
@@ -837,6 +1254,10 @@ enum ObfuscatedConstants {
 
     static var detectorIDDylibInjection: String {
         StringDeobfuscator.base64Decode("ZHlsaWJfaW5qZWN0aW9u")
+    }
+
+    static var signalWatchdogAdaptiveHint: String {
+        StringDeobfuscator.base64Decode("d2F0Y2hkb2dfYWRhcHRpdmVfaGludA==")
     }
 }
 

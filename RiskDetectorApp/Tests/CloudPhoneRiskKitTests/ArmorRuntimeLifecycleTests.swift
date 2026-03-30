@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import XCTest
 import CRiskCore
@@ -5,6 +6,22 @@ import CRiskCore
 
 final class ArmorRuntimeLifecycleTests: XCTestCase {
     private let armorRootKeyDefaultsKey = "com.cloudphone.riskkit.armor.root_key_hex"
+
+    private func textEncryptSelfCheckResult() throws -> UInt32 {
+        typealias SelfCheckFn = @convention(c) () -> UInt32
+
+        guard let handle = dlopen(nil, RTLD_NOW) else {
+            throw XCTSkip("dlopen(nil) unavailable for text encrypt self-check lookup")
+        }
+        defer { dlclose(handle) }
+
+        guard let symbol = dlsym(handle, "cprisk_text_encrypt_self_check") else {
+            throw XCTSkip("cprisk_text_encrypt_self_check is not linked in this test runtime")
+        }
+
+        let function = unsafeBitCast(symbol, to: SelfCheckFn.self)
+        return function()
+    }
 
     private func waitForWatchdogSnapshot(
         timeout: TimeInterval = 1.0
@@ -198,6 +215,66 @@ final class ArmorRuntimeLifecycleTests: XCTestCase {
 
     // MARK: - Init Timing
 
+    func testInitTimingThresholdSyntheticMachineOlderGenerationIsHigherThanNew() {
+        let older = cprisk_test_init_timing_threshold_ns_for_machine(
+            "iPhone10,1",
+            cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_PRODUCTION)
+        )
+        let newer = cprisk_test_init_timing_threshold_ns_for_machine(
+            "iPhone17,1",
+            cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_PRODUCTION)
+        )
+        XCTAssertGreaterThan(
+            older,
+            newer,
+            "older SoC generations should receive a larger slack threshold than recent ones"
+        )
+    }
+
+    func testRelaxedAntiDebugModeRaisesInitTimingThresholdVersusProduction() {
+        let machine = "iPhone14,2"
+        let prod = cprisk_test_init_timing_threshold_ns_for_machine(
+            machine,
+            cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_PRODUCTION)
+        )
+        let relaxed = cprisk_test_init_timing_threshold_ns_for_machine(
+            machine,
+            cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA)
+        )
+        let appStoreSafe = cprisk_test_init_timing_threshold_ns_for_machine(
+            machine,
+            cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_APP_STORE_SAFE)
+        )
+        XCTAssertGreaterThan(relaxed, prod)
+        XCTAssertEqual(appStoreSafe, relaxed)
+    }
+
+    func testAntiDebugRuntimeModeEnumAlignsWithCConstants() {
+        XCTAssertEqual(CPRiskAntiDebugRuntimeMode.production.rawValue, Int(CPRISK_RUNTIME_HARDENING_PRODUCTION))
+        XCTAssertEqual(CPRiskAntiDebugRuntimeMode.relaxedDevelopmentQA.rawValue, Int(CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA))
+        XCTAssertEqual(CPRiskAntiDebugRuntimeMode.appStoreSafe.rawValue, Int(CPRISK_RUNTIME_HARDENING_APP_STORE_SAFE))
+    }
+
+    func testRuntimeHardeningModeRoundTripInC() {
+        cprisk_set_runtime_hardening_mode(cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA))
+        XCTAssertEqual(Int(cprisk_get_runtime_hardening_mode()), Int(CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA))
+        cprisk_set_runtime_hardening_mode(cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_APP_STORE_SAFE))
+        XCTAssertEqual(Int(cprisk_get_runtime_hardening_mode()), Int(CPRISK_RUNTIME_HARDENING_APP_STORE_SAFE))
+        cprisk_set_runtime_hardening_mode(cprisk_runtime_hardening_mode_t(CPRISK_RUNTIME_HARDENING_PRODUCTION))
+        XCTAssertEqual(Int(cprisk_get_runtime_hardening_mode()), Int(CPRISK_RUNTIME_HARDENING_PRODUCTION))
+    }
+
+    func testStartWithRelaxedAntiDebugModeAppliesCoreModeAndStopResetsIt() {
+        let config = CPRiskConfig()
+        config.antiDebugRuntimeMode = .relaxedDevelopmentQA
+
+        CPRiskKit.shared.start(config: config)
+        XCTAssertEqual(Int(cprisk_get_runtime_hardening_mode()), Int(CPRISK_RUNTIME_HARDENING_RELAXED_DEV_QA))
+
+        CPRiskKit.shared.stop()
+        XCTAssertEqual(Int(cprisk_get_runtime_hardening_mode()), Int(CPRISK_RUNTIME_HARDENING_PRODUCTION))
+    }
+
     func testInitElapsedNsIsNonZeroAfterStart() {
         CPRiskKit.shared.start()
         defer { CPRiskKit.shared.stop() }
@@ -349,6 +426,136 @@ final class ArmorRuntimeLifecycleTests: XCTestCase {
             seen.insert(selected)
         }
         XCTAssertGreaterThanOrEqual(seen.count, 3, "path selector should spread calls across multiple variants")
+    }
+
+    func testObfDecodeSha256TagMatchesFridaToken() {
+        let domain = UInt32(CPRISK_OBF_TAG_DOMAIN_FRIDA_RT)
+        let enc: [UInt8] = [0xad, 0x0c, 0x6f, 0xa8, 0x2c]
+        var buf = [CChar](repeating: 0, count: 32)
+        let rc = cprisk_obf_decode_sha256_tag(domain, 1, enc, enc.count, &buf, buf.count)
+        XCTAssertEqual(rc, 0)
+        XCTAssertEqual(String(cString: buf), "frida")
+    }
+
+    func testArm64SuspiciousTrampolinePrefixDetectorFlagsCommonHookStubs() {
+        let clean: [UInt32] = [0xA9BF7BFD, 0x910003FD, 0xA90153F3]
+        let branchStub: [UInt32] = [0x14000008, 0xD503201F, 0xD503201F]
+        let literalBrStub: [UInt32] = [0x58000010, 0xD61F0200, 0xD503201F]
+        let adrpAddBrStub: [UInt32] = [0x90000010, 0x91000210, 0xD61F0200]
+
+        func scan(_ words: [UInt32]) -> Int32 {
+            words.withUnsafeBytes { raw in
+                cprisk_scan_arm64_suspicious_trampoline_prefix(raw.baseAddress, raw.count)
+            }
+        }
+
+        XCTAssertEqual(scan(clean), 0)
+        XCTAssertEqual(scan(branchStub), 1)
+        XCTAssertEqual(scan(literalBrStub), 1)
+        XCTAssertEqual(scan(adrpAddBrStub), 1)
+    }
+
+    func testFridaRuntimeSnapshotBehaviorFieldsStayConsistent() {
+        var snapshot = cprisk_frida_runtime_snapshot_t()
+        XCTAssertEqual(cprisk_frida_runtime_snapshot(&snapshot), 0)
+        if snapshot.supported == 0 {
+            XCTAssertEqual(snapshot.flags, 0)
+            XCTAssertEqual(snapshot.behavior_flags, 0)
+            XCTAssertEqual(snapshot.behavior_hit_count, 0)
+            return
+        }
+
+        let behaviorBit = UInt32(CPRISK_FRIDA_RT_BEHAVIOR)
+        let behaviorSet = (snapshot.flags & behaviorBit) != 0
+        if behaviorSet {
+            XCTAssertNotEqual(snapshot.behavior_flags, 0)
+            XCTAssertGreaterThan(snapshot.behavior_hit_count, 0)
+        } else {
+            XCTAssertEqual(snapshot.behavior_flags, 0)
+            XCTAssertEqual(snapshot.behavior_hit_count, 0)
+        }
+    }
+
+    func testVmMprotectCountersReadableAfterReset() {
+        cprisk_test_mprotect_reset_tamper_state()
+        XCTAssertEqual(cprisk_get_vm_mprotect_crosscheck_mismatch_count(), 0)
+        XCTAssertEqual(cprisk_get_vm_mprotect_mach_trap_mismatch_count(), 0)
+    }
+
+    func testSvcStubIntegrityReturnsStableMaskOnThisPlatform() {
+        let mask = cprisk_verify_svc_stub_integrity()
+        /* bits 0..2: syscall6/deny/syscall0; 3..5: SHA-256 whole-page auxiliary */
+        XCTAssertLessThanOrEqual(mask, 0x3F)
+    }
+
+    func testDlsymPrologueVerifierReturnsSuccessOnThisPlatform() {
+        XCTAssertEqual(cprisk_verify_dlsym_prologue(), 1)
+    }
+
+    func testRuntimeHookSurfacePrologueVerifierReturnsSuccessOnThisPlatform() {
+        XCTAssertEqual(cprisk_verify_runtime_hook_surface_prologues(), 1)
+    }
+
+    func testRuntimeHookSurfaceExportDriftMaskIsWithinKnownWatchdogBits() {
+        let mask = cprisk_runtime_hook_surface_export_drift_mask()
+        let allowed: UInt32 =
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_ACCESS) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_STAT) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_LSTAT) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_OPEN) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_SOCKET) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_CONNECT) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_DLOPEN) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_SYSCTL) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_SYSCTLBYNAME) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_MPROTECT) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_MACH_MSG) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_TASK_GET_EXCEPTION_PORTS) |
+            UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_TASK_SWAP_EXCEPTION_PORTS)
+        XCTAssertEqual(mask & ~allowed, 0)
+    }
+
+    func testMaskedPathProbesResolveTemporaryFileAcrossSecureAndStandardPaths() throws {
+        let tempURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("cprisk-masked-probe-\(UUID().uuidString)")
+        try Data("ok".utf8).write(to: tempURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        let path = tempURL.path
+        XCTAssertEqual(SVCDirectCall.secureAccess(path), true)
+        XCTAssertEqual(SVCDirectCall.secureStat(path), true)
+        XCTAssertEqual(SVCDirectCall.secureLstat(path), true)
+
+        let secureSnapshot = SVCDirectCall.securePathProbeSnapshot(path)
+        XCTAssertEqual(secureSnapshot.access, true)
+        XCTAssertEqual(secureSnapshot.stat, true)
+        XCTAssertEqual(secureSnapshot.lstat, true)
+
+        let standardSnapshot = SVCDirectCall.standardPathProbeSnapshot(path)
+        XCTAssertEqual(standardSnapshot.access, true)
+        XCTAssertEqual(standardSnapshot.stat, true)
+        XCTAssertEqual(standardSnapshot.fopen, true)
+
+        let libcMasked = SVCDirectCall.standardAccessErrnoMasked(path)
+        XCTAssertEqual(libcMasked?.exists, true)
+        XCTAssertEqual(libcMasked?.errno, 0)
+    }
+
+    func testTextEncryptSelfCheckIsCleanOnCurrentTestBuild() throws {
+        let result = try textEncryptSelfCheckResult()
+        XCTAssertEqual(result, 0)
+    }
+
+    func testCsopsStatusFlagsReturnsConsistentResultShape() {
+        var flags: UInt32 = 0
+        var err: Int32 = 0
+        let rc = cprisk_csops_status_flags(&flags, &err)
+        XCTAssertTrue(rc == 0 || rc == -1)
+        if rc == 0 {
+            XCTAssertEqual(err, 0)
+        } else {
+            XCTAssertNotEqual(err, 0)
+        }
     }
 
     private func makeAntiDebugPlanPayload(

@@ -8,8 +8,21 @@ private enum TextArmorSeed {
     static let accumulatorRotation: UInt32 = 7
 }
 
-/// Pass 12: encrypts a conservative inner range of `__TEXT,__text` at page granularity
-/// (skips first and last page) and emits `__DATA` text-encryption metadata (`ArmorABI.Sections.textEncryption`) for CRiskCore.
+/// Pass 12: encrypts `__TEXT,__text` at page granularity and emits `__DATA` text-encryption metadata
+/// (`ArmorABI.Sections.textEncryption`) for CRiskCore.
+///
+/// **Edges:** Historically the first and last 4K pages were left plaintext as a safety margin. When
+/// possible, this pass now also encrypts those pages:
+/// - **First page:** encrypted only if `LC_MAIN` exists and the entry **file offset** falls in
+///   `__TEXT,__text` but **not** in the first 4 KiB (so the initial PC from dyld is not in ciphertext).
+/// - **Last page:** encrypted when a symbol table is present (Pass 12 runs before Pass 6) **and**
+///   every `N_SECT` symbol with a value in that page looks like a VM trampoline (`cprisk_vm_entry*`),
+///   **or** there are no such symbols in that page. If there is no `LC_SYMTAB`, a full-size last page
+///   stays plaintext (conservative).
+/// - **Tail chunk:** `__text` is not always an exact multiple of 4 KiB. When the final chunk is a
+///   partial page, it is encrypted independently from the "last full page" symbol policy unless
+///   `LC_MAIN.entryoff` lands inside that tail chunk (rare, but guarded fail-safe).
+///   Runtime validation/decrypt uses the emitted per-entry `size`.
 public final class TextSegmentEncryptorPass: ArmorPass {
     public let name = "TextSegmentEncryptor"
 
@@ -46,11 +59,50 @@ public final class TextSegmentEncryptorPass: ArmorPass {
             )
         }
 
-        let pageCount = totalSize / pageSize
-        let firstPage = 1
-        let lastPage = pageCount - 2
-        guard firstPage <= lastPage else {
-            return PassResult(passName: name, itemsProcessed: 0, bytesModified: 0, details: ["Skipped: no inner pages"])
+        let pageCount = (totalSize + pageSize - 1) / pageSize
+
+        let encryptFirstPage = Self.shouldEncryptFirstTextPage(
+            file: file,
+            textSectionOffset: UInt64(textSection.offset),
+            textSectionSize: UInt64(textSection.size)
+        )
+        let encryptLastPage = try Self.shouldEncryptLastTextPage(
+            file: file,
+            textVMA: textSection.address,
+            textSize: UInt64(textSection.size),
+            pageCount: pageCount,
+            pageSize: pageSize
+        )
+        let lastChunkOffset = (pageCount - 1) * pageSize
+        let lastChunkSize = Swift.max(0, totalSize - lastChunkOffset)
+        let hasPartialTailChunk = lastChunkSize > 0 && lastChunkSize < pageSize
+        let encryptLastChunk = hasPartialTailChunk
+            ? Self.shouldEncryptPartialTailChunk(
+                file: file,
+                textSectionOffset: UInt64(textSection.offset),
+                textSectionSize: UInt64(textSection.size),
+                pageCount: pageCount,
+                pageSize: pageSize
+            )
+            : encryptLastPage
+
+        var pagesToEncrypt = [Int]()
+        pagesToEncrypt.reserveCapacity(pageCount)
+        for pageIdx in 0..<pageCount {
+            if pageIdx == 0 && !encryptFirstPage { continue }
+            if pageIdx == pageCount - 1 && !encryptLastChunk { continue }
+            pagesToEncrypt.append(pageIdx)
+        }
+
+        guard !pagesToEncrypt.isEmpty else {
+            return PassResult(
+                passName: name,
+                itemsProcessed: 0,
+                bytesModified: 0,
+                details: [
+                    "Skipped: no encryptable __text pages (edges constrained; entry/symbols may cover page0/last)"
+                ]
+            )
         }
 
         let baseKeyID = stableKeyID(segment: "__TEXT", section: "__text")
@@ -58,23 +110,28 @@ public final class TextSegmentEncryptorPass: ArmorPass {
         var details = [String]()
         var bytesXor = 0
 
-        for pageIdx in firstPage...lastPage {
-            let offset = UInt64(textSection.offset) + UInt64(pageIdx * pageSize)
-            let vmAddr = textSection.address + UInt64(pageIdx * pageSize)
+        for pageIdx in pagesToEncrypt {
+            let chunkOffset = pageIdx * pageSize
+            let chunkSize = Swift.min(pageSize, totalSize - chunkOffset)
+            guard chunkSize > 0 else { continue }
+
+            let offset = UInt64(textSection.offset) + UInt64(chunkOffset)
+            let vmAddr = textSection.address + UInt64(chunkOffset)
             let start = Int(offset)
-            let end = start + pageSize
+            let end = start + chunkSize
             let plaintext = file.data.subdata(in: start..<end)
             let contentHash = sha256(plaintext)
             let nonce = try generateNonce()
             let sectionIndex = TextEncryption.sectionIndexBase + UInt32(pageIdx)
-            let sectionKey = deriveChainedKey(
+            let sectionKey = TextSectionKeyDerivation.derive(
                 parentKey: loaderKey,
                 sectionIndex: sectionIndex,
                 nonce: nonce,
-                depth: 1
+                depth: 1,
+                whitebox: whitebox
             )
             let keyID = baseKeyID &+ UInt32(pageIdx)
-            let keystream = makeKeystream(key: sectionKey, keyID: keyID, nonce: nonce, length: pageSize)
+            let keystream = makeKeystream(key: sectionKey, keyID: keyID, nonce: nonce, length: chunkSize)
             let encrypted = xor(plaintext, keystream)
             try file.replaceBytes(at: offset, with: encrypted)
 
@@ -85,7 +142,7 @@ public final class TextSegmentEncryptorPass: ArmorPass {
             entries.append(
                 TextEncryption.Entry(
                     vmAddress: vmAddr,
-                    size: UInt64(pageSize),
+                    size: UInt64(chunkSize),
                     keyID: keyID,
                     flags: 0,
                     nonce: nonce,
@@ -93,8 +150,10 @@ public final class TextSegmentEncryptorPass: ArmorPass {
                     contentHash: contentHash
                 )
             )
-            bytesXor += pageSize
-            details.append("Encrypted __TEXT.__text page index \(pageIdx) @ 0x\(String(vmAddr, radix: 16))")
+            bytesXor += chunkSize
+            details.append(
+                "Encrypted __TEXT.__text page index \(pageIdx) size \(chunkSize) @ 0x\(String(vmAddr, radix: 16))"
+            )
         }
 
         var payload = TextEncryption.Header(count: UInt32(entries.count)).serialized()
@@ -102,15 +161,26 @@ public final class TextSegmentEncryptorPass: ArmorPass {
             payload.append(e.serialized())
         }
 
+        var slackMat = Data()
+        slackMat.append(loaderKey)
+        var seed = config.buildSeed.littleEndian
+        Swift.withUnsafeBytes(of: &seed) { slackMat.append(contentsOf: $0) }
+        slackMat.append(Data("pass12.text_encrypt_slack.v1".utf8))
         _ = try file.addOrUpdateSection(
             segment: ArmorABI.dataSegmentName,
             section: TextEncryption.sectionName,
             content: payload,
-            align: 3
+            align: 3,
+            slackPadding: .keyedPseudorandom(material: slackMat)
         )
 
         details.append(
             "Wrote \(entries.count) text encrypt descriptor entries to __DATA.\(TextEncryption.sectionName)"
+        )
+
+        details.insert(
+            "Edge policy: encryptFirstPage=\(encryptFirstPage) encryptLastPage=\(encryptLastPage) encryptPartialTail=\(hasPartialTailChunk ? String(encryptLastChunk) : "n/a")",
+            at: 0
         )
 
         return PassResult(
@@ -119,6 +189,121 @@ public final class TextSegmentEncryptorPass: ArmorPass {
             bytesModified: bytesXor + payload.count,
             details: details
         )
+    }
+
+    // MARK: - Edge page policy (first / last __text 4K)
+
+    private static func shouldEncryptFirstTextPage(
+        file: MachOFile,
+        textSectionOffset: UInt64,
+        textSectionSize: UInt64
+    ) -> Bool {
+        let textEnd = textSectionOffset &+ textSectionSize
+        for cmd in file.loadCommands {
+            guard cmd.cmd == LoadCommand.LC_MAIN else { continue }
+            guard cmd.cmdSize >= 24, cmd.rawData.count >= 16 else { continue }
+            guard let entryOff = readUInt64LE(cmd.rawData, at: 8) else { continue }
+            if entryOff < textSectionOffset || entryOff >= textEnd { return false }
+            let rel = entryOff &- textSectionOffset
+            let pageIdx = Int(rel / 4096)
+            return pageIdx != 0
+        }
+        return false
+    }
+
+    private static func shouldEncryptLastTextPage(
+        file: MachOFile,
+        textVMA: UInt64,
+        textSize: UInt64,
+        pageCount: Int,
+        pageSize: Int
+    ) throws -> Bool {
+        guard pageCount >= 1, pageSize > 0 else { return false }
+        guard try file.findSymbolTable() != nil else { return false }
+
+        let lastPageStart = textVMA &+ UInt64((pageCount - 1) * pageSize)
+        let textEnd = textVMA &+ textSize
+        let lastPageEnd = Swift.min(lastPageStart &+ UInt64(pageSize), textEnd)
+
+        guard let ord = try sectionOrdinal1Based(in: file, segment: "__TEXT", section: "__text") else {
+            return false
+        }
+
+        let symbols = try file.readSymbols()
+        var namesInLast = [String]()
+        for sym in symbols {
+            if sym.nlist.isStab { continue }
+            guard sym.nlist.typeField == Nlist64Entry.N_SECT else { continue }
+            guard sym.nlist.n_sect == ord else { continue }
+            let v = sym.nlist.n_value
+            if v >= lastPageStart && v < lastPageEnd {
+                namesInLast.append(sym.name)
+            }
+        }
+
+        if namesInLast.isEmpty {
+            return true
+        }
+        return namesInLast.allSatisfy { isVmTrampolineSymbol($0) }
+    }
+
+    /// Partial tail chunks are safe to encrypt by default: unlike the traditional "last full page"
+    /// window, they are bounded by emitted `size` and often carry no dyld-critical startup path.
+    /// Keep one hard guard: if LC_MAIN entryoff falls in this tail, leave it plaintext.
+    private static func shouldEncryptPartialTailChunk(
+        file: MachOFile,
+        textSectionOffset: UInt64,
+        textSectionSize: UInt64,
+        pageCount: Int,
+        pageSize: Int
+    ) -> Bool {
+        guard pageCount >= 1, pageSize > 0 else { return false }
+        let tailStart = textSectionOffset &+ UInt64((pageCount - 1) * pageSize)
+        let textEnd = textSectionOffset &+ textSectionSize
+        guard tailStart < textEnd else { return false }
+        for cmd in file.loadCommands {
+            guard cmd.cmd == LoadCommand.LC_MAIN else { continue }
+            guard cmd.cmdSize >= 24, cmd.rawData.count >= 16 else { continue }
+            guard let entryOff = readUInt64LE(cmd.rawData, at: 8) else { continue }
+            if entryOff >= tailStart && entryOff < textEnd {
+                return false
+            }
+        }
+        return true
+    }
+
+    private static func sectionOrdinal1Based(in file: MachOFile, segment: String, section: String) throws -> UInt8? {
+        var idx: UInt8 = 0
+        for seg in try file.segments() {
+            for sec in seg.sections {
+                guard idx < UInt8.max else { return nil }
+                idx += 1
+                if seg.name == segment && sec.sectionName == section {
+                    return idx
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Symbols that are VM dispatch stubs only; safe to encrypt with JIT decrypt like inner pages.
+    private static func isVmTrampolineSymbol(_ name: String) -> Bool {
+        let exact: Set<String> = [
+            "_cprisk_vm_entry", "cprisk_vm_entry",
+            "_cprisk_vm_entry_alt1", "cprisk_vm_entry_alt1",
+            "_cprisk_vm_entry_alt2", "cprisk_vm_entry_alt2",
+            "_cprisk_vm_execute", "cprisk_vm_execute"
+        ]
+        if exact.contains(name) { return true }
+        if name.hasPrefix("_cprisk_vm_entry") || name.hasPrefix("cprisk_vm_entry") { return true }
+        return false
+    }
+
+    private static func readUInt64LE(_ data: Data, at offset: Int) -> UInt64? {
+        guard offset >= 0, offset + 8 <= data.count else { return nil }
+        return data.withUnsafeBytes { buf in
+            UInt64(littleEndian: buf.load(fromByteOffset: offset, as: UInt64.self))
+        }
     }
 
     private func readFullAnchorHash(from file: MachOFile) throws -> Data {
@@ -221,17 +406,24 @@ public final class TextSegmentEncryptorPass: ArmorPass {
         return whitebox.prf(domain: .loaderKey, input: loaderDigest)
     }
 
-    private func deriveChainedKey(
+}
+
+/// Text __TEXT encryption section keys: `chained_key XOR WB_PRF(loader domain, SHA256(mask_ctx))`.
+/// Must stay byte-compatible with CRiskCore `cprisk_text_derive_section_key_i` (cprisk_text_encrypt.c).
+enum TextSectionKeyDerivation {
+    static func derive(
         parentKey: Data,
         sectionIndex: UInt32,
         nonce: Data,
-        depth: UInt32
+        depth: UInt32,
+        whitebox: ArmorWhiteBoxBundle
     ) -> Data {
         precondition(parentKey.count == ArmorABI.keySize, "parentKey must be 32 bytes")
         precondition(nonce.count == ArmorABI.nonceSize, "nonce must be 8 bytes")
 
         var material = Data()
-        appendUInt32(sectionIndex, to: &material)
+        var sectionLe = sectionIndex.littleEndian
+        withUnsafeBytes(of: &sectionLe) { material.append(contentsOf: $0) }
         material.append(nonce)
 
         var derived = ArmorABI.hmacSHA256(key: parentKey, message: material)
@@ -246,7 +438,15 @@ public final class TextSegmentEncryptorPass: ArmorPass {
                 derived = ArmorABI.hmacSHA256(key: depthMaterial, message: depthMaterial)
             }
         }
-        return derived
+
+        var maskMsg = Data()
+        maskMsg.append(Data("CPRISK_WB_TEXT_MASK_v1".utf8))
+        var sectionLe2 = sectionIndex.littleEndian
+        withUnsafeBytes(of: &sectionLe2) { maskMsg.append(contentsOf: $0) }
+        maskMsg.append(nonce)
+        let maskIn = Data(SHA256.hash(data: maskMsg))
+        let wbOut = whitebox.prf(domain: .loaderKey, input: maskIn)
+        return Data(zip(derived, wbOut).map(^))
     }
 }
 

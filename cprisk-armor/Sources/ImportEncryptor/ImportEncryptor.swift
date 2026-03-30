@@ -91,11 +91,13 @@ public final class ImportEncryptorPass: ArmorPass {
         let encryptedData = try buildEncryptedTable(symbols: toEncrypt, key: importKey)
 
         // Step 7: Write encrypted table to the import-encryption section.
+        let slackMat = importSlackMaterial(key: importKey, config: config)
         _ = try file.addOrUpdateSection(
             segment: ArmorABI.dataSegmentName,
             section: ArmorABI.Sections.importEncryptedTable,
             content: encryptedData,
-            align: 4
+            align: 4,
+            slackPadding: .keyedPseudorandom(material: slackMat)
         )
 
         // Step 8: Scrub original bind opcode streams so static tooling cannot
@@ -412,6 +414,15 @@ public final class ImportEncryptorPass: ArmorPass {
 
     private func sha256(_ data: Data) -> Data {
         Data(SHA256.hash(data: data))
+    }
+
+    private func importSlackMaterial(key: Data, config: PassConfig) -> Data {
+        var d = Data()
+        d.append(key)
+        var seed = config.buildSeed.littleEndian
+        Swift.withUnsafeBytes(of: &seed) { d.append(contentsOf: $0) }
+        d.append(Data("pass10.import_slack.v1".utf8))
+        return d
     }
 }
 

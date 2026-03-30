@@ -55,7 +55,7 @@ public final class RemoteConfigProvider: @unchecked Sendable {
         remoteEnabled: Bool = true,
         cache: ConfigCaching = ConfigCache.shared,
         fallbackConfig: RemoteConfig = .default,
-        pinnedCertificateHashes: Set<String> = []
+        pinnedPinMaterial: PinnedCertificatePinMaterial = .empty
     ) {
         self.configURL = configURL
         self.updateInterval = updateInterval
@@ -65,8 +65,8 @@ public final class RemoteConfigProvider: @unchecked Sendable {
         self.fallbackConfig = fallbackConfig
         self._configStalenessThreshold = cacheValidityDuration
         self.urlSession = CertificatePinningSessionDelegate.pinnedSession(
-            hashes: pinnedCertificateHashes,
-            allowsSystemCA: pinnedCertificateHashes.isEmpty
+            pinMaterial: pinnedPinMaterial,
+            allowsSystemCA: pinnedPinMaterial.isEmpty
         )
 
         if let cached = cache.load(), !cached.isExpired(duration: cacheValidityDuration) {
@@ -85,14 +85,19 @@ public final class RemoteConfigProvider: @unchecked Sendable {
         timer?.invalidate()
     }
 
-    public func configurePinning(hashes: Set<String>) {
+    public func configurePinning(pinMaterial: PinnedCertificatePinMaterial) {
         lock.withLock {
             urlSession.invalidateAndCancel()
             urlSession = CertificatePinningSessionDelegate.pinnedSession(
-                hashes: hashes,
+                pinMaterial: pinMaterial,
                 allowsSystemCA: false
             )
         }
+    }
+
+    /// Builds digest-backed material from pin strings (invalid entries ignored).
+    public func configurePinning(hashes: Set<String>) {
+        configurePinning(pinMaterial: PinnedCertificatePinMaterial(pinStrings: hashes))
     }
 
     public func reloadCachedConfigTrustState() {

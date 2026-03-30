@@ -34,11 +34,11 @@ public struct SignedRiskConclusion: Codable, Sendable {
         let signalsDigest = SignalDigest.computeFullDigest(report.signals)
 
         let input = "\(report.score)|\(report.isHighRisk)|\(timestamp)|\(nonce)|\(report.tampered)|\(signalsDigest)"
-        let hmac = SecureScope.withSecureBytes(Array(input.utf8)) { ptr in
+        let mac = SecureScope.withSecureBytes(Array(input.utf8)) { ptr in
             let data = Data(buffer: ptr)
-            return HMAC<SHA256>.authenticationCode(for: data, using: deviceKey)
+            return CPRiskMessageAuth.authenticationCode(for: data, using: deviceKey)
         }
-        let sigHex = Data(hmac).map { String(format: "%02x", $0) }.joined()
+        let sigHex = mac.map { String(format: "%02x", $0) }.joined()
         return SignedRiskConclusion(
             score: report.score,
             isHighRisk: report.isHighRisk,
@@ -70,7 +70,7 @@ public struct SignedRiskConclusion: Codable, Sendable {
 
         return SecureScope.withSecureBytes(Array(input.utf8)) { ptr in
             let data = Data(buffer: ptr)
-            return HMAC<SHA256>.isValidAuthenticationCode(signatureData, authenticating: data, using: deviceKey)
+            return CPRiskMessageAuth.isValidAuthenticationCode(signatureData, authenticating: data, using: deviceKey)
         }
     }
 }
@@ -160,6 +160,9 @@ private final class KeychainSalt {
     private let account = "device_key_salt"
     private let saltLength = 32
     private let lock = NSLock()  // NSLock: Keychain I/O inside lock
+#if DEBUG
+    private var debugFallbackSalt: String?
+#endif
 
     func getOrCreate() -> String {
         getOrCreateWithPersistedFlag().0
@@ -169,6 +172,11 @@ private final class KeychainSalt {
     func getOrCreateWithPersistedFlag() -> (String, Bool) {
         return lock.withLock {
             if let existing = read() { return (existing, true) }
+#if DEBUG
+            if let fallback = debugFallbackSalt {
+                return (fallback, false)
+            }
+#endif
 
             var bytes = [UInt8](repeating: 0, count: saltLength)
             defer { secureZeroBytes(&bytes) }
@@ -186,6 +194,9 @@ private final class KeychainSalt {
             if let existing = save(hex) {
                 return (existing, true)
             }
+#if DEBUG
+            debugFallbackSalt = hex
+#endif
             return (hex, false)
         }
     }

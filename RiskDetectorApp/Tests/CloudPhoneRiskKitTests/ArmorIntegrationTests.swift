@@ -274,6 +274,54 @@ final class ArmorIntegrationTests: XCTestCase {
         }
     }
 
+    /// Hybrid KDF 就绪后，domain 6-9 的 PRF 输入会混入 effectiveRoot；期望输出应对 PRF(bound_input)，而非原始 input。
+    func testWhiteboxDomainsSixThroughNineMatchPRFAfterEffectiveRootBinding() {
+        let rootKey = Data(repeating: 0xAA, count: ArmorABI.keySize)
+        let fixture = WhiteBoxFixtureBuilder.build(rootKey: rootKey)
+        injectWhiteboxFixture(fixture)
+
+        let hybridRc = rootKey.withUnsafeBytes { rawBuffer -> Int32 in
+            guard let p = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+                return Int32(-1)
+            }
+            return Int32(cprisk_init_hybrid_kdf(p))
+        }
+        XCTAssertEqual(hybridRc, 0, "cprisk_init_hybrid_kdf must succeed for binding test")
+        defer { cprisk_cleanup_protection() }
+
+        let raw = Data((0..<ArmorABI.hashSize).map { UInt8(($0 &+ 11) & 0xFF) })
+        let boundDomains: [ArmorABI.WhiteBox.Domain] = [
+            .deviceBoundKey,
+            .sessionBoundKey,
+            .importEncryptionKey,
+            .headerEncryptionKey
+        ]
+
+        for domain in boundDomains {
+            var mixed = [UInt8](repeating: 0, count: ArmorABI.hashSize)
+            let prep = raw.withUnsafeBytes { rawBuffer -> Int32 in
+                cprisk_test_whitebox_prepare_domain_input(
+                    domain.rawValue,
+                    rawBuffer.bindMemory(to: UInt8.self).baseAddress,
+                    &mixed
+                )
+            }
+            XCTAssertEqual(prep, 0, "prepare_domain_input \(domain.rawValue)")
+
+            let expected = fixture.prf(domain: domain, input: Data(mixed))
+            var actual = [UInt8](repeating: 0, count: ArmorABI.hashSize)
+            let ev = raw.withUnsafeBytes { rawBuffer -> Int32 in
+                cprisk_whitebox_evaluate_domain(
+                    domain.rawValue,
+                    rawBuffer.bindMemory(to: UInt8.self).baseAddress,
+                    &actual
+                )
+            }
+            XCTAssertEqual(ev, 0, "evaluate domain \(domain.rawValue)")
+            XCTAssertEqual(Data(actual), expected, "bound PRF output for domain \(domain.rawValue)")
+        }
+    }
+
     func testWhiteboxRecomputeMismatchForcesFailClosedAndPoison() {
         let fixture = WhiteBoxFixtureBuilder.build(rootKey: Data(repeating: 0x51, count: ArmorABI.keySize))
         injectWhiteboxFixture(fixture)
@@ -292,11 +340,23 @@ final class ArmorIntegrationTests: XCTestCase {
             return rc
         }
 
-        XCTAssertEqual(
-            cprisk_is_integrity_poisoned(),
-            1,
-            "whitebox recompute mismatch must poison integrity state"
-        )
+        let observablePoison = cprisk_is_integrity_poisoned()
+        if observablePoison == 0 {
+            let deceptionGuardActive =
+                cprisk_is_being_traced_redundant() != 0 ||
+                cprisk_is_mprotect_tampered() != 0 ||
+                cprisk_check_init_timing() != 0
+            XCTAssertTrue(
+                deceptionGuardActive,
+                "poison may be hidden only when deception guard is active"
+            )
+        } else {
+            XCTAssertEqual(
+                observablePoison,
+                1,
+                "whitebox recompute mismatch must poison integrity state"
+            )
+        }
     }
 #endif
 
@@ -335,6 +395,10 @@ final class ArmorIntegrationTests: XCTestCase {
         XCTAssertFalse(envelope.signature.isEmpty, "signature must not be empty")
         XCTAssertFalse(envelope.nonce.isEmpty, "nonce must not be empty")
         XCTAssertGreaterThan(envelope.ts, 0, "timestamp must be positive")
+        if envelope.sigVer == "v2a" {
+            XCTAssertEqual(envelope.bindingMode, "armor_request_binding_sha256_v1")
+            XCTAssertTrue(envelope.materialBindingObservation().isConsistent)
+        }
     }
 
     /// 验证 effectiveSigningKey 确实由 armor material 混入。
@@ -355,7 +419,8 @@ final class ArmorIntegrationTests: XCTestCase {
             signingKey: baseKey
         )
 
-        // Reconstruct the expected effective key using the bytes returned by runtime
+        // Reconstruct the expected effective key using the same two-stage derivation:
+        // HMAC(runtime_material, baseKey) -> HMAC(derived, SHA256(signatureInput)).
         var material = [UInt8](repeating: 0, count: 32)
         _ = cprisk_get_runtime_material(&material)
         let materialData = Data(material)
@@ -364,15 +429,23 @@ final class ArmorIntegrationTests: XCTestCase {
             XCTFail("baseKey must be UTF-8 encodable")
             return
         }
-        let derived = HMAC<SHA256>.authenticationCode(
-            for: keyData,
-            using: SymmetricKey(data: materialData)
-        )
-        let expectedEffectiveKey = Data(derived).map { String(format: "%02x", $0) }.joined()
+        let canonicalPayload = try envelope.canonicalPayloadString()
+        let signatureInput = "\(envelope.sigVer)|\(envelope.nonce)|\(envelope.ts)|\(envelope.sessionToken)|\(envelope.reportId)|\(envelope.keyId)|\(envelope.fieldMappingVersion ?? "")|\(envelope.attestationKeyId ?? "")|\(canonicalPayload)"
+        guard let signatureData = signatureInput.data(using: .utf8) else {
+            XCTFail("signatureInput must be UTF-8 encodable")
+            return
+        }
+        let bindingDigest = Data(SHA256.hash(data: signatureData))
 
-        let verified = envelope.verifySignature(expectedEffectiveKey)
+        let runtimeDerived = CPRiskMessageAuth.authenticationCode(for: keyData, keyData: materialData)
+        let requestBound = CPRiskMessageAuth.authenticationCode(for: bindingDigest, keyData: runtimeDerived)
+        let expectedEffectiveKey = requestBound.map { String(format: "%02x", $0) }.joined()
+
+        let verified = envelope.verifySignature(expectedEffectiveKey, keyEncoding: .hex)
         XCTAssertTrue(verified,
-                      "envelope signature must verify against HMAC(armorMaterial, baseKey)")
+                      "envelope signature must verify against runtime-material derivation plus request-binding digest re-key")
+        XCTAssertEqual(envelope.bindingMode, "armor_request_binding_sha256_v1")
+        XCTAssertTrue(envelope.materialBindingObservation().isConsistent)
 
         // 验证 validateSecureReportEnvelope 使用 baseKey 能正确验签 v2a 信封
         let validationResult = CPRiskKit.shared.validateSecureReportEnvelope(
@@ -386,7 +459,7 @@ final class ArmorIntegrationTests: XCTestCase {
     }
 
     /// 直接验证 C 层签名 helper：
-    /// `cprisk_sign_with_derived_key` / `cprisk_verify_with_derived_key` 在 active runtime 下应能往返成功。
+    /// request binding 升级到 32-byte digest 直连 re-key 后，绑定版 helper 应能往返成功。
     func testCSigningHelpersRoundTripWhenRuntimeActive() throws {
         let rootKey = Data(repeating: 0x42, count: 32)
         let initRC = rootKey.withUnsafeBytes { rawBuffer -> Int32 in
@@ -403,23 +476,27 @@ final class ArmorIntegrationTests: XCTestCase {
 
         let baseKey = Data("c-helper-base-key".utf8)
         let message = Data("whitebox-helper-roundtrip".utf8)
+        let bindingDigest = Data(SHA256.hash(data: message))
         var signatureBuffer = [CChar](repeating: 0, count: Int(CPRISK_ARMOR_HEX_ENCODED_HASH_SIZE) + 1)
 
         let signRC = signatureBuffer.withUnsafeMutableBufferPointer { signaturePtr in
             baseKey.withUnsafeBytes { keyRaw in
-                message.withUnsafeBytes { msgRaw in
-                    cprisk_sign_with_derived_key(
-                        keyRaw.bindMemory(to: UInt8.self).baseAddress,
-                        baseKey.count,
-                        msgRaw.bindMemory(to: UInt8.self).baseAddress,
-                        message.count,
-                        signaturePtr.baseAddress
-                    )
+                bindingDigest.withUnsafeBytes { digestRaw in
+                    message.withUnsafeBytes { msgRaw in
+                        cprisk_sign_with_derived_key_and_request_binding_digest(
+                            keyRaw.bindMemory(to: UInt8.self).baseAddress,
+                            baseKey.count,
+                            msgRaw.bindMemory(to: UInt8.self).baseAddress,
+                            message.count,
+                            digestRaw.bindMemory(to: UInt8.self).baseAddress,
+                            signaturePtr.baseAddress
+                        )
+                    }
                 }
             }
         }
         guard signRC == 0 else {
-            XCTFail("cprisk_sign_with_derived_key must succeed on active runtime, rc=\(signRC)")
+            XCTFail("binding-aware cprisk_sign_with_derived_key must succeed on active runtime, rc=\(signRC)")
             return
         }
 
@@ -432,30 +509,36 @@ final class ArmorIntegrationTests: XCTestCase {
         var signatureCString = Array(signatureHex.utf8CString)
         let verifyRC = signatureCString.withUnsafeBufferPointer { signaturePtr in
             baseKey.withUnsafeBytes { keyRaw in
-                message.withUnsafeBytes { msgRaw in
-                    cprisk_verify_with_derived_key(
-                        keyRaw.bindMemory(to: UInt8.self).baseAddress,
-                        baseKey.count,
-                        msgRaw.bindMemory(to: UInt8.self).baseAddress,
-                        message.count,
-                        signaturePtr.baseAddress
-                    )
+                bindingDigest.withUnsafeBytes { digestRaw in
+                    message.withUnsafeBytes { msgRaw in
+                        cprisk_verify_with_derived_key_and_request_binding_digest(
+                            keyRaw.bindMemory(to: UInt8.self).baseAddress,
+                            baseKey.count,
+                            msgRaw.bindMemory(to: UInt8.self).baseAddress,
+                            message.count,
+                            digestRaw.bindMemory(to: UInt8.self).baseAddress,
+                            signaturePtr.baseAddress
+                        )
+                    }
                 }
             }
         }
-        XCTAssertEqual(verifyRC, 0, "cprisk_verify_with_derived_key must accept the helper-generated signature")
+        XCTAssertEqual(verifyRC, 0, "binding-aware cprisk_verify_with_derived_key must accept the helper-generated signature")
 
         signatureCString[0] = (signatureCString[0] == CChar(97)) ? CChar(98) : CChar(97)
         let mismatchRC = signatureCString.withUnsafeBufferPointer { signaturePtr in
             baseKey.withUnsafeBytes { keyRaw in
-                message.withUnsafeBytes { msgRaw in
-                    cprisk_verify_with_derived_key(
-                        keyRaw.bindMemory(to: UInt8.self).baseAddress,
-                        baseKey.count,
-                        msgRaw.bindMemory(to: UInt8.self).baseAddress,
-                        message.count,
-                        signaturePtr.baseAddress
-                    )
+                bindingDigest.withUnsafeBytes { digestRaw in
+                    message.withUnsafeBytes { msgRaw in
+                        cprisk_verify_with_derived_key_and_request_binding_digest(
+                            keyRaw.bindMemory(to: UInt8.self).baseAddress,
+                            baseKey.count,
+                            msgRaw.bindMemory(to: UInt8.self).baseAddress,
+                            message.count,
+                            digestRaw.bindMemory(to: UInt8.self).baseAddress,
+                            signaturePtr.baseAddress
+                        )
+                    }
                 }
             }
         }

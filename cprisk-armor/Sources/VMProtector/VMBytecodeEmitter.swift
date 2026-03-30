@@ -53,19 +53,23 @@ public struct VMM3EmitOptions: Equatable, Sendable {
     public var enableSelfIntegrityCheck: Bool
     /// When `enableSelfIntegrityCheck` is true, use HMAC-SHA256 (truncated) vs CPSH blob instead of FNV/CPSF.
     public var enableSelfIntegrityHmac: Bool
+    /// Runtime SHA256 baseline + periodic re-check of each function bytecode blob (`CPRISK_VMP_BC_FLAG_BC_SEG_RUNTIME_SHA256`).
+    public var bytecodeSegmentRuntimeSha256: Bool
 
     public init(
         vpcPredicateConstants: [UInt64] = [],
         enableDeadHandlers: Bool = false,
         enableOpaquePredicateChain: Bool = false,
         enableSelfIntegrityCheck: Bool = false,
-        enableSelfIntegrityHmac: Bool = false
+        enableSelfIntegrityHmac: Bool = false,
+        bytecodeSegmentRuntimeSha256: Bool = false
     ) {
         self.vpcPredicateConstants = vpcPredicateConstants
         self.enableDeadHandlers = enableDeadHandlers
         self.enableOpaquePredicateChain = enableOpaquePredicateChain
         self.enableSelfIntegrityCheck = enableSelfIntegrityCheck
         self.enableSelfIntegrityHmac = enableSelfIntegrityHmac
+        self.bytecodeSegmentRuntimeSha256 = bytecodeSegmentRuntimeSha256
     }
 }
 
@@ -92,6 +96,8 @@ public struct VMM2EmitOptions: Equatable, Sendable {
     public var opcodeKeystreamMaterial: UInt64
     /// When true, set `BytecodeFlags.nonLinearVpc` and use the same 16-byte VPC slot as non-linear codec material (CRiskCore `CPRISK_VMP_BC_FLAG_VPC_NONLINEAR`).
     public var vpcNonlinearEncoding: Bool
+    /// Emit `CPRISK_VMP_BC_FLAG_ANTI_SYMBOLIC_HEAVY` (runtime anti-symbolic bait; CRiskCore interpreter).
+    public var antiSymbolicHeavy: Bool
 
     public init(
         opaqueVpcCategoryHigh32: Bool = false,
@@ -104,7 +110,8 @@ public struct VMM2EmitOptions: Equatable, Sendable {
         immediateKeystreamMaterial: UInt64 = 0,
         opcodeWireObfuscation: Bool = false,
         opcodeKeystreamMaterial: UInt64 = 0,
-        vpcNonlinearEncoding: Bool = true
+        vpcNonlinearEncoding: Bool = true,
+        antiSymbolicHeavy: Bool = false
     ) {
         self.opaqueVpcCategoryHigh32 = opaqueVpcCategoryHigh32
         self.handlerVariantSeed = handlerVariantSeed
@@ -117,6 +124,7 @@ public struct VMM2EmitOptions: Equatable, Sendable {
         self.opcodeWireObfuscation = opcodeWireObfuscation
         self.opcodeKeystreamMaterial = opcodeKeystreamMaterial
         self.vpcNonlinearEncoding = vpcNonlinearEncoding
+        self.antiSymbolicHeavy = antiSymbolicHeavy
     }
 }
 
@@ -160,6 +168,10 @@ public enum VMBytecodeFormat {
         public static let immediateKeystream: UInt32 = 1 << 5
         /// v3: wire opcode bytes XOR’d per insn (see on-disk opcode seed field).
         public static let opcodeWireObfuscation: UInt32 = 1 << 6
+        /// Runtime: SHA256 baseline + periodic bytecode segment integrity checks (CRiskCore `CPRISK_VMP_BC_FLAG_BC_SEG_RUNTIME_SHA256`).
+        public static let bcSegmentRuntimeSha256: UInt32 = 1 << 11
+        /// Runtime: heavy anti-symbolic bait (CRiskCore `CPRISK_VMP_BC_FLAG_ANTI_SYMBOLIC_HEAVY`).
+        public static let antiSymbolicHeavy: UInt32 = 1 << 7
     }
 
     /// Dispatch header `flags` (M2 + M3 producer hints). CRiskCore does not branch on these today; safe to extend.
@@ -451,6 +463,12 @@ public struct VMBytecodeEmitter: Sendable {
                 flags |= VMBytecodeFormat.BytecodeFlags.m3SelfIntegrityHmac
             }
         }
+        if options.m3.bytecodeSegmentRuntimeSha256 {
+            flags |= VMBytecodeFormat.BytecodeFlags.bcSegmentRuntimeSha256
+        }
+        if options.antiSymbolicHeavy {
+            flags |= VMBytecodeFormat.BytecodeFlags.antiSymbolicHeavy
+        }
         if immKs {
             flags |= VMBytecodeFormat.BytecodeFlags.immediateKeystream
         }
@@ -706,6 +724,60 @@ public struct VMBytecodeEmitter: Sendable {
         }
         return n
     }
+
+    /// Decode logical ops for one entry from emitted payloads.
+    ///
+    /// Notes:
+    /// - Requires clear (non-keystream-obfuscated) dispatch class table.
+    /// - Returns `nil` on malformed payload or unsupported encrypted dispatch table.
+    public static func decodeEntryLogicalOps(
+        bytecodePayload: Data,
+        dispatchPayload: Data,
+        entryIndex: Int
+    ) -> [VMLogicalOp]? {
+        guard entryIndex >= 0 else { return nil }
+        guard bytecodePayload.count >= 16, dispatchPayload.count >= 16 else { return nil }
+        guard VMBytecodeFormat.readUInt32LE(bytecodePayload, offset: 0) == VMBytecodeFormat.bytecodeMagic else { return nil }
+        guard VMBytecodeFormat.readUInt32LE(dispatchPayload, offset: 0) == VMBytecodeFormat.dispatchMagic else { return nil }
+
+        let dispatchVersion = VMBytecodeFormat.readUInt32LE(dispatchPayload, offset: 4)
+        let dispatchFlags = VMBytecodeFormat.readUInt32LE(dispatchPayload, offset: 12)
+        if (dispatchFlags & VMBytecodeFormat.DispatchHeaderFlags.classTableKeystream) != 0 {
+            return nil
+        }
+        let dispatchClassOffset = dispatchVersion >= VMBytecodeFormat.dispatchABIVersionV2
+            ? (16 + VMBytecodeFormat.dispatchSeedBytes)
+            : 16
+        guard dispatchPayload.count >= dispatchClassOffset + VMBytecodeFormat.dispatchTableSize else { return nil }
+        let dispatchTable = [UInt8](dispatchPayload[dispatchClassOffset..<(dispatchClassOffset + VMBytecodeFormat.dispatchTableSize)])
+
+        let bytecodeVersion = VMBytecodeFormat.readUInt32LE(bytecodePayload, offset: 4)
+        let entryCount = Int(VMBytecodeFormat.readUInt32LE(bytecodePayload, offset: 8))
+        let bytecodeFlags = VMBytecodeFormat.readUInt32LE(bytecodePayload, offset: 12)
+        guard entryIndex < entryCount else { return nil }
+        let headerTotal = bytecodeHeaderTotalBytes(version: bytecodeVersion, flags: bytecodeFlags)
+        let stride = VMBytecodeFormat.entryCoreSize
+            + (((bytecodeFlags & VMBytecodeFormat.BytecodeFlags.perEntryVpc) != 0) ? VMBytecodeFormat.vpcAffineBytes : 0)
+        let entryBase = headerTotal + entryIndex * stride
+        guard bytecodePayload.count >= entryBase + stride else { return nil }
+
+        let bytecodeOffset = Int(VMBytecodeFormat.readUInt32LE(bytecodePayload, offset: entryBase + 20))
+        let bytecodeLength = Int(VMBytecodeFormat.readUInt32LE(bytecodePayload, offset: entryBase + 24))
+        guard bytecodeOffset >= 0, bytecodeLength >= 0 else { return nil }
+        guard bytecodePayload.count >= bytecodeOffset + bytecodeLength else { return nil }
+        guard bytecodeLength % 9 == 0 else { return nil }
+
+        let opCount = bytecodeLength / 9
+        var decoded: [VMLogicalOp] = []
+        decoded.reserveCapacity(opCount)
+        for i in 0..<opCount {
+            let raw = bytecodePayload[bytecodeOffset + i * 9]
+            let logicalRaw = dispatchTable[Int(raw)]
+            guard let op = VMLogicalOp(rawValue: logicalRaw) else { return nil }
+            decoded.append(op)
+        }
+        return decoded
+    }
 }
 
 /// Stable 64-bit id for a symbol (FNV-1a 64).
@@ -718,5 +790,19 @@ public enum VMFunctionId {
             hash &*= prime
         }
         return hash == 0 ? 1 : hash
+    }
+
+    /// Per-build VM function id: FNV-1a(symbol) mixed with `buildSeed` via SplitMix64.
+    /// The value is embedded only in build artifacts (dispatch + bytecode); the interpreter dispatches by id, not by recomputing FNV from the symbol name at runtime.
+    public static func mixed(symbol: String, buildSeed: UInt64) -> UInt64 {
+        let base = fnv1a64(symbol: symbol)
+        let seed = buildSeed == 0 ? 1 : buildSeed
+        var mix = VMProtectorSplitMix64(seed: base ^ seed ^ 0x564D5F464E5F4944) // "VM_FN_ID"
+        let w = mix.next()
+        var out = base ^ w
+        if out == 0 {
+            out = 1
+        }
+        return out
     }
 }

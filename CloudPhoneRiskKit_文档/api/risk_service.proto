@@ -1,0 +1,263 @@
+syntax = "proto3";
+
+package cprisk.v1;
+
+option java_package = "com.cloudphone.risk.proto";
+option java_multiple_files = true;
+option go_package = "github.com/cloudphone/risk-proto/v1;riskv1";
+option swift_prefix = "CPRisk";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+// ──────── Service Definition ────────
+
+service RiskService {
+  // 实时风险评估
+  rpc EvaluateRisk(EvaluateRiskRequest) returns (EvaluateRiskResponse);
+
+  // 上报签名风险报告信封
+  rpc UploadRiskReport(UploadRiskReportRequest) returns (UploadRiskReportResponse);
+
+  // 拉取远程配置
+  rpc FetchConfig(FetchConfigRequest) returns (FetchConfigResponse);
+
+  // 健康检查
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// ──────── Risk Evaluate ────────
+
+message EvaluateRiskRequest {
+  string device_id = 1;
+  string sdk_version = 2;
+  string scenario = 3;
+  string account_id = 4;
+  string session_id = 5;
+  repeated RiskSignal signals = 6;
+  DeviceFingerprint device_fingerprint = 7;
+  ServerSignals server_signals = 8;
+  GraphNodeDescriptor graph_node_descriptor = 9;
+}
+
+message EvaluateRiskResponse {
+  string request_id = 1;
+  double score = 2;
+  bool is_high_risk = 3;
+  RiskAction action = 4;
+  repeated string reasons = 5;
+  ServerRiskPolicy server_risk_policy = 6;
+  GraphRiskFeedback graph_risk_feedback = 7;
+}
+
+// ──────── Report Upload ────────
+
+message UploadRiskReportRequest {
+  ReportEnvelope envelope = 1;
+  string app_id = 2;
+  string device_id = 3;
+  string scene = 4;
+}
+
+message UploadRiskReportResponse {
+  string request_id = 1;
+  bool accepted = 2;
+  bool signature_valid = 3;
+  google.protobuf.Timestamp server_timestamp = 4;
+}
+
+message ReportEnvelope {
+  string report_id = 1;
+  bytes payload = 2;
+  string nonce = 3;
+  google.protobuf.Timestamp timestamp = 4;
+  string key_id = 5;
+  string signature_version = 6;
+  string signature = 7;
+  string binding_mode = 8;
+  string trust_level = 9;
+  string attestation_key_id = 10;
+  bytes attestation_assertion = 11;
+  string field_mapping_version = 12;
+}
+
+// ──────── Config Fetch ────────
+
+message FetchConfigRequest {
+  string device_id = 1;
+  string sdk_version = 2;
+  int64 current_config_version = 3;
+}
+
+message FetchConfigResponse {
+  bool changed = 1;
+  RemoteConfig config = 2;
+}
+
+message RemoteConfig {
+  int64 version = 1;
+  RemoteConfigPolicy policy = 2;
+  SecurityHardening security_hardening = 3;
+  PayloadFieldMapping payload_field_mapping = 4;
+  map<string, string> text_segment_hash_reference = 5;
+  repeated string additional_suspicious_libraries = 6;
+  repeated string additional_suspicious_paths = 7;
+  repeated int32 additional_suspicious_ports = 8;
+  google.protobuf.Struct probe_config = 9;
+  RealtimeTelemetryAdaptiveConfig realtime_telemetry_adaptive = 10;
+  string signature = 11;
+}
+
+message RemoteConfigPolicy {
+  SignalWeights weights = 1;
+  double medium_threshold = 2;
+  double high_threshold = 3;
+}
+
+message SignalWeights {
+  double jailbreak = 1;
+  double network = 2;
+  double behavior = 3;
+  double cloud_phone = 4;
+  double time_pattern = 5;
+}
+
+message SecurityHardening {
+  bool enable_app_store_safe_profile = 1;
+  bool kill_switch_enabled = 2;
+  bool enforce_payload_field_mapping = 3;
+  bool enable_envelope_signature_v2 = 4;
+  bool enable_challenge_binding = 5;
+}
+
+message PayloadFieldMapping {
+  string version = 1;
+  google.protobuf.Timestamp expires_at = 2;
+  map<string, string> mapping = 3;
+}
+
+message RealtimeTelemetryAdaptiveConfig {
+  bool enabled = 1;
+  int32 base_min_evaluation_interval_millis = 2;
+  int32 high_pressure_min_evaluation_interval_millis = 3;
+  int32 default_weight_scale_bps = 4;
+  int32 min_weight_scale_bps = 5;
+  int32 max_weight_scale_bps = 6;
+  int32 feedback_ttl_seconds = 7;
+}
+
+// ──────── Shared Types ────────
+
+message RiskSignal {
+  string id = 1;
+  string category = 2;
+  double score = 3;
+  map<string, string> evidence = 4;
+  RiskSignalState state = 5;
+  int32 layer = 6;
+  double weight_hint = 7;
+}
+
+enum RiskSignalState {
+  RISK_SIGNAL_STATE_UNSPECIFIED = 0;
+  RISK_SIGNAL_STATE_CLEAR = 1;
+  RISK_SIGNAL_STATE_SOFT = 2;
+  RISK_SIGNAL_STATE_TAMPERED = 3;
+  RISK_SIGNAL_STATE_UNAVAILABLE = 4;
+}
+
+enum RiskAction {
+  RISK_ACTION_UNSPECIFIED = 0;
+  RISK_ACTION_ALLOW = 1;
+  RISK_ACTION_CHALLENGE = 2;
+  RISK_ACTION_MONITOR = 3;
+  RISK_ACTION_BLOCK = 4;
+}
+
+message DeviceFingerprint {
+  string model = 1;
+  string system_version = 2;
+  string hardware_machine = 3;
+  string kernel_version = 4;
+  int32 screen_width = 5;
+  int32 screen_height = 6;
+  int64 total_disk_space = 7;
+  int64 total_memory = 8;
+}
+
+message ServerSignals {
+  string public_ip = 1;
+  string asn = 2;
+  string as_org = 3;
+  bool is_datacenter = 4;
+  int32 ip_device_agg = 5;
+  int32 ip_account_agg = 6;
+  string geo_country = 7;
+  string geo_region = 8;
+  repeated string risk_tags = 9;
+}
+
+message ServerRiskPolicy {
+  Thresholds thresholds = 1;
+  map<string, double> signal_weights = 2;
+  repeated string blocklist = 3;
+  BlindChallengeConfig blind_challenge = 4;
+  MutationConfig mutation = 5;
+  string re_attestation_challenge = 6;
+
+  message Thresholds {
+    double monitor = 1;
+    double challenge = 2;
+    double block = 3;
+  }
+
+  message BlindChallengeConfig {
+    bool enabled = 1;
+    string challenge_salt = 2;
+    int32 window_seconds = 3;
+    int32 challenge_ttl_millis = 4;
+    repeated string probe_pool = 5;
+    repeated BlindChallengeRule rules = 6;
+  }
+
+  message BlindChallengeRule {
+    string id = 1;
+    repeated string all_of_signal_ids = 2;
+    repeated string any_of_signal_ids = 3;
+    int32 min_tampered_count = 4;
+    int32 min_distinct_risk_layers = 5;
+    bool require_cross_layer_inconsistency = 6;
+    double weight = 7;
+  }
+
+  message MutationConfig {
+    int64 seed = 1;
+    bool shuffle_checks = 2;
+    int32 threshold_jitter_bps = 3;
+    int32 score_jitter_bps = 4;
+  }
+}
+
+message GraphNodeDescriptor {
+  string hw_profile_hash = 1;
+  string signal_fingerprint = 2;
+}
+
+message GraphRiskFeedback {
+  string community_id = 1;
+  double community_risk_density = 2;
+  int32 hw_profile_degree = 3;
+  double device_page_rank = 4;
+  bool is_in_dense_subgraph = 5;
+  repeated string risk_tags = 6;
+}
+
+// ──────── Health ────────
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  string status = 1;
+  string version = 2;
+  int64 uptime_seconds = 3;
+}

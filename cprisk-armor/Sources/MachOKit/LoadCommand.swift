@@ -14,8 +14,11 @@ public struct LoadCommand {
     public static let LC_UUID: UInt32           = 0x1B
     public static let LC_CODE_SIGNATURE: UInt32 = 0x1D
     public static let LC_DYLD_INFO_ONLY: UInt32 = 0x80000022
+    public static let LC_DYLD_EXPORTS_TRIE: UInt32 = 0x80000033
     public static let LC_FUNCTION_STARTS: UInt32 = 0x26
     public static let LC_DATA_IN_CODE: UInt32   = 0x29
+    /// LC_MAIN — program entry offset (`entry_point_command`); used by MH_EXECUTE.
+    public static let LC_MAIN: UInt32           = 0x80000028
 
     public init(from data: Data, offset: UInt64) throws {
         let off = Int(offset)

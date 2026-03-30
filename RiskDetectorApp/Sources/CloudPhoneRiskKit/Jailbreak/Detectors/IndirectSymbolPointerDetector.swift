@@ -21,6 +21,8 @@ struct IndirectSymbolPointerDetector: Detector {
         ("dlopen", 12),
         ("syscall", 14),
         ("__syscall", 14),
+        ("posix_spawn", 12),
+        ("posix_spawnp", 10),
         ("objc_msgSend", 14),
     ]
 

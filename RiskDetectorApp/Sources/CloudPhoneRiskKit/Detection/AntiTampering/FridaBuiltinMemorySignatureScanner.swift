@@ -38,8 +38,7 @@ enum FridaBuiltinMemorySignatureScanner {
         let configuration = Configuration.current()
         guard configuration.enabled else { return nil }
 
-        // Check throttle under lock and immediately claim the slot to prevent
-        // concurrent threads from passing the throttle check during the scan.
+        // Check throttle under lock, but run the heavy scan outside.
         let shouldScan = scanState.withLock { lastScanMonotonicNs -> Bool in
             let now = monotonicNanoseconds()
             if lastScanMonotonicNs != 0 {
@@ -48,13 +47,13 @@ enum FridaBuiltinMemorySignatureScanner {
                     return false
                 }
             }
-            // Claim the slot immediately so other threads won't duplicate the scan
-            lastScanMonotonicNs = now
             return true
         }
         guard shouldScan else { return nil }
 
-        return performScan(configuration: configuration)
+        let hit = performScan(configuration: configuration)
+        scanState.withLock { $0 = monotonicNanoseconds() }
+        return hit
 #endif
     }
 
@@ -188,16 +187,11 @@ enum FridaBuiltinMemorySignatureScanner {
         return rows
     }
 
-    private static let timebaseInfo: mach_timebase_info_data_t = {
-        var info = mach_timebase_info_data_t()
-        mach_timebase_info(&info)
-        return info
-    }()
-
     private static func monotonicNanoseconds() -> UInt64 {
+        var timebase = mach_timebase_info_data_t()
+        mach_timebase_info(&timebase)
         let ticks = mach_absolute_time()
-        // Divide before multiply to avoid UInt64 overflow on large tick values
-        return ticks / UInt64(timebaseInfo.denom) * UInt64(timebaseInfo.numer)
+        return ticks * UInt64(timebase.numer) / UInt64(timebase.denom)
     }
 
     // MARK: - Configuration (env)
@@ -211,12 +205,12 @@ enum FridaBuiltinMemorySignatureScanner {
         let maxRegionIterations: Int
 
         static func current() -> Configuration {
-            let enabled = envBool(key: "CPRISK_FRIDA_MEMSIG_BUILTIN", defaultIfUnset: true)
-            let intervalMs = envInt(key: "CPRISK_FRIDA_MEMSIG_INTERVAL_MS", defaultValue: 90_000)
-            let maxPages = envInt(key: "CPRISK_FRIDA_MEMSIG_MAX_PAGES", defaultValue: 64)
-            let maxRegionBytes = envUInt64(key: "CPRISK_FRIDA_MEMSIG_MAX_REGION_BYTES", defaultValue: 64 * 1024 * 1024)
-            let chunkBytes = envInt(key: "CPRISK_FRIDA_MEMSIG_CHUNK_BYTES", defaultValue: 16 * 1024)
-            let maxIter = envInt(key: "CPRISK_FRIDA_MEMSIG_MAX_REGION_ITER", defaultValue: 4096)
+            let enabled = envBool(key: ObfuscatedConstants.envKeyCpriskFridaMemsigBuiltin, defaultIfUnset: true)
+            let intervalMs = envInt(key: ObfuscatedConstants.envKeyCpriskFridaMemsigIntervalMs, defaultValue: 90_000)
+            let maxPages = envInt(key: ObfuscatedConstants.envKeyCpriskFridaMemsigMaxPages, defaultValue: 64)
+            let maxRegionBytes = envUInt64(key: ObfuscatedConstants.envKeyCpriskFridaMemsigMaxRegionBytes, defaultValue: 64 * 1024 * 1024)
+            let chunkBytes = envInt(key: ObfuscatedConstants.envKeyCpriskFridaMemsigChunkBytes, defaultValue: 16 * 1024)
+            let maxIter = envInt(key: ObfuscatedConstants.envKeyCpriskFridaMemsigMaxRegionIter, defaultValue: 4096)
 
             return Configuration(
                 enabled: enabled,

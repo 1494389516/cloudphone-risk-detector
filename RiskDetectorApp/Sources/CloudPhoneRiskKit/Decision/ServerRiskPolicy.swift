@@ -16,6 +16,11 @@ public struct ServerRiskPolicy: Codable, Sendable {
     /// 服务端下发后，客户端用 App Attest key 签名并上报，用于周期性 attestation 刷新
     public let reAttestationChallenge: Data?
 
+    /// Enable Unix domain socket full-sweep detection (default: false).
+    /// When enabled, UnixSocketSweepDetector enumerates all Unix sockets
+    /// and checks for anomalous IPC channels that may indicate Frida.
+    public let enableUnixSocketSweep: Bool?
+
     private enum CodingKeys: String, CodingKey {
         case version = "v"
         case signalWeights = "sw"
@@ -26,6 +31,7 @@ public struct ServerRiskPolicy: Codable, Sendable {
         case blindChallenge = "bc"
         case keyRotationPolicy = "kr"
         case reAttestationChallenge = "ra"
+        case enableUnixSocketSweep = "us"
     }
 
     public struct PolicyThresholds: Codable, Sendable {
@@ -165,7 +171,8 @@ public struct ServerRiskPolicy: Codable, Sendable {
         mutation: MutationConfig? = nil,
         blindChallenge: BlindChallengeConfig? = nil,
         keyRotationPolicy: KeyRotationPolicy? = nil,
-        reAttestationChallenge: Data? = nil
+        reAttestationChallenge: Data? = nil,
+        enableUnixSocketSweep: Bool? = nil
     ) {
         self.version = version
         self.signalWeights = signalWeights
@@ -176,6 +183,7 @@ public struct ServerRiskPolicy: Codable, Sendable {
         self.blindChallenge = blindChallenge
         self.keyRotationPolicy = keyRotationPolicy
         self.reAttestationChallenge = reAttestationChallenge
+        self.enableUnixSocketSweep = enableUnixSocketSweep
     }
 }
 
@@ -240,7 +248,7 @@ public final class PolicyManager: @unchecked Sendable {
         #if DEBUG
         Logger.log("⚠️ PolicyManager.init: no certificate hashes configured yet — falling back to system CA in DEBUG. Call configurePinning(hashes:) before fetching policy.")
         self.urlSession = CertificatePinningSessionDelegate.pinnedSession(
-            hashes: [],
+            pinMaterial: .empty,
             allowsSystemCA: true
         )
         #else
@@ -249,15 +257,15 @@ public final class PolicyManager: @unchecked Sendable {
         self.cachedPolicy = loadFromCache()
     }
 
-    public func configurePinning(hashes: Set<String>) {
+    public func configurePinning(pinMaterial: PinnedCertificatePinMaterial) {
         lock.withLock {
-            guard !hashes.isEmpty else {
+            guard !pinMaterial.isEmpty else {
                 Logger.log("PolicyManager.configurePinning: empty hashes provided — all TLS connections would fail")
                 #if DEBUG
                 Logger.log("⚠️ PolicyManager.configurePinning: [DEBUG] falling back to system CA with empty hashes")
                 urlSession.invalidateAndCancel()
                 urlSession = CertificatePinningSessionDelegate.pinnedSession(
-                    hashes: [],
+                    pinMaterial: .empty,
                     allowsSystemCA: true
                 )
                 #else
@@ -267,10 +275,15 @@ public final class PolicyManager: @unchecked Sendable {
             }
             urlSession.invalidateAndCancel()
             urlSession = CertificatePinningSessionDelegate.pinnedSession(
-                hashes: hashes,
+                pinMaterial: pinMaterial,
                 allowsSystemCA: false
             )
         }
+    }
+
+    /// Builds digest-backed material from pin strings (invalid entries ignored).
+    public func configurePinning(hashes: Set<String>) {
+        configurePinning(pinMaterial: PinnedCertificatePinMaterial(pinStrings: hashes))
     }
 
     public var activePolicy: ServerRiskPolicy? {

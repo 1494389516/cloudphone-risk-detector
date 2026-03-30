@@ -110,7 +110,8 @@ final class DetectionEnhancementTests: XCTestCase {
             deadNameCount: 200,
             sendOnlyExceptionPortCount: 1,
             unknownExceptionPortCount: 0,
-            taskForPidUnexpectedSuccess: false
+            taskForPidUnexpectedSuccess: false,
+            debugserverServiceHits: []
         )
 
         let assessment = detector.assess(snapshot: snapshot)
@@ -118,6 +119,27 @@ final class DetectionEnhancementTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(assessment.score, 40)
         XCTAssertEqual(assessment.sendOnlyExceptionPortCount, 1)
         XCTAssertTrue(assessment.methods.contains("task_port:exception_send_only:1"))
+    }
+
+    func testTaskPortAuditCorrelatesDebugserverMachServiceAndTaskForPid() {
+        let detector = TaskPortAuditDetector()
+        let snapshot = TaskPortAuditDetector.Snapshot(
+            totalPortNames: 200,
+            sendRightCount: 90,
+            receiveRightCount: 40,
+            sendOnceRightCount: 10,
+            deadNameCount: 8,
+            sendOnlyExceptionPortCount: 0,
+            unknownExceptionPortCount: 0,
+            taskForPidUnexpectedSuccess: true,
+            debugserverServiceHits: ["com.apple.debugserver"]
+        )
+
+        let assessment = detector.assess(snapshot: snapshot)
+
+        XCTAssertGreaterThanOrEqual(assessment.score, 80)
+        XCTAssertTrue(assessment.methods.contains("task_port:debugserver_mach_service:1"))
+        XCTAssertTrue(assessment.methods.contains("task_port:debugserver_tfpid_correlation"))
     }
 
     func testDTraceKDebugAssessmentUsesConservativeGating() {
@@ -161,6 +183,41 @@ final class DetectionEnhancementTests: XCTestCase {
         XCTAssertLessThan(softAssessment.score, 30)
         XCTAssertGreaterThanOrEqual(strongAssessment.score, 30)
         XCTAssertTrue(strongAssessment.methods.contains(where: { $0.hasPrefix("lldb_jit:small_rwx_count") }))
+    }
+
+    func testLLDBJITAssessmentEscalatesWithTaskPortAuditHintsWithoutRWX() {
+        let detector = LLDBJITDetector()
+        let assessment = detector.assess(
+            observations: [],
+            auditHints: LLDBJITDetector.AuditHints(
+                sendOnlyExceptionPortCount: 1,
+                taskForPidUnexpectedSuccess: true,
+                debugserverMachServiceHits: 1
+            )
+        )
+
+        XCTAssertGreaterThanOrEqual(assessment.score, 55)
+        XCTAssertTrue(assessment.methods.contains("lldb_jit:debugserver_mach_service_hits:1"))
+        XCTAssertTrue(assessment.methods.contains("lldb_jit:task_for_pid_unexpected_success"))
+        XCTAssertTrue(assessment.methods.contains("lldb_jit:exception_send_only:1"))
+    }
+
+    func testLLDBJITAssessmentAddsCrossSurfaceCorrelationBonus() {
+        let detector = LLDBJITDetector()
+        let observations = [
+            LLDBJITDetector.RegionObservation(address: 0x1000, size: 0x4000, userTag: 240, shareMode: 3, inImage: false),
+        ]
+
+        let assessment = detector.assess(
+            observations: observations,
+            auditHints: LLDBJITDetector.AuditHints(
+                sendOnlyExceptionPortCount: 0,
+                taskForPidUnexpectedSuccess: false,
+                debugserverMachServiceHits: 1
+            )
+        )
+
+        XCTAssertTrue(assessment.methods.contains("lldb_jit:cross_surface_correlation"))
     }
 
     func testDyldSharedCacheIntegrityCorrelatedAnomaliesIncreaseScore() {

@@ -13,6 +13,37 @@ private extension Data {
     }
 }
 
+private enum ArmorMessageAuth {
+    static let blockSize = 64
+    static let innerPadByte: UInt8 = 0x6D
+    static let outerPadByte: UInt8 = 0xA3
+
+    static func authenticationCode(key: Data, message: Data) -> Data {
+        var normalizedKey = [UInt8](repeating: 0, count: blockSize)
+        if key.count > blockSize {
+            let digest = Data(SHA256.hash(data: key))
+            normalizedKey.replaceSubrange(0..<digest.count, with: digest)
+        } else {
+            normalizedKey.replaceSubrange(0..<key.count, with: key)
+        }
+
+        var innerKey = normalizedKey
+        var outerKey = normalizedKey
+        for index in 0..<blockSize {
+            innerKey[index] ^= innerPadByte
+            outerKey[index] ^= outerPadByte
+        }
+
+        var innerInput = Data(innerKey)
+        innerInput.append(message)
+        let innerDigest = Data(SHA256.hash(data: innerInput))
+
+        var outerInput = Data(outerKey)
+        outerInput.append(innerDigest)
+        return Data(SHA256.hash(data: outerInput))
+    }
+}
+
 /// Shared producer-side binary ABI contract for cprisk-armor <-> CRiskCore.
 ///
 /// The goal of this namespace is to freeze the section names and packed layout
@@ -45,7 +76,10 @@ public enum ArmorABI {
         public static let textEncryption = "__swift5_cgenc"
         public static let vmpDispatch = "__swift5_mdvrt"
         public static let vmpBytecode = "__swift5_mdirt"
+        /// CPSF/CPSH blob (`magic` + tag); hashed payload is three TEXT prefixes (exec+loop+dispatch bytes per CRiskCore `CPRISK_VM_M3_SELF_*`).
         public static let vmpSelfExpect = "__swift5_mdvsk"
+        /// CPSV span map; vmaddr/length/kind records align with the same three-window self-check as `vmpSelfExpect`.
+        public static let vmpSelfSpans = "__swift5_mdvsi"
         /// Pass 5: Swift descriptor pointer-table shuffle mapping (when `__swift5_ptmap` is too small).
         public static let swiftMetadataMap = "__sw5_mdmap"
 
@@ -61,7 +95,7 @@ public enum ArmorABI {
             anchorA, anchorB, anchorC, anchorD, fullAnchorHash,
             whiteboxMeta, whiteboxCode, whiteboxData, whiteboxTag,
             antiDebugPlan, importEncryptedTable, headerBackup, chainMeta, textEncryption,
-            vmpDispatch, vmpBytecode, vmpSelfExpect,
+            vmpDispatch, vmpBytecode, vmpSelfExpect, vmpSelfSpans,
             swiftMetadataMap,
         ]
     }
@@ -433,6 +467,11 @@ public enum ArmorABI {
 
         public static let swiftTypeRef = "__swift5_typeref"
 
+        /// Pass 2 optional read-only decoy blob: plausible Swift-mangled noise, not referenced by real metadata.
+        public static let swiftSemanticDecoy = "__cp5_swdec"
+
+        /// Ancillary Swift metadata; `__swift5_types` is handled separately by type-descriptor scrubbing
+        /// and must not be blindly bulk-overwritten (relative-pointer tables).
         public static let additionalScrubSections = [
             swiftFieldMetadata,
             swiftBuiltinTypes,
@@ -441,6 +480,8 @@ public enum ArmorABI {
             swiftProtocols,
             swiftProtocolConformances,
             swiftTypeRef,
+            /// Swift 5+ replaceable / resilient metadata (when present; conservative pass scrubs string-like payloads only).
+            "__swift5_replace",
         ]
     }
 
@@ -664,6 +705,7 @@ public enum ArmorABI {
             set.insert(Sections.headerBackup)
             set.insert(Sections.chainMeta)
             set.insert(Sections.textEncryption)
+            set.insert(Sections.vmpSelfSpans)
             set.insert(Sections.swiftMetadataMap)
             return set
         }()
@@ -702,11 +744,9 @@ public enum ArmorABI {
         }
     }
 
-    /// HMAC-SHA256 — used for authentication tags throughout the ABI.
+    /// Custom-pad SHA-256 MAC — used for authentication tags throughout the ABI.
     public static func hmacSHA256(key: Data, message: Data) -> Data {
-        let symmetricKey = SymmetricKey(data: key)
-        let mac = HMAC<SHA256>.authenticationCode(for: message, using: symmetricKey)
-        return Data(mac)
+        ArmorMessageAuth.authenticationCode(key: key, message: message)
     }
 
     /// Derive a single-byte salt XOR key from the root key.

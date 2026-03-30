@@ -29,14 +29,22 @@ public struct RiskVerdict: Codable, Sendable {
     public let scenario: RiskScenario
     public let compressedDigest: Data?
     public let mappingVersion: String?
+    /// 引擎聚合/底线决策的可观测元数据（供上报与服务端联动；不参与分数计算）。
+    public let decisionMetadata: [String: String]?
     public let timestamp: Date
     public let requestId: String
 
     public var extras: [String: String] {
-        [
+        var base = [
             "requestId": requestId,
             "timestamp": ISO8601DateFormatter().string(from: timestamp)
         ]
+        if let decisionMetadata {
+            for (k, v) in decisionMetadata {
+                base["dm.\(k)"] = v
+            }
+        }
+        return base
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -49,6 +57,7 @@ public struct RiskVerdict: Codable, Sendable {
         case scenario = "sc"
         case compressedDigest = "cd"
         case mappingVersion = "mv"
+        case decisionMetadata = "dm"
         case timestamp = "ts"
         case requestId = "ri"
     }
@@ -64,7 +73,8 @@ public struct RiskVerdict: Codable, Sendable {
         signals: [RiskSignal],
         scenario: RiskScenario,
         compressedDigest: Data? = nil,
-        mappingVersion: String? = nil
+        mappingVersion: String? = nil,
+        decisionMetadata: [String: String]? = nil
     ) {
         self.score = score
         self.internalLevel = internalLevel
@@ -75,6 +85,7 @@ public struct RiskVerdict: Codable, Sendable {
         self.scenario = scenario
         self.compressedDigest = compressedDigest
         self.mappingVersion = mappingVersion
+        self.decisionMetadata = decisionMetadata
         self.timestamp = Date()
         self.requestId = UUID().uuidString
     }
@@ -92,8 +103,25 @@ public struct RiskVerdict: Codable, Sendable {
         scenario = try container.decode(RiskScenario.self, forKey: .scenario)
         compressedDigest = try container.decodeIfPresent(Data.self, forKey: .compressedDigest)
         mappingVersion = try container.decodeIfPresent(String.self, forKey: .mappingVersion)
+        decisionMetadata = try container.decodeIfPresent([String: String].self, forKey: .decisionMetadata)
         timestamp = try container.decodeIfPresent(Date.self, forKey: .timestamp) ?? Date()
         requestId = try container.decodeIfPresent(String.self, forKey: .requestId) ?? UUID().uuidString
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(score, forKey: .score)
+        try container.encode(internalLevel, forKey: .internalLevel)
+        try container.encode(internalAction, forKey: .internalAction)
+        try container.encode(confidence, forKey: .confidence)
+        try container.encode(primaryReasons, forKey: .primaryReasons)
+        try container.encode(signals, forKey: .signals)
+        try container.encode(scenario, forKey: .scenario)
+        try container.encodeIfPresent(compressedDigest, forKey: .compressedDigest)
+        try container.encodeIfPresent(mappingVersion, forKey: .mappingVersion)
+        try container.encodeIfPresent(decisionMetadata, forKey: .decisionMetadata)
+        try container.encode(timestamp, forKey: .timestamp)
+        try container.encode(requestId, forKey: .requestId)
     }
 
     /// 便捷初始化：从分数自动推算等级和动作
@@ -115,6 +143,7 @@ public struct RiskVerdict: Codable, Sendable {
         self.scenario = scenario
         self.compressedDigest = compressedDigest
         self.mappingVersion = mappingVersion
+        self.decisionMetadata = nil
         self.timestamp = Date()
         self.requestId = UUID().uuidString
     }

@@ -70,4 +70,21 @@ final class CFFRuntimeSaltTests: XCTestCase {
 
         XCTAssertNotEqual(ordered, reversed)
     }
+
+    func testCombineBuildContextTogglePerturbsOutput() {
+        let withBuildContext = CFFRuntimeSalt.combine(
+            words: [0x1234_5678, 0x9ABC_DEF0],
+            strings: ["ctx", "blend"],
+            flags: [true],
+            includeBuildContext: true
+        )
+        let withoutBuildContext = CFFRuntimeSalt.combine(
+            words: [0x1234_5678, 0x9ABC_DEF0],
+            strings: ["ctx", "blend"],
+            flags: [true],
+            includeBuildContext: false
+        )
+
+        XCTAssertNotEqual(withBuildContext, withoutBuildContext)
+    }
 }

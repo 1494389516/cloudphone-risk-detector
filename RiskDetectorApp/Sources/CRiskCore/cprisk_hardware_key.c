@@ -23,7 +23,6 @@
 #include <Security/Security.h>
 #include <TargetConditionals.h>
 #include <sys/utsname.h>
-#include <sys/sysctl.h>
 #endif
 
 #if defined(__APPLE__) && TARGET_OS_OSX && !TARGET_OS_MACCATALYST
@@ -327,7 +326,8 @@ static int cprisk_sysctl_string_i(const char *name, char *out, size_t out_len) {
         return -1;
 
     size_t len = out_len;
-    if (sysctlbyname(name, out, &len, NULL, 0) != 0 || len == 0) {
+    int err = 0;
+    if (cprisk_sysctlbyname_direct(name, out, &len, NULL, 0, &err) != 0 || len == 0) {
         out[0] = '\0';
         return -1;
     }
@@ -371,7 +371,8 @@ static int cprisk_collect_ios_device_fingerprint_i(
 
     uint64_t memsize = 0;
     size_t memsize_len = sizeof(memsize);
-    if (sysctlbyname("hw.memsize", &memsize, &memsize_len, NULL, 0) == 0 &&
+    int mem_err = 0;
+    if (cprisk_sysctlbyname_direct("hw.memsize", &memsize, &memsize_len, NULL, 0, &mem_err) == 0 &&
         memsize_len == sizeof(memsize)) {
         cprisk_sha256_update_tagged_bytes_i(
             &ctx,

@@ -2,6 +2,7 @@
 
 # Xcode
 DerivedData/
+RiskDetectorApp/com.apple.DeveloperTools/
 *.xcworkspace
 *.xcuserdata/
 *.xcuserstate
@@ -32,6 +33,7 @@ RiskDetectorApp/Legacy/
 
 # Logs
 *.log
+/.tmp_anti_debug.i
 
 # Red team analysis notes & SDK spec (local only)
 RED_TEAM_ANALYSIS_ROUND*.md
@@ -40,3 +42,6 @@ sdk *.txt
 # CFF / anti-deobfuscation implementation reports (local tracking)
 CFF_IMPLEMENTATION_REPORT.md
 ANTI_DEOBFUSCATION_REPORT.md
+
+# CocoaPods podspec (local / private distribution only; not tracked)
+CloudPhoneRiskKit.podspec

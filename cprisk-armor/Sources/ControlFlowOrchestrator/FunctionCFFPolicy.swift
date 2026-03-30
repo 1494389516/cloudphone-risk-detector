@@ -66,11 +66,13 @@ public struct FunctionCFFPolicy: Codable, Equatable, Sendable {
     }
 
     public func tier(for symbol: String) -> FunctionCFFTier? {
+        // `never` / `regionOnly` must win over flattening tiers when a symbol is listed in multiple
+        // buckets (YAML hygiene should still keep one tier per symbol).
+        if never.contains(symbol) { return .never }
+        if regionOnly.contains(symbol) { return .regionOnly }
         if heavy.contains(symbol) { return .heavy }
         if medium.contains(symbol) { return .medium }
         if light.contains(symbol) { return .light }
-        if never.contains(symbol) { return .never }
-        if regionOnly.contains(symbol) { return .regionOnly }
         return nil
     }
 

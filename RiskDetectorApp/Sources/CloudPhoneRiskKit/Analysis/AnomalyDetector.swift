@@ -184,7 +184,6 @@ public final class AnomalyDetector {
         }
 
         let sorted = samples.sorted()
-        let count = sorted.count
 
         // 计算四分位数（线性插值，与统计标准一致）
         let q1 = interpolatedPercentile(sorted: sorted, p: 0.25)
@@ -444,7 +443,9 @@ private func sqrt(_ x: Double) -> Double {
 private func interpolatedPercentile(sorted: [Double], p: Double) -> Double {
     guard !sorted.isEmpty else { return 0 }
     let n = Double(sorted.count)
-    let index = max(0, min(p * (n - 1), n - 1))
+    // Align with StatisticalFeatures percentile convention for consistency across detectors:
+    // index = p*n - 0.5 (p in [0,1]), then linearly interpolate.
+    let index = max(0, min((p * n) - 0.5, n - 1))
     let lower = Int(Darwin.floor(index))
     let upper = Int(Darwin.ceil(index))
     guard lower >= 0, upper < sorted.count else { return sorted[max(0, min(lower, sorted.count - 1))] }

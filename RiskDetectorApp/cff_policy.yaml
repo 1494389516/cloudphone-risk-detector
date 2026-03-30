@@ -5,8 +5,15 @@ functions:
     - RiskDetectionEngine.fastDigestShortCircuit
     - ChallengeSession.transition
     - ChallengeSession.advance
-    - TrustChainManager.buildKeyResolver
     - anti_debug_watchdog.cprisk_watchdog_run_iteration
+    # 风险结论签名 / 设备密钥派生（高敏感）
+    - SignedRiskConclusion.sign
+    - DeviceKeyDeriver.deriveKeyWithTrustInfo
+    - PayloadCrypto.encrypt
+    - PayloadCrypto.decrypt
+    - ReportEnvelope.buildSignatureInput
+    - StorageIntegrityGuard.sign
+    - StorageIntegrityGuard.verify
 
   # 中等：整函数二进制改写预算介于 light/heavy 之间（Pass9 默认更宽的扫描窗口）
   medium:
@@ -14,7 +21,25 @@ functions:
     - ConditionExpression.evaluate
     - ScoreActionNode.evaluate
     - TrustChainManager.shouldRefreshAttestation
-    - ChallengeSession.markSubmitted
+    # 信封验签 / 远程配置验签 / CFF 自保护
+    - SignedRiskConclusion.verify
+    - DeviceKeyDeriver.deriveKey
+    - ReportEnvelope.verifySignature
+    - ConfigSignatureVerifier.verify
+    - CPRiskKit.validateSecureReportEnvelope
+    - RemoteConfig.validate
+    - StringDeobfuscator.xorDecode
+    - CFFStateCodec.deriveSeed
+    - CFFOpaquePredicates.parityFence
+    - CFFOpaquePredicates.connectorGate
+    - CFFOpaquePredicates.maskedEquals
+    # CRiskCore：完整性 / 派生密钥 / hook-surface 校验
+    - cprisk_verify_anchor_hmac
+    - cprisk_verify_with_derived_key
+    - cprisk_verify_with_derived_key_and_request_binding_digest
+    - cprisk_derive_device_key
+    - cprisk_verify_trust_hook_surface_integrity
+    - cprisk_verify_runtime_hook_surface_prologues
     # VM 解释器核心入口，配合 vmp_policy.yaml protect_vm_interpreter_with_cff: true
     - cprisk_vm_entry
     - _cprisk_vm_entry
@@ -33,6 +58,22 @@ functions:
     - ChallengeTrigger.shouldTriggerBlindChallenge
     - AntiTamperingSignalProvider.signals
     - MutationPlanner.maybeShuffle
+    - FridaDetector.detect
+    - AppAttestSigner.generateAssertion
+    - AppAttestSigner.resolveKeyId
+    - SecureFileStore.read
+    - SecureFileStore.write
+    # CRiskCore：Frida / signal-probe 行为入口
+    - cprisk_frida_runtime_snapshot
+    - cprisk_detect_dbi_markers
+    - cprisk_run_all_signal_probes
+    - cprisk_probe_debugger_via_signal
+    - cprisk_probe_exception_delivery_timeout
+    - cprisk_detect_thread_exception_ports
+    - cprisk_detect_hardware_breakpoints
+    - cprisk_scan_instant_return_key_symbols_prefix
+    - cprisk_scan_hook_surface_trampoline_prefixes
+    - cprisk_is_being_traced_sysctl_only
 
   # 绝不平坦化：底层 syscall 包装、App 入口、测试等
   never:
@@ -48,6 +89,15 @@ functions:
     - TrustChainManager.buildKeyResolver
     - RiskDetectorApp.App
     - CloudPhoneRiskKitTests
+    # CRiskCore：保持最底层 syscall / text 加密循环控制流，避免干扰 guard page / idle re-encrypt
+    - cprisk_verify_svc_stub_integrity
+    - cprisk_verify_dlsym_prologue
+    - cprisk_resolve_import
+    - cprisk_deny_attach
+    - cprisk_deny_attach_status
+    - cprisk_deny_attach_effective_verify
+    - cprisk_text_encrypt_service_idle
+    - cprisk_text_on_demand_decrypt
 
   # 仅做 region flattening，不做整函数 flattening
   regionOnly:

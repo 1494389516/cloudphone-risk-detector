@@ -48,6 +48,16 @@ extern "C" {
 #define CPRISK_VMP_BC_FLAG_M3_SELFCHK_HMAC 0x00000100u
 /** M4: interpret the 16-byte VPC metadata block as non-linear Feistel/SPN material instead of plain affine A/B. */
 #define CPRISK_VMP_BC_FLAG_VPC_NONLINEAR 0x00000400u
+/**
+ * When set, runtime takes a SHA256 baseline of each function's bytecode blob at entry and re-checks on a step
+ * cadence + selected control-flow boundaries (see CRiskCore VM interpreter). Backward-compatible when unset.
+ * Periodic re-hashes are throttled against the last successful check; an early-step check and
+ * return/halt/nested-call boundaries run more eagerly.
+ */
+#define CPRISK_VMP_BC_FLAG_BC_SEG_RUNTIME_SHA256 0x00000800u
+
+/** White-box PRF domain used for per-dispatch session-bound side effects (feeds opaque/session chain). */
+#define CPRISK_VM_WB_HANDLER_SIDE_DOMAIN 7u
 
 /** Dispatch header flags (`cprisk_vmp_dispatch_header_t::flags`). */
 #define CPRISK_VMP_DH_FLAG_HANDLER_DUPLICATION 0x00000001u
@@ -76,12 +86,18 @@ enum {
 };
 
 /**
- * M3 optional: expected FNV-1a (32-bit) of the first \c CPRISK_VM_M3_SELF_BYTES bytes of
- * \c cprisk_vm_execute in the linked TEXT segment (no address mixing; stable under ASLR).
+ * M3 optional: rolling FNV-1a (32-bit) over three **concatenated** TEXT windows (no address
+ * mixing): \c CPRISK_VM_M3_SELF_EXEC_BYTES at \c cprisk_vm_execute, then
+ * \c CPRISK_VM_M3_SELF_LOOP_BYTES at \c cprisk_vm_interp_loop_a (main interpret loop prefix),
+ * then \c CPRISK_VM_M3_SELF_DISPATCH_BYTES at \c cprisk_vm_dispatch_lookup (dispatch decode path).
+ * Loop/dispatch windows are intentionally wider than the legacy 48/32 split so tamper in the
+ * hot loop/dispatch path invalidates CPSF/CPSH together with runtime decode seeds (see self-check
+ * wiring in the lane-specific VM execute paths).
+ * Sum equals \c CPRISK_VM_M3_SELF_BYTES; \c cprisk-armor \c VMSelfExpectInjector hashes the same
+ * layout from Mach-O symtab (post-link CPSF/CPSH).
  * When 0, the self-check is skipped even if \c CPRISK_VMP_BC_FLAG_M3_SELFCHK is set.
  * Enable a strict check by defining this at compile time to the fingerprint for your
- * toolchain (e.g. arm64 -O2 reference: \c 0x2f32ecc6u for the object file produced
- * from this source snapshot; re-derive after material interpreter changes).
+ * toolchain; re-derive after material interpreter changes.
  *
  * Additional sources (when macro is 0): optional \c CPRISK_ARMOR_SECTION_VMP_SELF_EXPECT
  * section (magic + LE u32 expect value). See \c CPRISK_VMP_SELF_EXPECT_MAGIC.
@@ -93,7 +109,20 @@ enum {
 #define CPRISK_VM_M3_SELF_EXPECT 0u
 #endif
 #if !defined(CPRISK_VM_M3_SELF_BYTES)
-#define CPRISK_VM_M3_SELF_BYTES 96u
+#define CPRISK_VM_M3_SELF_BYTES 176u
+#endif
+/** Split of \c CPRISK_VM_M3_SELF_BYTES: VM entry + main loop prefix + dispatch lookup (must sum to total). */
+#if !defined(CPRISK_VM_M3_SELF_EXEC_BYTES)
+#define CPRISK_VM_M3_SELF_EXEC_BYTES 48u
+#endif
+#if !defined(CPRISK_VM_M3_SELF_LOOP_BYTES)
+#define CPRISK_VM_M3_SELF_LOOP_BYTES 64u
+#endif
+#if !defined(CPRISK_VM_M3_SELF_DISPATCH_BYTES)
+#define CPRISK_VM_M3_SELF_DISPATCH_BYTES 64u
+#endif
+#if !defined(CPRISK_VM_M3_SELF_INCLUDE_LOOP)
+#define CPRISK_VM_M3_SELF_INCLUDE_LOOP 1
 #endif
 #if !defined(CPRISK_VM_SELFCHK_POLICY)
 #define CPRISK_VM_SELFCHK_POLICY 0
@@ -153,8 +182,38 @@ enum {
     CPRISK_VM_OP_SUB_LANE = 20u,
     /** Byte-lane multiply mod 256 — AArch64 MADD-as-MUL surrogate. */
     CPRISK_VM_OP_MUL_LANE = 21u,
+    /**
+     * Super-instruction: fused \c CPRISK_VM_OP_ADD (imm low 32) then \c CPRISK_VM_OP_ROL_ACC (imm high 32, rot & 31).
+     * Semantics match executing ADD then ROL in sequence at one PC step.
+     */
+    CPRISK_VM_OP_ADD_ROL_ACC = 22u,
+    /**
+     * Indirect unconditional branch: target PC byte offset = mixed(vreg[imm&7], 8 acc bytes at (imm>>3)&31) mod insn_count.
+     */
+    CPRISK_VM_OP_BRANCH_IND = 23u,
     CPRISK_VM_OP_POISON = 0xFFu
 };
+
+/**
+ * Reserved immediate contract for \c CPRISK_VM_OP_BRANCH_IND:
+ * - high byte \c 0xA1 means semi-identity mode and runtime must fall through by one instruction;
+ * - remaining low 56 bits are payload/entropy and must not alter the fallthrough behavior.
+ * - high byte \c 0xA2 means semi-semantic mode: runtime evaluates the full mix/vreg/\c acc path
+ *   to obtain \c q, then selects a controlled forward target within a producer-supplied nop sled.
+ *   Bits 8..15 encode \c forward_span (0..255): the number of nop instructions following the
+ *   \c branchInd. Runtime jumps \c (1 + q % (forward_span + 1)) * INSN_WIDTH forward.
+ *   All reachable targets are safe (nop or halt).
+ */
+#define CPRISK_VM_BRANCH_IND_SEMI_IDENTITY_TAG 0xA100000000000000ULL
+#define CPRISK_VM_BRANCH_IND_SEMI_IDENTITY_MASK 0xFF00000000000000ULL
+#define CPRISK_VM_BRANCH_IND_SEMI_IDENTITY_PAYLOAD_MASK 0x00FFFFFFFFFFFFFFULL
+
+#define CPRISK_VM_BRANCH_IND_SEMI_SEMANTIC_TAG 0xA200000000000000ULL
+#define CPRISK_VM_BRANCH_IND_SEMI_SEMANTIC_MASK 0xFF00000000000000ULL
+
+#define CPRISK_VM_ACC_PRIMARY_BYTES 32u
+#define CPRISK_VM_ACC_AUX_BYTES 32u
+#define CPRISK_VM_ACC_COMBINED_BYTES (CPRISK_VM_ACC_PRIMARY_BYTES + CPRISK_VM_ACC_AUX_BYTES)
 
 /** `cprisk_vmp_bytecode_entry_t::reserved` extended profile marker in bits 24...31. */
 #define CPRISK_VMP_ENTRY_PROFILE_MAGIC 0xA5u
@@ -193,21 +252,30 @@ typedef struct cprisk_vm_run_result {
     uint32_t status;
     uint32_t poison_flags;
     uint32_t whitebox_domain_rc;
-    uint8_t acc[32];
+    /** Folded / externally visible accumulator view derived from the 64-byte primary+aux state. */
+    uint8_t acc[CPRISK_VM_ACC_PRIMARY_BYTES];
     uint64_t steps;
     uint32_t last_opcode;
     uint32_t last_dispatch_class;
     /** Eight virtual 64-bit GPRs (interpreter-visible state at VM halt). */
     uint64_t vregs[8];
+    /** Auxiliary 32-byte bank; together with \c acc forms the 64-byte combined VM state. */
+    uint8_t acc_aux[CPRISK_VM_ACC_AUX_BYTES];
 } cprisk_vm_run_result_t;
+
+#if defined(__GNUC__)
+#define CPRISK_VM_EXPORT __attribute__((visibility("default")))
+#else
+#define CPRISK_VM_EXPORT
+#endif
 
 /// Execute VM bytecode for the given function id.
 /// Returns a 64-bit value folded from VM accumulator (reserved for ABI compatibility).
-uint64_t cprisk_vm_entry(uint64_t func_id);
+CPRISK_VM_EXPORT uint64_t cprisk_vm_entry(uint64_t func_id);
 
 /// Alternate VM entry symbols (same semantics as \c cprisk_vm_entry); kept distinct for CFF / linker \c -u wiring.
-uint64_t cprisk_vm_entry_alt1(uint64_t func_id);
-uint64_t cprisk_vm_entry_alt2(uint64_t func_id);
+CPRISK_VM_EXPORT uint64_t cprisk_vm_entry_alt1(uint64_t func_id);
+CPRISK_VM_EXPORT uint64_t cprisk_vm_entry_alt2(uint64_t func_id);
 
 /// Debug/testing entry: execute VM and emit detailed run result.
 /// Returns 0 on success, -1 on invalid input.

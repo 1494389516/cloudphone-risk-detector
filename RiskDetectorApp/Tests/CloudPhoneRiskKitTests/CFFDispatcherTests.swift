@@ -64,6 +64,27 @@ final class CFFDispatcherTests: XCTestCase {
         XCTAssertEqual(planA.style, planB.style)
         XCTAssertTrue(planA.style == .switchLoop || planA.style == .ifElseChain)
     }
+
+    func testBlendDerivedConstantsAreDeterministicAndDiverse() {
+        var dispatchXors = Set<UInt32>()
+        for blend in CFFContextBlend.allCases {
+            let first = blend.dispatchXor32
+            let second = blend.dispatchXor32
+            XCTAssertEqual(first, second, "derived constants must remain deterministic per blend")
+            dispatchXors.insert(first)
+        }
+        XCTAssertGreaterThanOrEqual(dispatchXors.count, 3, "derived constants should not collapse all blends")
+    }
+
+    func testDerivedLayoutTagsRemainBoundedAndSplitPrimeIsValid() {
+        for blend in CFFContextBlend.allCases {
+            XCTAssertLessThan(blend.residueLayoutTag, 4)
+            XCTAssertLessThan(blend.parityLayoutTag, 4)
+            XCTAssertLessThan(blend.connectorLayoutTag, 4)
+            XCTAssertTrue(blend.splitSelectorPrime > 0)
+            XCTAssertEqual(blend.splitSelectorPrime & 1, 1, "split selector prime must stay odd")
+        }
+    }
 }
 
 #if !DEBUG

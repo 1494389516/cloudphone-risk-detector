@@ -16,6 +16,27 @@ final class DetectorManifestTests: XCTestCase {
         }
     }
 
+    func testAllDetectorTypesHaveRegisteredFactories() {
+        let registry = DetectorRegistry.shared
+        for type in DetectorRegistry.DetectorType.allCases {
+            XCTAssertNotNil(
+                registry.createDetector(type: type),
+                "missing factory for \(type.rawValue)"
+            )
+        }
+    }
+
+    func testDetectorGroupsPartitionAllDetectorTypes() {
+        let registry = DetectorRegistry.shared
+        var union: Set<DetectorRegistry.DetectorType> = []
+        for group in DetectorRegistry.DetectorGroup.allCases {
+            let members = registry.types(in: group)
+            XCTAssertFalse(members.isEmpty, "group \(group.rawValue) should not be empty")
+            union.formUnion(members)
+        }
+        XCTAssertEqual(union, Set(DetectorRegistry.DetectorType.allCases))
+    }
+
     func testFridaDetectorHasHighPriority() {
         let registry = DetectorRegistry.shared
         let fridaManifest = registry.manifest(for: .frida)

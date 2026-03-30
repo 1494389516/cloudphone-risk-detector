@@ -343,7 +343,8 @@ public final class SubstitutionEngine {
             ))
         }
 
-        // Dead-code islands: [CBZ XZR, +8] [dead op]. Branch always skips dead op.
+        // Dead-code islands: blend classic 2-word bait with longer __text mimic blocks so
+        // disassemblers / LLMs see fake helper routines inside real code pages.
         let remainingNoEffect = noEffectCandidates
             .filter { !mutatedOffsets.contains($0.fileOffset) }
             .sorted { $0.fileOffset < $1.fileOffset }
@@ -367,8 +368,61 @@ public final class SubstitutionEngine {
             replacementRate: configuration.deadCodeIslandRate
         )
         if islandTarget > 0 {
-            islandCandidates.shuffle(using: &rng)
             var usedIslandOffsets = Set<UInt64>()
+            let textMimicCandidates = buildTextMimicIslandCandidates(
+                from: remainingNoEffect,
+                textEndFileOffset: textEndFileOffset,
+                dataInCodeRanges: dataInCodeRanges
+            )
+            let textMimicTarget = textMimicCandidates.isEmpty ? 0 : min(textMimicCandidates.count, max(1, islandTarget / 2))
+
+            if textMimicTarget > 0 {
+                var shuffledMimics = textMimicCandidates
+                shuffledMimics.shuffle(using: &rng)
+
+                for candidate in shuffledMimics {
+                    guard injectedDeadCodeIslands.count < textMimicTarget else { break }
+                    let branchOffset = candidate.branchSlot.fileOffset
+                    let deadOffsets = candidate.deadSlots.map(\.fileOffset)
+                    guard !mutatedOffsets.contains(branchOffset),
+                          !usedIslandOffsets.contains(branchOffset),
+                          deadOffsets.allSatisfy({ !mutatedOffsets.contains($0) && !usedIslandOffsets.contains($0) }) else {
+                        continue
+                    }
+
+                    let branchReplacement = encodeCompareAndBranchZero(
+                        branchIfZero: true,
+                        immediateWords: candidate.template.instructions.count + 1
+                    )
+                    if branchReplacement != candidate.branchSlot.originalRawValue {
+                        try file.replaceBytes(at: branchOffset, with: ARM64Codec.data(for: branchReplacement))
+                        bytesModified += 4
+                    }
+                    mutatedOffsets.insert(branchOffset)
+                    usedIslandOffsets.insert(branchOffset)
+
+                    for (slot, replacementRawValue) in zip(candidate.deadSlots, candidate.template.instructions) {
+                        if replacementRawValue != slot.originalRawValue {
+                            try file.replaceBytes(at: slot.fileOffset, with: ARM64Codec.data(for: replacementRawValue))
+                            bytesModified += 4
+                        }
+                        mutatedOffsets.insert(slot.fileOffset)
+                        usedIslandOffsets.insert(slot.fileOffset)
+                    }
+
+                    injectedDeadCodeIslands.append(AppliedDeadCodeIsland(
+                        branchFileOffset: branchOffset,
+                        deadInstructionFileOffset: candidate.deadSlots[0].fileOffset,
+                        originalBranchRawValue: candidate.branchSlot.originalRawValue,
+                        originalDeadRawValue: candidate.deadSlots[0].originalRawValue,
+                        replacementBranchRawValue: branchReplacement,
+                        replacementDeadRawValue: candidate.template.instructions[0],
+                        description: candidate.template.description
+                    ))
+                }
+            }
+
+            islandCandidates.shuffle(using: &rng)
             let branchReplacement = encodeCompareAndBranchZero(
                 branchIfZero: true,
                 immediateWords: 2
@@ -980,6 +1034,52 @@ public final class SubstitutionEngine {
         return pool[index]
     }
 
+    private func buildTextMimicIslandCandidates(
+        from candidates: [NoEffectCandidate],
+        textEndFileOffset: Int,
+        dataInCodeRanges: [DataInCodeRange]
+    ) -> [TextMimicIslandCandidate] {
+        guard !candidates.isEmpty else { return [] }
+
+        let templates = TextMimicTemplate.allCases
+        var result = [TextMimicIslandCandidate]()
+        result.reserveCapacity(max(1, candidates.count / 3))
+
+        for startIndex in candidates.indices {
+            let branchSlot = candidates[startIndex]
+            for template in templates {
+                let deadCount = template.instructions.count
+                guard deadCount > 0 else { continue }
+                guard startIndex + deadCount < candidates.count else { continue }
+
+                var deadSlots = [NoEffectCandidate]()
+                deadSlots.reserveCapacity(deadCount)
+                var contiguous = true
+                for delta in 1...deadCount {
+                    let slot = candidates[startIndex + delta]
+                    guard slot.fileOffset == branchSlot.fileOffset + UInt64(delta * 4) else {
+                        contiguous = false
+                        break
+                    }
+                    deadSlots.append(slot)
+                }
+                guard contiguous else { continue }
+
+                let branchTarget = Int(branchSlot.fileOffset) + ((deadCount + 1) * 4)
+                guard branchTarget < textEndFileOffset else { continue }
+                guard !isMarkedAsData(fileOffset: branchTarget, ranges: dataInCodeRanges) else { continue }
+
+                result.append(TextMimicIslandCandidate(
+                    branchSlot: branchSlot,
+                    deadSlots: deadSlots,
+                    template: template
+                ))
+            }
+        }
+
+        return result
+    }
+
     private func loadDataInCodeRanges(from file: MachOFile, textSection: Section) -> [DataInCodeRange] {
         guard textSection.size <= UInt64(Int.max) else { return [] }
 
@@ -1071,6 +1171,123 @@ private struct NoEffectCandidate {
 private struct DeadCodeIslandCandidate {
     let branchSlot: NoEffectCandidate
     let deadSlot: NoEffectCandidate
+}
+
+private struct TextMimicIslandCandidate {
+    let branchSlot: NoEffectCandidate
+    let deadSlots: [NoEffectCandidate]
+    let template: TextMimicTemplate
+}
+
+private enum TextMimicTemplate: CaseIterable {
+    case jailbreakProbe
+    case compareStub
+    case frameCallStub
+    case megamorphicDataflow
+    case deepCallChain
+    case vtableDispatch
+
+    var instructions: [UInt32] {
+        switch self {
+        case .jailbreakProbe:
+            return [
+                0x9000_0000, // ADRP X0, #0
+                ARM64Codec.encodeAddImmediateZero(
+                    destinationRegister: 0,
+                    sourceRegister: 0,
+                    width: .x64
+                ),
+                0x9400_0000, // BL +0
+                0x7100_001F, // CMP W0, #0
+                ARM64Codec.encodeBCond(conditionCode: 0, immediateBytes: 8), // B.EQ +8
+            ]
+        case .compareStub:
+            return [
+                ARM64Codec.encodeMoveAlias(destinationRegister: 8, sourceRegister: 0, width: .x64),
+                ARM64Codec.encodeMoveAlias(destinationRegister: 9, sourceRegister: 1, width: .x64),
+                ARM64Codec.encodeSUBSShiftedRegister(
+                    destination: ARM64RegisterWidth.zeroRegisterIndex,
+                    source1: 8,
+                    source2: 9,
+                    width: .x64
+                ),
+                ARM64Codec.encodeBCond(conditionCode: 1, immediateBytes: 8), // B.NE +8
+                0xD65F_03C0, // RET
+            ]
+        case .frameCallStub:
+            return [
+                0xA9BF_7BFD, // STP X29, X30, [SP,#-16]!
+                0x9100_03FD, // MOV X29, SP
+                0xD100_C3FF, // SUB SP, SP, #0x30
+                0x9400_0000, // BL +0
+                0xD65F_03C0, // RET
+            ]
+        case .megamorphicDataflow:
+            return [
+                0xCA0A_0128, // EOR  X8,  X9,  X10
+                0x8B09_0D0B, // ADD  X11, X8,  X9,  LSL #3
+                0xCB0A_1D6C, // SUB  X12, X11, X10
+                0xCA0B_358D, // EOR  X13, X12, X11
+                0x8B0C_15AE, // ADD  X14, X13, X12, LSL #5
+                0xCB0D_01CF, // SUB  X15, X14, X13
+                0xCA0E_01E8, // EOR  X8,  X15, X14
+                0x8B0F_0109, // ADD  X9,  X8,  X15
+                0xCB08_012A, // SUB  X10, X9,  X8
+                0xCA09_014B, // EOR  X11, X10, X9
+                0x8B0A_016C, // ADD  X12, X11, X10
+                0xCB0B_018D, // SUB  X13, X12, X11
+                0xCA0C_01AE, // EOR  X14, X13, X12
+                0x8B0D_01CF, // ADD  X15, X14, X13
+                0xCB0E_01E8, // SUB  X8,  X15, X14
+                0xD65F_03C0, // RET (fake epilogue)
+            ]
+        case .deepCallChain:
+            return [
+                0xA9BF_7BFD, // STP  X29, X30, [SP, #-16]!
+                0x9100_03FD, // MOV  X29, SP
+                0xAA08_03E0, // MOV  X0,  X8
+                0x9400_0000, // BL   +0
+                0xAA00_03E8, // MOV  X8,  X0
+                0xAA09_03E0, // MOV  X0,  X9
+                0x9400_0000, // BL   +0
+                0xEB00_011F, // CMP  X8,  X0
+                0x5400_0041, // B.NE +8
+                0xAA1F_03E0, // MOV  X0,  XZR
+                0xA8C1_7BFD, // LDP  X29, X30, [SP], #16
+                0xD65F_03C0, // RET
+            ]
+        case .vtableDispatch:
+            return [
+                0xF940_0008, // LDR  X8,  [X0]          (load vtable ptr)
+                0xF940_0909, // LDR  X9,  [X8, #0x10]   (load method ptr)
+                0xAA13_03E1, // MOV  X1,  X19
+                0xAA14_03E2, // MOV  X2,  X20
+                0xD63F_0120, // BLR  X9                  (call virtual method)
+                0xF940_040A, // LDR  X10, [X0, #8]      (load 2nd vtable)
+                0xF940_0D4B, // LDR  X11, [X10, #0x18]  (load 2nd method)
+                0xAA15_03E1, // MOV  X1,  X21
+                0xD63F_0160, // BLR  X11                 (call 2nd virtual method)
+                0xD65F_03C0, // RET
+            ]
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .jailbreakProbe:
+            return "CBZ XZR text-mimic island + fake jailbreak probe (ADRP+ADD+BL+CMP+B.EQ)"
+        case .compareStub:
+            return "CBZ XZR text-mimic island + fake compare helper (MOV+MOV+SUBS+B.NE+RET)"
+        case .frameCallStub:
+            return "CBZ XZR text-mimic island + fake frame/call stub (STP+MOV+SUB+BL+RET)"
+        case .megamorphicDataflow:
+            return "CBZ XZR text-mimic island + megamorphic data-flow chain (16 EOR/ADD/SUB register dependency cascade)"
+        case .deepCallChain:
+            return "CBZ XZR text-mimic island + deep call chain with multiple BL (fake cross-refs for IDA call graph)"
+        case .vtableDispatch:
+            return "CBZ XZR text-mimic island + vtable dispatch mimic (LDR+BLR fake virtual calls)"
+        }
+    }
 }
 
 private struct ReplacementOption {

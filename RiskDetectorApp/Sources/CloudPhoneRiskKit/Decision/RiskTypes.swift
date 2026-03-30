@@ -8,7 +8,7 @@ import Foundation
 // MARK: - Risk Scenario
 /// 风险评估场景
 /// 定义不同的业务场景，每个场景可以有不同的策略配置
-@objc public enum RiskScenario: Int, Sendable, Codable, CaseIterable {
+@objc(CPR_RiskScenario) public enum RiskScenario: Int, Sendable, Codable, CaseIterable {
     /// 登录场景
     case login = 0
     /// 支付场景
@@ -106,7 +106,7 @@ public enum InternalRiskLevel: String, Codable, Sendable {
 
 // MARK: - Public Risk Level (3-level per protocol)
 /// 公开风险等级（3级，符合协议定义）
-@objc public enum PublicRiskLevel: Int, Sendable, Codable, CaseIterable {
+@objc(CPR_PublicRiskLevel) public enum PublicRiskLevel: Int, Sendable, Codable, CaseIterable {
     /// 低风险 - 可以直接通过
     case low = 0
     /// 中风险 - 需要额外验证或挑战
@@ -136,7 +136,7 @@ public enum InternalRiskLevel: String, Codable, Sendable {
 // MARK: - Risk Action
 /// 风险处理动作
 /// 定义针对不同风险级别的处理建议
-@objc public enum RiskAction: Int, Sendable, Codable, CaseIterable {
+@objc(CPR_RiskAction) public enum RiskAction: Int, Sendable, Codable, CaseIterable {
     /// 允许 - 直接放行
     case allow = 0
     /// 挑战 - 需要额外验证（如验证码、人脸识别）
@@ -178,7 +178,7 @@ public enum InternalRiskLevel: String, Codable, Sendable {
 
 // MARK: - Public Risk Action (3-type per protocol)
 /// 公开风险动作（3种，符合协议定义）
-@objc public enum PublicRiskAction: Int, Sendable, Codable, CaseIterable {
+@objc(CPR_PublicRiskAction) public enum PublicRiskAction: Int, Sendable, Codable, CaseIterable {
     /// 允许 - 直接放行
     case allow = 0
     /// 挑战 - 需要额外验证（如验证码、人脸识别）

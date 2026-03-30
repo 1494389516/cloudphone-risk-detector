@@ -30,6 +30,14 @@ struct CLIOptions {
     var buildSeedRaw: String?
     /// Pass 2: `conservative` (default) or `aggressive` Swift metadata scrub.
     var metadataScrubLevelRaw: String?
+    /// Pass 2: report `__TEXT.__cstring` matches for curated Swift semantic tokens (stderr + PassResult details).
+    var swiftSemanticReport: Bool = false
+    /// Pass 2: scrub matching `__cstring` literals (opt-in; can break string comparisons at runtime).
+    var swiftSemanticScrubCString: Bool = false
+    /// Pass 2: append unreferenced decoy section with fake Swift-mangled noise (best-effort).
+    var swiftSemanticDecoys: Bool = false
+    /// `standard` (default) or `appstore-safe` — selects default CFF/VMP YAML when paths not overridden.
+    var safetyProfileRaw: String?
 }
 
 func parseArguments() -> CLIOptions {
@@ -77,6 +85,15 @@ func parseArguments() -> CLIOptions {
         case "--metadata-scrub-level":
             i += 1
             if i < args.count { options.metadataScrubLevelRaw = args[i] }
+        case "--swift-semantic-report":
+            options.swiftSemanticReport = true
+        case "--swift-semantic-scrub-cstring":
+            options.swiftSemanticScrubCString = true
+        case "--swift-semantic-decoys":
+            options.swiftSemanticDecoys = true
+        case "--safety-profile":
+            i += 1
+            if i < args.count { options.safetyProfileRaw = args[i] }
         case "--help":
             printUsage()
             exit(0)
@@ -102,7 +119,7 @@ func printUsage() {
       --pass3           Pass 3: Data Segment Encryption
       --pass4           Pass 4: Integrity Anchor
       --pass5           Pass 5: Structure Obfuscation
-      --pass6           Pass 6: Symbol Stripping (nlist obfuscation)
+      --pass6           Pass 6: Symbol Stripping + export trie scrub (MH_EXECUTE)
       --pass7           Pass 7: Anti-Debug Metadata Injection
       --pass8           Pass 8: Instruction Substitution
       --pass9           Pass 9: Control Flow Orchestrator (policy-guided binary rewrite)
@@ -113,10 +130,18 @@ func printUsage() {
       --all             Enable all passes
       --cff-policy      Override cff_policy.yaml path for Pass 9
       --vmp-policy      Override vmp_policy.yaml path for Pass 13 (default: RiskDetectorApp/vmp_policy.yaml search)
+      --safety-profile standard|appstore-safe
+                        Build policy profile: appstore-safe defaults to *_appstore_safe.yaml when --cff-policy/--vmp-policy omitted
       --build-seed      Build randomization seed (u64, decimal or 0x-prefixed hex)
       --metadata-scrub-level conservative|aggressive
                         Pass 2 Swift metadata: conservative (default, string payloads only)
                         or aggressive (full section overwrite; higher breakage risk)
+      --swift-semantic-report
+                        Pass 2: scan __TEXT.__cstring for semantic-leak tokens (details + stderr when --verbose)
+      --swift-semantic-scrub-cstring
+                        Pass 2: overwrite matching CString bodies in-place (same length; runtime risk)
+      --swift-semantic-decoys
+                        Pass 2: append `__TEXT,__cp5_swdec` with fake Swift-mangled decoys (best-effort)
       --verbose         Verbose output
       --help            Show this help
 
@@ -125,6 +150,16 @@ func printUsage() {
       CPRISK_ARMOR_BUILD_SEED Decimal or 0x-prefixed seed for deterministic randomization (preferred override)
       CPRISK_BUILD_SEED       Legacy alias for CPRISK_ARMOR_BUILD_SEED (fallback when --build-seed is missing)
       CPRISK_METADATA_SCRUB_LEVEL  Pass 2: conservative (default) or aggressive
+                        (aggressive overwrites non-`__swift5_types` ancillary sections in full; may break reflection / some dynamic features)
+      CPRISK_SWIFT_SEMANTIC_REPORT=1  Pass 2: same as --swift-semantic-report
+      CPRISK_SWIFT_SEMANTIC_SCRUB_CSTRING=1  Pass 2: same as --swift-semantic-scrub-cstring
+      CPRISK_SWIFT_SEMANTIC_DECOYS=1  Pass 2: same as --swift-semantic-decoys
+
+    Swift metadata (compile-time, complements Pass 2):
+      Xcode project/target: set SWIFT_REFLECTION_METADATA_LEVEL=minimal (default in this repo’s
+        project-level Debug/Release — reduces refl/__swift5_*-derived strings vs. full metadata).
+      SwiftPM (Release only): CPRISK_ENABLE_SWIFT_METADATA_CONVERGENCE=1 enables -disable-reflection-metadata
+        and -disable-reflection-names in Package.swift (stronger than minimal; test before shipping).
 
     A key is REQUIRED when any encryption pass (1, 3, 4, 12) or --all is enabled.
     """)
@@ -207,6 +242,20 @@ private func resolveSwiftMetadataScrubLevel(from options: CLIOptions) -> SwiftMe
         if env == "aggressive" { return .aggressive }
     }
     return .conservative
+}
+
+/// Pass 2 optional Swift semantic CString scan / scrub / decoys: CLI flags OR env toggles.
+private func resolveSwiftSemanticLeakOptions(from options: CLIOptions) -> SwiftSemanticLeakOptions {
+    func envBool(_ key: String) -> Bool {
+        let v = ProcessInfo.processInfo.environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        return v == "1" || v == "true" || v == "yes"
+    }
+    return SwiftSemanticLeakOptions(
+        reportCStringSemanticMatches: options.swiftSemanticReport || envBool("CPRISK_SWIFT_SEMANTIC_REPORT"),
+        scrubCStringSemanticMatches: options.swiftSemanticScrubCString
+            || envBool("CPRISK_SWIFT_SEMANTIC_SCRUB_CSTRING"),
+        injectSemanticDecoys: options.swiftSemanticDecoys || envBool("CPRISK_SWIFT_SEMANTIC_DECOYS")
+    )
 }
 
 private func resolveBuildSeed(from options: CLIOptions) throws -> BuildSeedResolution {
@@ -300,6 +349,41 @@ do {
     exit(1)
 }
 
+let safetyProfile: ArmorSafetyProfile
+if let raw = options.safetyProfileRaw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+    guard let parsed = ArmorSafetyProfile(cliToken: raw) else {
+        fputs("Error: invalid --safety-profile '\(raw)' (use standard or appstore-safe)\n", stderr)
+        exit(1)
+    }
+    safetyProfile = parsed
+} else {
+    safetyProfile = .standard
+}
+
+let resolvedCffPolicyPath: String? = options.cffPolicyPath ?? (
+    safetyProfile == .appStoreSafe ? ArmorPolicyPathResolver.resolveDefaultCffPolicyPath(profile: safetyProfile) : nil
+)
+let resolvedVmpPolicyPath: String? = options.vmpPolicyPath ?? (
+    safetyProfile == .appStoreSafe ? ArmorPolicyPathResolver.resolveDefaultVmpPolicyPath(profile: safetyProfile) : nil
+)
+
+if safetyProfile == .appStoreSafe {
+    if enabledPasses.contains(9), resolvedCffPolicyPath == nil {
+        fputs(
+            "Error: --safety-profile appstore-safe requires cff_policy_appstore_safe.yaml (or pass --cff-policy)\n",
+            stderr
+        )
+        exit(1)
+    }
+    if enabledPasses.contains(13), resolvedVmpPolicyPath == nil {
+        fputs(
+            "Error: --safety-profile appstore-safe requires vmp_policy_appstore_safe.yaml (or pass --vmp-policy)\n",
+            stderr
+        )
+        exit(1)
+    }
+}
+
 do {
     let inputURL = URL(fileURLWithPath: inputPath)
     let outputURL = URL(fileURLWithPath: outputPath)
@@ -307,21 +391,31 @@ do {
     if verbose { print("[*] Loading Mach-O: \(inputPath)") }
     let machoFile = try MachOFile(url: inputURL)
 
+    let metadataScrubLevel = resolveSwiftMetadataScrubLevel(from: options)
+    let swiftSemanticLeak = resolveSwiftSemanticLeakOptions(from: options)
+    let config = PassConfig(
+        verbose: verbose,
+        encryptionKey: keyData,
+        randomSeed: buildSeed.seed,
+        buildSeed: buildSeed.seed,
+        swiftMetadataScrubLevel: metadataScrubLevel,
+        swiftSemanticLeakOptions: swiftSemanticLeak
+    )
+
     if verbose {
         let validity = machoFile.header.isValid ? "valid" : "INVALID"
         print("[*] Header: \(validity) | Commands: \(machoFile.header.numberOfCommands) | Type: \(machoFile.header.fileType)")
         print("[*] Segments: \(try machoFile.segments().map(\.name).joined(separator: ", "))")
         if keyData != nil { print("[*] Encryption key: provided (\(ArmorABI.keySize) bytes)") }
         print(String(format: "[*] Build seed: 0x%016llX (%@)", buildSeed.seed, buildSeed.origin.rawValue))
+        print("[*] Safety profile: \(safetyProfile.rawValue)")
+        if let p = resolvedCffPolicyPath { print("[*] CFF policy path: \(p)") }
+        if let p = resolvedVmpPolicyPath { print("[*] VMP policy path: \(p)") }
+        print(
+            "[*] Pass 2 semantic leak: report=\(swiftSemanticLeak.reportCStringSemanticMatches) scrub_cstring=\(swiftSemanticLeak.scrubCStringSemanticMatches) decoys=\(swiftSemanticLeak.injectSemanticDecoys)"
+        )
     }
 
-    let metadataScrubLevel = resolveSwiftMetadataScrubLevel(from: options)
-    let config = PassConfig(
-        verbose: verbose,
-        encryptionKey: keyData,
-        randomSeed: buildSeed.seed,
-        swiftMetadataScrubLevel: metadataScrubLevel
-    )
     var allResults = [PassResult]()
     let passes: [(Int, ArmorPass)] = [
         (1, StringEncryptorPass()),
@@ -332,11 +426,12 @@ do {
         (11, HeaderEncryptorPass()),
         (5, StructureObfuscatorPass()),
         (7, AntiDebugInjectorPass()),
-        (9, ControlFlowOrchestratorPass(policyFilePath: options.cffPolicyPath)),
+        (9, ControlFlowOrchestratorPass(policyFilePath: resolvedCffPolicyPath)),
         (10, ImportEncryptorPass()),
-        (13, VMProtectorPass(policyFilePath: options.vmpPolicyPath)),
+        (13, VMProtectorPass(policyFilePath: resolvedVmpPolicyPath)),
         (12, TextSegmentEncryptorPass()),
         (6, SymbolStripperPass()),
+        (6, ExportTrieScrubberPass()),
     ]
 
     for (index, pass) in passes {

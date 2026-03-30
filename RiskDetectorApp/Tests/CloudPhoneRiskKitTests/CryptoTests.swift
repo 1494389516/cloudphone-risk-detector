@@ -167,6 +167,46 @@ final class CryptoTests: XCTestCase {
         XCTAssertEqual(integrity?["payload_sha256_match"], "1")
         XCTAssertEqual(integrity?["route"], "report_envelope->grpc_payload")
         XCTAssertFalse((integrity?["signature_input_sha256"] ?? "").isEmpty)
+        XCTAssertEqual(integrity?["binding_mode"], "base_key_request_bound")
+        XCTAssertEqual(
+            integrity?["binding_fields"],
+            "sigVer,nonce,ts,sessionToken,reportId,keyId,fieldMappingVersion,attestationKeyId,payloadCanonical"
+        )
+        XCTAssertEqual(integrity?["attestation_pair_state"], "none")
+        XCTAssertEqual(integrity?["trust_level"], "unspecified")
+        XCTAssertFalse((integrity?["request_binding_fp"] ?? "").isEmpty)
+        XCTAssertFalse((integrity?["signing_identity_status"] ?? "").isEmpty)
+        XCTAssertFalse((integrity?["signing_identity_fp"] ?? "").isEmpty)
+        XCTAssertEqual(integrity?["signals_digest_present"], "0")
+    }
+
+    func testReportEnvelopeBindingDiagnosticsExposeSignalDigestAndBindingState() throws {
+        let payloadData = try JSONSerialization.data(withJSONObject: [
+            "score": 75,
+            "sd": "deadbeef",
+            "dv2": "v2a",
+        ])
+        let signingKey = "test-signing-key-32-bytes-long!!"
+        let envelope = try ReportEnvelope.create(
+            payloadData: payloadData,
+            reportId: "report-bind-diag",
+            sessionToken: "session-bind-diag",
+            signingKey: signingKey,
+            keyId: "key-1",
+            attestationKeyId: "att-key",
+            trustLevel: .derived,
+            config: .init()
+        )
+
+        let diagnostics = envelope.bindingDiagnostics()
+        XCTAssertEqual(diagnostics["binding_mode"], "plain_hmac_v1")
+        XCTAssertEqual(diagnostics["binding_digest_present"], "1")
+        XCTAssertEqual(diagnostics["binding_digest_consistent"], "1")
+        XCTAssertEqual(diagnostics["signals_digest_present"], "1")
+        XCTAssertEqual(diagnostics["signals_digest_version"], "v2a")
+        XCTAssertEqual(diagnostics["signals_digest"], "deadbeef")
+        XCTAssertEqual(diagnostics["attestation_pair_state"], "key_only")
+        XCTAssertEqual(diagnostics["trust_level"], "derived")
     }
 
     func testGrpcPayloadFailClosedOnPayloadSha256Mismatch() throws {

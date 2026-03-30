@@ -24,10 +24,8 @@ final class ConfigSignatureVerifierTests: XCTestCase {
         ConfigSignatureVerifier.configure(serverSigningKey: "test-signing-key")
 
         let payload = Data("test payload".utf8)
-        let keyHash = SHA256.hash(data: Data("test-signing-key".utf8))
-        let key = SymmetricKey(data: Data(keyHash))
-        let mac = HMAC<SHA256>.authenticationCode(for: payload, using: key)
-        let sigHex = Data(mac).map { String(format: "%02x", $0) }.joined()
+        let keyData = Data(SHA256.hash(data: Data("test-signing-key".utf8)))
+        let sigHex = CPRiskMessageAuth.authenticationCodeHex(for: payload, keyData: keyData)
 
         let result = ConfigSignatureVerifier.verify(payload: payload, signatureHex: sigHex)
         XCTAssertTrue(result.isValid)

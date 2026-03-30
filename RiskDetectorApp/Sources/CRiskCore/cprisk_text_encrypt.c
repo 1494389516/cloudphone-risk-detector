@@ -30,7 +30,56 @@ extern void cprisk_armor_derive_chained_key(const uint8_t *parent_key,
                                             size_t nonce_len,
                                             uint8_t depth,
                                             uint8_t out_key[CPRISK_ARMOR_KEY_SIZE]);
+/* Uses loader hidden mprotect: POSIX syscall + Mach vm_region/vm_protect cross-check (cprisk_data_loader.c). */
 extern int cprisk_armor_vm_protect(void *addr, size_t len, int prot);
+
+/* Domain 4 = ArmorABI.WhiteBox.Domain.loaderKey — non-hybrid PRF (domains 1–5 bypass
+ * effectiveRoot binding). Must match TextSegmentEncryptor mask + XOR mix. */
+#define CPRISK_TEXT_WB_MASK_DOMAIN 4u
+
+static void cprisk_text_mask_prf_input_i(uint32_t section_index,
+                                         const uint8_t nonce[CPRISK_ARMOR_NONCE_SIZE],
+                                         uint8_t out32[32]) {
+    static const uint8_t k_label[] = "CPRISK_WB_TEXT_MASK_v1";
+    uint8_t msg[sizeof(k_label) - 1u + 4u + CPRISK_ARMOR_NONCE_SIZE];
+    memcpy(msg, k_label, sizeof(k_label) - 1u);
+    msg[sizeof(k_label) - 1u + 0] = (uint8_t)(section_index);
+    msg[sizeof(k_label) - 1u + 1] = (uint8_t)(section_index >> 8);
+    msg[sizeof(k_label) - 1u + 2] = (uint8_t)(section_index >> 16);
+    msg[sizeof(k_label) - 1u + 3] = (uint8_t)(section_index >> 24);
+    memcpy(msg + sizeof(k_label) - 1u + 4u, nonce, CPRISK_ARMOR_NONCE_SIZE);
+    cprisk_sha256(msg, sizeof(msg), out32);
+    cprisk_secure_zero(msg, sizeof(msg));
+}
+
+/* section_key = chained_key XOR WB_PRF(domain4, SHA256(label||section_index||nonce)).
+ * Hooks on cprisk_armor_derive_chained_key alone no longer yield the XOR keystream key. */
+static int cprisk_text_derive_section_key_i(const uint8_t parent_key[CPRISK_ARMOR_KEY_SIZE],
+                                          uint32_t section_index,
+                                          const uint8_t *nonce,
+                                          size_t nonce_len,
+                                          uint8_t depth,
+                                          uint8_t out_key[CPRISK_ARMOR_KEY_SIZE]) {
+    uint8_t chain[CPRISK_ARMOR_KEY_SIZE];
+    uint8_t wb_in[32];
+    uint8_t wb_out[32];
+
+    cprisk_armor_derive_chained_key(parent_key, section_index, nonce, nonce_len, depth,
+                                    chain);
+    cprisk_text_mask_prf_input_i(section_index, nonce, wb_in);
+    if (cprisk_whitebox_evaluate_domain(CPRISK_TEXT_WB_MASK_DOMAIN, wb_in, wb_out) != 0) {
+        cprisk_secure_zero(chain, sizeof(chain));
+        cprisk_secure_zero(wb_in, sizeof(wb_in));
+        cprisk_secure_zero(wb_out, sizeof(wb_out));
+        return -1;
+    }
+    for (size_t i = 0; i < CPRISK_ARMOR_KEY_SIZE; i++)
+        out_key[i] = (uint8_t)(chain[i] ^ wb_out[i]);
+    cprisk_secure_zero(chain, sizeof(chain));
+    cprisk_secure_zero(wb_in, sizeof(wb_in));
+    cprisk_secure_zero(wb_out, sizeof(wb_out));
+    return 0;
+}
 
 #if defined(__APPLE__) && (defined(__arm64__) || defined(__aarch64__)) && \
     (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR) && \
@@ -38,7 +87,12 @@ extern int cprisk_armor_vm_protect(void *addr, size_t len, int prot);
     (!defined(TARGET_OS_WATCH) || !TARGET_OS_WATCH)
 
 #define CPRISK_TEXT_PAGE_SIZE 4096u
-#define CPRISK_TEXT_RECRYPT_NS 100000000ull
+/* Idle re-encrypt eligibility: min time a page may stay decrypted before XOR+PROT_NONE.
+ * Hot __TEXT can remain fault-free for long stretches; pair with watchdog idle cadence
+ * (primary + secondary) so plaintext is not gated only on ~1 Hz ticks. */
+/* Tighter idle re-encrypt: reduce plaintext dwell between JIT decrypt and service_idle sweep. */
+#define CPRISK_TEXT_RECRYPT_NS 32000000ull
+#define CPRISK_TEXT_STALE_DECRYPT_NS (CPRISK_TEXT_RECRYPT_NS * 4ull)
 #define CPRISK_TEXT_SECTION_INDEX_BASE 100000u
 
 static pthread_mutex_t s_text_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -53,6 +107,10 @@ static uint32_t s_entry_count;
 static uint8_t *s_poison = NULL;
 static uint8_t *s_decrypted = NULL;
 static uint64_t *s_decrypt_ticks = NULL;
+static uint8_t *s_cipher_hashes = NULL;
+
+static int s_text_honeypot_armed;
+static void *s_text_honeypot_page;
 
 static void cprisk_text_timebase_once(void) {
     (void)mach_timebase_info(&s_timebase);
@@ -91,7 +149,10 @@ static int cprisk_text_validate_bounds(
 ) {
     if (!hdr || !ent)
         return -1;
-    if (ent->size == 0 || ent->size % CPRISK_TEXT_PAGE_SIZE != 0)
+    /* Build-time Pass 12 may emit a tail descriptor shorter than 4 KiB when
+     * __TEXT.__text is not page-aligned on disk. Runtime only requires the
+     * entry to start on a page boundary and stay fully inside __TEXT.__text. */
+    if (ent->size == 0)
         return -1;
     if (ent->vm_addr % CPRISK_TEXT_PAGE_SIZE != 0)
         return -1;
@@ -150,6 +211,119 @@ static int cprisk_text_parse_descriptor(
     return 0;
 }
 
+static int cprisk_text_plain_hash_ok(
+    const uint8_t *ptr,
+    size_t sz,
+    const uint8_t *expect_content_hash
+) {
+    uint8_t plain_hash[CPRISK_SHA256_DIGEST_LENGTH];
+    cprisk_sha256(ptr, sz, plain_hash);
+    int bad = memcmp(plain_hash, expect_content_hash, CPRISK_ARMOR_HASH_SIZE) != 0;
+    cprisk_secure_zero(plain_hash, sizeof(plain_hash));
+    return bad ? -1 : 0;
+}
+
+static uint8_t *cprisk_text_cipher_hash_slot_i(uint32_t entry_index) {
+    if (s_cipher_hashes == NULL || entry_index >= s_entry_count) {
+        return NULL;
+    }
+    return s_cipher_hashes + ((size_t)entry_index * CPRISK_ARMOR_HASH_SIZE);
+}
+
+static int cprisk_text_capture_cipher_hash_i(uint32_t entry_index, const uint8_t *ptr, size_t sz) {
+    uint8_t *slot = cprisk_text_cipher_hash_slot_i(entry_index);
+    if (slot == NULL || ptr == NULL || sz == 0u) {
+        return -1;
+    }
+    cprisk_sha256(ptr, sz, slot);
+    return 0;
+}
+
+static int cprisk_text_cipher_hash_ok_locked_i(
+    uint32_t entry_index,
+    uint8_t *ptr,
+    size_t sz,
+    void *page,
+    size_t span
+) {
+    uint8_t *expect_cipher_hash = cprisk_text_cipher_hash_slot_i(entry_index);
+    if (expect_cipher_hash == NULL || ptr == NULL || sz == 0u || page == NULL || span == 0u) {
+        return -1;
+    }
+    if (cprisk_armor_vm_protect(page, span, PROT_READ) != 0) {
+        return -1;
+    }
+    const int rc = cprisk_text_plain_hash_ok(ptr, sz, expect_cipher_hash);
+    if (cprisk_armor_vm_protect(page, span, PROT_NONE) != 0) {
+        cprisk_integrity_poison_text_encrypt_lane();
+        return -1;
+    }
+    return rc;
+}
+
+static void cprisk_text_honeypot_disarm(void) {
+    if (!s_text_honeypot_armed || !s_text_honeypot_page)
+        return;
+    cprisk_unregister_text_honeypot_page();
+    (void)cprisk_armor_vm_protect(s_text_honeypot_page, CPRISK_TEXT_PAGE_SIZE, PROT_READ | PROT_EXEC);
+    s_text_honeypot_armed = 0;
+    s_text_honeypot_page = NULL;
+}
+
+/*
+ * Replace the build-time zero pad with high-entropy bytes before PROT_NONE so
+ * static "all-zero honeypot page" signatures and fixed vm_protect + size
+ * heuristics are less reliable for Frida bypass scripts.
+ */
+static void cprisk_text_honeypot_fill_entropy_i(void *page) {
+    uint8_t *p = (uint8_t *)page;
+    uint8_t buf[128];
+    int err = 0;
+    size_t off = 0;
+    uint64_t mix = (uint64_t)(uintptr_t)page ^ (uint64_t)mach_absolute_time();
+    while (off < CPRISK_TEXT_PAGE_SIZE) {
+        size_t n = CPRISK_TEXT_PAGE_SIZE - off;
+        if (n > sizeof(buf)) {
+            n = sizeof(buf);
+        }
+        if (cprisk_getentropy_direct(buf, n, &err) != 0) {
+            for (size_t i = 0; i < n; i++) {
+                mix = mix * 6364136223846793005ULL + 1ULL;
+                buf[i] = (uint8_t)(mix >> 56);
+            }
+        }
+        memcpy(p + off, buf, n);
+        cprisk_secure_zero(buf, sizeof(buf));
+        off += n;
+    }
+}
+
+static void cprisk_text_honeypot_arm(const struct mach_header_64 *hdr) {
+    cprisk_text_honeypot_disarm();
+    if (!hdr)
+        return;
+    unsigned long psz = 0;
+    const uint8_t *p = cprisk_find_section(hdr, "__TEXT", "__cprisk_pad", &psz);
+    if (!p || psz < CPRISK_TEXT_PAGE_SIZE)
+        return;
+    if (((uintptr_t)p % CPRISK_TEXT_PAGE_SIZE) != 0)
+        return;
+    void *page = (void *)(uintptr_t)p;
+    if (cprisk_armor_vm_protect(page, CPRISK_TEXT_PAGE_SIZE, PROT_READ | PROT_WRITE) != 0)
+        return;
+    cprisk_text_honeypot_fill_entropy_i(page);
+    if (cprisk_armor_vm_protect(page, CPRISK_TEXT_PAGE_SIZE, PROT_NONE) != 0) {
+        (void)cprisk_armor_vm_protect(page, CPRISK_TEXT_PAGE_SIZE, PROT_READ | PROT_EXEC);
+        return;
+    }
+    if (cprisk_register_text_honeypot_page(page, CPRISK_TEXT_PAGE_SIZE) != 0) {
+        (void)cprisk_armor_vm_protect(page, CPRISK_TEXT_PAGE_SIZE, PROT_READ | PROT_EXEC);
+        return;
+    }
+    s_text_honeypot_armed = 1;
+    s_text_honeypot_page = page;
+}
+
 static void cprisk_text_fill_poison_brk(uint8_t *ptr, size_t sz) {
     uint32_t brk0 = 0xD4200000u;
     size_t i = 0;
@@ -167,12 +341,61 @@ static void cprisk_text_poison_entry(
     size_t span
 ) {
     if (cprisk_armor_vm_protect(page, span, PROT_READ | PROT_WRITE) != 0) {
-        cprisk_force_integrity_poison();
+        cprisk_integrity_poison_text_encrypt_lane();
         return;
     }
     cprisk_text_fill_poison_brk(ptr, sz);
     if (cprisk_armor_vm_protect(page, span, PROT_READ | PROT_EXEC) != 0)
-        cprisk_force_integrity_poison();
+        cprisk_integrity_poison_text_encrypt_lane();
+}
+
+static int cprisk_text_query_page_protection_i(void *page, int *out_prot) {
+    if (!page || !out_prot) {
+        return -1;
+    }
+    *out_prot = 0;
+    vm_address_t region_addr = (vm_address_t)(uintptr_t)page;
+    vm_size_t region_size = 0;
+    vm_region_basic_info_data_64_t info;
+    mach_msg_type_number_t info_count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object_name = MACH_PORT_NULL;
+    const kern_return_t kr = vm_region_64(
+        mach_task_self(),
+        &region_addr,
+        &region_size,
+        VM_REGION_BASIC_INFO_64,
+        (vm_region_info_t)&info,
+        &info_count,
+        &object_name);
+    if (object_name != MACH_PORT_NULL) {
+        mach_port_deallocate(mach_task_self(), object_name);
+    }
+    if (kr != KERN_SUCCESS) {
+        return -1;
+    }
+    *out_prot = (int)info.protection & (PROT_READ | PROT_WRITE | PROT_EXEC);
+    return 0;
+}
+
+static uint32_t cprisk_text_page_state_mask_i(uint32_t entry_index, void *page) {
+    int prot = 0;
+    if (cprisk_text_query_page_protection_i(page, &prot) != 0) {
+        return 0u;
+    }
+    if (entry_index >= s_entry_count) {
+        return 0u;
+    }
+    if (s_decrypted[entry_index]) {
+        uint32_t mask = 0u;
+        if ((prot & PROT_WRITE) != 0) {
+            mask |= 1u << 0;
+        }
+        if ((prot & (PROT_READ | PROT_EXEC)) != (PROT_READ | PROT_EXEC)) {
+            mask |= 1u << 1;
+        }
+        return mask;
+    }
+    return ((prot & (PROT_READ | PROT_WRITE | PROT_EXEC)) != 0) ? (1u << 2) : 0u;
 }
 
 static void cprisk_text_maybe_reencrypt_idle(uint64_t now_ticks) {
@@ -184,17 +407,29 @@ static void cprisk_text_maybe_reencrypt_idle(uint64_t now_ticks) {
     intptr_t slide = cprisk_compute_slide(hdr);
 
     for (uint32_t i = 0; i < s_entry_count; i++) {
-        if (!s_decrypted[i] || s_poison[i])
+        if (s_poison[i])
             continue;
-        uint64_t dt = now_ticks - s_decrypt_ticks[i];
-        if (cprisk_text_ticks_to_ns(dt) < CPRISK_TEXT_RECRYPT_NS)
-            continue;
-
         const struct cprisk_text_encrypt_entry *ent = &s_entries[i];
         uint8_t *ptr = (uint8_t *)((uintptr_t)ent->vm_addr + (uintptr_t)slide);
         void *page = NULL;
         size_t span = 0;
         if (cprisk_text_page_span(ptr, (size_t)ent->size, &page, &span) != 0)
+            continue;
+
+        const uint32_t state_mask = cprisk_text_page_state_mask_i(i, page);
+        if (state_mask != 0u) {
+            cprisk_text_poison_entry(ptr, (size_t)ent->size, page, span);
+            s_poison[i] = 1;
+            s_decrypted[i] = 0;
+            cprisk_integrity_poison_text_encrypt_lane();
+            continue;
+        }
+
+        if (!s_decrypted[i]) {
+            continue;
+        }
+        uint64_t dt = now_ticks - s_decrypt_ticks[i];
+        if (cprisk_text_ticks_to_ns(dt) < CPRISK_TEXT_RECRYPT_NS)
             continue;
 
         unsigned long text_sz = 0;
@@ -208,17 +443,27 @@ static void cprisk_text_maybe_reencrypt_idle(uint64_t now_ticks) {
         uint32_t section_index = CPRISK_TEXT_SECTION_INDEX_BASE + page_idx;
 
         uint8_t section_key[CPRISK_ARMOR_KEY_SIZE];
-        cprisk_armor_derive_chained_key(
-            s_parent_key,
-            section_index,
-            ent->nonce,
-            CPRISK_ARMOR_NONCE_SIZE,
-            1,
-            section_key);
+        if (cprisk_text_derive_section_key_i(
+                s_parent_key,
+                section_index,
+                ent->nonce,
+                CPRISK_ARMOR_NONCE_SIZE,
+                1,
+                section_key) != 0) {
+            cprisk_integrity_poison_text_encrypt_lane();
+            continue;
+        }
 
         if (cprisk_armor_vm_protect(page, span, PROT_READ | PROT_WRITE) != 0) {
             cprisk_secure_zero(section_key, sizeof(section_key));
-            cprisk_force_integrity_poison();
+            cprisk_integrity_poison_text_encrypt_lane();
+            continue;
+        }
+        if (cprisk_text_plain_hash_ok(ptr, (size_t)ent->size, ent->content_hash) != 0) {
+            cprisk_secure_zero(section_key, sizeof(section_key));
+            cprisk_text_poison_entry(ptr, (size_t)ent->size, page, span);
+            s_poison[i] = 1;
+            cprisk_integrity_poison_text_encrypt_lane();
             continue;
         }
         (void)cprisk_armor_xor_region(
@@ -229,13 +474,132 @@ static void cprisk_text_maybe_reencrypt_idle(uint64_t now_ticks) {
             CPRISK_ARMOR_NONCE_SIZE,
             section_key);
         cprisk_secure_zero(section_key, sizeof(section_key));
+        if (cprisk_text_plain_hash_ok(
+                ptr,
+                (size_t)ent->size,
+                cprisk_text_cipher_hash_slot_i(i)) != 0) {
+            cprisk_text_poison_entry(ptr, (size_t)ent->size, page, span);
+            s_poison[i] = 1;
+            s_decrypted[i] = 0;
+            cprisk_integrity_poison_text_encrypt_lane();
+            continue;
+        }
         if (cprisk_armor_vm_protect(page, span, PROT_NONE) != 0)
-            cprisk_force_integrity_poison();
+            cprisk_integrity_poison_text_encrypt_lane();
         s_decrypted[i] = 0;
+    }
+
+    if (s_text_honeypot_armed && s_text_honeypot_page != NULL) {
+        int prot = 0;
+        if (cprisk_text_query_page_protection_i(s_text_honeypot_page, &prot) == 0 &&
+            (prot & (PROT_READ | PROT_WRITE | PROT_EXEC)) != 0) {
+            cprisk_integrity_poison_text_encrypt_lane();
+            cprisk_text_honeypot_arm(hdr);
+        }
     }
 }
 
+static int cprisk_text_query_vm_protection_i(void *region, size_t len, vm_prot_t *prot_out) {
+    void *page = NULL;
+    size_t span = 0u;
+    vm_address_t addr = 0;
+    vm_size_t region_size = 0;
+    vm_region_basic_info_data_64_t info;
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object_name = MACH_PORT_NULL;
+    kern_return_t kr;
+
+    if (region == NULL || len == 0u || prot_out == NULL) {
+        return -1;
+    }
+    if (cprisk_text_page_span((uint8_t *)region, len, &page, &span) != 0 || span == 0u) {
+        return -1;
+    }
+
+    addr = (vm_address_t)(uintptr_t)page;
+    memset(&info, 0, sizeof(info));
+    kr = vm_region_64(
+        mach_task_self(),
+        &addr,
+        &region_size,
+        VM_REGION_BASIC_INFO_64,
+        (vm_region_info_t)&info,
+        &count,
+        &object_name);
+    if (object_name != MACH_PORT_NULL) {
+        mach_port_deallocate(mach_task_self(), object_name);
+    }
+    if (kr != KERN_SUCCESS || addr > (vm_address_t)(uintptr_t)page) {
+        return -1;
+    }
+    *prot_out = info.protection;
+    return 0;
+}
+
+static uint32_t cprisk_text_encrypt_self_check_locked_i(uint64_t now_ticks) {
+    uint32_t flags = CPRISK_TEXT_ENCRYPT_SELF_CHECK_FLAG_NONE;
+    if (!s_entries || !s_decrypted || !s_decrypt_ticks || s_entry_count == 0u) {
+        return flags;
+    }
+
+    const struct mach_header_64 *hdr = cprisk_text_own_hdr();
+    if (!hdr) {
+        return flags;
+    }
+    intptr_t slide = cprisk_compute_slide(hdr);
+
+    for (uint32_t i = 0u; i < s_entry_count; i++) {
+        const struct cprisk_text_encrypt_entry *ent = &s_entries[i];
+        uint8_t *ptr = (uint8_t *)((uintptr_t)ent->vm_addr + (uintptr_t)slide);
+        vm_prot_t prot = 0;
+        if (cprisk_text_query_vm_protection_i(ptr, (size_t)ent->size, &prot) != 0) {
+            continue;
+        }
+
+        if (s_decrypted[i] != 0u) {
+            const uint64_t dt = now_ticks >= s_decrypt_ticks[i] ? (now_ticks - s_decrypt_ticks[i]) : 0u;
+            const uint64_t dwell_ns = cprisk_text_ticks_to_ns(dt);
+            const int rx_ok = ((prot & VM_PROT_READ) != 0) &&
+                              ((prot & VM_PROT_EXECUTE) != 0) &&
+                              ((prot & VM_PROT_WRITE) == 0);
+            if (!rx_ok) {
+                flags |= CPRISK_TEXT_ENCRYPT_SELF_CHECK_FLAG_DECRYPTED_PROTECTION_DRIFT;
+            }
+            if (cprisk_text_plain_hash_ok(ptr, (size_t)ent->size, ent->content_hash) != 0) {
+                flags |= CPRISK_TEXT_ENCRYPT_SELF_CHECK_FLAG_DECRYPTED_CONTENT_DRIFT;
+            }
+            if (dwell_ns > CPRISK_TEXT_STALE_DECRYPT_NS) {
+                flags |= CPRISK_TEXT_ENCRYPT_SELF_CHECK_FLAG_DECRYPTED_STALE;
+            }
+        } else {
+            if ((prot & (VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE)) != 0) {
+                flags |= CPRISK_TEXT_ENCRYPT_SELF_CHECK_FLAG_ENCRYPTED_PROTECTION_DRIFT;
+            } else {
+                void *page = NULL;
+                size_t span = 0u;
+                if (cprisk_text_page_span(ptr, (size_t)ent->size, &page, &span) == 0 &&
+                    cprisk_text_cipher_hash_ok_locked_i(i, ptr, (size_t)ent->size, page, span) != 0) {
+                    flags |= CPRISK_TEXT_ENCRYPT_SELF_CHECK_FLAG_ENCRYPTED_CONTENT_DRIFT;
+                }
+            }
+        }
+    }
+
+    if (s_text_honeypot_armed && s_text_honeypot_page != NULL) {
+        vm_prot_t honeypot_prot = 0;
+        if (cprisk_text_query_vm_protection_i(s_text_honeypot_page, CPRISK_TEXT_PAGE_SIZE, &honeypot_prot) == 0) {
+            if ((honeypot_prot & (VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE)) != 0) {
+                flags |= CPRISK_TEXT_ENCRYPT_SELF_CHECK_FLAG_HONEYPOT_PROTECTION_DRIFT;
+            }
+        }
+    }
+
+    return flags;
+}
+
 static void cprisk_text_encrypt_release_locked(void) {
+    cprisk_text_honeypot_disarm();
+
     if (!s_parent_ready)
         return;
 
@@ -263,25 +627,36 @@ static void cprisk_text_encrypt_release_locked(void) {
             uint32_t section_index = CPRISK_TEXT_SECTION_INDEX_BASE + page_idx;
 
             uint8_t section_key[CPRISK_ARMOR_KEY_SIZE];
-            cprisk_armor_derive_chained_key(
-                s_parent_key,
-                section_index,
-                ent->nonce,
-                CPRISK_ARMOR_NONCE_SIZE,
-                1,
-                section_key);
-
-            if (cprisk_armor_vm_protect(page, span, PROT_READ | PROT_WRITE) == 0) {
-                (void)cprisk_armor_xor_region(
-                    ptr,
-                    (size_t)ent->size,
-                    ent->key_id,
+            if (cprisk_text_derive_section_key_i(
+                    s_parent_key,
+                    section_index,
                     ent->nonce,
                     CPRISK_ARMOR_NONCE_SIZE,
-                    section_key);
+                    1,
+                    section_key) != 0) {
+                cprisk_integrity_poison_text_encrypt_lane();
+                continue;
+            }
+
+            if (cprisk_armor_vm_protect(page, span, PROT_READ | PROT_WRITE) == 0) {
+                if (cprisk_text_plain_hash_ok(ptr, (size_t)ent->size, ent->content_hash) != 0) {
+                    cprisk_text_poison_entry(ptr, (size_t)ent->size, page, span);
+                    s_poison[i] = 1;
+                    cprisk_integrity_poison_text_encrypt_lane();
+                } else {
+                    (void)cprisk_armor_xor_region(
+                        ptr,
+                        (size_t)ent->size,
+                        ent->key_id,
+                        ent->nonce,
+                        CPRISK_ARMOR_NONCE_SIZE,
+                        section_key);
+                    (void)cprisk_armor_vm_protect(page, span, PROT_READ | PROT_EXEC);
+                }
+            } else {
+                (void)cprisk_armor_vm_protect(page, span, PROT_READ | PROT_EXEC);
             }
             cprisk_secure_zero(section_key, sizeof(section_key));
-            (void)cprisk_armor_vm_protect(page, span, PROT_READ | PROT_EXEC);
         }
     }
 
@@ -289,10 +664,15 @@ static void cprisk_text_encrypt_release_locked(void) {
     free(s_poison);
     free(s_decrypted);
     free(s_decrypt_ticks);
+    if (s_cipher_hashes != NULL) {
+        cprisk_secure_zero(s_cipher_hashes, (size_t)s_entry_count * CPRISK_ARMOR_HASH_SIZE);
+    }
+    free(s_cipher_hashes);
     s_entries = NULL;
     s_poison = NULL;
     s_decrypted = NULL;
     s_decrypt_ticks = NULL;
+    s_cipher_hashes = NULL;
     s_entry_count = 0;
     cprisk_secure_zero(s_parent_key, sizeof(s_parent_key));
     s_parent_ready = 0;
@@ -346,15 +726,18 @@ void cprisk_text_encrypt_install(const uint8_t loader_key[CPRISK_ARMOR_KEY_SIZE]
     s_poison = (uint8_t *)calloc((size_t)count, 1);
     s_decrypted = (uint8_t *)calloc((size_t)count, 1);
     s_decrypt_ticks = (uint64_t *)calloc((size_t)count, sizeof(uint64_t));
-    if (!s_entries || !s_poison || !s_decrypted || !s_decrypt_ticks) {
+    s_cipher_hashes = (uint8_t *)calloc((size_t)count, CPRISK_ARMOR_HASH_SIZE);
+    if (!s_entries || !s_poison || !s_decrypted || !s_decrypt_ticks || !s_cipher_hashes) {
         free(s_entries);
         free(s_poison);
         free(s_decrypted);
         free(s_decrypt_ticks);
+        free(s_cipher_hashes);
         s_entries = NULL;
         s_poison = NULL;
         s_decrypted = NULL;
         s_decrypt_ticks = NULL;
+        s_cipher_hashes = NULL;
         cprisk_secure_zero(s_parent_key, sizeof(s_parent_key));
         s_parent_ready = 0;
         pthread_mutex_unlock(&s_text_mutex);
@@ -375,8 +758,12 @@ void cprisk_text_encrypt_install(const uint8_t loader_key[CPRISK_ARMOR_KEY_SIZE]
         if (cprisk_text_page_span(ptr, (size_t)ent.size, &page, &span) != 0)
             continue;
 
+        if (cprisk_text_capture_cipher_hash_i(installed, ptr, (size_t)ent.size) != 0) {
+            continue;
+        }
+
         if (cprisk_armor_vm_protect(page, span, PROT_NONE) != 0) {
-            cprisk_force_integrity_poison();
+            cprisk_integrity_poison_text_encrypt_lane();
             continue;
         }
         memcpy(&s_entries[installed], &ent, sizeof(ent));
@@ -389,21 +776,39 @@ void cprisk_text_encrypt_install(const uint8_t loader_key[CPRISK_ARMOR_KEY_SIZE]
         free(s_poison);
         free(s_decrypted);
         free(s_decrypt_ticks);
+        free(s_cipher_hashes);
         s_entries = NULL;
         s_poison = NULL;
         s_decrypted = NULL;
         s_decrypt_ticks = NULL;
+        s_cipher_hashes = NULL;
         cprisk_secure_zero(s_parent_key, sizeof(s_parent_key));
         s_parent_ready = 0;
+    } else {
+        cprisk_text_honeypot_arm(hdr);
     }
 
     pthread_mutex_unlock(&s_text_mutex);
 }
 
 void cprisk_text_encrypt_service_idle(void) {
+    uint32_t self_check_flags = CPRISK_TEXT_ENCRYPT_SELF_CHECK_FLAG_NONE;
     pthread_mutex_lock(&s_text_mutex);
-    cprisk_text_maybe_reencrypt_idle(mach_absolute_time());
+    const uint64_t now_ticks = mach_absolute_time();
+    cprisk_text_maybe_reencrypt_idle(now_ticks);
+    self_check_flags = cprisk_text_encrypt_self_check_locked_i(now_ticks);
     pthread_mutex_unlock(&s_text_mutex);
+    if (self_check_flags != CPRISK_TEXT_ENCRYPT_SELF_CHECK_FLAG_NONE) {
+        cprisk_integrity_poison_text_encrypt_lane();
+    }
+}
+
+uint32_t cprisk_text_encrypt_self_check(void) {
+    uint32_t flags = CPRISK_TEXT_ENCRYPT_SELF_CHECK_FLAG_NONE;
+    pthread_mutex_lock(&s_text_mutex);
+    flags = cprisk_text_encrypt_self_check_locked_i(mach_absolute_time());
+    pthread_mutex_unlock(&s_text_mutex);
+    return flags;
 }
 
 void cprisk_text_encrypt_uninstall(void) {
@@ -470,19 +875,25 @@ int cprisk_text_jit_decrypt(void *fault_addr) {
         uint32_t section_index = CPRISK_TEXT_SECTION_INDEX_BASE + page_idx;
 
         uint8_t section_key[CPRISK_ARMOR_KEY_SIZE];
-        cprisk_armor_derive_chained_key(
-            s_parent_key,
-            section_index,
-            ent->nonce,
-            CPRISK_ARMOR_NONCE_SIZE,
-            1,
-            section_key);
+        if (cprisk_text_derive_section_key_i(
+                s_parent_key,
+                section_index,
+                ent->nonce,
+                CPRISK_ARMOR_NONCE_SIZE,
+                1,
+                section_key) != 0) {
+            cprisk_secure_zero(section_key, sizeof(section_key));
+            (void)cprisk_armor_vm_protect(page, span, PROT_NONE);
+            cprisk_integrity_poison_text_encrypt_lane();
+            pthread_mutex_unlock(&s_text_mutex);
+            return 0;
+        }
 
         if (ent->size > SIZE_MAX - CPRISK_ARMOR_NONCE_SIZE) {
             cprisk_secure_zero(section_key, sizeof(section_key));
             cprisk_text_poison_entry(ptr, (size_t)ent->size, page, span);
             s_poison[i] = 1;
-            cprisk_force_integrity_poison();
+            cprisk_integrity_poison_text_encrypt_lane();
             pthread_mutex_unlock(&s_text_mutex);
             return 1;
         }
@@ -506,7 +917,7 @@ int cprisk_text_jit_decrypt(void *fault_addr) {
             cprisk_secure_zero(section_key, sizeof(section_key));
             cprisk_text_poison_entry(ptr, (size_t)ent->size, page, span);
             s_poison[i] = 1;
-            cprisk_force_integrity_poison();
+            cprisk_integrity_poison_text_encrypt_lane();
             pthread_mutex_unlock(&s_text_mutex);
             return 1;
         }
@@ -532,14 +943,14 @@ int cprisk_text_jit_decrypt(void *fault_addr) {
             cprisk_secure_zero(plain_hash, sizeof(plain_hash));
             cprisk_text_poison_entry(ptr, (size_t)ent->size, page, span);
             s_poison[i] = 1;
-            cprisk_force_integrity_poison();
+            cprisk_integrity_poison_text_encrypt_lane();
             pthread_mutex_unlock(&s_text_mutex);
             return 1;
         }
         cprisk_secure_zero(plain_hash, sizeof(plain_hash));
 
         if (cprisk_armor_vm_protect(page, span, PROT_READ | PROT_EXEC) != 0) {
-            cprisk_force_integrity_poison();
+            cprisk_integrity_poison_text_encrypt_lane();
             pthread_mutex_unlock(&s_text_mutex);
             return 0;
         }

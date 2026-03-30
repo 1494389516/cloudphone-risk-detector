@@ -1,3 +1,4 @@
+import CRiskCore
 import CryptoKit
 import Foundation
 
@@ -215,26 +216,19 @@ extension ReportEnvelope {
             payload: payload
         )
         let payloadShaMatches = (recomputed == payloadSha256)
-        let rawPayloadDigestHex = Self.sha256Hex(payload)
-
-        var canonicalDigestHex = "unavailable"
-        var canonicalPayload = ""
-        var canonicalizationOK = false
-        if let object = try? JSONSerialization.jsonObject(with: payload, options: [.fragmentsAllowed]),
-           JSONSerialization.isValidJSONObject(object),
-           let canonicalData = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
-           let canonicalString = String(data: canonicalData, encoding: .utf8) {
-            canonicalizationOK = true
-            canonicalPayload = canonicalString
-            canonicalDigestHex = Self.sha256Hex(canonicalData)
-        }
-
-        let fmv = fieldMappingVersion ?? ""
-        let attestationKey = attestationKeyId ?? ""
-        // Signature format must match ReportEnvelope.buildSignatureInput:
-        // sigVer|nonce|ts|sessionToken|reportId|keyId|fieldMappingVersion|attestationKeyId|canonicalPayloadJSON
-        let signatureInput = "\(sigVer)|\(nonce)|\(ts)|\(sessionToken)|\(reportId)|\(keyId)|\(fmv)|\(attestationKey)|\(canonicalPayload)"
-        let signatureInputDigestHex = Self.sha256Hex(Data(signatureInput.utf8))
+        let bindingDiagnostics = bindingDiagnostics()
+        let canonicalizationOK = bindingDiagnostics["payload_canonical_sha256"] != "unavailable"
+        let trustValue = trustLevel?.rawValue ?? "unspecified"
+        let signingTelemetry = AppSigningIdentityDetector().telemetry()
+        let requestBindingFingerprint = Self.sha256Hex(Data([
+            sigVer,
+            keyId,
+            trustValue,
+            bindingDiagnostics["attestation_pair_state"] ?? "absent",
+            reportId,
+            signingTelemetry["signing_identity_fp"] ?? "",
+            bindingDiagnostics["signature_input_sha256"] ?? "unavailable",
+        ].joined(separator: "|").utf8))
 
         let status: String
         let reason: String
@@ -249,19 +243,66 @@ extension ReportEnvelope {
             reason = "consistent"
         }
 
-        return [
+        var rows = bindingDiagnostics
+        rows.merge([
             "status": status,
             "reason": reason,
             "api_chain": "json_serialization+cryptokit_sha256",
             "route": "report_envelope->grpc_payload",
             "payload_sha256_match": payloadShaMatches ? "1" : "0",
-            "payload_raw_sha256": rawPayloadDigestHex,
-            "payload_canonical_sha256": canonicalDigestHex,
-            "signature_input_sha256": signatureInputDigestHex,
-        ]
+            "binding_mode": Self.signatureBindingMode(for: sigVer),
+            "binding_fields": "sigVer,nonce,ts,sessionToken,reportId,keyId,fieldMappingVersion,attestationKeyId,payloadCanonical",
+            "attestation_pair_state": Self.attestationPairState(
+                attestationKeyId: attestationKeyId,
+                attestationAssertion: attestationAssertion
+            ),
+            "trust_level": trustValue,
+            "request_binding_fp": requestBindingFingerprint,
+        ]) { _, new in new }
+        for (key, value) in signingTelemetry where !value.isEmpty {
+            rows[key] = value
+        }
+        let mixFp = cprisk_get_signing_mix_fingerprint()
+        if mixFp != 0 {
+            rows["signing_mix_fp"] = String(format: "%08x", mixFp)
+        }
+        let wbPressure = cprisk_integrity_wb_prf_pressure_mask()
+        if wbPressure != 0 {
+            rows["wb_prf_pressure_mask"] = String(format: "%08x", wbPressure)
+        }
+        return rows
     }
 
     private static func sha256Hex(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func signatureBindingMode(for signatureVersion: String) -> String {
+        switch signatureVersion {
+        case "v2a":
+            return "armor_runtime_derived_request_bound"
+        case "v2d":
+            return "degraded_base_key_request_bound"
+        default:
+            return "base_key_request_bound"
+        }
+    }
+
+    private static func attestationPairState(
+        attestationKeyId: String?,
+        attestationAssertion: Data?
+    ) -> String {
+        let hasKeyId = attestationKeyId.map { !$0.isEmpty } ?? false
+        let hasAssertion = attestationAssertion.map { !$0.isEmpty } ?? false
+        switch (hasKeyId, hasAssertion) {
+        case (true, true):
+            return "paired"
+        case (true, false):
+            return "key_only"
+        case (false, true):
+            return "assertion_only"
+        case (false, false):
+            return "none"
+        }
     }
 }

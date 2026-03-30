@@ -29,6 +29,17 @@ final class AppSigningIdentityDetectorTests: XCTestCase {
         XCTAssertTrue(inspection.findings.contains(where: { $0.signalID == "app_team_identifier_mismatch" }))
     }
 
+    func testDetectsMalformedApplicationIdentifier() {
+        let detector = makeDetector()
+        let inspection = detector.inspect(
+            snapshot: makeSnapshot(applicationIdentifier: "ABCDE12345"),
+            isDebugBuild: false
+        )
+
+        XCTAssertFalse(inspection.shouldPoison)
+        XCTAssertTrue(inspection.findings.contains(where: { $0.signalID == "app_identifier_malformed" }))
+    }
+
     func testDerivesTeamIdentifierFromApplicationIdentifierPrefix() {
         let detector = makeDetector()
         let inspection = detector.inspect(
@@ -76,6 +87,45 @@ final class AppSigningIdentityDetectorTests: XCTestCase {
         XCTAssertTrue(secondInspection.findings.contains(where: { $0.signalID == "app_signing_baseline_changed" }))
     }
 
+    func testAggregateSignalCarriesReasonCodesAndCoverageEvidence() {
+        let detector = makeDetector()
+        let inspection = detector.inspect(
+            snapshot: makeSnapshot(
+                teamIdentifierEntitlement: "ABCDE12345",
+                applicationIdentifier: "ZZZZZ99999.com.example.other",
+                bundleIdentifier: "com.example.app",
+                infoPlistBundleIdentifier: "com.example.mismatch",
+                getTaskAllow: true
+            ),
+            isDebugBuild: false
+        )
+
+        let aggregate = inspection.signals.first { $0.id == ObfuscatedConstants.signalAppSigningIdentityTampered }
+        XCTAssertNotNil(aggregate)
+        XCTAssertTrue(aggregate?.evidence["reason_codes"]?.contains("app_bundle_identifier_mismatch") ?? false)
+        XCTAssertTrue(aggregate?.evidence["poison_finding_ids"]?.contains("app_get_task_allow_enabled") ?? false)
+        XCTAssertEqual(aggregate?.evidence["team_identifier_source"], "entitlement")
+        XCTAssertEqual(aggregate?.evidence["bundle_container"], "app")
+        XCTAssertEqual(aggregate?.evidence["soft_count"], "0")
+    }
+
+    func testTelemetryCarriesBindingFingerprintAndEligibility() {
+        let detector = makeDetector()
+        let inspection = detector.inspect(
+            snapshot: makeSnapshot(
+                teamIdentifierEntitlement: nil,
+                applicationIdentifier: "ABCDE12345",
+                bundleIdentifier: "com.example.app"
+            ),
+            isDebugBuild: false
+        )
+
+        XCTAssertFalse(inspection.telemetry["signing_identity_fp"]?.isEmpty ?? true)
+        XCTAssertEqual(inspection.telemetry["signing_identity_status"], "soft_anomaly")
+        XCTAssertEqual(inspection.telemetry["signing_identity_baseline_eligibility"], "missing_team_identifier")
+        XCTAssertTrue(inspection.telemetry["signing_identity_reason_codes"]?.contains("app_identifier_malformed") ?? false)
+    }
+
     func testSkipsNonAppBundleContainers() {
         let detector = makeDetector()
         let inspection = detector.inspect(
@@ -85,6 +135,23 @@ final class AppSigningIdentityDetectorTests: XCTestCase {
 
         XCTAssertTrue(inspection.findings.isEmpty)
         XCTAssertTrue(inspection.signals.isEmpty)
+    }
+
+    func testAggregateSignalCarriesFindingIDsAndTeamSource() {
+        let detector = makeDetector()
+        let inspection = detector.inspect(
+            snapshot: makeSnapshot(
+                teamIdentifierEntitlement: "ABCDE12345",
+                applicationIdentifier: "ZZZZZ99999.com.example.app"
+            ),
+            isDebugBuild: false
+        )
+
+        let aggregate = inspection.signals.first(where: { $0.id == "app_signing_identity_tampered" })
+        XCTAssertEqual(aggregate?.evidence["team_identifier_source"], "entitlement")
+        XCTAssertEqual(aggregate?.evidence["bundle_container"], "app")
+        XCTAssertTrue(aggregate?.evidence["finding_ids"]?.contains("app_team_identifier_mismatch") ?? false)
+        XCTAssertTrue(aggregate?.evidence["poison_finding_ids"]?.contains("app_team_identifier_mismatch") ?? false)
     }
 
     private func makeDetector() -> AppSigningIdentityDetector {

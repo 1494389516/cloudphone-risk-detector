@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import CRiskCore
 
 /// [4.4.9] 蜜罐内存诱饵 (Honeypot Memory) — 加固版
 ///
@@ -65,14 +66,13 @@ private let honeypotSigbusHandler: @convention(c) (
            The handler runs in the context of the faulting thread, so modifying the
            saved PC in ucontext_t is async-signal-safe. */
         if let ctx = ctx {
-            let uctx = ctx.assumingMemoryBound(to: ucontext_t.self)
             #if arch(arm64)
-            uctx.pointee.uc_mcontext.pointee.__ss.__pc &+= 4
+            _ = cprisk_advance_ucontext_pc(ctx, 4)
             #elseif arch(x86_64)
             // x86_64 instruction length varies; skip past the faulting MOV (typically 1–3 bytes).
             // Use a conservative 1-byte advance — the PROT_NONE page will re-fault at the next
             // byte until we leave the page, which is acceptable since the flag is already set.
-            uctx.pointee.uc_mcontext.pointee.__ss.__rip &+= 1
+            _ = cprisk_advance_ucontext_pc(ctx, 1)
             #endif
         }
         return
@@ -87,40 +87,40 @@ private let honeypotSigbusHandler: @convention(c) (
 
 struct HoneypotMemoryDetector: Detector {
 
-    static let baitSets: [[String]] = [
-        ["AES-256-Key-CloudPhone-Secure", "MasterKey-RSA-4096-Internal"],
-        ["Device-ID-CloudPhone-Risk-SDK", "Session-Token-Internal-Secret"],
-        ["PrivateKey-EC-P256-Signing", "Certificate-Chain-Root-CA-Prod"],
-    ]
-
     init() {
         Self.armHoneypotIfNeeded()
     }
 
     func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)
-        return DetectorResult(score: 0, methods: ["honeypot:unavailable_simulator"])
+        return DetectorResult(score: 0, methods: ["\(ObfuscatedConstants.methodPrefixHoneypot)unavailable_simulator"])
 #else
         var methods: [String] = []
         var score: Double = 0
+        let hp = ObfuscatedConstants.methodPrefixHoneypot
 
         if honeypotTriggeredPtr.pointee != 0 {
             methods.append("memory_dump_attempt_detected")
             score = max(score, 80)
         }
 
+        if let exportedAgentSymbol = Self.mainBinarySuspiciousAgentExport() {
+            methods.append("\(ObfuscatedConstants.methodPrefixHoneypot)main_export_agent_entry:\(exportedAgentSymbol)")
+            score = max(score, 92)
+        }
+
         if Self.isHandlerReplaced() {
-            methods.append("honeypot_handler_replaced")
+            methods.append("\(hp)handler_replaced")
             score = max(score, 90)
         }
 
         if Self.isProtectionModified() {
-            methods.append("honeypot_protection_modified")
+            methods.append("\(hp)protection_modified")
             score = max(score, 90)
         }
 
         if methods.isEmpty {
-            methods.append("honeypot:clean")
+            methods.append("\(hp)clean")
         }
         return DetectorResult(score: score, methods: methods)
 #endif
@@ -137,9 +137,16 @@ struct HoneypotMemoryDetector: Detector {
 
             var bases: [UnsafeMutableRawPointer] = []
             var sizes: [Int] = []
+            var rows = ObfuscatedConstants.honeypotBaitRows
+            /* Shuffle region order so layout is not a fixed [row0,row1,row2] signature. */
+            for i in stride(from: rows.count - 1, through: 1, by: -1) {
+                let j = Int(arc4random_uniform(UInt32(i + 1)))
+                rows.swapAt(i, j)
+            }
 
-            for baits in baitSets {
-                let size = pageSize
+            for baits in rows {
+                let pagePages = 1 + Int(arc4random_uniform(2))
+                let size = pageSize * pagePages
                 guard let ptr = mmap(
                     nil, size,
                     PROT_READ | PROT_WRITE,
@@ -188,6 +195,30 @@ struct HoneypotMemoryDetector: Detector {
             previousSigbusHandler = oldAction
             sigaction(SIGBUS, &newAction, nil)
         }
+#endif
+    }
+
+    // MARK: - Export-trie safe attach bait
+
+    /// Low-visibility bait: resolve Gadget-shaped Mach-O symbols against the **main executable** image only.
+    /// We intentionally do **not** export such symbols ourselves; this path is only for catching patched
+    /// payloads that accidentally expose Frida/Gadget-like entrypoints in the host app image.
+    private static func mainBinarySuspiciousAgentExport() -> String? {
+#if targetEnvironment(simulator)
+        return nil
+#else
+        guard let handle = dlopen(nil, RTLD_NOW) else { return nil }
+        let primary = ObfuscatedConstants.honeypotFridaAgentMainSymbol
+        let candidates = [
+            primary,
+            String(primary.drop(while: { $0 == "_" })),
+        ]
+        for symbol in candidates where !symbol.isEmpty {
+            if dlsym(handle, symbol) != nil {
+                return symbol
+            }
+        }
+        return nil
 #endif
     }
 
@@ -271,7 +302,20 @@ extension HoneypotMemoryDetector {
                     ],
                     state: .tampered, layer: 2, weightHint: 95
                 ))
-            case "honeypot_handler_replaced":
+            case let m where m.hasPrefix("\(ObfuscatedConstants.methodPrefixHoneypot)main_export_agent_entry"):
+                let symbol = m.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false).last.map(String.init) ?? "unknown"
+                signals.append(RiskSignal(
+                    id: "honeypot_main_export_agent_entry",
+                    category: ObfuscatedConstants.categoryAntiTamper,
+                    score: 92,
+                    evidence: [
+                        "reason": "main_image_frida_agent_symbol_resolved",
+                        "symbol": symbol,
+                        "description": "Main executable resolved a Gadget-shaped agent entry symbol via dlsym",
+                    ],
+                    state: .tampered, layer: 2, weightHint: 97
+                ))
+            case let m where m.contains("handler_replaced"):
                 signals.append(RiskSignal(
                     id: "honeypot_handler_replaced",
                     category: ObfuscatedConstants.categoryAntiTamper,
@@ -282,7 +326,7 @@ extension HoneypotMemoryDetector {
                     ],
                     state: .tampered, layer: 2, weightHint: 98
                 ))
-            case "honeypot_protection_modified":
+            case let m where m.contains("protection_modified"):
                 signals.append(RiskSignal(
                     id: "honeypot_protection_modified",
                     category: ObfuscatedConstants.categoryAntiTamper,

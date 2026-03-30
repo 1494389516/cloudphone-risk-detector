@@ -1,7 +1,7 @@
 # CloudPhoneRiskKit SDK 隐私声明
 
 > 文档定位：`CloudPhoneRiskKit` 的 SDK 级隐私声明  
-> 适用版本：SDK 7.0  
+> 适用版本：SDK 7.3  
 > 适用对象：SDK 接入方、法务/隐私团队、客户安全评审  
 > 适用范围：iOS / iPadOS 端集成 `CloudPhoneRiskKit` 的场景  
 > 说明：本文描述的是 **SDK 自身的处理边界**，不替代宿主 App 的隐私政策、App Privacy 标签或 App Review Information
@@ -81,28 +81,20 @@ SDK 当前自带的 privacy manifest 文件位于：
 - SDK **显式声明空的 `NSPrivacyTrackingDomains`**
 - SDK **不以广告追踪为目的**使用所采集数据
 
-### 3.4 7.0 版本升级是否改变隐私声明范围
+### 3.4 7.3 版本升级是否改变隐私声明范围
 
 不会。
 
-7.0 主要新增并持续强化的是**二进制保护与运行时虚拟化能力**，例如：
+7.3 继承 7.1 / 7.2 的 VM self-check / dispatcher / MIE 姿态等基线，对外文档与 `Version.current` 对齐；能力侧仍强调**设备安全姿态探测、运行时完整性校验和构建产物可见性收敛**，例如：
 
-- Pass 7 runtime gate
-- Pass 10 ImportEncryptor
-- Pass 11 HeaderEncryptor
-- Pass 12 TextSegmentEncryptor
-- Pass 13 VMProtector
-- 更早期的异常端口抢占
-- 多频 watchdog / timing canary / Frida 行为指纹增强
-- VM 解释器的 dead handler、opaque predicate chain、解释器自身 CFF 接线
-- VM 自校验从 FNV 扩展到 HMAC 路径，并引入 `__swift5_mdvsk` self-expect section
-- VM 多入口执行链、双主循环解释器、虚拟寄存器与 VM 内部子调用
-- `__TEXT.__text` 按页按需解密、空闲重加密、guard page anti-dump
-- 单字符串 lazy decrypt 缓存与明文清零
-- 白盒表/元数据的可选 ASLR 绑定解码路径
-- bootstrap 阶段的 mini-VM 保护关键初始化片段
+- `MIEPostureDetector` / `cprisk_mte_guard`：通过 `sysctl` 读取设备级 MTE/PAuth 能力摘要，并配合本地 snapshot / canary 生成安全姿态信号
+- Pass 6 在 `MH_EXECUTE` 上扩展为 **符号表清理 + export trie scrub**，降低 IDA/Hopper 通过导出表恢复函数名的能力
+- Release 构建启用 `SWIFT_REFLECTION_METADATA_LEVEL=minimal`，并继续通过关键类的 `@objc(CPR_...)` 别名压缩 Swift / ObjC 暴露面
+- watchdog 引入 Mach port mailbox peer-liveness、PAC bridge 线程入口校验、更多 exception / software breakpoint / timeout 维度
+- VM region image 白名单差异比对、`user_tag` 精细化扫描、SVC 桩代码页 hash 滚动校验
+- 白盒 PRF 与被动完整性信号、runtime material 的耦合进一步加强
 
-这些能力会增强 SDK 的反调试、反篡改和逆向对抗强度，但**不会新增 privacy manifest 中的 collected data 类型，也不会新增 Required Reason API 类别**。因此从隐私边界上看，7.0 仍然以 `Device ID`、`UserDefaults`、`SystemBootTime` 这三项 manifest 事实为基线。
+这些能力会增强 SDK 的反调试、反篡改和逆向对抗强度，并改变二进制在静态视角下的可见性，但**不会新增 privacy manifest 中的 collected data 类型，也不会新增 Required Reason API 类别**。因此从隐私边界上看，7.3 仍然以 `Device ID`、`UserDefaults`、`SystemBootTime` 这三项 manifest 事实为基线。
 
 ---
 
@@ -138,6 +130,9 @@ SDK 可能处理以下环境风险数据：
 - `deny_attach` 生效回溯验证、`task_for_pid` 异常成功、AMFI / entitlement 异常位
 - Frida/Gum/Gadget 模块特征（如已加载 image 名、可疑 Mach-O section 名、只读字符串片段）
 - guard page 命中、按页解密/重加密状态、VM 自校验状态、解释器路径异常
+- Mach port mailbox 心跳、PAC 线程入口桥、VM region image 白名单差异、镜像外匿名可执行页、SVC 桩整页 hash/滚动校验结果
+- 白盒 PRF 退化/绑定状态、runtime material 完整性结果、MIE/MTE 安全姿态与 canary 状态
+- **内存完整性 / MTE 姿态（`MIEPostureDetector`）**：在支持的系统上，仅通过内核导出的 `sysctl`（如 `hw.optional.arm.FEAT_MTE*` 等 OID）读取**设备级硬件能力摘要**，用于本地安全姿态评估与反篡改信号的轻量上下文加权；**不读取通讯录、照片、消息等用户内容**，也不访问应用沙箱内的用户文件。该能力通常只会在 **A17 / A17 Pro 及后续较新产品线**上更可能观察到相关位形，最终仍以系统实际导出的 OID 与数值为准。
 
 这些字段的共同特点是：
 
@@ -148,7 +143,28 @@ SDK 可能处理以下环境风险数据：
 补充说明：
 
 - `FridaModuleDetector` 主要检查**当前进程已加载模块与只读段内容**，用于识别 Frida/Gum/Gadget 注入痕迹，不读取用户文件内容，也不扩大对外网络发送的数据范围。
-- 新增的 watchdog / software breakpoint / exception timeout / guard page / deny-attach verify / HMAC self-check 探针，本质上仍属于**运行时完整性状态**，不是新的个人信息类别。
+- 新增的 watchdog / software breakpoint / exception timeout / guard page / deny-attach verify / HMAC self-check / SVC page-hash / VM image whitelist / MIE posture 探针，本质上仍属于**运行时完整性状态**，不是新的个人信息类别。
+
+**关于 MIE / MTE（含 Apple 在 sysctl 中暴露的 EMTE 相关位形）的补充说明**：
+
+- 该能力依赖**A17 / A17 Pro 及后续较新 Apple 芯片与对应系统**对 ARM 内存标记扩展（MTE）等能力的导出与兼容；**并非所有设备、并非所有系统版本**都会暴露相同的 `sysctl` OID 或非零读数。
+- 在不支持或 OID 不可读时，SDK **安全降级**为较低姿态层级（例如仅反映 PAC/PAuth 路径），**不会**为了“凑齐”能力而采集额外敏感个人信息或用户内容。
+- 输出语义为**本地安全姿态探测 / 运行时防护增强的上下文**，用于解释与加权部分风险信号；**不等于**读取用户数据、也不构成对用户存储的扫描。
+
+### 4.2a 构建产物可见性收敛（新增）
+
+除运行时安全信号外，7.3 当前交付版还会在 Release / 壳后产物上体现一些**“可见性收敛”**能力，例如：
+
+- Pass 6 对 `MH_EXECUTE` 执行 `LC_SYMTAB` 清理、旧 `LINKEDIT` payload 覆写，以及 export trie scrub
+- Swift Release 构建使用 `SWIFT_REFLECTION_METADATA_LEVEL=minimal`
+- 关键对外暴露类维持 `@objc(CPR_...)` 别名，而不是直接暴露完整 Swift 类名
+
+这类能力的边界需要单独说明：
+
+- 它们作用于**代码、元数据和导出表的静态可见性**
+- 目的是**降低逆向恢复与篡改成本**
+- **不新增用户数据采集**
+- **不改变 privacy manifest 的 collected data / Required Reason API 范围**
 
 ### 4.3 行为与传感器类
 
@@ -275,7 +291,7 @@ SDK 可以在设备侧本地完成：
 
 - SDK 本地为了做风控而读取、计算、比对某些信号，并不等于这些信号一定会离开设备
 - 只有当宿主 App 选择上报 `CPRiskReport`、`ReportEnvelope`、`GrpcReportPayload` 或自定义抽取其中字段时，相关数据才进入宿主 App 的对外披露范围
-- 7.0 的 runtime gate / text 加密 / VMP 保护只增强代码保护，不会单独增加新的用户数据出境路径
+- 7.3 交付中的 runtime gate / text 加密 / VMP 保护 / export trie scrub / Swift 可见性收敛 / MIE posture 只增强代码保护与本地安全姿态判断，不会单独增加新的用户数据出境路径
 
 ---
 
@@ -367,7 +383,7 @@ SDK 当前会在本地执行更强的运行时完整性探测，包括：
 - 用于**安全信号采集与风险决策**
 - 用于**识别动态注入、Frida 模块加载与调试篡改**
 
-另外，`cprisk-armor` 的 Pass 7 `AntiDebugInjector`、Pass 8 `InstructionSubstitution`、Pass 9 `ControlFlowOrchestrator`、Pass 10 `ImportEncryptor`、Pass 11 `HeaderEncryptor`、Pass 12 `TextSegmentEncryptor` 与 Pass 13 `VMProtector` 都属于**构建期二进制保护能力**。Pass 7 负责写入 anti-debug metadata ABI 并驱动运行时 gate，Pass 8 负责对 `__TEXT.__text` 中的安全 ARM64 指令子集做 1:1 等长语义等价替换，Pass 9 负责对策略编排的函数执行控制流平坦化，Pass 10/11 分别负责导入表与 header 关键字段的加密/恢复，Pass 12 负责对 text 页执行加密元数据编排并配合运行时按页解密/空闲重加密，Pass 13 则把部分高价值函数转成 VM 字节码并由解释器执行；当前还配套 `__swift5_mdvsk` 自校验元数据、白盒表 ASLR 绑定、字符串 lazy decrypt 与 bootstrap mini-VM。它们均不会新增终端用户数据采集，只影响构建产物的代码与元数据形态，因此不改变 SDK 的隐私数据边界。
+另外，`cprisk-armor` 的 Pass 6 `SymbolStripper + ExportTrieScrubber`、Pass 7 `AntiDebugInjector`、Pass 8 `InstructionSubstitution`、Pass 9 `ControlFlowOrchestrator`、Pass 10 `ImportEncryptor`、Pass 11 `HeaderEncryptor`、Pass 12 `TextSegmentEncryptor` 与 Pass 13 `VMProtector` 都属于**构建期二进制保护能力**。其中 Pass 6 现在不仅清理 `LC_SYMTAB`，还会在 `MH_EXECUTE` 上清理 export trie；Pass 7 负责写入 anti-debug metadata ABI 并驱动运行时 gate，Pass 8 负责对 `__TEXT.__text` 中的安全 ARM64 指令子集做 1:1 等长语义等价替换，Pass 9 负责对策略编排的函数执行控制流平坦化，Pass 10/11 分别负责导入表与 header 关键字段的加密/恢复，Pass 12 负责对 text 页执行加密元数据编排并配合运行时按页解密/空闲重加密，Pass 13 则把部分高价值函数转成 VM 字节码并由解释器执行；当前还配套 `SWIFT_REFLECTION_METADATA_LEVEL=minimal`、`__swift5_mdvsk` 自校验元数据、白盒表 ASLR 绑定、字符串 lazy decrypt 与 bootstrap mini-VM。它们均不会新增终端用户数据采集，只影响构建产物的代码与元数据形态，因此不改变 SDK 的隐私数据边界。
 
 ---
 
@@ -383,22 +399,22 @@ SDK 当前会在本地执行更强的运行时完整性探测，包括：
 
 尤其在当前项目以**静态库 / 源码集成**为主的情况下，接入方不能误以为“SDK 带了 manifest 就自动全部覆盖”。
 
-### 8.1 当前 7.0 版本的额外提醒
+### 8.1 当前 7.3 版本的额外提醒
 
-从当前 7.0 版本的整体风险结构看，接入方需要区分两件事：
+从当前 7.3 版本的整体风险结构看，接入方需要区分两件事：
 
 1. **隐私合规**
 2. **App Store 对二进制保护强度的接受度**
 
-就 SDK 隐私边界本身而言，当前 7.0 版本并没有因为 Pass 12 `TextSegmentEncryptor`、Pass 13 `VMProtector`、HMAC 自校验、guard page anti-dump、白盒表 ASLR 绑定或 bootstrap mini-VM 而新增新的 collected data 类型，也没有扩大 Required Reason API 范围。因此：
+就 SDK 隐私边界本身而言，当前 7.3 版本并没有因为 Pass 6 export trie scrub、Swift metadata 可见性收敛、Pass 12 `TextSegmentEncryptor`、Pass 13 `VMProtector`、CPSV span map 驱动 self-check、CPSH/HMAC expect blob、handler 跨编译单元散布、guard page anti-dump、白盒表 ASLR 绑定、Mach port watchdog、SVC page hash 或 bootstrap mini-VM 而新增新的 collected data 类型，也没有扩大 Required Reason API 范围。因此：
 
-- 7.0 的主要新增风险**不是隐私类型扩张**
+- 7.3 的主要新增风险**不是隐私类型扩张**
 - 而是宿主 App 是否选择启用更强的二进制保护后，带来额外的审核解释成本
-- 当前项目比早期 7.0 文档所描述的 Full Armor 更进一步，已经落到“按页代码恢复、guard page 反 dump、HMAC self-check、白盒表绑定”这一层，审核备注和交付说明需要比之前写得更明确
+- 当前项目比早期 7.0/7.1 文档所描述的 Full Armor 更进一步，已经落到“符号表 + export 双路径可见性收敛、按页代码恢复、guard page 反 dump、CPSV/CPSH 驱动 self-check、白盒表绑定、跨 TU handler 散布、Mach port watchdog、SVC page hash”这一层，审核备注和交付说明需要比之前写得更明确
 
 也就是说：
 
-> **隐私文档回答的是“收什么、为什么收、谁来披露”；是否适合直接带 Full Armor 版本上架，则应优先参考 `CloudPhoneRiskKit_AppStore_合规指南.md` 中的 7.0 上架风险评估章节。**
+> **隐私文档回答的是“收什么、为什么收、谁来披露”；是否适合直接带 Full Armor 版本上架，则应优先参考 `CloudPhoneRiskKit_AppStore_合规指南.md` 中的 7.3 上架风险评估章节。**
 
 ---
 

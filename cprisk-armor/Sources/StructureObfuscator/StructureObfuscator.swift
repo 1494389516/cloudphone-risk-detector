@@ -115,8 +115,9 @@ public final class StructureObfuscatorPass: ArmorPass {
         )
     }
 
-    /// Build mixed-structure payloads with pointer-like lanes, dead-code-like
-    /// words, and constrained entropy shaping to avoid synthetic signatures.
+    /// Build mixed-structure payloads: crypto-constant pools, LLM-oriented cstring
+    /// clusters, fake jump / pointer tables, AArch64-shaped boundary words,
+    /// semantic-mimic symbol adjacency, Strategy 11 pseudo-trace lines — plus entropy shaping.
     private static func generateStructuredContent(
         size: Int,
         sectionName: String,
@@ -137,50 +138,147 @@ public final class StructureObfuscatorPass: ArmorPass {
 
         var laneIndex = 0
         while data.count < size {
-            let laneType = Int((rng.next() ^ UInt64(laneIndex)) % 4)
-            switch laneType {
+            let remaining = size - data.count
+            if remaining < 8 {
+                for _ in 0..<remaining {
+                    data.append(UInt8(truncatingIfNeeded: rng.next() ^ 0xA5A5_A5A5))
+                }
+                break
+            }
+
+            let chunkBudget = min(
+                remaining,
+                min(256, 24 + Int(rng.next() % 200))
+            )
+
+            let kind = Int((rng.next() ^ UInt64(laneIndex) ^ fnv1a64Combine(base: 0x9E37, string: sectionName)) % 14)
+            switch kind {
             case 0:
-                if data.count + 8 <= size {
-                    // Pointer-like lane near canonical image ranges.
-                    let base: UInt64 = (rng.next() & 1) == 0
-                        ? 0x0000000100000000
-                        : 0x0000000180000000
-                    let ptr = base | (rng.next() & 0x0000000000FF_FC00)
-                    appendLE64(&data, ptr)
-                }
+                let mix = UInt8(truncatingIfNeeded: rng.next())
+                let split = chunkBudget / 2
+                AIDecoyPayloadBuilder.appendCryptoPoisonAESBox(
+                    to: &data,
+                    budget: split,
+                    mixKey: mix,
+                    using: &rng
+                )
+                AIDecoyPayloadBuilder.appendSHA256KConstants(
+                    to: &data,
+                    budget: chunkBudget - split,
+                    xorSalt: UInt32(truncatingIfNeeded: rng.next()),
+                    using: &rng
+                )
             case 1:
-                if data.count + 4 <= size {
-                    // Dead-code-like AArch64 words (NOP/ISB/ORR XZR patterns).
-                    let deadWords: [UInt32] = [
-                        0xD503_201F, // NOP
-                        0xD503_3FDF, // ISB
-                        0xAA1F_03E0, // MOV X0, XZR
-                        0x8A1F_03FF, // AND XZR, XZR, XZR
-                    ]
-                    let word = deadWords[Int(rng.next() % UInt64(deadWords.count))]
-                        ^ UInt32(truncatingIfNeeded: (rng.next() & 0x0000_0003) << 5)
-                    appendLE32(&data, word)
-                }
+                let split = chunkBudget * (40 + Int(rng.next() % 40)) / 100
+                AIDecoyPayloadBuilder.appendSHA512KConstants(
+                    to: &data,
+                    budget: split,
+                    using: &rng
+                )
+                AIDecoyPayloadBuilder.appendSecp256r1PrimeTail(
+                    to: &data,
+                    budget: chunkBudget - split,
+                    using: &rng
+                )
             case 2:
+                AIDecoyPayloadBuilder.appendLLMPromptCluster(
+                    to: &data,
+                    budget: chunkBudget,
+                    using: &rng
+                )
+            case 3:
+                AIDecoyPayloadBuilder.appendPointerLikeTable(
+                    to: &data,
+                    budget: chunkBudget,
+                    using: &rng
+                )
+            case 4:
+                AIDecoyPayloadBuilder.appendFakeJumpTable(
+                    to: &data,
+                    budget: chunkBudget,
+                    using: &rng
+                )
+            case 5:
+                AIDecoyPayloadBuilder.appendFunctionBoundaryRun(
+                    to: &data,
+                    budget: chunkBudget,
+                    using: &rng
+                )
+            case 6:
+                AIDecoyPayloadBuilder.appendSemanticMimicCluster(
+                    to: &data,
+                    budget: chunkBudget,
+                    using: &rng
+                )
+            case 7:
                 let tokenPool = [
                     "__swift5",
                     "__objc",
                     "__auth",
                     "__stubs",
-                    sectionName
+                    "__la_symbol_ptr",
+                    "__DATA_CONST",
+                    sectionName,
                 ]
                 let token = tokenPool[Int(rng.next() % UInt64(tokenPool.count))]
-                for b in token.utf8 where data.count < size {
+                let start = data.count
+                for b in token.utf8 {
+                    guard data.count - start < chunkBudget else { break }
                     data.append(b)
                 }
-                if data.count < size {
+                if data.count - start < chunkBudget {
                     data.append(0)
                 }
+                while data.count - start < chunkBudget {
+                    data.append(UInt8(truncatingIfNeeded: rng.next() & 0x7F))
+                }
+            case 8, 9:
+                let deadWords: [UInt32] = [
+                    0xD503_201F,
+                    0xD503_3FDF,
+                    0xAA1F_03E0,
+                    0x8A1F_03FF,
+                ]
+                let start = data.count
+                while data.count - start + 4 <= chunkBudget {
+                    let word = deadWords[Int(rng.next() % UInt64(deadWords.count))]
+                        ^ UInt32(truncatingIfNeeded: (rng.next() & 0x0000_0003) << 5)
+                    appendLE32(&data, word)
+                }
+                while data.count - start < chunkBudget {
+                    data.append(UInt8(truncatingIfNeeded: rng.next() ^ 0xA5A5_A5A5))
+                }
+            case 10:
+                AIDecoyPayloadBuilder.appendTarPitCallGraph(
+                    to: &data,
+                    budget: chunkBudget,
+                    using: &rng
+                )
+            case 11:
+                AIDecoyPayloadBuilder.appendProtocolSmashCluster(
+                    to: &data,
+                    budget: chunkBudget,
+                    using: &rng
+                )
+            case 12:
+                AIDecoyPayloadBuilder.appendSystemPromptOverride(
+                    to: &data,
+                    budget: chunkBudget,
+                    using: &rng
+                )
+            case 13:
+                AIDecoyPayloadBuilder.appendContextWindowPseudoTraceCluster(
+                    to: &data,
+                    budget: chunkBudget,
+                    using: &rng
+                )
             default:
-                if data.count < size {
+                let start = data.count
+                while data.count - start < chunkBudget {
                     data.append(UInt8(truncatingIfNeeded: rng.next() ^ 0xA5A5_A5A5))
                 }
             }
+
             laneIndex += 1
         }
 
@@ -188,7 +286,6 @@ public final class StructureObfuscatorPass: ArmorPass {
             data.removeSubrange(size..<data.count)
         }
 
-        // Entropy shaping: avoid low-entropy synthetic lanes and stable repeats.
         let entropy = approximateEntropy(data)
         if entropy < 4.2 {
             for index in stride(from: 0, to: data.count, by: 7) {

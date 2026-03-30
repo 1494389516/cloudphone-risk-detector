@@ -1,4 +1,5 @@
 import CRiskCore
+import CryptoKit
 import Foundation
 import Security
 
@@ -28,6 +29,30 @@ struct AppSigningIdentityDetector: Detector {
         var effectiveBundleIdentifier: String? {
             AppSigningIdentityDetector.normalized(bundleIdentifier)
                 ?? AppSigningIdentityDetector.normalized(infoPlistBundleIdentifier)
+        }
+
+        var materialCoverage: String {
+            var components: [String] = []
+            if AppSigningIdentityDetector.normalized(teamIdentifierEntitlement) != nil {
+                components.append("team_entitlement")
+            } else if derivedTeamIdentifier != nil {
+                components.append("team_derived")
+            }
+            if AppSigningIdentityDetector.normalized(applicationIdentifier) != nil {
+                components.append("application_identifier")
+            }
+            if effectiveBundleIdentifier != nil {
+                components.append("bundle_identifier")
+            }
+            if getTaskAllow != nil {
+                components.append("get_task_allow")
+            }
+            components.append("container:\(bundleContainer.rawValue)")
+            return components.joined(separator: ",")
+        }
+
+        var bindingFingerprint: String {
+            AppSigningIdentityDetector.bindingFingerprint(for: self)
         }
 
         var isExecutableAppContainer: Bool {
@@ -68,6 +93,47 @@ struct AppSigningIdentityDetector: Detector {
             findings.map(\.method)
         }
 
+        var reasonCodes: [String] {
+            findings.map(\.signalID)
+        }
+
+        var statusCode: String {
+            if shouldPoison {
+                return "tampered"
+            }
+            if findings.isEmpty {
+                return "clean"
+            }
+            return "soft_anomaly"
+        }
+
+        var baselineEligibility: String {
+            if snapshot.effectiveBundleIdentifier == nil {
+                return "missing_bundle_identifier"
+            }
+            if snapshot.applicationIdentifier == nil {
+                return "missing_application_identifier"
+            }
+            if snapshot.effectiveTeamIdentifier == nil {
+                return "missing_team_identifier"
+            }
+            return "eligible"
+        }
+
+        var telemetry: [String: String] {
+            var rows: [String: String] = [
+                "signing_identity_status": statusCode,
+                "signing_identity_fp": snapshot.bindingFingerprint,
+                "signing_identity_coverage": snapshot.materialCoverage,
+                "signing_identity_reason_codes": reasonCodes.joined(separator: ","),
+                "signing_identity_baseline_eligibility": baselineEligibility,
+            ]
+            if baselineStored {
+                rows["signing_identity_baseline_stored"] = "1"
+            }
+            return rows
+        }
+
         var detectorResult: DetectorResult {
             DetectorResult(score: score, methods: methods)
         }
@@ -75,21 +141,45 @@ struct AppSigningIdentityDetector: Detector {
         var signals: [RiskSignal] {
             guard !findings.isEmpty else { return [] }
 
+            let findingIDs = findings.map(\.signalID).sorted()
+            let poisonFindingIDs = findings.filter(\.poison).map(\.signalID).sorted()
+            let softFindingIDs = findings.filter { !$0.poison }.map(\.signalID).sorted()
             var aggregateEvidence: [String: String] = [
                 "methods": methods.joined(separator: ","),
                 "team_identifier": snapshot.effectiveTeamIdentifier ?? "nil",
+                "derived_team_identifier": snapshot.derivedTeamIdentifier ?? "nil",
                 "application_identifier": snapshot.applicationIdentifier ?? "nil",
                 "bundle_identifier": snapshot.bundleIdentifier ?? "nil",
                 "info_bundle_identifier": snapshot.infoPlistBundleIdentifier ?? "nil",
+                "effective_bundle_identifier": snapshot.effectiveBundleIdentifier ?? "nil",
                 "get_task_allow": snapshot.getTaskAllow.map { $0 ? "1" : "0" } ?? "nil",
+                "finding_ids": findingIDs.joined(separator: ","),
+                "finding_count": "\(findingIDs.count)",
+                "poison_count": "\(poisonFindingIDs.count)",
+                "soft_count": "\(softFindingIDs.count)",
+                "team_identifier_source": AppSigningIdentityDetector.teamIdentifierSource(for: snapshot),
+                "bundle_container": snapshot.bundleContainer.rawValue,
+                "signing_identity_fp": snapshot.bindingFingerprint,
+                "signing_identity_coverage": snapshot.materialCoverage,
+                "signing_identity_status": statusCode,
+                "baseline_eligibility": baselineEligibility,
             ]
+            if !poisonFindingIDs.isEmpty {
+                aggregateEvidence["poison_finding_ids"] = poisonFindingIDs.joined(separator: ",")
+            }
+            if !softFindingIDs.isEmpty {
+                aggregateEvidence["soft_finding_ids"] = softFindingIDs.joined(separator: ",")
+            }
+            if !reasonCodes.isEmpty {
+                aggregateEvidence["reason_codes"] = reasonCodes.joined(separator: ",")
+            }
             if baselineStored {
                 aggregateEvidence["baseline_stored"] = "1"
             }
 
             var out = [
                 RiskSignal(
-                    id: "app_signing_identity_tampered",
+                    id: ObfuscatedConstants.signalAppSigningIdentityTampered,
                     category: "integrity",
                     score: score,
                     evidence: aggregateEvidence,
@@ -135,9 +225,13 @@ struct AppSigningIdentityDetector: Detector {
                 "[AppSigningIdentityDetector] forcing integrity poison: " +
                 inspection.findings.map(\.signalID).joined(separator: ",")
             )
-            cprisk_force_integrity_poison()
+            cprisk_integrity_poison_code_signing_lane()
         }
         return inspection.signals
+    }
+
+    func telemetry() -> [String: String] {
+        inspect().telemetry
     }
 
     func inspect() -> Inspection {
@@ -171,6 +265,37 @@ struct AppSigningIdentityDetector: Detector {
         let applicationIdentifier = Self.normalized(snapshot.applicationIdentifier)
         let explicitTeamIdentifier = Self.normalized(snapshot.teamIdentifierEntitlement)
         let effectiveTeamIdentifier = snapshot.effectiveTeamIdentifier
+
+        if bundleIdentifier == nil, infoBundleIdentifier == nil {
+            findings.append(Finding(
+                signalID: "app_bundle_identifier_missing",
+                method: "signing_identity:bundle_identifier_missing",
+                score: 28,
+                evidence: [
+                    "bundle_identifier": "nil",
+                    "info_bundle_identifier": "nil",
+                    "bundle_container": snapshot.bundleContainer.rawValue,
+                ],
+                state: .soft(confidence: 0.88),
+                weightHint: 72,
+                poison: false
+            ))
+        }
+
+        if let applicationIdentifier,
+           Self.teamPrefix(from: applicationIdentifier) == nil || Self.bundleSuffix(from: applicationIdentifier) == nil {
+            findings.append(Finding(
+                signalID: "app_identifier_malformed",
+                method: "signing_identity:application_identifier_malformed",
+                score: 24,
+                evidence: [
+                    "application_identifier": applicationIdentifier,
+                ],
+                state: .soft(confidence: 0.84),
+                weightHint: 64,
+                poison: false
+            ))
+        }
 
         if let bundleIdentifier, let infoBundleIdentifier, bundleIdentifier != infoBundleIdentifier {
             findings.append(Finding(
@@ -375,7 +500,7 @@ struct AppSigningIdentityDetector: Detector {
             }
 
             findings.append(Finding(
-                signalID: "app_signing_baseline_changed",
+                signalID: ObfuscatedConstants.signalAppSigningBaselineChanged,
                 method: "signing_identity:baseline_changed",
                 score: 44,
                 evidence: [
@@ -459,6 +584,16 @@ struct AppSigningIdentityDetector: Detector {
         return trimmed
     }
 
+    static func teamIdentifierSource(for snapshot: IdentitySnapshot) -> String {
+        if normalized(snapshot.teamIdentifierEntitlement) != nil {
+            return "entitlement"
+        }
+        if snapshot.derivedTeamIdentifier != nil {
+            return "application_identifier_prefix"
+        }
+        return "missing"
+    }
+
     static func teamPrefix(from applicationIdentifier: String?) -> String? {
         guard let applicationIdentifier = normalized(applicationIdentifier),
               let separator = applicationIdentifier.firstIndex(of: ".") else {
@@ -503,5 +638,17 @@ struct AppSigningIdentityDetector: Detector {
             let value = scalar.value
             return (48...57).contains(value) || (65...90).contains(value)
         }
+    }
+
+    static func bindingFingerprint(for snapshot: IdentitySnapshot) -> String {
+        let material = [
+            normalized(snapshot.teamIdentifierEntitlement) ?? "",
+            snapshot.derivedTeamIdentifier ?? "",
+            normalized(snapshot.applicationIdentifier) ?? "",
+            snapshot.effectiveBundleIdentifier ?? "",
+            snapshot.getTaskAllow.map { $0 ? "1" : "0" } ?? "",
+            snapshot.bundleContainer.rawValue,
+        ].joined(separator: "|")
+        return SHA256.hash(data: Data(material.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 }

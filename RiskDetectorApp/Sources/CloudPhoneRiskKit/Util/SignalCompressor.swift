@@ -12,7 +12,7 @@ import Foundation
 public enum SignalCompressor {
 
     /// 映射表版本，服务端需用同一版本解码
-    public static let mappingVersion = "1.1"
+    public static let mappingVersion = "1.2"
     private static let signalTamperingDetectedID = StringDeobfuscator.base64Decode("dGFtcGVyaW5nX2RldGVjdGVk")
     private static let signalJailbreakDeviceID = "\(ObfuscatedConstants.signalJailbreak)_device"
 
@@ -157,6 +157,7 @@ public enum SignalCompressor {
         let hasHardwareCapabilityMismatch = ids.contains("haptic_capability_mismatch") || ids.contains("refresh_rate_mismatch") || ids.contains("proximity_sensor_absent")
         if hasHardwareCapabilityMismatch { bits |= 0x0200 }
         if ids.contains("network_interface_anomaly") { bits |= 0x0400 }
+        if ids.contains(ObfuscatedConstants.signalLibcDirectSyscallFallback) { bits |= 0x0001_0000 }
 
         // bit 12-15：SDK 5.2 新信号（原 bits 12-14 行为熵已迁移至 extendedByte）
         if ids.contains("screen_captured") { bits |= 0x1000 }
@@ -180,7 +181,7 @@ public enum SignalCompressor {
 public struct SignalToBitMapping {
 
     /// 当前支持的映射版本（占位，便于后续扩展）
-    public static let supportedVersions: [String] = ["1.0", "1.1"]
+    public static let supportedVersions: [String] = ["1.0", "1.1", "1.2"]
 
     /// Layer1 位定义（8-bit）
     /// bit0: gpu_virtual, bit1: vphone_hardware, bit2: board_id_virtual,
@@ -260,5 +261,6 @@ public struct SignalToBitMapping {
         13: "external_display_attached",
         14: "usb_audio_routed",
         15: "no_cellular_provider",
+        16: "libc_direct_syscall_fallback",
     ]
 }

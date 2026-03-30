@@ -11,6 +11,9 @@ struct FileDetector: Detector {
     private static let suspiciousSampleFloor = 10
 
     func detect() throws -> DetectorResult {
+#if targetEnvironment(simulator)
+        return DetectorResult(score: 0, methods: ["unavailable_simulator"])
+#else
         var score: Double = 0
         var methods: [String] = []
         var fileExistsMismatchCount = 0
@@ -50,7 +53,7 @@ struct FileDetector: Detector {
         for item in suspiciousPaths {
             // Probabilistically inject a noise access() via direct SVC before some real checks
             if Bool.random() && noiseIdx < noisePaths.count {
-                _ = noisePaths[noiseIdx].withCString { cprisk_access_direct($0, F_OK, nil) }
+                _ = SVCDirectCall.secureAccess(noisePaths[noiseIdx])
                 noiseIdx += 1
             }
 
@@ -116,7 +119,7 @@ struct FileDetector: Detector {
         var tracedCount = 0
         for path in criticalPaths {
             if Bool.random() && critNoiseIdx < critNoisePaths.count {
-                _ = critNoisePaths[critNoiseIdx].withCString { cprisk_access_direct($0, F_OK, nil) }
+                _ = SVCDirectCall.secureAccess(critNoisePaths[critNoiseIdx])
                 critNoiseIdx += 1
             }
 
@@ -173,18 +176,15 @@ struct FileDetector: Detector {
         }
 
         return DetectorResult(score: score, methods: methods)
+#endif
     }
 
     /// access(F_OK) 并返回 errno（用于 [4.4.6] EPERM 异常化）
     private func pathAccessWithErrno(_ path: String) -> (exists: Bool, errno: Int32) {
-        path.withCString { cPath in
-            let result = access(cPath, F_OK)
-            let savedErrno = errno
-            if result == 0 {
-                return (true, 0)
-            }
-            return (false, savedErrno)
+        if let result = SVCDirectCall.standardAccessErrnoMasked(path) {
+            return result
         }
+        return (false, EINVAL)
     }
 
     private struct ExistenceResult {

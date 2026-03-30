@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import XCTest
 import CRiskCore
@@ -71,9 +72,14 @@ final class AntiTamperingTests: XCTestCase {
         lastExceptionQuerySucceeded: Bool = true,
         lastExceptionReclaimAttempted: Bool = false,
         lastExceptionHijackDetected: Bool = false,
+        lastExceptionEarlyPhaseCaptured: Bool = false,
+        lastExceptionStartupRaceDetected: Bool = false,
         lastExceptionQueryKernReturn: Int32 = 0,
         lastExceptionRegisterKernReturn: Int32 = 0,
         lastCheckMonotonicNs: UInt64 = 0,
+        lastExceptionVerifyCount: UInt64 = 0,
+        lastExceptionReclaimCount: UInt64 = 0,
+        lastExceptionStartupDeltaNs: UInt64 = 0,
         signalProbeResult: Bool = false,
         hardwareBpDetected: Bool = false,
         softwareBreakpointDetected: Bool = false,
@@ -113,7 +119,19 @@ final class AntiTamperingTests: XCTestCase {
         lastDenyAttachVerifyBits: UInt32 = 0,
         denyAttachVerifyAnomalyCount: UInt64 = 0,
         amfiCsFlagsAnomalyCount: UInt64 = 0,
-        getTaskAllowAnomalyCount: UInt64 = 0
+        getTaskAllowAnomalyCount: UInt64 = 0,
+        vmMprotectCrosscheckMismatchTotal: UInt64 = 0,
+        vmMprotectMachTrapMismatchTotal: UInt64 = 0,
+        libcFallbackUsedMask: UInt32 = 0,
+        libcFallbackEventTotal: UInt32 = 0,
+        watchdogStartPathMask: UInt32 = 0,
+        watchdogStartupLivenessOk: Bool = true,
+        mainThreadAliveMonotonicNs: UInt64 = 0,
+        earlyInjectionEnvMask: UInt32 = 0,
+        watchdogExtendedAnomalyFlags: UInt32 = 0,
+        mainThreadHeartbeatSeq: UInt64 = 0,
+        mainThreadHeartbeatStallCount: UInt64 = 0,
+        lastMainThreadHeartbeatStalled: Bool = false
     ) -> CPRiskKit.AntiDebugWatchdogSnapshot {
         CPRiskKit.AntiDebugWatchdogSnapshot(
             supported: supported,
@@ -132,9 +150,14 @@ final class AntiTamperingTests: XCTestCase {
             lastExceptionQuerySucceeded: lastExceptionQuerySucceeded,
             lastExceptionReclaimAttempted: lastExceptionReclaimAttempted,
             lastExceptionHijackDetected: lastExceptionHijackDetected,
+            lastExceptionEarlyPhaseCaptured: lastExceptionEarlyPhaseCaptured,
+            lastExceptionStartupRaceDetected: lastExceptionStartupRaceDetected,
             lastExceptionQueryKernReturn: lastExceptionQueryKernReturn,
             lastExceptionRegisterKernReturn: lastExceptionRegisterKernReturn,
             lastCheckMonotonicNs: lastCheckMonotonicNs,
+            lastExceptionVerifyCount: lastExceptionVerifyCount,
+            lastExceptionReclaimCount: lastExceptionReclaimCount,
+            lastExceptionStartupDeltaNs: lastExceptionStartupDeltaNs,
             signalProbeResult: signalProbeResult,
             hardwareBpDetected: hardwareBpDetected,
             softwareBreakpointDetected: softwareBreakpointDetected,
@@ -174,8 +197,137 @@ final class AntiTamperingTests: XCTestCase {
             lastDenyAttachVerifyBits: lastDenyAttachVerifyBits,
             denyAttachVerifyAnomalyCount: denyAttachVerifyAnomalyCount,
             amfiCsFlagsAnomalyCount: amfiCsFlagsAnomalyCount,
-            getTaskAllowAnomalyCount: getTaskAllowAnomalyCount
+            getTaskAllowAnomalyCount: getTaskAllowAnomalyCount,
+            vmMprotectCrosscheckMismatchTotal: vmMprotectCrosscheckMismatchTotal,
+            vmMprotectMachTrapMismatchTotal: vmMprotectMachTrapMismatchTotal,
+            libcFallbackUsedMask: libcFallbackUsedMask,
+            libcFallbackEventTotal: libcFallbackEventTotal,
+            watchdogStartPathMask: watchdogStartPathMask,
+            watchdogStartupLivenessOk: watchdogStartupLivenessOk,
+            mainThreadAliveMonotonicNs: mainThreadAliveMonotonicNs,
+            earlyInjectionEnvMask: earlyInjectionEnvMask,
+            watchdogExtendedAnomalyFlags: watchdogExtendedAnomalyFlags,
+            mainThreadHeartbeatSeq: mainThreadHeartbeatSeq,
+            mainThreadHeartbeatStallCount: mainThreadHeartbeatStallCount,
+            lastMainThreadHeartbeatStalled: lastMainThreadHeartbeatStalled
         )
+    }
+
+    func testAntiDebugWatchdogSnapshotHasAnyAnomalyIncludesExtendedFlags() {
+        let stalled = makeWatchdogSnapshot(
+            anomalyFlags: 0,
+            watchdogExtendedAnomalyFlags: UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXT_MAIN_THREAD_STALL)
+        )
+        XCTAssertTrue(stalled.hasAnyAnomaly)
+        let clean = makeWatchdogSnapshot(anomalyFlags: 0, watchdogExtendedAnomalyFlags: 0)
+        XCTAssertFalse(clean.hasAnyAnomaly)
+    }
+
+    func testLibcDirectSyscallFallbackSignalEmittedWhenMaskNonZero() {
+        let provider = AntiTamperingSignalProvider()
+        let mask = UInt32(CPRISK_LIBC_FALLBACK_USED_DIRECT_SYSCTL)
+            | UInt32(CPRISK_LIBC_FALLBACK_USED_DIRECT_GETENTROPY)
+        let snapshot = makeWatchdogSnapshot(libcFallbackUsedMask: mask, libcFallbackEventTotal: 4)
+        let signals = provider.libcDirectSyscallFallbackSignals(from: snapshot)
+        XCTAssertEqual(signals.count, 1)
+        XCTAssertEqual(signals[0].id, SignalID.libcDirectSyscallFallback)
+        XCTAssertEqual(signals[0].evidence["libc_fallback_used_mask"], "\(mask)")
+        XCTAssertEqual(signals[0].evidence["mask_hex"], String(mask, radix: 16))
+        XCTAssertEqual(signals[0].evidence["libc_fallback_event_total"], "4")
+        XCTAssertTrue(
+            (signals[0].evidence["fallback_classes"] ?? "").contains("sysctl"),
+            "expected sysctl class label in \(signals[0].evidence["fallback_classes"] ?? "")"
+        )
+        XCTAssertTrue(
+            (signals[0].evidence["fallback_classes"] ?? "").contains("getentropy"),
+            "expected getentropy class label"
+        )
+    }
+
+    func testLibcDirectSyscallFallbackSignalStillEmittedWhenWatchdogUnsupportedButMaskNonZero() {
+        let provider = AntiTamperingSignalProvider()
+        let mask = UInt32(CPRISK_LIBC_FALLBACK_USED_UNSUPPORTED_PLATFORM)
+            | UInt32(CPRISK_LIBC_FALLBACK_USED_DIRECT_SYSCTL)
+        let signals = provider.libcDirectSyscallFallbackSignals(
+            from: makeWatchdogSnapshot(
+                supported: false,
+                libcFallbackUsedMask: mask,
+                libcFallbackEventTotal: 2
+            )
+        )
+        XCTAssertEqual(signals.count, 1)
+        XCTAssertEqual(signals[0].evidence["mask_hex"], String(mask, radix: 16))
+        XCTAssertEqual(signals[0].evidence["watchdog_snapshot_supported"], "0")
+        XCTAssertEqual(signals[0].evidence["libc_fallback_event_total"], "2")
+    }
+
+    func testLibcDirectSyscallFallbackSignalEmptyWhenMaskZero() {
+        let provider = AntiTamperingSignalProvider()
+        XCTAssertTrue(
+            provider.libcDirectSyscallFallbackSignals(from: makeWatchdogSnapshot(libcFallbackUsedMask: 0))
+                .isEmpty
+        )
+    }
+
+    func testSDKIntegrityCheckerLibcFallbackObservationStillEmittedWhenWatchdogUnsupportedButMaskNonZero() {
+        let mask = UInt32(CPRISK_LIBC_FALLBACK_USED_UNSUPPORTED_PLATFORM)
+            | UInt32(CPRISK_LIBC_FALLBACK_USED_DIRECT_SYSCTL)
+        let observation = SDKIntegrityChecker.libcDirectSyscallFallbackObservation(
+            from: makeWatchdogSnapshot(
+                supported: false,
+                libcFallbackUsedMask: mask,
+                libcFallbackEventTotal: 3
+            )
+        )
+        XCTAssertNotNil(observation)
+        XCTAssertEqual(observation?.score, 14)
+        XCTAssertTrue(observation?.method.contains("integrity:libc_direct_syscall_fallback:0x\(String(mask, radix: 16))") ?? false)
+        XCTAssertTrue(observation?.method.contains("events_total=3") ?? false)
+        XCTAssertTrue(observation?.method.contains("watchdog_supported=0") ?? false)
+    }
+
+    func testSDKIntegrityCheckerLibcFallbackObservationNilWhenMaskZero() {
+        XCTAssertNil(
+            SDKIntegrityChecker.libcDirectSyscallFallbackObservation(
+                from: makeWatchdogSnapshot(libcFallbackUsedMask: 0, libcFallbackEventTotal: 9)
+            )
+        )
+    }
+
+    /// Runtime contract: libc fallback signal id must be protocol-stable via `ObfuscatedConstants` (not inline literals).
+    func testLibcDirectSyscallFallbackSignalIdUsesObfuscatedContract() {
+        XCTAssertEqual(SignalID.libcDirectSyscallFallback, ObfuscatedConstants.signalLibcDirectSyscallFallback)
+    }
+
+    func testLibcDirectSyscallFallbackMechanismEvidenceUsesObfuscatedConstant() {
+        XCTAssertEqual(
+            ObfuscatedConstants.evidenceMechanismLibcDirectSyscallFallback,
+            "libc_or_arc4_fallback_after_direct_syscall_unavailable"
+        )
+    }
+
+    func testAntiDebugWatchdogDerivedSignalIdsUseObfuscatedContract() {
+        XCTAssertEqual(SignalID.debuggerDetected, ObfuscatedConstants.signalDebuggerDetected)
+        XCTAssertEqual(SignalID.csopsDebugged, ObfuscatedConstants.signalCsopsDebugged)
+        XCTAssertEqual(SignalID.hardwareBreakpointDetected, ObfuscatedConstants.signalHardwareBreakpointDetected)
+        XCTAssertEqual(SignalID.signalProbeDebugger, ObfuscatedConstants.signalSignalProbeDebugger)
+        XCTAssertEqual(SignalID.antidebugPlanEscalated, ObfuscatedConstants.signalAntidebugPlanEscalated)
+    }
+
+    func testLibcDirectSyscallFallbackSetsCompressorCrossLayerBit() {
+        let sig = RiskSignal(
+            id: SignalID.libcDirectSyscallFallback,
+            category: ObfuscatedConstants.categoryAntiTamper,
+            score: 30,
+            evidence: [:],
+            state: .soft(confidence: 0.8),
+            layer: 1,
+            weightHint: 28
+        )
+        let digest = SignalCompressor.compress(signals: [sig]).digest
+        XCTAssertEqual(digest.count, 9)
+        // `crossLayerBits` stores libc fallback at bit 16 (`0x00010000`) → byte index 5 is `(crossLayer >> 16) & 0xFF`.
+        XCTAssertEqual(digest[5], 1)
     }
 
     // MARK: - AntiTamperingDetector Logic Tests
@@ -396,6 +548,24 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertTrue(provider.antiDebugWatchdogSignals(from: snapshot).isEmpty)
     }
 
+    func testAntiDebugWatchdogSnapshotEmitsCriticalHookSurfaceWhenFunctionPrologueFlagSet() {
+        let provider = AntiTamperingSignalProvider()
+        let prologueFlag = UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_FUNCTION_PROLOGUE)
+        let mask = UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_OBJC_MSGSEND)
+            | UInt32(CPRISK_WATCHDOG_PROLOGUE_FAIL_MASK_DYLD_IMAGE_COUNT)
+        let snapshot = makeWatchdogSnapshot(
+            anomalyFlags: prologueFlag,
+            iterationCount: 2,
+            prologueIntegrityAnomalyCount: 1,
+            lastPrologueFailMask: mask
+        )
+        let signals = provider.antiDebugWatchdogSignals(from: snapshot)
+        let hook = signals.first(where: { $0.id == SignalID.antiDebugWatchdogCriticalHookSurface })
+        XCTAssertNotNil(hook)
+        XCTAssertEqual(hook?.evidence["fail_objc_msgsend"], "1")
+        XCTAssertEqual(hook?.evidence["fail_dyld_image_count"], "1")
+    }
+
     func testAntiDebugWatchdogSnapshotProducesDetailedSignals() {
         let provider = AntiTamperingSignalProvider()
         let flags = UInt32(1 << 0)
@@ -438,6 +608,55 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertEqual(summary.evidence["anomaly_kinds"], "traced,deny_attach,exception_port,exception_query")
     }
 
+    func testAntiDebugWatchdogSignalsEmitFridaStartupRaceSignal() {
+        let provider = AntiTamperingSignalProvider()
+        let snapshot = makeWatchdogSnapshot(
+            anomalyFlags: UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_PORT),
+            lastExceptionPortHealthy: false,
+            lastExceptionReclaimAttempted: true,
+            lastExceptionHijackDetected: true,
+            lastExceptionEarlyPhaseCaptured: true,
+            lastExceptionStartupRaceDetected: true,
+            lastExceptionQueryKernReturn: 5,
+            lastExceptionRegisterKernReturn: 6,
+            lastExceptionVerifyCount: 3,
+            lastExceptionReclaimCount: 1,
+            lastExceptionStartupDeltaNs: 42_000
+        )
+
+        let signals = provider.antiDebugWatchdogSignals(from: snapshot)
+
+        guard let startupRace = signals.first(where: { $0.id == SignalID.fridaExceptionPortStartupRace }) else {
+            return XCTFail("missing frida startup race signal")
+        }
+        XCTAssertEqual(startupRace.state, RiskSignalState.tampered)
+        XCTAssertEqual(startupRace.layer, 1)
+        XCTAssertEqual(startupRace.evidence["early_phase_captured"], "true")
+        XCTAssertEqual(startupRace.evidence["startup_delta_ns"], "42000")
+
+        guard let exceptionPort = signals.first(where: { $0.id == SignalID.antiDebugWatchdogExceptionPort }) else {
+            return XCTFail("missing watchdog exception port signal")
+        }
+        XCTAssertEqual(exceptionPort.evidence["startup_race_detected"], "true")
+        XCTAssertEqual(exceptionPort.evidence["verify_count"], "3")
+        XCTAssertEqual(exceptionPort.evidence["reclaim_count"], "1")
+    }
+
+    func testCRiskCoreDBIVmTraceMarkerFlagConstants() {
+        XCTAssertEqual(UInt32(CPRISK_DBI_MARKER_ANON_EXEC_SLAB), 32)
+        XCTAssertEqual(UInt32(CPRISK_DBI_MARKER_STALKER_CORREL), 64)
+        XCTAssertEqual(UInt32(CPRISK_DBI_MARKER_DYLD_IMAGE_COUNT_LOW), 128)
+        XCTAssertEqual(UInt32(CPRISK_DBI_MARKER_FOREIGN_MAPPED_EXEC), 256)
+        XCTAssertEqual(UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DBI_VM_TRACE_CORREL), 1 << 28)
+    }
+
+    func testCRiskCoreDyldImageLayoutDigestSucceeds() {
+        var digest = [UInt8](repeating: 0, count: 32)
+        let rc = digest.withUnsafeMutableBufferPointer { cprisk_vm_dyld_image_layout_digest($0.baseAddress!) }
+        XCTAssertEqual(rc, 0)
+        XCTAssertTrue(digest.contains { $0 != 0 })
+    }
+
     func testCRiskCoreDBIProbeFlagsEnvMarkersAndAggregateProbeBit() throws {
         guard CPRiskKit.shared.antiDebugWatchdogSnapshot().supported else {
             throw XCTSkip("signal probe is unavailable on this platform")
@@ -472,6 +691,9 @@ final class AntiTamperingTests: XCTestCase {
             | UInt32(CPRISK_TIMING_ANOMALY_JITTER)
             | UInt32(CPRISK_TIMING_ANOMALY_CLOCK_SKEW)
             | UInt32(CPRISK_TIMING_ANOMALY_DUAL_CLOCK_DRIFT)
+            | UInt32(CPRISK_TIMING_ANOMALY_CRYPTO_TRACE)
+            | UInt32(CPRISK_TIMING_ANOMALY_CRYPTO_TRACE_SKEW)
+            | UInt32(CPRISK_TIMING_ANOMALY_CRYPTO_TRACE_INVARIANT)
 
         XCTAssertGreaterThan(thresholdNs, 0)
         XCTAssertGreaterThanOrEqual(maxNs, medianNs)
@@ -528,6 +750,64 @@ final class AntiTamperingTests: XCTestCase {
         } else {
             XCTAssertEqual(flags & UInt32(CPRISK_PAC_CFI_FLAG_UNAVAILABLE), 0)
         }
+    }
+
+    func testCRiskCoreArm64InstantReturnPatchPrefixDetectsCommonPatterns() throws {
+#if !arch(arm64)
+        throw XCTSkip("ARM64 opcode scan test requires an arm64 host")
+#endif
+        var movX0: [UInt32] = [0xAA00_03E0, 0xD65F_03C0]
+        XCTAssertEqual(
+            movX0.withUnsafeBufferPointer { cprisk_scan_arm64_instant_return_nop_patch_prefix($0.baseAddress!, 8) },
+            1
+        )
+
+        var nopRet: [UInt32] = [0xD503_201F, 0xD65F_03C0]
+        XCTAssertEqual(
+            nopRet.withUnsafeBufferPointer { cprisk_scan_arm64_instant_return_nop_patch_prefix($0.baseAddress!, 8) },
+            1
+        )
+
+        var movW0: [UInt32] = [0x2A00_03E0, 0xD65F_03C0]
+        XCTAssertEqual(
+            movW0.withUnsafeBufferPointer { cprisk_scan_arm64_instant_return_nop_patch_prefix($0.baseAddress!, 8) },
+            1
+        )
+
+        XCTAssertEqual(
+            movX0.withUnsafeBufferPointer { cprisk_scan_arm64_instant_return_nop_patch_prefix($0.baseAddress!, 4) },
+            0
+        )
+    }
+
+    func testCRiskCoreArm64InstantReturnPatchCleanKeyFunctionPrefix() throws {
+#if !arch(arm64)
+        throw XCTSkip("ARM64 key-symbol prefix test requires an arm64 host")
+#endif
+        typealias SignalProbeFn = @convention(c) () -> Int32
+        let probeFn: SignalProbeFn = cprisk_probe_debugger_via_signal
+        let probePtr = unsafeBitCast(probeFn, to: UnsafeRawPointer.self)
+        XCTAssertEqual(cprisk_scan_arm64_instant_return_nop_patch_prefix(probePtr, 8), 0)
+        XCTAssertEqual(cprisk_scan_instant_return_key_symbols_prefix(), 0)
+    }
+
+    func testCRiskCoreAggregateSignalProbesIncludeInstantReturnPatchBitWhenClean() {
+        let aggregateFlags = cprisk_run_all_signal_probes()
+        XCTAssertEqual(aggregateFlags & UInt32(CPRISK_PROBE_INSTANT_RETURN_PATCH), 0)
+    }
+
+    func testAntiDebugWatchdogSignalsIncludeInstantReturnPatchKind() {
+        let provider = AntiTamperingSignalProvider()
+        let snapshot = makeWatchdogSnapshot(
+            anomalyFlags: UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_INSTANT_RETURN_PATCH)
+        )
+        let signals = provider.antiDebugWatchdogSignals(from: snapshot)
+        let id = "\(ObfuscatedConstants.detectorIDAntiDebugWatchdog)_instant_return_patch"
+        XCTAssertTrue(signals.contains { $0.id == id })
+        guard let summary = signals.first(where: { $0.id == SignalID.antiDebugWatchdogAnomaly }) else {
+            return XCTFail("missing anti_debug_watchdog_anomaly summary signal")
+        }
+        XCTAssertTrue(summary.evidence["anomaly_kinds"]?.contains("instant_return_patch") ?? false)
     }
 
     func testCRiskCoreThreadExceptionPortsAndHardwareProbeBits() throws {
@@ -610,7 +890,7 @@ final class AntiTamperingTests: XCTestCase {
             anomalyFlags: flags,
             dbiDetected: true,
             dbiMarkerFlags: UInt32(CPRISK_DBI_MARKER_ENV),
-            timingAnomalyFlags: UInt32(CPRISK_TIMING_ANOMALY_MEDIAN),
+            timingAnomalyFlags: UInt32(CPRISK_TIMING_ANOMALY_MEDIAN) | UInt32(CPRISK_TIMING_ANOMALY_CRYPTO_TRACE),
             timingProbeMedianNs: 1_500_000,
             timingProbeMaxNs: 2_900_000,
             timingProbeThresholdNs: 1_200_000,
@@ -627,6 +907,11 @@ final class AntiTamperingTests: XCTestCase {
         }
         XCTAssertTrue(summary.evidence["anomaly_kinds"]?.contains("dbi_marker") ?? false)
         XCTAssertTrue(summary.evidence["anomaly_kinds"]?.contains("timing_sidechannel") ?? false)
+        XCTAssertEqual(summary.evidence["crypto_trace_slow"], "1")
+        XCTAssertEqual(
+            signals.first(where: { $0.id == "\(ObfuscatedConstants.detectorIDAntiDebugWatchdog)_timing_sidechannel" })?.evidence["crypto_trace_slow"],
+            "1"
+        )
     }
 
     func testProtectedDuplicateSignalsAreCollapsedToStrongestSignal() {
@@ -760,6 +1045,13 @@ final class AntiTamperingTests: XCTestCase {
         ])
     }
 
+    func testDefaultConfigurationCheckPlanCount() {
+        let provider = AntiTamperingSignalProvider()
+        let snapshot = makeSnapshot()
+        let ids = provider.configuredCheckIDs(snapshot: snapshot)
+        XCTAssertEqual(ids.count, 42, "descriptor plan drift: update expected count when adding/removing checks")
+    }
+
     // MARK: - FridaDetector Logic Tests
 
     func testFridaDetectorKnownPorts() {
@@ -775,6 +1067,148 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertEqual(ObfuscatedConstants.methodPrefixFridaMemorySig, "frida:memsig:")
         XCTAssertEqual(ObfuscatedConstants.methodPrefixFridaRuntime, "frida:runtime:")
         XCTAssertEqual(ObfuscatedConstants.methodPrefixFridaRuntimeFused, "frida:runtime_fused:")
+        XCTAssertEqual(FridaDetector.methodPrefixPatch, "frida:patch:")
+        XCTAssertEqual(FridaDetector.methodPrefixBehavior, "frida:behavior:")
+    }
+
+    func testFridaProtocolWireClassification_saslOk() {
+        let tok = FridaDetector.classifyFridaWireResponseForTesting(Data("OK deadbeefbeef\r\n".utf8))
+        XCTAssertEqual(tok, FridaDetector.classifyFridaWireResponseForTesting(Data("ok\r\n".utf8)))
+        XCTAssertNotNil(tok)
+    }
+
+    func testFridaProtocolWireClassification_saslRejected() {
+        let tok = FridaDetector.classifyFridaWireResponseForTesting(Data("REJECTED EXTERNAL ANONYMOUS\r\n".utf8))
+        XCTAssertNotNil(tok)
+    }
+
+    func testFridaProtocolWireClassification_dbusShapedBinary() {
+        var bytes: [UInt8] = [
+            0x6c, 0x02, 0x00, 0x01, 0x04, 0x00, 0x00, 0x00,
+            0x02, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00,
+        ]
+        let tok = FridaDetector.classifyFridaWireResponseForTesting(Data(bytes))
+        XCTAssertNotNil(tok)
+    }
+
+    func testFridaProtocolActiveWirePayloadsOrder() {
+        let probes = ObfuscatedConstants.fridaProtocolActiveWirePayloads
+        XCTAssertTrue(probes.first?.hasPrefix("AUTH EXTERNAL") ?? false)
+        XCTAssertTrue(probes.contains("AUTH\r\n"))
+        XCTAssertFalse(ObfuscatedConstants.fridaProtocolProbePayloads.isEmpty)
+    }
+
+    func testFridaDetectorDefaultCandidatePortsIncludeOfflineFallback() {
+        let detector = FridaDetector()
+        let ports = detector.candidatePortsForTesting()
+        XCTAssertTrue(ports.contains(27042))
+        XCTAssertTrue(ports.contains(27041), "offline fallback should remain active without remote updates")
+        XCTAssertTrue(ports.contains(8888), "builtin magic ports should participate in default scan set")
+    }
+
+    func testFridaDetectorProactivePayloadsStartWithDbusShape() {
+        let payloads = FridaDetector.proactiveProtocolPayloadsForTesting()
+        let first = try? XCTUnwrap(payloads.first)
+        XCTAssertEqual(first?.count, 16)
+        XCTAssertEqual(first?.first, 0x6c, "first proactive payload should be D-Bus-shaped wire bytes")
+        let secondText = payloads.dropFirst().first.flatMap { String(data: $0, encoding: .utf8) }
+        XCTAssertTrue(secondText?.hasPrefix("AUTH EXTERNAL") ?? false)
+    }
+
+    func testFridaDetectorHttpResponseClassificationForLocalListenExclusion() {
+        XCTAssertTrue(FridaDetector.httpResponseLooksLikeHttpForTesting(Data("HTTP/1.1 200 OK\r\n".utf8)))
+        XCTAssertTrue(FridaDetector.httpResponseLooksLikeHttpForTesting(Data("http/1.0 404\r\n".utf8)))
+        XCTAssertFalse(FridaDetector.httpResponseLooksLikeHttpForTesting(Data("REJECTED EXTERNAL ANONYMOUS\r\n".utf8)))
+    }
+
+    func testFridaDetectorFileArtifactProbeRequiresHigherEntropyHints() {
+        let detector = FridaDetector()
+        XCTAssertFalse(
+            detector.shouldProbeFileArtifacts(
+                envHit: false,
+                portBehaviorScore: 0,
+                runtimeChannelCount: 0,
+                memorySignatureHit: false,
+                hookSurfaceHit: false
+            )
+        )
+        XCTAssertTrue(
+            detector.shouldProbeFileArtifacts(
+                envHit: true,
+                portBehaviorScore: 0,
+                runtimeChannelCount: 0,
+                memorySignatureHit: false,
+                hookSurfaceHit: false
+            )
+        )
+        XCTAssertTrue(
+            detector.shouldProbeFileArtifacts(
+                envHit: false,
+                portBehaviorScore: 12,
+                runtimeChannelCount: 0,
+                memorySignatureHit: false,
+                hookSurfaceHit: false
+            )
+        )
+        XCTAssertTrue(
+            detector.shouldProbeFileArtifacts(
+                envHit: false,
+                portBehaviorScore: 0,
+                runtimeChannelCount: 2,
+                memorySignatureHit: false,
+                hookSurfaceHit: false
+            )
+        )
+        XCTAssertTrue(
+            detector.shouldProbeFileArtifacts(
+                envHit: false,
+                portBehaviorScore: 0,
+                runtimeChannelCount: 0,
+                memorySignatureHit: true,
+                hookSurfaceHit: false
+            )
+        )
+        XCTAssertTrue(
+            detector.shouldProbeFileArtifacts(
+                envHit: false,
+                portBehaviorScore: 0,
+                runtimeChannelCount: 0,
+                memorySignatureHit: false,
+                hookSurfaceHit: true
+            )
+        )
+    }
+
+    func testFridaDetectorHookSurfaceMappingCoversPatchAndBehaviorFamilies() {
+        let mapped = FridaDetector.mapHookSurfaceMethods(
+            prologueMethods: ["prologue_branch:open", "prologue_unreadable:stat"],
+            inlineMethods: ["memory_integrity:inline_hook:malloc", "memory_integrity:unreadable:objc_msgSend"],
+            dyldMethods: ["dyld_interpose:section_found:libx.dylib", "dyld_env:DYLD_INSERT_LIBRARIES"]
+        )
+
+        XCTAssertTrue(mapped.contains("frida:patch:prologue_branch:open"))
+        XCTAssertTrue(mapped.contains("frida:patch:prologue_unreadable:stat"))
+        XCTAssertTrue(mapped.contains("frida:patch:inline_hook:malloc"))
+        XCTAssertTrue(mapped.contains("frida:patch:inline_unreadable:objc_msgSend"))
+        XCTAssertTrue(mapped.contains("frida:behavior:dyld_interpose:section_found:libx.dylib"))
+        XCTAssertTrue(mapped.contains("frida:behavior:dyld_env:dyld_insert_libraries"))
+    }
+
+    func testFridaDetectorRuntimeBehaviorMappingCoversGadgetLikeSignals() {
+        let flags = UInt32(CPRISK_FRIDA_RT_BEHAVIOR_PROLOGUE)
+            | UInt32(CPRISK_FRIDA_RT_BEHAVIOR_FOREIGN_EXEC)
+        let mapped = FridaDetector.mapRuntimeBehaviorMethodsForTesting(flags: flags, hitCount: 2)
+
+        XCTAssertTrue(mapped.contains("frida:behavior:runtime_prologue"))
+        XCTAssertTrue(mapped.contains("frida:behavior:runtime_foreign_exec"))
+        XCTAssertTrue(mapped.contains("frida:behavior:runtime_multi_surface"))
+    }
+
+    func testFridaSocketDetectorSuspiciousPathProbeRequiresPriorHints() {
+        let detector = FridaSocketDetector()
+        XCTAssertFalse(detector.shouldProbeSuspiciousPaths(score: 0, methods: []))
+        XCTAssertTrue(detector.shouldProbeSuspiciousPaths(score: 12, methods: []))
+        XCTAssertTrue(detector.shouldProbeSuspiciousPaths(score: 0, methods: ["frida_socket:tmp_entry:gum-js-loop"]))
     }
 
     func testCFridaRuntimeSnapshotAPI() {
@@ -806,12 +1240,16 @@ final class AntiTamperingTests: XCTestCase {
         }
         let detector = FridaDetector()
         let result = try detector.detect()
+#if targetEnvironment(simulator)
+        XCTAssertTrue(result.methods.contains("unavailable_simulator"))
+#else
         XCTAssertTrue(
             result.methods.contains(where: {
                 $0.hasPrefix(ObfuscatedConstants.methodPrefixFridaMemorySig)
             }),
             "memory-signature hook should emit frida:memsig:* evidence when enabled"
         )
+#endif
     }
 
     func testFridaDetectorMemorySignatureHookPath_builtinDisabledStillEmits() throws {
@@ -931,6 +1369,42 @@ final class AntiTamperingTests: XCTestCase {
         XCTAssertTrue(stringHits.contains("frida_module:string:gum-js-loop"))
     }
 
+    func testFridaModuleDetectorMainBinaryMarkerWeighting() {
+        let detector = FridaModuleDetector()
+        let mainStringHits = detector.detectStringMarkers(
+            in: ["boot gum-js-loop frida:rpc"],
+            mainBinary: true
+        )
+        let baseline = FridaModuleDetector.buildResult(
+            imageHits: [],
+            sectionHits: [],
+            stringHits: ["frida_module:string:gum-js-loop"]
+        )
+        let weighted = FridaModuleDetector.buildResult(
+            imageHits: [],
+            sectionHits: [],
+            stringHits: mainStringHits
+        )
+
+        XCTAssertTrue(mainStringHits.contains("frida_module:string:main_binary:gum-js-loop"))
+        XCTAssertTrue(mainStringHits.contains("frida_module:string:main_binary:frida:rpc"))
+        XCTAssertGreaterThan(weighted.score, baseline.score)
+    }
+
+    func testFridaModuleDetectorImageOriginAnomalies() {
+        let detector = FridaModuleDetector()
+        let hits = detector.detectImageOriginAnomalies(in: [
+            "/private/var/mobile/Containers/Data/Application/UUID/tmp/libagent.dylib",
+            "/private/var/mobile/Containers/Data/Application/UUID/Documents/plug.framework/plug",
+            "/private/var/mobile/Containers/Data/Application/UUID/Library/Caches/libcache.dylib",
+        ])
+
+        XCTAssertTrue(hits.contains("frida_module:image:tmp_origin"))
+        XCTAssertTrue(hits.contains("frida_module:image:documents_origin"))
+        XCTAssertTrue(hits.contains("frida_module:image:caches_origin"))
+        XCTAssertTrue(hits.contains("frida_module:image:sandbox_data_origin"))
+    }
+
     func testFridaModuleDetectorSignalConversion() {
         let result = FridaModuleDetector.buildResult(
             imageHits: ["frida_module:image:frida-agent"],
@@ -952,6 +1426,202 @@ final class AntiTamperingTests: XCTestCase {
             signals.first(where: { $0.id == SignalID.fridaModuleDetected })?.score ?? 0,
             28
         )
+    }
+
+    func testFridaModuleDetectorTrampolineMatching() {
+        let detector = FridaModuleDetector()
+        let hits = detector.detectTrampolineMarkers(in: [
+            .init(symbol: "objc_msgSend", firstInstruction: 0x58000010, secondInstruction: 0xD61F0000),
+            .init(symbol: "open", firstInstruction: 0x14000000, secondInstruction: nil),
+        ])
+
+        XCTAssertTrue(hits.contains("frida_module:trampoline:objc_msgSend:literal_branch"))
+        XCTAssertTrue(hits.contains("frida_module:trampoline:open:branch"))
+    }
+
+    func testFridaModuleDetectorSignalConversionIncludesTrampolineSignal() {
+        let result = FridaModuleDetector.buildResult(
+            imageHits: [],
+            sectionHits: [],
+            stringHits: [],
+            trampolineHits: ["frida_module:trampoline:objc_msgSend:literal_branch"]
+        )
+        let signals = FridaModuleDetector.asSignals(result: result)
+
+        XCTAssertTrue(signals.contains(where: { $0.id == SignalID.fridaModuleTrampoline }))
+        XCTAssertLessThanOrEqual(result.score, 44)
+    }
+
+    func testFridaCorrelationSignalsRequireBehavioralOrPatchFamily() {
+        let provider = AntiTamperingSignalProvider()
+        let drivers = [
+            RiskSignal(
+                id: ObfuscatedConstants.signalFridaDetected,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 42,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 80
+            ),
+            RiskSignal(
+                id: SignalID.fridaModuleDetected,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 24,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 78
+            ),
+        ]
+
+        XCTAssertTrue(provider.fridaCorrelationSignals(from: drivers).isEmpty)
+    }
+
+    func testFridaCorrelationSignalsFuseRuntimeBehaviorAndPatchFamilies() {
+        let provider = AntiTamperingSignalProvider()
+        let drivers = [
+            RiskSignal(
+                id: ObfuscatedConstants.signalFridaDetected,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 44,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 84
+            ),
+            RiskSignal(
+                id: ObfuscatedConstants.signalFridaUnixSocket,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 22,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 74
+            ),
+            RiskSignal(
+                id: SignalID.antiDebugWatchdogCriticalHookSurface,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 88,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 92
+            ),
+        ]
+
+        let consensus = provider.fridaCorrelationSignals(from: drivers)
+        XCTAssertEqual(consensus.count, 1)
+        XCTAssertEqual(consensus.first?.id, SignalID.fridaRuntimeConsensus)
+        XCTAssertTrue(consensus.first?.evidence["families"]?.contains("runtime_surface") ?? false)
+        XCTAssertTrue(consensus.first?.evidence["behavioral_families"]?.contains("socket_surface") ?? false)
+        XCTAssertEqual(consensus.first?.state, .tampered)
+    }
+
+    func testFridaCorrelationSignalsTreatFridaPatchSignalsAsPatchSurface() {
+        let provider = AntiTamperingSignalProvider()
+        let drivers = [
+            RiskSignal(
+                id: "frida_behavior_dyld_interpose_section_found_hooker",
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 26,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 70
+            ),
+            RiskSignal(
+                id: "frida_patch_inline_hook_malloc",
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 28,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 80
+            ),
+            RiskSignal(
+                id: ObfuscatedConstants.signalFridaUnixSocket,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 24,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 74
+            ),
+        ]
+
+        let consensus = provider.fridaCorrelationSignals(from: drivers)
+        XCTAssertEqual(consensus.count, 1)
+        XCTAssertEqual(consensus.first?.id, SignalID.fridaRuntimeConsensus)
+        XCTAssertTrue(consensus.first?.evidence["families"]?.contains("patch_surface") ?? false)
+    }
+
+    func testAntiDebugStrategySignalsFuseDebuggerWatchdogAndBreakpointFamilies() {
+        let provider = AntiTamperingSignalProvider()
+        let drivers = [
+            RiskSignal(
+                id: SignalID.debuggerDetected,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 36,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 70
+            ),
+            RiskSignal(
+                id: SignalID.antiDebugWatchdogAnomaly,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 48,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 82
+            ),
+            RiskSignal(
+                id: SignalID.softwareBreakpointDetected,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 52,
+                evidence: [:],
+                state: .tampered,
+                layer: 1,
+                weightHint: 78
+            ),
+        ]
+
+        let consensus = provider.antiDebugStrategySignals(from: drivers)
+        XCTAssertEqual(consensus.count, 1)
+        XCTAssertEqual(consensus.first?.id, SignalID.antiDebugRuntimeConsensus)
+        XCTAssertTrue(consensus.first?.evidence["families"]?.contains("watchdog_surface") ?? false)
+        XCTAssertEqual(consensus.first?.state, .tampered)
+    }
+
+    func testAntiDebugStrategySignalsTreatPlanSurfaceAsIndependentFamily() {
+        let provider = AntiTamperingSignalProvider()
+        let drivers = [
+            RiskSignal(
+                id: SignalID.debuggerDetected,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 36,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 70
+            ),
+            RiskSignal(
+                id: "antidebug_plan_policy_applied",
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 28,
+                evidence: [:],
+                state: .soft(confidence: 0.8),
+                layer: 2,
+                weightHint: 62
+            ),
+        ]
+
+        let consensus = provider.antiDebugStrategySignals(from: drivers)
+        XCTAssertEqual(consensus.count, 1)
+        XCTAssertEqual(consensus.first?.id, SignalID.antiDebugRuntimeConsensus)
+        XCTAssertTrue(consensus.first?.evidence["families"]?.contains("plan_surface") ?? false)
     }
 
     func testRWXMemoryScannerJitAssessmentFlagsStalkerCoexistence() {
@@ -1061,6 +1731,26 @@ final class AntiTamperingTests: XCTestCase {
             XCTAssertEqual(signal.layer, 2)
             XCTAssertTrue(signal.id == "thread_anomaly" || signal.id == "frida_exception_port")
         }
+    }
+
+    func testFridaThreadForeignExecutionMethodRequiresRuntimeCorrelation() {
+        let detector = FridaThreadDetector()
+
+        XCTAssertNil(
+            detector.foreignExecutionMethodForTesting(
+                marker: "gum-js-loop",
+                hasForeignExecutableThread: false
+            )
+        )
+        XCTAssertEqual(
+            detector.foreignExecutionMethodForTesting(
+                marker: "gum-js-loop",
+                hasForeignExecutableThread: true,
+                threadPort: 0x41,
+                pc: 0x1234
+            ),
+            "frida_thread:foreign_exec:gum-js-loop:port_0x41:pc_0x1234"
+        )
     }
 
     // MARK: - FridaSocketDetector Tests
@@ -1301,5 +1991,321 @@ final class AntiTamperingTests: XCTestCase {
         let result = try RandomizedDetection(config: config).detect()
         XCTAssertGreaterThanOrEqual(result.score, 0)
         XCTAssertLessThanOrEqual(result.score, 70)
+    }
+
+    // MARK: - Watchdog dyld / AMFI / get-task-allow / deny-attach-verify
+
+    func testAntiDebugWatchdogSnapshotProducesDyldFamilySignals() {
+        let provider = AntiTamperingSignalProvider()
+        let flags = UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DYLD_INJECTION)
+            | UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DENY_ATTACH_VERIFY)
+            | UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_AMFI_CS_FLAGS)
+            | UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GET_TASK_ALLOW)
+
+        let snapshot = makeWatchdogSnapshot(
+            anomalyFlags: flags,
+            iterationCount: 1,
+            dyldInjectionAnomalyCount: 1,
+            lastDyldInjectionFlags: 1,
+            lastCsopsStatusFlags: 8,
+            lastAmfiProbeBits: 4,
+            lastGetTaskAllowSuspect: true,
+            lastDenyAttachVerifyBits: 2,
+            denyAttachVerifyAnomalyCount: 1,
+            amfiCsFlagsAnomalyCount: 1,
+            getTaskAllowAnomalyCount: 1
+        )
+
+        let signals = provider.antiDebugWatchdogSignals(from: snapshot)
+        let ids = Set(signals.map { $0.id })
+
+        XCTAssertTrue(ids.contains(SignalID.antiDebugWatchdogDyldInjection))
+        XCTAssertTrue(ids.contains(SignalID.antiDebugWatchdogDenyAttachVerify))
+        XCTAssertTrue(ids.contains(SignalID.antiDebugWatchdogAMFICsFlags))
+        XCTAssertTrue(ids.contains(SignalID.antiDebugWatchdogGetTaskAllow))
+
+        guard let summary = signals.first(where: { $0.id == SignalID.antiDebugWatchdogAnomaly }) else {
+            return XCTFail("missing anti_debug_watchdog_anomaly summary signal")
+        }
+        let kinds = summary.evidence["anomaly_kinds"] ?? ""
+        XCTAssertTrue(kinds.contains("dyld_injection"), "expected dyld_injection in \(kinds)")
+        XCTAssertTrue(kinds.contains("deny_attach_verify"), "expected deny_attach_verify in \(kinds)")
+        XCTAssertTrue(kinds.contains("amfi_cs_flags"), "expected amfi_cs_flags in \(kinds)")
+        XCTAssertTrue(kinds.contains("get_task_allow"), "expected get_task_allow in \(kinds)")
+    }
+
+    // MARK: - Dylib image count low → dylibInjectImageCountLow
+
+    func testDylibInjectionClassifyImageCountLowMapsToAsSignalsFilters() {
+        let hard = DylibInjectionDetector.classifyImageCount(80)
+        XCTAssertFalse(hard.methods.isEmpty)
+        XCTAssertTrue(hard.methods.allSatisfy { $0.contains("image_count_low_hard") })
+
+        let soft = DylibInjectionDetector.classifyImageCount(150)
+        XCTAssertFalse(soft.methods.isEmpty)
+        XCTAssertTrue(soft.methods.allSatisfy { $0.contains("image_count_low_soft") })
+
+        let nominal = DylibInjectionDetector.classifyImageCount(250)
+        XCTAssertTrue(nominal.methods.isEmpty)
+
+        // Mirrors DylibInjectionDetector.asSignals() low-path filter
+        let isLow: (String) -> Bool = {
+            $0.contains("image_count_low_hard") || $0.contains("image_count_low_soft")
+        }
+        let lowDetail = hard.methods.filter { $0.hasPrefix("dylib_inject:image_count") }.filter(isLow)
+        XCTAssertFalse(lowDetail.isEmpty)
+    }
+
+    func testDylibInjectImageCountLowSignalIdIsStable() {
+        XCTAssertEqual(SignalID.dylibInjectImageCountLow, "dylib_inject_image_count_low")
+    }
+
+    // MARK: - Cross-consistency (dyld_topology family)
+
+    func testCrossConsistencyIncludesDyldTopologyWithWatchdogDyldInjection() {
+        let provider = AntiTamperingSignalProvider()
+        let drivers: [RiskSignal] = [
+            RiskSignal(
+                id: SignalID.pacDisabled,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 50,
+                evidence: [:],
+                state: .tampered,
+                layer: 1,
+                weightHint: 70
+            ),
+            RiskSignal(
+                id: SignalID.antiDebugWatchdogDyldInjection,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 84,
+                evidence: ["dyld_injection_flags": "1"],
+                state: .tampered,
+                layer: 2,
+                weightHint: 90
+            ),
+        ]
+
+        let consensus = provider.crossConsistencySignals(from: drivers)
+        XCTAssertEqual(consensus.count, 1)
+        XCTAssertEqual(consensus.first?.id, "multi_path_consistency_consensus")
+        XCTAssertTrue(consensus.first?.evidence["families"]?.contains("dyld_topology") ?? false)
+        XCTAssertTrue(consensus.first?.evidence["matched_signals"]?.contains(SignalID.antiDebugWatchdogDyldInjection) ?? false)
+    }
+
+    func testCrossConsistencyDyldTopologyAcceptsDylibInjectImageCountLow() {
+        let provider = AntiTamperingSignalProvider()
+        let drivers: [RiskSignal] = [
+            RiskSignal(
+                id: SignalID.vmRemapSharedAnonymous,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 50,
+                evidence: [:],
+                state: .tampered,
+                layer: 2,
+                weightHint: 80
+            ),
+            RiskSignal(
+                id: SignalID.dylibInjectImageCountLow,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 30,
+                evidence: ["detail": "dylib_inject:image_count_low_hard:100"],
+                state: .soft(confidence: 0.82),
+                layer: 2,
+                weightHint: 62
+            ),
+        ]
+
+        let consensus = provider.crossConsistencySignals(from: drivers)
+        XCTAssertEqual(consensus.count, 1)
+        XCTAssertTrue(consensus.first?.evidence["matched_signals"]?.contains(SignalID.dylibInjectImageCountLow) ?? false)
+    }
+
+    func testFridaCorrelationSignalsIncludeTrampolineDrivenModuleFamily() {
+        let provider = AntiTamperingSignalProvider()
+        let drivers: [RiskSignal] = [
+            RiskSignal(
+                id: SignalID.fridaModuleTrampoline,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 18,
+                evidence: ["detail": "frida_module:trampoline:objc_msgSend:literal_branch"],
+                state: .tampered,
+                layer: 2,
+                weightHint: 84
+            ),
+            RiskSignal(
+                id: ObfuscatedConstants.signalFridaUnixSocket,
+                category: ObfuscatedConstants.categoryAntiTamper,
+                score: 20,
+                evidence: ["detail": "frida_socket:path:/tmp/frida"],
+                state: .tampered,
+                layer: 2,
+                weightHint: 75
+            ),
+        ]
+
+        let consensus = provider.fridaCorrelationSignals(from: drivers)
+        XCTAssertEqual(consensus.count, 1)
+        XCTAssertEqual(consensus.first?.id, SignalID.fridaRuntimeConsensus)
+        XCTAssertTrue(consensus.first?.evidence["matched_signals"]?.contains(SignalID.fridaModuleTrampoline) ?? false)
+    }
+
+    func testSigningChainSignalsRequireCodeSignatureAndIdentityDrivers() {
+        let provider = AntiTamperingSignalProvider()
+        let drivers: [RiskSignal] = [
+            RiskSignal(
+                id: "code_signature_invalid",
+                category: "integrity",
+                score: 42,
+                evidence: ["detector": "CodeSignatureValidator"],
+                state: .soft(confidence: 0.85),
+                layer: 2,
+                weightHint: 60
+            ),
+            RiskSignal(
+                id: ObfuscatedConstants.signalAppSigningIdentityTampered,
+                category: "integrity",
+                score: 48,
+                evidence: ["reason_codes": "app_team_identifier_mismatch"],
+                state: .tampered,
+                layer: 2,
+                weightHint: 92
+            ),
+        ]
+
+        let consensus = provider.signingChainSignals(from: drivers)
+        XCTAssertEqual(consensus.count, 1)
+        XCTAssertEqual(consensus.first?.id, SignalID.signingChainConsensus)
+        XCTAssertEqual(consensus.first?.category, "integrity")
+        XCTAssertTrue(consensus.first?.evidence["matched_signals"]?.contains("code_signature_invalid") ?? false)
+    }
+}
+
+/// Exercises `cprisk_hidden_mprotect` tolerance: streak-based tamper latch + test injection.
+final class MprotectTamperThresholdTests: XCTestCase {
+
+    override func tearDown() {
+        cprisk_test_mprotect_reset_tamper_state()
+        super.tearDown()
+    }
+
+    func testDirectFailFallbackSucceedsDoesNotSetTampered() {
+        cprisk_test_mprotect_reset_tamper_state()
+        let pageSize = Int(sysconf(_SC_PAGESIZE))
+        let ptr = mmap(nil, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0)
+        XCTAssertNotEqual(ptr, MAP_FAILED)
+        defer { munmap(ptr, pageSize) }
+
+        cprisk_test_mprotect_set_force_direct_fail(1)
+        cprisk_test_mprotect_set_force_fallback_fail(0)
+
+        let rc = cprisk_armor_vm_protect(ptr, size_t(pageSize), PROT_READ)
+        XCTAssertEqual(rc, 0)
+
+        XCTAssertEqual(cprisk_is_mprotect_tampered(), 0)
+        XCTAssertEqual(cprisk_get_mprotect_direct_failure_count(), 1)
+        XCTAssertEqual(cprisk_get_mprotect_fallback_success_count(), 1)
+        XCTAssertEqual(cprisk_get_mprotect_consecutive_full_fail_streak(), 0)
+    }
+
+    func testConsecutiveFullFailuresReachThresholdSetsTampered() {
+        cprisk_test_mprotect_reset_tamper_state()
+        cprisk_test_mprotect_set_fail_streak_threshold(2)
+
+        let pageSize = Int(sysconf(_SC_PAGESIZE))
+        let ptr = mmap(nil, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0)
+        XCTAssertNotEqual(ptr, MAP_FAILED)
+        defer { munmap(ptr, pageSize) }
+
+        cprisk_test_mprotect_set_force_direct_fail(1)
+        cprisk_test_mprotect_set_force_fallback_fail(1)
+
+        XCTAssertEqual(cprisk_armor_vm_protect(ptr, size_t(pageSize), PROT_READ), -1)
+        XCTAssertEqual(cprisk_is_mprotect_tampered(), 0)
+        XCTAssertEqual(cprisk_get_mprotect_consecutive_full_fail_streak(), 1)
+
+        XCTAssertEqual(cprisk_armor_vm_protect(ptr, size_t(pageSize), PROT_READ), -1)
+        XCTAssertEqual(cprisk_is_mprotect_tampered(), 1)
+        XCTAssertEqual(cprisk_get_mprotect_consecutive_full_fail_streak(), 2)
+        XCTAssertEqual(cprisk_get_mprotect_fail_streak_threshold(), 2)
+    }
+
+    func testRealSuccessClearsFullFailStreak() {
+        cprisk_test_mprotect_reset_tamper_state()
+        cprisk_test_mprotect_set_fail_streak_threshold(3)
+
+        let pageSize = Int(sysconf(_SC_PAGESIZE))
+        let ptr = mmap(nil, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0)
+        XCTAssertNotEqual(ptr, MAP_FAILED)
+        defer { munmap(ptr, pageSize) }
+
+        cprisk_test_mprotect_set_force_direct_fail(1)
+        cprisk_test_mprotect_set_force_fallback_fail(1)
+        XCTAssertEqual(cprisk_armor_vm_protect(ptr, size_t(pageSize), PROT_READ), -1)
+        XCTAssertEqual(cprisk_armor_vm_protect(ptr, size_t(pageSize), PROT_READ), -1)
+        XCTAssertEqual(cprisk_get_mprotect_consecutive_full_fail_streak(), 2)
+        XCTAssertEqual(cprisk_is_mprotect_tampered(), 0)
+
+        cprisk_test_mprotect_set_force_direct_fail(0)
+        cprisk_test_mprotect_set_force_fallback_fail(0)
+        XCTAssertEqual(cprisk_armor_vm_protect(ptr, size_t(pageSize), PROT_READ), 0)
+        XCTAssertEqual(cprisk_get_mprotect_consecutive_full_fail_streak(), 0)
+
+        cprisk_test_mprotect_set_force_direct_fail(1)
+        cprisk_test_mprotect_set_force_fallback_fail(1)
+        XCTAssertEqual(cprisk_armor_vm_protect(ptr, size_t(pageSize), PROT_READ), -1)
+        XCTAssertEqual(cprisk_armor_vm_protect(ptr, size_t(pageSize), PROT_READ), -1)
+        XCTAssertEqual(cprisk_get_mprotect_consecutive_full_fail_streak(), 2)
+        XCTAssertEqual(cprisk_armor_vm_protect(ptr, size_t(pageSize), PROT_READ), -1)
+        XCTAssertEqual(cprisk_is_mprotect_tampered(), 1)
+    }
+
+    func testMIEPostureDetectorPrimarySignalAndLevel() {
+        let a = MIEPostureDetector.evaluate()
+        XCTAssertTrue(MIEPostureDetector.Level.allCases.contains(a.level))
+        let signals = MIEPostureDetector().asSignals()
+        let primary = signals.first { $0.id == SignalID.miePosture }
+        XCTAssertNotNil(primary)
+        XCTAssertEqual(primary?.score, 0)
+        XCTAssertFalse(signals.contains { $0.id == SignalID.mteCanaryTampered && $0.score > 0 })
+    }
+
+    /// Staged watchdog: default threshold 3 triggers a slow-poison wave first; a second threshold (3 more hits) commits full poison.
+    func testStagedWatchdogPoisonRequiresThresholdHits() {
+        cprisk_test_reset_staged_poison_for_tests()
+        XCTAssertEqual(cprisk_is_integrity_poisoned(), 0)
+
+        cprisk_integrity_poison_watchdog_lane()
+        XCTAssertEqual(cprisk_is_integrity_poisoned(), 0)
+
+        cprisk_integrity_poison_watchdog_lane()
+        XCTAssertEqual(cprisk_is_integrity_poisoned(), 0)
+
+        cprisk_integrity_poison_watchdog_lane()
+        /* Slow-poison wave: still no global integrity poison. */
+        XCTAssertEqual(cprisk_is_integrity_poisoned(), 0)
+
+        cprisk_integrity_poison_watchdog_lane()
+        XCTAssertEqual(cprisk_is_integrity_poisoned(), 0)
+
+        cprisk_integrity_poison_watchdog_lane()
+        XCTAssertEqual(cprisk_is_integrity_poisoned(), 0)
+
+        cprisk_integrity_poison_watchdog_lane()
+        let observablePoison = cprisk_is_integrity_poisoned()
+        if observablePoison == 0 {
+            let deceptionGuardActive =
+                cprisk_is_being_traced_redundant() != 0 ||
+                cprisk_is_mprotect_tampered() != 0 ||
+                cprisk_check_init_timing() != 0
+            XCTAssertTrue(
+                deceptionGuardActive,
+                "staged watchdog full-commit may be hidden only when deception guard is active"
+            )
+        } else {
+            XCTAssertEqual(observablePoison, 1)
+        }
+
+        cprisk_test_reset_staged_poison_for_tests()
+        XCTAssertEqual(cprisk_is_integrity_poisoned(), 0)
     }
 }

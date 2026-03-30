@@ -22,6 +22,7 @@
 
 #include "include/CRiskCore.h"
 #include "include/cprisk_macho.h"
+#include "include/cprisk_dlsym.h"
 #include "include/cprisk_sha256.h"
 #include "include/cprisk_secure_zero.h"
 
@@ -32,7 +33,124 @@
 #include <string.h>
 #include <time.h>
 #include <mach-o/dyld.h>
-#include <sys/sysctl.h>
+
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
+
+#ifndef RTLD_DEFAULT
+#define RTLD_DEFAULT ((void *)(intptr_t)-2)
+#endif
+
+/*
+ * Optional: compare dlsym(RTLD_DEFAULT) with export-trie resolution (cprisk_dlsym).
+ * Mismatch → return NULL for this resolve (fail closed) without global poison,
+ * to reduce false positives from DYLD interposition / tooling.
+ */
+#ifndef CPRISK_IMPORT_DLSYM_TRIE_CROSSCHECK
+#if defined(__APPLE__) && defined(TARGET_OS_IOS) && TARGET_OS_IOS && \
+    (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
+#define CPRISK_IMPORT_DLSYM_TRIE_CROSSCHECK 1
+#else
+#define CPRISK_IMPORT_DLSYM_TRIE_CROSSCHECK 0
+#endif
+#endif
+
+/*
+ * dlsym(RTLD_DEFAULT, …) is a high-value hook target: it can steer encrypted
+ * imports to attacker stubs while leaving HMAC/name decryption intact.
+ * cprisk_dlsym() walks the Mach-O export trie from dyld_all_image_infos (no
+ * libc dlsym). When trie resolution in known system dylibs yields a unique
+ * address that disagrees with dlsym, fail closed.
+ */
+static const char *cprisk_import_trie_sym_i(const char *name_buf) {
+    if (!name_buf || name_buf[0] == '\0') {
+        return NULL;
+    }
+    return (name_buf[0] == '_') ? (name_buf + 1) : name_buf;
+}
+
+static const char *const s_import_system_libs_i[] = {
+    "libsystem_kernel.dylib",
+    "libsystem_c.dylib",
+    "libsystem_pthread.dylib",
+    "libsystem_info.dylib",
+    "libsystem_malloc.dylib",
+    "libsystem_platform.dylib",
+    "libsystem_blocks.dylib",
+    "libsystem_asl.dylib",
+    "libsystem_trace.dylib",
+};
+
+static void *cprisk_import_resolve_via_export_trie_i(const char *name_buf, uint32_t *path_flags_out) {
+    const char *sym = cprisk_import_trie_sym_i(name_buf);
+    if (!sym || sym[0] == '\0') {
+        return NULL;
+    }
+
+    void *seen = NULL;
+    for (size_t i = 0; i < sizeof(s_import_system_libs_i) / sizeof(s_import_system_libs_i[0]); i++) {
+        void *candidate = cprisk_dlsym(s_import_system_libs_i[i], sym);
+        if (!candidate) {
+            continue;
+        }
+        if (seen == NULL) {
+            seen = candidate;
+        } else if (seen != candidate) {
+            if (path_flags_out) {
+                *path_flags_out |= CPRISK_IMPORT_RESOLVE_PATH_TRIE_AMBIGUOUS;
+            }
+            return NULL;
+        }
+    }
+    if (seen != NULL && path_flags_out) {
+        *path_flags_out |= CPRISK_IMPORT_RESOLVE_PATH_TRIE_UNIQUE;
+    }
+    return seen;
+}
+
+static void *cprisk_import_crosscheck_dlsym_vs_trie_i(
+    const char *name_buf,
+    void *rtld_addr
+) {
+    if (!rtld_addr || !name_buf) {
+        return rtld_addr;
+    }
+    const void *seen = cprisk_import_resolve_via_export_trie_i(name_buf, NULL);
+    if (seen != NULL && seen != (const void *)rtld_addr) {
+        return NULL;
+    }
+    return rtld_addr;
+}
+
+uint32_t cprisk_test_import_resolve_strategy_for_symbol(const char *symbol_name) {
+    if (!symbol_name || symbol_name[0] == '\0') {
+        return CPRISK_IMPORT_RESOLVE_PATH_NONE;
+    }
+
+    uint32_t flags = 0u;
+    void *trie_addr = cprisk_import_resolve_via_export_trie_i(symbol_name, &flags);
+    if (trie_addr != NULL) {
+        return flags;
+    }
+
+    flags |= CPRISK_IMPORT_RESOLVE_PATH_RTLD_FALLBACK;
+    void *rtld_addr = dlsym(RTLD_DEFAULT, symbol_name);
+    if (rtld_addr != NULL &&
+        cprisk_import_crosscheck_dlsym_vs_trie_i(symbol_name, rtld_addr) == NULL) {
+        flags |= CPRISK_IMPORT_RESOLVE_PATH_CROSSCHECK_FAIL;
+    }
+    return flags;
+}
+
+int cprisk_verify_mprotect_dlsym_matches_export_trie(void) {
+    void *a = dlsym(RTLD_DEFAULT, "mprotect");
+    void *b = cprisk_dlsym("libsystem_kernel.dylib", "mprotect");
+    if (!a || !b) {
+        return -1;
+    }
+    return (a == b) ? 0 : 1;
+}
 
 /* CPRISK_IMPORT_MAGIC: "CPIM" = 0x43494D50 */
 #define CPRISK_IMPORT_MAGIC     0x43494D50
@@ -45,6 +163,7 @@ typedef struct cprisk_import_cache_entry_i {
     uint32_t symbol_index;
     uintptr_t addr;
     uint32_t tag;
+    uint32_t path_flags;
     uint8_t valid;
     uint8_t _reserved[3];
 } cprisk_import_cache_entry_i;
@@ -52,10 +171,52 @@ typedef struct cprisk_import_cache_entry_i {
 static pthread_mutex_t s_import_cache_mutex_i = PTHREAD_MUTEX_INITIALIZER;
 static cprisk_import_cache_entry_i s_import_cache_i[CPRISK_IMPORT_CACHE_SLOTS];
 
+static int cprisk_import_symbol_owner_matches_i(
+    const void *addr,
+    const char *const *expected_libs,
+    size_t expected_count
+) {
+    Dl_info info;
+    if (addr == NULL || expected_libs == NULL || expected_count == 0u) {
+        return 0;
+    }
+    memset(&info, 0, sizeof(info));
+    if (dladdr(addr, &info) == 0 || info.dli_fname == NULL) {
+        return 0;
+    }
+    for (size_t i = 0u; i < expected_count; i++) {
+        if (expected_libs[i] != NULL && strstr(info.dli_fname, expected_libs[i]) != NULL) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int cprisk_import_validate_resolved_addr_i(const void *addr, uint32_t path_flags) {
+    if (addr == NULL) {
+        return -1;
+    }
+    if (cprisk_addr_in_any_image_executable(addr) != 1) {
+        return -1;
+    }
+    if (cprisk_scan_arm64_suspicious_trampoline_prefix(addr, 16u) != 0) {
+        return -1;
+    }
+    if ((path_flags & CPRISK_IMPORT_RESOLVE_PATH_TRIE_UNIQUE) != 0u &&
+        cprisk_import_symbol_owner_matches_i(
+            addr,
+            s_import_system_libs_i,
+            sizeof(s_import_system_libs_i) / sizeof(s_import_system_libs_i[0])) == 0) {
+        return -1;
+    }
+    return 0;
+}
+
 static uint32_t cprisk_import_os_mix_i(void) {
     char osrelease[128];
     size_t len = sizeof(osrelease);
-    if (sysctlbyname("kern.osrelease", osrelease, &len, NULL, 0) != 0 || len == 0) {
+    int err = 0;
+    if (cprisk_sysctlbyname_direct("kern.osrelease", osrelease, &len, NULL, 0, &err) != 0 || len == 0) {
         return 0x7F4A7C15u;
     }
     uint32_t mix = 0x811C9DC5u;
@@ -119,6 +280,11 @@ static int cprisk_import_cache_lookup_i(
     if (!out_addr)
         return 0;
 
+    size_t matched_slot = CPRISK_IMPORT_CACHE_SLOTS;
+    uintptr_t matched_addr = 0u;
+    uint32_t matched_tag = 0u;
+    uint32_t matched_path_flags = 0u;
+
     pthread_mutex_lock(&s_import_cache_mutex_i);
     for (size_t i = 0; i < CPRISK_IMPORT_CACHE_SLOTS; i++) {
         const cprisk_import_cache_entry_i *entry = &s_import_cache_i[i];
@@ -129,9 +295,28 @@ static int cprisk_import_cache_lookup_i(
             key, symbol_index, entry->addr, table_fingerprint
         );
         if (expected_tag == entry->tag) {
-            *out_addr = (void *)entry->addr;
+            matched_slot = i;
+            matched_addr = entry->addr;
+            matched_tag = entry->tag;
+            matched_path_flags = entry->path_flags;
             pthread_mutex_unlock(&s_import_cache_mutex_i);
-            return *out_addr != NULL ? 1 : 0;
+            if (cprisk_import_validate_resolved_addr_i((const void *)matched_addr, matched_path_flags) == 0) {
+                *out_addr = (void *)matched_addr;
+                return 1;
+            }
+            cprisk_integrity_poison_watchdog_lane_now();
+            pthread_mutex_lock(&s_import_cache_mutex_i);
+            if (matched_slot < CPRISK_IMPORT_CACHE_SLOTS) {
+                cprisk_import_cache_entry_i *mut = &s_import_cache_i[matched_slot];
+                if (mut->valid &&
+                    mut->symbol_index == symbol_index &&
+                    mut->addr == matched_addr &&
+                    mut->tag == matched_tag) {
+                    memset(mut, 0, sizeof(*mut));
+                }
+            }
+            pthread_mutex_unlock(&s_import_cache_mutex_i);
+            return 0;
         }
     }
     pthread_mutex_unlock(&s_import_cache_mutex_i);
@@ -142,8 +327,14 @@ static void cprisk_import_cache_store_i(
     const uint8_t key[CPRISK_ARMOR_KEY_SIZE],
     uint32_t symbol_index,
     uint32_t table_fingerprint,
-    void *addr
+    void *addr,
+    uint32_t path_flags
 ) {
+    if (cprisk_import_validate_resolved_addr_i(addr, path_flags) != 0) {
+        cprisk_integrity_poison_watchdog_lane_now();
+        return;
+    }
+
     const size_t slot = (size_t)(symbol_index % CPRISK_IMPORT_CACHE_SLOTS);
     const uint32_t tag = cprisk_import_cache_tag_i(
         key, symbol_index, (uintptr_t)addr, table_fingerprint
@@ -153,6 +344,7 @@ static void cprisk_import_cache_store_i(
     s_import_cache_i[slot].symbol_index = symbol_index;
     s_import_cache_i[slot].addr = (uintptr_t)addr;
     s_import_cache_i[slot].tag = tag;
+    s_import_cache_i[slot].path_flags = path_flags;
     s_import_cache_i[slot].valid = 1u;
     pthread_mutex_unlock(&s_import_cache_mutex_i);
 }
@@ -234,11 +426,49 @@ static const struct mach_header_64 *cprisk_own_hdr(void) {
     return cprisk_find_own_header((const void *)cprisk_own_hdr);
 }
 
+void cprisk_swift_bridge_force_link(void);
+
+static int cprisk_resolve_swift_bridge_alias_i(uint32_t symbol_index, void **out_addr) {
+    if (!out_addr || symbol_index < CPRISK_SWIFT_BRIDGE_IMPORT_BASE) {
+        return 1;
+    }
+
+    const uint32_t bridge_index = symbol_index - CPRISK_SWIFT_BRIDGE_IMPORT_BASE;
+    if (bridge_index >= CPRISK_SWIFT_BRIDGE_IMPORT_COUNT) {
+        return -1;
+    }
+
+    if (cprisk_verify_dlsym_prologue() == 0) {
+        return -1;
+    }
+
+    cprisk_swift_bridge_force_link();
+
+    char alias_name[16];
+    const int written = snprintf(
+        alias_name,
+        sizeof(alias_name),
+        "cpra_%04u",
+        (unsigned)(bridge_index + 1u)
+    );
+    if (written <= 0 || (size_t)written >= sizeof(alias_name)) {
+        return -1;
+    }
+
+    void *addr = dlsym(RTLD_DEFAULT, alias_name);
+    *out_addr = addr;
+    return (addr != NULL) ? 0 : -1;
+}
+
 /* ── Main resolver ─────────────────────────────────────────────────── */
 
 int cprisk_resolve_import(uint32_t symbol_index, void **out_addr) {
     if (!out_addr) return -1;
     *out_addr = NULL;
+
+    if (symbol_index >= CPRISK_SWIFT_BRIDGE_IMPORT_BASE) {
+        return cprisk_resolve_swift_bridge_alias_i(symbol_index, out_addr);
+    }
 
     /* Import table is encrypted with WhiteBox Domain-8 key on the Swift side. */
     uint8_t key[CPRISK_ARMOR_KEY_SIZE];
@@ -360,11 +590,39 @@ int cprisk_resolve_import(uint32_t symbol_index, void **out_addr) {
         return -1;
     }
 
-    /* dlsym resolution */
-    cprisk_import_timing_hook_i(1u, symbol_index);
-    void *addr = dlsym(RTLD_DEFAULT, name_buf);
+    /*
+     * Prefer export-trie resolution first: this avoids handing the recovered
+     * plaintext symbol to hooked RTLD paths when a unique system export exists.
+     */
+    uint32_t resolve_path_flags = 0u;
+    void *addr = cprisk_import_resolve_via_export_trie_i(name_buf, &resolve_path_flags);
+    if (addr == NULL) {
+        /* dlsym fallback — prologue must match early baseline before trusting RTLD_DEFAULT. */
+        if (cprisk_verify_dlsym_prologue() == 0) {
+            cprisk_secure_zero(name_buf, data_len);
+            cprisk_secure_zero(ks, data_len < sizeof(ks) ? data_len : sizeof(ks));
+            cprisk_secure_zero(key, sizeof(key));
+            cprisk_secure_zero(hmac_input, sizeof(hmac_input));
+            cprisk_secure_zero(computed_hmac, sizeof(computed_hmac));
+            return -1;
+        }
+        resolve_path_flags |= CPRISK_IMPORT_RESOLVE_PATH_RTLD_FALLBACK;
+        cprisk_import_timing_hook_i(1u, symbol_index);
+        addr = dlsym(RTLD_DEFAULT, name_buf);
+#if CPRISK_IMPORT_DLSYM_TRIE_CROSSCHECK
+        addr = cprisk_import_crosscheck_dlsym_vs_trie_i(name_buf, addr);
+        if (addr == NULL) {
+            resolve_path_flags |= CPRISK_IMPORT_RESOLVE_PATH_CROSSCHECK_FAIL;
+        }
+#endif
+    }
     if (addr != NULL) {
-        cprisk_import_cache_store_i(key, symbol_index, table_fingerprint, addr);
+        if (cprisk_import_validate_resolved_addr_i(addr, resolve_path_flags) != 0) {
+            cprisk_integrity_poison_watchdog_lane_now();
+            addr = NULL;
+        } else {
+            cprisk_import_cache_store_i(key, symbol_index, table_fingerprint, addr, resolve_path_flags);
+        }
     }
 
     /* Clean up decrypted name before returning */

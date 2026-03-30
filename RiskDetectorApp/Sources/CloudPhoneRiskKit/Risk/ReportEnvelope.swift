@@ -39,7 +39,7 @@ public struct ReportEnvelope: Codable, Sendable {
     /// 字段映射版本（用于字段混淆轮换）
     public let fieldMappingVersion: String?
 
-    /// HMAC-SHA256 签名（hex）
+    /// 基于 SHA-256 的自定义 MAC 签名（hex）
     public let signature: String
 
     /// App Attest 密钥标识（base64，可选；SDK 4.4 硬件信任根）
@@ -55,12 +55,46 @@ public struct ReportEnvelope: Codable, Sendable {
     /// 当 shouldRefreshAttestation 且服务端下发 reAttestationChallenge 时，客户端用 App Attest key 签名后填入
     public let reAttestationAssertion: Data?
 
+    /// 材料绑定模式可观测值。
+    /// `plain_hmac_v1` 表示常规 HMAC，`armor_request_binding_sha256_v1` 表示 CRiskCore 派生密钥 + request-binding，
+    /// `plain_hmac_fallback_v1` 表示降级回普通 HMAC。
+    public let bindingMode: String?
+
+    /// 对签名输入做 SHA-256 后的 hex 摘要，用于观测 v2/v2a/v2d 的材料绑定上下文。
+    /// 该值不是额外密钥材料，但可以帮助区分“签名不匹配”与“签名输入/绑定上下文漂移”。
+    public let bindingDigest: String?
+
     /// 是否具备完整硬件信任根（attestationKeyId 与 attestationAssertion 均存在且非空）。
     /// 调用方可用此判断是否发生静默降级；若业务要求硬件信任根，应检查此属性为 true。
     public var hasHardwareAttestation: Bool {
         guard let keyId = attestationKeyId, !keyId.isEmpty else { return false }
         guard let assertion = attestationAssertion, !assertion.isEmpty else { return false }
         return true
+    }
+
+    public struct MaterialBindingObservation: Sendable, Equatable {
+        public let mode: String?
+        public let envelopeDigestHex: String?
+        public let recomputedDigestHex: String
+        public let isPresent: Bool
+        public let isConsistent: Bool
+        public let failureReason: String?
+
+        public init(
+            mode: String?,
+            envelopeDigestHex: String?,
+            recomputedDigestHex: String,
+            isPresent: Bool,
+            isConsistent: Bool,
+            failureReason: String?
+        ) {
+            self.mode = mode
+            self.envelopeDigestHex = envelopeDigestHex
+            self.recomputedDigestHex = recomputedDigestHex
+            self.isPresent = isPresent
+            self.isConsistent = isConsistent
+            self.failureReason = failureReason
+        }
     }
 
     // MARK: - Configuration
@@ -137,6 +171,8 @@ public struct ReportEnvelope: Codable, Sendable {
         case attestationAssertion = "aa"
         case trustLevel = "tl"
         case reAttestationAssertion = "ra"
+        case bindingMode = "bm"
+        case bindingDigest = "bd"
     }
 
     public init(
@@ -152,7 +188,9 @@ public struct ReportEnvelope: Codable, Sendable {
         attestationKeyId: String? = nil,
         attestationAssertion: Data? = nil,
         trustLevel: TrustLevel? = nil,
-        reAttestationAssertion: Data? = nil
+        reAttestationAssertion: Data? = nil,
+        bindingMode: String? = nil,
+        bindingDigest: String? = nil
     ) {
         self.nonce = nonce
         self.ts = ts
@@ -167,6 +205,8 @@ public struct ReportEnvelope: Codable, Sendable {
         self.attestationAssertion = attestationAssertion
         self.trustLevel = trustLevel
         self.reAttestationAssertion = reAttestationAssertion
+        self.bindingMode = bindingMode
+        self.bindingDigest = bindingDigest
     }
 
     public init(from decoder: Decoder) throws {
@@ -184,6 +224,8 @@ public struct ReportEnvelope: Codable, Sendable {
         attestationAssertion = try container.decodeIfPresent(Data.self, forKey: .attestationAssertion)
         trustLevel = try container.decodeIfPresent(TrustLevel.self, forKey: .trustLevel)
         reAttestationAssertion = try container.decodeIfPresent(Data.self, forKey: .reAttestationAssertion)
+        bindingMode = try container.decodeIfPresent(String.self, forKey: .bindingMode)
+        bindingDigest = try container.decodeIfPresent(String.self, forKey: .bindingDigest)
     }
 
     // MARK: - Factory
@@ -234,7 +276,8 @@ public struct ReportEnvelope: Codable, Sendable {
         attestationKeyId: String? = nil,
         trustLevel: TrustLevel? = nil,
         config: Config = Config(),
-        signatureProvider: ((Data) throws -> String)?
+        signatureProvider: ((Data) throws -> String)?,
+        bindingMode: String? = nil
     ) throws -> ReportEnvelope {
         let nonce = UUID().uuidString
         let ts = currentTimestampMillis()
@@ -260,6 +303,7 @@ public struct ReportEnvelope: Codable, Sendable {
         )
 
         let signatureData = try signatureInputData(from: signatureInput)
+        let bindingDigest = Self.bindingDigestHex(for: signatureData)
         let signatureHex: String
         if let signatureProvider {
             signatureHex = try signatureProvider(signatureData)
@@ -283,7 +327,10 @@ public struct ReportEnvelope: Codable, Sendable {
             signature: signatureHex,
             attestationKeyId: attestationKeyId,
             attestationAssertion: nil,
-            trustLevel: trustLevel
+            trustLevel: trustLevel,
+            reAttestationAssertion: nil,
+            bindingMode: bindingMode ?? defaultBindingMode(signatureProviderPresent: signatureProvider != nil),
+            bindingDigest: bindingDigest
         )
     }
 
@@ -304,7 +351,9 @@ public struct ReportEnvelope: Codable, Sendable {
             attestationKeyId: attestationKeyId,
             attestationAssertion: assertion,
             trustLevel: .hardware,
-            reAttestationAssertion: reAttestationAssertion
+            reAttestationAssertion: reAttestationAssertion,
+            bindingMode: bindingMode,
+            bindingDigest: bindingDigest
         )
     }
 
@@ -323,7 +372,9 @@ public struct ReportEnvelope: Codable, Sendable {
             attestationKeyId: attestationKeyId,
             attestationAssertion: attestationAssertion,
             trustLevel: level,
-            reAttestationAssertion: reAttestationAssertion
+            reAttestationAssertion: reAttestationAssertion,
+            bindingMode: bindingMode,
+            bindingDigest: bindingDigest
         )
     }
 
@@ -342,7 +393,9 @@ public struct ReportEnvelope: Codable, Sendable {
             attestationKeyId: attestationKeyId,
             attestationAssertion: attestationAssertion,
             trustLevel: trustLevel,
-            reAttestationAssertion: assertion
+            reAttestationAssertion: assertion,
+            bindingMode: bindingMode,
+            bindingDigest: bindingDigest
         )
     }
 
@@ -405,6 +458,12 @@ public struct ReportEnvelope: Codable, Sendable {
             canonicalPayload: canonicalPayload
         )
         guard let signatureData = try? Self.signatureInputData(from: signatureInput) else {
+            return false
+        }
+        let bindingObservation = materialBindingObservation(
+            signatureInputData: signatureData
+        )
+        guard bindingObservation.isConsistent else {
             return false
         }
         let expectedSignature = Self.hmacHex(message: signatureData, keyData: keyDataCopy)
@@ -479,7 +538,16 @@ public struct ReportEnvelope: Codable, Sendable {
             attestationKeyId: attestationKeyId,
             canonicalPayload: canonicalPayload
         )
-        guard let signatureData = try? Self.signatureInputData(from: signatureInput),
+        guard let signatureData = try? Self.signatureInputData(from: signatureInput) else {
+            return .failure(.signatureMismatch)
+        }
+        let bindingObservation = materialBindingObservation(
+            signatureInputData: signatureData
+        )
+        guard bindingObservation.isConsistent else {
+            return .failure(.signatureMismatch)
+        }
+        guard
               signatureValidator(signatureData, signature) else {
             return .failure(.signatureMismatch)
         }
@@ -540,6 +608,101 @@ public struct ReportEnvelope: Codable, Sendable {
         try Self.canonicalJSONString(from: payload)
     }
 
+    /// 对外暴露稳定的绑定诊断字段，便于日志、灰度和服务端回溯。
+    /// 不包含密钥材料，只暴露签名输入 / material binding 的可观测摘要。
+    public func bindingDiagnostics() -> [String: String] {
+        let payloadRawDigestHex = Self.sha256Hex(payload)
+        let canonicalPayload = try? Self.canonicalJSONString(from: payload)
+        let canonicalPayloadDigestHex = canonicalPayload.map { Self.sha256Hex(Data($0.utf8)) } ?? "unavailable"
+
+        let signatureInputDigestHex: String
+        if let canonicalPayload {
+            let signatureInput = Self.buildSignatureInput(
+                sigVer: sigVer,
+                nonce: nonce,
+                ts: ts,
+                sessionToken: sessionToken,
+                reportId: reportId,
+                keyId: keyId,
+                fieldMappingVersion: fieldMappingVersion,
+                attestationKeyId: attestationKeyId,
+                canonicalPayload: canonicalPayload
+            )
+            signatureInputDigestHex = Self.sha256Hex(Data(signatureInput.utf8))
+        } else {
+            signatureInputDigestHex = "unavailable"
+        }
+
+        let bindingObservation = materialBindingObservation()
+        var rows: [String: String] = [
+            "sig_ver": sigVer,
+            "key_id": keyId,
+            "payload_raw_sha256": payloadRawDigestHex,
+            "payload_canonical_sha256": canonicalPayloadDigestHex,
+            "signature_input_sha256": signatureInputDigestHex,
+            "binding_mode": bindingMode ?? inferredBindingMode(for: sigVer),
+            "binding_digest_present": bindingDigest == nil ? "0" : "1",
+            "binding_digest_consistent": bindingObservation.isConsistent ? "1" : "0",
+            "binding_digest_failure_reason": bindingObservation.failureReason ?? "none",
+            "attestation_pair_state": attestationPairState(),
+            "trust_level": trustLevel?.rawValue ?? "nil",
+            "field_mapping_version": fieldMappingVersion ?? "",
+        ]
+
+        if let digest = bindingObservation.envelopeDigestHex {
+            rows["binding_digest_hex"] = digest
+        }
+        rows["binding_digest_recomputed_hex"] = bindingObservation.recomputedDigestHex
+
+        let payloadMetadata = payloadBindingMetadata()
+        rows["signals_digest_present"] = payloadMetadata.signalsDigestPresent ? "1" : "0"
+        if let version = payloadMetadata.signalsDigestVersion {
+            rows["signals_digest_version"] = version
+        }
+        if let digest = payloadMetadata.signalsDigest {
+            rows["signals_digest"] = digest
+        }
+
+        return rows
+    }
+
+    /// 返回 envelope 当前的材料绑定观测结果。
+    /// 旧版本 envelope 若未携带 `bindingMode` / `bindingDigest`，`isPresent == false` 且不会判为不一致。
+    public func materialBindingObservation() -> MaterialBindingObservation {
+        guard let canonicalPayload = try? Self.canonicalJSONString(from: payload) else {
+            return MaterialBindingObservation(
+                mode: bindingMode,
+                envelopeDigestHex: bindingDigest,
+                recomputedDigestHex: "",
+                isPresent: bindingMode != nil || bindingDigest != nil,
+                isConsistent: false,
+                failureReason: "payload_canonicalization_failed"
+            )
+        }
+        let signatureInput = Self.buildSignatureInput(
+            sigVer: sigVer,
+            nonce: nonce,
+            ts: ts,
+            sessionToken: sessionToken,
+            reportId: reportId,
+            keyId: keyId,
+            fieldMappingVersion: fieldMappingVersion,
+            attestationKeyId: attestationKeyId,
+            canonicalPayload: canonicalPayload
+        )
+        guard let signatureData = try? Self.signatureInputData(from: signatureInput) else {
+            return MaterialBindingObservation(
+                mode: bindingMode,
+                envelopeDigestHex: bindingDigest,
+                recomputedDigestHex: "",
+                isPresent: bindingMode != nil || bindingDigest != nil,
+                isConsistent: false,
+                failureReason: "signature_input_encoding_failed"
+            )
+        }
+        return materialBindingObservation(signatureInputData: signatureData)
+    }
+
     /// v2 签名输入：sigVer|nonce|ts|sessionToken|reportId|keyId|fieldMappingVersion|attestationKeyId|canonicalPayload
     /// canonicalPayload 为 payload 的规范 JSON，已包含 compressedDigestHex、signalMappingVersion 等字段，故压缩摘要已纳入签名域。
     private static func buildSignatureInput(
@@ -559,9 +722,34 @@ public struct ReportEnvelope: Codable, Sendable {
     }
 
     private static func hmacHex(message: Data, keyData: Data) -> String {
-        let key = SymmetricKey(data: keyData)
-        let digest = HMAC<SHA256>.authenticationCode(for: message, using: key)
-        return digest.map { String(format: "%02x", $0) }.joined()
+        CPRiskMessageAuth.authenticationCodeHex(for: message, keyData: keyData)
+    }
+
+    private static func defaultBindingMode(signatureProviderPresent: Bool) -> String {
+        signatureProviderPresent ? "external_signature_provider_v1" : "plain_hmac_v1"
+    }
+
+    private static func bindingDigestHex(for signatureInputData: Data) -> String {
+        Data(SHA256.hash(data: signatureInputData)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func isBindingModeCompatible(_ mode: String, sigVer: String) -> Bool {
+        switch mode {
+        case "plain_hmac_v1":
+            return sigVer == "v1" || sigVer == "v2" || sigVer == "v2d"
+        case "plain_hmac_fallback_v1":
+            return sigVer == "v2d"
+        case "armor_request_binding_sha256_v1":
+            return sigVer == "v2a"
+        case "external_signature_provider_v1":
+            return true
+        default:
+            return true
+        }
     }
 
     private static func signatureInputData(from signatureInput: String) throws -> Data {
@@ -585,6 +773,100 @@ public struct ReportEnvelope: Codable, Sendable {
             throw ReportEnvelopeError.encodingFailed
         }
         return canonicalString
+    }
+
+    private func materialBindingObservation(signatureInputData: Data) -> MaterialBindingObservation {
+        let recomputedDigestHex = Self.bindingDigestHex(for: signatureInputData)
+        let metadataPresent = bindingMode != nil || bindingDigest != nil
+        guard metadataPresent else {
+            return MaterialBindingObservation(
+                mode: nil,
+                envelopeDigestHex: nil,
+                recomputedDigestHex: recomputedDigestHex,
+                isPresent: false,
+                isConsistent: true,
+                failureReason: nil
+            )
+        }
+
+        guard let bindingMode, let bindingDigest else {
+            return MaterialBindingObservation(
+                mode: self.bindingMode,
+                envelopeDigestHex: self.bindingDigest,
+                recomputedDigestHex: recomputedDigestHex,
+                isPresent: true,
+                isConsistent: false,
+                failureReason: "binding_metadata_incomplete"
+            )
+        }
+
+        guard Self.isBindingModeCompatible(bindingMode, sigVer: sigVer) else {
+            return MaterialBindingObservation(
+                mode: bindingMode,
+                envelopeDigestHex: bindingDigest,
+                recomputedDigestHex: recomputedDigestHex,
+                isPresent: true,
+                isConsistent: false,
+                failureReason: "binding_mode_signature_version_mismatch"
+            )
+        }
+
+        guard timingSafeCompare(bindingDigest.lowercased(), recomputedDigestHex) else {
+            return MaterialBindingObservation(
+                mode: bindingMode,
+                envelopeDigestHex: bindingDigest,
+                recomputedDigestHex: recomputedDigestHex,
+                isPresent: true,
+                isConsistent: false,
+                failureReason: "binding_digest_mismatch"
+            )
+        }
+
+        return MaterialBindingObservation(
+            mode: bindingMode,
+            envelopeDigestHex: bindingDigest,
+            recomputedDigestHex: recomputedDigestHex,
+            isPresent: true,
+            isConsistent: true,
+            failureReason: nil
+        )
+    }
+
+    private func inferredBindingMode(for signatureVersion: String) -> String {
+        switch signatureVersion {
+        case "v2a":
+            return "armor_request_binding_sha256_v1"
+        case "v2d":
+            return "plain_hmac_fallback_v1"
+        case "v1", "v2":
+            return "plain_hmac_v1"
+        default:
+            return "unknown"
+        }
+    }
+
+    private func attestationPairState() -> String {
+        let hasKeyId = attestationKeyId.map { !$0.isEmpty } ?? false
+        let hasAssertion = attestationAssertion.map { !$0.isEmpty } ?? false
+        switch (hasKeyId, hasAssertion) {
+        case (true, true):
+            return "paired"
+        case (true, false):
+            return "key_only"
+        case (false, true):
+            return "assertion_only"
+        case (false, false):
+            return "absent"
+        }
+    }
+
+    private func payloadBindingMetadata() -> (signalsDigestPresent: Bool, signalsDigestVersion: String?, signalsDigest: String?) {
+        guard let object = try? JSONSerialization.jsonObject(with: payload, options: [.fragmentsAllowed]) as? [String: Any] else {
+            return (false, nil, nil)
+        }
+        let digest = object["sd"] as? String
+        let version = object["dv2"] as? String
+        return (digest != nil, version, digest)
     }
 
     private func timingSafeCompare(_ lhs: String, _ rhs: String) -> Bool {
@@ -654,3 +936,26 @@ extension ReportEnvelope {
     }
 }
 #endif
+
+public extension ReportEnvelope.ReportEnvelopeError {
+    var reasonCode: String {
+        switch self {
+        case .invalidPayload:
+            return "invalid_payload"
+        case .signatureMismatch:
+            return "signature_mismatch"
+        case .replayDetected:
+            return "replay_detected"
+        case .nonceExpired:
+            return "nonce_expired"
+        case .timestampOutOfRange:
+            return "timestamp_out_of_range"
+        case .encodingFailed:
+            return "encoding_failed"
+        case .signingFailed:
+            return "signing_failed"
+        case .attestationIncomplete:
+            return "attestation_incomplete"
+        }
+    }
+}

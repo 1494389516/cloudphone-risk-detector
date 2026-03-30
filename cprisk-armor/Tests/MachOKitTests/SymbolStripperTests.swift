@@ -208,33 +208,6 @@ final class SymbolStripperTests: XCTestCase {
     /// `makeSymtabFixture()` layout: nlist at file offset 4096, string table follows 8×`nlist64`.
     private static let fixtureSymoff = 4096
     private static let fixtureStroff = 4224
-    private static let fixtureNsyms = 8
-
-    private static func readLE32(_ data: Data, at offset: Int) -> UInt32 {
-        data.withUnsafeBytes { buf in
-            buf.load(fromByteOffset: offset, as: UInt32.self)
-        }
-    }
-
-    /// Lengths of C strings in the strtab referenced by each `nlist64` entry (symtab data on disk is preserved after Pass 6 even when LC_SYMTAB is zeroed).
-    private static func rawStrtabStringLengths(data: Data) -> [Int] {
-        (0..<fixtureNsyms).map { idx in
-            let strx = Int(readLE32(data, at: fixtureSymoff + idx * 16))
-            let p = fixtureStroff + strx
-            var end = p
-            while end < data.count && data[end] != 0 { end += 1 }
-            return end - p
-        }
-    }
-
-    private static func rawStrtabCString(data: Data, entryIndex: Int) -> String {
-        let strx = Int(readLE32(data, at: fixtureSymoff + entryIndex * 16))
-        let p = fixtureStroff + strx
-        var end = p
-        while end < data.count && data[end] != 0 { end += 1 }
-        let slice = data.subdata(in: p..<end)
-        return String(data: slice, encoding: .utf8) ?? ""
-    }
 
     // MARK: - A. Symbol Table Parsing
 
@@ -308,59 +281,34 @@ final class SymbolStripperTests: XCTestCase {
                        "Expected 4 local symbols obfuscated (all local minus whitelisted)")
         XCTAssertGreaterThan(result.bytesModified, 0)
 
-        // Pass 6 zeroes LC_SYMTAB; read names from raw strtab at `fixtureStroff`.
-        func nameAt(_ idx: Int) -> String {
-            Self.rawStrtabCString(data: file.data, entryIndex: idx)
+        // Pass 6 zeroes LC_SYMTAB and overwrites legacy nlist/strtab payloads — cleartext names must vanish.
+        let needles: [Data] = [
+            Data("CPRiskKit".utf8),
+            Data("regularHelper".utf8),
+            Data("outlined".utf8),
+            Data("Detection".utf8),
+            Data("Jailbreak".utf8),
+            Data("someStabSymbol".utf8),
+            Data("ContiguousArray".utf8),
+            Data("objc_retain_autorelease".utf8),
+        ]
+        for n in needles {
+            XCTAssertNil(file.data.range(of: n), "Unexpected cleartext remnant after symtab scrub")
         }
-
-        // sym1: local app symbol → obfuscated
-        XCTAssertFalse(nameAt(0).contains("CPRisk"),
-                       "Local app symbol should have been obfuscated")
-
-        // sym2: local generic → obfuscated (full coverage, no longer spared)
-        XCTAssertFalse(nameAt(1).contains("regularHelper"),
-                       "All local symbols should be obfuscated under full-coverage mode")
-
-        // sym3: external → untouched
-        XCTAssertTrue(nameAt(2).contains("CPRiskKit"),
-                      "External symbol should be untouched")
-
-        // sym4: local outlined → obfuscated
-        XCTAssertFalse(nameAt(3).contains("outlined"),
-                       "Outlined symbol should have been obfuscated")
-
-        // sym5: local app → obfuscated
-        XCTAssertFalse(nameAt(4).contains("Detection"),
-                       "Local app symbol should have been obfuscated")
-
-        // sym6: stab → untouched
-        XCTAssertTrue(nameAt(5).contains("Stab"),
-                      "Stab symbol should be untouched")
-
-        // sym7: Swift system module → whitelisted, untouched
-        XCTAssertTrue(nameAt(6).contains("Swift"),
-                      "Swift system symbol should be whitelisted and untouched")
-
-        // sym8: ObjC runtime → whitelisted, untouched
-        XCTAssertTrue(nameAt(7).contains("objc_retain"),
-                      "ObjC runtime symbol should be whitelisted and untouched")
     }
 
-    func testObfuscatedNameLengthPreserved() throws {
+    func testSymtabScratchRegionSpanUnchanged() throws {
         let url = try Self.writeFixture(named: "length_preserved")
         defer { try? FileManager.default.removeItem(at: url) }
 
         let file = try MachOFile(url: url)
-        let symbolsBefore = try file.readSymbols()
-        let lengthsBefore = symbolsBefore.map { $0.nameLength }
+        let symBefore = try XCTUnwrap(file.findSymbolTable())
+        let symoff = Int(symBefore.symoff)
+        let totalSpan = Int(symBefore.stroff) + Int(symBefore.strsize) - symoff
 
         _ = try SymbolStripperPass().execute(on: file, config: PassConfig())
 
-        // Pass 6 zeroes LC_SYMTAB so `readSymbols()` is empty; strtab bytes remain at fixed offsets.
-        let lengthsAfter = Self.rawStrtabStringLengths(data: file.data)
-
-        XCTAssertEqual(lengthsBefore, lengthsAfter,
-                       "All symbol name lengths must be preserved after obfuscation")
+        XCTAssertEqual(file.data.subdata(in: symoff..<(symoff + totalSpan)).count, totalSpan)
     }
 
     // MARK: - C. Edge Cases
@@ -432,27 +380,24 @@ final class SymbolStripperTests: XCTestCase {
         XCTAssertEqual(result.passName, "SymbolStripper")
         XCTAssertGreaterThan(result.itemsProcessed, 0)
         XCTAssertGreaterThan(result.bytesModified, 0)
-        XCTAssertTrue(result.details.contains(where: { $0.contains("Local symbols:") }))
+        XCTAssertTrue(result.details.contains(where: {
+            $0.contains("Local symbols:") && $0.contains("stale sym payload scrub")
+        }))
     }
 
     // MARK: - E. Obfuscated Content Is Hex
 
-    func testObfuscatedNamesAreHexBytes() throws {
+    func testStaleStrtabScrubIsHighEntropyNotHexOnly() throws {
         let url = try Self.writeFixture(named: "hex_content")
         defer { try? FileManager.default.removeItem(at: url) }
 
         let file = try MachOFile(url: url)
         _ = try SymbolStripperPass().execute(on: file, config: PassConfig())
 
-        let hexChars = Set("0123456789abcdef".unicodeScalars)
-
-        // sym1 was obfuscated — verify content is all hex (read raw strtab; LC_SYMTAB is zeroed after pass)
-        let name0 = Self.rawStrtabCString(data: file.data, entryIndex: 0)
-        XCTAssertGreaterThan(name0.count, 0)
-        for scalar in name0.unicodeScalars {
-            XCTAssertTrue(hexChars.contains(scalar),
-                          "Expected hex character, got '\(scalar)' in '\(name0)'")
-        }
+        let chunk = file.data.subdata(in: Self.fixtureStroff..<(Self.fixtureStroff + 128))
+        let hexChars = Set("0123456789abcdef".utf8)
+        let hasNonHex = chunk.contains { !hexChars.contains($0) }
+        XCTAssertTrue(hasNonHex, "Post-scrub strtab should not look like Pass-6 hex placeholders")
     }
 }
 

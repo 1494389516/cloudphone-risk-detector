@@ -8,6 +8,14 @@ public protocol ConfigCaching: Sendable {
     func clear()
     func cacheSize() -> Int
     func cacheStats() -> CacheStats
+    /// 生产可用：仅允许回滚到本地已缓存且通过 `isUsableTrustedEntry` / 验签链校验的条目（Release 下等价于服务端已验证）。
+    func rollbackToNewestVerifiedVersion(below ceilingVersion: Int) -> RemoteConfig?
+}
+
+extension ConfigCaching {
+    public func rollbackToNewestVerifiedVersion(below ceilingVersion: Int) -> RemoteConfig? {
+        nil
+    }
 }
 
 extension ConfigCaching {
@@ -205,6 +213,34 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         Logger.log("ConfigCache.rollback rejected: not allowed in release build")
         return nil
 #endif
+    }
+
+    /// 自动稳定性回滚：选择 **严格小于** `ceilingVersion` 的最高可信缓存版本并写入 `rollbackVersionKey` 钉扎。
+    /// - Note: 与 DEBUG-only `rollback(to:)` 不同；不允许任意指定版本号，仅能从已持久化且可信的条目中选择。
+    public func rollbackToNewestVerifiedVersion(below ceilingVersion: Int) -> RemoteConfig? {
+        ConfigCache.globalLock.withLock {
+            guard ceilingVersion > Int.min else { return nil }
+            let allEntries = loadAllDiskEntries()
+            #if DEBUG
+            let candidates = allEntries.filter { entry in
+                entry.config.version < ceilingVersion && isUsableDebugEntry(entry, source: "verified_rollback_below")
+            }
+            #else
+            let candidates = allEntries.filter { entry in
+                entry.config.version < ceilingVersion && isUsableTrustedEntry(entry, source: "verified_rollback_below")
+            }
+            #endif
+            guard let target = candidates.max(by: { $0.config.version < $1.config.version }) else {
+                Logger.log("ConfigCache.rollbackToNewestVerifiedVersion: no candidate below ceiling=\(ceilingVersion)")
+                return nil
+            }
+            memoryCache = target
+            if persistToDisk, let data = "\(target.config.version)".data(using: .utf8) {
+                fileStore.write(key: rollbackVersionKey, data: data)
+            }
+            Logger.log("ConfigCache.rollbackToNewestVerifiedVersion: pinned version=\(target.config.version) verified=\(target.isVerifiedByServer)")
+            return target.config
+        }
     }
 
     public func availableVersions() -> [Int] {

@@ -68,7 +68,9 @@ internal enum CFFDispatcher {
 
     @inline(__always)
     static func prefersPrimaryRail(encodedState: UInt32, salt: UInt32, blend: CFFContextBlend) -> Bool {
-        ((encodedState ^ (salt &* blend.railSaltMultiplier)) & 1) == 0
+        let mask = runtimeBlendMask(salt: salt, blend: blend, lane: 0x4346_465F_5241_494C)
+        let multiplier = (blend.railSaltMultiplier ^ mask) | 1
+        return ((encodedState ^ (salt &* multiplier)) & 1) == 0
     }
 
     @inline(__always)
@@ -79,7 +81,8 @@ internal enum CFFDispatcher {
     @inline(__always)
     static func branchKey(_ encodedState: UInt32, salt: UInt32, modulo: UInt32, blend: CFFContextBlend) -> UInt32 {
         let boundedModulo = max(1, modulo)
-        return (encodedState ^ salt ^ blend.dispatchXor32) % boundedModulo
+        let mask = runtimeBlendMask(salt: salt, blend: blend, lane: 0x4346_465F_4252_414E)
+        return (encodedState ^ salt ^ blend.dispatchXor32 ^ mask) % boundedModulo
     }
 
     @inline(__always)
@@ -124,5 +127,14 @@ internal enum CFFDispatcher {
             return base == .switchLoop ? .ifElseChain : .switchLoop
         }
         return base
+    }
+
+    @inline(__always)
+    private static func runtimeBlendMask(salt: UInt32, blend: CFFContextBlend, lane: UInt64) -> UInt32 {
+        CFFRuntimeSalt.combine(
+            words: [UInt64(salt), UInt64(blend.dispatchXor32), lane],
+            strings: [blend.rawValue],
+            flags: [(lane & 1) == 1]
+        )
     }
 }
