@@ -11,15 +11,14 @@ enum CRiskCoreBridge {
             lock.unlock()
             return unsafeBitCast(cached, to: type)
         }
-        lock.unlock()
 
         var addr: UnsafeMutableRawPointer?
         let rc = cprisk_resolve_import(index, &addr)
         guard rc == 0, let resolved = addr else {
+            lock.unlock()
             fatalError("CRiskCore bridge resolve failed for index \(index)")
         }
 
-        lock.lock()
         cache[index] = resolved
         lock.unlock()
         return unsafeBitCast(resolved, to: type)

@@ -45,16 +45,18 @@ static uint64_t cprisk_crypto_trace_ticks_to_ns_i(uint64_t delta_ticks) {
 
 #if CPRISK_CRYPTO_TRACE_ARM64_DEVICE
 static uint64_t cprisk_crypto_cntpct_delta_ns_i(uint64_t c0, uint64_t c1) {
-    static uint64_t s_cntfrq = 0u;
-    if (s_cntfrq == 0u) {
-        __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(s_cntfrq));
+    static _Atomic uint64_t s_cntfrq = 0u;
+    uint64_t freq = atomic_load_explicit(&s_cntfrq, memory_order_relaxed);
+    if (freq == 0u) {
+        __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+        atomic_store_explicit(&s_cntfrq, freq, memory_order_relaxed);
     }
-    if (s_cntfrq == 0u || c1 < c0) {
+    if (freq == 0u || c1 < c0) {
         return 0u;
     }
     const uint64_t dt = c1 - c0;
-    return (dt / s_cntfrq) * 1000000000ull +
-           ((dt % s_cntfrq) * 1000000000ull) / s_cntfrq;
+    return (dt / freq) * 1000000000ull +
+           ((dt % freq) * 1000000000ull) / freq;
 }
 
 static uint64_t cprisk_crypto_u64_abs_diff_i(uint64_t a, uint64_t b) {

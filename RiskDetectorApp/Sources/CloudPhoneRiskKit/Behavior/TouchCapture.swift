@@ -184,11 +184,15 @@ final class TouchCapture {
 }
 
 private enum UIApplicationSendEventSwizzler {
-    private static var didSwizzle = false
+    private static let swizzleToken: Void = {
+        _performSwizzle()
+    }()
 
     static func swizzleOnce() {
-        guard !didSwizzle else { return }
-        didSwizzle = true
+        _ = swizzleToken
+    }
+
+    private static func _performSwizzle() {
 
         let cls: AnyClass = UIApplication.self
         let originalSelector = #selector(UIApplication.sendEvent(_:))
