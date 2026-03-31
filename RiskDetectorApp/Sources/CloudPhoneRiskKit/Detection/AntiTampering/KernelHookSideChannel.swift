@@ -3,7 +3,7 @@ import Darwin
 import Foundation
 
 struct KernelHookSideChannel: Detector {
-    private static var timebaseInfo: mach_timebase_info_data_t = {
+    private static let timebaseInfo: mach_timebase_info_data_t = {
         var info = mach_timebase_info_data_t()
         mach_timebase_info(&info)
         return info

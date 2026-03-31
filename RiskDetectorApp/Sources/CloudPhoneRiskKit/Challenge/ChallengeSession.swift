@@ -420,19 +420,6 @@ extension ChallengeSession {
         return nil
     }
 
-    private func timingSafeCompare(_ lhs: String, _ rhs: String) -> Bool {
-        let lhsBytes = Array(lhs.utf8)
-        let rhsBytes = Array(rhs.utf8)
-        var result: UInt8 = lhsBytes.count == rhsBytes.count ? 0 : 1
-        let maxCount = max(lhsBytes.count, rhsBytes.count)
-        let lhsN = max(lhsBytes.count, 1)
-        let rhsN = max(rhsBytes.count, 1)
-        for i in 0..<maxCount {
-            result |= lhsBytes[i % lhsN] ^ rhsBytes[i % rhsN]
-        }
-        return result == 0
-    }
-
     private func makeMismatchSignal(challengeId: String, reason: String) -> RiskSignal {
         RiskSignal(
             id: "challenge_hmac_mismatch",
