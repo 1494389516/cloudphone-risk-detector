@@ -39,7 +39,8 @@ static uint64_t cprisk_crypto_trace_ticks_to_ns_i(uint64_t delta_ticks) {
     cprisk_crypto_trace_timebase_once_i();
     if (s_timebase.denom == 0u)
         return 0u;
-    return (delta_ticks * (uint64_t)s_timebase.numer) / (uint64_t)s_timebase.denom;
+    return delta_ticks / (uint64_t)s_timebase.denom * (uint64_t)s_timebase.numer +
+           (delta_ticks % (uint64_t)s_timebase.denom) * (uint64_t)s_timebase.numer / (uint64_t)s_timebase.denom;
 }
 
 #if CPRISK_CRYPTO_TRACE_ARM64_DEVICE

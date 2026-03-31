@@ -91,7 +91,8 @@ enum FridaBuiltinMemorySignatureScanner {
 
             let regionStart = address
             defer {
-                address = regionStart + size
+                let (next, overflow) = regionStart.addingReportingOverflow(size)
+                address = overflow ? vm_address_t.max : next
                 iteration += 1
             }
 
@@ -191,7 +192,9 @@ enum FridaBuiltinMemorySignatureScanner {
         var timebase = mach_timebase_info_data_t()
         mach_timebase_info(&timebase)
         let ticks = mach_absolute_time()
-        return ticks * UInt64(timebase.numer) / UInt64(timebase.denom)
+        let denom = max(UInt64(timebase.denom), 1)
+        let (product, overflow) = ticks.multipliedReportingOverflow(by: UInt64(timebase.numer))
+        return overflow ? UInt64.max : product / denom
     }
 
     // MARK: - Configuration (env)

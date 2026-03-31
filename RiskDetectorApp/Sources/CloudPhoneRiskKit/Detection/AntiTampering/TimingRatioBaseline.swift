@@ -21,7 +21,8 @@ struct TimingRatioBaseline {
 
     private static func nanoseconds(from ticks: UInt64) -> UInt64 {
         let denom = max(UInt64(timebaseInfo.denom), 1)
-        return ticks * UInt64(timebaseInfo.numer) / denom
+        let (product, overflow) = ticks.multipliedReportingOverflow(by: UInt64(timebaseInfo.numer))
+        return overflow ? UInt64.max : product / denom
     }
 
     // MARK: - Sampling Noise (Stalker DBT Overhead Amplification)
