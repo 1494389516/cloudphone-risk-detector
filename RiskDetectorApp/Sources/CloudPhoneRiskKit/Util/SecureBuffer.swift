@@ -85,6 +85,23 @@ private func secureZero(_ buffer: inout [UInt8]) {
 }
 
 internal func secureZeroBytes(_ buffer: inout [UInt8]) {
+
+/// 常量时间字符串比较。迭代次数固定为 max(lhs, rhs) 字节，
+/// 长度差异编码到累加器中但不提前返回，避免通过执行时间泄露长度信息。
+internal func timingSafeCompare(_ lhs: String, _ rhs: String) -> Bool {
+    let lhsBytes = Array(lhs.utf8)
+    let rhsBytes = Array(rhs.utf8)
+    var result: UInt8 = lhsBytes.count == rhsBytes.count ? 0 : 1
+    let maxCount = max(lhsBytes.count, rhsBytes.count)
+    let lhsN = max(lhsBytes.count, 1)
+    let rhsN = max(rhsBytes.count, 1)
+    for i in 0..<maxCount {
+        result |= lhsBytes[i % lhsN] ^ rhsBytes[i % rhsN]
+    }
+    return result == 0
+}
+
+internal func secureZeroBytes(_ buffer: inout [UInt8]) {
     buffer.withUnsafeMutableBytes { ptr in
         guard let base = ptr.baseAddress else { return }
         memset_s(base, ptr.count, 0, ptr.count)
