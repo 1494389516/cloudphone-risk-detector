@@ -67,7 +67,7 @@ struct PointerValidationDetector: Detector {
             }
         }
 
-        return DetectorResult(score: score, methods: methods)
+        return DetectorResult(score: min(score, 100), methods: methods)
     }
 
     func isSuspiciousImagePath(_ path: String) -> Bool {

@@ -49,7 +49,7 @@ struct PrologueBranchDetector: Detector {
             }
         }
 
-        return DetectorResult(score: score, methods: methods)
+        return DetectorResult(score: min(score, 100), methods: methods)
         #else
         return .empty
         #endif

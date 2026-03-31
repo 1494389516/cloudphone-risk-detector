@@ -57,7 +57,7 @@ struct SDKIntegrityChecker: Detector {
             methods.append("integrity:plt_baseline_rejected_suspicious_env")
         }
 
-        return DetectorResult(score: score, methods: methods)
+        return DetectorResult(score: min(score, 100), methods: methods)
     }
 
     static func libcDirectSyscallFallbackObservation(

@@ -37,7 +37,7 @@ struct MemoryIntegrityChecker: Detector {
         score += inline.score
         methods.append(contentsOf: inline.methods)
 
-        return DetectorResult(score: score, methods: methods)
+        return DetectorResult(score: min(score, 100), methods: methods)
 #endif
     }
 
