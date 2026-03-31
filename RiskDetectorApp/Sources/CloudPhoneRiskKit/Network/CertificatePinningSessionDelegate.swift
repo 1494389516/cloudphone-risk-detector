@@ -300,6 +300,8 @@ private enum PinningMonotonicNanos {
 
     static func now() -> UInt64 {
         let t = mach_absolute_time()
-        return t * UInt64(timebase.numer) / UInt64(timebase.denom)
+        let denom = max(UInt64(timebase.denom), 1)
+        let (product, overflow) = t.multipliedReportingOverflow(by: UInt64(timebase.numer))
+        return overflow ? UInt64.max : product / denom
     }
 }

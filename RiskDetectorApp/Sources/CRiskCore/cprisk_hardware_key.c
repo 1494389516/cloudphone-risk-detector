@@ -41,7 +41,7 @@ static const uint8_t s_device_fallback_salt[CPRISK_ARMOR_KEY_SIZE] = {
 
 /* 1 when a platform-derived hardware salt was successfully produced, 0 when
  * the static fallback salt is in use. */
-static volatile int s_device_bound_ready = 0;
+static _Atomic int s_device_bound_ready = 0;
 
 /* HMAC-SHA256 wrapper that delegates to the inline definition in
  * cprisk_armor_abi.h, which is transitively included via CRiskCore.h. */
@@ -458,9 +458,9 @@ int cprisk_derive_device_key(
     /* Attempt to retrieve real hardware salt; fall back to static salt. */
     if (cprisk_get_device_salt_i(device_salt) != 0) {
         memcpy(device_salt, s_device_fallback_salt, CPRISK_ARMOR_KEY_SIZE);
-        s_device_bound_ready = 0;
+        atomic_store(&s_device_bound_ready, 0);
     } else {
-        s_device_bound_ready = 1;
+        atomic_store(&s_device_bound_ready, 1);
     }
 
     /* deviceKey = HMAC(rootKey, deviceSalt) */
@@ -475,5 +475,5 @@ int cprisk_derive_device_key(
 }
 
 int cprisk_is_device_bound(void) {
-    return s_device_bound_ready ? 1 : 0;
+    return atomic_load(&s_device_bound_ready) ? 1 : 0;
 }

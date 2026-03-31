@@ -24,7 +24,7 @@ _Static_assert(CPRISK_SHA256_DIGEST_LENGTH == CPRISK_ARMOR_HASH_SIZE,
 /* ── state ─────────────────────────────────────────────────────────── */
 
 static uint8_t  s_dec_key[CPRISK_ARMOR_KEY_SIZE];
-static int      s_dec_ready;
+static _Atomic int s_dec_ready;
 static uint64_t s_str_acc;
 static uint64_t s_dispatch_seed;
 static uint8_t  s_per_string_key[CPRISK_ARMOR_KEY_SIZE];
@@ -332,13 +332,13 @@ int cprisk_init_string_decryptor(const uint8_t *key, size_t key_len) {
         return -1;
     memcpy(s_dec_key, key, CPRISK_ARMOR_KEY_SIZE);
     s_dispatch_seed = cprisk_derive_dispatch_seed(key, key_len);
-    s_dec_ready = 1;
+    atomic_store(&s_dec_ready, 1);
     s_str_acc = 0;
     return 0;
 }
 
 int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) {
-    if (!s_dec_ready || !buffer || buffer_size == 0)
+    if (!atomic_load(&s_dec_ready) || !buffer || buffer_size == 0)
         return -1;
 
     const struct mach_header_64 *hdr = cprisk_own_hdr();
@@ -491,7 +491,7 @@ void cprisk_cleanup_string_decryptor(void) {
     cprisk_string_lazy_scrub_all();
     cprisk_secure_zero(s_dec_key, sizeof(s_dec_key));
     cprisk_secure_zero(s_per_string_key, sizeof(s_per_string_key));
-    s_dec_ready = 0;
+    atomic_store(&s_dec_ready, 0);
     s_str_acc = 0;
     s_dispatch_seed = 0;
 }

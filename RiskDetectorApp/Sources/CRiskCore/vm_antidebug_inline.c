@@ -101,13 +101,17 @@ static int vm_adb_check_exception_port_i(void) {
         return -1;
     }
 
+    int result = 0;
     for (mach_msg_type_number_t i = 0; i < count; i++) {
-        if (ports[i] != MACH_PORT_NULL && ports[i] != mach_task_self()) {
-            return 1;
+        if (ports[i] != MACH_PORT_NULL) {
+            if (ports[i] != mach_task_self()) {
+                result = 1;
+            }
+            mach_port_deallocate(mach_task_self(), ports[i]);
         }
     }
 
-    return 0;
+    return result;
 }
 
 static uint64_t vm_adb_read_instructions_retired_i(void) {

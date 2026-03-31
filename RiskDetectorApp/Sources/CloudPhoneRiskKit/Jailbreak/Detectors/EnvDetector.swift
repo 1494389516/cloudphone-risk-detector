@@ -34,7 +34,7 @@ struct EnvDetector: Detector {
             }
         }
 
-        return DetectorResult(score: score, methods: methods)
+        return DetectorResult(score: min(score, 100), methods: methods)
     }
 
     private func getenvString(_ name: String) -> String? {

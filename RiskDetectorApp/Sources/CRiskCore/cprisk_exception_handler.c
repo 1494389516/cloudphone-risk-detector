@@ -68,7 +68,8 @@ static uint64_t cprisk_exception_monotonic_time_ns_i(void) {
     if (denom == 0u) {
         return ticks;
     }
-    return (ticks * (uint64_t)numer) / (uint64_t)denom;
+    return (ticks / (uint64_t)denom) * (uint64_t)numer +
+           (ticks % (uint64_t)denom) * (uint64_t)numer / (uint64_t)denom;
 }
 
 #define EXC_EXCEPTION_RAISE_STATE_IDENTITY 2403
