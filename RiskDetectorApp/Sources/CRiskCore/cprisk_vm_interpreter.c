@@ -4033,6 +4033,8 @@ void cprisk_vm_interp_loop_a(struct cprisk_vm_interp_frame *fr)
         /* Task 5: CFF integrity verify (every 128 steps) */
         if ((fr->steps & 0x7Fu) == 0u)
             cprisk_vm_hardening_cff_verify(fr);
+        /* VM sync barrier: inject external data dependency every 64 steps */
+        cprisk_vm_sync_barrier_step(&fr->sync_barrier_ctx, fr->acc, pc);
 
         {
             const cprisk_vm_flow_t flow =
@@ -4472,6 +4474,8 @@ static int cprisk_vm_prepare_program_i(const struct mach_header_64 *hdr,
     fr->steps = 0u;
     /* Initialize integrated hardening modules */
     cprisk_vm_hardening_init(fr);
+    /* VM sync barrier: external data dependency to break native batch-trace */
+    cprisk_vm_sync_barrier_init(&fr->sync_barrier_ctx);
     return 1;
 }
 

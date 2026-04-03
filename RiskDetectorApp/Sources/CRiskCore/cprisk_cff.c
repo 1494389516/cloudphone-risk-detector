@@ -1518,3 +1518,51 @@ void cprisk_cff_finalize(cprisk_cff_context_t *context) {
     cprisk_cff_chain_finalize_i(context);
     memset(context, 0, sizeof(*context));
 }
+
+/* ── Dispatch Epoch Rotation ────────────────────────────────────────────────
+ *
+ * Counter-measure against Capstone L1/L2 disassembly-result caching used by
+ * optimised unidbg trace engines.
+ *
+ * The epoch is a per-thread uint32 counter.  On every CFF loop iteration the
+ * macro CPRISK_CFF_LOOP_STATE_PEEK calls:
+ *   1. cprisk_cff_rotate_dispatch_epoch()   — advance the counter
+ *   2. context->runtime_salt ^= cprisk_cff_epoch_mix_salt(ctx)  — blend in
+ *   3. cprisk_cff_current_state_fast()      — decode with rotated salt
+ *
+ * Effect: `cprisk_cff_current_state_fast` computes a different dispatch key
+ * each iteration, selecting a different code path through the state machine
+ * (switchLoop / ifElseChain / dualRail / splitIndirect).  Because a different
+ * ARM64 branch target is executed each iteration the Capstone L1 slot for the
+ * dispatcher basic-block is *always* a miss — the slot maps to a different
+ * address on every pass.  The L2 LRU fills with diverse entries that are each
+ * used only once, driving effective cache utilisation toward zero.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+#ifdef __APPLE__
+static _Thread_local uint32_t s_dispatch_epoch_tl = 0u;
+#else
+/* Fallback for non-Apple targets (test hosts). */
+static uint32_t s_dispatch_epoch_tl = 0u;
+#endif
+
+void cprisk_cff_rotate_dispatch_epoch(void) {
+    /* Weyl sequence step: additive with an odd constant so the counter visits
+     * all 2^32 residues before repeating.  Fast and branch-free. */
+    s_dispatch_epoch_tl += 0x9E3779B9u;
+}
+
+uint32_t cprisk_cff_epoch_mix_salt(const cprisk_cff_context_t *context) {
+    if (!context) {
+        return 0u;
+    }
+    /* One-step SplitMix64 collapsed to 32 bits.
+     * Couples the epoch to the per-function seed so two functions at the same
+     * iteration step produce orthogonal salt perturbations. */
+    const uint32_t seed_plain = cprisk_cff_ctx_seed_plain(context);
+    uint64_t z = ((uint64_t)s_dispatch_epoch_tl ^ (uint64_t)seed_plain) + 0x9E3779B97F4A7C15ULL;
+    z = (z ^ (z >> 30u)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27u)) * 0x94D049BB133111EBULL;
+    z = z ^ (z >> 31u);
+    return (uint32_t)(z ^ (z >> 32u));
+}

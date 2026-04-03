@@ -957,6 +957,49 @@ int cprisk_text_jit_decrypt(void *fault_addr) {
 
         s_decrypted[i] = 1;
         s_decrypt_ticks[i] = now;
+
+        /* ── Probabilistic immediate re-encrypt scheduling ────────────────────
+         *
+         * Counter-measure against unidbg魔改版 `setDisableSMC(true)` optimisation.
+         *
+         * When the attacker calls setDisableSMC(true), unidbg skips the
+         * mem_read + compare step on every instruction, treating all pages as
+         * non-self-modifying.  The L1/L2 Capstone cache is then never
+         * invalidated and every instruction in a hot loop is served from cache
+         * in O(1) — effectively making our page-level encryption invisible to
+         * the tracer.
+         *
+         * By scheduling ~30% of freshly-decrypted pages for *immediate*
+         * re-encryption (setting their timestamp to the stale threshold so the
+         * next service_idle sweep re-encrypts them within ~32 ms), we force the
+         * page content to change while the attacker is executing instructions
+         * from it.  This means:
+         *   • The page transitions PROT_READ|EXEC → PROT_NONE between
+         *     consecutive instruction fetches.
+         *   • unidbg with setDisableSMC(true) encounters a fault on a page it
+         *     "knows" was just decrypted — forcing it to either crash or fall
+         *     back to the slow SMC-aware path.
+         *   • With setDisableSMC(false) the mem_read returns different bytes
+         *     after re-encryption, invalidating the cached disassembly.
+         *
+         * Probability is derived from `mach_absolute_time()` low bits so it is
+         * non-deterministic and not reproducible across runs.  We use
+         * (time ^ ptr_mix) % 10 < 3  (≈30%) — cheap, branch-free-ish, and
+         * requires no heap allocation. */
+        {
+            const uint64_t prob_mix = now ^ (uint64_t)(uintptr_t)ptr ^ (uint64_t)(uintptr_t)page;
+            if ((prob_mix % 10u) < 3u) {
+                /* Back-date the decrypt timestamp beyond the stale threshold so
+                 * the next cprisk_text_maybe_reencrypt_idle() re-encrypts this
+                 * page immediately rather than waiting the normal dwell time. */
+                const uint64_t ns_to_ticks = (s_timebase.denom > 0u)
+                    ? (CPRISK_TEXT_STALE_DECRYPT_NS + 1000000000ULL) * (uint64_t)s_timebase.denom
+                      / (uint64_t)s_timebase.numer
+                    : 1u;
+                s_decrypt_ticks[i] = (now > ns_to_ticks) ? (now - ns_to_ticks) : 0u;
+            }
+        }
+
         pthread_mutex_unlock(&s_text_mutex);
         return 1;
     }

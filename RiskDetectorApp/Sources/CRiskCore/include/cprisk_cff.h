@@ -506,10 +506,41 @@ int cprisk_cff_spn_sbox_copy_forward(uint8_t out_forward256[256]);
 void cprisk_cff_run_fake_path_decoy(const cprisk_cff_context_t *context);
 
 /**
+ * Dispatch epoch rotation (counter-measure: Capstone L1/L2 cache busting).
+ *
+ * unidbg魔改版 caches Capstone disassembly per address using L1 (direct-mapped
+ * array) + L2 (LRU HashMap).  The cache is only invalidated on SMC (Self-Modifying
+ * Code) detection.  Without SMC the SAME instruction-sequence at address X is
+ * returned from cache on every subsequent visit — typical in CFF state-machine
+ * loops where the dispatcher basic-block is executed millions of times.
+ *
+ * Solution: mix a per-iteration epoch into `runtime_salt` before calling
+ * `cprisk_cff_current_state_dispatch()`.  The encoded state after XOR-mixing
+ * now differs each iteration, causing the dispatch function to take a different
+ * branch (switchLoop vs ifElseChain vs dualRail) on each pass.  The ARM64
+ * instructions that are *executed* therefore come from different addresses each
+ * time — defeating the L1/L2 address-keyed cache entirely.
+ *
+ * cprisk_cff_rotate_dispatch_epoch: advance the per-thread epoch counter.
+ *   Call once per state-machine loop iteration, immediately before decoding.
+ *
+ * cprisk_cff_epoch_mix_salt: derive a one-time salt mask from the current
+ *   epoch + context seed.  XOR into runtime_salt before cprisk_cff_current_state.
+ */
+void    cprisk_cff_rotate_dispatch_epoch(void);
+uint32_t cprisk_cff_epoch_mix_salt(const cprisk_cff_context_t *context);
+
+/**
  * Loop PEEK: hot decode path (dispatch_style + MBA layers) without a stable
  * single-symbol hook on `cprisk_cff_current_state` — implemented in cprisk_cff.c.
  */
-#define CPRISK_CFF_LOOP_STATE_PEEK(ctx) cprisk_cff_current_state_fast((ctx))
+/* Epoch-rotated state peek: advance per-thread epoch, mix into runtime_salt,
+ * then decode.  Each loop iteration uses a different salt → different dispatch
+ * branch → different ARM64 code addresses executed → Capstone L1/L2 misses. */
+#define CPRISK_CFF_LOOP_STATE_PEEK(ctx) \
+    ( cprisk_cff_rotate_dispatch_epoch(), \
+      (ctx)->runtime_salt ^= cprisk_cff_epoch_mix_salt((ctx)), \
+      cprisk_cff_current_state_fast((ctx)) )
 
 #define CPRISK_CFF_CTX_STATE_INLINE(ctx) cprisk_cff_current_state_fast((ctx))
 

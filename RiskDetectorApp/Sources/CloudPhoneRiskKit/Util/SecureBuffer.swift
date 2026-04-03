@@ -85,6 +85,11 @@ private func secureZero(_ buffer: inout [UInt8]) {
 }
 
 internal func secureZeroBytes(_ buffer: inout [UInt8]) {
+    buffer.withUnsafeMutableBytes { ptr in
+        guard let base = ptr.baseAddress else { return }
+        memset_s(base, ptr.count, 0, ptr.count)
+    }
+}
 
 /// 常量时间字符串比较。迭代次数固定为 max(lhs, rhs) 字节，
 /// 长度差异编码到累加器中但不提前返回，避免通过执行时间泄露长度信息。
@@ -101,10 +106,111 @@ internal func timingSafeCompare(_ lhs: String, _ rhs: String) -> Bool {
     return result == 0
 }
 
-internal func secureZeroBytes(_ buffer: inout [UInt8]) {
-    buffer.withUnsafeMutableBytes { ptr in
-        guard let base = ptr.baseAddress else { return }
-        memset_s(base, ptr.count, 0, ptr.count)
+// MARK: - SplitSecureBuffer
+
+/// Split-storage secure buffer that stores a key as N XOR-masked fragments
+/// scattered across independently-allocated heap regions.
+///
+/// ## Counter-measure: hexdump key-material tracing
+///
+/// unidbg's optimised trace engine (文章 §6.3) can print a hexdump of memory
+/// read/write addresses for every ld/st instruction, effectively letting an
+/// attacker trace where a key first appears and follow it through the pipeline.
+///
+/// A contiguous `SecureBuffer` presents a single, easily-spotted 16/32-byte
+/// blob in the hexdump — the attacker simply searches for the expected key size
+/// at the first occurrence and sets a watch-point.
+///
+/// `SplitSecureBuffer` stores the key as `n` independently-allocated byte
+/// arrays where fragment[i] = keyByte XOR mask[i].  No single fragment
+/// contains usable key material.  When `use()` is called, the fragments are
+/// assembled into a *stack* buffer for the duration of the closure and then
+/// immediately zeroed.
+///
+/// Effect on hexdump analysis:
+/// - The "key" is spread across N different heap addresses with no obvious
+///   byte pattern at any single location.
+/// - The momentary assembly on the stack lasts only for the closure body
+///   (typically <1µs), making it extremely unlikely to be captured by a
+///   periodic hexdump scan.
+/// - After `use()` returns, the stack copy is zeroed — no persistent plaintext.
+///
+/// - Parameter n: Number of fragments (default 4).  Higher values increase
+///   scatter at the cost of slightly more allocation overhead.
+final class SplitSecureBuffer {
+    private let size: Int
+    private var fragments: [[UInt8]]    // fragments[i] = keyByte[i%size] XOR masks[i]
+    private var masks: [[UInt8]]        // one random mask per fragment
+    private let n: Int
+
+    init(size: Int, fragments n: Int = 4) {
+        precondition(size >= 1, "SplitSecureBuffer: size must be ≥ 1")
+        precondition(n >= 2,    "SplitSecureBuffer: fragment count must be ≥ 2")
+        self.size = size
+        self.n = n
+        // Allocate n independent arrays; key bytes are all 0 at construction.
+        self.masks     = (0..<n).map { _ in [UInt8](repeating: 0, count: size) }
+        self.fragments = (0..<n).map { _ in [UInt8](repeating: 0, count: size) }
+    }
+
+    /// Write key material.  The bytes are immediately split into fragments
+    /// and the original `bytes` buffer is zeroed on return.
+    func store(_ bytes: UnsafeRawPointer, count: Int) {
+        precondition(count == size, "SplitSecureBuffer: byte count mismatch")
+        let src = bytes.bindMemory(to: UInt8.self, capacity: count)
+
+        // Generate fresh random masks for each fragment.
+        for i in 0..<n {
+            for j in 0..<size {
+                var r: UInt8 = 0
+                _ = Darwin.getentropy(&r, 1)
+                masks[i][j] = r
+            }
+        }
+
+        // Distribute: fragment[i][j] = src[j] XOR masks[0][j] XOR ... XOR masks[n-1][j]
+        // stored as fragment[i][j] = (XOR of all masks except i) XOR src[j] for i=0
+        // and fragment[i][j] = masks[i][j] for i>0.
+        // Recovery: XOR all fragments together = src[j].
+        for j in 0..<size {
+            var carry = src[j]
+            for i in 1..<n {
+                fragments[i][j] = masks[i][j]
+                carry ^= masks[i][j]
+            }
+            fragments[0][j] = carry  // fragment[0] = src XOR fragment[1] XOR ... XOR fragment[n-1]
+        }
+    }
+
+    /// Assemble fragments into a stack buffer, call `block`, then zero.
+    func use<T>(_ block: (UnsafeMutableRawPointer) -> T) -> T {
+        var assembled = [UInt8](repeating: 0, count: size)
+        // XOR all fragments together to recover the original key.
+        for i in 0..<n {
+            for j in 0..<size {
+                assembled[j] ^= fragments[i][j]
+            }
+        }
+        let result: T = assembled.withUnsafeMutableBytes { raw in
+            guard let base = raw.baseAddress else {
+                preconditionFailure("SplitSecureBuffer: assembly buffer has nil base")
+            }
+            return block(base)
+        }
+        secureZeroBytes(&assembled)
+        return result
+    }
+
+    /// Zero all fragments and masks.
+    func clear() {
+        for i in 0..<n {
+            secureZeroBytes(&fragments[i])
+            secureZeroBytes(&masks[i])
+        }
+    }
+
+    deinit {
+        clear()
     }
 }
 

@@ -1,5 +1,6 @@
 #include "include/cprisk_vm_interpreter_internal.h"
 #include "include/cprisk_vm_interpreter_ops.h"
+#include "include/cprisk_vm_oph_variants.h"
 
 static uintptr_t cprisk_vm_oph_materialize_key_i(const cprisk_vm_interp_frame_t *fr,
                                                  uint8_t logical,
@@ -54,7 +55,9 @@ static cprisk_vm_flow_t cprisk_vm_dispatch_core_family_i(cprisk_vm_interp_frame_
                                                          uint32_t hvar) {
     switch (logical) {
     case CPRISK_VM_OP_NOP:
-        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x11u, cprisk_vm_oph_nop);
+        /* Polymorphic variant pool: rotates among 3 NOP implementations to
+         * defeat Capstone L1/L2 address-keyed disassembly caching. */
+        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x11u, cprisk_vm_oph_select_nop);
     case CPRISK_VM_OP_RET:
         return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x12u, cprisk_vm_oph_ret);
     case CPRISK_VM_OP_RAW_REGION:
@@ -74,7 +77,7 @@ static cprisk_vm_flow_t cprisk_vm_dispatch_lane_family_i(cprisk_vm_interp_frame_
                                                          uint32_t hvar) {
     switch (logical) {
     case CPRISK_VM_OP_ADD:
-        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x21u, cprisk_vm_oph_add);
+        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x21u, cprisk_vm_oph_select_add);
     case CPRISK_VM_OP_ADD_ROL_ACC:
         return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x29u, cprisk_vm_oph_add_rol_acc);
     case CPRISK_VM_OP_SUB_LANE:
@@ -82,7 +85,7 @@ static cprisk_vm_flow_t cprisk_vm_dispatch_lane_family_i(cprisk_vm_interp_frame_
     case CPRISK_VM_OP_MUL_LANE:
         return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x23u, cprisk_vm_oph_mul_lane);
     case CPRISK_VM_OP_XOR_MIX:
-        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x24u, cprisk_vm_oph_xor_mix);
+        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x24u, cprisk_vm_oph_select_xor_mix);
     case CPRISK_VM_OP_OR_LANE:
         return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x25u, cprisk_vm_oph_or_lane);
     case CPRISK_VM_OP_AND_LANE:
