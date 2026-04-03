@@ -4033,8 +4033,19 @@ void cprisk_vm_interp_loop_a(struct cprisk_vm_interp_frame *fr)
         /* Task 5: CFF integrity verify (every 128 steps) */
         if ((fr->steps & 0x7Fu) == 0u)
             cprisk_vm_hardening_cff_verify(fr);
-        /* VM sync barrier: inject external data dependency every 64 steps */
-        cprisk_vm_sync_barrier_step(&fr->sync_barrier_ctx, fr->acc, pc);
+        /* VM sync barrier: inject external data dependency every 64 steps.
+         * If the watchdog appears stuck (counter never advances), this is a
+         * strong indicator that we are running inside unidbg — OR the flag
+         * into emulator_flags and let the emulator_is_hostile check in the
+         * hardening layer poison the result. */
+        if (cprisk_vm_sync_barrier_step(&fr->sync_barrier_ctx, fr->acc, pc)) {
+            if (cprisk_vm_sync_barrier_watchdog_stuck(&fr->sync_barrier_ctx)) {
+                fr->emulator_flags |= CPRISK_EMU_FLAG_WATCHDOG_STUCK;
+                /* Poison the integrity chain so the final result is tainted. */
+                fr->vm_integrity_checksum ^= 0xDEADBEEFCAFEBABEULL;
+                fr->vm_integrity_corrupted = 1;
+            }
+        }
 
         {
             const cprisk_vm_flow_t flow =

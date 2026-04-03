@@ -33,9 +33,16 @@ uint32_t cprisk_vm_sync_barrier_get_watchdog(void) {
 
 void cprisk_vm_sync_barrier_init(cprisk_vm_sync_barrier_ctx_t *ctx) {
     if (!ctx) return;
-    ctx->step_counter     = 0u;
+    ctx->step_counter      = 0u;
     ctx->last_watchdog_val = atomic_load_explicit(&s_watchdog_counter, memory_order_relaxed);
-    ctx->accumulated_mix  = 0u;
+    ctx->accumulated_mix   = 0u;
+    ctx->no_advance_count  = 0u;
+    ctx->watchdog_stuck    = 0u;
+}
+
+int cprisk_vm_sync_barrier_watchdog_stuck(const cprisk_vm_sync_barrier_ctx_t *ctx) {
+    if (!ctx) return 0;
+    return (int)ctx->watchdog_stuck;
 }
 
 /*
@@ -83,6 +90,21 @@ int cprisk_vm_sync_barrier_step(cprisk_vm_sync_barrier_ctx_t *ctx,
      * sees the flipped bit and restores it via the FNV chain delta.
      */
     const uint32_t delta_wdog = wdog_now ^ ctx->last_watchdog_val;
+
+    /* Track whether the watchdog is actually advancing.
+     * On unidbg, the watchdog pthread typically never runs, so the counter
+     * never moves.  After STUCK_THRESHOLD consecutive barrier fires with no
+     * change, flag the context as stuck. */
+    if (delta_wdog == 0u) {
+        ctx->no_advance_count += 1u;
+        if (ctx->no_advance_count >= CPRISK_VM_SYNC_BARRIER_STUCK_THRESHOLD) {
+            ctx->watchdog_stuck = 1u;
+        }
+    } else {
+        ctx->no_advance_count = 0u;
+        ctx->watchdog_stuck   = 0u;
+    }
+
     const uint32_t mix = sb_avalanche32(delta_wdog ^ pc ^ ctx->step_counter ^ 0xBAADF00Du);
 
     /* Single-bit injection into acc[0] — sufficient for the data dependency */
