@@ -1,4 +1,5 @@
 #include "include/CRiskCore.h"
+#include "include/cprisk_codesign_bind.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -92,9 +93,14 @@ static void cprisk_whitebox_xor_tables_aslr_i(uint8_t *buf,
                                               intptr_t runtime_slide,
                                               uint64_t anchor_slide_u64,
                                               uint32_t domain_id) {
-    const uint64_t tr = cprisk_wbx_slide_term_u64(runtime_slide);
+    /* Mix TeamID salt into the runtime slide term so that the XOR pad is
+     * correct only when the same Team Identifier is present.  A repackaged
+     * app has a different TeamID → different salt → wrong pad → corrupted
+     * S-box → silent PRF output corruption, no crash. */
+    const uint64_t team_salt = cprisk_codesign_team_salt();
+    const uint64_t tr = cprisk_wbx_slide_term_u64(runtime_slide) ^ team_salt;
     const intptr_t anchor_as_int = (intptr_t)anchor_slide_u64;
-    const uint64_t ta = cprisk_wbx_slide_term_u64(anchor_as_int);
+    const uint64_t ta = cprisk_wbx_slide_term_u64(anchor_as_int) ^ team_salt;
 
     for (size_t base = 0; base < len; base += 32u) {
         const size_t chunk = (len - base < 32u) ? (len - base) : 32u;

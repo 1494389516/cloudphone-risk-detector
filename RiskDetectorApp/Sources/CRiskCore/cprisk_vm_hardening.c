@@ -17,6 +17,7 @@
 #include "include/cprisk_vm_interpreter_internal.h"
 #include "include/cprisk_vm_interpreter_limits.h"
 #include "include/cprisk_secure_zero.h"
+#include "include/cprisk_emulator_detect.h"
 #include "vm_integrity.h"
 #include "vm_cff_fusion.h"
 #include "cprisk_vm_hardening.h"
@@ -154,6 +155,21 @@ void cprisk_vm_hardening_init(cprisk_vm_interp_frame_t *fr)
         vmh_cff_store_to_frame(fr, &ctx);
 
         fr->cff_vpc = 0;  /* will be set on first transition */
+    }
+
+    /* ── C-layer emulator detection ── */
+    {
+        const uint32_t emu_flags = cprisk_emulator_probe();
+        fr->emulator_flags = emu_flags;
+
+        /* If the environment looks hostile, poison the integrity chain so that
+         * the final VM result is subtly corrupted — the attacker's risk score
+         * becomes unreliable without a visible crash or assert. */
+        if (cprisk_emulator_is_hostile(emu_flags)) {
+            /* Mix a deterministic-looking but wrong constant into the FNV chain */
+            fr->vm_integrity_checksum ^= (uint64_t)emu_flags * 0x9E3779B97F4A7C15ULL;
+            fr->vm_integrity_corrupted = 1;
+        }
     }
 }
 

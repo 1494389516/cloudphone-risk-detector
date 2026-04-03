@@ -167,7 +167,8 @@ final class CryptoTests: XCTestCase {
         XCTAssertEqual(integrity?["payload_sha256_match"], "1")
         XCTAssertEqual(integrity?["route"], "report_envelope->grpc_payload")
         XCTAssertFalse((integrity?["signature_input_sha256"] ?? "").isEmpty)
-        XCTAssertEqual(integrity?["binding_mode"], "base_key_request_bound")
+        // v2h (default since SDK 5.1) uses HKDF per-request key derivation
+        XCTAssertEqual(integrity?["binding_mode"], "hkdf_derived_request_bound")
         XCTAssertEqual(
             integrity?["binding_fields"],
             "sigVer,nonce,ts,sessionToken,reportId,keyId,fieldMappingVersion,attestationKeyId,payloadCanonical"
@@ -199,7 +200,8 @@ final class CryptoTests: XCTestCase {
         )
 
         let diagnostics = envelope.bindingDiagnostics()
-        XCTAssertEqual(diagnostics["binding_mode"], "plain_hmac_v1")
+        // v2h (default since SDK 5.1) uses HKDF per-request key derivation
+        XCTAssertEqual(diagnostics["binding_mode"], "hkdf_hmac_v1")
         XCTAssertEqual(diagnostics["binding_digest_present"], "1")
         XCTAssertEqual(diagnostics["binding_digest_consistent"], "1")
         XCTAssertEqual(diagnostics["signals_digest_present"], "1")

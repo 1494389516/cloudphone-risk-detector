@@ -61,7 +61,14 @@ typedef struct cprisk_vm_sync_barrier_ctx {
     uint32_t step_counter;        /* local instruction counter */
     uint32_t last_watchdog_val;   /* last observed watchdog tick */
     uint32_t accumulated_mix;     /* running mix term (subtracted at recovery) */
+    uint32_t no_advance_count;    /* consecutive barrier fires with no watchdog advance */
+    uint32_t watchdog_stuck;      /* 1 when watchdog appears not advancing (unidbg heuristic) */
 } cprisk_vm_sync_barrier_ctx_t;
+
+/* How many consecutive barrier intervals with no watchdog advance before flagging stuck. */
+#ifndef CPRISK_VM_SYNC_BARRIER_STUCK_THRESHOLD
+#define CPRISK_VM_SYNC_BARRIER_STUCK_THRESHOLD 3u
+#endif
 
 /** Initialise a per-frame barrier context. */
 void cprisk_vm_sync_barrier_init(cprisk_vm_sync_barrier_ctx_t *ctx);
@@ -89,6 +96,24 @@ void cprisk_vm_sync_barrier_note_watchdog_tick(void);
 
 /** Read the current watchdog counter value (for testing). */
 uint32_t cprisk_vm_sync_barrier_get_watchdog(void);
+
+/**
+ * Returns non-zero if the watchdog counter appears stuck (not advancing).
+ * This is a strong indicator that the watchdog thread is not running —
+ * consistent with unidbg's limited thread emulation.
+ */
+int cprisk_vm_sync_barrier_watchdog_stuck(const cprisk_vm_sync_barrier_ctx_t *ctx);
+
+/**
+ * Returns non-zero when ANY VM frame has detected a stuck watchdog since
+ * process start.  Uses a process-global atomic so the result persists even
+ * after the originating VM frame is torn down.
+ *
+ * Used by the signing layer to poison the HKDF derivation when the watchdog
+ * is absent (strong unidbg indicator), causing the resulting HMAC to differ
+ * from what the server expects — silently and without an observable crash.
+ */
+uint32_t cprisk_vm_sync_barrier_global_stuck(void);
 
 #ifdef __cplusplus
 }

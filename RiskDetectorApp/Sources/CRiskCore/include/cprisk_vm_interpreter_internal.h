@@ -4,6 +4,7 @@
 #include "cprisk_vm_interpreter.h"
 #include "cprisk_vm_interpreter_limits.h"
 #include "cprisk_vm_sync_barrier.h"
+#include "cprisk_emulator_detect.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -146,6 +147,11 @@ struct cprisk_vm_interp_frame {
 
     /** VM sync barrier context: external data dependency every 64 steps */
     cprisk_vm_sync_barrier_ctx_t sync_barrier_ctx;
+
+    /** C-layer emulator detection flags (CPRISK_EMU_FLAG_* bitmask).
+     *  Set during cprisk_vm_hardening_init(); CPRISK_EMU_FLAG_WATCHDOG_STUCK
+     *  is OR'd in at runtime when the sync barrier detects a frozen watchdog. */
+    uint32_t emulator_flags;
 };
 
 /**

@@ -373,7 +373,11 @@ static void register_locked(int reclaiming) {
         return;
     }
 
-    exception_mask_t mask = EXC_MASK_BREAKPOINT | EXC_MASK_BAD_ACCESS;
+    /* Claim BREAKPOINT + BAD_ACCESS (existing) plus SOFTWARE.
+     * EXC_SOFTWARE covers SIGTRAP-based attach — LLDB's primary iOS attach
+     * vector.  Our handler returns KERN_FAILURE for EXC_SOFTWARE events it
+     * doesn't own, preserving normal POSIX signal delivery. */
+    exception_mask_t mask = EXC_MASK_BREAKPOINT | EXC_MASK_BAD_ACCESS | EXC_MASK_SOFTWARE;
     exception_mask_t old_masks[EXC_TYPES_COUNT];
     mach_port_t old_ports[EXC_TYPES_COUNT];
     exception_behavior_t old_behaviors[EXC_TYPES_COUNT];
@@ -485,7 +489,7 @@ void cprisk_verify_exception_handler(void) {
         }
     }
 
-    exception_mask_t mask = EXC_MASK_BREAKPOINT | EXC_MASK_BAD_ACCESS;
+    exception_mask_t mask = EXC_MASK_BREAKPOINT | EXC_MASK_BAD_ACCESS | EXC_MASK_SOFTWARE;
     exception_mask_t masks[EXC_TYPES_COUNT];
     mach_port_t ports[EXC_TYPES_COUNT];
     exception_behavior_t behaviors[EXC_TYPES_COUNT];
@@ -513,7 +517,7 @@ void cprisk_verify_exception_handler(void) {
     }
 
     for (mach_msg_type_number_t i = 0; i < count; i++) {
-        if ((masks[i] & (EXC_MASK_BREAKPOINT | EXC_MASK_BAD_ACCESS)) && ports[i] != s_exception_port) {
+        if ((masks[i] & (EXC_MASK_BREAKPOINT | EXC_MASK_BAD_ACCESS | EXC_MASK_SOFTWARE)) && ports[i] != s_exception_port) {
             s_status.last_hijack_detected = 1u;
             s_status.port_matches = 0u;
             atomic_store(&s_registered, 0);
