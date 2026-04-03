@@ -60,6 +60,13 @@ public final class CPRiskKit: NSObject {
     internal var latestRemoteConfig: RemoteConfig?
     internal var textSegmentReferenceResolver: (any TextSegmentReferenceResolving)?
 
+    /// Register a reporter to receive C-layer hostile-environment signals for
+    /// server-side risk assessment.  The reporter is called after each
+    /// evaluation cycle when any emulator/unidbg signals are active.
+    ///
+    /// Setting this to `nil` (default) disables server-side reporting.
+    public weak var hostileEnvironmentReporter: (any HostileEnvironmentReporter)?
+
     internal var boundAccountId: String?
     internal var boundSceneTag: String?
     internal var currentSessionId: String?

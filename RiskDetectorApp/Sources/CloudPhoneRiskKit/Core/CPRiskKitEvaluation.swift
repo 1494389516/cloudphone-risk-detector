@@ -251,6 +251,12 @@ extension CPRiskKit {
             remoteConfig: remoteConfig
         )
 
+        // Dispatch hostile-environment C-layer signals to the registered reporter
+        // so the SDK consumer can forward them to their server for a second
+        // verification layer that cannot be bypassed through binary patching.
+        let reporter = stateLock.withLock { hostileEnvironmentReporter }
+        dispatchHostileEnvironmentReport(to: reporter)
+
         return out
     }
 

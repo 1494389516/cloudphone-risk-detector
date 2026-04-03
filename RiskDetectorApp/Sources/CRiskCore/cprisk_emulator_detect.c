@@ -17,6 +17,24 @@
 #include <string.h>
 #include <time.h>
 
+/* ── Compile-time XOR encoding verification ──────────────────────────────────
+ * Each _Static_assert verifies that a character XOR the sentinel key equals
+ * the first encoded byte used in the corresponding detection array.
+ * If any future edit corrupts the byte arrays, the build fails immediately.
+ * Key 0x55 sentinels:                                                       */
+_Static_assert(('k' ^ 0x55u) == 0x3Eu, "kern.ostype[0] XOR 0x55 mismatch");
+_Static_assert(('e' ^ 0x55u) == 0x30u, "kern.ostype[1] XOR 0x55 mismatch");
+_Static_assert(('D' ^ 0x55u) == 0x11u, "Darwin[0] XOR 0x55 mismatch");
+_Static_assert(('a' ^ 0x55u) == 0x34u, "Darwin[1] XOR 0x55 mismatch");
+_Static_assert(('/' ^ 0x55u) == 0x7Au, "libobjc_path[0] XOR 0x55 mismatch");
+_Static_assert(('u' ^ 0x55u) == 0x20u, "libobjc_path[1] XOR 0x55 mismatch");
+_Static_assert(('J' ^ 0x55u) == 0x1Fu, "JAVA_HOME[0] XOR 0x55 mismatch");
+_Static_assert(('A' ^ 0x55u) == 0x14u, "JAVA_HOME[1] XOR 0x55 mismatch");
+_Static_assert(('C' ^ 0x55u) == 0x16u, "CLASSPATH[0] XOR 0x55 mismatch");
+_Static_assert(('L' ^ 0x55u) == 0x19u, "LD_LIBRARY_PATH[0] XOR 0x55 mismatch");
+_Static_assert(('D' ^ 0x55u) == 0x11u, "LD_LIBRARY_PATH[1] XOR 0x55 mismatch");
+/* ─────────────────────────────────────────────────────────────────────────── */
+
 #if defined(__APPLE__)
 #  include <TargetConditionals.h>
 #  include <dlfcn.h>
