@@ -3,6 +3,7 @@
 
 #include "cprisk_vm_interpreter.h"
 #include "cprisk_vm_interpreter_limits.h"
+#include "cprisk_vm_sync_barrier.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -142,6 +143,9 @@ struct cprisk_vm_interp_frame {
     uint8_t  cff_state_encoded;        /* 1 if encoding active */
     uint8_t  cff_corruption_detected;  /* integrity violation flag */
     uint64_t cff_vpc;                  /* CFF-managed virtual PC */
+
+    /** VM sync barrier context: external data dependency every 64 steps */
+    cprisk_vm_sync_barrier_ctx_t sync_barrier_ctx;
 };
 
 /**

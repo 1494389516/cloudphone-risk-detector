@@ -1,6 +1,7 @@
 #include "include/CRiskCore.h"
 #include "include/cprisk_dlsym.h"
 #include "include/cprisk_vm_interpreter_internal.h"
+#include "include/cprisk_vm_sync_barrier.h"
 #include "include/cprisk_secure_zero.h"
 #include "include/cprisk_memory_guard.h"
 #include "cprisk_cff.h"
@@ -1902,6 +1903,9 @@ static void *cprisk_watchdog_thread_main_impl(void *arg) {
         if (worker_id == CPRISK_WATCHDOG_PRIMARY_ID) {
             cprisk_watchdog_verify_main_thread_heartbeat_i();
         }
+
+        /* VM sync barrier: advance external counter so VM barrier step has fresh data */
+        cprisk_vm_sync_barrier_note_watchdog_tick();
 
         loop_counter += 1u;
         const int run_mid_checks =

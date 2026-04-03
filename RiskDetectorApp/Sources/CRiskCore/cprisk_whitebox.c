@@ -292,7 +292,11 @@ static void cprisk_whitebox_first_mix_layer_i(
 ) {
     for (size_t i = 0; i < CPRISK_WHITEBOX_STATE_SIZE; i++) {
         const uint8_t *table = round_tables + i * CPRISK_WHITEBOX_TABLE_WIDTH;
+        /* Dummy reads before real lookup — noise to confuse hexdump tracing */
+        cprisk_whitebox_dummy_reads_i(table, state[i], i, round);
         const uint8_t table_value = table[state[i]];
+        /* Dummy reads after — attacker sees real read sandwiched by noise */
+        cprisk_whitebox_dummy_reads_i(table, table_value, i ^ 0x1Fu, round ^ 0x3u);
         const uint8_t mixed = (uint8_t)(table_value ^
                                         state[(i + 1u) % CPRISK_WHITEBOX_STATE_SIZE] ^
                                         round_constants[i]);
@@ -326,7 +330,9 @@ static void cprisk_whitebox_second_mix_layer_i(
 ) {
     for (size_t i = 0; i < CPRISK_WHITEBOX_STATE_SIZE; i++) {
         const uint8_t *table = round_tables + i * CPRISK_WHITEBOX_TABLE_WIDTH;
+        cprisk_whitebox_dummy_reads_i(table, state[i], i ^ 0xAu, round + 4u);
         const uint8_t table_value = table[state[i]];
+        cprisk_whitebox_dummy_reads_i(table, table_value, i ^ 0x15u, round + 5u);
         const uint8_t mixed = (uint8_t)(
             table_value ^
             state[(i + 5u) % CPRISK_WHITEBOX_STATE_SIZE] ^
@@ -337,6 +343,56 @@ static void cprisk_whitebox_second_mix_layer_i(
             (unsigned int)(((i * 3u + round + 1u) % 7u) + 1u)
         );
     }
+}
+
+/*
+ * Dummy S-box table-lookup noise.
+ *
+ * Counter-measure: hexdump-based key-material tracing (unidbg魔改版 `setDisableHexdump`
+ * is often left *on* during early analysis; even with hexdump disabled, memory
+ * access pattern analysis can identify which table indices are read to deduce
+ * the key schedule).
+ *
+ * Mechanism:
+ *   Before and after each genuine per-byte table lookup in the mix layers we
+ *   perform N dummy lookups at pseudo-random indices derived from the current
+ *   state but whose results are XOR'd with themselves (net zero).  The dummy
+ *   reads touch the same S-box table pages as the real reads, creating a
+ *   Hamming-weight-balanced read access pattern.  An attacker observing the
+ *   memory read log via hexdump sees:
+ *     real_read(table, state[i])    → real byte used in computation
+ *     dummy_read(table, idx_a) ^ dummy_read(table, idx_a) → discarded
+ *     dummy_read(table, idx_b) ^ dummy_read(table, idx_b) → discarded
+ *
+ *   Because the dummy indices are derived from the evolving state (step counter,
+ *   round number, byte position), they are not constant — they look identical to
+ *   the real lookups from the outside.  The attacker cannot distinguish real from
+ *   noise without re-implementing the full state machine.
+ *
+ * Performance: 2 extra byte reads per state byte per round (negligible vs the
+ * existing SHA-256 HMAC overhead).
+ *
+ * IMPORTANT: volatile sink prevents the compiler from eliding the dummy reads.
+ */
+static volatile uint8_t s_wb_dummy_sink;   /* global volatile sink */
+
+static inline void cprisk_whitebox_dummy_reads_i(
+    const uint8_t *table,
+    uint8_t real_idx,
+    size_t position,
+    size_t round
+) {
+    /* Derive two dummy indices from position + round + real_idx to ensure they
+     * are data-dependent (not constant-foldable) while being self-cancelling. */
+    const uint8_t dummy_a = (uint8_t)((real_idx * 0x9Du) ^ (uint8_t)(position * 0x6Bu) ^ (uint8_t)(round * 0xA3u));
+    const uint8_t dummy_b = (uint8_t)((real_idx ^ dummy_a) * 0xC3u ^ (uint8_t)(position + round));
+
+    /* Read and immediately XOR with itself — net zero, but the memory access
+     * to table[dummy_a] and table[dummy_b] is visible to the tracer. */
+    const uint8_t ra = table[dummy_a];
+    const uint8_t rb = table[dummy_b];
+    s_wb_dummy_sink = (uint8_t)(s_wb_dummy_sink ^ ra ^ ra);   /* ra ^ ra == 0 */
+    s_wb_dummy_sink = (uint8_t)(s_wb_dummy_sink ^ rb ^ rb);   /* rb ^ rb == 0 */
 }
 
 static int cprisk_ct_mem_diff_i(const uint8_t *lhs, const uint8_t *rhs, size_t len) {

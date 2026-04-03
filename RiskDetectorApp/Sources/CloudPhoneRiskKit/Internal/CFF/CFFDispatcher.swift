@@ -5,6 +5,10 @@ internal struct CFFDispatchPlan: Sendable, Equatable {
     let branchSelector: UInt32
     let prefersPrimaryRail: Bool
     let usesSecondaryDispatcher: Bool
+    /// Per-invocation epoch used to rotate dispatcher style across loop iterations.
+    /// Downstream state-machine callers should pass this back as `invocationCounter`
+    /// on the next call to `planRotating` to advance the rotation chain.
+    let invocationEpoch: UInt32
 }
 
 internal enum CFFDispatcher {
@@ -62,7 +66,80 @@ internal enum CFFDispatcher {
             style: resolvedStyle,
             branchSelector: selector,
             prefersPrimaryRail: prefersPrimary,
-            usesSecondaryDispatcher: config.dispatcherStyle == .dualRail
+            usesSecondaryDispatcher: config.dispatcherStyle == .dualRail,
+            invocationEpoch: 0
+        )
+    }
+
+    /// Returns a dispatch plan whose style rotates on each invocation of the same
+    /// function by mixing `invocationCounter` into the salt.  Pass
+    /// `plan.invocationEpoch` back as `invocationCounter` on the next call to
+    /// advance the rotation chain without external state.
+    ///
+    /// Counter-measure: defeats Capstone L1/L2 dispatch-path caching — the same
+    /// state-machine basic-block entry produces a different ARM64 branch target on
+    /// each pass through the loop because the resolved `CFFDispatcherStyle` changes.
+    @inline(__always)
+    static func planRotating(
+        encodedState: UInt32,
+        salt: UInt32,
+        config: CFFConfig,
+        invocationCounter: UInt32
+    ) -> CFFDispatchPlan {
+        let rotNonce = CFFRuntimeSalt.deriveRotationNonce(
+            counter: invocationCounter,
+            functionSeed: config.functionSeed
+        )
+        let rotatedSalt = salt ^ rotNonce
+        let blend = config.contextBlend
+        let selector = branchKey(encodedState, salt: rotatedSalt, modulo: 4, blend: blend)
+        let prefersPrimary = prefersPrimaryRail(
+            encodedState: encodedState,
+            salt: rotatedSalt,
+            blend: blend
+        )
+
+        let resolvedStyle: CFFDispatcherStyle
+        switch config.dispatcherStyle {
+        case .switchLoop:
+            resolvedStyle = selector == blend.switchConnectorSelector && config.allowConnectorStates
+                ? .ifElseChain : .switchLoop
+        case .ifElseChain:
+            resolvedStyle = selector == blend.ifElseConnectorSelector && config.allowConnectorStates
+                ? .switchLoop : .ifElseChain
+        case .dualRail:
+            resolvedStyle = prefersPrimary ? .switchLoop : .ifElseChain
+        case .functionPointerTable:
+            let table = blend.fpTable
+            let seed32 = UInt32(truncatingIfNeeded: config.functionSeed)
+            let ix = Int(CFFOpaquePredicates.boundedSelector(
+                encodedState ^ seed32 ^ rotNonce,
+                salt: rotatedSalt,
+                modulo: UInt32(table.count),
+                blend: blend
+            ))
+            resolvedStyle = table[ix]
+        case .splitIndirect:
+            resolvedStyle = splitIndirectStyle(
+                encodedState: encodedState,
+                salt: rotatedSalt,
+                selector: selector,
+                prefersPrimary: prefersPrimary,
+                config: config,
+                blend: blend
+            )
+        }
+
+        // Next epoch: advance the rotation chain by hashing the current nonce
+        // with the resolved selector so the chain is coupled to actual execution.
+        let nextEpoch = invocationCounter &+ 1 &+ (selector ^ rotNonce)
+
+        return CFFDispatchPlan(
+            style: resolvedStyle,
+            branchSelector: selector,
+            prefersPrimaryRail: prefersPrimary,
+            usesSecondaryDispatcher: config.dispatcherStyle == .dualRail,
+            invocationEpoch: nextEpoch
         )
     }
 

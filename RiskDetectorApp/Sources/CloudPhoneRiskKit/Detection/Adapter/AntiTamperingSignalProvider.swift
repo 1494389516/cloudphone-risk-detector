@@ -99,6 +99,8 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
         var enableAntiDebugWatchdog: Bool = true
         /// libc / arc4random fallback bitset from `AntiDebugWatchdogSnapshot` (independent of `enableAntiDebugWatchdog` so telemetry survives when watchdog checks are disabled).
         var enableLibcDirectSyscallFallbackReporting: Bool = true
+        var enableEmulatorLayoutDetect: Bool = true
+        var enableEmulatorBehaviorDetect: Bool = true
         var minScoreThreshold: Double = 0
         
         public static let `default` = Configuration()
@@ -657,6 +659,36 @@ public final class AntiTamperingSignalProvider: RiskSignalProvider {
                 Row(internalToken: nextKey(&c), enabled: { $0.enableLibcDirectSyscallFallbackReporting }) { p, snapshot, _ in
                     DetectorCheck(id: "libc_syscall_fallback") {
                         p.libcDirectSyscallFallbackSignals(from: snapshot)
+                    }
+                },
+                Row(internalToken: nextKey(&c), enabled: { $0.enableEmulatorLayoutDetect }) { _, _, _ in
+                    DetectorCheck(id: "emulator_layout") {
+                        let result = try EmulatorLayoutDetector().detect()
+                        guard result.score > 0 else { return [] }
+                        return [RiskSignal(
+                            id: "emulator_layout_anomaly",
+                            category: ObfuscatedConstants.categoryAntiTamper,
+                            score: result.score,
+                            evidence: ["methods": result.methods.joined(separator: ",")],
+                            state: .soft(confidence: min(result.score / 60.0, 1.0)),
+                            layer: 2,
+                            weightHint: 70
+                        )]
+                    }
+                },
+                Row(internalToken: nextKey(&c), enabled: { $0.enableEmulatorBehaviorDetect }) { _, _, _ in
+                    DetectorCheck(id: "emulator_behavior") {
+                        let result = try EmulatorBehaviorDetector().detect()
+                        guard result.score > 0 else { return [] }
+                        return [RiskSignal(
+                            id: "emulator_behavior_anomaly",
+                            category: ObfuscatedConstants.categoryAntiTamper,
+                            score: result.score,
+                            evidence: ["methods": result.methods.joined(separator: ",")],
+                            state: .soft(confidence: min(result.score / 40.0, 1.0)),
+                            layer: 2,
+                            weightHint: 65
+                        )]
                     }
                 },
             ]

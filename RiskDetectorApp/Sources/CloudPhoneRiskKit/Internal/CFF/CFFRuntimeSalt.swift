@@ -102,6 +102,21 @@ internal enum CFFRuntimeSalt {
         return UInt32(truncatingIfNeeded: hash ^ (hash >> 32))
     }
 
+    /// Fast non-cryptographic nonce for CFF dispatcher rotation.
+    ///
+    /// Couples `counter` (per-iteration invocation index) with `functionSeed`
+    /// (per-function unique constant) so two functions at the same counter
+    /// produce different nonces.  Uses SplitMix64 one-step mixing — cheap
+    /// enough to call in a tight dispatch loop without measurable overhead.
+    @inline(__always)
+    static func deriveRotationNonce(counter: UInt32, functionSeed: UInt64) -> UInt32 {
+        var z = functionSeed ^ (UInt64(counter) &* 0x9E3779B97F4A7C15)
+        z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
+        z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+        z = z ^ (z >> 31)
+        return UInt32(truncatingIfNeeded: z ^ (z >> 32))
+    }
+
     private static func processContextWords() -> [UInt64] {
         let processInfo = ProcessInfo.processInfo
         let uptimeMillis = UInt64((processInfo.systemUptime * 1_000.0).rounded(.down))
