@@ -107,12 +107,15 @@ public struct ReportEnvelope: Codable, Sendable {
         public var timeDriftToleranceMillis: Int64 = 300_000
 
         /// 当前签名版本
-        public var signatureVersion: String = "v2"
+        /// `v2h` — HKDF per-request key derivation on top of base HMAC (default, SDK 5.1+)
+        /// `v2`  — plain HMAC with static key (legacy, kept for backward compatibility)
+        /// `v2a` — armor CRiskCore-derived request binding
+        public var signatureVersion: String = "v2h"
 
         public init(
             nonceExpirationMillis: Int64 = 300_000,
             timeDriftToleranceMillis: Int64 = 300_000,
-            signatureVersion: String = "v2"
+            signatureVersion: String = "v2h"
         ) {
             self.nonceExpirationMillis = nonceExpirationMillis
             self.timeDriftToleranceMillis = timeDriftToleranceMillis
@@ -282,6 +285,17 @@ public struct ReportEnvelope: Codable, Sendable {
         let nonce = UUID().uuidString
         let ts = currentTimestampMillis()
 
+        // Sanity-check the device clock: ts must be ≥ 2020-01-01T00:00:00Z in ms
+        // (1_577_836_800_000) and no more than 60 s ahead of "now" (which is ts
+        // itself, so this catches only wildly wrong futures such as year 2100+).
+        // A clock stuck at epoch 0 or wrong by years would be rejected here before
+        // the server ever sees the envelope, giving a clearer error than a silent
+        // timestampOutOfRange later.
+        let minReasonableTs: Int64 = 1_577_836_800_000  // 2020-01-01 UTC
+        guard ts >= minReasonableTs else {
+            throw ReportEnvelopeError.timestampOutOfRange
+        }
+
         // Client-side nonce deduplication: guard against UUID-generator
         // tampering or accidental envelope reuse within the replay window.
         guard ClientNonceWindow.shared.registerIfNew(nonce, ts: ts) else {
@@ -318,13 +332,17 @@ public struct ReportEnvelope: Codable, Sendable {
                 throw ReportEnvelopeError.signingFailed
             }
             defer { secureZeroData(&baseKeyData) }
-            // HKDF per-request key derivation: effective key = HKDF(IKM=signingKey,
-            // salt=nonce|ts, info="cprisk.report.hmac.v2").  Even if two envelopes
-            // share the same static signing key their HMAC keys differ, preventing
-            // statistical key recovery from a corpus of (input, HMAC) pairs.
-            var derivedKey = Self.hkdfDerivedKey(baseKey: baseKeyData, nonce: nonce, ts: ts)
-            defer { secureZeroData(&derivedKey) }
-            signatureHex = hmacHex(message: signatureData, keyData: derivedKey)
+            if config.signatureVersion == "v2h" {
+                // HKDF per-request key derivation (v2h only): effective key =
+                // HKDF(IKM=signingKey, salt=nonce|ts, info="cprisk.report.hmac.v2h").
+                // Each envelope gets a unique effective key, preventing statistical
+                // HMAC key recovery from a corpus of (input, MAC) pairs.
+                var derivedKey = Self.hkdfDerivedKey(baseKey: baseKeyData, nonce: nonce, ts: ts)
+                defer { secureZeroData(&derivedKey) }
+                signatureHex = hmacHex(message: signatureData, keyData: derivedKey)
+            } else {
+                signatureHex = hmacHex(message: signatureData, keyData: baseKeyData)
+            }
         }
 
         return ReportEnvelope(
@@ -341,7 +359,7 @@ public struct ReportEnvelope: Codable, Sendable {
             attestationAssertion: nil,
             trustLevel: trustLevel,
             reAttestationAssertion: nil,
-            bindingMode: bindingMode ?? defaultBindingMode(signatureProviderPresent: signatureProvider != nil),
+            bindingMode: bindingMode ?? defaultBindingMode(signatureProviderPresent: signatureProvider != nil, sigVer: config.signatureVersion),
             bindingDigest: bindingDigest
         )
     }
@@ -453,10 +471,15 @@ public struct ReportEnvelope: Codable, Sendable {
 
     /// 验签（内部实现，使用 Data 密钥）
     private func verifySignature(keyData: Data) -> Bool {
-        // Mirror the per-request HKDF derivation used in create() so that the
-        // effective verification key matches the one used during signing.
-        var derivedKey = Self.hkdfDerivedKey(baseKey: keyData, nonce: nonce, ts: ts)
-        defer { secureZeroData(&derivedKey) }
+        // For v2h: mirror the HKDF derivation used in create() so the effective
+        // verification key matches.  For v1/v2/v2a/v2d: use the raw key as before.
+        var effectiveKey: Data
+        if sigVer == "v2h" {
+            effectiveKey = Self.hkdfDerivedKey(baseKey: keyData, nonce: nonce, ts: ts)
+        } else {
+            effectiveKey = keyData
+        }
+        defer { secureZeroData(&effectiveKey) }
         guard let canonicalPayload = try? Self.canonicalJSONString(from: payload) else {
             return false
         }
@@ -480,7 +503,7 @@ public struct ReportEnvelope: Codable, Sendable {
         guard bindingObservation.isConsistent else {
             return false
         }
-        let expectedSignature = Self.hmacHex(message: signatureData, keyData: derivedKey)
+        let expectedSignature = Self.hmacHex(message: signatureData, keyData: effectiveKey)
         return timingSafeCompare(expectedSignature, signature)
     }
 
@@ -761,8 +784,9 @@ public struct ReportEnvelope: Codable, Sendable {
         return derived.withUnsafeBytes { Data($0) }
     }
 
-    private static func defaultBindingMode(signatureProviderPresent: Bool) -> String {
-        signatureProviderPresent ? "external_signature_provider_v1" : "plain_hmac_v1"
+    private static func defaultBindingMode(signatureProviderPresent: Bool, sigVer: String = "v2h") -> String {
+        if signatureProviderPresent { return "external_signature_provider_v1" }
+        return sigVer == "v2h" ? "hkdf_hmac_v1" : "plain_hmac_v1"
     }
 
     private static func bindingDigestHex(for signatureInputData: Data) -> String {
@@ -775,6 +799,8 @@ public struct ReportEnvelope: Codable, Sendable {
 
     private static func isBindingModeCompatible(_ mode: String, sigVer: String) -> Bool {
         switch mode {
+        case "hkdf_hmac_v1":
+            return sigVer == "v2h"
         case "plain_hmac_v1":
             return sigVer == "v1" || sigVer == "v2" || sigVer == "v2d"
         case "plain_hmac_fallback_v1":
@@ -870,6 +896,8 @@ public struct ReportEnvelope: Codable, Sendable {
 
     private func inferredBindingMode(for signatureVersion: String) -> String {
         switch signatureVersion {
+        case "v2h":
+            return "hkdf_hmac_v1"
         case "v2a":
             return "armor_request_binding_sha256_v1"
         case "v2d":

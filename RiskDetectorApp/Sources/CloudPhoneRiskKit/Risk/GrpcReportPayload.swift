@@ -304,6 +304,8 @@ extension ReportEnvelope {
 
     private static func signatureBindingMode(for signatureVersion: String) -> String {
         switch signatureVersion {
+        case "v2h":
+            return "hkdf_derived_request_bound"
         case "v2a":
             return "armor_runtime_derived_request_bound"
         case "v2d":

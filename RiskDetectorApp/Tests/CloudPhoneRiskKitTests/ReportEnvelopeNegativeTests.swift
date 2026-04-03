@@ -246,7 +246,8 @@ final class ReportEnvelopeNegativeTests: XCTestCase {
 
         XCTAssertTrue(observation.isPresent)
         XCTAssertTrue(observation.isConsistent)
-        XCTAssertEqual(observation.mode, "plain_hmac_v1")
+        // v2h (default since SDK 5.1) uses HKDF per-request key derivation
+        XCTAssertEqual(observation.mode, "hkdf_hmac_v1")
         XCTAssertEqual(observation.envelopeDigestHex, observation.recomputedDigestHex)
     }
 
