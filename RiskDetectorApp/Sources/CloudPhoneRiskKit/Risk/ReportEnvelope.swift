@@ -282,6 +282,12 @@ public struct ReportEnvelope: Codable, Sendable {
         let nonce = UUID().uuidString
         let ts = currentTimestampMillis()
 
+        // Client-side nonce deduplication: guard against UUID-generator
+        // tampering or accidental envelope reuse within the replay window.
+        guard ClientNonceWindow.shared.registerIfNew(nonce, ts: ts) else {
+            throw ReportEnvelopeError.replayDetected
+        }
+
         let effectivePayload: Data
         if let mapping = fieldMapping {
             effectivePayload = try PayloadFieldObfuscator.obfuscate(jsonData: payloadData, mapping: mapping)
@@ -308,11 +314,17 @@ public struct ReportEnvelope: Codable, Sendable {
         if let signatureProvider {
             signatureHex = try signatureProvider(signatureData)
         } else {
-            guard var keyData = signingKey.data(using: .utf8) else {
+            guard var baseKeyData = signingKey.data(using: .utf8) else {
                 throw ReportEnvelopeError.signingFailed
             }
-            defer { secureZeroData(&keyData) }
-            signatureHex = hmacHex(message: signatureData, keyData: keyData)
+            defer { secureZeroData(&baseKeyData) }
+            // HKDF per-request key derivation: effective key = HKDF(IKM=signingKey,
+            // salt=nonce|ts, info="cprisk.report.hmac.v2").  Even if two envelopes
+            // share the same static signing key their HMAC keys differ, preventing
+            // statistical key recovery from a corpus of (input, HMAC) pairs.
+            var derivedKey = Self.hkdfDerivedKey(baseKey: baseKeyData, nonce: nonce, ts: ts)
+            defer { secureZeroData(&derivedKey) }
+            signatureHex = hmacHex(message: signatureData, keyData: derivedKey)
         }
 
         return ReportEnvelope(
@@ -441,8 +453,10 @@ public struct ReportEnvelope: Codable, Sendable {
 
     /// 验签（内部实现，使用 Data 密钥）
     private func verifySignature(keyData: Data) -> Bool {
-        var keyDataCopy = keyData
-        defer { secureZeroData(&keyDataCopy) }
+        // Mirror the per-request HKDF derivation used in create() so that the
+        // effective verification key matches the one used during signing.
+        var derivedKey = Self.hkdfDerivedKey(baseKey: keyData, nonce: nonce, ts: ts)
+        defer { secureZeroData(&derivedKey) }
         guard let canonicalPayload = try? Self.canonicalJSONString(from: payload) else {
             return false
         }
@@ -466,7 +480,7 @@ public struct ReportEnvelope: Codable, Sendable {
         guard bindingObservation.isConsistent else {
             return false
         }
-        let expectedSignature = Self.hmacHex(message: signatureData, keyData: keyDataCopy)
+        let expectedSignature = Self.hmacHex(message: signatureData, keyData: derivedKey)
         return timingSafeCompare(expectedSignature, signature)
     }
 
@@ -723,6 +737,28 @@ public struct ReportEnvelope: Codable, Sendable {
 
     private static func hmacHex(message: Data, keyData: Data) -> String {
         CPRiskMessageAuth.authenticationCodeHex(for: message, keyData: keyData)
+    }
+
+    /// Derives a 32-byte per-request HMAC key using HKDF-SHA-256.
+    ///
+    /// `IKM`  = static `baseKey` provided by the caller
+    /// `salt` = `"<nonce>|<ts>"` — unique per envelope, prevents key reuse
+    /// `info` = `"cprisk.report.hmac.v2"` — domain-separates this derivation
+    ///          from any other HKDF usage that might share the same IKM
+    ///
+    /// This ensures that even if two envelopes are signed with the same static
+    /// key, the effective HMAC key is unique per (nonce, ts) pair, making
+    /// statistical key-recovery attacks impractical.
+    private static func hkdfDerivedKey(baseKey: Data, nonce: String, ts: Int64) -> Data {
+        let salt = Data("\(nonce)|\(ts)".utf8)
+        let info = Data("cprisk.report.hmac.v2".utf8)
+        let derived = HKDF<SHA256>.deriveKey(
+            inputKeyMaterial: SymmetricKey(data: baseKey),
+            salt: salt,
+            info: info,
+            outputByteCount: 32
+        )
+        return derived.withUnsafeBytes { Data($0) }
     }
 
     private static func defaultBindingMode(signatureProviderPresent: Bool) -> String {

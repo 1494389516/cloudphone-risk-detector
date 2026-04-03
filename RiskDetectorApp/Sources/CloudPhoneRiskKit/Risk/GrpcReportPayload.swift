@@ -208,6 +208,31 @@ extension ReportEnvelope {
         return try JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys])
     }
 
+    // MARK: - Compressed Upload
+
+    /// Returns the serialised request body compressed with zlib deflate (RFC 1950).
+    ///
+    /// The **signature covers the uncompressed canonical payload** so the server
+    /// must decompress the body before verifying.  Set the HTTP header
+    /// `Content-Encoding: zlib` when transmitting the compressed bytes.
+    ///
+    /// If zlib compression would *increase* the payload size (e.g. very small
+    /// or already-compressed payloads) the raw uncompressed bytes are returned
+    /// instead and `isCompressed` is `false`.
+    ///
+    /// - Returns: `(data, isCompressed)` — `isCompressed` indicates whether
+    ///   `data` is zlib-compressed (`true`) or plain JSON (`false`).
+    public func toCompressedGrpcRequestBytes(
+        context: GrpcReportContext? = nil
+    ) throws -> (data: Data, isCompressed: Bool) {
+        let raw = try toGrpcRequestBytes(context: context)
+        if let compressed = try? (raw as NSData).compressed(using: .zlib) as Data,
+           compressed.count < raw.count {
+            return (compressed, true)
+        }
+        return (raw, false)
+    }
+
     private func buildOutputPathIntegritySignal(payloadSha256: Data) -> [String: String] {
         let recomputed = GrpcReportPayload.computePayloadSha256(
             nonce: nonce,
