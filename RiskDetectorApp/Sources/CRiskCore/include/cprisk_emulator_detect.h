@@ -86,6 +86,24 @@ int cprisk_emulator_score(uint32_t flags);
  */
 int cprisk_emulator_is_hostile(uint32_t flags);
 
+/**
+ * Lightweight re-probe: runs only the two cheapest invariant checks
+ * (kern.ostype sysctl and stack-pointer address) WITHOUT updating the cache.
+ *
+ * Call from the signing critical path to detect cache-patching attacks:
+ * an attacker who zeroes `s_cached_flags` must also handle this re-probe.
+ * Returns a flag bitmask using the same CPRISK_EMU_FLAG_* constants.
+ */
+uint32_t cprisk_emulator_quick_probe(void);
+
+/**
+ * OR the CPRISK_EMU_FLAG_WATCHDOG_STUCK bit into the cached result.
+ *
+ * Called by the VM sync barrier when a stuck watchdog is first detected.
+ * Safe to call multiple times; idempotent once the bit is set.
+ */
+void cprisk_emulator_mark_watchdog_stuck(void);
+
 #ifdef __cplusplus
 }
 #endif

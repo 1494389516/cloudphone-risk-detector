@@ -104,6 +104,17 @@ uint32_t cprisk_vm_sync_barrier_get_watchdog(void);
  */
 int cprisk_vm_sync_barrier_watchdog_stuck(const cprisk_vm_sync_barrier_ctx_t *ctx);
 
+/**
+ * Returns non-zero when ANY VM frame has detected a stuck watchdog since
+ * process start.  Uses a process-global atomic so the result persists even
+ * after the originating VM frame is torn down.
+ *
+ * Used by the signing layer to poison the HKDF derivation when the watchdog
+ * is absent (strong unidbg indicator), causing the resulting HMAC to differ
+ * from what the server expects — silently and without an observable crash.
+ */
+uint32_t cprisk_vm_sync_barrier_global_stuck(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -10,6 +10,7 @@
  */
 
 #include "include/cprisk_vm_sync_barrier.h"
+#include "include/cprisk_emulator_detect.h"
 #include "include/CRiskCore.h"
 
 #include <stdatomic.h>
@@ -18,6 +19,14 @@
 /* ── Global watchdog counter (written by watchdog thread) ────────────────── */
 
 static _Atomic(uint32_t) s_watchdog_counter = 0u;
+
+/*
+ * Process-global stuck flag.
+ * Set to 1 the first time any VM frame detects a stuck watchdog.
+ * Never reset — once stuck, always stuck (a real device would have threads).
+ * Read by cprisk_vm_sync_barrier_global_stuck() for signing-layer poison.
+ */
+static _Atomic(uint32_t) s_global_stuck = 0u;
 
 void cprisk_vm_sync_barrier_note_watchdog_tick(void) {
     /* Relaxed store: the watchdog and the VM run on different threads;
@@ -43,6 +52,10 @@ void cprisk_vm_sync_barrier_init(cprisk_vm_sync_barrier_ctx_t *ctx) {
 int cprisk_vm_sync_barrier_watchdog_stuck(const cprisk_vm_sync_barrier_ctx_t *ctx) {
     if (!ctx) return 0;
     return (int)ctx->watchdog_stuck;
+}
+
+uint32_t cprisk_vm_sync_barrier_global_stuck(void) {
+    return atomic_load_explicit(&s_global_stuck, memory_order_acquire);
 }
 
 /*
@@ -99,10 +112,20 @@ int cprisk_vm_sync_barrier_step(cprisk_vm_sync_barrier_ctx_t *ctx,
         ctx->no_advance_count += 1u;
         if (ctx->no_advance_count >= CPRISK_VM_SYNC_BARRIER_STUCK_THRESHOLD) {
             ctx->watchdog_stuck = 1u;
+            /* Propagate to the process-global flag so the signing layer can
+             * read it without access to the VM frame context. */
+            atomic_store_explicit(&s_global_stuck, 1u, memory_order_release);
+            /* Also update the emulator-detect cache so the signing-layer
+             * HKDF poison path sees the stuck flag even if the full probe
+             * ran before the watchdog was detected as stuck. */
+            cprisk_emulator_mark_watchdog_stuck();
         }
     } else {
         ctx->no_advance_count = 0u;
         ctx->watchdog_stuck   = 0u;
+        /* Note: s_global_stuck is intentionally NOT cleared here.  On a real
+         * device the watchdog always advances; if it ever stopped advancing
+         * (stuck=1) then recovered, that itself is anomalous. */
     }
 
     const uint32_t mix = sb_avalanche32(delta_wdog ^ pc ^ ctx->step_counter ^ 0xBAADF00Du);

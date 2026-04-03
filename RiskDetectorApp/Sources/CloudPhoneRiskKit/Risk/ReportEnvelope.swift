@@ -112,14 +112,25 @@ public struct ReportEnvelope: Codable, Sendable {
         /// `v2a` — armor CRiskCore-derived request binding
         public var signatureVersion: String = "v2h"
 
+        /// When `true`, `create()` rejects requests that lack an `attestationKeyId`
+        /// and `toGrpcRequestBytes()` / `toCompressedGrpcRequestBytes()` reject
+        /// envelopes where `hasHardwareAttestation == false`.
+        ///
+        /// Set to `true` for high-risk operations (payment, account takeover
+        /// prevention) where a hardware trust root is mandatory.
+        /// Default: `false` — attestation is optional and advisory.
+        public var requireHardwareAttestation: Bool = false
+
         public init(
             nonceExpirationMillis: Int64 = 300_000,
             timeDriftToleranceMillis: Int64 = 300_000,
-            signatureVersion: String = "v2h"
+            signatureVersion: String = "v2h",
+            requireHardwareAttestation: Bool = false
         ) {
             self.nonceExpirationMillis = nonceExpirationMillis
             self.timeDriftToleranceMillis = timeDriftToleranceMillis
             self.signatureVersion = signatureVersion
+            self.requireHardwareAttestation = requireHardwareAttestation
         }
     }
 
@@ -296,6 +307,15 @@ public struct ReportEnvelope: Codable, Sendable {
             throw ReportEnvelopeError.timestampOutOfRange
         }
 
+        // Attestation enforcement: if the caller requires a hardware trust root,
+        // the attestationKeyId must be provided at create() time (it is included
+        // in the signature domain).  The assertion itself is added post-create via
+        // withAttestation(); callers should call envelope.requireAttestation()
+        // before transmitting to ensure it is complete.
+        if config.requireHardwareAttestation && (attestationKeyId == nil || attestationKeyId!.isEmpty) {
+            throw ReportEnvelopeError.attestationIncomplete
+        }
+
         // Client-side nonce deduplication: guard against UUID-generator
         // tampering or accidental envelope reuse within the replay window.
         guard ClientNonceWindow.shared.registerIfNew(nonce, ts: ts) else {
@@ -440,6 +460,25 @@ public struct ReportEnvelope: Codable, Sendable {
             throw ReportEnvelopeError.invalidPayload
         }
         return try fromJSON(data)
+    }
+
+    // MARK: - Attestation Enforcement
+
+    /// Throws `.attestationIncomplete` if this envelope does not carry a complete
+    /// hardware attestation pair (`attestationKeyId` + `attestationAssertion`).
+    ///
+    /// Call this **before** `toGrpcRequestBytes()` when transmitting envelopes
+    /// for high-risk operations that mandate App Attest hardware trust roots:
+    /// ```swift
+    /// let envelope = try ReportEnvelope.create(..., attestationKeyId: keyId)
+    ///     .withAttestation(attestationKeyId: keyId, assertion: assertion)
+    /// try envelope.requireAttestation()   // throws if assertion missing
+    /// let bytes = try envelope.toGrpcRequestBytes()
+    /// ```
+    public func requireAttestation() throws {
+        guard hasHardwareAttestation else {
+            throw ReportEnvelopeError.attestationIncomplete
+        }
     }
 
     // MARK: - Verification
@@ -766,15 +805,31 @@ public struct ReportEnvelope: Codable, Sendable {
     ///
     /// `IKM`  = static `baseKey` provided by the caller
     /// `salt` = `"<nonce>|<ts>"` — unique per envelope, prevents key reuse
-    /// `info` = `"cprisk.report.hmac.v2"` — domain-separates this derivation
-    ///          from any other HKDF usage that might share the same IKM
+    /// `info` = `"cprisk.report.hmac.v2h"` || BE32(emuFlags)
     ///
-    /// This ensures that even if two envelopes are signed with the same static
-    /// key, the effective HMAC key is unique per (nonce, ts) pair, making
-    /// statistical key-recovery attacks impractical.
+    /// ## Emulator-probe poisoning
+    /// Emulator detection results (bitmask from C-layer probes) are mixed into
+    /// the HKDF `info` field.  On a real device all flags are 0 — the info is
+    /// effectively `"cprisk.report.hmac.v2h\0\0\0\0"` and the server verifies
+    /// successfully.  On unidbg at least one flag bit is set → info changes →
+    /// derived key differs → HMAC mismatch → server rejects, silently.
+    ///
+    /// Two probes are combined:
+    /// - `cprisk_emulator_probe()` — cached; runs full 8-check suite at VM init.
+    /// - `cprisk_emulator_quick_probe()` — live, uncached re-probe of 3 fast checks
+    ///   (kern.ostype, stack address, watchdog stuck).  Resists attacks where the
+    ///   attacker zeroes the probe cache between VM init and signing.
     private static func hkdfDerivedKey(baseKey: Data, nonce: String, ts: Int64) -> Data {
         let salt = Data("\(nonce)|\(ts)".utf8)
-        let info = Data("cprisk.report.hmac.v2".utf8)
+
+        // Combine cached probe with live re-probe; OR so any set bit poisons.
+        let emuCached = cprisk_emulator_probe()
+        let emuQuick  = cprisk_emulator_quick_probe()
+        let emuFlags  = emuCached | emuQuick
+
+        var info = Data("cprisk.report.hmac.v2h".utf8)
+        withUnsafeBytes(of: emuFlags.bigEndian) { info.append(contentsOf: $0) }
+
         let derived = HKDF<SHA256>.deriveKey(
             inputKeyMaterial: SymmetricKey(data: baseKey),
             salt: salt,

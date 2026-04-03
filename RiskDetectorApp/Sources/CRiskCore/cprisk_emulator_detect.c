@@ -10,6 +10,7 @@
  */
 
 #include "include/cprisk_emulator_detect.h"
+#include "include/cprisk_vm_sync_barrier.h"
 #include "include/CRiskCore.h"
 
 #include <stdatomic.h>
@@ -285,9 +286,54 @@ uint32_t cprisk_emulator_probe(void) {
 
 #endif /* __APPLE__ && !SIMULATOR */
 
-    /* Cache the result — WATCHDOG_STUCK may be OR'd in later */
-    atomic_store_explicit(&s_cached_flags, flags, memory_order_relaxed);
+    /* Incorporate global watchdog stuck state — set by the VM sync barrier
+     * the first time it detects no watchdog advancement. */
+    if (cprisk_vm_sync_barrier_global_stuck())
+        flags |= CPRISK_EMU_FLAG_WATCHDOG_STUCK;
+
+    atomic_store_explicit(&s_cached_flags, flags, memory_order_release);
     return flags;
+}
+
+uint32_t cprisk_emulator_quick_probe(void) {
+    /*
+     * Re-run only the two lightest probes — no malloc, no syscall with side
+     * effects.  Result is NOT cached so an attacker who zeroed s_cached_flags
+     * must also defeat this live check on every signing call.
+     *
+     * Returns a bitmask using the same CPRISK_EMU_FLAG_* constants.
+     */
+    uint32_t flags = 0u;
+#if defined(__APPLE__) && !TARGET_OS_SIMULATOR
+    if (!probe_ostype())
+        flags |= CPRISK_EMU_FLAG_OSTYPE_NOT_DARWIN;
+    if (!probe_stack_address())
+        flags |= CPRISK_EMU_FLAG_LOW_STACK_ADDR;
+    if (cprisk_vm_sync_barrier_global_stuck())
+        flags |= CPRISK_EMU_FLAG_WATCHDOG_STUCK;
+#endif
+    return flags;
+}
+
+void cprisk_emulator_mark_watchdog_stuck(void) {
+    /* OR in the stuck flag without disturbing other cached bits.
+     * Uses a compare-and-swap loop so we don't clobber 0xFFFFFFFF
+     * (not-yet-computed sentinel) — in that case the full probe will
+     * incorporate the stuck flag via cprisk_vm_sync_barrier_global_stuck(). */
+    uint32_t current = atomic_load_explicit(&s_cached_flags, memory_order_relaxed);
+    while (current != 0xFFFFFFFFu) {
+        if (current & CPRISK_EMU_FLAG_WATCHDOG_STUCK)
+            return; /* already set */
+        if (atomic_compare_exchange_weak_explicit(
+                &s_cached_flags,
+                &current,
+                current | CPRISK_EMU_FLAG_WATCHDOG_STUCK,
+                memory_order_release,
+                memory_order_relaxed))
+            return;
+    }
+    /* Cache not yet populated; the full probe will pick it up from
+     * cprisk_vm_sync_barrier_global_stuck() when it eventually runs. */
 }
 
 int cprisk_emulator_score(uint32_t flags) {
