@@ -122,10 +122,10 @@ int cprisk_vm_sync_barrier_step(cprisk_vm_sync_barrier_ctx_t *ctx,
         }
     } else {
         ctx->no_advance_count = 0u;
-        ctx->watchdog_stuck   = 0u;
-        /* Note: s_global_stuck is intentionally NOT cleared here.  On a real
-         * device the watchdog always advances; if it ever stopped advancing
-         * (stuck=1) then recovered, that itself is anomalous. */
+        /* Once stuck, stay stuck per-frame too — matches the global semantics.
+         * On a real device the watchdog never stalls long enough to trip the
+         * threshold; if it ever did then recovered, that itself is anomalous
+         * and should remain flagged for the lifetime of the frame. */
     }
 
     const uint32_t mix = sb_avalanche32(delta_wdog ^ pc ^ ctx->step_counter ^ 0xBAADF00Du);

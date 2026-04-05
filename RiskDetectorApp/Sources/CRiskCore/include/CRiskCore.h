@@ -15,6 +15,8 @@
 #include "cprisk_vm_interpreter.h"
 #include "cprisk_crypto_trace.h"
 #include "cprisk_cff.h"
+#include "cprisk_emulator_detect.h"
+#include "cprisk_vm_sync_barrier.h"
 
 #ifdef __cplusplus
 extern "C" {

@@ -156,8 +156,9 @@ static int probe_ostype(void) {
     xor_decode(expected_enc, sizeof(expected_enc), expected, 0x55u);
 
     char buf[64] = {0};
-    size_t bsz = sizeof(buf);
+    size_t bsz = sizeof(buf) - 1; /* leave room for defensive null-terminator */
     if (sysctlbyname(name, buf, &bsz, NULL, 0) != 0) return 0; /* query failed */
+    buf[sizeof(buf) - 1] = '\0'; /* ensure null-termination regardless of kernel output */
     return (strcmp(buf, expected) == 0) ? 1 : 0;
 }
 
@@ -171,7 +172,15 @@ static int probe_thread_count(void) {
     thread_act_array_t list = NULL;
     mach_msg_type_number_t cnt = 0;
     kern_return_t kr = task_threads(mach_task_self(), &list, &cnt);
-    if (kr != KERN_SUCCESS) return 1; /* error — treat as ok to avoid false positives */
+    if (kr != KERN_SUCCESS) {
+        /* Defensive cleanup: kernel may partially populate list on failure. */
+        if (list != NULL && cnt > 0) {
+            vm_deallocate(mach_task_self(),
+                          (vm_address_t)list,
+                          (vm_size_t)cnt * sizeof(thread_t));
+        }
+        return 1; /* error — treat as ok to avoid false positives */
+    }
     int n = (int)cnt;
     for (int i = 0; i < n; i++)
         mach_port_deallocate(mach_task_self(), list[i]);
