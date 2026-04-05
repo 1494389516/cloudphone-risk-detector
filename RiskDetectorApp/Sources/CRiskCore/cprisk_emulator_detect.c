@@ -337,7 +337,7 @@ void cprisk_emulator_mark_watchdog_stuck(void) {
      * Uses a compare-and-swap loop so we don't clobber 0xFFFFFFFF
      * (not-yet-computed sentinel) — in that case the full probe will
      * incorporate the stuck flag via cprisk_vm_sync_barrier_global_stuck(). */
-    uint32_t current = atomic_load_explicit(&s_cached_flags, memory_order_relaxed);
+    uint32_t current = atomic_load_explicit(&s_cached_flags, memory_order_acquire);
     while (current != 0xFFFFFFFFu) {
         if (current & CPRISK_EMU_FLAG_WATCHDOG_STUCK)
             return; /* already set */
