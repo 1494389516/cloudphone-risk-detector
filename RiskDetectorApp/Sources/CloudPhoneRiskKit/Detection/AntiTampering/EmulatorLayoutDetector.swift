@@ -37,6 +37,9 @@ import Foundation
 /// Each signal contributes a partial score; the composite score is capped at
 /// 60 to act as one factor among several in the overall risk assessment.
 struct EmulatorLayoutDetector: Detector {
+    private static let vmRegionBasicInfoCount64 = mach_msg_type_number_t(
+        MemoryLayout<vm_region_basic_info_data_64_t>.stride / MemoryLayout<natural_t>.stride
+    )
 
     // MARK: - Score constants
 
@@ -150,15 +153,16 @@ struct EmulatorLayoutDetector: Detector {
         var count = 0
         var size: vm_size_t = 0
         var info = vm_region_basic_info_data_64_t()
-        var infoCount = mach_msg_type_number_t(VM_REGION_BASIC_INFO_COUNT_64)
+        var infoCount = Self.vmRegionBasicInfoCount64
         var objectName: mach_port_t = 0
 
         let maxIterations = 2000
         var iterations = 0
 
         while iterations < maxIterations {
+            infoCount = Self.vmRegionBasicInfoCount64
             let kr = withUnsafeMutablePointer(to: &info) { infoPtr in
-                infoPtr.withMemoryRebound(to: Int32.self, capacity: Int(VM_REGION_BASIC_INFO_COUNT_64)) { rawPtr in
+                infoPtr.withMemoryRebound(to: Int32.self, capacity: Int(Self.vmRegionBasicInfoCount64)) { rawPtr in
                     vm_region_64(
                         mach_task_self_,
                         &address,

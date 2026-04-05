@@ -6,7 +6,8 @@ enum TestFixtures {
 
     static func makeDeviceFingerprint(
         isSimulator: Bool = false,
-        hardwareMachine: String? = "iPhone15,3"
+        hardwareMachine: String? = "iPhone15,3",
+        kernelBuild: String? = "21A360"
     ) -> DeviceFingerprint {
         DeviceFingerprint(
             systemName: "iOS",
@@ -22,13 +23,18 @@ enum TestFixtures {
             screenScale: 3.0,
             hardwareMachine: hardwareMachine,
             hardwareModel: "D73AP",
-            isSimulator: isSimulator
+            isSimulator: isSimulator,
+            kernelBuild: kernelBuild
         )
     }
 
     static func makeNetworkSignals(
         vpnActive: Bool = false,
-        proxyEnabled: Bool = false
+        proxyEnabled: Bool = false,
+        mcc: String? = nil,
+        mnc: String? = nil,
+        batteryLevel: Double? = nil,
+        batteryState: String? = nil
     ) -> NetworkSignals {
         NetworkSignals(
             interfaceType: InterfaceTypeSignal(value: "wifi", method: "NWPathMonitor"),
@@ -45,7 +51,11 @@ enum TestFixtures {
                 method: "CFNetworkCopySystemProxySettings",
                 evidence: proxyEnabled ? ["http_proxy": "127.0.0.1:8080"] : nil,
                 confidence: .weak
-            )
+            ),
+            mcc: mcc,
+            mnc: mnc,
+            batteryLevel: batteryLevel,
+            batteryState: batteryState
         )
     }
 

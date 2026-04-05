@@ -25,6 +25,20 @@ public struct RiskReportDTO: Codable, Sendable {
     public var imuMagnitude: Double?
     public var imuVariance: Double?
     public var touchForceVar: Double?
+    public var mcc: String?
+    public var mnc: String?
+
+    /// 系统启动时间戳（Unix 秒，CR-006）
+    /// 计算方式：Date().timeIntervalSince1970 - ProcessInfo.processInfo.systemUptime
+    public var bootTime: Double?
+    /// 应用安装时间戳（Unix 秒，CR-006）
+    /// 来自 BundleInfo.shared.installDate
+    public var installDate: Double?
+
+    /// Battery level (0.0 to 1.0). Nil if monitoring is disabled or unavailable (CR-004).
+    public var batteryLevel: Double?
+    /// Battery state: "charging" / "unplugged" / "full" / "unknown". Nil if monitoring is disabled or unavailable (CR-004).
+    public var batteryState: String?
 
     public var signals: [RiskSignal]
 
@@ -57,6 +71,12 @@ public struct RiskReportDTO: Codable, Sendable {
         imuMagnitude: Double? = nil,
         imuVariance: Double? = nil,
         touchForceVar: Double? = nil,
+        mcc: String? = nil,
+        mnc: String? = nil,
+        bootTime: Double? = nil,
+        installDate: Double? = nil,
+        batteryLevel: Double? = nil,
+        batteryState: String? = nil,
         signals: [RiskSignal],
         hardSignals: [SignalItemDTO],
         softSignals: [SignalItemDTO],
@@ -83,6 +103,12 @@ public struct RiskReportDTO: Codable, Sendable {
         self.imuMagnitude = imuMagnitude
         self.imuVariance = imuVariance
         self.touchForceVar = touchForceVar
+        self.mcc = mcc
+        self.mnc = mnc
+        self.bootTime = bootTime
+        self.installDate = installDate
+        self.batteryLevel = batteryLevel
+        self.batteryState = batteryState
         self.signals = signals
         self.hardSignals = hardSignals
         self.softSignals = softSignals
@@ -364,6 +390,12 @@ public enum RiskReportMapper {
             imuMagnitude: payload.imuMagnitude,
             imuVariance: payload.imuVariance,
             touchForceVar: payload.touchForceVar,
+            mcc: payload.mcc ?? payload.network.mcc,
+            mnc: payload.mnc ?? payload.network.mnc,
+            bootTime: payload.bootTime,
+            installDate: payload.installDate,
+            batteryLevel: payload.batteryLevel ?? payload.network.batteryLevel,
+            batteryState: payload.batteryState ?? payload.network.batteryState,
             signals: payload.signals,
             hardSignals: hard,
             softSignals: soft,
@@ -379,6 +411,7 @@ public enum RiskReportMapper {
             detectedMethods: report.detectedMethods,
             details: ""
         )
+        let network = NetworkSignals.current()
         return RiskReportDTO(
             sdkVersion: nil,
             generatedAt: ISO8601DateFormatter().string(from: Date()),
@@ -387,10 +420,16 @@ public enum RiskReportMapper {
             isHighRisk: report.isHighRisk,
             summary: report.summary,
             jailbreak: jailbreak,
-            network: NetworkSignals.current(),
+            network: network,
             behavior: emptyBehaviorSignals(),
             server: nil,
             local: nil,
+            mcc: network.mcc,
+            mnc: network.mnc,
+            bootTime: nil,
+            installDate: nil,
+            batteryLevel: network.batteryLevel,
+            batteryState: network.batteryState,
             signals: [],
             hardSignals: [
                 SignalItemDTO(id: "jailbreak", title: "越狱", kind: .hard, detected: jailbreak.isJailbroken),
@@ -431,6 +470,7 @@ public enum RiskReportMapper {
         )
         let server = legacyServerSignals(from: object["server"] as? [String: Any])
         let graphPayload = legacyGraphPayload(from: object["graphPayload"] as? [String: Any])
+        let network = NetworkSignals.current()
 
         var softSignals: [SignalItemDTO] = []
         if let server {
@@ -512,7 +552,7 @@ public enum RiskReportMapper {
             summary: summary,
             tamperedCount: object["tamperedCount"] as? Int,
             jailbreak: jailbreak,
-            network: NetworkSignals.current(),
+            network: network,
             behavior: emptyBehaviorSignals(),
             server: server,
             local: nil,
@@ -522,6 +562,12 @@ public enum RiskReportMapper {
             imuMagnitude: object["imuMagnitude"] as? Double,
             imuVariance: object["imuVariance"] as? Double,
             touchForceVar: object["touchForceVar"] as? Double,
+            mcc: network.mcc,
+            mnc: network.mnc,
+            bootTime: object["bootTime"] as? Double,
+            installDate: object["installDate"] as? Double,
+            batteryLevel: network.batteryLevel,
+            batteryState: network.batteryState,
             signals: [],
             hardSignals: [
                 SignalItemDTO(id: "jailbreak", title: "越狱", kind: .hard, detected: jailbreak.isJailbroken),
@@ -776,6 +822,12 @@ private protocol PayloadMirrorProtocol {
     var imuMagnitude: Double? { get }
     var imuVariance: Double? { get }
     var touchForceVar: Double? { get }
+    var mcc: String? { get }
+    var mnc: String? { get }
+    var bootTime: Double? { get }
+    var installDate: Double? { get }
+    var batteryLevel: Double? { get }
+    var batteryState: String? { get }
     var signals: [RiskSignal] { get }
     var server: ServerSignals? { get }
     var local: LocalSignals? { get }
@@ -806,6 +858,12 @@ private struct PayloadMirror: Decodable {
     var imuMagnitude: Double?
     var imuVariance: Double?
     var touchForceVar: Double?
+    var mcc: String?
+    var mnc: String?
+    var bootTime: Double?
+    var installDate: Double?
+    var batteryLevel: Double?
+    var batteryState: String?
     var signals: [RiskSignal]
     var server: ServerSignals?
     var local: LocalSignals?
@@ -839,6 +897,12 @@ private struct CompactPayloadMirror: Decodable {
     var imuMagnitude: Double?
     var imuVariance: Double?
     var touchForceVar: Double?
+    var mcc: String?
+    var mnc: String?
+    var bootTime: Double?
+    var installDate: Double?
+    var batteryLevel: Double?
+    var batteryState: String?
     var signals: [RiskSignal]
     var server: ServerSignals?
     var local: LocalSignals?
@@ -864,6 +928,12 @@ private struct CompactPayloadMirror: Decodable {
         case imuMagnitude = "im"
         case imuVariance = "iv"
         case touchForceVar = "tf"
+        case mcc = "mc"
+        case mnc = "mn"
+        case bootTime = "bt"
+        case installDate = "id"
+        case batteryLevel = "bl"
+        case batteryState = "bs"
         case signals = "sg"
         case server = "sr"
         case local = "lc"

@@ -138,6 +138,30 @@ final class EnvironmentConsistencyProvider: RiskSignalProvider {
                 layer: 3,
                 weightHint: 50
             ),
+            RiskSignal(
+                id: SignalID.batteryLevelStatic,
+                category: "device",
+                score: 0,
+                evidence: [
+                    "level_range": String(format: "%.4f", levelRange),
+                    "count": "\(history.count)",
+                ],
+                state: .soft(confidence: 0.7),
+                layer: 3,
+                weightHint: 50
+            ),
+            RiskSignal(
+                id: SignalID.noChargeStateChange,
+                category: "device",
+                score: 0,
+                evidence: [
+                    "state": "charging",
+                    "count": "\(history.count)",
+                ],
+                state: .soft(confidence: 0.68),
+                layer: 3,
+                weightHint: 45
+            ),
         ]
     }
 

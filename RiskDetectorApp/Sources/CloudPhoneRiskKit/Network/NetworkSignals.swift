@@ -1,7 +1,11 @@
 import CFNetwork
+import CoreTelephony
 import Darwin
 import Foundation
 import Network
+#if canImport(UIKit)
+import UIKit
+#endif
 
 public enum SignalConfidence: String, Codable, Sendable {
     case weak
@@ -51,6 +55,13 @@ public struct NetworkSignals: Codable, Sendable {
     public var isConstrained: Bool
     public var vpn: DetectionSignal<[String]>
     public var proxy: DetectionSignal<[String: String]>
+    public var mcc: String? = nil
+    public var mnc: String? = nil
+
+    /// Battery level (0.0 to 1.0). Nil if monitoring is disabled or unavailable.
+    public var batteryLevel: Double? = nil
+    /// Battery state: "charging" / "unplugged" / "full" / "unknown". Nil if monitoring is disabled or unavailable.
+    public var batteryState: String? = nil
 
     private enum CodingKeys: String, CodingKey {
         case interfaceType = "it"
@@ -58,6 +69,10 @@ public struct NetworkSignals: Codable, Sendable {
         case isConstrained = "ic"
         case vpn = "vp"
         case proxy = "px"
+        case mcc = "mc"
+        case mnc = "mn"
+        case batteryLevel = "bl"
+        case batteryState = "bs"
     }
 
     public var isVPNActive: Bool { vpn.detected }
@@ -78,6 +93,20 @@ public struct NetworkSignals: Codable, Sendable {
         let proxyMethod = "CFNetworkCopySystemProxySettings"
         #endif
 
+        // Fetch MCC/MNC from CoreTelephony. Use String? to preserve leading zeros (e.g., "001").
+        var mcc: String?
+        var mnc: String?
+        #if os(iOS)
+        if let providers = CTTelephonyNetworkInfo().serviceSubscriberCellularProviders {
+            for (_, provider) in providers {
+                // Take the first carrier; dual-SIM devices have multiple, we report the primary.
+                mcc = provider.mobileCountryCode
+                mnc = provider.mobileNetworkCode
+                break
+            }
+        }
+        #endif
+
         let signals = NetworkSignals(
             interfaceType: InterfaceTypeSignal(value: path.interfaceType, method: "NWPathMonitor"),
             isExpensive: path.isExpensive,
@@ -93,12 +122,46 @@ public struct NetworkSignals: Codable, Sendable {
                 method: proxyMethod,
                 evidence: proxyEvidence.isEmpty ? nil : proxyEvidence,
                 confidence: .weak
-            )
+            ),
+            mcc: mcc,
+            mnc: mnc,
+            batteryLevel: nil,
+            batteryState: nil
         )
+
+        let (batteryLevel, batteryState) = Self.captureBattery()
+        // Mutate after construction to avoid repeating battery capture in every path
+        var mutableSignals = signals
+        mutableSignals.batteryLevel = batteryLevel
+        mutableSignals.batteryState = batteryState
+
         #if DEBUG
-        Logger.log("network: iface=\(signals.interfaceType.value) expensive=\(signals.isExpensive) constrained=\(signals.isConstrained) vpn=\(signals.isVPNActive) proxy=\(signals.proxyEnabled)")
+        Logger.log("network: iface=\(mutableSignals.interfaceType.value) expensive=\(mutableSignals.isExpensive) constrained=\(mutableSignals.isConstrained) vpn=\(mutableSignals.isVPNActive) proxy=\(mutableSignals.proxyEnabled) mcc=\(String(describing: mcc)) mnc=\(String(describing: mnc)) batteryLevel=\(mutableSignals.batteryLevel.map { String(format: "%.2f", $0) } ?? "nil") batteryState=\(mutableSignals.batteryState ?? "nil")")
         #endif
-        return signals
+        return mutableSignals
+    }
+
+    /// Capture battery level and state from UIDevice.
+    /// Returns (nil, nil) on non-UIKit platforms or when battery monitoring is unavailable.
+    private static func captureBattery() -> (level: Double?, state: String?) {
+        #if canImport(UIKit)
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        let rawLevel = UIDevice.current.batteryLevel
+        // batteryLevel returns -1.0 when monitoring is unavailable
+        guard rawLevel >= 0 else { return (nil, nil) }
+        let state: UIDevice.BatteryState = UIDevice.current.batteryState
+        let stateStr: String
+        switch state {
+        case .unknown: stateStr = "unknown"
+        case .unplugged: stateStr = "unplugged"
+        case .charging: stateStr = "charging"
+        case .full: stateStr = "full"
+        @unknown default: stateStr = "unknown"
+        }
+        return (Double(rawLevel), stateStr)
+        #else
+        return (nil, nil)
+        #endif
     }
 }
 

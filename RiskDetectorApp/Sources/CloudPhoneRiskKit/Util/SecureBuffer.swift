@@ -1,6 +1,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+import Security
 
 /// 敏感数据内存生命周期管理。适用于：字符串解密后的明文、电池电压采样原始值、
 /// 硬件指纹比对的中间结果、最终评分值。
@@ -161,13 +162,8 @@ final class SplitSecureBuffer {
 
         // Generate fresh random masks for each fragment.
         for i in 0..<n {
-            for j in 0..<size {
-                var r: UInt8 = 0
-                if Darwin.getentropy(&r, 1) != 0 {
-                    r = UInt8(arc4random_uniform(256))
-                }
-                masks[i][j] = r
-            }
+            let status = SecRandomCopyBytes(kSecRandomDefault, size, &masks[i])
+            precondition(status == errSecSuccess, "SplitSecureBuffer: SecRandomCopyBytes failed (\(status))")
         }
 
         // Distribute: fragment[i][j] = src[j] XOR masks[0][j] XOR ... XOR masks[n-1][j]

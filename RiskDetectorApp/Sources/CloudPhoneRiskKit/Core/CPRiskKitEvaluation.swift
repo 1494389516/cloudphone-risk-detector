@@ -135,6 +135,13 @@ extension CPRiskKit {
             }
         }
 
+        extraSignals.append(
+            contentsOf: ScenarioPolicySignalBridge.deriveSignals(
+                snapshot: snapshot,
+                existingSignals: extraSignals
+            )
+        )
+
         let policy = buildEnginePolicy(
             runtimeConfig: runtimeConfig,
             remoteConfig: remoteConfig,

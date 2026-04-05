@@ -108,7 +108,7 @@ static uint64_t derive_from_executable_path(void) {
     if (_NSGetExecutablePath(path, &sz) != 0) return 0u;
     const size_t len = strnlen(path, sizeof(path));
     if (len == 0) return 0u;
-    return smix64(fnv1a64((const uint8_t *)path, len) ^ 0x455845435041544HULL /* "EXECPATH" */);
+    return smix64(fnv1a64((const uint8_t *)path, len) ^ UINT64_C(0x455845435041544));  /* "EXECPATH" */
 }
 
 #endif /* __APPLE__ */

@@ -138,6 +138,54 @@ public enum SignalID {
     static let dylibInjectImageCountLow = ObfuscatedConstants.signalDylibInjectImageCountLow
     /// Multi-path libc spawn entry resolution mismatch (RTLD_DEFAULT / dlopen+dlsym / export trie) or prologue anomaly.
     static let ifaceSpawnPathDivergence = ObfuscatedConstants.signalIfaceSpawnPathDivergence
+
+    // MARK: - CR-001: Jailbreak + Debug + Kernel Anomaly
+
+    /// Anti-debug watchdog: is_debugged 聚合信号（traced / deny_attach / exception_port 等）
+    static let isDebugged = "is_debugged"
+    /// Frida V8/QuickJS heap 异常（大匿名 RWX 区域）
+    static let v8HeapAnomaly = ObfuscatedConstants.signalFridaJSEngineHeap
+    /// Frida 端口开放（frida_port_* 系列信号）
+    static let fridaPortOpen = "frida_port_open"
+    /// 内核 Build 指纹异常（kernelBuild 与已知云手机/模拟器 build 不一致）
+    static let kernelBuildAnomaly = "kernel_build_anomaly"
+
+    // MARK: - CR-002: Device Tamper + IDFV + MCC
+
+    /// 设备篡改综合分（来自 AntiTamperingSignalProvider 的聚合分）
+    static let deviceTamperScore = "device_tamper_score"
+    /// IDFV 重装次数异常（短时间多次重装）
+    static let idfvReinstallCount = "idfv_reinstall_count"
+    /// MCC（移动国家码）与设备归属地不一致
+    static let mccMismatch = "mcc_mismatch"
+
+    // MARK: - CR-003: Simulator + Cloud Hostname
+
+    /// 模拟器检测（targetEnvironment(simulator) 或 FingerprintDeobfuscation 命中）
+    static let isSimulator = "is_simulator"
+    /// 设备 hostname 包含云手机标识（如 cloudphone, vphone, vm 等）
+    static let hostnameContainsCloud = "hostname_contains_cloud"
+
+    // MARK: - CR-004: No Cellular + Battery Static
+
+    /// 电池电量静止（多采样期间无变化）
+    static let batteryLevelStatic = "battery_level_static"
+    /// 充电状态无变化（多采样期间）
+    static let noChargeStateChange = "no_charge_state_change"
+
+    // MARK: - CR-005: Frida Triple Stack
+
+    /// DNS 隧道检测（异常 DNS 查询模式）
+    static let dnsTunnelDetected = "dns_tunnel_detected"
+
+    // MARK: - CR-006: Time Anomaly Combo
+
+    /// 启动时间回拨（boot time 比上次记录更早）
+    static let bootTimeRollback = "boot_time_rollback"
+    /// 系统时间跳跃（短时间内大幅前进或后退）
+    static let systemTimeJump = "system_time_jump"
+    /// 安装日期异常（过新/过旧/不符合设备生命周期）
+    static let installDateUnusual = "install_date_unusual"
 }
 
 // MARK: - Signal Categories
@@ -475,6 +523,16 @@ private struct Payload: Codable {
     var imuVariance: Double?
     var touchForceVar: Double?
 
+    /// 系统启动时间戳（Unix 秒，CR-006）
+    var bootTime: Double?
+    /// 应用安装时间戳（Unix 秒，CR-006）
+    var installDate: Double?
+
+    /// Battery level (0.0 to 1.0). Nil if monitoring is disabled or unavailable (CR-004).
+    var batteryLevel: Double?
+    /// Battery state: "charging" / "unplugged" / "full" / "unknown". Nil if monitoring is disabled or unavailable (CR-004).
+    var batteryState: String?
+
     var accountId: String?
     var sessionId: String?
     var sceneTag: String?
@@ -518,6 +576,10 @@ private struct Payload: Codable {
         case imuMagnitude = "im"
         case imuVariance = "iv"
         case touchForceVar = "tf"
+        case bootTime = "bt"
+        case installDate = "id"
+        case batteryLevel = "bl"
+        case batteryState = "bs"
         case accountId = "ai"
         case sessionId = "si"
         case sceneTag = "st"
@@ -555,11 +617,17 @@ private struct Payload: Codable {
         self.local = nil
         self.challengeBinding = nil
         self.gpuName = report.signals.first(where: { $0.id == SignalID.gpuVirtual })?.evidence["gpu_name"]
-        self.kernelBuild = report.signals.first(where: { $0.id == SignalID.vphoneHardware })?.evidence["kernel"]
+        self.kernelBuild = Self.resolveKernelBuild(context: context, signals: report.signals)
         self.deviceModel = context.device.hardwareMachine ?? context.device.model
         self.imuMagnitude = nil
         self.imuVariance = nil
         self.touchForceVar = context.behavior.touch.forceVariance
+        // bootTime: Unix 时间戳 = 当前时间 - 系统运行时间
+        self.bootTime = Date().timeIntervalSince1970 - ProcessInfo.processInfo.systemUptime
+        // installDate: 应用安装时间戳
+        self.installDate = BundleInfo.shared.installDate?.timeIntervalSince1970
+        self.batteryLevel = context.network.batteryLevel
+        self.batteryState = context.network.batteryState
         self.accountId = nil
         self.sessionId = nil
         self.sceneTag = nil
@@ -587,6 +655,25 @@ private struct Payload: Codable {
         let eventTotal = signal.evidence["libc_fallback_event_total"].flatMap(UInt32.init)
         let watchdogSupported = signal.evidence["watchdog_snapshot_supported"].map { $0 == "1" }
         return (maskHex: maskHex, eventTotal: eventTotal, watchdogSupported: watchdogSupported)
+    }
+
+    private static func resolveKernelBuild(context: RiskContext, signals: [RiskSignal]) -> String? {
+        if let kernelBuild = context.device.kernelBuild, !kernelBuild.isEmpty {
+            return kernelBuild
+        }
+
+        guard let vphoneSignal = signals.first(where: { $0.id == SignalID.vphoneHardware }) else {
+            return nil
+        }
+
+        if let kernelBuild = vphoneSignal.evidence["kernel_build"], !kernelBuild.isEmpty {
+            return kernelBuild
+        }
+
+        return DeviceFingerprint.extractKernelBuild(
+            from: vphoneSignal.evidence["kernel"],
+            osVersion: nil
+        )
     }
 
     private static func buildTextSegmentIntegrityPayload() -> TextSegmentIntegrityPayload? {

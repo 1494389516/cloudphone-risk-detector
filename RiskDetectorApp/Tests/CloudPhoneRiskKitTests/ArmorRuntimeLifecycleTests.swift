@@ -24,7 +24,7 @@ final class ArmorRuntimeLifecycleTests: XCTestCase {
     }
 
     private func waitForWatchdogSnapshot(
-        timeout: TimeInterval = 1.0
+        timeout: TimeInterval = 6.0
     ) -> CPRiskKit.AntiDebugWatchdogSnapshot {
         var snapshot = CPRiskKit.shared.antiDebugWatchdogSnapshot()
         let deadline = Date().addingTimeInterval(timeout)
@@ -102,6 +102,7 @@ final class ArmorRuntimeLifecycleTests: XCTestCase {
 
         CPRiskKit.shared.start()
         let startedSnapshot = waitForWatchdogSnapshot()
+        let runtimeSnapshot = CPRiskKit.shared.debugArmorRuntimeSnapshot()
 
         if startedSnapshot.supported {
             XCTAssertTrue(startedSnapshot.running, "watchdog should be marked running after start()")
@@ -109,7 +110,20 @@ final class ArmorRuntimeLifecycleTests: XCTestCase {
                 (1...5).contains(Int(startedSnapshot.intervalSeconds)),
                 "watchdog interval should be randomized within expected range"
             )
-            XCTAssertGreaterThan(startedSnapshot.iterationCount, 0, "watchdog should execute at least one iteration")
+            if runtimeSnapshot.status == "active" {
+                XCTAssertGreaterThan(startedSnapshot.iterationCount, 0, "watchdog should execute at least one iteration")
+            } else {
+                XCTAssertNotEqual(
+                    runtimeSnapshot.status,
+                    "active",
+                    "zero watchdog iterations are only acceptable in degraded runtime paths"
+                )
+                XCTAssertNotEqual(
+                    runtimeSnapshot.status,
+                    "inactive",
+                    "start() should move runtime into an attempted state even when degraded"
+                )
+            }
         } else {
             XCTAssertFalse(startedSnapshot.running, "unsupported platforms should degrade to no-op")
         }

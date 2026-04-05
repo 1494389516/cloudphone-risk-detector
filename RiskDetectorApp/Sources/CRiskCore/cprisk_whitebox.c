@@ -13,6 +13,13 @@
 
 extern uint32_t cprisk_collect_passive_signal_binding_bits(void);
 
+/* Forward declaration for static inline dummy-read function (defined below) */
+static inline void cprisk_whitebox_dummy_reads_i(
+    const uint8_t *table,
+    uint8_t real_idx,
+    size_t position,
+    size_t round);
+
 /* CPRISK_WHITEBOX_DOMAIN_COUNT is defined in cprisk_armor_abi.h (via CRiskCore.h).
  * Do NOT redefine it here to avoid macro redefinition conflict. */
 /* CPRISK_WHITEBOX_DOMAIN_DEVICE_BOUND through HEADER_ENCRYPTION (6-9) are also

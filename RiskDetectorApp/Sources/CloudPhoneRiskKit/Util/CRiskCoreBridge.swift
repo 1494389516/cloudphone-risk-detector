@@ -201,3 +201,13 @@ let cprisk_whitebox_evaluate_domain: _CRiskWhiteboxEval =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_WHITEBOX_EVALUATE_DOMAIN), as: _CRiskWhiteboxEval.self)
 let cprisk_thread_pc_exec_snapshot: _CRiskIntFnThreadExecSnapshot =
     CRiskCoreBridge.resolve(UInt32(CPRISK_SWIFT_BRIDGE_IMPORT_THREAD_PC_EXEC_SNAPSHOT), as: _CRiskIntFnThreadExecSnapshot.self)
+
+/// Emulator probe — not in the bridge index, use silgen import.
+/// Returns a bitmask of CPRISK_EMU_FLAG_* bits for each detected anomaly.
+@_silgen_name("cprisk_emulator_probe") func cprisk_emulator_probe() -> UInt32
+/// Lightweight re-probe without cache update.
+@_silgen_name("cprisk_emulator_quick_probe") func cprisk_emulator_quick_probe() -> UInt32
+/// Score the emulator anomaly bitmask into an integer severity.
+@_silgen_name("cprisk_emulator_score") func cprisk_emulator_score(_ flags: UInt32) -> CInt
+/// Whether the current anomaly bitmask crosses the hostile threshold.
+@_silgen_name("cprisk_emulator_is_hostile") func cprisk_emulator_is_hostile(_ flags: UInt32) -> CInt

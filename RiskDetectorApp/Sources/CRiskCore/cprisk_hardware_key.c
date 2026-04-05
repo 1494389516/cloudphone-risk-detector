@@ -15,6 +15,7 @@
 
 #include "include/CRiskCore.h"
 #include "include/cprisk_sha256.h"
+#include <stdatomic.h>
 #include <stdint.h>
 #include <string.h>
 

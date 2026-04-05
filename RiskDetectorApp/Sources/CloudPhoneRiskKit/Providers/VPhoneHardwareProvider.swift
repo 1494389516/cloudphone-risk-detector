@@ -154,6 +154,7 @@ final class VPhoneHardwareProvider: RiskSignalProvider {
         let sysctlModel = probe.machine(from: snapshot)
         let iokitModel = probe.ioKitModel()
         let kernelVersion = probe.kernelVersion()
+        let kernelBuild = DeviceFingerprint.extractKernelBuild(from: kernelVersion, osVersion: nil)
         let boardID = snapshot.device.hardwareModel ?? ""
         let all = [sysctlModel, iokitModel, kernelVersion]
         let dynamicPatterns = PolicyManager.shared.activePolicy?.newVPhonePatterns.map { $0.lowercased() } ?? []
@@ -173,6 +174,7 @@ final class VPhoneHardwareProvider: RiskSignalProvider {
                     "sysctl_model": sysctlModel,
                     "iokit_model": iokitModel,
                     "kernel": kernelVersion,
+                    "kernel_build": kernelBuild ?? "",
                 ],
                 state: .hard(detected: hasVPhonePattern),
                 layer: 1,

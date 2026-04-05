@@ -281,6 +281,8 @@ final class SDK52ProviderTests: XCTestCase {
         let knownIDs: Set<String> = [
             "thermal_state_static",
             "battery_state_static",
+            SignalID.batteryLevelStatic,
+            SignalID.noChargeStateChange,
             "screen_brightness_static",
         ]
         for signal in signals {

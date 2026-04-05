@@ -114,6 +114,23 @@ final class ScenarioPolicyTests: XCTestCase {
         XCTAssertEqual(jbVpnRule?.forceAction, .block)
     }
 
+    func testGeneralPolicyIncludesBatteryAndTimeFusionRules() {
+        let policy = ScenarioPolicy.general
+        let batteryRule = policy.comboRules.first { $0.name == "CR-004_impossible_no_cellular_power" }
+        let timeRule = policy.comboRules.first { $0.name == "CR-006_time_anomaly_combo" }
+
+        XCTAssertNotNil(batteryRule)
+        XCTAssertEqual(
+            Set(batteryRule?.requiredSignals ?? []),
+            Set(["no_cellular_provider", SignalID.batteryLevelStatic, SignalID.noChargeStateChange])
+        )
+        XCTAssertNotNil(timeRule)
+        XCTAssertEqual(
+            Set(timeRule?.requiredSignals ?? []),
+            Set([SignalID.bootTimeRollback, SignalID.systemTimeJump, SignalID.installDateUnusual])
+        )
+    }
+
     // MARK: - Policy for Scenario
 
     func testPolicyForScenarioMapping() {

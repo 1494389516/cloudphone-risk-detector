@@ -70,7 +70,9 @@ final class UncoveredProviderTests: XCTestCase {
     func testDeviceHardwareProviderSimulatorReturnsSimulatorSignal() {
         let signals = DeviceHardwareProvider.shared.signals(snapshot: simulatorSnapshot)
         let simulatorSignal = signals.first { $0.id == "simulator" }
+        let policySimulatorSignal = signals.first { $0.id == SignalID.isSimulator }
         XCTAssertNotNil(simulatorSignal, "模拟器环境下应包含 simulator 信号")
+        XCTAssertNotNil(policySimulatorSignal, "模拟器环境下应包含 is_simulator 策略桥接信号")
         XCTAssertEqual(simulatorSignal?.category, "device")
     }
 
@@ -79,6 +81,22 @@ final class UncoveredProviderTests: XCTestCase {
         let hwMachine = signals.first { $0.id == "hw_machine" }
         XCTAssertNotNil(hwMachine)
         XCTAssertEqual(hwMachine?.evidence["machine"], "iPhone15,3")
+    }
+
+    func testDeviceHardwareProviderInvalidKernelBuildReturnsAnomalySignal() {
+        let snapshot = RiskSnapshot(
+            deviceID: "test-kernel-build",
+            device: TestFixtures.makeDeviceFingerprint(kernelBuild: "RELEASE_ARM64_T8101"),
+            network: TestFixtures.makeNetworkSignals(),
+            behavior: TestFixtures.makeBehaviorSignals(),
+            jailbreak: TestFixtures.makeDetectionResult()
+        )
+
+        let signals = DeviceHardwareProvider.shared.signals(snapshot: snapshot)
+        let anomaly = signals.first { $0.id == SignalID.kernelBuildAnomaly }
+
+        XCTAssertNotNil(anomaly)
+        XCTAssertEqual(anomaly?.evidence["reason"], "kernel_build_format_invalid")
     }
 
     // MARK: - DeviceAgeProvider

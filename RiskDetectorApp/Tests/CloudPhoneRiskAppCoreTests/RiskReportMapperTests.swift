@@ -42,6 +42,42 @@ final class RiskReportMapperTests: XCTestCase {
         XCTAssertTrue(jailbreakHard?.detected ?? false)
     }
 
+    func testDtoFromReport_MapsKernelBuildBatteryAndTimeFields() {
+        let context = RiskContext(
+            device: TestFixtures.makeDeviceFingerprint(kernelBuild: "21A360"),
+            deviceID: "test-device-fields",
+            network: TestFixtures.makeNetworkSignals(
+                mcc: "460",
+                mnc: "00",
+                batteryLevel: 0.42,
+                batteryState: "charging"
+            ),
+            behavior: TestFixtures.makeBehaviorSignals(),
+            jailbreak: TestFixtures.makeDetectionResult()
+        )
+        let report = RiskScoreReport(
+            score: 12,
+            isHighRisk: false,
+            signals: [],
+            summary: "field_mapping"
+        )
+        let cprReport = CPRiskReport(context: context, report: report)
+
+        let dto = RiskReportMapper.dto(from: cprReport)
+
+        XCTAssertEqual(dto.kernelBuild, "21A360")
+        XCTAssertEqual(dto.mcc, "460")
+        XCTAssertEqual(dto.mnc, "00")
+        XCTAssertNotNil(dto.batteryLevel)
+        XCTAssertEqual(dto.batteryLevel ?? -1, 0.42, accuracy: 0.0001)
+        XCTAssertEqual(dto.batteryState, "charging")
+        XCTAssertNotNil(dto.bootTime)
+        if let installDate = BundleInfo.shared.installDate?.timeIntervalSince1970 {
+            XCTAssertNotNil(dto.installDate)
+            XCTAssertEqual(dto.installDate ?? -1, installDate, accuracy: 1.0)
+        }
+    }
+
     // MARK: - dto(from: jsonData)
 
     func testDtoFromJSONData_MinimalValidPayload() {

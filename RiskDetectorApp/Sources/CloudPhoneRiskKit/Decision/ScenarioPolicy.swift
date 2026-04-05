@@ -121,12 +121,116 @@ public struct ScenarioPolicy: Codable, Sendable {
         description: "录屏+充电态静态+USB音频+无蜂窝+未录入生物识别 -> 云手机不可能状态"
     )
 
+    // MARK: - 信号融合规则 CR-001 ~ CR-006
+
+    /// CR-001: 越狱 + 调试 + 内核异常 → HIGH
+    /// 越狱环境 + 调试状态 + 内核Build异常三重叠加，典型攻击者工具链
+    private static let cr001JailbreakDebugKernel = ComboRule(
+        name: "CR-001_jailbreak_debug_kernel",
+        requiredSignals: [
+            SignalID.isDebugged,
+            SignalID.kernelBuildAnomaly,
+            ObfuscatedConstants.signalJailbreak,
+        ],
+        bonusScore: 30.0,
+        forceAction: .block,
+        description: "越狱环境 + 调试状态 + 内核Build异常三重叠加"
+    )
+
+    /// CR-002: 改机 + IDFV重装 + MCC异常 → HIGH
+    /// 改机指纹 + IDFV频繁重装 + 归属地MCC异常，典型模拟器/云手机农场特征
+    private static let cr002DeviceTamperIdfvMcc = ComboRule(
+        name: "CR-002_device_tamper_idfv_mcc",
+        requiredSignals: [
+            SignalID.deviceTamperScore,
+            SignalID.idfvReinstallCount,
+            SignalID.mccMismatch,
+        ],
+        bonusScore: 25.0,
+        forceAction: .block,
+        description: "改机指纹 + IDFV频繁重装 + 归属地MCC异常"
+    )
+
+    /// CR-003: 模拟器 + hostname含cloud → MEDIUM
+    /// 模拟器环境 + hostName含云手机标识，直接指向云手机服务
+    private static let cr003SimulatorCloudHostname = ComboRule(
+        name: "CR-003_simulator_cloud_hostname",
+        requiredSignals: [
+            SignalID.isSimulator,
+            SignalID.hostnameContainsCloud,
+        ],
+        bonusScore: 15.0,
+        forceAction: .challenge,
+        description: "模拟器环境 + hostName含云手机标识"
+    )
+
+    /// CR-004: 无SIM + 无蜂窝 + 电池静止 → MEDIUM (扩展云手机不可能状态)
+    /// 无蜂窝服务 + 电池电量静止 + 无充电状态变化，典型云手机虚拟机环境
+    private static let cr004ImpossibleNoCellularPower = ComboRule(
+        name: "CR-004_impossible_no_cellular_power",
+        requiredSignals: [
+            "no_cellular_provider",
+            SignalID.batteryLevelStatic,
+            SignalID.noChargeStateChange,
+        ],
+        bonusScore: 20.0,
+        forceAction: .challenge,
+        description: "无蜂窝服务 + 电池电量静止 + 无充电状态变化"
+    )
+
+    /// CR-005: Frida端口 + V8堆 + DNS隧道 → HIGH
+    /// Frida工具链三件套同时检测（端口+V8堆+DNS隧道），典型Frida动态分析环境
+    private static let cr005FridaV8Dns = ComboRule(
+        name: "CR-005_frida_v8_dns",
+        requiredSignals: [
+            SignalID.fridaPortOpen,
+            ObfuscatedConstants.signalFridaJSEngineHeap,
+            SignalID.dnsTunnelDetected,
+        ],
+        bonusScore: 35.0,
+        forceAction: .block,
+        description: "Frida工具链三件套同时检测"
+    )
+
+    /// CR-006: boot时间回拨 + 系统时间跳跃 + installDate异常 → MEDIUM
+    /// 系统时间三重异常（启动时间回拨 + 系统时间跳跃 + 安装日期异常），典型时间篡改环境
+    private static let cr006TimeAnomalyCombo = ComboRule(
+        name: "CR-006_time_anomaly_combo",
+        requiredSignals: [
+            SignalID.bootTimeRollback,
+            SignalID.systemTimeJump,
+            SignalID.installDateUnusual,
+        ],
+        bonusScore: 15.0,
+        forceAction: .challenge,
+        description: "系统时间三重异常（启动时间回拨 + 系统时间跳跃 + 安装日期异常）"
+    )
+
+    /// 全量信号融合规则集合（适用于最严格策略）
+    private static let allComboRules: [ComboRule] = [
+        impossibleStatesRule,
+        cr001JailbreakDebugKernel,
+        cr002DeviceTamperIdfvMcc,
+        cr003SimulatorCloudHostname,
+        cr004ImpossibleNoCellularPower,
+        cr005FridaV8Dns,
+        cr006TimeAnomalyCombo,
+    ]
+
+    /// 核心融合规则集合（高危三件套，过滤掉 MEDIUM 级规则）
+    private static let coreComboRules: [ComboRule] = [
+        impossibleStatesRule,
+        cr001JailbreakDebugKernel,
+        cr002DeviceTamperIdfvMcc,
+        cr005FridaV8Dns,
+    ]
+
     /// 通用策略（默认）
     public static let general = ScenarioPolicy(
         mediumThreshold: 30,
         highThreshold: 55,
         criticalThreshold: 80,
-        comboRules: [impossibleStatesRule]
+        comboRules: coreComboRules + [cr004ImpossibleNoCellularPower, cr003SimulatorCloudHostname, cr006TimeAnomalyCombo]
     )
 
     /// 登录策略：相对宽松，允许一定风险但需要监控
@@ -141,7 +245,7 @@ public struct ScenarioPolicy: Codable, Sendable {
             device: 1.0,
             time: 1.0
         ),
-        comboRules: [impossibleStatesRule]
+        comboRules: coreComboRules + [cr004ImpossibleNoCellularPower, cr003SimulatorCloudHostname, cr006TimeAnomalyCombo]
     )
 
     /// 注册策略：严格，防止批量注册
@@ -162,13 +266,15 @@ public struct ScenarioPolicy: Codable, Sendable {
             device: 1.3,          // 重视设备指纹
             time: 1.1
         ),
-        comboRules: [
+        comboRules: coreComboRules + [
             .init(
                 name: "vm_register",
                 requiredSignals: ["vm_detected", "suspicious_time"],
                 bonusScore: 30
             ),
-            impossibleStatesRule,
+            cr004ImpossibleNoCellularPower,
+            cr003SimulatorCloudHostname,
+            cr006TimeAnomalyCombo,
         ]
     )
 
@@ -190,7 +296,7 @@ public struct ScenarioPolicy: Codable, Sendable {
             device: 1.2,
             time: 0.8
         ),
-        comboRules: [
+        comboRules: coreComboRules + [
             // 支付场景的组合规则
             .init(
                 name: "jailbreak_vpn_payment",
@@ -204,7 +310,9 @@ public struct ScenarioPolicy: Codable, Sendable {
                 bonusScore: 25,
                 forceAction: .stepUpAuth
             ),
-            impossibleStatesRule,
+            cr004ImpossibleNoCellularPower,
+            cr003SimulatorCloudHostname,
+            cr006TimeAnomalyCombo,
         ]
     )
 
@@ -219,7 +327,7 @@ public struct ScenarioPolicy: Codable, Sendable {
             .high: .stepUpAuth,
             .critical: .block
         ],
-        comboRules: [impossibleStatesRule]
+        comboRules: coreComboRules + [cr004ImpossibleNoCellularPower, cr003SimulatorCloudHostname, cr006TimeAnomalyCombo]
     )
 
     /// 敏感操作策略：最严格
@@ -240,7 +348,7 @@ public struct ScenarioPolicy: Codable, Sendable {
             device: 1.5,
             time: 1.0
         ),
-        comboRules: [impossibleStatesRule]
+        comboRules: allComboRules
     )
 
     /// API访问策略：适中
@@ -255,7 +363,7 @@ public struct ScenarioPolicy: Codable, Sendable {
             device: 1.2,
             time: 1.0
         ),
-        comboRules: [impossibleStatesRule]
+        comboRules: coreComboRules + [cr004ImpossibleNoCellularPower, cr003SimulatorCloudHostname, cr006TimeAnomalyCombo]
     )
 
     /// 根据场景获取预设策略

@@ -13,8 +13,10 @@
 #include "include/cprisk_vm_sync_barrier.h"
 #include "include/CRiskCore.h"
 
+#include <mach/mach_vm.h>
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -200,16 +202,22 @@ static int probe_thread_count(void) {
  *                        0x0C,0x0A,0x05,0x14,0x01,0x1D]
  */
 static int probe_jvm_env(void) {
-    static const struct { const uint8_t *enc; size_t len; } vars[] = {
-#define V(arr) { arr, sizeof(arr) }
-        V(((const uint8_t[]){0x1F,0x14,0x03,0x14,0x0A,0x1D,0x1A,0x18,0x10})),
-        V(((const uint8_t[]){0x16,0x19,0x14,0x06,0x06,0x05,0x14,0x01,0x1D})),
-        V(((const uint8_t[]){0x19,0x11,0x0A,0x19,0x1C,0x17,0x07,0x14,0x07,
-                              0x0C,0x0A,0x05,0x14,0x01,0x1D})),
-#undef V
+    /* Separate static arrays for XOR-encoded JVM env var names */
+    static const uint8_t JAVA_HOME_ENC[]   = {0x1F,0x14,0x03,0x14,0x0A,0x1D,0x1A,0x18,0x10};
+    static const uint8_t CLASSPATH_ENC[]   = {0x16,0x19,0x14,0x06,0x06,0x05,0x14,0x01,0x1D};
+    static const uint8_t LD_LIB_ENC[]      = {0x19,0x11,0x0A,0x19,0x1C,0x17,0x07,0x14,0x07,
+                                            0x0C,0x0A,0x05,0x14,0x01,0x1D};
+    /* Use separate const size_t variables to avoid initializer complexity */
+    static const size_t JAVA_HOME_LEN = 9u;
+    static const size_t CLASSPATH_LEN = 9u;
+    static const size_t LD_LIB_LEN    = 15u;
+    static const struct { const uint8_t *enc; size_t len; } vars[3] = {
+        [0] = { JAVA_HOME_ENC,   JAVA_HOME_LEN   },
+        [1] = { CLASSPATH_ENC,   CLASSPATH_LEN   },
+        [2] = { LD_LIB_ENC,      LD_LIB_LEN      },
     };
     char buf[32];
-    for (size_t i = 0; i < sizeof(vars)/sizeof(vars[0]); i++) {
+    for (size_t i = 0; i < 3u; i++) {
         if (vars[i].len >= sizeof(buf)) continue;
         xor_decode(vars[i].enc, vars[i].len, buf, 0x55u);
         if (getenv(buf) != NULL) return 1; /* found — JVM env present */
