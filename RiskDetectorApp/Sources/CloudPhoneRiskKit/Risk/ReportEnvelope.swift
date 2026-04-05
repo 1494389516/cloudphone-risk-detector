@@ -297,12 +297,12 @@ public struct ReportEnvelope: Codable, Sendable {
         let nonce = UUID().uuidString
         let ts = currentTimestampMillis()
 
-        // Sanity-check the device clock: ts must be ≥ 2020-01-01T00:00:00Z in ms
-        // (1_577_836_800_000) and no more than 60 s ahead of "now" (which is ts
-        // itself, so this catches only wildly wrong futures such as year 2100+).
-        // A clock stuck at epoch 0 or wrong by years would be rejected here before
-        // the server ever sees the envelope, giving a clearer error than a silent
-        // timestampOutOfRange later.
+        // Sanity-check the device clock at creation time: only the lower bound
+        // (≥ 2020-01-01T00:00:00Z, i.e. 1_577_836_800_000 ms) is enforced here.
+        // The upper bound (not too far in the future) is checked by the verifier
+        // via isTimestampValid().  A clock stuck at epoch 0 or wrong by years is
+        // caught before the server ever sees the envelope, giving a clearer error
+        // than a silent timestampOutOfRange on the server side.
         let minReasonableTs: Int64 = 1_577_836_800_000  // 2020-01-01 UTC
         guard ts >= minReasonableTs else {
             throw ReportEnvelopeError.timestampOutOfRange
