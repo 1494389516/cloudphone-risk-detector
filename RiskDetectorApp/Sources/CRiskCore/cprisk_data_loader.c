@@ -596,7 +596,7 @@ int cprisk_load_protected_data(void) {
         uint8_t *keys_tmp = NULL;
         entries_tmp = (struct cprisk_armor_loader_entry *)calloc((size_t)count, sizeof(struct cprisk_armor_loader_entry));
         flags_tmp = (int *)calloc((size_t)count, sizeof(*s_decrypted_flags));
-        keys_tmp = (uint8_t *)calloc((size_t)count * CPRISK_ARMOR_KEY_SIZE, sizeof(uint8_t));
+        keys_tmp = (uint8_t *)calloc((size_t)count, CPRISK_ARMOR_KEY_SIZE);
         if (!entries_tmp || !flags_tmp || !keys_tmp) {
             free(entries_tmp);
             free(flags_tmp);

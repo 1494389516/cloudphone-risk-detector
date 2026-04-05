@@ -163,7 +163,9 @@ final class SplitSecureBuffer {
         for i in 0..<n {
             for j in 0..<size {
                 var r: UInt8 = 0
-                _ = Darwin.getentropy(&r, 1)
+                if Darwin.getentropy(&r, 1) != 0 {
+                    r = UInt8(arc4random_uniform(256))
+                }
                 masks[i][j] = r
             }
         }
