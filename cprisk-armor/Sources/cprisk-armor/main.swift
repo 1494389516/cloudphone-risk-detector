@@ -161,6 +161,15 @@ func printUsage() {
       SwiftPM (Release only): CPRISK_ENABLE_SWIFT_METADATA_CONVERGENCE=1 enables -disable-reflection-metadata
         and -disable-reflection-names in Package.swift (stronger than minimal; test before shipping).
 
+    Pass 13 (VMProtector) — choosing --input:
+      Pass 13 resolves policy names from vmp_policy.yaml by matching the Mach-O symbol table. If the
+      input is stripped (typical for many shipping app executables), Swift/C symbols may be missing
+      and targets will not resolve — this is usually not a policy typo, but a stripped symtab.
+      Debug Xcode builds often place much Swift code in a separate companion binary (e.g.
+      <Product>.debug.dylib under .../Objects-normal/<arch>/Binary/) that still carries symbols.
+      For development and policy validation, prefer an unstripped intermediate Mach-O or that
+      debug dylib as --input. For fat/universal files, ensure the slice matches the target arch.
+
     A key is REQUIRED when any encryption pass (1, 3, 4, 12) or --all is enabled.
     """)
 }

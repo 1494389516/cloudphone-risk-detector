@@ -7,6 +7,7 @@
 #include "include/cprisk_cff.h"
 #include "include/cprisk_vm_interpreter.h"
 #include "include/cprisk_vm_interpreter_internal.h"
+#include "include/cprisk_vm_interpreter_ops.h"
 #include "vm_cff_fusion.h"
 
 #include <string.h>
@@ -15,25 +16,54 @@
 #define VM_CFF_MAGIC_INIT           0xCFF0CFF0u
 #define VM_CFF_STATE_MASK           0x0FFFFFFFu
 
+/* 4-bit nibble S-box (bijective, generated from AES-like affine map) */
+static const uint8_t vm_cff_sbox4[16] = {
+    0x6, 0xB, 0x3, 0x8, 0xD, 0x0, 0xA, 0xF,
+    0x2, 0xC, 0x5, 0x1, 0xE, 0x9, 0x7, 0x4
+};
+
 static uint32_t vm_cff_feistel_f(uint32_t right, uint32_t round_key) {
     uint32_t x = right ^ round_key;
+
+    /* 4-bit nibble S-box substitution (low 2 nibbles) */
+    uint8_t lo = vm_cff_sbox4[x & 0xF];
+    uint8_t hi = vm_cff_sbox4[(x >> 4) & 0xF];
+    x = (x & ~0xFFu) | ((uint32_t)hi << 4) | (uint32_t)lo;
+
+    /* Avalanche mixing with rotations */
     x = ((x << 7) | (x >> 25)) ^ 0x9E3779B9u;
     x = ((x * 0x85EBCA6Bu) >> 16) ^ x;
     x = ((x << 13) | (x >> 19)) ^ 0xC2B2AE35u;
+
+    /* Second S-box pass on different nibbles (bytes 1-2) */
+    lo = vm_cff_sbox4[(x >> 8) & 0xF];
+    hi = vm_cff_sbox4[(x >> 12) & 0xF];
+    x = (x & ~(0xFFu << 8)) | ((uint32_t)hi << 12) | ((uint32_t)lo << 8);
+
     return x & VM_CFF_STATE_MASK;
 }
 
 static uint32_t vm_cff_encode_state_i(uint32_t state, const uint32_t *rk) {
-    uint32_t left = (state >> 14) & VM_CFF_STATE_MASK;
-    uint32_t right = state & VM_CFF_STATE_MASK;
+    uint32_t left = (state >> 14) & 0x3FFF;
+    uint32_t right = state & 0x3FFF;
+
+    /* Pre-whitening: mix round keys for key-dependent initial state */
+    uint32_t pre_whiten = cprisk_vmp_avalanche32_i(rk[0] ^ rk[7]);
+    left ^= (pre_whiten >> 14) & 0x3FFF;
+    right ^= pre_whiten & 0x3FFF;
 
     for (int r = 0; r < VM_CFF_FEISTEL_ROUNDS; r++) {
         uint32_t f_out = vm_cff_feistel_f(right, rk[r]);
         uint32_t new_left = right;
-        uint32_t new_right = (left ^ f_out) & VM_CFF_STATE_MASK;
+        uint32_t new_right = (left ^ f_out) & 0x3FFF;
         left = new_left;
         right = new_right;
     }
+
+    /* Post-whitening: different key mix for output decorrelation */
+    uint32_t post_whiten = cprisk_vmp_avalanche32_i(rk[3] ^ rk[5]);
+    left ^= (post_whiten >> 14) & 0x3FFF;
+    right ^= post_whiten & 0x3FFF;
 
     return ((left & 0x3FFF) << 14) | (right & 0x3FFF);
 }
@@ -41,6 +71,11 @@ static uint32_t vm_cff_encode_state_i(uint32_t state, const uint32_t *rk) {
 static uint32_t vm_cff_decode_state_i(uint32_t encoded, const uint32_t *rk) {
     uint32_t left = (encoded >> 14) & 0x3FFF;
     uint32_t right = encoded & 0x3FFF;
+
+    /* Decode: undo post-whitening first, then pre-whitening last (reverse order) */
+    uint32_t post_whiten = cprisk_vmp_avalanche32_i(rk[3] ^ rk[5]);
+    left ^= (post_whiten >> 14) & 0x3FFF;
+    right ^= post_whiten & 0x3FFF;
 
     for (int r = VM_CFF_FEISTEL_ROUNDS - 1; r >= 0; r--) {
         uint32_t f_out = vm_cff_feistel_f(left, rk[r]);
@@ -50,7 +85,12 @@ static uint32_t vm_cff_decode_state_i(uint32_t encoded, const uint32_t *rk) {
         left = new_left;
     }
 
-    return ((left & VM_CFF_STATE_MASK) << 14) | (right & VM_CFF_STATE_MASK);
+    /* Undo pre-whitening */
+    uint32_t pre_whiten = cprisk_vmp_avalanche32_i(rk[0] ^ rk[7]);
+    left ^= (pre_whiten >> 14) & 0x3FFF;
+    right ^= pre_whiten & 0x3FFF;
+
+    return ((left & 0x3FFF) << 14) | (right & 0x3FFF);
 }
 
 void vm_cff_fusion_init(vm_cff_fusion_ctx_t *ctx,
@@ -72,7 +112,12 @@ void vm_cff_fusion_init(vm_cff_fusion_ctx_t *ctx,
 
     uint8_t seed_material[64];
     memcpy(seed_material, &func_id, sizeof(func_id));
-    memcpy(seed_material + 8, bytecode_hash ? bytecode_hash : &func_id, 32);
+    if (bytecode_hash) {
+        memcpy(seed_material + 8, bytecode_hash, 32);
+    } else {
+        memset(seed_material + 8, 0, 24);
+        memcpy(seed_material + 8 + 24, &func_id, 8);
+    }
 
     uint8_t hash_out[32];
     cprisk_sha256(seed_material, 40, hash_out);

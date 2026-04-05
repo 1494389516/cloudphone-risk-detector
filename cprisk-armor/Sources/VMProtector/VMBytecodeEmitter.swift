@@ -436,7 +436,7 @@ public struct VMBytecodeEmitter: Sendable {
             )
             entriesData.append(entry.serialize())
             if perEntryVpc {
-                entriesData.append(serializeVpcAffine(a: affine.0, b: affine.1))
+                entriesData.append(serializeVpcAffine(a: affine.0, b: affine.1, funcId: program.functionId))
             }
             cursor += UInt32(body.count)
         }
@@ -482,7 +482,7 @@ public struct VMBytecodeEmitter: Sendable {
         ).serialize()
         if useM2 {
             let (globalA, globalB) = Self.deriveVpcAffine(functionId: 0x4350564D, seed: options.handlerVariantSeed)
-            out.append(serializeVpcAffine(a: globalA, b: globalB))
+            out.append(serializeVpcAffine(a: globalA, b: globalB, funcId: 0x4350564D))
         }
         if immKs {
             out.appendUInt64(Self.immediateKeystreamRoot(options: options))
@@ -614,12 +614,28 @@ public struct VMBytecodeEmitter: Sendable {
         return hv | semantic | mixed | subDepth | entropyTag | marker
     }
 
-    private func serializeVpcAffine(a: UInt64, b: UInt64) -> Data {
+    private func serializeVpcAffine(a: UInt64, b: UInt64, funcId: UInt64) -> Data {
         precondition(a & 1 == 1)
+        /* XOR-encrypt affine parameters with funcId-derived SplitMix64 mask (must match CRiskCore decryption). */
+        let (maskA, maskB) = Self.vpcAffineXorMask(funcId: funcId)
         var d = Data()
-        d.appendUInt64(a)
-        d.appendUInt64(b)
+        d.appendUInt64(a ^ maskA)
+        d.appendUInt64(b ^ maskB)
         return d
+    }
+
+    /// Derive a 128-bit XOR mask from func_id for VPC affine parameter encryption.
+    /// Must match CRiskCore's `cprisk_vmp_read_vpc_affine_i` decryption logic:
+    ///   seed = func_id + 0x53504556, then 4x splitmix64_next to form maskA (high32|low32) and maskB (high32|low32).
+    public static func vpcAffineXorMask(funcId: UInt64) -> (UInt64, UInt64) {
+        var rng = VMProtectorSplitMix64(seed: funcId &+ 0x53504556) // 'VPES'
+        let m0 = rng.next()
+        let m1 = rng.next()
+        let maskA = (m0 << 32) | m1
+        let m2 = rng.next()
+        let m3 = rng.next()
+        let maskB = (m2 << 32) | m3
+        return (maskA, maskB)
     }
 
     private static func wireImmediate(_ ins: VMInstruction, options: VMM2EmitOptions) -> UInt64 {

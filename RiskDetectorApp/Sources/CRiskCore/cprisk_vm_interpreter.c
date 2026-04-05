@@ -18,6 +18,7 @@
 #include <pthread.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/random.h>
 #endif
 
 #define CPRISK_VM_MAX_STEPS 65536u
@@ -68,13 +69,7 @@ static uint32_t cprisk_read_le_u32_i(const uint8_t *p) {
     return value;
 }
 
-static uint64_t cprisk_splitmix64_next_i(uint64_t *state) {
-    *state += 0x9E3779B97F4A7C15ULL;
-    uint64_t z = *state;
-    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
-    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
-    return z ^ (z >> 31);
-}
+/* cprisk_splitmix64_next_i is now provided by cprisk_vm_interpreter_internal.h (inline) */
 
 static int cprisk_vmp_bytecode_has_m2_i(const cprisk_vmp_bytecode_header_t *bh) {
     if (!bh)
@@ -110,14 +105,23 @@ static int cprisk_vmp_bytecode_version_ok_i(uint32_t v) {
 
 void cprisk_vmp_read_vpc_affine_i(const uint8_t *b_sec,
                                        const cprisk_vmp_bytecode_header_t *bh,
+                                       uint64_t func_id,
                                        uint64_t *out_a,
                                        uint64_t *out_b) {
     *out_a = 1u;
     *out_b = 0u;
     if (!bh || !b_sec || !cprisk_vmp_bytecode_has_m2_i(bh))
         return;
-    *out_a = cprisk_read_le_u64_i(b_sec + CPRISK_VMP_BYTECODE_HEADER_CORE_BYTES);
-    *out_b = cprisk_read_le_u64_i(b_sec + CPRISK_VMP_BYTECODE_HEADER_CORE_BYTES + 8u);
+    uint64_t raw_a = cprisk_read_le_u64_i(b_sec + CPRISK_VMP_BYTECODE_HEADER_CORE_BYTES);
+    uint64_t raw_b = cprisk_read_le_u64_i(b_sec + CPRISK_VMP_BYTECODE_HEADER_CORE_BYTES + 8u);
+    /* Derive XOR mask from func_id + 0x53504556 ('VPES') via SplitMix64 */
+    uint64_t mask_state = func_id + UINT64_C(0x53504556);
+    uint64_t mask_a = cprisk_splitmix64_next_i(&mask_state);
+    mask_a = (mask_a << 32) | cprisk_splitmix64_next_i(&mask_state);
+    uint64_t mask_b = cprisk_splitmix64_next_i(&mask_state);
+    mask_b = (mask_b << 32) | cprisk_splitmix64_next_i(&mask_state);
+    *out_a = raw_a ^ mask_a;
+    *out_b = raw_b ^ mask_b;
 }
 
 static int cprisk_vmp_vpc_is_nonlinear_i(const cprisk_vmp_bytecode_header_t *bh) {
@@ -401,6 +405,14 @@ static uint32_t cprisk_vm_session_mix_i(void) {
         mix ^= (uint32_t)now.tv_sec * 0x9E3779B9u;
     }
     mix ^= (uint32_t)getpid() * 0x45D9F3Bu;
+
+    /* getentropy: 从内核 CSPRNG 获取密码学安全随机数 (iOS 10+) */
+    uint32_t entropy_word = 0;
+    if (getentropy(&entropy_word, sizeof(entropy_word)) != 0) {
+        /* fallback: mach_absolute_time 在 getentropy 不可用时使用 */
+        entropy_word = (uint32_t)mach_absolute_time();
+    }
+    mix ^= entropy_word;
 #endif
 
     uint8_t session_key[CPRISK_ARMOR_KEY_SIZE];
@@ -4072,46 +4084,48 @@ static void cprisk_vm_interp_loop_b(struct cprisk_vm_interp_frame *fr)
         } else {
             cprisk_vm_interp_core_marker2_i();
         }
+        /* Loop B: volatile dead computation pattern differs from Loop A */
         if (fr->path_lane == 1u) {
             volatile uint32_t pl = (uint32_t)fr->func_id ^ (uint32_t)(fr->steps * 0xB5297A4Du);
-            (void)(pl ^ pl);
+            (void)(pl & (~pl));
         } else if (fr->path_lane == 2u) {
             volatile uint32_t pl2 = (uint32_t)(fr->func_id >> 33) ^ (uint32_t)fr->steps;
-            (void)(pl2 | 0u);
+            (void)(pl2 ^ pl2);
         }
+        /* Loop B: different dead branch tags (0xA1, 0xB2, 0xC3) vs Loop A (0x11, 0x22, 0x33) */
         if (fr->path_lane != 1u) {
             if (fr->m3_opaque != 0u) {
                 if (cprisk_vm_opaque_dead_branch_i(
                         fr,
-                        0x11u,
+                        0xA1u,
                         fr->encoded_pc ^ fr->func_id,
                         (uint32_t)fr->steps,
-                        0x11u
+                        0xA1u
                     )) {
                     if (fr->m3_dead != 0u)
-                        cprisk_vm_m3_dead_dispatch_i(fr->acc, fr->bh->reserved, 0x11u);
+                        cprisk_vm_m3_dead_dispatch_i(fr->acc, fr->bh->reserved, 0xA1u);
                     continue;
                 }
                 if (cprisk_vm_opaque_dead_branch_i(
                         fr,
-                        0x22u,
+                        0xB2u,
                         fr->encoded_pc + ((uint64_t)fr->session_mix << 17u),
                         (uint32_t)fr->steps,
-                        0x22u
+                        0xB2u
                     )) {
                     if (fr->m3_dead != 0u)
-                        cprisk_vm_m3_dead_bait_xor_i(fr->acc, (fr->bh->reserved >> 8) & 0xFFu, 0x22u);
+                        cprisk_vm_m3_dead_bait_xor_i(fr->acc, (fr->bh->reserved >> 8) & 0xFFu, 0xB2u);
                     continue;
                 }
                 if (cprisk_vm_opaque_dead_branch_i(
                         fr,
-                        0x33u,
+                        0xC3u,
                         fr->encoded_pc ^ (uint64_t)fr->opaque_chain,
                         (uint32_t)fr->steps,
-                        0x33u
+                        0xC3u
                     )) {
                     if (fr->m3_dead != 0u)
-                        cprisk_vm_m3_dead_bait_add_i(fr->acc, (fr->bh->reserved >> 16) & 0xFFu, 0x33u);
+                        cprisk_vm_m3_dead_bait_add_i(fr->acc, (fr->bh->reserved >> 16) & 0xFFu, 0xC3u);
                     continue;
                 }
             } else if (fr->m3_dead != 0u) {
@@ -4131,39 +4145,40 @@ static void cprisk_vm_interp_loop_b(struct cprisk_vm_interp_frame *fr)
             break;
         }
 
+        /* Loop B: path_lane 1 dead branches with different tags (0xA1/0xB2/0xC3) vs Loop A (0x11/0x22/0x33) */
         if (fr->path_lane == 1u) {
             if (fr->m3_opaque != 0u) {
                 if (cprisk_vm_opaque_dead_branch_i(
                         fr,
-                        0x11u,
+                        0xA1u,
                         fr->encoded_pc ^ fr->func_id,
                         pc,
-                        0x41u
+                        0xA1u
                     )) {
                     if (fr->m3_dead != 0u)
-                        cprisk_vm_m3_dead_dispatch_i(fr->acc, fr->bh->reserved, 0x11u);
+                        cprisk_vm_m3_dead_dispatch_i(fr->acc, fr->bh->reserved, 0xA1u);
                     continue;
                 }
                 if (cprisk_vm_opaque_dead_branch_i(
                         fr,
-                        0x22u,
+                        0xB2u,
                         fr->encoded_pc + ((uint64_t)fr->session_mix << 17u),
                         pc,
-                        0x42u
+                        0xB2u
                     )) {
                     if (fr->m3_dead != 0u)
-                        cprisk_vm_m3_dead_bait_xor_i(fr->acc, (fr->bh->reserved >> 8) & 0xFFu, 0x22u);
+                        cprisk_vm_m3_dead_bait_xor_i(fr->acc, (fr->bh->reserved >> 8) & 0xFFu, 0xB2u);
                     continue;
                 }
                 if (cprisk_vm_opaque_dead_branch_i(
                         fr,
-                        0x33u,
+                        0xC3u,
                         fr->encoded_pc ^ (uint64_t)fr->opaque_chain,
                         pc,
-                        0x43u
+                        0xC3u
                     )) {
                     if (fr->m3_dead != 0u)
-                        cprisk_vm_m3_dead_bait_add_i(fr->acc, (fr->bh->reserved >> 16) & 0xFFu, 0x33u);
+                        cprisk_vm_m3_dead_bait_add_i(fr->acc, (fr->bh->reserved >> 16) & 0xFFu, 0xC3u);
                     continue;
                 }
             } else if (fr->m3_dead != 0u) {
@@ -4173,10 +4188,11 @@ static void cprisk_vm_interp_loop_b(struct cprisk_vm_interp_frame *fr)
             }
         }
 
+        /* Loop B: after-decode dead branch tag 0xD4 vs Loop A 0x44 */
         if (fr->m3_opaque != 0u) {
-            if (cprisk_vm_opaque_dead_branch_i(fr, 0x44u, fr->encoded_pc ^ fr->blen, pc, 0x44u)) {
+            if (cprisk_vm_opaque_dead_branch_i(fr, 0xD4u, fr->encoded_pc ^ fr->blen, pc, 0xD4u)) {
                 if (fr->m3_dead != 0u)
-                    cprisk_vm_m3_dead_dispatch_i(fr->acc, fr->bh->reserved, 0x44u);
+                    cprisk_vm_m3_dead_dispatch_i(fr->acc, fr->bh->reserved, 0xD4u);
                 continue;
             }
         }
@@ -4206,10 +4222,11 @@ static void cprisk_vm_interp_loop_b(struct cprisk_vm_interp_frame *fr)
             cprisk_vm_handler_variant_i(fr->bh->reserved, fr->func_id, fr->steps, (uint32_t)op, imm)
             ^ ((fr->semantic_family & 0x3u) << 1u);
 
+        /* Loop B: after-dispatch dead branch tag 0xE5 vs Loop A 0x50 */
         if (fr->m3_opaque != 0u) {
-            if (cprisk_vm_opaque_dead_branch_i(fr, (uint32_t)logical, imm, pc, 0x50u)) {
+            if (cprisk_vm_opaque_dead_branch_i(fr, (uint32_t)logical, imm, pc, 0xE5u)) {
                 if (fr->m3_dead != 0u)
-                    cprisk_vm_m3_dead_dispatch_i(fr->acc, fr->bh->reserved, (uint32_t)op + 0x50u);
+                    cprisk_vm_m3_dead_dispatch_i(fr->acc, fr->bh->reserved, (uint32_t)op + 0xE5u);
                 continue;
             }
         }
@@ -4226,22 +4243,22 @@ static void cprisk_vm_interp_loop_b(struct cprisk_vm_interp_frame *fr)
 
         cprisk_vm_interp_loop_b_cluster_spread_i(logical);
 
-        /* -- Integrated hardening hooks -- */
+        /* -- Loop B: Integrated hardening hooks (different order and intervals from Loop A) -- */
         /* Task 3: verify bytecode block integrity before fetch */
         cprisk_vm_hardening_ondemand_decrypt(fr, pc);
         /* Task 1: update integrity state after decode */
         cprisk_vm_hardening_integrity_checkpoint(fr, pc, (uint32_t)logical);
-        /* Task 4: path explosion checkpoint (periodic) */
-        if ((fr->steps & 0xFu) == 0u)
-            cprisk_vm_hardening_path_explosion(fr, pc);
-        /* Task 2: fake dependency injection (periodic) */
-        if ((fr->steps & 0x7u) == 0u)
-            cprisk_vm_hardening_fake_dep_inject(fr, pc, hvar);
-        /* Task 5: CFF transition (every 32 steps on fall-through) */
-        if ((fr->steps & 0x1Fu) == 0u)
+        /* Loop B: cff_transition every 48 steps (vs Loop A: path_explosion every 16 steps) */
+        if ((fr->steps & 0x2Fu) == 0u)
             cprisk_vm_hardening_cff_transition(fr, pc, pc + CPRISK_VM_INSN_WIDTH, 0);
-        /* Task 5: CFF integrity verify (every 128 steps) */
-        if ((fr->steps & 0x7Fu) == 0u)
+        /* Loop B: path_explosion every 24 steps (vs Loop A: every 16 steps) */
+        if ((fr->steps & 0x17u) == 0u)
+            cprisk_vm_hardening_path_explosion(fr, pc);
+        /* Loop B: fake_dep every 12 steps (vs Loop A: every 8 steps) */
+        if ((fr->steps & 0xBu) == 0u)
+            cprisk_vm_hardening_fake_dep_inject(fr, pc, hvar);
+        /* Loop B: CFF integrity verify every 192 steps (vs Loop A: every 128 steps) */
+        if ((fr->steps & 0xBFu) == 0u)
             cprisk_vm_hardening_cff_verify(fr);
 
         {
@@ -4276,7 +4293,7 @@ static int cprisk_vm_prepare_program_i(const struct mach_header_64 *hdr,
 
     uint64_t vpc_a = 1u;
     uint64_t vpc_b = 0u;
-    cprisk_vmp_read_vpc_affine_i(b_sec, bh, &vpc_a, &vpc_b);
+    cprisk_vmp_read_vpc_affine_i(b_sec, bh, func_id, &vpc_a, &vpc_b);
 
     const cprisk_vmp_bytecode_entry_t *selected = NULL;
     const uint64_t table_end =
@@ -4304,8 +4321,16 @@ static int cprisk_vm_prepare_program_i(const struct mach_header_64 *hdr,
 
     if ((bh->reserved & CPRISK_VMP_BC_FLAG_PER_ENTRY_VPC) != 0u) {
         const uint8_t *selp = (const uint8_t *)selected;
-        vpc_a = cprisk_read_le_u64_i(selp + sizeof(cprisk_vmp_bytecode_entry_t));
-        vpc_b = cprisk_read_le_u64_i(selp + sizeof(cprisk_vmp_bytecode_entry_t) + 8u);
+        uint64_t pe_raw_a = cprisk_read_le_u64_i(selp + sizeof(cprisk_vmp_bytecode_entry_t));
+        uint64_t pe_raw_b = cprisk_read_le_u64_i(selp + sizeof(cprisk_vmp_bytecode_entry_t) + 8u);
+        /* Derive XOR mask for per-entry VPC decryption */
+        uint64_t pe_mask_state = func_id + UINT64_C(0x53504556);
+        uint64_t pe_mask_a = cprisk_splitmix64_next_i(&pe_mask_state);
+        pe_mask_a = (pe_mask_a << 32) | cprisk_splitmix64_next_i(&pe_mask_state);
+        uint64_t pe_mask_b = cprisk_splitmix64_next_i(&pe_mask_state);
+        pe_mask_b = (pe_mask_b << 32) | cprisk_splitmix64_next_i(&pe_mask_state);
+        vpc_a = pe_raw_a ^ pe_mask_a;
+        vpc_b = pe_raw_b ^ pe_mask_b;
     }
 
     const uint8_t *code = b_sec + selected->bytecode_offset;

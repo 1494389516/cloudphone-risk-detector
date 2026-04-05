@@ -132,6 +132,13 @@ export CPRISK_ARMOR_KEY=<64-char-hex-string>
 - 白盒 PRF 相关 placeholder（如 `whitebox_code.bin`、`whitebox_data.bin`）尺寸需要与当前 `ArmorABI.WhiteBox.Domain` 数量保持一致；白盒域数量扩展后，应同步更新占位文件大小。当前白盒 header 已扩为支持 `aslr_table_anchor_slide` 的 v2 结构，旧占位文件与旧 ABI 不应混用。
 - `vmp_policy.yaml` 与 `cff_policy.yaml` 需要联动维护：VMP full tier 函数应从 Pass 9 的 heavy/medium 挪到 `never`，避免同一函数被 CFF 与 VM 跳板同时重写。
 
+**Pass 13 与「该对哪个 Mach-O 跑」：**
+
+- Pass 13 按 **符号表** 匹配 `vmp_policy.yaml` 中的函数名；若 `--input` 指向 **已 strip** 的最终 App 主可执行文件，Swift/C 符号可能 **全部不可见**，表现为 not in symbol table，**不一定是 YAML 写错**。
+- **Debug 构建**下，大量 Swift 往往在 **`RiskDetectorApp.debug.dylib`**（路径形如 `…/Build/Intermediates.noindex/RiskDetectorApp.build/Debug-iphonesimulator/RiskDetectorApp.build/Objects-normal/arm64/Binary/RiskDetectorApp.debug.dylib`）中，符号更易保留；**验证策略命中 / 开发调 Pass 13** 时可优先把该未裁剪中间产物作为 `--input`。
+- **Release / 提审链**仍可按上文对 **最终 App 二进制** 全量加壳；若需在 strip 前验证符号，可对 **未 strip 的中间链接产物** 跑 Pass 13，再确认后续打包步骤未覆盖已加固文件。
+- 将 DerivedData 指到桌面便于查找，例如：`-derivedDataPath ~/Desktop/.deriveddata-riskdetector`，再用 `find … -name 'RiskDetectorApp.debug.dylib'` 定位。
+
 **适用建议：**
 
 - 做逆向分析：建议直接取第 4 步产物。

@@ -393,11 +393,20 @@ internal enum CFFStateCodec {
         let roundKey = avalanche32(key ^ salt ^ (round &* roundMul) ^ codecTag32(key: key, salt: salt, lane: 1))
         let b0 = UInt8(truncatingIfNeeded: r)
         let b1 = UInt8(truncatingIfNeeded: r >> 8)
+        // Layer 1: S-box substitution with round key mixing
         let s0 = UInt32(spnSboxByte(b0 ^ UInt8(truncatingIfNeeded: roundKey)))
         let s1 = UInt32(spnSboxByte(b1 ^ UInt8(truncatingIfNeeded: roundKey >> 8))) << 8
         var piece = s0 ^ s1
         piece ^= roundKey ^ (roundKey >> 16)
         piece = avalanche32(piece)
+        // Layer 2: second S-box with shifted round key (double SPN structure)
+        let s2_0 = UInt32(spnSboxByte(UInt8(truncatingIfNeeded: piece) ^ UInt8(truncatingIfNeeded: roundKey >> 16)))
+        let s2_1 = UInt32(spnSboxByte(UInt8(truncatingIfNeeded: piece >> 8) ^ UInt8(truncatingIfNeeded: roundKey >> 24))) << 8
+        var piece2 = s2_0 ^ s2_1
+        piece2 ^= (roundKey >> 8) ^ (roundKey >> 24)
+        piece2 = avalanche32(piece2)
+        // Mix both layers
+        piece ^= piece2
         return UInt16(truncatingIfNeeded: piece ^ (piece >> 16))
     }
 

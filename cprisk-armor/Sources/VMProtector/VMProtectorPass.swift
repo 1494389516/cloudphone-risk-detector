@@ -359,6 +359,18 @@ enum VMPolicyParser {
 
 // MARK: - Pass
 
+/// Pass 13: policy-driven VM bytecode and entry trampolines (`vmp_policy.yaml`).
+///
+/// **Symbol resolution:** Targets are found by name against the Mach-O symbol table (`LC_SYMTAB`).
+/// Stripped executables often omit Swift/C symbols, so policy entries may not resolve even when the
+/// YAML is correct.
+///
+/// **Typical Xcode layout:** In Debug, Swift code frequently lives in a companion
+/// `*.debug.dylib` under `Objects-normal/<arch>/Binary/`, which often retains symbols the main
+/// stripped `MH_EXECUTE` lacks. Prefer that or another unstripped intermediate when validating
+/// matches; the shipped app bundle executable is not always the right `--input` for Pass 13.
+///
+/// **Fat Mach-O:** Ensure the input slice matches the intended architecture.
 public final class VMProtectorPass: ArmorPass {
     public let name = "VM Protector"
 

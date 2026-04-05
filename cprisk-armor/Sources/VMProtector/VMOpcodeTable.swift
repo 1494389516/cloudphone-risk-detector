@@ -11,7 +11,7 @@ public struct VMDeadHandlerSpec: Equatable, Sendable {
     }
 }
 
-/// One decoy raw opcode mapped to a logical handler id (`0...3`).
+/// One decoy raw opcode mapped to a logical handler id (`0...23`, uniformly distributed).
 public struct VMDeadHandlerMapping: Equatable, Sendable {
     public let raw: UInt8
     public let logical: UInt8
@@ -124,19 +124,19 @@ public struct VMOpcodeTable: Equatable, Sendable {
         let want = requestedBudget == 0 ? UInt32(min(24, max(0, cap))) : min(requestedBudget, UInt32(cap))
         var rng = VMProtectorSplitMix64(seed: seed ^ 0xDEAD_484E_444C_5233) // "deadHndLR3"
         var pool = free
-        let logicalChoices: [UInt8] = [0, 1, 2, 3]
+        let logicalChoices: [UInt8] = Array(0...23)
         var mappings: [VMDeadHandlerMapping] = []
         var i: UInt32 = 0
         while i < want && pool.count > 1 {
             let j = Int(rng.next() % UInt64(pool.count))
             let raw = pool.remove(at: j)
-            let log = logicalChoices[Int(rng.next() % 4)]
+            let log = logicalChoices[Int(rng.next() % UInt64(logicalChoices.count))]
             mappings.append(VMDeadHandlerMapping(raw: raw, logical: log))
             i += 1
         }
         if want > 0, pool.count == 1, i < want {
             let raw = pool[0]
-            let log = logicalChoices[Int(rng.next() % 4)]
+            let log = logicalChoices[Int(rng.next() % UInt64(logicalChoices.count))]
             mappings.append(VMDeadHandlerMapping(raw: raw, logical: log))
         }
         return VMDeadHandlerInjection(seed: seed, budget: UInt32(mappings.count), mappings: mappings)

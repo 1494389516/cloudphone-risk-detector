@@ -14,6 +14,10 @@ functions:
     - ReportEnvelope.buildSignatureInput
     - StorageIntegrityGuard.sign
     - StorageIntegrityGuard.verify
+    # 关键决策路径：评分+决策+提交（从 never 提升，defense-in-depth）
+    - RiskDetectionEngine.scoreAndForceDecision
+    - RiskDetectionEngine.treeCommitVerdict
+    - DecisionTree.decide
 
   # 中等：整函数二进制改写预算介于 light/heavy 之间（Pass9 默认更宽的扫描窗口）
   medium:
@@ -49,6 +53,15 @@ functions:
     - _cprisk_vm_entry_alt2
     - cprisk_vm_execute
     - _cprisk_vm_execute
+    # 关键决策函数：从 never 提升，信号收集需要 CFF 保护（defense-in-depth）
+    - RiskDetectionEngine.collectAndAugmentSignals
+    # CFF 自保护 + 信任链密钥派生
+    - ChallengeSession.markSubmitted
+    - TrustChainManager.deriveSessionKey
+    - TrustChainManager.buildKeyResolver
+    # VM 解释器主循环：CFF 保护对抗 trace-based 分析
+    - cprisk_vm_interp_loop_a
+    - cprisk_vm_interp_loop_b
 
   # 轻量平坦化：高频检测流程，强调低开销与异构分发
   light:
@@ -79,14 +92,7 @@ functions:
   never:
     - direct_syscall.cprisk_direct_syscall0
     - direct_syscall.cprisk_direct_syscall6
-    # Delegated to Pass13 VMProtector full tier.
-    - RiskDetectionEngine.collectAndAugmentSignals
-    - RiskDetectionEngine.scoreAndForceDecision
-    - RiskDetectionEngine.treeCommitVerdict
-    - DecisionTree.decide
-    - ChallengeSession.markSubmitted
-    - TrustChainManager.deriveSessionKey
-    - TrustChainManager.buildKeyResolver
+    # 仅保留真正需要避开 CFF 的底层函数
     - RiskDetectorApp.App
     - CloudPhoneRiskKitTests
     # CRiskCore：保持最底层 syscall / text 加密循环控制流，避免干扰 guard page / idle re-encrypt

@@ -58,11 +58,19 @@ cprisk_vm_flow_t cprisk_vm_oph_vm_call_func(cprisk_vm_interp_frame_t *fr,
     }
     fr->vpc_a = 1u;
     fr->vpc_b = 0u;
-    cprisk_vmp_read_vpc_affine_i(fr->b_sec, fr->bh, &fr->vpc_a, &fr->vpc_b);
+    cprisk_vmp_read_vpc_affine_i(fr->b_sec, fr->bh, callee_id, &fr->vpc_a, &fr->vpc_b);
     if ((fr->bh->reserved & CPRISK_VMP_BC_FLAG_PER_ENTRY_VPC) != 0u) {
         const uint8_t *selp = fr->b_sec + fr->bc_hdr_total + (size_t)callee_idx * fr->entry_stride;
-        fr->vpc_a = cprisk_read_le_u64_i(selp + sizeof(cprisk_vmp_bytecode_entry_t));
-        fr->vpc_b = cprisk_read_le_u64_i(selp + sizeof(cprisk_vmp_bytecode_entry_t) + 8u);
+        uint64_t pe_raw_a = cprisk_read_le_u64_i(selp + sizeof(cprisk_vmp_bytecode_entry_t));
+        uint64_t pe_raw_b = cprisk_read_le_u64_i(selp + sizeof(cprisk_vmp_bytecode_entry_t) + 8u);
+        /* Derive XOR mask for per-entry VPC decryption */
+        uint64_t pe_mask_state = callee_id + UINT64_C(0x53504556);
+        uint64_t pe_mask_a = cprisk_splitmix64_next_i(&pe_mask_state);
+        pe_mask_a = (pe_mask_a << 32) | cprisk_splitmix64_next_i(&pe_mask_state);
+        uint64_t pe_mask_b = cprisk_splitmix64_next_i(&pe_mask_state);
+        pe_mask_b = (pe_mask_b << 32) | cprisk_splitmix64_next_i(&pe_mask_state);
+        fr->vpc_a = pe_raw_a ^ pe_mask_a;
+        fr->vpc_b = pe_raw_b ^ pe_mask_b;
     }
     fr->code = fr->b_sec + callee_ent->bytecode_offset;
     fr->blen = callee_ent->bytecode_length;

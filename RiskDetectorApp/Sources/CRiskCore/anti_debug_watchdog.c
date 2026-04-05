@@ -1027,7 +1027,7 @@ static void cprisk_watchdog_reset_mailboxes_locked(void) {
     atomic_store(&s_watchdog_mailbox_ready, 0u);
     for (uint32_t i = 0u; i < CPRISK_WATCHDOG_THREAD_COUNT; i++) {
         if (s_watchdog_mailbox_ports[i] != MACH_PORT_NULL) {
-            mach_port_destroy(mach_task_self(), s_watchdog_mailbox_ports[i]);
+            mach_port_deallocate(mach_task_self(), s_watchdog_mailbox_ports[i]);
             s_watchdog_mailbox_ports[i] = MACH_PORT_NULL;
         }
         atomic_store(&s_watchdog_mailbox_last_recv_ns[i], 0u);
@@ -1048,7 +1048,7 @@ static int cprisk_watchdog_init_mailboxes_locked(void) {
         }
         kr = mach_port_insert_right(mach_task_self(), port, port, MACH_MSG_TYPE_MAKE_SEND);
         if (kr != KERN_SUCCESS) {
-            mach_port_destroy(mach_task_self(), port);
+            mach_port_deallocate(mach_task_self(), port);
             cprisk_watchdog_reset_mailboxes_locked();
             return -1;
         }

@@ -9,6 +9,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/** Shared SplitMix64 PRNG step (used by VPC affine mask derivation and other cross-TU utilities). */
+static inline uint64_t cprisk_splitmix64_next_i(uint64_t *state) {
+    *state += UINT64_C(0x9E3779B97F4A7C15);
+    uint64_t z = *state;
+    z = (z ^ (z >> 30)) * UINT64_C(0xBF58476D1CE4E5B9);
+    z = (z ^ (z >> 27)) * UINT64_C(0x94D049BB133111EB);
+    return z ^ (z >> 31);
+}
+
 struct mach_header_64;
 struct cprisk_vm_interp_frame;
 typedef struct cprisk_vm_interp_frame cprisk_vm_interp_frame_t;

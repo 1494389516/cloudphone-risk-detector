@@ -274,16 +274,32 @@ int vm_encoding_encode_insn(const vm_encoding_ctx_t *ctx,
             break;
 
         case VM_ENCODING_V1:
-            /* V1: 置换+异或 */
+            /* V1: 置换+XOR+字节重排（可逆） */
             encoded_opcode = vm_encoding_encode_opcode_quick(ctx, (uint8_t)opcode);
             *ptr++ = encoded_opcode;
 
-            /* 操作数: 分段加密，前4字节和后4字节使用不同密钥 */
-            uint64_t salt1 = ctx->operand_salt;
-            uint64_t salt2 = ctx->operand_salt ^ 0x5A5A5A5A5A5A5A5AULL;
-            uint64_t enc_op_v1 = (operand ^ salt1) + (operand ^ salt2);
-            for (int i = 7; i >= 0; i--) {
-                *ptr++ = (uint8_t)(enc_op_v1 >> (i * 8));
+            /* 操作数: 两层XOR + 字节重排，编码解码完全可逆
+             * Layer 1: operand XOR salt1
+             * Layer 2: 结果做字节重排 (swap bytes 0-3 with 4-7)
+             * Layer 3: 重排结果 XOR salt2
+             * 解码时反序: 先 XOR salt2, 再反向重排, 再 XOR salt1
+             */
+            {
+                uint64_t salt1 = ctx->operand_salt;
+                uint64_t salt2 = ctx->operand_salt ^ 0x5A5A5A5A5A5A5A5AULL;
+                uint64_t t = operand ^ salt1;
+                /* Byte shuffle: swap low/high 32-bit halves and rotate bytes */
+                uint32_t lo32 = (uint32_t)(t & 0xFFFFFFFFULL);
+                uint32_t hi32 = (uint32_t)((t >> 32) & 0xFFFFFFFFULL);
+                /* Rotate each half left by 8 bits (byte rotate) */
+                lo32 = (lo32 << 8) | (lo32 >> 24);
+                hi32 = (hi32 << 8) | (hi32 >> 24);
+                /* Swap halves */
+                uint64_t shuffled = ((uint64_t)lo32 << 32) | (uint64_t)hi32;
+                uint64_t enc_op_v1 = shuffled ^ salt2;
+                for (int i = 7; i >= 0; i--) {
+                    *ptr++ = (uint8_t)(enc_op_v1 >> (i * 8));
+                }
             }
             out->total_len = 9;
             break;
@@ -370,15 +386,31 @@ int vm_encoding_decode_insn(const vm_encoding_ctx_t *ctx,
             break;
 
         case VM_ENCODING_V1:
-            /* V1: 反向置换+异或 */
+            /* V1: 反向置换+XOR+字节重排解码（编码的精确逆操作） */
             opcode = (uint32_t)vm_encoding_decode_opcode_quick(ctx, encoded_opcode);
 
-            /* 操作数: 需要解分段加密 (简化实现) */
-            for (int i = 0; i < 8; i++) {
-                operand = (operand << 8) | *ptr++;
+            /* 操作数: 反向解码 — 反序执行编码的三个步骤 */
+            {
+                for (int i = 0; i < 8; i++) {
+                    operand = (operand << 8) | *ptr++;
+                }
+                /* Step 3 inverse: XOR salt2 */
+                uint64_t salt2 = ctx->operand_salt ^ 0x5A5A5A5A5A5A5A5AULL;
+                uint64_t unxored = operand ^ salt2;
+                /* Step 2 inverse: reverse byte shuffle (swap halves, rotate right by 8) */
+                uint32_t lo32 = (uint32_t)(unxored & 0xFFFFFFFFULL);
+                uint32_t hi32 = (uint32_t)((unxored >> 32) & 0xFFFFFFFFULL);
+                /* Swap halves back */
+                uint64_t swapped = ((uint64_t)lo32 << 32) | (uint64_t)hi32;
+                /* Rotate each half right by 8 bits (undo the left rotate) */
+                lo32 = (uint32_t)((swapped >> 32) & 0xFFFFFFFFULL);
+                hi32 = (uint32_t)(swapped & 0xFFFFFFFFULL);
+                lo32 = (lo32 >> 8) | (lo32 << 24);
+                hi32 = (hi32 >> 8) | (hi32 << 24);
+                uint64_t unshuffled = ((uint64_t)lo32 << 32) | (uint64_t)hi32;
+                /* Step 1 inverse: XOR salt1 */
+                operand = unshuffled ^ ctx->operand_salt;
             }
-            /* 注意: 实际解密需要解方程，这里简化处理 */
-            operand ^= ctx->operand_salt;
             break;
 
         case VM_ENCODING_V2:

@@ -2,7 +2,10 @@ version: 2
 functions:
   # 审核友好：收窄 heavy/medium，更多留在 light；never 与常规 policy 对齐（VM 全量覆盖、syscall、C 核心）
   heavy:
+    - RiskDetectionEngine.fastDigestShortCircuit
     - ChallengeSession.transition
+    - ChallengeSession.advance
+    - anti_debug_watchdog.cprisk_watchdog_run_iteration
     - SignedRiskConclusion.sign
     - DeviceKeyDeriver.deriveKeyWithTrustInfo
     - PayloadCrypto.encrypt
@@ -10,6 +13,10 @@ functions:
     - ReportEnvelope.buildSignatureInput
     - StorageIntegrityGuard.sign
     - StorageIntegrityGuard.verify
+    # 关键决策路径（defense-in-depth）
+    - RiskDetectionEngine.scoreAndForceDecision
+    - RiskDetectionEngine.treeCommitVerdict
+    - DecisionTree.decide
 
   medium:
     - ConditionNode.evaluate
@@ -33,11 +40,14 @@ functions:
     - cprisk_derive_device_key
     - cprisk_verify_trust_hook_surface_integrity
     - cprisk_verify_runtime_hook_surface_prologues
+    # 关键决策函数：信号收集需要 CFF 保护（defense-in-depth）
+    - RiskDetectionEngine.collectAndAugmentSignals
+    # CFF 自保护 + 信任链密钥派生
+    - ChallengeSession.markSubmitted
+    - TrustChainManager.deriveSessionKey
+    - TrustChainManager.buildKeyResolver
 
   light:
-    - RiskDetectionEngine.fastDigestShortCircuit
-    - ChallengeSession.advance
-    - anti_debug_watchdog.cprisk_watchdog_run_iteration
     - RandomizedDetection.detect
     - AntiTamperingDetector.detect
     - DetectorRegistry.detectAll
@@ -59,6 +69,7 @@ functions:
     - cprisk_scan_instant_return_key_symbols_prefix
     - cprisk_scan_hook_surface_trampoline_prefixes
     - cprisk_is_being_traced_sysctl_only
+    # VM 解释器核心入口
     - cprisk_vm_entry
     - _cprisk_vm_entry
     - cprisk_vm_entry_alt1
@@ -67,17 +78,14 @@ functions:
     - _cprisk_vm_entry_alt2
     - cprisk_vm_execute
     - _cprisk_vm_execute
+    # VM interpreter core loops (App Store Safe: light tier)
+    - cprisk_vm_interp_loop_a
+    - cprisk_vm_interp_loop_b
 
   never:
     - direct_syscall.cprisk_direct_syscall0
     - direct_syscall.cprisk_direct_syscall6
-    - RiskDetectionEngine.collectAndAugmentSignals
-    - RiskDetectionEngine.scoreAndForceDecision
-    - RiskDetectionEngine.treeCommitVerdict
-    - DecisionTree.decide
-    - ChallengeSession.markSubmitted
-    - TrustChainManager.deriveSessionKey
-    - TrustChainManager.buildKeyResolver
+    # 仅保留真正需要避开 CFF 的底层函数
     - RiskDetectorApp.App
     - CloudPhoneRiskKitTests
     - cprisk_verify_svc_stub_integrity
@@ -93,8 +101,8 @@ functions:
     - RiskDetectionEngine.evaluate
 
 anti_deobfuscation:
-  enable_runtime_salt: false
-  enable_fake_state_release_only: false
-  enable_multi_dispatcher: false
+  enable_runtime_salt: true
+  enable_fake_state_release_only: true
+  enable_multi_dispatcher: true
   enable_default_poison_for_heavy: true
   enable_pass8_cff_awareness: false

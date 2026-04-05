@@ -16,6 +16,7 @@ uint64_t cprisk_read_le_u64_i(const uint8_t *p);
 
 void cprisk_vmp_read_vpc_affine_i(const uint8_t *b_sec,
                                     const cprisk_vmp_bytecode_header_t *bh,
+                                    uint64_t func_id,
                                     uint64_t *out_a,
                                     uint64_t *out_b);
 
