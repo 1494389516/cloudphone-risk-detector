@@ -118,7 +118,11 @@ public final class CPRiskTLSPinning: NSObject, URLSessionDelegate, @unchecked Se
         let keyType = attrs?[kSecAttrKeyType] as? String
 
         if keyType == (kSecAttrKeyTypeECSECPrimeRandom as String) {
-            // EC P-256: fixed 26-byte SPKI header
+            // EC P-256: fixed 26-byte SPKI header — only valid for 65-byte
+            // uncompressed point (04 || X || Y).  Reject other sizes to avoid
+            // producing a malformed SPKI for P-384/P-521 keys.
+            guard keyData.count == 65 else { return keyData }
+
             // SEQUENCE { SEQUENCE { OID ecPublicKey, OID prime256v1 } BIT STRING }
             let header: [UInt8] = [
                 0x30, 0x59,
