@@ -5,15 +5,15 @@ import MachO
 
 // MARK: - Module Whitelist Detector
 //
-// 现有 DylibInjectionDetector 依赖关键词匹配（"frida", "gadget", "gum" 等）。
-// 针对 rustFrida 的 libagent.so（名称不含任何已知关键词），关键词匹配完全失效。
+// DylibInjectionDetector 依赖关键词匹配（"frida", "substrate", "gadget" 等），
+// 但 IPA 重签注入、越狱 tweak 注入、DYLD_INSERT_LIBRARIES 注入的 dylib
+// 可以使用任意名称（如 "libutils.dylib"、"helper.dylib"），关键词匹配失效。
 //
 // 本检测器采用"白名单路径"策略：
-// 1. 任何加载的 dylib，若其路径不属于已知系统路径前缀集合，
-//    且不属于当前应用 Bundle 路径，则标记为可疑模块。
-// 2. 对可疑模块进一步检查：代码签名状态、加载时序异常。
+// 1. 枚举所有已加载 dylib，路径不属于系统白名单且不属于 App Bundle → 可疑
+// 2. 对可疑模块进一步评估：来源路径分类、磁盘签名状态
 //
-// 补充覆盖：任意工具名称的注入模块，不依赖名称特征。
+// 覆盖场景：免越狱 IPA 重签注入；越狱 tweak 注入；任意名称的恶意 dylib
 
 struct ModuleWhitelistDetector: Detector {
 

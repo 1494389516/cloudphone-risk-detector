@@ -5,15 +5,16 @@ import MachO
 
 // MARK: - Function Integrity Hash Detector
 //
-// 传统的 Trampoline 检测器依赖已知的 hook 指令模式（LDR+BR、ADRP+ADD+BR 等）。
-// 针对 rustFrida RECOMP 模式——将目标函数整体重编译——这些已知模式全部失效。
+// GumTrampolineDetector 依赖已知的 hook 指令模式（LDR+BR、ADRP+ADD+BR 等），
+// 但 Dobby、Ellekit 等非 Frida hook 引擎使用不同的跳板序列，
+// 更高级的攻击者可能整体重编译函数代码，完全规避模式匹配。
 //
 // 本检测器采用"基线快照 + 变更检测"策略：
-// 1. 首次运行时，对关键系统函数的前 N 字节计算 FNV-1a 哈希作为基线。
-// 2. 后续运行时，重新计算哈希并与基线对比。
-// 3. 任何字节变化（不管 hook 使用何种指令序列）均会触发报警。
+// 1. SDK 初始化时，对关键系统函数的前 32 字节计算 FNV-1a 哈希作为基线
+// 2. 后续评估时重新计算哈希并与基线对比
+// 3. 任何字节变化（不管 hook 使用何种指令序列或工具）均触发报警
 //
-// 补充覆盖：RECOMP 模式 / 任意非标准 hook 变体。
+// 覆盖场景：Substrate、Dobby、Ellekit inline hook；函数体重编译；任意非标准 hook 变体
 
 /// Thread-safe baseline storage for prologue hashes.
 /// Populated on first `detect()` call; subsequent calls validate against this snapshot.

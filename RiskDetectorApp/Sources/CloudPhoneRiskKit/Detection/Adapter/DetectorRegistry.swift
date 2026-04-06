@@ -41,10 +41,10 @@ public final class DetectorRegistry {
         case memoryIntegrity
         case runtimeIntegrity
 
-        // 行为检测型检测器（不依赖工具签名，应对去特征化注入）
-        case functionIntegrityHash   // 函数前缀哈希基线校验
-        case moduleWhitelist         // 模块白名单（路径前缀）
-        case syscallCrossValidator   // libc 与直接 SVC 结果一致性
+        // 行为检测型检测器（不依赖工具特征签名）
+        case functionIntegrityHash   // 函数前缀哈希基线校验（对抗 Dobby/Ellekit/任意 inline hook）
+        case moduleWhitelist         // 模块白名单（对抗 IPA 重签注入/越狱 tweak 注入）
+        case syscallCrossValidator   // libc 与直接 SVC 结果一致性（对抗越狱隐藏工具）
 
         public var rawValue: String {
             switch self {
@@ -215,7 +215,7 @@ public final class DetectorRegistry {
             minOS: 14.0,
             signalOverlapGroup: "runtime_integrity"
         ),
-        // 行为检测型（去特征化注入对抗）
+        // 行为检测型（不依赖工具特征签名）
         .functionIntegrityHash: DetectorManifest(
             minOS: 14.0,
             signalOverlapGroup: ObfuscatedConstants.overlapGroupFrida,
@@ -690,7 +690,7 @@ private enum DetectorRegistryBootstrap {
         .jailbreak: [.file, .dyld, .env, .sysctl, .scheme, .hook],
         .antiTamper: [
             .antiTampering, .debugger, .frida, .fridaModule, .dylibInjection,
-            // 行为检测型（去特征化注入对抗）
+            // 行为检测型（不依赖工具特征签名）
             .functionIntegrityHash, .moduleWhitelist, .syscallCrossValidator,
         ],
         .integrity: [.codeSignature, .memoryIntegrity, .runtimeIntegrity],
@@ -793,7 +793,7 @@ extension JailbreakConfig {
         types.insert(.codeSignature)
         types.insert(.memoryIntegrity)
         types.insert(.runtimeIntegrity)
-        // 行为检测型（应对去特征化注入工具如 rustFrida）
+        // 行为检测型（不依赖工具特征签名，应对 Dobby/Ellekit/IPA重签注入等）
         types.insert(.functionIntegrityHash)
         types.insert(.moduleWhitelist)
         types.insert(.syscallCrossValidator)

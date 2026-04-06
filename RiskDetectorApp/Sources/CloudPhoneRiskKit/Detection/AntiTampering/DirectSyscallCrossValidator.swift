@@ -4,20 +4,21 @@ import Foundation
 
 // MARK: - Direct Syscall Cross-Validator
 //
-// 基于时序的侧信道检测（FridaSocketDetector、KernelHookSideChannel）属于概率型检测，
-// 存在误报风险，且 rustFrida 不使用 Frida Stalker，所以时序异常不明显。
+// KernelHookSideChannel / FridaSocketDetector 的时序侧信道属于概率型检测，
+// 依赖 Frida Stalker 的 DBT 开销。不使用 Stalker 的 hook 工具时序异常不明显。
 //
-// 本检测器采用"结果一致性"验证策略：
-// - 通过 libc 包装器调用系统调用（可能被 hook 篡改）
-// - 通过 CRiskCore 直接 SVC 调用同一系统调用（绕过 libc hook）
-// - 比较两条路径的返回值：不一致 = libc 层存在 hook 且正在篡改结果
+// 本检测器采用"结果一致性"验证——确定性检测，非概率型：
+// - 通过 libc 包装器调用系统调用（可能被 hook 篡改返回值）
+// - 通过 CRiskCore 直接 SVC #0x80 调用同一系统调用（绕过 libc hook）
+// - 比较两条路径的返回值：不一致 = libc 层存在活跃 hook 且正在篡改结果
 //
-// 检测维度：
-// 1. getpid()  vs  cprisk_getpid_direct()   — 最简单的存活检测
-// 2. stat()    vs  cprisk_stat_direct()      — 文件系统访问一致性
-// 3. access()  vs  cprisk_access_direct()    — 文件权限一致性
+// 探针维度：
+// 1. getpid()  vs  cprisk_getpid_direct()   — 最小化测试，不可能自然不一致
+// 2. stat()    vs  cprisk_stat_direct()      — 文件存在性交叉验证
+// 3. access()  vs  cprisk_access_direct()    — 文件权限交叉验证
 //
-// 补充覆盖：任意工具对 libc 函数的 hook，不依赖工具名称或指令模式。
+// 覆盖场景：Substrate/Dobby/Ellekit/fishhook 对 libc 函数的 hook；
+//           越狱隐藏工具（如 Shadow、A-Bypass）篡改文件检测结果
 
 struct DirectSyscallCrossValidator: Detector {
 
