@@ -41,6 +41,11 @@ public final class DetectorRegistry {
         case memoryIntegrity
         case runtimeIntegrity
 
+        // 行为检测型检测器（不依赖工具特征签名）
+        case functionIntegrityHash   // 函数前缀哈希基线校验（对抗 Dobby/Ellekit/任意 inline hook）
+        case moduleWhitelist         // 模块白名单（对抗 IPA 重签注入/越狱 tweak 注入）
+        case syscallCrossValidator   // libc 与直接 SVC 结果一致性（对抗越狱隐藏工具）
+
         public var rawValue: String {
             switch self {
             case .file: return "file"
@@ -57,6 +62,9 @@ public final class DetectorRegistry {
             case .codeSignature: return "code_signature"
             case .memoryIntegrity: return "memory_integrity"
             case .runtimeIntegrity: return "runtime_integrity"
+            case .functionIntegrityHash: return "function_integrity_hash"
+            case .moduleWhitelist: return "module_whitelist"
+            case .syscallCrossValidator: return "syscall_cross_validator"
             }
         }
 
@@ -206,6 +214,22 @@ public final class DetectorRegistry {
         .runtimeIntegrity: DetectorManifest(
             minOS: 14.0,
             signalOverlapGroup: "runtime_integrity"
+        ),
+        // 行为检测型（不依赖工具特征签名）
+        .functionIntegrityHash: DetectorManifest(
+            minOS: 14.0,
+            signalOverlapGroup: ObfuscatedConstants.overlapGroupFrida,
+            priority: 110
+        ),
+        .moduleWhitelist: DetectorManifest(
+            minOS: 14.0,
+            dependsOn: [.dylibInjection],
+            signalOverlapGroup: "dyld"
+        ),
+        .syscallCrossValidator: DetectorManifest(
+            minOS: 14.0,
+            signalOverlapGroup: "syscall_crosscheck",
+            priority: 115
         ),
     ]
     
@@ -656,11 +680,19 @@ private enum DetectorRegistryBootstrap {
         FactoryToken(token: 0xB3471926FD8C2B57, type: .codeSignature, factory: { CodeSignatureValidator() }),
         FactoryToken(token: 0xC4582A370E9D3C68, type: .memoryIntegrity, factory: { MemoryIntegrityChecker() }),
         FactoryToken(token: 0xD5693B481FAE4D79, type: .runtimeIntegrity, factory: { RuntimeIntegrityValidator() }),
+        // 行为检测型
+        FactoryToken(token: 0xE67A4C5920BF5E8A, type: .functionIntegrityHash, factory: { FunctionIntegrityHashDetector() }),
+        FactoryToken(token: 0xF78B5D6A30C16F9B, type: .moduleWhitelist, factory: { ModuleWhitelistDetector() }),
+        FactoryToken(token: 0x089C6E7B4D1270AC, type: .syscallCrossValidator, factory: { DirectSyscallCrossValidator() }),
     ]
 
     private static let groupMembership: [DetectorRegistry.DetectorGroup: Set<DetectorRegistry.DetectorType>] = [
         .jailbreak: [.file, .dyld, .env, .sysctl, .scheme, .hook],
-        .antiTamper: [.antiTampering, .debugger, .frida, .fridaModule, .dylibInjection],
+        .antiTamper: [
+            .antiTampering, .debugger, .frida, .fridaModule, .dylibInjection,
+            // 行为检测型（不依赖工具特征签名）
+            .functionIntegrityHash, .moduleWhitelist, .syscallCrossValidator,
+        ],
         .integrity: [.codeSignature, .memoryIntegrity, .runtimeIntegrity],
     ]
 
@@ -761,6 +793,10 @@ extension JailbreakConfig {
         types.insert(.codeSignature)
         types.insert(.memoryIntegrity)
         types.insert(.runtimeIntegrity)
+        // 行为检测型（不依赖工具特征签名，应对 Dobby/Ellekit/IPA重签注入等）
+        types.insert(.functionIntegrityHash)
+        types.insert(.moduleWhitelist)
+        types.insert(.syscallCrossValidator)
 
         return types
     }
