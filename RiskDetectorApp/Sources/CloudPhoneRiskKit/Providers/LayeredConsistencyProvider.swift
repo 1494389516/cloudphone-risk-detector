@@ -32,6 +32,7 @@ final class LayeredConsistencyProvider: RiskSignalProvider {
             { self.detectTimingAnomaly().map { [$0] } ?? [] },
             { self.detectSensorEntropy(snapshot: snapshot).map { [$0] } ?? [] },
             { self.detectTouchEntropy(snapshot: snapshot).map { [$0] } ?? [] },
+            { self.detectTouchMotionDecoupling(snapshot: snapshot).map { [$0] } ?? [] },
         ]
         let orderedChecks = planner.maybeShuffle(checks, salt: "layer23_checks")
         for check in orderedChecks {
@@ -213,6 +214,45 @@ final class LayeredConsistencyProvider: RiskSignalProvider {
             state: .soft(confidence: confidence),
             layer: 3,
             weightHint: 50
+        )
+    }
+
+    /// CVD 云手机通过 ADB/virtio-input 注入触摸事件，但不携带真实的手部运动。
+    /// 真实设备中，密集触摸操作（≥15 次）必然伴随加速度计噪声（motionEnergy > 0）
+    /// 和非零的触摸-运动相关性。CVD 环境下两者解耦：触摸活跃但运动能量为零。
+    private func detectTouchMotionDecoupling(snapshot: RiskSnapshot) -> RiskSignal? {
+        let touch = snapshot.behavior.touch
+        let motion = snapshot.behavior.motion
+        let actionCount = touch.tapCount + touch.swipeCount
+
+        // 需要足够的触摸操作才有统计意义
+        guard actionCount >= 15 else { return nil }
+
+        let energy = motion.motionEnergy ?? 0
+        let correlation = snapshot.behavior.touchMotionCorrelation ?? 1.0
+
+        // CVD 特征：大量触摸事件 + 传感器几乎完全静默 + 触摸-运动弱耦合
+        let energyDead = energy < 1e-6
+        let correlationWeak = correlation < 0.15
+
+        guard energyDead && correlationWeak else { return nil }
+
+        // 置信度随操作次数递增：15次→0.6，30次→0.8，50+次→0.85
+        let depthFactor = min(Double(actionCount - 15) / 35.0, 1.0)
+        let confidence = 0.6 + depthFactor * 0.25
+
+        return RiskSignal(
+            id: SignalID.touchMotionDecoupling,
+            category: SignalCategory.cloudphone,
+            score: 0,
+            evidence: [
+                "action_count": "\(actionCount)",
+                "motion_energy": String(format: "%.8f", energy),
+                "touch_motion_correlation": String(format: "%.4f", correlation),
+            ],
+            state: .soft(confidence: confidence),
+            layer: 2,
+            weightHint: 65
         )
     }
 

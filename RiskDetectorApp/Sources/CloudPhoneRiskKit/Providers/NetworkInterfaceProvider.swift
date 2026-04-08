@@ -98,6 +98,17 @@ final class NetworkInterfaceProvider: RiskSignalProvider {
             hitMethods.append("virtual_interface:\(virtualHits.joined(separator: ","))")
         }
 
+        // 1b. Hypervisor/CVD 特征接口名检测
+        // CVD (Cuttlefish)、QEMU、libvirt 等虚拟化平台暴露的接口命名模式
+        let hypervisorKeywords = ["vnet", "qemu", "kvm", "xen", "virtio", "cvd", "crosvm"]
+        let hypervisorHits = uniqueNames.filter { name in
+            let lower = name.lowercased()
+            return hypervisorKeywords.contains { lower.contains($0) }
+        }
+        if !hypervisorHits.isEmpty {
+            hitMethods.append("hypervisor_interface:\(hypervisorHits.joined(separator: ","))")
+        }
+
         // 2. MTU 异常：en0 非 1500
         if let mtu = en0MTU {
             if mtu == 0 || mtu > 9000 {

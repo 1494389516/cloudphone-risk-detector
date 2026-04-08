@@ -206,6 +206,34 @@ public struct ScenarioPolicy: Codable, Sendable {
         description: "系统时间三重异常（启动时间回拨 + 系统时间跳跃 + 安装日期异常）"
     )
 
+    /// CR-007: CVD 多层联合检测 → BLOCK
+    /// 跨层融合：网络虚拟接口 + 环境冻结 + 触摸-运动解耦 + IMU 噪声合成
+    /// 任意 2 个以上同时命中表明高度可信的 CVD/云手机环境
+    private static let cr007CVDMultilayerDetection = ComboRule(
+        name: "CR-007_cvd_multilayer_detection",
+        requiredSignals: [
+            SignalID.networkInterfaceAnomaly,     // Layer 1: 虚拟/hypervisor 网络接口
+            SignalID.environmentFreezeLock,        // Layer 2: 三维环境冻结
+            SignalID.touchMotionDecoupling,        // Layer 2: 触摸-运动解耦
+        ],
+        bonusScore: 40.0,
+        forceAction: .block,
+        description: "CVD 多层联合检测：网络接口 + 环境冻结 + 传感器解耦"
+    )
+
+    /// CR-007b: CVD 轻量组合（2/4 命中即触发挑战）
+    /// 降级版，用于包含更多信号源但阈值较低的场景
+    private static let cr007bCVDLightCombo = ComboRule(
+        name: "CR-007b_cvd_light_combo",
+        requiredSignals: [
+            SignalID.environmentFreezeLock,
+            SignalID.touchMotionDecoupling,
+        ],
+        bonusScore: 25.0,
+        forceAction: .challenge,
+        description: "CVD 轻量组合：环境冻结 + 传感器解耦"
+    )
+
     /// 全量信号融合规则集合（适用于最严格策略）
     private static let allComboRules: [ComboRule] = [
         impossibleStatesRule,
@@ -215,6 +243,8 @@ public struct ScenarioPolicy: Codable, Sendable {
         cr004ImpossibleNoCellularPower,
         cr005FridaV8Dns,
         cr006TimeAnomalyCombo,
+        cr007CVDMultilayerDetection,
+        cr007bCVDLightCombo,
     ]
 
     /// 核心融合规则集合（高危三件套，过滤掉 MEDIUM 级规则）
@@ -223,6 +253,7 @@ public struct ScenarioPolicy: Codable, Sendable {
         cr001JailbreakDebugKernel,
         cr002DeviceTamperIdfvMcc,
         cr005FridaV8Dns,
+        cr007bCVDLightCombo,
     ]
 
     /// 通用策略（默认）
