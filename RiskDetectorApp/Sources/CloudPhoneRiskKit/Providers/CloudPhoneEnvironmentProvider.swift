@@ -115,20 +115,41 @@ public final class CloudPhoneEnvironmentProvider: RiskSignalProvider {
         let variance = computeVariance(samples)
         let mean = samples.reduce(0, +) / Double(samples.count)
         let cv = mean > 0 ? (variance.squareRoot() / mean) : 1.0
+        let kurt = computeKurtosis(samples, mean: mean, variance: variance)
 
-        // Cloud phones typically show coefficient of variation < 0.02 (nearly identical RTTs).
-        let confidence: Double
+        // Two orthogonal signals are combined:
+        //
+        // 1. CV (coefficient of variation): cloud phones show near-zero CV because the
+        //    virtual scheduler delivers uniform loopback latency.  Sophisticated operators
+        //    may inject jitter to raise CV into a "normal-looking" range (0.03–0.15).
+        //
+        // 2. Kurtosis: genuine network jitter is approximately Gaussian (kurtosis ≈ 3).
+        //    Artificially injected uniform jitter is platykurtic (kurtosis ≈ 1.8).
+        //    A low kurtosis in the 0.03–0.15 CV band exposes jitter-injection bypasses.
+        let cvConfidence: Double
         if cv < 0.01 {
-            confidence = 0.95
+            cvConfidence = 0.95
         } else if cv < 0.03 {
-            confidence = 0.75
+            cvConfidence = 0.75
         } else if cv < 0.08 {
-            confidence = 0.45
+            cvConfidence = 0.45
         } else {
-            confidence = 0.15
+            cvConfidence = 0.15
         }
 
-        Logger.log("CloudPhoneEnv: RTT cv=\(String(format: "%.4f", cv)), variance=\(String(format: "%.6f", variance)), samples=\(samples.count)")
+        // Platykurtic distribution in the "jitter-injected" CV band signals bypass attempt.
+        // kurtosis nil means insufficient samples for the 4th moment; treat conservatively.
+        let kurtosisBoost: Double
+        if let k = kurt, cv >= 0.03, cv < 0.15, k < 2.2 {
+            // Uniform-like distribution despite non-trivial spread → artificial jitter.
+            kurtosisBoost = 0.25
+        } else {
+            kurtosisBoost = 0.0
+        }
+
+        let confidence = min(cvConfidence + kurtosisBoost, 0.95)
+
+        Logger.log("CloudPhoneEnv: RTT cv=\(String(format: "%.4f", cv)), kurtosis=\(kurt.map { String(format: "%.2f", $0) } ?? "n/a"), boost=\(kurtosisBoost), samples=\(samples.count)")
 
         return [
             RiskSignal(
@@ -139,6 +160,7 @@ public final class CloudPhoneEnvironmentProvider: RiskSignalProvider {
                     "rtt_cv": String(format: "%.6f", cv),
                     "rtt_variance": String(format: "%.6f", variance),
                     "rtt_mean_ms": String(format: "%.2f", mean),
+                    "rtt_kurtosis": kurt.map { String(format: "%.4f", $0) } ?? "n/a",
                     "samples": "\(samples.count)",
                 ],
                 state: .soft(confidence: confidence),
@@ -191,7 +213,19 @@ public final class CloudPhoneEnvironmentProvider: RiskSignalProvider {
         ]
     }
 
-    /// 3. Thermal state anomalies — cloud phones typically report nominal state without variation.
+    // UserDefaults key for cross-call thermal state history.
+    // Each call appends the current reading; we require ≥ thermalHistoryMinCount
+    // distinct-session samples before drawing any conclusion, eliminating the
+    // false-positive caused by a single always-nominal point-in-time read.
+    static let thermalSnapshotKey = "cprk_cpenv_thermal_snaps"
+    private static let thermalHistoryMinCount = 3
+    private static let thermalHistoryMaxCount = 12
+
+    /// 3. Thermal state anomalies — cloud phones persistently report nominal state across
+    /// multiple SDK evaluation sessions, whereas real devices occasionally transition to
+    /// fair/serious under load.  A single point-in-time read is meaningless (most real
+    /// devices are also nominal when idle), so we accumulate a cross-call history and only
+    /// flag when every recorded reading is nominal.
     private func thermalStateSignals() -> [RiskSignal] {
         #if targetEnvironment(simulator)
         return [
@@ -206,32 +240,49 @@ public final class CloudPhoneEnvironmentProvider: RiskSignalProvider {
             ),
         ]
         #elseif canImport(UIKit)
-        let samples = collectThermalStateSamples(count: 5, interval: 0.2)
-        let allNominal = !samples.isEmpty && samples.allSatisfy { $0 == ProcessInfo.ThermalState.nominal.rawValue }
-        let noVariation = Set(samples).count <= 1
+        let currentRaw = ProcessInfo.processInfo.thermalState.rawValue
 
-        let confidence: Double
-        if samples.isEmpty {
+        // Persist current reading into rolling history.
+        var history = loadThermalHistory()
+        history.append(currentRaw)
+        if history.count > Self.thermalHistoryMaxCount {
+            history.removeFirst(history.count - Self.thermalHistoryMaxCount)
+        }
+        saveThermalHistory(history)
+
+        guard history.count >= Self.thermalHistoryMinCount else {
+            Logger.log("CloudPhoneEnv: thermal history insufficient (\(history.count)/\(Self.thermalHistoryMinCount)), deferring")
             return [
                 RiskSignal(
                     id: "thermal_state_anomaly",
                     category: "environment",
                     score: 0,
-                    evidence: ["detail": "no_samples"],
+                    evidence: [
+                        "detail": "insufficient_history",
+                        "sample_count": "\(history.count)",
+                        "required": "\(Self.thermalHistoryMinCount)",
+                    ],
                     state: .unavailable,
                     layer: 2,
                     weightHint: 55
                 ),
             ]
-        } else if allNominal && noVariation {
-            confidence = 0.7
-        } else if noVariation {
-            confidence = 0.5
-        } else {
-            confidence = 0.1
         }
 
-        Logger.log("CloudPhoneEnv: thermal samples=\(samples), allNominal=\(allNominal), noVariation=\(noVariation)")
+        let allNominal = history.allSatisfy { $0 == ProcessInfo.ThermalState.nominal.rawValue }
+        let uniqueCount = Set(history).count
+
+        let confidence: Double
+        if allNominal {
+            // Scale confidence with history depth: more readings → stronger signal.
+            let depth = min(Double(history.count), Double(Self.thermalHistoryMaxCount))
+            let depthRatio = depth / Double(Self.thermalHistoryMaxCount)
+            confidence = 0.55 + depthRatio * 0.20  // [0.55 … 0.75]
+        } else {
+            confidence = 0.05
+        }
+
+        Logger.log("CloudPhoneEnv: thermal history=\(history.count) readings, allNominal=\(allNominal), uniqueStates=\(uniqueCount)")
 
         return [
             RiskSignal(
@@ -240,8 +291,8 @@ public final class CloudPhoneEnvironmentProvider: RiskSignalProvider {
                 score: 0,
                 evidence: [
                     "all_nominal": "\(allNominal)",
-                    "no_variation": "\(noVariation)",
-                    "sample_count": "\(samples.count)",
+                    "unique_states": "\(uniqueCount)",
+                    "sample_count": "\(history.count)",
                 ],
                 state: .soft(confidence: confidence),
                 layer: 2,
@@ -263,6 +314,20 @@ public final class CloudPhoneEnvironmentProvider: RiskSignalProvider {
         #endif
     }
 
+    func loadThermalHistory() -> [Int] {
+        guard let raw = UserDefaults.standard.string(forKey: Self.thermalSnapshotKey),
+              !raw.isEmpty else { return [] }
+        return raw.split(separator: ",")
+            .compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+    }
+
+    func saveThermalHistory(_ history: [Int]) {
+        UserDefaults.standard.set(
+            history.map { String($0) }.joined(separator: ","),
+            forKey: Self.thermalSnapshotKey
+        )
+    }
+
     /// 4. Process name patterns — look for cloud phone management daemons.
     private func processNameSignals() -> [RiskSignal] {
         #if targetEnvironment(simulator)
@@ -274,7 +339,7 @@ public final class CloudPhoneEnvironmentProvider: RiskSignalProvider {
                 evidence: ["detail": "simulator"],
                 state: .unavailable,
                 layer: 1,
-                weightHint: 90
+                weightHint: 35
             ),
         ]
         #else
@@ -292,6 +357,9 @@ public final class CloudPhoneEnvironmentProvider: RiskSignalProvider {
             #endif
         }
 
+        // NOTE: Process name matching is a weak signal — kernel-level CVD customization
+        // can trivially rename daemons. Weight is intentionally low; treat as corroborating
+        // evidence only, never as a standalone hard indicator.
         return [
             RiskSignal(
                 id: "cloud_process_detected",
@@ -303,7 +371,7 @@ public final class CloudPhoneEnvironmentProvider: RiskSignalProvider {
                 ],
                 state: detected ? .hard(detected: true) : .soft(confidence: 0.05),
                 layer: 1,
-                weightHint: 90
+                weightHint: 35
             ),
         ]
         #endif
@@ -377,11 +445,21 @@ public final class CloudPhoneEnvironmentProvider: RiskSignalProvider {
         )
     }
 
-    private func computeVariance(_ series: [Double]) -> Double {
+    func computeVariance(_ series: [Double]) -> Double {
         guard series.count > 1 else { return 0 }
         let mean = series.reduce(0, +) / Double(series.count)
         let squaredDiffs = series.map { pow($0 - mean, 2) }
         return squaredDiffs.reduce(0, +) / Double(series.count - 1)
+    }
+
+    /// Pearson kurtosis (not excess) of the sample.  Returns nil when the sample is too
+    /// small (< 4 points) or variance is zero (degenerate distribution).
+    /// Normal distribution → ≈ 3.0.  Uniform distribution → ≈ 1.8.
+    func computeKurtosis(_ series: [Double], mean: Double, variance: Double) -> Double? {
+        guard series.count >= 4, variance > 0 else { return nil }
+        let n = Double(series.count)
+        let m4 = series.map { pow($0 - mean, 4) }.reduce(0, +) / n
+        return m4 / (variance * variance)
     }
 
     /// Measure loopback RTT samples using a lightweight socket connection.
@@ -414,20 +492,6 @@ public final class CloudPhoneEnvironmentProvider: RiskSignalProvider {
         }
         return results
     }
-
-    #if canImport(UIKit)
-    /// Collect thermal state samples without blocking the calling thread for extended periods.
-    /// Uses a single snapshot plus ProcessInfo's built-in state (which already tracks thermal changes).
-    private func collectThermalStateSamples(count: Int, interval: TimeInterval) -> [Int] {
-        // Avoid Thread.sleep which blocks the caller (potentially the main thread).
-        // Instead, take a single reading and check if thermal state monitoring indicates variance.
-        let currentState = ProcessInfo.processInfo.thermalState
-        // ProcessInfo.thermalState is already a smoothed value; repeated reads within 1s
-        // will return the same value. Taking multiple samples via sleep adds latency without
-        // meaningful new data. Return a single sample.
-        return [currentState.rawValue]
-    }
-    #endif
 
     /// Detect suspicious processes by scanning /proc or using sysctl.
     private func detectSuspiciousProcesses(patterns: [String]) -> [String] {
