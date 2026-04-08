@@ -30,6 +30,7 @@ final class EnvironmentConsistencyProvider: RiskSignalProvider {
             { self.thermalStateStaticSignals() },
             { self.batteryStateStaticSignals() },
             { self.screenBrightnessStaticSignals() },
+            { self.environmentFreezeLockSignals() },
         ]
 
         var out: [RiskSignal] = []
@@ -273,6 +274,84 @@ final class EnvironmentConsistencyProvider: RiskSignalProvider {
         // 可能导致正常设备（亮度有轻微波动）被误判为亮度静止。
         return squaredDiffs.reduce(0, +) / Double(series.count - 1)
     }
+
+    // MARK: - environment_freeze_lock
+
+    /// CVD 云手机三维环境冻结联合检测：
+    /// 热状态 + 电池 + 屏幕亮度三者同时静止是真实设备上极不可能的组合。
+    /// 真实 iPhone 长期使用必然会出现热状态波动（CPU 负载）、电池电量变化
+    /// （充放电循环）、亮度调节（自动亮度/手动操作）。三者全冻结强烈暗示
+    /// CVD 或云手机虚拟环境。
+    private func environmentFreezeLockSignals() -> [RiskSignal] {
+        #if canImport(UIKit)
+        let thermalHistory = loadHistory(key: Self.thermalHistoryKey)
+        let batteryHistory = loadHistory(key: Self.batteryHistoryKey)
+
+        // 至少需要每个维度 3 个以上历史点才有判定意义
+        guard thermalHistory.count >= 3, batteryHistory.count >= 2 else {
+            return []
+        }
+
+        let thermalFrozen = Set(thermalHistory).count <= 1
+        let batteryFrozen = Set(batteryHistory).count <= 1
+
+        // 亮度无 history 存储，使用当前采样代替（非主线程安全时跳过）
+        let brightnessFrozen: Bool
+        if !Thread.isMainThread {
+            let samples = captureBrightnessSamplesSync()
+            brightnessFrozen = samples.count >= 3 && computeVariance(samples) < 0.001
+        } else {
+            brightnessFrozen = false
+        }
+
+        // 计分：每个冻结维度贡献权重，2/3 以上才触发信号
+        let frozenCount = [thermalFrozen, batteryFrozen, brightnessFrozen].filter { $0 }.count
+        guard frozenCount >= 2 else { return [] }
+
+        let confidence: Double
+        switch frozenCount {
+        case 3:  confidence = 0.85
+        case 2:  confidence = 0.65
+        default: return []
+        }
+
+        return [
+            RiskSignal(
+                id: SignalID.environmentFreezeLock,
+                category: SignalCategory.cloudphone,
+                score: 0,
+                evidence: [
+                    "thermal_frozen": "\(thermalFrozen)",
+                    "battery_frozen": "\(batteryFrozen)",
+                    "brightness_frozen": "\(brightnessFrozen)",
+                    "frozen_dimensions": "\(frozenCount)/3",
+                ],
+                state: .soft(confidence: confidence),
+                layer: 2,
+                weightHint: 75
+            ),
+        ]
+        #else
+        return []
+        #endif
+    }
+
+    #if canImport(UIKit)
+    /// 非主线程安全的亮度采样（不使用 asyncAfter，直接同步读取多次）
+    private func captureBrightnessSamplesSync() -> [Double] {
+        guard !Thread.isMainThread else { return [] }
+        var samples: [Double] = []
+        let semaphore = DispatchSemaphore(value: 0)
+        DispatchQueue.main.async {
+            for _ in 0..<3 {
+                samples.append(Double(UIScreen.main.brightness))
+            }
+            semaphore.signal()
+        }
+        _ = semaphore.wait(timeout: .now() + 1.0)
+        return samples
+    }
+    #endif
 
     // MARK: - Persistence
 

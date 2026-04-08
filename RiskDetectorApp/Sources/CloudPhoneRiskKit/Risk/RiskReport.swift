@@ -186,6 +186,13 @@ public enum SignalID {
     static let systemTimeJump = "system_time_jump"
     /// 安装日期异常（过新/过旧/不符合设备生命周期）
     static let installDateUnusual = "install_date_unusual"
+
+    // MARK: - CR-007: CVD Multilayer Detection
+
+    /// CVD 触摸-运动解耦：大量触摸事件但传感器完全静默（虚拟输入注入特征）
+    static let touchMotionDecoupling = "touch_motion_decoupling"
+    /// CVD 环境冻结锁：热状态+电池+亮度三维同时静止（虚拟环境不可能状态）
+    static let environmentFreezeLock = "environment_freeze_lock"
 }
 
 // MARK: - Signal Categories
