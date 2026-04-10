@@ -12,11 +12,14 @@ final class ControlFlowBinaryRewriter {
     private let policy: FunctionCFFPolicy
     private let plansBySymbol: [String: OrchestratedFunctionPlan]
     private let symbolIndex: CFFPolicySymbolIndex
+    /// Build seed forwarded to the heuristic fallback path when the binary is stripped.
+    private let heuristicFallbackSeed: UInt64
 
-    init(policy: FunctionCFFPolicy, plans: [OrchestratedFunctionPlan]) {
+    init(policy: FunctionCFFPolicy, plans: [OrchestratedFunctionPlan], heuristicFallbackSeed: UInt64 = 0) {
         self.policy = policy
         self.plansBySymbol = Dictionary(uniqueKeysWithValues: plans.map { ($0.symbol, $0) })
         self.symbolIndex = CFFPolicySymbolIndex(policy: policy)
+        self.heuristicFallbackSeed = heuristicFallbackSeed
     }
 
     func apply(to file: MachOFile, verbose: Bool) throws -> ControlFlowBinaryRewriteReport {
@@ -43,10 +46,16 @@ final class ControlFlowBinaryRewriter {
 
         let symbols = try file.readSymbols()
         guard !symbols.isEmpty else {
-            return ControlFlowBinaryRewriteReport(
-                modifiedFunctionCount: 0,
-                bytesModified: 0,
-                details: ["Skipped: no symbol table entries found for Pass9 targeting"]
+            // Stripped binary: no symbol table to match policy names against.
+            // Fall back to ARM64 prologue heuristic scanning so Pass9 still
+            // applies light-tier CFF mutations instead of silently no-op'ing.
+            return applyHeuristic(
+                to: file,
+                textStart: textStart,
+                textSize: textSize,
+                textVMStart: textVMStart,
+                textVMEnd: textVMEnd,
+                verbose: verbose
             )
         }
 
@@ -165,6 +174,181 @@ final class ControlFlowBinaryRewriter {
                     symbolLabel = "\(record.policySymbol) <= \(record.binarySymbol)"
                 }
                 details.append("[skipped][\(record.tier.rawValue)] \(symbolLabel): \(record.reason)")
+            }
+        }
+
+        return ControlFlowBinaryRewriteReport(
+            modifiedFunctionCount: modified.count,
+            bytesModified: bytesModified,
+            details: details
+        )
+    }
+
+    // MARK: - ARM64 Prologue Heuristic (stripped-binary fallback)
+
+    /// ARM64 encoding mask/pattern for `STP x29, x30, [sp, #-N]!` (pre-indexed, N > 0).
+    ///
+    /// Bits 31–22: load/store pair, 64-bit, pre-index, store.
+    /// Bit  21:    imm7 sign bit = 1 → negative offset (stack grows down).
+    /// Bits 14–0:  fixed Rt2=x30, Rn=SP, Rt=x29.
+    /// Bits 20–15: lower imm7 field — cleared in the mask (any valid frame size).
+    private static let arm64StpX29X30PreindexMask:    UInt32 = 0xFFE0_7FFF
+    private static let arm64StpX29X30PreindexPattern: UInt32 = 0xA9A0_7BFD
+
+    /// Minimum distance between two heuristically detected function starts (bytes).
+    private static let heuristicMinFunctionGap = 16
+    /// Maximum number of functions detected via heuristic scan (guard against pathological binaries).
+    private static let heuristicMaxFunctions = 256
+
+    /// Build a light-tier `OrchestratedFunctionPlan` for a synthetic heuristic symbol.
+    private func makeLightFallbackPlan(symbol: String) -> OrchestratedFunctionPlan {
+        let seed = heuristicFallbackSeed == 0 ? 1 : heuristicFallbackSeed
+        let stateEnc = StateEncodingPlan.recommended(
+            for: symbol,
+            tier: .light,
+            options: policy.antiDeobfuscation,
+            buildSeed: seed
+        )
+        let runtimeDep = RuntimeDependencyPlan.recommended(for: .light, options: policy.antiDeobfuscation)
+        let antiDeobf = AntiDeobfuscationFunctionPlan.recommended(
+            for: .light,
+            options: policy.antiDeobfuscation,
+            stateEncodingPlan: stateEnc,
+            runtimeDependencyPlan: runtimeDep
+        )
+        return OrchestratedFunctionPlan(
+            symbol: symbol,
+            tier: .light,
+            dispatcherStyle: DispatcherStyle.choose(for: symbol, tier: .light, enableMultiDispatcher: false),
+            stateEncodingPlan: stateEnc,
+            runtimeDependencyPlan: runtimeDep,
+            antiDeobfuscationPlan: antiDeobf,
+            notes: ["heuristic: ARM64 prologue scan (stripped binary — no symbol table)"]
+        )
+    }
+
+    /// Scan `__TEXT.__text` for `STP x29, x30, [sp, #-N]!` prologues.
+    /// Returns file-offset-sorted candidate structs ready for `rewriteFunction`.
+    private func heuristicPrologueCandidates(
+        file: MachOFile,
+        textStart: Int,
+        textSize: Int,
+        textVMStart: UInt64,
+        textVMEnd: UInt64
+    ) -> [CFFManagedFunctionCandidate] {
+        var candidates: [CFFManagedFunctionCandidate] = []
+        var lastFileOffset = -Self.heuristicMinFunctionGap
+
+        let slotCount = textSize / 4
+        for slotIndex in 0..<slotCount {
+            guard candidates.count < Self.heuristicMaxFunctions else { break }
+
+            let fileOffset = textStart + slotIndex * 4
+            guard fileOffset - lastFileOffset >= Self.heuristicMinFunctionGap else { continue }
+            guard let raw = try? file.data.readUInt32LE(at: fileOffset) else { continue }
+
+            guard (raw & Self.arm64StpX29X30PreindexMask) == Self.arm64StpX29X30PreindexPattern else {
+                continue
+            }
+
+            let vmAddress = textVMStart + UInt64(slotIndex * 4)
+            let syntheticName = String(format: "__heuristic_func_0x%X", fileOffset - textStart)
+            let plan = makeLightFallbackPlan(symbol: syntheticName)
+            let profile = FunctionCFFTier.light.rewriteProfile!
+
+            candidates.append(CFFManagedFunctionCandidate(
+                policySymbol: syntheticName,
+                binarySymbol: syntheticName,
+                tier: .light,
+                plan: plan,
+                entryVMAddress: vmAddress,
+                entryFileOffset: fileOffset,
+                requiredPatchSlots: profile.requiredPatchSlots,
+                scanSlots: profile.scanSlots
+            ))
+            lastFileOffset = fileOffset
+        }
+        return candidates
+    }
+
+    /// Apply light-tier CFF mutations to ARM64-prologue-detected functions in a stripped binary.
+    private func applyHeuristic(
+        to file: MachOFile,
+        textStart: Int,
+        textSize: Int,
+        textVMStart: UInt64,
+        textVMEnd: UInt64,
+        verbose: Bool
+    ) -> ControlFlowBinaryRewriteReport {
+        let candidates = heuristicPrologueCandidates(
+            file: file,
+            textStart: textStart,
+            textSize: textSize,
+            textVMStart: textVMStart,
+            textVMEnd: textVMEnd
+        )
+
+        guard !candidates.isEmpty else {
+            return ControlFlowBinaryRewriteReport(
+                modifiedFunctionCount: 0,
+                bytesModified: 0,
+                details: [
+                    "Skipped: no symbol table found and ARM64 prologue scan found no candidates",
+                    "Hint: provide an unstripped binary for full policy-guided Pass9 targeting",
+                ]
+            )
+        }
+
+        // Build a sorted list of all detected VM addresses for boundary estimation.
+        let sortedEntries = candidates.map(\.entryVMAddress).sorted()
+
+        var modified: [CFFModifiedFunctionRecord] = []
+        var skipped: [CFFSkippedFunctionRecord] = []
+
+        for candidate in candidates {
+            let functionVMEnd = Self.nextTextSymbolEntry(
+                after: candidate.entryVMAddress,
+                sortedEntries: sortedEntries,
+                textVMEnd: textVMEnd
+            )
+            guard functionVMEnd > candidate.entryVMAddress else {
+                skipped.append(CFFSkippedFunctionRecord(
+                    policySymbol: candidate.policySymbol,
+                    binarySymbol: candidate.binarySymbol,
+                    tier: candidate.tier,
+                    reason: "invalid heuristic function bounds"
+                ))
+                continue
+            }
+
+            let functionSizeBytes = Int(functionVMEnd - candidate.entryVMAddress)
+            let outcome = rewriteFunction(
+                candidate,
+                functionSizeBytes: functionSizeBytes,
+                textStart: textStart,
+                file: file
+            )
+            switch outcome {
+            case .modified(let record): modified.append(record)
+            case .skipped(let record):  skipped.append(record)
+            }
+        }
+
+        let bytesModified = modified.reduce(0) { $0 + $1.bytesModified }
+        var details: [String] = [
+            "Pass9 heuristic mode: ARM64 prologue scan (stripped binary)",
+            "prologue candidates detected: \(candidates.count)",
+            "modified functions: \(modified.count)",
+            "bytes modified in __text: \(bytesModified)",
+        ]
+        if !skipped.isEmpty {
+            details.append("skipped functions: \(skipped.count)")
+        }
+        if verbose {
+            for record in modified {
+                details.append(
+                    "[heuristic][light] \(record.binarySymbol) patches=\(record.patches.count) bytes=\(record.bytesModified)"
+                )
             }
         }
 

@@ -158,10 +158,11 @@ public struct ControlFlowOrchestratorPass: ArmorPass {
         )
         let availableSymbols = (try? file.readSymbols().map(\.name)) ?? []
         let plans = ControlFlowOrchestrator(policy: policy, seedMaterial: buildSeed).buildPlans()
-        let rewriteReport = try ControlFlowBinaryRewriter(policy: policy, plans: plans).apply(
-            to: file,
-            verbose: config.verbose
-        )
+        let rewriteReport = try ControlFlowBinaryRewriter(
+            policy: policy,
+            plans: plans,
+            heuristicFallbackSeed: buildSeed
+        ).apply(to: file, verbose: config.verbose)
         let coverageSuggestion = CFFPolicyCoverageAdvisor.suggestExpansions(
             policy: policy,
             availableSymbols: availableSymbols

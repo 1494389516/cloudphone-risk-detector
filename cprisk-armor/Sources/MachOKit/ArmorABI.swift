@@ -52,7 +52,7 @@ public enum ArmorABI {
     public static let version: UInt32 = 2
     public static let keySize = 32
     public static let hashSize = 32
-    public static let nonceSize = 8
+    public static let nonceSize = 16
     public static let dataSegmentName = "__DATA"
 
     public enum Sections {

@@ -52,6 +52,10 @@ public final class AntiDebugInjectorPass: ArmorPass {
     private static let interestingKeywords = [
         "debug", "dbg", "frida", "ptrace", "sysctl", "tamper",
         "jailbreak", "hook", "trace", "integrity", "risk", "guard", "probe",
+        // Extended coverage: common naming patterns in security-sensitive code paths
+        "detect", "monitor", "audit", "verify", "inspect", "validate",
+        "bypass", "evade", "patch", "inject", "spoof", "cheat",
+        "sandbox", "emulat", "virtual", "environment",
     ]
 
     private static let ignoredPrefixes = [
@@ -201,6 +205,17 @@ public final class AntiDebugInjectorPass: ArmorPass {
                     hash = mix(hash, value: section.size)
                 }
             }
+        }
+
+        // Add a cryptographically random nonce so the selection differs across
+        // repeated invocations on the same binary, preventing an attacker from
+        // reproducing the plan by inspecting the binary fingerprint alone.
+        var nonce: UInt64 = 0
+        withUnsafeMutableBytes(of: &nonce) { buf in
+            arc4random_buf(buf.baseAddress!, buf.count)
+        }
+        if nonce != 0 {
+            hash = mix(hash, value: nonce)
         }
 
         return (hash == 0 ? 1 : hash, .binary)

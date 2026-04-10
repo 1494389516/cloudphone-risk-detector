@@ -84,7 +84,7 @@ public struct VMPolicyHardeningM3: Equatable, Sendable {
         opaqueVpcPredicateChain: Bool = false,
         interpreterSelfIntegrityCheck: Bool = false,
         interpreterCffTier: VMPInterpreterCffTier = .medium,
-        dispatchTableKeystream: Bool = false,
+        dispatchTableKeystream: Bool = true,
         bytecodeImmediateKeystream: Bool = false,
         bytecodeSegmentRuntimeSha256: Bool = false,
         antiSymbolicHeavy: Bool = false,
@@ -178,7 +178,7 @@ enum VMPolicyParser {
         var vpcPredicateChain = false
         var selfIntegrity = false
         var interpreterCffTier = VMPInterpreterCffTier.medium
-        var dispatchTableKs = false
+        var dispatchTableKs = true
         var bytecodeImmKs = false
         var bytecodeSegSha256 = false
         var antiSymbolicHeavy = false
@@ -427,6 +427,12 @@ public final class VMProtectorPass: ArmorPass {
         let m3Predicates: [UInt64] = policy.hardening.opaqueVpcPredicateChain
             ? VMBytecodeEmitter.generateVpcPredicateChain(seed: seedNonZero ^ UInt64(policy.version & 0xFFFF) << 40, count: 8)
             : []
+        // semiIdentity / semiSemantic branchInd modes embed 0xA1/0xA2 in the
+        // high byte of 64-bit immediates, making them statically fingerprintable.
+        // Force immediate keystream + opcode wire obfuscation to mask these bytes
+        // on disk whenever a semi-* mode is active.
+        let usingSemiIndMode = policy.hardening.syntheticBranchIndMode != .unreachableSkip
+        let needImmKs = policy.hardening.bytecodeImmediateKeystream || usingSemiIndMode
         let m2Opts = VMM2EmitOptions(
             opaqueVpcCategoryHigh32: policy.opaqueVpcEncoding.enabled,
             handlerVariantSeed: seedNonZero ^ (UInt64(policy.version) << 48),
@@ -440,9 +446,9 @@ public final class VMProtectorPass: ArmorPass {
             ),
             dispatchTableKeystream: policy.hardening.dispatchTableKeystream,
             dispatchKeystreamMaterial: seedNonZero ^ UInt64(truncatingIfNeeded: policy.version & 0xFFFF),
-            immediateKeystream: policy.hardening.bytecodeImmediateKeystream,
+            immediateKeystream: needImmKs,
             immediateKeystreamMaterial: seedNonZero ^ 0x1CE0_00DE_F11E_0001,
-            opcodeWireObfuscation: policy.hardening.bytecodeImmediateKeystream,
+            opcodeWireObfuscation: needImmKs,
             opcodeKeystreamMaterial: seedNonZero ^ 0x0BC0_4D45_4D4D_3258,
             antiSymbolicHeavy: policy.hardening.antiSymbolicHeavy
         )
