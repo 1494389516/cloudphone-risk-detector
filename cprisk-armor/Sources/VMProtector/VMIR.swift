@@ -137,4 +137,53 @@ public enum VMBranchIndImmediateContract: Sendable {
     public static func isSemiSemantic(_ immediate: UInt64) -> Bool {
         (immediate & ~semiIdentityPayloadMask) == semiSemanticTag
     }
+
+    // MARK: - Per-build tag masking
+
+    /// Derive a per-build XOR byte for the `branchInd` high-byte tag.
+    ///
+    /// XOR-ing the emitted tag byte with this value moves `0xA1`/`0xA2` to a
+    /// build-specific position, preventing static bytecode fingerprinting.
+    /// The XOR byte must be stored in the dispatch section header so the runtime
+    /// can recover the original tag identity.
+    ///
+    /// - Parameter seed: Build seed (e.g. `VMM2EmitOptions.handlerVariantSeed`).
+    /// - Returns: A non-zero byte outside the `0xA0–0xAF` range.
+    public static func perBuildTagXorByte(seed: UInt64) -> UInt8 {
+        // Domain-separated avalanche mix — "branchInd" constant.
+        var v = seed ^ 0xB4_47_CD_00_1E_70_F7_A5
+        v = (v ^ (v >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        v = (v ^ (v >> 27)) &* 0x94D0_49BB_1331_11EB
+        v ^= v >> 31
+        let b = UInt8(truncatingIfNeeded: v)
+        // Avoid 0x00 (identity XOR) and 0xA0–0xAF (adjacent to base tags).
+        return (b == 0 || b & 0xF0 == 0xA0) ? b ^ 0x37 : b
+    }
+
+    /// Emit a `semiIdentity` immediate whose high tag byte is XOR'd with `xorByte`.
+    public static func maskedSemiIdentity(entropy: UInt64, xorByte: UInt8) -> UInt64 {
+        let tagByte = (semiIdentityTag >> 56) ^ UInt64(xorByte)
+        return (tagByte << 56) | (entropy & semiIdentityPayloadMask)
+    }
+
+    /// Emit a `semiSemantic` immediate whose high tag byte is XOR'd with `xorByte`.
+    public static func maskedSemiSemantic(entropy: UInt64, forwardSpan: UInt8, xorByte: UInt8) -> UInt64 {
+        let tagByte = (semiSemanticTag >> 56) ^ UInt64(xorByte)
+        var payload = entropy & semiIdentityPayloadMask
+        payload = (payload & ~(semiSemanticForwardSpanMask << semiSemanticForwardSpanShift))
+            | (UInt64(forwardSpan) << semiSemanticForwardSpanShift)
+        return (tagByte << 56) | payload
+    }
+
+    /// Check whether `immediate` is a masked `semiIdentity` produced with `xorByte`.
+    public static func isMaskedSemiIdentity(_ immediate: UInt64, xorByte: UInt8) -> Bool {
+        let expectedTag = ((semiIdentityTag >> 56) ^ UInt64(xorByte)) << 56
+        return (immediate & ~semiIdentityPayloadMask) == expectedTag
+    }
+
+    /// Check whether `immediate` is a masked `semiSemantic` produced with `xorByte`.
+    public static func isMaskedSemiSemantic(_ immediate: UInt64, xorByte: UInt8) -> Bool {
+        let expectedTag = ((semiSemanticTag >> 56) ^ UInt64(xorByte)) << 56
+        return (immediate & ~semiIdentityPayloadMask) == expectedTag
+    }
 }

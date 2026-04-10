@@ -52,7 +52,7 @@ public enum ArmorABI {
     public static let version: UInt32 = 2
     public static let keySize = 32
     public static let hashSize = 32
-    public static let nonceSize = 8
+    public static let nonceSize = 16
     public static let dataSegmentName = "__DATA"
 
     public enum Sections {
@@ -301,6 +301,10 @@ public enum ArmorABI {
         public static let signingPipelineFlag: UInt32 = 0x0000_0002
         public static let enhancedDiffusionFlag: UInt32 = 0x0000_0004
         public static let aslrTableBindFlag: UInt32 = 0x0000_0008
+        /// When set, `configDigest` was computed over `SHA256(code||data||tag||teamSaltLE8)`.
+        /// Producers that set `aslrTableBindFlag` should also set this so the runtime can
+        /// perform an explicit Team ID self-check at bundle validation time.
+        public static let teamIdBoundFlag: UInt32 = 0x0000_0010
         public static let roundCount: UInt32 = 4
         /// Runtime-compatible strengthening target: keep ABI roundCount=4 while
         /// executing two deterministic sub-rounds per round.
@@ -544,7 +548,7 @@ public enum ArmorABI {
 
             public init(stringID: UInt32, dataOffset: UInt32, dataLength: UInt32,
                         nonce: Data, hmacTag: Data) {
-                precondition(nonce.count == ArmorABI.nonceSize, "nonce must be 8 bytes")
+                precondition(nonce.count == ArmorABI.nonceSize, "nonce must be 16 bytes")
                 precondition(hmacTag.count == ArmorABI.hashSize, "hmacTag must be 32 bytes")
                 self.stringID = stringID
                 self.dataOffset = dataOffset
@@ -628,7 +632,7 @@ public enum ArmorABI {
                 chainedKeyDepth: UInt32 = 0
             ) {
                 precondition(contentHash.count == ArmorABI.hashSize, "contentHash must be 32 bytes")
-                precondition(nonce.count == ArmorABI.nonceSize, "nonce must be 8 bytes")
+                precondition(nonce.count == ArmorABI.nonceSize, "nonce must be 16 bytes")
                 precondition(hmacTag.count == ArmorABI.hashSize, "hmacTag must be 32 bytes")
                 self.segmentName = segmentName
                 self.sectionName = sectionName

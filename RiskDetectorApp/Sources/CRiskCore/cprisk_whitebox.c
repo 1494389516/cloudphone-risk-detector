@@ -509,6 +509,30 @@ static int cprisk_whitebox_config_digest_valid_i(
     cprisk_sha256_update(&ctx, code, code_len);
     cprisk_sha256_update(&ctx, data, data_len);
     cprisk_sha256_update(&ctx, tag, tag_len);
+
+    /* Proactive Team ID self-check: when CPRISK_ARMOR_WHITEBOX_FLAG_TEAM_ID_BOUND
+     * is set, the producer computed config_digest over (code||data||tag||team_salt_le8)
+     * using the build-time Team Identifier salt.  Re-derive the salt at runtime via
+     * cprisk_codesign_team_salt() and fold it in before finalising the digest.
+     * A repackaged app with a different Team ID will produce a different salt here,
+     * causing an explicit validation failure rather than silently propagating corrupted
+     * PRF output downstream. */
+    if (!s_test_bundle_i.active &&
+        (header->flags & CPRISK_ARMOR_WHITEBOX_FLAG_TEAM_ID_BOUND) != 0u) {
+        const uint64_t ts = cprisk_codesign_team_salt();
+        uint8_t ts_le[8];
+        ts_le[0] = (uint8_t)(ts & 0xFFu);
+        ts_le[1] = (uint8_t)((ts >>  8) & 0xFFu);
+        ts_le[2] = (uint8_t)((ts >> 16) & 0xFFu);
+        ts_le[3] = (uint8_t)((ts >> 24) & 0xFFu);
+        ts_le[4] = (uint8_t)((ts >> 32) & 0xFFu);
+        ts_le[5] = (uint8_t)((ts >> 40) & 0xFFu);
+        ts_le[6] = (uint8_t)((ts >> 48) & 0xFFu);
+        ts_le[7] = (uint8_t)((ts >> 56) & 0xFFu);
+        cprisk_sha256_update(&ctx, ts_le, sizeof(ts_le));
+        cprisk_secure_zero(ts_le, sizeof(ts_le));
+    }
+
     cprisk_sha256_final(&ctx, digest);
 
     const int rc = cprisk_hmac_verify(header->config_digest,

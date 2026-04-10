@@ -19,7 +19,7 @@
  *
  *  See docs/ABI_CONTRACT.md for the full compatibility matrix.
  */
-#define CPRISK_ABI_VERSION_MAJOR 1u
+#define CPRISK_ABI_VERSION_MAJOR 2u
 #define CPRISK_ABI_VERSION_MINOR 0u
 #define CPRISK_ABI_VERSION_PATCH 0u
 
@@ -38,11 +38,11 @@ uint32_t cprisk_abi_version(void) {
     return CPRISK_ABI_VERSION_CURRENT;
 }
 
-#define CPRISK_ARMOR_ABI_VERSION 2u
+#define CPRISK_ARMOR_ABI_VERSION 3u
 
 #define CPRISK_ARMOR_KEY_SIZE 32u
 #define CPRISK_ARMOR_HASH_SIZE 32u
-#define CPRISK_ARMOR_NONCE_SIZE 8u
+#define CPRISK_ARMOR_NONCE_SIZE 16u
 
 #define CPRISK_ARMOR_SEGMENT_DATA "__DATA"
 
@@ -113,6 +113,10 @@ uint32_t cprisk_abi_version(void) {
 #define CPRISK_ARMOR_WHITEBOX_FLAG_ENHANCED_DIFFUSION 0x00000004u
 /** When set, white-box table bytes in \c __swift5_mdbdy are XOR-masked vs ASLR slide; see \c cprisk_armor_whitebox_header::aslr_table_anchor_slide. */
 #define CPRISK_ARMOR_WHITEBOX_FLAG_ASLR_TABLE_BIND 0x00000008u
+/** When set, \c config_digest was produced over \c SHA256(code||data||tag||team_salt_le8).
+ *  Runtime re-derives the team salt via \c cprisk_codesign_team_salt() and verifies the digest
+ *  at bundle validation time, providing an explicit proactive Team ID self-check. */
+#define CPRISK_ARMOR_WHITEBOX_FLAG_TEAM_ID_BOUND   0x00000010u
 
 /** Minimum on-disk white-box meta size (v1 layout: no anchor tail). */
 #define CPRISK_ARMOR_WHITEBOX_HEADER_V1_SIZE 48u
@@ -146,7 +150,7 @@ uint32_t cprisk_abi_version(void) {
 #define CPRISK_ARMOR_STRTAB_MAGIC 0x43505354u  /* table guard sentinel */
 #define CPRISK_ARMOR_LOADER_MAGIC 0x4350524Bu  /* descriptor guard sentinel */
 #define CPRISK_ARMOR_IMPORT_MAGIC 0x43494D50u  /* "CPIM" import table sentinel */
-#define CPRISK_ARMOR_LOADER_ENTRY_V3_SIZE 136u
+#define CPRISK_ARMOR_LOADER_ENTRY_V3_SIZE 144u
 
 #define CPRISK_ARMOR_ANCHOR_LANE_COUNT 4u
 #define CPRISK_ARMOR_ANCHOR_LANE_SIZE 8u
@@ -267,7 +271,7 @@ struct cprisk_whitebox_probe_result {
 
 _Static_assert(sizeof(struct cprisk_armor_strtab_header) == 12,
                "cprisk strtab header ABI drift");
-_Static_assert(sizeof(struct cprisk_armor_strtab_index_entry) == 52,
+_Static_assert(sizeof(struct cprisk_armor_strtab_index_entry) == 60,
                "cprisk strtab index ABI drift");
 _Static_assert(sizeof(struct cprisk_armor_loader_header) == 12,
                "cprisk loader header ABI drift");
@@ -284,7 +288,7 @@ _Static_assert(sizeof(struct cprisk_armor_whitebox_header) == CPRISK_ARMOR_WHITE
                "cprisk whitebox header ABI drift");
 _Static_assert(sizeof(struct cprisk_text_encrypt_header) == 16,
                "cprisk text encrypt header ABI drift");
-_Static_assert(sizeof(struct cprisk_text_encrypt_entry) == 96,
+_Static_assert(sizeof(struct cprisk_text_encrypt_entry) == 104,
                "cprisk text encrypt entry ABI drift");
 _Static_assert(sizeof(struct cprisk_whitebox_probe_result) == 16,
                "cprisk whitebox probe ABI drift");
