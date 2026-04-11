@@ -13,6 +13,7 @@
 #include <mach/thread_info.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
@@ -97,6 +98,55 @@
      CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SVC_STUB_INTEGRITY | \
      CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_MPROTECT_MACH_DIVERGENCE | \
      CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DBI_VM_TRACE_CORREL)
+
+/*
+ * Debug-only runtime bypass for the hardening response path.
+ *
+ * Goal: let developers run normal Xcode debug sessions (with debugger attached,
+ * GET_TASK_ALLOW entitlement, Frida installed for side research, etc.) without
+ * being silently killed by the anti-debug poison, WHILE still allowing them to
+ * exercise and verify the full hardening response when they explicitly want to
+ * test it.
+ *
+ * Behaviour:
+ *   Release build (CPRISK_WD_POISON_SUPPRESSED() == 0 always):
+ *     - Compile-time constant 0; the optimiser fully elides the branch.
+ *     - Hardening response is always active; zero overhead over the previous
+ *       unconditional call.
+ *
+ *   Debug build:
+ *     - CPRISK_WD_POISON_SUPPRESSED() consults the environment variable
+ *       CPRISK_TEST_HARDENING (cached on first read).
+ *     - Default (variable unset or "0"): returns 1 → poison is suppressed →
+ *       the developer can debug freely; anomaly_flags are still collected and
+ *       visible through cprisk_get_watchdog_snapshot() for diagnostics.
+ *     - CPRISK_TEST_HARDENING=1 (or y/Y/t/T): returns 0 → full hardening
+ *       response is active, exactly as it would be in Release.  Use this mode
+ *       in Xcode scheme environment variables when verifying that the
+ *       poison lanes, CFF explosion, hard-crash switch, etc. actually fire.
+ *
+ * The helper is declared here so every watchdog detection path that wants to
+ * suppress its response just needs one call: `if (!CPRISK_WD_POISON_SUPPRESSED())`.
+ */
+#if (defined(DEBUG) && DEBUG)
+static int cprisk_watchdog_dev_bypass_poison_i(void) {
+    static int s_cached = -1;
+    if (s_cached >= 0) {
+        return s_cached;
+    }
+    const char *e = getenv("CPRISK_TEST_HARDENING");
+    if (e != NULL &&
+        (e[0] == '1' || e[0] == 'y' || e[0] == 'Y' || e[0] == 't' || e[0] == 'T')) {
+        s_cached = 0;  /* developer opted in → full hardening response active */
+    } else {
+        s_cached = 1;  /* default in debug → bypass so normal dev workflow works */
+    }
+    return s_cached;
+}
+#define CPRISK_WD_POISON_SUPPRESSED() (cprisk_watchdog_dev_bypass_poison_i() != 0)
+#else
+#define CPRISK_WD_POISON_SUPPRESSED() (0)
+#endif
 
 enum {
     CPRISK_WATCHDOG_STATE_STOPPED = 0,
@@ -1491,20 +1541,20 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
         /* Staged (not immediate): push/IM SDK late-loading and OTA framework updates
          * legitimately add new RX images after launch.  Only name-matched jailbreak
          * tools (DYLD_INJECTION) warrant zero-tolerance immediate commit.
-         * Skipped entirely in debug builds where the developer toolchain loads
-         * additional images (e.g. Xcode helper dylibs, instruments DTX). */
-#if !(defined(DEBUG) && DEBUG)
-        cprisk_integrity_poison_watchdog_lane();
-#endif
+         * Debug build default suppresses this through CPRISK_WD_POISON_SUPPRESSED();
+         * set CPRISK_TEST_HARDENING=1 to exercise the staged path in dev. */
+        if (!CPRISK_WD_POISON_SUPPRESSED()) {
+            cprisk_integrity_poison_watchdog_lane();
+        }
     }
     if (vm_image_whitelist_anom == 0u && low_checks) {
         const int layout_drift = cprisk_vm_dyld_image_layout_digest_differs_from_baseline();
         if (layout_drift == 1) {
             vm_image_whitelist_anom = CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_IMAGE_WHITELIST;
             /* Same staged rationale as above. */
-#if !(defined(DEBUG) && DEBUG)
-            cprisk_integrity_poison_watchdog_lane();
-#endif
+            if (!CPRISK_WD_POISON_SUPPRESSED()) {
+                cprisk_integrity_poison_watchdog_lane();
+            }
         }
     }
     const uint32_t vm_cc_total = cprisk_get_vm_mprotect_crosscheck_mismatch_count();
@@ -1562,31 +1612,34 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
             }
             if (deny_verify_suspicious != 0) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DENY_ATTACH_VERIFY;
-#if !(defined(DEBUG) && DEBUG)
-                cprisk_integrity_poison_high_signal_mixed(0xB101u);
-#endif
+                if (!CPRISK_WD_POISON_SUPPRESSED()) {
+                    cprisk_integrity_poison_high_signal_mixed(0xB101u);
+                }
             }
             anomaly_flags |= cprisk_wd_amfi_flags_from_probe_bits_i(amfi_probe_bits);
             if (get_task_allow_suspect != 0u) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GET_TASK_ALLOW;
             }
-            /* GET_TASK_ALLOW is always present in Debug/Adhoc entitlements; guard the inline
-             * poison to prevent 100% false-positive kills in developer builds.  Production
-             * Release builds never have this entitlement so the guard has zero effect there. */
+            /* GET_TASK_ALLOW is always present in Debug/Adhoc entitlements; the
+             * CPRISK_WD_POISON_SUPPRESSED() runtime gate prevents 100% false-positive
+             * kills in developer builds by default while still allowing
+             * CPRISK_TEST_HARDENING=1 to exercise the full response for regression
+             * tests.  In Release the macro expands to constant 0 and the optimiser
+             * fully elides the branch — same performance as the previous code. */
             if ((anomaly_flags & (CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_AMFI_CS_FLAGS |
                                   CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GET_TASK_ALLOW)) != 0u) {
-#if !(defined(DEBUG) && DEBUG)
-                cprisk_integrity_poison_high_signal_mixed(0xB102u);
-#endif
+                if (!CPRISK_WD_POISON_SUPPRESSED()) {
+                    cprisk_integrity_poison_high_signal_mixed(0xB102u);
+                }
             }
             if (traced != 0 || traced_sys != 0 || traced_mach != 0) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACED;
             }
             if ((traced_sys != 0 || traced_mach != 0) && traced == 0) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACED_PROBE_DIVERGENCE;
-#if !(defined(DEBUG) && DEBUG)
-                cprisk_integrity_poison_high_signal_mixed(0xB103u);
-#endif
+                if (!CPRISK_WD_POISON_SUPPRESSED()) {
+                    cprisk_integrity_poison_high_signal_mixed(0xB103u);
+                }
             }
             if (trace_crosscheck != 0) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACE_CROSSCHECK;
@@ -1731,13 +1784,13 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_MPROTECT_MACH_DIVERGENCE |
                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DBI_VM_TRACE_CORREL |
                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_PAC_THREAD_ENTRY);
-/* In debug builds the watchdog still collects anomaly_flags for diagnostic
- * inspection via cprisk_get_watchdog_snapshot(), but all poison and CFF
- * explosion paths are compiled out.  This prevents 100% false-positive kills
- * during normal Xcode development (TRACED, GET_TASK_ALLOW, DYLD_INJECTION
- * from Frida-based testing tools, etc.).  Production Release builds are
- * unaffected — the #if resolves to 1 and all paths are active. */
-#if !(defined(DEBUG) && DEBUG)
+            /* CFF symbolic explosion is obfuscation-only (extra state transitions
+             * and fake values) — it does not kill the app, so it stays active in
+             * every build configuration.  Only the actual poison commit and the
+             * optional hard-crash _exit() are gated by CPRISK_WD_POISON_SUPPRESSED(),
+             * which is a compile-time constant 0 in Release and a cached env-var
+             * check in Debug (default suppressed; set CPRISK_TEST_HARDENING=1 to
+             * exercise the full response path during hardening verification). */
             if ((anomaly_flags & high_risk_flags) != 0u) {
                 cprisk_cff_trigger_symbolic_explosion(cpr_cff_ctx, anomaly_flags & high_risk_flags);
             }
@@ -1762,20 +1815,21 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DBI_VM_TRACE_CORREL |
                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_PAC_THREAD_ENTRY |
                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_IMAGE_WHITELIST)) != 0u) {
-                if ((anomaly_flags & CPRISK_WD_HIGH_RISK_POISON_MASK) != 0u) {
-                    cprisk_integrity_poison_high_signal_mixed(0xCFF15u ^ anomaly_flags);
-                    /* Hard-crash mode: explicit _exit(3) after poison commit.
-                     * Apps that prefer fail-fast over silent PRF corruption enable this
-                     * via cprisk_set_hard_crash_mode(1).  _exit bypasses atexit handlers
-                     * (which may be hooked) and delivers an immediate SIGKILL-equivalent. */
-                    if (atomic_load_explicit(&s_hard_crash_mode, memory_order_relaxed) != 0) {
-                        _exit(3);
+                if (!CPRISK_WD_POISON_SUPPRESSED()) {
+                    if ((anomaly_flags & CPRISK_WD_HIGH_RISK_POISON_MASK) != 0u) {
+                        cprisk_integrity_poison_high_signal_mixed(0xCFF15u ^ anomaly_flags);
+                        /* Hard-crash mode: explicit _exit(3) after poison commit.
+                         * Apps that prefer fail-fast over silent PRF corruption enable this
+                         * via cprisk_set_hard_crash_mode(1).  _exit bypasses atexit handlers
+                         * (which may be hooked) and delivers an immediate SIGKILL-equivalent. */
+                        if (atomic_load_explicit(&s_hard_crash_mode, memory_order_relaxed) != 0) {
+                            _exit(3);
+                        }
+                    } else if ((anomaly_flags & CPRISK_WD_POISON_TRIGGER_BUNDLE_MASK) != 0u) {
+                        cprisk_integrity_poison_watchdog_lane();
                     }
-                } else if ((anomaly_flags & CPRISK_WD_POISON_TRIGGER_BUNDLE_MASK) != 0u) {
-                    cprisk_integrity_poison_watchdog_lane();
                 }
             }
-#endif /* !(defined(DEBUG) && DEBUG) */
             CPR_CFF_GOTO(0x16u);
         }
 
