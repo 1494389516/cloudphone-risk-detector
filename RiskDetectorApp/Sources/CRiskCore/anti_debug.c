@@ -316,9 +316,12 @@ int cprisk_is_being_traced_sysctl_only(void) {
     size_t size = sizeof(info);
 
     memset(&info, 0, size);
-    mib[0] = CTL_KERN;
-    mib[1] = KERN_PROC;
-    mib[2] = KERN_PROC_PID;
+    /* MIB values constructed at runtime via XOR to avoid static integer-pattern
+     * matching (equivalent to DexHelper-style stack string construction for paths).
+     * CTL_KERN=1, KERN_PROC=14, KERN_PROC_PID=1 — decoded only during execution. */
+    mib[0] = (int)(0x2Au ^ 0x2Bu);          /* CTL_KERN  = 1  */
+    mib[1] = (int)(0xF8u ^ 0xF6u);          /* KERN_PROC = 14 */
+    mib[2] = (int)(0x55u ^ 0x54u);          /* KERN_PROC_PID = 1 */
     mib[3] = (int)cprisk_getpid_direct();
 
     if (cprisk_sysctl_direct(mib, 4, &info, &size, NULL, 0, NULL) != 0)
@@ -524,9 +527,9 @@ int cprisk_deny_attach_effective_verify(int deny_attach_rc, int deny_attach_errn
     memset(&b, 0, sizeof(b));
     memset(&c, 0, sizeof(c));
     memset(&libc_shadow, 0, sizeof(libc_shadow));
-    mib[0] = CTL_KERN;
-    mib[1] = KERN_PROC;
-    mib[2] = KERN_PROC_PID;
+    mib[0] = (int)(0x2Au ^ 0x2Bu);          /* CTL_KERN  = 1  */
+    mib[1] = (int)(0xF8u ^ 0xF6u);          /* KERN_PROC = 14 */
+    mib[2] = (int)(0x55u ^ 0x54u);          /* KERN_PROC_PID = 1 */
     mib[3] = (int)self_pid;
 
     if (cprisk_sysctl_direct(mib, 4, &a, &sz_a, NULL, 0, NULL) != 0) {

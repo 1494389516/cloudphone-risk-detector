@@ -15,6 +15,7 @@
 #include <stdatomic.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 #include <mach-o/dyld.h>
 #include <dlfcn.h>
 #include <objc/message.h>
@@ -48,6 +49,12 @@
 #define CPRISK_WATCHDOG_PATH_BRIDGE (1u << 1)
 #define CPRISK_WATCHDOG_PATH_IMPL (1u << 2)
 #define CPRISK_WATCHDOG_PATH_SECONDARY_SHIFT 8u
+/* Retry budget for watchdog thread creation: up to CREATE_RETRY_MAX additional attempts per
+ * PAC-signed candidate after the first failure.  Absorbs transient EAGAIN (resource depletion)
+ * and attacker-induced pthread_create hook/block without busy-spinning the CPU.
+ * Pattern mirrors DexHelper's 30-attempt loop but uses shorter inter-attempt sleep. */
+#define CPRISK_WATCHDOG_CREATE_RETRY_MAX 10u
+#define CPRISK_WATCHDOG_CREATE_RETRY_SLEEP_NS 100000000L  /* 100 ms between retries */
 
 /* Integrity poison: high-confidence anomalies use immediate lane commit; the bundled weaker
  * probe hits in the primary iteration use staged escalation (see cprisk_integrity.c). */
@@ -211,6 +218,11 @@ static atomic_uint_fast64_t s_watchdog_main_alive_ns;
 static atomic_uint_fast64_t s_watchdog_main_heartbeat_seq;
 static atomic_uint_fast32_t s_watchdog_main_stall_consecutive;
 static atomic_uint_fast32_t s_watchdog_main_stall_latched;
+
+/* Hard-crash mode: when non-zero any HIGH_RISK_POISON_MASK anomaly calls _exit(3) immediately
+ * after the standard poison lane commit.  Disabled by default.
+ * Enable with cprisk_set_hard_crash_mode(1) for apps that prefer fail-fast over silent corruption. */
+static atomic_int s_hard_crash_mode = 0;
 
 __attribute__((constructor(4)))
 static void cprisk_watchdog_sign_main_entry_i(void) {
@@ -1723,6 +1735,13 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_IMAGE_WHITELIST)) != 0u) {
                 if ((anomaly_flags & CPRISK_WD_HIGH_RISK_POISON_MASK) != 0u) {
                     cprisk_integrity_poison_high_signal_mixed(0xCFF15u ^ anomaly_flags);
+                    /* Hard-crash mode: explicit _exit(3) after poison commit.
+                     * Apps that prefer fail-fast over silent PRF corruption enable this
+                     * via cprisk_set_hard_crash_mode(1).  _exit bypasses atexit handlers
+                     * (which may be hooked) and delivers an immediate SIGKILL-equivalent. */
+                    if (atomic_load_explicit(&s_hard_crash_mode, memory_order_relaxed) != 0) {
+                        _exit(3);
+                    }
                 } else if ((anomaly_flags & CPRISK_WD_POISON_TRIGGER_BUNDLE_MASK) != 0u) {
                     cprisk_integrity_poison_watchdog_lane();
                 }
@@ -1981,19 +2000,24 @@ static int cprisk_watchdog_pthread_create_with_fallbacks_i(
             continue;
         }
         typedef void *(*cprisk_wd_pthread_fn)(void *);
-        int rc = pthread_create(
-            &s_watchdog_threads[worker_id],
-            NULL,
-            (cprisk_wd_pthread_fn)fn,
-            (void *)(uintptr_t)worker_id);
-        if (rc == EAGAIN) {
-            struct timespec ts = {0, 10000000L};
-            nanosleep(&ts, NULL);
+        int rc = -1;
+        /* Retry loop: absorbs transient EAGAIN and attacker-induced thread-create suppression.
+         * Up to CPRISK_WATCHDOG_CREATE_RETRY_MAX additional attempts per candidate with
+         * CPRISK_WATCHDOG_CREATE_RETRY_SLEEP_NS sleep between failures.
+         * On the first attempt we skip the sleep to avoid adding latency on success paths. */
+        for (uint32_t attempt = 0u; attempt <= CPRISK_WATCHDOG_CREATE_RETRY_MAX; attempt++) {
+            if (attempt > 0u) {
+                struct timespec ts = {0, CPRISK_WATCHDOG_CREATE_RETRY_SLEEP_NS};
+                nanosleep(&ts, NULL);
+            }
             rc = pthread_create(
                 &s_watchdog_threads[worker_id],
                 NULL,
                 (cprisk_wd_pthread_fn)fn,
                 (void *)(uintptr_t)worker_id);
+            if (rc == 0) {
+                break;
+            }
         }
         if (last_errno_out != NULL) {
             *last_errno_out = rc;
@@ -2164,6 +2188,10 @@ int cprisk_start_anti_debug_watchdog(void) {
     return 0;
 }
 
+void cprisk_set_hard_crash_mode(int enabled) {
+    atomic_store_explicit(&s_hard_crash_mode, enabled ? 1 : 0, memory_order_relaxed);
+}
+
 void cprisk_stop_anti_debug_watchdog(void) {
     pthread_t threads_to_join[CPRISK_WATCHDOG_THREAD_COUNT];
     uint32_t join_count = 0u;
@@ -2248,6 +2276,10 @@ uint32_t cprisk_runtime_hook_surface_export_drift_mask(void) {
 int cprisk_start_anti_debug_watchdog(void) {
     (void)cprisk_start_anti_dump_probe(5);
     return 0;
+}
+
+void cprisk_set_hard_crash_mode(int enabled) {
+    (void)enabled;
 }
 
 void cprisk_stop_anti_debug_watchdog(void) {

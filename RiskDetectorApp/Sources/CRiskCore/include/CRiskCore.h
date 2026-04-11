@@ -486,6 +486,19 @@ int cprisk_get_exception_handler_snapshot(cprisk_exception_handler_snapshot_t *o
 /// Returns 0 on success/already-running/no-op platforms, -1 on thread creation failure.
 int cprisk_start_anti_debug_watchdog(void);
 
+/// Enable or disable hard-crash mode.
+///
+/// When \p enabled is non-zero, any HIGH_RISK watchdog anomaly (TRACED, EXCEPTION_PORT,
+/// DENY_ATTACH_VERIFY, SVC_STUB_INTEGRITY, DYLD_INJECTION, etc.) calls \c _exit(3)
+/// immediately after the standard integrity poison lane commit.
+///
+/// Default: disabled (silent-corruption mode). Enable for apps that prefer explicit
+/// fail-fast termination over opaque PRF output corruption — matches DexHelper-style
+/// hard-kill response while keeping silent corruption as the default.
+///
+/// Thread-safe; can be called before or after \c cprisk_start_anti_debug_watchdog.
+void cprisk_set_hard_crash_mode(int enabled);
+
 /// Main-thread / caller alive ping for mutual startup checks (updates snapshot timestamp).
 void cprisk_watchdog_note_main_thread_alive(void);
 
