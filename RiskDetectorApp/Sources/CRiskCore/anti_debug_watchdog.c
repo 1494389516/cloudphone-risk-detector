@@ -58,6 +58,11 @@
 
 /* Integrity poison: high-confidence anomalies use immediate lane commit; the bundled weaker
  * probe hits in the primary iteration use staged escalation (see cprisk_integrity.c). */
+/* VM_IMAGE_WHITELIST is intentionally excluded from the HIGH_RISK mask: generic
+ * image-layout drift caused by crash-reporter / push-notification SDK late-loading
+ * is a major production FP source.  It is handled via cprisk_integrity_poison_watchdog_lane()
+ * (staged) in the early per-iteration detection block.  Only name-matched jailbreak
+ * tools (DYLD_INJECTION) retain zero-tolerance immediate commit. */
 #define CPRISK_WD_HIGH_RISK_POISON_MASK \
     (CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACED | \
      CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_PORT | \
@@ -70,8 +75,7 @@
      CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SVC_STUB_INTEGRITY | \
      CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_MPROTECT_MACH_DIVERGENCE | \
      CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DBI_VM_TRACE_CORREL | \
-     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_PAC_THREAD_ENTRY | \
-     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_IMAGE_WHITELIST)
+     CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_PAC_THREAD_ENTRY)
 
 #define CPRISK_WD_POISON_TRIGGER_BUNDLE_MASK \
     (CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SIGNAL_PROBE | \
@@ -1484,13 +1488,23 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
                           CPRISK_MEM_GUARD_TICK_UNKNOWN_EXECUTABLE_RX |
                           CPRISK_MEM_GUARD_TICK_EXECUTABLE_WRITE)) != 0u) {
         vm_image_whitelist_anom = CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_IMAGE_WHITELIST;
-        cprisk_integrity_poison_high_signal_mixed(0xA002u);
+        /* Staged (not immediate): push/IM SDK late-loading and OTA framework updates
+         * legitimately add new RX images after launch.  Only name-matched jailbreak
+         * tools (DYLD_INJECTION) warrant zero-tolerance immediate commit.
+         * Skipped entirely in debug builds where the developer toolchain loads
+         * additional images (e.g. Xcode helper dylibs, instruments DTX). */
+#if !(defined(DEBUG) && DEBUG)
+        cprisk_integrity_poison_watchdog_lane();
+#endif
     }
     if (vm_image_whitelist_anom == 0u && low_checks) {
         const int layout_drift = cprisk_vm_dyld_image_layout_digest_differs_from_baseline();
         if (layout_drift == 1) {
             vm_image_whitelist_anom = CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_IMAGE_WHITELIST;
-            cprisk_integrity_poison_high_signal_mixed(0xA003u);
+            /* Same staged rationale as above. */
+#if !(defined(DEBUG) && DEBUG)
+            cprisk_integrity_poison_watchdog_lane();
+#endif
         }
     }
     const uint32_t vm_cc_total = cprisk_get_vm_mprotect_crosscheck_mismatch_count();
@@ -1548,22 +1562,31 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
             }
             if (deny_verify_suspicious != 0) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DENY_ATTACH_VERIFY;
+#if !(defined(DEBUG) && DEBUG)
                 cprisk_integrity_poison_high_signal_mixed(0xB101u);
+#endif
             }
             anomaly_flags |= cprisk_wd_amfi_flags_from_probe_bits_i(amfi_probe_bits);
             if (get_task_allow_suspect != 0u) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GET_TASK_ALLOW;
             }
+            /* GET_TASK_ALLOW is always present in Debug/Adhoc entitlements; guard the inline
+             * poison to prevent 100% false-positive kills in developer builds.  Production
+             * Release builds never have this entitlement so the guard has zero effect there. */
             if ((anomaly_flags & (CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_AMFI_CS_FLAGS |
                                   CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_GET_TASK_ALLOW)) != 0u) {
+#if !(defined(DEBUG) && DEBUG)
                 cprisk_integrity_poison_high_signal_mixed(0xB102u);
+#endif
             }
             if (traced != 0 || traced_sys != 0 || traced_mach != 0) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACED;
             }
             if ((traced_sys != 0 || traced_mach != 0) && traced == 0) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACED_PROBE_DIVERGENCE;
+#if !(defined(DEBUG) && DEBUG)
                 cprisk_integrity_poison_high_signal_mixed(0xB103u);
+#endif
             }
             if (trace_crosscheck != 0) {
                 anomaly_flags |= CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_TRACE_CROSSCHECK;
@@ -1707,8 +1730,14 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_SVC_STUB_INTEGRITY |
                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_MPROTECT_MACH_DIVERGENCE |
                  CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DBI_VM_TRACE_CORREL |
-                 CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_PAC_THREAD_ENTRY |
-                 CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_VM_IMAGE_WHITELIST);
+                 CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_PAC_THREAD_ENTRY);
+/* In debug builds the watchdog still collects anomaly_flags for diagnostic
+ * inspection via cprisk_get_watchdog_snapshot(), but all poison and CFF
+ * explosion paths are compiled out.  This prevents 100% false-positive kills
+ * during normal Xcode development (TRACED, GET_TASK_ALLOW, DYLD_INJECTION
+ * from Frida-based testing tools, etc.).  Production Release builds are
+ * unaffected — the #if resolves to 1 and all paths are active. */
+#if !(defined(DEBUG) && DEBUG)
             if ((anomaly_flags & high_risk_flags) != 0u) {
                 cprisk_cff_trigger_symbolic_explosion(cpr_cff_ctx, anomaly_flags & high_risk_flags);
             }
@@ -1746,6 +1775,7 @@ static uint32_t cprisk_watchdog_run_iteration_i(int run_mid_checks, int run_low_
                     cprisk_integrity_poison_watchdog_lane();
                 }
             }
+#endif /* !(defined(DEBUG) && DEBUG) */
             CPR_CFF_GOTO(0x16u);
         }
 

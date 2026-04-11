@@ -72,10 +72,14 @@ static volatile uint64_t s_poison_cause_mix;
  * Thresholds are compile-time tunable; partial hits mix into cause/rolling state without
  * incrementing per-lane seq (avoids a linear “distance-to-poison” oracle). */
 #ifndef CPRISK_POISON_STAGED_WATCHDOG_THRESHOLD
-#define CPRISK_POISON_STAGED_WATCHDOG_THRESHOLD 3u
+/* Raised 3→5: absorbs transient BG-fetch / low-battery scheduling noise;
+ * real attacker signals are consecutive and still commit well within budget. */
+#define CPRISK_POISON_STAGED_WATCHDOG_THRESHOLD 5u
 #endif
 #ifndef CPRISK_POISON_STAGED_ANTI_DUMP_THRESHOLD
-#define CPRISK_POISON_STAGED_ANTI_DUMP_THRESHOLD 2u
+/* Raised 2→4: anti-dump probe runs at tighter cadence; extra margin removes
+ * GC-pause / memory-pressure single-iteration false positives on low-end devices. */
+#define CPRISK_POISON_STAGED_ANTI_DUMP_THRESHOLD 4u
 #endif
 
 static atomic_uint_fast32_t s_staged_watchdog_hits;
