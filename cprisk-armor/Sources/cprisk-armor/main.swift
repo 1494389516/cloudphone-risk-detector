@@ -67,19 +67,13 @@ func parseArguments() -> CLIOptions {
         case "--build-seed":
             i += 1
             if i < args.count { options.buildSeedRaw = args[i] }
-        case "--pass1": options.passes.insert(1)
-        case "--pass2": options.passes.insert(2)
-        case "--pass3": options.passes.insert(3)
-        case "--pass4": options.passes.insert(4)
-        case "--pass5": options.passes.insert(5)
-        case "--pass6": options.passes.insert(6)
-        case "--pass7": options.passes.insert(7)
-        case "--pass8": options.passes.insert(8)
-        case "--pass9": options.passes.insert(9)
-        case "--pass10": options.passes.insert(10)
-        case "--pass11": options.passes.insert(11)
-        case "--pass12": options.passes.insert(12)
-        case "--pass13": options.passes.insert(13)
+        case let arg where arg.hasPrefix("--pass"):
+            let suffix = String(arg.dropFirst("--pass".count))
+            if let passNumber = Int(suffix), passNumber > 0, passNumber < 100 {
+                options.passes.insert(passNumber)
+            } else {
+                fputs("Unknown option: \(args[i])\n", stderr)
+            }
         case "--all":   options.allPasses = true
         case "--verbose": options.verbose = true
         case "--metadata-scrub-level":
@@ -322,17 +316,16 @@ if enabledPasses.isEmpty {
     fputs("Warning: No passes enabled. Use --all or --passN flags.\n", stderr)
 }
 
-// Pass 3 (Data Segment Encryption) depends on Pass 4 (Integrity Anchor) for loader descriptor layout.
-if enabledPasses.contains(3) && !enabledPasses.contains(4) {
-    fputs("Error: --pass3 (Data Segment Encryption) requires --pass4 (Integrity Anchor).\n", stderr)
-    fputs("Enable both with --pass3 --pass4 or use --all.\n", stderr)
-    exit(1)
-}
-
-if enabledPasses.contains(12) && !enabledPasses.contains(4) {
-    fputs("Error: --pass12 requires --pass4 (Integrity Anchor).\n", stderr)
-    fputs("Enable both with --pass12 --pass4 or use --all.\n", stderr)
-    exit(1)
+// Every pass that consumes the white-box PRF (built inside Pass 4) must run after Pass 4.
+// The execution order below (in `passes`) enforces this when both are selected; we still
+// surface an up-front error so `--passN` selections are obviously wrong rather than latently wrong.
+let passesRequiringWhiteBox: Set<Int> = [3, 10, 11, 12]
+for dependent in passesRequiringWhiteBox {
+    if enabledPasses.contains(dependent) && !enabledPasses.contains(4) {
+        fputs("Error: --pass\(dependent) requires --pass4 (Integrity Anchor / white-box material).\n", stderr)
+        fputs("Enable both with --pass\(dependent) --pass4 or use --all.\n", stderr)
+        exit(1)
+    }
 }
 
 let encryptionPassIDs: Set<Int> = [1, 3, 4, 10, 11, 12]

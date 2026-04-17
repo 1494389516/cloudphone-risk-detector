@@ -317,9 +317,32 @@ public final class MachOFile {
         self.url = url
         self.data = try Data(contentsOf: url)
 
+        try Self.rejectFatBinary(in: data)
+
         let parsed = try Self.validateLayout(in: data)
         self.header = parsed.header
         self.loadCommands = parsed.loadCommands
+    }
+
+    /// Reject fat/universal binaries up front with an actionable hint; the armor pipeline only
+    /// handles a single thin slice at a time.
+    private static func rejectFatBinary(in data: Data) throws {
+        guard data.count >= 4 else {
+            throw MachOError.invalidHeader
+        }
+        var magic: UInt32 = 0
+        data.withUnsafeBytes { buffer in
+            if let base = buffer.baseAddress {
+                magic = base.load(as: UInt32.self)
+            }
+        }
+        // FAT_MAGIC / FAT_CIGAM (32-bit or 64-bit). Both orderings appear in the wild.
+        let fatMagics: Set<UInt32> = [0xCAFEBABE, 0xBEBAFECA, 0xCAFEBABF, 0xBFBAFECA]
+        if fatMagics.contains(magic) {
+            throw MachOError.invalidData(
+                "Input is a fat/universal Mach-O. Run `lipo -thin arm64 <input> -output <input>.arm64` first."
+            )
+        }
     }
 
     // MARK: - Segment / Section Access
