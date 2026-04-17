@@ -16,6 +16,7 @@ public enum MachOError: Error, CustomStringConvertible {
     case malformedLoadCommands(String)
     case unsupportedMutation(String)
     case validationFailed(String)
+    case fatBinaryUnsupported
 
     public var description: String {
         switch self {
@@ -38,6 +39,8 @@ public enum MachOError: Error, CustomStringConvertible {
             return "Unsupported Mach-O mutation: \(msg)"
         case .validationFailed(let msg):
             return "Mach-O validation failed: \(msg)"
+        case .fatBinaryUnsupported:
+            return "FAT/universal Mach-O is not supported directly; run `lipo -thin <arch> <input> -output <slice>` first"
         }
     }
 }
@@ -708,6 +711,12 @@ public final class MachOFile {
     ) {
         guard data.count >= MachOHeader.size else {
             throw MachOError.invalidHeader
+        }
+        if data.count >= 4 {
+            let magicBE = (UInt32(data[0]) << 24) | (UInt32(data[1]) << 16) | (UInt32(data[2]) << 8) | UInt32(data[3])
+            if magicBE == 0xCAFEBABE || magicBE == 0xBEBAFECA {
+                throw MachOError.fatBinaryUnsupported
+            }
         }
 
         let header = try MachOHeader(from: data)

@@ -142,13 +142,14 @@ package struct ArmorWhiteBoxBundle {
 
 package enum ArmorWhiteBox {
     package static func build(rootKey: Data?) -> ArmorWhiteBoxBundle {
-        let normalizedRootKey = normalizedRootKey(rootKey)
+        var normalizedRootKey = normalizedRootKey(rootKey)
+        let buildSalt = currentBuildSalt()
         var records = [ArmorWhiteBoxBundle.DomainRecord]()
         var codeSection = Data()
         var dataSection = Data()
 
         for domain in ArmorABI.WhiteBox.Domain.allCases.sorted(by: { $0.rawValue < $1.rawValue }) {
-            let domainKey = deriveDomainKey(rootKey: normalizedRootKey, domain: domain)
+            let domainKey = deriveDomainKey(rootKey: normalizedRootKey, domain: domain, buildSalt: buildSalt)
             let permutation = makePermutation(domainKey: domainKey)
             let finalMask = sha256(domainKey + Data("final".utf8))
             let roundConstants = makeRoundConstants(domainKey: domainKey)
@@ -181,10 +182,16 @@ package enum ArmorWhiteBox {
         tagMaterial.append(dataSection)
         let whiteboxTag = sha256(tagMaterial)
 
-        var configMaterial = Data()
+        var configMaterial = Data("cprisk.whitebox.config.v2".utf8)
+        appendLittleEndian(UInt64(codeSection.count), to: &configMaterial)
         configMaterial.append(codeSection)
+        appendLittleEndian(UInt64(dataSection.count), to: &configMaterial)
         configMaterial.append(dataSection)
+        appendLittleEndian(UInt64(whiteboxTag.count), to: &configMaterial)
         configMaterial.append(whiteboxTag)
+        for domain in ArmorABI.WhiteBox.Domain.allCases.sorted(by: { $0.rawValue < $1.rawValue }) {
+            configMaterial.append(domain.rawValue)
+        }
         let configDigest = sha256(configMaterial)
 
         let metadata = ArmorABI.WhiteBox.Header(
@@ -197,13 +204,15 @@ package enum ArmorWhiteBox {
             configDigest: configDigest
         )
 
-        return ArmorWhiteBoxBundle(
+        let bundle = ArmorWhiteBoxBundle(
             domains: records,
             metadata: metadata,
             whiteboxCode: codeSection,
             whiteboxData: dataSection,
             whiteboxTag: whiteboxTag
         )
+        normalizedRootKey.resetBytes(in: 0..<normalizedRootKey.count)
+        return bundle
     }
 
     package static func normalizedRootKey(_ rootKey: Data?) -> Data {
@@ -245,9 +254,18 @@ package enum ArmorWhiteBox {
         return value
     }
 
-    private static func deriveDomainKey(rootKey: Data, domain: ArmorABI.WhiteBox.Domain) -> Data {
-        let label = Data("cprisk.whitebox.domain.\(domain.rawValue)".utf8)
+    private static func deriveDomainKey(rootKey: Data, domain: ArmorABI.WhiteBox.Domain, buildSalt: Data) -> Data {
+        var label = Data("cprisk.whitebox.domain.\(domain.rawValue).v2".utf8)
+        label.append(buildSalt)
         return ArmorABI.hmacSHA256(key: rootKey, message: label)
+    }
+
+    private static func currentBuildSalt() -> Data {
+        let env = ProcessInfo.processInfo.environment
+        if let raw = env["CPRISK_ARMOR_BUILD_SEED"] ?? env["CPRISK_BUILD_SEED"] {
+            return Data(raw.utf8)
+        }
+        return Data("default-build-salt".utf8)
     }
 
     private static func makePermutation(domainKey: Data) -> Data {
@@ -255,12 +273,23 @@ package enum ArmorWhiteBox {
         var stream = DeterministicByteStream(domainKey: domainKey, label: "perm")
 
         for i in stride(from: values.count - 1, through: 1, by: -1) {
-            let random = stream.nextUInt32()
-            let j = Int(random % UInt32(i + 1))
+            let j = unbiasedBoundedInt(bound: i + 1, stream: &stream)
             values.swapAt(i, j)
         }
 
         return Data(values)
+    }
+
+    private static func unbiasedBoundedInt(bound: Int, stream: inout DeterministicByteStream) -> Int {
+        precondition(bound > 0)
+        let b = UInt32(bound)
+        let limit = UInt32.max - (UInt32.max % b)
+        while true {
+            let v = stream.nextUInt32()
+            if v < limit {
+                return Int(v % b)
+            }
+        }
     }
 
     private static func makeRoundConstants(domainKey: Data) -> Data {
@@ -288,9 +317,13 @@ package enum ArmorWhiteBox {
                 let maskByte = tableSeed[1]
                 let rotation = Int(domainKey[(index + round) % ArmorABI.WhiteBox.stateSize] & 0x07) + 1
                 let roundConstant = roundConstants[(round * ArmorABI.WhiteBox.stateSize) + index]
+                let a = (tableSeed[2] | 1)
+                let b = tableSeed[3]
                 for x in 0..<ArmorABI.WhiteBox.tableValueCount {
-                    let s = UInt8(x) ^ domainKey[index] ^ mixByte
-                    let y = rotl8(s, by: rotation) ^ maskByte ^ roundConstant
+                    let inEncoded = UInt8((Int(a) * x + Int(b)) & 0xFF)
+                    let s = inEncoded &+ domainKey[index] &+ mixByte
+                    let nonlinear = (s &* (s &+ 0x3D)) &+ (domainKey[(index + x) & 31] ^ mixByte)
+                    let y = rotl8(nonlinear, by: rotation) ^ maskByte ^ roundConstant
                     tables.append(y)
                 }
             }

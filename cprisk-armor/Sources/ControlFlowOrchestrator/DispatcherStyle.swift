@@ -20,9 +20,14 @@ public enum DispatcherStyle: String, CaseIterable, Codable, Sendable {
     public static func choose(
         for symbol: String,
         tier: FunctionCFFTier,
-        enableMultiDispatcher: Bool
+        enableMultiDispatcher: Bool,
+        buildSeed: UInt64 = 0
     ) -> DispatcherStyle {
-        let hash = cffStableHash64(symbol)
+        var hash = cffStableHash64(symbol)
+        if buildSeed != 0 {
+            hash ^= cffStableHash64(String(buildSeed))
+            hash = (hash &* 0x9E37_79B9_7F4A_7C15) ^ (hash >> 33)
+        }
 
         switch tier {
         case .never:

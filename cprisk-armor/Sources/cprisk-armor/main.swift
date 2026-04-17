@@ -318,11 +318,60 @@ let outputPath = options.outputPath ?? (inputPath + "_armored")
 let verbose = options.verbose
 let enabledPasses: Set<Int> = options.allPasses ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] : options.passes
 
+/// Stable topological ordering for pass dependencies.
+private func resolvePassOrder(_ registered: [(Int, ArmorPass)]) throws -> [(Int, ArmorPass)] {
+    let dependencyIDs: [Int: Set<Int>] = [
+        4: [3],         // runtime data expects pass3 outputs pre-anchor
+        5: [4],         // structure obfuscation after anchor sections are created
+        12: [4],        // text encryption depends on anchor metadata
+    ]
+
+    let n = registered.count
+    var indegree = Array(repeating: 0, count: n)
+    var outgoing = Array(repeating: Set<Int>(), count: n)
+
+    for i in 0..<n {
+        let id = registered[i].0
+        let deps = dependencyIDs[id] ?? []
+        guard !deps.contains(id) else { continue }
+        if deps.isEmpty { continue }
+        for j in 0..<n where i != j {
+            if deps.contains(registered[j].0) {
+                if outgoing[j].insert(i).inserted {
+                    indegree[i] += 1
+                }
+            }
+        }
+    }
+
+    var queue = Array(0..<n).filter { indegree[$0] == 0 }
+    var sortedIndices = [Int]()
+    while let idx = queue.first {
+        queue.removeFirst()
+        sortedIndices.append(idx)
+        for nxt in outgoing[idx] {
+            indegree[nxt] -= 1
+            if indegree[nxt] == 0 {
+                queue.append(nxt)
+                queue.sort()
+            }
+        }
+    }
+    guard sortedIndices.count == n else {
+        throw NSError(
+            domain: "cprisk-armor",
+            code: 2001,
+            userInfo: [NSLocalizedDescriptionKey: "pass dependency graph contains a cycle"]
+        )
+    }
+    return sortedIndices.map { registered[$0] }
+}
+
 if enabledPasses.isEmpty {
     fputs("Warning: No passes enabled. Use --all or --passN flags.\n", stderr)
 }
 
-// Pass 3 (Data Segment Encryption) depends on Pass 4 (Integrity Anchor) for loader descriptor layout.
+// Pass 4 (Integrity Anchor) consumes pass-3 outputs; run pass-3 before pass-4.
 if enabledPasses.contains(3) && !enabledPasses.contains(4) {
     fputs("Error: --pass3 (Data Segment Encryption) requires --pass4 (Integrity Anchor).\n", stderr)
     fputs("Enable both with --pass3 --pass4 or use --all.\n", stderr)
@@ -426,12 +475,12 @@ do {
     }
 
     var allResults = [PassResult]()
-    let passes: [(Int, ArmorPass)] = [
+    let registeredPasses: [(Int, ArmorPass)] = [
         (1, StringEncryptorPass()),
         (2, MetadataScrubberPass()),
         (8, InstructionSubstitutionPass()),
-        (4, IntegrityAnchorPass()),
         (3, DataSegmentEncryptorPass()),
+        (4, IntegrityAnchorPass()),
         (11, HeaderEncryptorPass()),
         (5, StructureObfuscatorPass()),
         (7, AntiDebugInjectorPass()),
@@ -442,6 +491,7 @@ do {
         (6, SymbolStripperPass()),
         (6, ExportTrieScrubberPass()),
     ]
+    let passes = try resolvePassOrder(registeredPasses)
 
     for (index, pass) in passes {
         guard enabledPasses.contains(index) else { continue }

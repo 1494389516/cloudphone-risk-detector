@@ -123,14 +123,14 @@ public final class HeaderEncryptorPass: ArmorPass {
     // MARK: - Key Derivation
 
     /// Derive the header encryption key from WhiteBox Domain 9.
-    /// We feed a fixed domain-9 input through the white-box PRF and use
-    /// the resulting 32-byte output as the symmetric key.
+    /// Input now mixes a per-build seed and stable domain label to avoid
+    /// identical derivation across binaries sharing the same root key.
     private func deriveHeaderKey(whitebox: ArmorWhiteBoxBundle) -> Data {
-        // Use a fixed all-zero seed for Domain 9 derivation — the WhiteBox
-        // PRF output is seeded purely by the domain key (which itself derives
-        // from the root key).  This gives us a deterministic per-binary key
-        // without needing any runtime input.
-        let seed = Data(repeating: 0, count: 32)
+        var seedMaterial = Data("cprisk.header.domain9.v2".utf8)
+        if let raw = ProcessInfo.processInfo.environment["CPRISK_ARMOR_BUILD_SEED"] {
+            seedMaterial.append(Data(raw.utf8))
+        }
+        let seed = Data(SHA256.hash(data: seedMaterial))
         return whitebox.prf(domain: .headerEncryptionKey, input: seed)
     }
 
