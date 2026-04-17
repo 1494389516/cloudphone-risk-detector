@@ -56,21 +56,27 @@ public final class MachOWriter {
             throw MachOError.invalidData("Section \(segment),\(section) already exists")
         }
 
-        let fileBackedTail = try highestFileBackedSegmentEnd(in: data, header: header)
         let targetSegmentEnd = try checkedAdd(target.segment.fileOffset, target.segment.fileSize, context: "segment \(segment) tail")
-        guard targetSegmentEnd == fileBackedTail, targetSegmentEnd == UInt64(data.count) else {
-            throw MachOError.unsupportedMutation(
-                "Appending a new section is only supported for the last file-backed segment that reaches EOF"
-            )
-        }
 
         let alignment = try fileAlignment(forSectionAlign: target.segment.sections.last?.align ?? 0)
-        let contentOffset = try align(UInt64(data.count), to: alignment)
-        let paddingCount = try checkedInt(contentOffset - UInt64(data.count), context: "section padding")
-        if paddingCount > 0 {
-            data.append(Data(count: paddingCount))
+        let contentOffset = try align(targetSegmentEnd, to: alignment)
+        let paddingCount = try checkedInt(contentOffset - targetSegmentEnd, context: "section padding")
+        let growth = try checkedInt(UInt64(paddingCount + content.count), context: "section growth")
+
+        let insertionPoint = try checkedInt(targetSegmentEnd, context: "insertion point")
+        var appended = Data(count: paddingCount)
+        appended.append(content)
+        if insertionPoint == data.count {
+            data.append(appended)
+        } else {
+            data.insert(contentsOf: appended, at: insertionPoint)
+            try shiftOffsetsAfterInsertion(
+                in: &data,
+                insertionOffset: insertionPoint,
+                delta: growth,
+                excludeSegmentNamed: segment
+            )
         }
-        data.append(content)
 
         guard target.segment.vmAddress >= target.segment.fileOffset else {
             throw MachOError.unsupportedMutation("Segment \(segment) has vmaddr < fileoff")
@@ -304,21 +310,99 @@ public final class MachOWriter {
         throw MachOError.segmentNotFound(name)
     }
 
-    private static func highestFileBackedSegmentEnd(in data: Data, header: MachOHeader) throws -> UInt64 {
-        var highestEnd: UInt64 = 0
+    private static func shiftOffsetsAfterInsertion(
+        in data: inout Data,
+        insertionOffset: Int,
+        delta: Int,
+        excludeSegmentNamed excludedSegment: String
+    ) throws {
+        guard delta > 0 else { return }
+        let header = try MachOHeader(from: data)
+        let deltaU32 = UInt32(delta)
         var cmdOffset = MachOHeader.size
 
         for _ in 0..<header.numberOfCommands {
             let command = try LoadCommand(from: data, offset: UInt64(cmdOffset))
-            if command.cmd == LoadCommand.LC_SEGMENT_64 {
-                let segment = try Segment(from: data, commandOffset: UInt64(cmdOffset))
-                let segmentEnd = try checkedAdd(segment.fileOffset, segment.fileSize, context: "segment \(segment.name) end")
-                highestEnd = max(highestEnd, segmentEnd)
+            switch command.cmd {
+            case LoadCommand.LC_SEGMENT_64:
+                try shiftSegmentOffsets(
+                    in: &data,
+                    commandOffset: cmdOffset,
+                    insertionOffset: insertionOffset,
+                    deltaU32: deltaU32,
+                    excludedSegment: excludedSegment
+                )
+            case LoadCommand.LC_SYMTAB:
+                if command.cmdSize >= 24 {
+                    try shiftOffsetFieldIfNeeded(in: &data, fieldOffset: cmdOffset + 8, insertionOffset: insertionOffset, deltaU32: deltaU32)
+                    try shiftOffsetFieldIfNeeded(in: &data, fieldOffset: cmdOffset + 16, insertionOffset: insertionOffset, deltaU32: deltaU32)
+                }
+            case LoadCommand.LC_DYSYMTAB:
+                if command.cmdSize >= 80 {
+                    for off in [32, 40, 48, 56, 64, 72] {
+                        try shiftOffsetFieldIfNeeded(in: &data, fieldOffset: cmdOffset + off, insertionOffset: insertionOffset, deltaU32: deltaU32)
+                    }
+                }
+            case LoadCommand.LC_DYLD_INFO_ONLY:
+                if command.cmdSize >= 48 {
+                    for off in [8, 16, 24, 32, 40] {
+                        try shiftOffsetFieldIfNeeded(in: &data, fieldOffset: cmdOffset + off, insertionOffset: insertionOffset, deltaU32: deltaU32)
+                    }
+                }
+            case LoadCommand.LC_DYLD_EXPORTS_TRIE,
+                 LoadCommand.LC_CODE_SIGNATURE,
+                 LoadCommand.LC_FUNCTION_STARTS,
+                 LoadCommand.LC_DATA_IN_CODE,
+                 0x1E, // LC_SEGMENT_SPLIT_INFO
+                 0x2B, // LC_DYLIB_CODE_SIGN_DRS
+                 0x2E, // LC_LINKER_OPTIMIZATION_HINT
+                 0x80000034: // LC_DYLD_CHAINED_FIXUPS
+                if command.cmdSize >= 16 {
+                    try shiftOffsetFieldIfNeeded(in: &data, fieldOffset: cmdOffset + 8, insertionOffset: insertionOffset, deltaU32: deltaU32)
+                }
+            default:
+                break
             }
             cmdOffset += Int(command.cmdSize)
         }
+    }
 
-        return highestEnd
+    private static func shiftSegmentOffsets(
+        in data: inout Data,
+        commandOffset: Int,
+        insertionOffset: Int,
+        deltaU32: UInt32,
+        excludedSegment: String
+    ) throws {
+        let segment = try Segment(from: data, commandOffset: UInt64(commandOffset))
+        if segment.name != excludedSegment, Int(segment.fileOffset) >= insertionOffset {
+            try data.writeUInt64(segment.fileOffset + UInt64(deltaU32), at: commandOffset + 40)
+        }
+
+        let sectionBase = commandOffset + Segment.headerSize
+        for idx in 0..<Int(segment.numberOfSections) {
+            let sectionOffset = sectionBase + idx * Section.size
+            let old = try data.readUInt32(at: sectionOffset + 48)
+            if old != 0, Int(old) >= insertionOffset {
+                try data.writeUInt32(old &+ deltaU32, at: sectionOffset + 48)
+            }
+            let oldReloc = try data.readUInt32(at: sectionOffset + 56)
+            if oldReloc != 0, Int(oldReloc) >= insertionOffset {
+                try data.writeUInt32(oldReloc &+ deltaU32, at: sectionOffset + 56)
+            }
+        }
+    }
+
+    private static func shiftOffsetFieldIfNeeded(
+        in data: inout Data,
+        fieldOffset: Int,
+        insertionOffset: Int,
+        deltaU32: UInt32
+    ) throws {
+        let value = try data.readUInt32(at: fieldOffset)
+        if value != 0, Int(value) >= insertionOffset {
+            try data.writeUInt32(value &+ deltaU32, at: fieldOffset)
+        }
     }
 
     private static func fileAlignment(forSectionAlign alignExponent: UInt32) throws -> UInt64 {
