@@ -58,25 +58,58 @@ public final class MachOWriter {
 
         let fileBackedTail = try highestFileBackedSegmentEnd(in: data, header: header)
         let targetSegmentEnd = try checkedAdd(target.segment.fileOffset, target.segment.fileSize, context: "segment \(segment) tail")
-        guard targetSegmentEnd == fileBackedTail, targetSegmentEnd == UInt64(data.count) else {
-            throw MachOError.unsupportedMutation(
-                "Appending a new section is only supported for the last file-backed segment that reaches EOF"
-            )
-        }
 
         let alignment = try fileAlignment(forSectionAlign: target.segment.sections.last?.align ?? 0)
-        let contentOffset = try align(UInt64(data.count), to: alignment)
-        let paddingCount = try checkedInt(contentOffset - UInt64(data.count), context: "section padding")
-        if paddingCount > 0 {
-            data.append(Data(count: paddingCount))
-        }
-        data.append(content)
 
-        guard target.segment.vmAddress >= target.segment.fileOffset else {
+        // Resolve a final insertion context. If target segment already reaches EOF we append at EOF as before;
+        // otherwise relocate trailing file-backed content (typically __LINKEDIT) to make room at target's tail.
+        let insertionPoint: UInt64
+        let paddingCount: Int
+        let refreshedTarget: SegmentCommandContext
+        if targetSegmentEnd == fileBackedTail, targetSegmentEnd == UInt64(data.count) {
+            let rawOffset = try align(UInt64(data.count), to: alignment)
+            paddingCount = try checkedInt(rawOffset - UInt64(data.count), context: "section padding")
+            if paddingCount > 0 {
+                data.append(Data(count: paddingCount))
+            }
+            data.append(content)
+            insertionPoint = rawOffset
+            refreshedTarget = target
+        } else {
+            // Target segment is not at EOF — there is trailing file-backed data we must shift.
+            let alignedInsertionPoint = try align(targetSegmentEnd, to: alignment)
+            let paddingBefore = try checkedInt(alignedInsertionPoint - targetSegmentEnd, context: "section padding before shift")
+            let shiftAmount = try checkedAdd(UInt64(paddingBefore), UInt64(content.count), context: "trailing shift amount")
+            try relocateTrailingFileData(
+                in: &data,
+                header: header,
+                excludingSegmentCmdOffset: target.commandOffset,
+                minFileOffset: targetSegmentEnd,
+                shift: shiftAmount
+            )
+            // Write zero padding + new content into the slot that just opened up.
+            if paddingBefore > 0 {
+                let padRange = Int(targetSegmentEnd)..<Int(alignedInsertionPoint)
+                for i in padRange { data[i] = 0 }
+            }
+            let writeOffset = try checkedInt(alignedInsertionPoint, context: "section content offset")
+            try replaceBytes(in: &data, at: writeOffset, with: content)
+            insertionPoint = alignedInsertionPoint
+            paddingCount = paddingBefore
+            // Re-locate target with the fresh header state. Note: target's own fileOffset is unchanged
+            // because we relocated everything *after* its end, but we still re-read to be safe.
+            let refreshedHeader = try MachOHeader(from: data)
+            refreshedTarget = try locateSegment(in: data, header: refreshedHeader, named: segment)
+        }
+
+        _ = paddingCount // preserved for future diagnostics
+
+        guard refreshedTarget.segment.vmAddress >= refreshedTarget.segment.fileOffset else {
             throw MachOError.unsupportedMutation("Segment \(segment) has vmaddr < fileoff")
         }
-        let addressBias = target.segment.vmAddress - target.segment.fileOffset
-        let contentAddress = try checkedAdd(addressBias, UInt64(contentOffset), context: "new section vmaddr")
+        let addressBias = refreshedTarget.segment.vmAddress - refreshedTarget.segment.fileOffset
+        let contentOffset = insertionPoint
+        let contentAddress = try checkedAdd(addressBias, contentOffset, context: "new section vmaddr")
 
         let newSection = Section(
             sectionName: section, segmentName: segment,
@@ -302,6 +335,122 @@ public final class MachOWriter {
         }
 
         throw MachOError.segmentNotFound(name)
+    }
+
+    /// Shift any trailing file-backed content (typically __LINKEDIT plus the LC_* blobs it hosts)
+    /// rightward by `shift` bytes, starting at `minFileOffset`. Updates every relevant load command
+    /// field so the on-disk layout remains self-consistent after the shift.
+    ///
+    /// This is used when we want to extend a non-terminal segment but LINKEDIT (or similar) is in the way.
+    private static func relocateTrailingFileData(
+        in data: inout Data,
+        header: MachOHeader,
+        excludingSegmentCmdOffset: Int,
+        minFileOffset: UInt64,
+        shift: UInt64
+    ) throws {
+        guard shift > 0 else { return }
+        guard minFileOffset <= UInt64(data.count) else {
+            throw MachOError.unsupportedMutation("relocateTrailingFileData: minFileOffset beyond EOF")
+        }
+        let shiftInt = try checkedInt(shift, context: "trailing shift")
+        let anchor = try checkedInt(minFileOffset, context: "trailing anchor")
+
+        // Physically insert `shift` bytes at `anchor` (pushing trailing data rightward).
+        let insertion = Data(count: shiftInt)
+        data.insert(contentsOf: insertion, at: anchor)
+
+        // Walk every load command and update any file-offset fields that point into the shifted region.
+        var cmdOffset = MachOHeader.size
+        var vmShiftForLinkeditEtc: UInt64 = 0
+        // First pass: compute how much vm-space the target segment will gain — we need that so
+        // trailing segments' vmAddress can be bumped to stay contiguous. We rely on caller having
+        // extended target segment's vmSize by `shift` when the caller later writes the new section header.
+        // For now, shift vmAddress of every file-backed segment whose fileOffset > minFileOffset by `shift`
+        // to preserve the vmAddr == fileOffset + constBias invariant in Apple-produced binaries.
+        vmShiftForLinkeditEtc = shift
+
+        for _ in 0..<Int(header.numberOfCommands) {
+            let command = try LoadCommand(from: data, offset: UInt64(cmdOffset))
+            let cmd = command.cmd
+            let size = Int(command.cmdSize)
+
+            switch cmd {
+            case LoadCommand.LC_SEGMENT_64:
+                if cmdOffset != excludingSegmentCmdOffset {
+                    // struct segment_command_64:
+                    //   cmd(4) cmdsize(4) segname(16) vmaddr(8) vmsize(8) fileoff(8) filesize(8) ...
+                    let fileOff = try data.readUInt64(at: cmdOffset + 32 + 16)
+                    if fileOff >= minFileOffset {
+                        try data.writeUInt64(fileOff + shift, at: cmdOffset + 32 + 16)
+                        // Shift vmAddress as well so it stays past the extended target segment.
+                        let vmAddr = try data.readUInt64(at: cmdOffset + 8 + 16)
+                        try data.writeUInt64(vmAddr + vmShiftForLinkeditEtc, at: cmdOffset + 8 + 16)
+                    }
+                    // Sections inside this segment also need fileOffset updates.
+                    let nsectsOff = cmdOffset + 64
+                    let nsects = try data.readUInt32(at: nsectsOff)
+                    for i in 0..<Int(nsects) {
+                        let secOffset = cmdOffset + Segment.headerSize + i * Section.size
+                        // section_64: sectname(16) segname(16) addr(8) size(8) offset(4) ...
+                        let secAddr = try data.readUInt64(at: secOffset + 32)
+                        let secFileOffset = try data.readUInt32(at: secOffset + 48)
+                        if UInt64(secFileOffset) >= minFileOffset && secFileOffset != 0 {
+                            let newOff = UInt64(secFileOffset) + shift
+                            guard newOff <= UInt64(UInt32.max) else {
+                                throw MachOError.integerOverflow("section fileOffset after shift")
+                            }
+                            try data.writeUInt32(UInt32(newOff), at: secOffset + 48)
+                            try data.writeUInt64(secAddr + vmShiftForLinkeditEtc, at: secOffset + 32)
+                        }
+                    }
+                }
+            case LoadCommand.LC_SYMTAB:
+                // symtab_command: cmd cmdsize symoff nsyms stroff strsize
+                let symoff = try data.readUInt32(at: cmdOffset + 8)
+                if UInt64(symoff) >= minFileOffset && symoff != 0 {
+                    try data.writeUInt32(UInt32(UInt64(symoff) + shift), at: cmdOffset + 8)
+                }
+                let stroff = try data.readUInt32(at: cmdOffset + 16)
+                if UInt64(stroff) >= minFileOffset && stroff != 0 {
+                    try data.writeUInt32(UInt32(UInt64(stroff) + shift), at: cmdOffset + 16)
+                }
+            case LoadCommand.LC_DYSYMTAB:
+                // dysymtab_command layout (first 8 = cmd+cmdsize, then many fields; we only shift the offsets):
+                //   tocoff(at 32), modtaboff(at 40), extrefsymoff(at 48), indirectsymoff(at 56),
+                //   extreloff(at 64), locreloff(at 72)
+                for fieldOff in [32, 40, 48, 56, 64, 72] {
+                    let raw = try data.readUInt32(at: cmdOffset + fieldOff)
+                    if UInt64(raw) >= minFileOffset && raw != 0 {
+                        try data.writeUInt32(UInt32(UInt64(raw) + shift), at: cmdOffset + fieldOff)
+                    }
+                }
+            case LoadCommand.LC_DYLD_INFO, LoadCommand.LC_DYLD_INFO_ONLY:
+                // dyld_info_command: rebase_off(8), bind_off(16), weak_bind_off(24), lazy_bind_off(32), export_off(40)
+                for fieldOff in [8, 16, 24, 32, 40] {
+                    let raw = try data.readUInt32(at: cmdOffset + fieldOff)
+                    if UInt64(raw) >= minFileOffset && raw != 0 {
+                        try data.writeUInt32(UInt32(UInt64(raw) + shift), at: cmdOffset + fieldOff)
+                    }
+                }
+            case LoadCommand.LC_CODE_SIGNATURE,
+                 LoadCommand.LC_DYLD_EXPORTS_TRIE,
+                 LoadCommand.LC_DYLD_CHAINED_FIXUPS,
+                 LoadCommand.LC_FUNCTION_STARTS,
+                 LoadCommand.LC_DATA_IN_CODE,
+                 LoadCommand.LC_SEGMENT_SPLIT_INFO,
+                 LoadCommand.LC_DYLIB_CODE_SIGN_DRS,
+                 LoadCommand.LC_LINKER_OPTIMIZATION_HINT:
+                // linkedit_data_command: cmd cmdsize dataoff(4) datasize(4)
+                let dataoff = try data.readUInt32(at: cmdOffset + 8)
+                if UInt64(dataoff) >= minFileOffset && dataoff != 0 {
+                    try data.writeUInt32(UInt32(UInt64(dataoff) + shift), at: cmdOffset + 8)
+                }
+            default:
+                break
+            }
+            cmdOffset += size
+        }
     }
 
     private static func highestFileBackedSegmentEnd(in data: Data, header: MachOHeader) throws -> UInt64 {
