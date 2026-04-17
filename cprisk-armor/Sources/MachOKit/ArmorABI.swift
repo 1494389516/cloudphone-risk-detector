@@ -15,8 +15,8 @@ private extension Data {
 
 private enum ArmorMessageAuth {
     static let blockSize = 64
-    static let innerPadByte: UInt8 = 0x6D
-    static let outerPadByte: UInt8 = 0xA3
+    static let innerPadByte: UInt8 = 0x36
+    static let outerPadByte: UInt8 = 0x5C
 
     static func authenticationCode(key: Data, message: Data) -> Data {
         var normalizedKey = [UInt8](repeating: 0, count: blockSize)
@@ -41,6 +41,15 @@ private enum ArmorMessageAuth {
         var outerInput = Data(outerKey)
         outerInput.append(innerDigest)
         return Data(SHA256.hash(data: outerInput))
+    }
+
+    static func constantTimeEquals(_ lhs: Data, _ rhs: Data) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        var diff: UInt8 = 0
+        for i in 0..<lhs.count {
+            diff |= lhs[i] ^ rhs[i]
+        }
+        return diff == 0
     }
 }
 
@@ -751,6 +760,14 @@ public enum ArmorABI {
     /// Custom-pad SHA-256 MAC — used for authentication tags throughout the ABI.
     public static func hmacSHA256(key: Data, message: Data) -> Data {
         ArmorMessageAuth.authenticationCode(key: key, message: message)
+    }
+
+    /// Constant-time HMAC-SHA256 verification helper.
+    public static func verifyHMACSHA256(key: Data, message: Data, expectedTag: Data) -> Bool {
+        ArmorMessageAuth.constantTimeEquals(
+            ArmorMessageAuth.authenticationCode(key: key, message: message),
+            expectedTag
+        )
     }
 
     /// Derive a single-byte salt XOR key from the root key.

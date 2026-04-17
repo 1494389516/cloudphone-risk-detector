@@ -351,10 +351,24 @@ public final class MetadataScrubberPass: ArmorPass {
     /// Aggressive: full section overwrite (legacy behavior).
     private func scrubAdditionalMetadataSectionsAggressive(in file: MachOFile) throws -> Int {
         var totalBytes = 0
+        let relativePointerCritical: Set<String> = [
+            ArmorABI.MetadataSections.swiftProtocols,
+            ArmorABI.MetadataSections.swiftFieldMetadata,
+            ArmorABI.MetadataSections.swiftAssociatedTypes,
+            ArmorABI.MetadataSections.swiftTypeReferences,
+        ]
 
         for sectionName in ArmorABI.MetadataSections.additionalScrubSections {
             for segName in ["__TEXT", "__DATA"] {
                 guard let section = try file.section(segment: segName, section: sectionName) else {
+                    continue
+                }
+                if relativePointerCritical.contains(sectionName) {
+                    // Keep relative-pointer metadata byte-stable even in aggressive mode.
+                    let conservative = try scrubSectionCStringPayloads(section, in: file) { utf8 in
+                        Self.shouldScrubSwiftMetadataCString(utf8)
+                    }
+                    totalBytes += conservative.bytes
                     continue
                 }
                 guard section.size <= UInt64(Int.max) else { continue }

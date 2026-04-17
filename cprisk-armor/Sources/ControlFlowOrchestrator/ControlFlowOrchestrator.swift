@@ -52,7 +52,8 @@ public final class ControlFlowOrchestrator {
         let dispatcher = DispatcherStyle.choose(
             for: symbol,
             tier: tier,
-            enableMultiDispatcher: policy.antiDeobfuscation.enableMultiDispatcher
+            enableMultiDispatcher: policy.antiDeobfuscation.enableMultiDispatcher,
+            buildSeed: seedMaterial
         )
         let stateEncodingPlan = StateEncodingPlan.recommended(
             for: symbol,

@@ -932,12 +932,22 @@ public enum ARM64Codec {
         }
 
         let high = (raw >> 24) & 0x7F
-        guard high == 0x34 || high == 0x35 else { return nil }
-        let isCbnz = high == 0x35
-        let imm19 = (raw >> 5) & 0x7FFFF
         let rt = raw & 0x1F
-        let imm = expandPCRelativeOffset(Int32(imm19 << 2))
-        let form: ARM64CompareBranchForm = isCbnz ? .cbnz : .cbz
+        let form: ARM64CompareBranchForm
+        let imm: Int32
+        if high == 0x34 || high == 0x35 {
+            let isCbnz = high == 0x35
+            let imm19 = (raw >> 5) & 0x7FFFF
+            imm = signExtendShiftedImmediate(value: imm19, bits: 19, shift: 2)
+            form = isCbnz ? .cbnz : .cbz
+        } else if (raw & 0x7E00_0000) == 0x3600_0000 || (raw & 0x7E00_0000) == 0x3700_0000 {
+            let isTbnz = (raw & 0x0100_0000) != 0
+            let imm14 = (raw >> 5) & 0x3FFF
+            imm = signExtendShiftedImmediate(value: imm14, bits: 14, shift: 2)
+            form = isTbnz ? .cbnz : .cbz
+        } else {
+            return nil
+        }
         return ARM64DecodedInstruction(
             rawValue: raw,
             kind: .compareBranch(ARM64CompareBranch(form: form, register: rt, immediate: imm))
@@ -949,7 +959,7 @@ public enum ARM64Codec {
         guard (raw & 0xFF00_0010) == 0x5400_0000 else { return nil }
         let imm19 = (raw >> 5) & 0x7FFFF
         let cond = raw & 0xF
-        let imm = expandPCRelativeOffset(Int32(imm19 << 2))
+        let imm = signExtendShiftedImmediate(value: imm19, bits: 19, shift: 2)
         return ARM64DecodedInstruction(
             rawValue: raw,
             kind: .compareBranch(ARM64CompareBranch(
@@ -1080,7 +1090,7 @@ public enum ARM64Codec {
         let isXReg = ((raw >> 30) & 1) != 0
         let imm19 = (raw >> 5) & 0x7FFFF
         let rt = raw & 0x1F
-        let imm = Int64(imm19 << 2)
+        let imm = Int64(signExtendShiftedImmediate(value: imm19, bits: 19, shift: 2))
         return ARM64DecodedInstruction(
             rawValue: raw,
             kind: .loadLiteral(ARM64LoadLiteral(
@@ -1099,6 +1109,16 @@ public enum ARM64Codec {
             return Int32(bitPattern: UInt32(bitPattern: value) | 0xFFF00000)
         }
         return value
+    }
+
+    private static func signExtendShiftedImmediate(value: UInt32, bits: Int, shift: Int) -> Int32 {
+        precondition(bits > 0 && bits <= 31)
+        let signBit = UInt32(1) << (bits - 1)
+        var signed = value & ((UInt32(1) << bits) - 1)
+        if (signed & signBit) != 0 {
+            signed |= ~((UInt32(1) << bits) - 1)
+        }
+        return Int32(bitPattern: signed << shift)
     }
 
     public static func encodeBitmaskImmediate(

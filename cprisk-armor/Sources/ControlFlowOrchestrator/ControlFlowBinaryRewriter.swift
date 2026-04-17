@@ -219,7 +219,12 @@ final class ControlFlowBinaryRewriter {
         return OrchestratedFunctionPlan(
             symbol: symbol,
             tier: .light,
-            dispatcherStyle: DispatcherStyle.choose(for: symbol, tier: .light, enableMultiDispatcher: false),
+            dispatcherStyle: DispatcherStyle.choose(
+                for: symbol,
+                tier: .light,
+                enableMultiDispatcher: false,
+                buildSeed: seed
+            ),
             stateEncodingPlan: stateEnc,
             runtimeDependencyPlan: runtimeDep,
             antiDeobfuscationPlan: antiDeobf,
@@ -1197,7 +1202,7 @@ final class ControlFlowBinaryRewriter {
     private func encodeUnconditionalBranchImmediate(immediateBytes: Int) -> UInt32? {
         guard immediateBytes % 4 == 0 else { return nil }
         let words = immediateBytes / 4
-        guard words >= -(1 << 25), words < (1 << 25) else { return nil }
+        guard words >= -(1 << 25), words <= ((1 << 25) - 1) else { return nil }
         let imm26 = UInt32(bitPattern: Int32(words)) & 0x03FF_FFFF
         return 0x1400_0000 | imm26
     }
