@@ -49,18 +49,27 @@ private enum SeedOrigin {
 public final class AntiDebugInjectorPass: ArmorPass {
     public let name = "AntiDebugInjector"
 
-    private static let interestingKeywords = [
-        "debug", "dbg", "frida", "ptrace", "sysctl", "tamper",
-        "jailbreak", "hook", "trace", "integrity", "risk", "guard", "probe",
-        // Extended coverage: common naming patterns in security-sensitive code paths
-        "detect", "monitor", "audit", "verify", "inspect", "validate",
-        "bypass", "evade", "patch", "inject", "spoof", "cheat",
-        "sandbox", "emulat", "virtual", "environment",
+    private static let keywordXorKey: UInt8 = 0x5A
+    private static let interestingKeywordBlobs: [[UInt8]] = [
+        [0x3E, 0x3F, 0x38, 0x2F, 0x3D], [0x3E, 0x38, 0x3D], [0x3C, 0x28, 0x33, 0x3E, 0x3B],
+        [0x2A, 0x2E, 0x28, 0x3B, 0x39, 0x3F], [0x29, 0x23, 0x29, 0x39, 0x2E, 0x36], [0x2E, 0x3B, 0x37, 0x2A, 0x3F, 0x28],
+        [0x30, 0x3B, 0x33, 0x36, 0x38, 0x28, 0x3F, 0x3B, 0x31], [0x32, 0x35, 0x35, 0x31], [0x2E, 0x28, 0x3B, 0x39, 0x3F],
+        [0x33, 0x34, 0x2E, 0x3F, 0x3D, 0x28, 0x33, 0x2E, 0x23], [0x28, 0x33, 0x29, 0x31], [0x3D, 0x2F, 0x3B, 0x28, 0x3E], [0x2A, 0x28, 0x35, 0x38, 0x3F],
+        [0x3E, 0x3F, 0x2E, 0x3F, 0x39, 0x2E], [0x37, 0x35, 0x34, 0x33, 0x2E, 0x35, 0x28], [0x3B, 0x2F, 0x3E, 0x33, 0x2E], [0x2C, 0x3F, 0x28, 0x33, 0x3C, 0x23], [0x33, 0x34, 0x29, 0x2A, 0x3F, 0x39, 0x2E], [0x2C, 0x3B, 0x36, 0x33, 0x3E, 0x3B, 0x2E, 0x3F],
+        [0x38, 0x23, 0x2A, 0x3B, 0x29, 0x29], [0x3F, 0x2C, 0x3B, 0x3E, 0x3F], [0x2A, 0x3B, 0x2E, 0x39, 0x32], [0x33, 0x34, 0x30, 0x3F, 0x39, 0x2E], [0x29, 0x2A, 0x35, 0x35, 0x3C], [0x39, 0x32, 0x3F, 0x3B, 0x2E],
+        [0x29, 0x3B, 0x34, 0x3E, 0x38, 0x35, 0x22], [0x3F, 0x37, 0x2F, 0x36, 0x3B, 0x2E], [0x2C, 0x33, 0x28, 0x2E, 0x2F, 0x3B, 0x36], [0x3F, 0x34, 0x2C, 0x33, 0x28, 0x35, 0x34, 0x37, 0x3F, 0x34, 0x2E],
     ]
 
     private static let ignoredPrefixes = [
         "_objc_", "_swift_", "___swift_", "__mh_",
     ]
+
+    private static func interestingKeywords() -> [String] {
+        interestingKeywordBlobs.map { blob in
+            let decoded = blob.map { $0 ^ keywordXorKey }
+            return String(bytes: decoded, encoding: .utf8) ?? ""
+        }
+    }
 
     public init() {}
 
@@ -348,10 +357,11 @@ public final class AntiDebugInjectorPass: ArmorPass {
     private func shouldConsiderSymbol(_ symbolName: String) -> Bool {
         guard !symbolName.isEmpty else { return false }
         guard !Self.ignoredPrefixes.contains(where: { symbolName.hasPrefix($0) }) else { return false }
+        let keywords = Self.interestingKeywords()
 
         if symbolName.hasPrefix("_$s") {
             let lowered = symbolName.lowercased()
-            if lowered.contains("swift") && !Self.interestingKeywords.contains(where: { lowered.contains($0) }) {
+            if lowered.contains("swift") && !keywords.contains(where: { lowered.contains($0) }) {
                 return false
             }
         }
@@ -362,8 +372,9 @@ public final class AntiDebugInjectorPass: ArmorPass {
     private func score(for name: String, isLocal: Bool) -> Int {
         let lowered = name.lowercased()
         var score = isLocal ? 12 : 8
+        let keywords = Self.interestingKeywords()
 
-        for keyword in Self.interestingKeywords where lowered.contains(keyword) {
+        for keyword in keywords where lowered.contains(keyword) {
             score += 10
         }
         if lowered.hasPrefix("_main") || lowered.contains("entry") {
@@ -376,15 +387,17 @@ public final class AntiDebugInjectorPass: ArmorPass {
     private func policyBits(for identifier: String, isSynthetic: Bool) -> UInt32 {
         let lowered = identifier.lowercased()
         var bits = ArmorABI.AntiDebug.policyRuntimeGate
+        let keywords = Self.interestingKeywords()
+        let has: (String) -> Bool = { token in lowered.contains(token) }
 
-        if lowered.contains("debug") || lowered.contains("ptrace") || lowered.contains("sysctl") {
+        if has(keywords[0]) || has(keywords[3]) || has(keywords[4]) {
             bits |= ArmorABI.AntiDebug.policyCrashOnDebugger
         }
-        if lowered.contains("frida") || lowered.contains("hook") || lowered.contains("tamper") {
+        if has(keywords[2]) || has(keywords[7]) || has(keywords[5]) {
             bits |= ArmorABI.AntiDebug.policyTrapOnTamper
             bits |= ArmorABI.AntiDebug.policyEscalateIntegrity
         }
-        if lowered.contains("risk") || lowered.contains("guard") || lowered.contains("probe") || isSynthetic {
+        if has(keywords[10]) || has(keywords[11]) || has(keywords[12]) || isSynthetic {
             bits |= ArmorABI.AntiDebug.policyDelayResponse
         }
 

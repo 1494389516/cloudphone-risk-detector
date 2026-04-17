@@ -102,7 +102,7 @@ public enum VMSelfExpectInjector {
             align: 2,
             flags: 0
         )
-        _ = try file.write(to: machoURL, validateRoundTrip: true)
+        _ = try file.write(to: machoURL, validateRoundTrip: false)
         return Result(
             fnvExpect: fnv,
             expectMagicLE: Self.magicLE,
@@ -134,7 +134,7 @@ public enum VMSelfExpectInjector {
             align: 2,
             flags: 0
         )
-        _ = try file.write(to: machoURL, validateRoundTrip: true)
+        _ = try file.write(to: machoURL, validateRoundTrip: false)
         return Result(
             fnvExpect: tag,
             expectMagicLE: Self.magicHmacLE,

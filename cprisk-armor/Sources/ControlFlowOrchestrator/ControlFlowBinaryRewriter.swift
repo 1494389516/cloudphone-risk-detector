@@ -975,6 +975,9 @@ final class ControlFlowBinaryRewriter {
               regionLength <= 512 else {
             return []
         }
+        if hasDataInCode(file: file, range: regionStart..<regionEnd) {
+            return []
+        }
 
         for block in selected {
             guard case .unconditional = block.terminator else { return [] }
@@ -1074,6 +1077,30 @@ final class ControlFlowBinaryRewriter {
         }
 
         return patches
+    }
+
+    private func hasDataInCode(file: MachOFile, range: Range<Int>) -> Bool {
+        for command in file.loadCommands where command.cmd == LoadCommand.LC_DATA_IN_CODE {
+            guard command.cmdSize >= 16 else { continue }
+            let cmdOffset = Int(command.offset)
+            guard let dataOff = try? file.readUInt32(at: cmdOffset + 8),
+                  let dataSize = try? file.readUInt32(at: cmdOffset + 12) else { continue }
+            let start = Int(dataOff)
+            let size = Int(dataSize)
+            guard size > 0, start >= 0, start + size <= file.data.count, size % 8 == 0 else { continue }
+
+            var cursor = start
+            while cursor + 8 <= start + size {
+                guard let entryOffset = try? file.readUInt32(at: cursor) else { break }
+                let fileOffset = Int(entryOffset)
+                let length = Int(file.data[cursor + 4]) | (Int(file.data[cursor + 5]) << 8)
+                if length > 0, (fileOffset..<(fileOffset + length)).overlaps(range) {
+                    return true
+                }
+                cursor += 8
+            }
+        }
+        return false
     }
 
     private func buildReorderBasicBlocks(
@@ -1232,7 +1259,7 @@ private struct CFFManagedFunctionCandidate {
     var rewriteSeed: UInt64 {
         let base = plan.stateEncodingPlan.perFunctionSeed
         let tierSalt = UInt64(tier.priorityWeight) << 48
-        return base ^ UInt64(entryFileOffset) ^ tierSalt
+        return base ^ entryVMAddress ^ tierSalt
     }
 }
 
