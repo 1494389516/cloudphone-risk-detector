@@ -47,7 +47,7 @@ public final class ExportTrieScrubberPass: ArmorPass {
         var scrubbedBytes = 0
         var scrubbedRegions = 0
         var invalidRegions = 0
-        var seen = Set<String>()
+        var seenByOffset = [Int: Int]()
 
         for region in regions {
             // Always clear command pointers first.
@@ -63,9 +63,11 @@ public final class ExportTrieScrubberPass: ArmorPass {
                 continue
             }
 
-            // LC_DYLD_INFO_ONLY and LC_DYLD_EXPORTS_TRIE may point to the same blob.
-            let key = "\(region.offset):\(region.size)"
-            guard seen.insert(key).inserted else { continue }
+            // LC_DYLD_INFO_ONLY and LC_DYLD_EXPORTS_TRIE can share `offset` with different sizes.
+            // Scrub once with the max observed size for that offset.
+            let known = seenByOffset[region.offset] ?? 0
+            if known >= region.size { continue }
+            seenByOffset[region.offset] = region.size
 
             let noise = Self.exportNoise(
                 count: region.size,

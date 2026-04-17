@@ -141,6 +141,11 @@ enum SwiftMetadataShuffle {
             let label = try writeMappingBlob(to: file, payload: payload)
             bytes += payload.count
             details.append("Swift shuffle mapping: \(payload.count) bytes → \(label)")
+        } else {
+            let cleared = try clearMappingBlobIfPresent(in: file)
+            if cleared {
+                details.append("Swift shuffle mapping cleared (no valid shuffled sections)")
+            }
         }
 
         return (records.count, bytes, details)
@@ -221,5 +226,16 @@ enum SwiftMetadataShuffle {
             flags: 0
         )
         return "\(ArmorABI.dataSegmentName).\(fallback)"
+    }
+
+    private static func clearMappingBlobIfPresent(in file: MachOFile) throws -> Bool {
+        for name in [ArmorABI.Sections.chainMeta, ArmorABI.Sections.swiftMetadataMap] {
+            if let existing = try file.section(segment: ArmorABI.dataSegmentName, section: name),
+               existing.size > 0 {
+                try file.replaceBytes(at: UInt64(existing.offset), with: Data(count: Int(existing.size)))
+                return true
+            }
+        }
+        return false
     }
 }

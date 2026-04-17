@@ -674,9 +674,13 @@ public final class StringEncryptorPass: ArmorPass {
 
 private func deriveStringKey(rootKey: Data?) -> Data {
     let whitebox = ArmorWhiteBox.build(rootKey: rootKey)
+    var seedMaterial = Data("cprisk.string.domain1.v2".utf8)
+    if let raw = ProcessInfo.processInfo.environment["CPRISK_ARMOR_BUILD_SEED"] {
+        seedMaterial.append(Data(raw.utf8))
+    }
     return whitebox.prf(
         domain: .pass1StringKey,
-        input: Data(repeating: 0, count: ArmorABI.hashSize)
+        input: Data(SHA256.hash(data: seedMaterial))
     )
 }
 

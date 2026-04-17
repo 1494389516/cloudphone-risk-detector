@@ -154,7 +154,11 @@ public struct ARM64Lifter: Sendable {
             return VMInstruction(op: .loadStore, immediate: UInt64(insn))
         }
         if isBLR(insn) || isBR(insn) {
-            return VMInstruction(op: .rawRegion, immediate: UInt64(insn), rawCategory: .branchTest)
+            let rn = UInt64((insn >> 5) & 0x1F)
+            return VMInstruction(op: .branchInd, immediate: VMBranchIndImmediateContract.synthetic(vregIndex: rn, accBase: 0))
+        }
+        if isPACInstruction(insn) {
+            return VMInstruction(op: .rawRegion, immediate: UInt64(insn), rawCategory: .other)
         }
         if isMADD64(insn) {
             return VMInstruction(op: .mulLane, immediate: UInt64(insn))
@@ -193,6 +197,8 @@ public struct ARM64Lifter: Sendable {
         let adrp = readU32LE(bytes, offset)
         let add = readU32LE(bytes, offset + 4)
         guard isADRP(adrp), isADDImm64(add) else { return nil }
+        let addShift = (add >> 22) & 0x3
+        guard addShift == 0 || addShift == 1 else { return nil }
         let adrpRd = adrp & 31
         let addRn = (add >> 5) & 31
         let addRd = add & 31
@@ -266,7 +272,9 @@ public struct ARM64Lifter: Sendable {
     }
 
     private func isADDImm64(_ insn: UInt32) -> Bool {
-        (insn & 0xFF80_0000) == 0x9100_0000
+        guard (insn & 0xFF80_0000) == 0x9100_0000 else { return false }
+        let shift = (insn >> 22) & 0x3
+        return shift == 0 || shift == 1
     }
 
     private func isSUBImm64(_ insn: UInt32) -> Bool {
@@ -367,8 +375,21 @@ public struct ARM64Lifter: Sendable {
         if top == 0xB940_0000 || top == 0xB900_0000 { return true }
         if top == 0xF840_0000 || top == 0xF800_0000 { return true }
         if top == 0xB840_0000 || top == 0xB800_0000 { return true }
+        if top == 0xB980_0000 || top == 0xB880_0000 { return true } // LDRSW/LDURSW
         if (insn & 0x3B00_0000) == 0x3900_0000 { return true }
         if (insn & 0x3B00_0000) == 0x3800_0000 { return true }
+        if (insn & 0x3FE0_0C00) == 0x3820_0400 { return true } // pre/post-index family
+        return false
+    }
+
+    private func isPACInstruction(_ insn: UInt32) -> Bool {
+        // PAC/AUT/XPAC live in system-hint and data-processing classes.
+        if (insn & 0xFFFF_FF1F) == 0xD503_211F { return true } // XPACLRI
+        if (insn & 0xFFFF_FC1F) == 0xDAC1_0000 { return true } // PACIA/PACIZA variants
+        if (insn & 0xFFFF_FC1F) == 0xDAC1_0400 { return true } // PACIB/PACIZB variants
+        if (insn & 0xFFFF_FC1F) == 0xDAC1_0800 { return true } // AUTIA/AUTIZA variants
+        if (insn & 0xFFFF_FC1F) == 0xDAC1_0C00 { return true } // AUTIB/AUTIZB variants
+        if (insn & 0xFFFF_FC1F) == 0xDAC1_1000 { return true } // XPACI/XPACD class
         return false
     }
 }

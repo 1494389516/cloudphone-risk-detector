@@ -189,6 +189,8 @@ public final class SymbolStripperPass: ArmorPass {
         if symbolName.hasPrefix("_objc_") || symbolName.hasPrefix("_OBJC_") { return false }
         if symbolName.hasPrefix("_swift_") { return false }
         if symbolName.hasPrefix("___swift_") { return false }
+        if symbolName.hasPrefix("_dyld_") || symbolName.hasPrefix("__dyld_") { return false }
+        if symbolName.hasPrefix("__mh_") { return false }
         if Self.entryPoints.contains(symbolName) { return false }
 
         return true
