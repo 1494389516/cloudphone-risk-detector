@@ -108,6 +108,17 @@ public struct ARM64Lifter: Sendable {
         if isBUnconditional(insn) {
             return VMInstruction(op: .branchRel, immediate: Self.vmByteDeltaFromUnconditionalBranch(insn))
         }
+        // BLR / BR / BLRAA / BLRAB / BRAA / BRAB — indirect register branches. Must be matched
+        // before the load/store sieve so they don't accidentally fall through to other handlers.
+        if isBLR(insn) || isBR(insn) || isBLRAuth(insn) || isBRAuth(insn) {
+            return VMInstruction(op: .rawRegion, immediate: UInt64(insn), rawCategory: .branchTest)
+        }
+        // PAC instructions (PACIA/PACIB/AUTIA/AUTIB/XPACI/XPACD and ZA variants). Semantically
+        // they are NOPs on pre-ARMv8.3; on ARMv8.3+ they mutate LR/Xn. Either way, preserving the
+        // original word via rawRegion keeps the protected-return invariant intact.
+        if isPACInstruction(insn) {
+            return VMInstruction(op: .rawRegion, immediate: UInt64(insn), rawCategory: .other)
+        }
         if isMoveWide(insn) {
             return VMInstruction(op: .movWide, immediate: UInt64(insn))
         }
@@ -150,16 +161,76 @@ public struct ARM64Lifter: Sendable {
         if isCBZCBNZ(insn) || isBCond(insn) || isTBZTBNZ(insn) {
             return VMInstruction(op: .branchCond, immediate: UInt64(insn))
         }
+        if isLDRLiteral(insn) {
+            return VMInstruction(op: .loadStore, immediate: UInt64(insn), rawCategory: .loadStore)
+        }
+        if isLDRSW(insn) {
+            return VMInstruction(op: .loadStore, immediate: UInt64(insn), rawCategory: .loadStore)
+        }
         if isLoadStoreBasic(insn) {
             return VMInstruction(op: .loadStore, immediate: UInt64(insn))
-        }
-        if isBLR(insn) || isBR(insn) {
-            return VMInstruction(op: .rawRegion, immediate: UInt64(insn), rawCategory: .branchTest)
         }
         if isMADD64(insn) {
             return VMInstruction(op: .mulLane, immediate: UInt64(insn))
         }
         return nil
+    }
+
+    /// RETAA (0xD65F0BFF) / RETAB (0xD65F0FFF) — PAC-authenticated returns.
+    private func isRETAuth(_ insn: UInt32) -> Bool {
+        insn == 0xD65F_0BFF || insn == 0xD65F_0FFF
+    }
+
+    /// BLRAA (0xD73F0800) / BLRAB (0xD73F0C00) / BLRAAZ (0xD63F081F) / BLRABZ (0xD63F0C1F).
+    private func isBLRAuth(_ insn: UInt32) -> Bool {
+        let top = insn & 0xFFE0_FC00
+        return top == 0xD73F_0800 || top == 0xD73F_0C00
+            || (insn & 0xFFFF_FC1F) == 0xD63F_081F
+            || (insn & 0xFFFF_FC1F) == 0xD63F_0C1F
+    }
+
+    /// BRAA (0xD71F0800) / BRAB (0xD71F0C00) / BRAAZ / BRABZ.
+    private func isBRAuth(_ insn: UInt32) -> Bool {
+        let top = insn & 0xFFE0_FC00
+        return top == 0xD71F_0800 || top == 0xD71F_0C00
+            || (insn & 0xFFFF_FC1F) == 0xD61F_081F
+            || (insn & 0xFFFF_FC1F) == 0xD61F_0C1F
+    }
+
+    /// PACIA / PACIB / PACDA / PACDB and their ZA variants; AUTIA / AUTIB / AUTDA / AUTDB;
+    /// XPACI / XPACD. All live in the data-processing-1-source space `1 1 011010 110 00001 ...`.
+    private func isPACInstruction(_ insn: UInt32) -> Bool {
+        // Data-processing (1 source) encoding: op31=1, op2=0b00001, opcode2=0b00001,
+        // mask = 1101_1010_1100_0001_xxxxxx_xxxxx_xxxxx
+        guard (insn & 0xFFFF_C000) == 0xDAC1_0000 else { return false }
+        let opcode = (insn >> 10) & 0xF
+        // Valid PAC opcodes: PACIA/PACIB/PACDA/PACDB (0..3), AUTIA/AUTIB/AUTDA/AUTDB (4..7),
+        // PACIZA/PACIZB/PACDZA/PACDZB (8..0xB), AUTIZA/…/AUTDZB (0xC..0xF).
+        return opcode <= 0xF
+    }
+
+    /// LDR (literal) Wt / Xt — PC-relative 19-bit-signed word-offset load.
+    /// Top opcode: `0x18000000` (32-bit) or `0x58000000` (64-bit), `0x98000000` (LDRSW literal),
+    /// `0x1C000000`..`0xDC000000` (SIMD literals — also PC-relative).
+    private func isLDRLiteral(_ insn: UInt32) -> Bool {
+        let top = insn & 0xFF00_0000
+        return top == 0x1800_0000
+            || top == 0x5800_0000
+            || top == 0x9800_0000   // LDRSW literal
+            || top == 0x1C00_0000   // SIMD 32-bit literal
+            || top == 0x5C00_0000   // SIMD 64-bit literal
+            || top == 0x9C00_0000   // SIMD 128-bit literal
+    }
+
+    /// LDRSW (register / unsigned immediate) — 32-bit sign-extended load, not caught by the
+    /// basic load/store sieve. Unsigned imm form: 0xB980_0000 top.
+    private func isLDRSW(_ insn: UInt32) -> Bool {
+        let top = insn & 0xFFC0_0000
+        if top == 0xB980_0000 { return true }                 // LDRSW Xt, [Xn{,#imm}]
+        if (insn & 0xFFE0_0C00) == 0xB880_0800 { return true } // LDRSW (register, pre-/post-idx)
+        if (insn & 0xFFE0_0C00) == 0xB880_0400 { return true } // LDRSW (immediate, pre-/post-idx)
+        if (insn & 0xFFE0_0000) == 0xB8A0_0000 { return true } // LDRSW (register, shifted)
+        return false
     }
 
     /// AArch64 unconditional `B` / `BL`: signed imm26 counts 32-bit words; VM mirrors one AArch64 word per VM instruction → ×9 bytes.
@@ -186,7 +257,12 @@ public struct ARM64Lifter: Sendable {
     }
 
     private func isRET(_ insn: UInt32) -> Bool {
-        (insn & 0xFFFF_FC1F) == 0xD65F_0000 || insn == 0xD65F_03C0
+        if (insn & 0xFFFF_FC1F) == 0xD65F_0000 { return true }
+        if insn == 0xD65F_03C0 { return true }
+        // RETAA / RETAB — PAC-authenticated returns must terminate the block too, otherwise the
+        // lifter walks past the end of the function into whatever follows.
+        if isRETAuth(insn) { return true }
+        return false
     }
 
     private func tryFuseAdrpAdd(bytes: Data, offset: Int) -> UInt64? {
@@ -197,6 +273,14 @@ public struct ARM64Lifter: Sendable {
         let addRn = (add >> 5) & 31
         let addRd = add & 31
         guard adrpRd == addRn, adrpRd == addRd else { return nil }
+        // The `sh` bit (bit 22) selects LSL #0 or LSL #12 on the 12-bit immediate. Only LSL #0 is
+        // used to materialize a page-offset address — LSL #12 means this ADD is an arithmetic
+        // operation that happens to reuse the register, not an ADRP-page + page-offset pair.
+        let shift = (add >> 22) & 0x1
+        guard shift == 0 else { return nil }
+        // XZR (Rd = 31) never names a real address register; abort the fusion to avoid lying to the
+        // runtime about which register holds the final page-offset pointer.
+        guard adrpRd != 31 else { return nil }
         return UInt64(adrp) | (UInt64(add) << 32)
     }
 

@@ -49,13 +49,18 @@ func deriveSwiftShuffleSubseed(segment: String, section: String, masterSeed: UIn
 
 enum SwiftMetadataShuffle {
 
+    /// Flat relative-pointer tables only — each slot is an `int32_t` offset from the slot's own
+    /// address to a descriptor. Sections like `__swift5_fieldmd`, `__swift5_assocty`,
+    /// `__swift5_typeref` are variable-length record streams (not flat tables) and MUST NOT be
+    /// shuffled as `[Int32]` — that would corrupt FieldDescriptor / AssociatedTypeDescriptor
+    /// layouts and break the Swift reflection / field-discovery runtime.
     private static let targets: [(segment: String, section: String)] = [
         ("__TEXT", ArmorABI.MetadataSections.swiftTypes),
         ("__TEXT", ArmorABI.MetadataSections.swiftProtocols),
-        ("__TEXT", ArmorABI.MetadataSections.swiftFieldMetadata),
+        ("__TEXT", ArmorABI.MetadataSections.swiftProtocolConformances),
         ("__DATA", ArmorABI.MetadataSections.swiftTypes),
         ("__DATA", ArmorABI.MetadataSections.swiftProtocols),
-        ("__DATA", ArmorABI.MetadataSections.swiftFieldMetadata),
+        ("__DATA", ArmorABI.MetadataSections.swiftProtocolConformances),
     ]
 
     /// Reorder Swift relative-pointer tables and re-encode offsets so each slot still resolves to

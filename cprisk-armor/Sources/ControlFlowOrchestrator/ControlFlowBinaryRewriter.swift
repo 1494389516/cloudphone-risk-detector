@@ -659,6 +659,73 @@ final class ControlFlowBinaryRewriter {
         return fileOffset + Int(signed) * 4
     }
 
+    /// Build a 3-patch branch-stub shuffle for a pre-validated CBZ/CBNZ head + two `B` stubs.
+    /// Returns nil when any sub-decoding fails so the caller can try another site or fall
+    /// through to the opaque-island path.
+    private func buildBranchStubShufflePatches(
+        site: (head: Int, headRaw: UInt32, leftRaw: UInt32, rightRaw: UInt32),
+        blockApprox: Int
+    ) -> [CFFPatchMutation]? {
+        let base = site.head
+        guard let invertedHead = invertedCompareBranchRaw(raw: site.headRaw) else {
+            return nil
+        }
+        let leftOffset = base + 4
+        let rightOffset = base + 8
+        guard let leftImm = decodeUnconditionalBranchImmediate(raw: site.leftRaw),
+              let rightImm = decodeUnconditionalBranchImmediate(raw: site.rightRaw) else {
+            return nil
+        }
+
+        let leftTarget = leftOffset + leftImm
+        let rightTarget = rightOffset + rightImm
+
+        let relocatedLeft = rightTarget - leftOffset
+        let relocatedRight = leftTarget - rightOffset
+        guard let leftReencoded = encodeUnconditionalBranchImmediate(immediateBytes: relocatedLeft),
+              let rightReencoded = encodeUnconditionalBranchImmediate(immediateBytes: relocatedRight) else {
+            return nil
+        }
+
+        let tag = "CFG branch-stub reorder (bb~\(blockApprox))"
+        return [
+            CFFPatchMutation(
+                fileOffset: base,
+                originalRawValue: site.headRaw,
+                replacementRawValue: invertedHead,
+                replacementDescription: "\(tag) invert head predicate"
+            ),
+            CFFPatchMutation(
+                fileOffset: leftOffset,
+                originalRawValue: site.leftRaw,
+                replacementRawValue: leftReencoded,
+                replacementDescription: "\(tag) reorder +0x4"
+            ),
+            CFFPatchMutation(
+                fileOffset: rightOffset,
+                originalRawValue: site.rightRaw,
+                replacementRawValue: rightReencoded,
+                replacementDescription: "\(tag) reorder +0x8"
+            ),
+        ]
+    }
+
+    /// Decode TBZ / TBNZ (C4.2.5, test-and-branch-immediate). Returns the branch target file
+    /// offset (computed as `fileOffset + signExtendedImm14 * 4`) or nil if `raw` isn't a test
+    /// branch. Both 32-bit (`b5 = 0`) and 64-bit (`b5 = 1`) forms share the same imm14 layout,
+    /// so we don't need to distinguish operand width to resolve the branch edge.
+    private func testBranchTargetOffset(fileOffset: Int, raw: UInt32) -> Int? {
+        // TBZ/TBNZ share encoding `x 011011 o1 bbbbb imm14 Rt` with top bits masked as below.
+        guard (raw & 0x7E00_0000) == 0x3600_0000 else { return nil }
+        var immBits = (raw >> 5) & 0x3FFF
+        if (immBits & 0x2000) != 0 {
+            // Sign-extend from bit 13 into the upper bits of a 32-bit word.
+            immBits |= 0xFFFF_C000
+        }
+        let signed = Int32(bitPattern: immBits)
+        return fileOffset + Int(signed) * 4
+    }
+
     /// Structural CFG mutation priority:
     /// 1) Switch-style dispatcher (TBZ/TBNZ on WZR) using NOP padding holes, with dead bogus blocks.
     /// 2) Multi-basic-block physical reorder (safe subset with explicit terminal branches).
@@ -672,7 +739,16 @@ final class ControlFlowBinaryRewriter {
     ) -> [CFFPatchMutation] {
         let start = candidate.entryFileOffset
         let end = start + functionSizeBytes
-        var rng = CFFSplitMix64(seed: candidate.rewriteSeed ^ 0xC0FF_EE2F)
+        // Domain-tag + per-symbol/per-VM mix so two dispatchers with the same policy tier
+        // don't share the same shuffle/opaque ordering. Using only `rewriteSeed ^ 0xC0FF_EE2F`
+        // would degrade every function to the same handful of permutations under a single
+        // build seed, making pattern-based reversal trivial.
+        let dispatcherSeedMix: UInt64 =
+            0xD15C_5EED_C0FF_EE2F
+            ^ cffStableHash64("dispatch:\(candidate.policySymbol)")
+            ^ (UInt64(functionSizeBytes) &* 0x9E37_79B9_7F4A_7C15)
+            ^ (candidate.entryVMAddress &* 0xBF58_476D_1CE4_E5B9)
+        var rng = CFFSplitMix64(seed: candidate.rewriteSeed ^ dispatcherSeedMix)
 
         let shuffleEnabled = policy.antiDeobfuscation.enableBinaryCFGShuffle
         let opaqueEnabled = policy.antiDeobfuscation.enableCFGOpaqueIslands
@@ -723,49 +799,13 @@ final class ControlFlowBinaryRewriter {
 
         if shuffleEnabled, !shuffleSites.isEmpty {
             shuffleSites.shuffle(using: &rng)
-            if let site = shuffleSites.first {
-                let base = site.head
-                guard let invertedHead = invertedCompareBranchRaw(raw: site.headRaw) else {
-                    return []
+            // Try shuffle sites in randomised order; if one fails mid-decode, keep trying
+            // the next site instead of returning []. Previous code aborted the whole
+            // structural path at the first decode miss, starving the opaque fallback.
+            for site in shuffleSites {
+                if let stubPatches = buildBranchStubShufflePatches(site: site, blockApprox: blockApprox) {
+                    return stubPatches
                 }
-                let leftOffset = base + 4
-                let rightOffset = base + 8
-                guard let leftImm = decodeUnconditionalBranchImmediate(raw: site.leftRaw),
-                      let rightImm = decodeUnconditionalBranchImmediate(raw: site.rightRaw) else {
-                    return []
-                }
-
-                let leftTarget = leftOffset + leftImm
-                let rightTarget = rightOffset + rightImm
-
-                let relocatedLeft = rightTarget - leftOffset
-                let relocatedRight = leftTarget - rightOffset
-                guard let leftReencoded = encodeUnconditionalBranchImmediate(immediateBytes: relocatedLeft),
-                      let rightReencoded = encodeUnconditionalBranchImmediate(immediateBytes: relocatedRight) else {
-                    return []
-                }
-
-                let tag = "CFG branch-stub reorder (bb~\(blockApprox))"
-                return [
-                    CFFPatchMutation(
-                        fileOffset: base,
-                        originalRawValue: site.headRaw,
-                        replacementRawValue: invertedHead,
-                        replacementDescription: "\(tag) invert head predicate"
-                    ),
-                    CFFPatchMutation(
-                        fileOffset: leftOffset,
-                        originalRawValue: site.leftRaw,
-                        replacementRawValue: leftReencoded,
-                        replacementDescription: "\(tag) reorder +0x4"
-                    ),
-                    CFFPatchMutation(
-                        fileOffset: rightOffset,
-                        originalRawValue: site.rightRaw,
-                        replacementRawValue: rightReencoded,
-                        replacementDescription: "\(tag) reorder +0x8"
-                    ),
-                ]
             }
         }
 
@@ -940,6 +980,81 @@ final class ControlFlowBinaryRewriter {
         return (UInt32(b5) << 31) | (opcodeBase << 24) | (b40 << 19) | (imm << 5) | 31
     }
 
+    /// Returns `true` if any instruction in `[regionStart, regionEnd)` is a PC-relative
+    /// pointer (LDR-literal, LDRSW-literal, PRFM-literal, ADR, ADRP) whose target lands
+    /// inside the same region. Such references are invalidated by block reorder because
+    /// we don't rewrite their encoded immediates. Unconditional-branch terminators are
+    /// handled separately in the reorder path and are explicitly ignored here.
+    ///
+    /// Conservative: unrecognised instruction shapes are treated as "no reference".
+    private func regionContainsInternalPCRelativeReference(
+        file: MachOFile,
+        regionStart: Int,
+        regionEnd: Int
+    ) -> Bool {
+        var offset = regionStart
+        while offset + 4 <= regionEnd {
+            defer { offset += 4 }
+            guard let raw = try? file.data.readUInt32LE(at: offset) else { return true }
+
+            // ADR / ADRP: `(op)(immlo)10000(immhi)Rd` — `op` in bit 31, fixed `10000` in [28:24].
+            if (raw & 0x1F00_0000) == 0x1000_0000 {
+                let immlo = (raw >> 29) & 0x3
+                var immhi = (raw >> 5) & 0x7FFFF
+                // Sign-extend 21 bits (immhi:immlo) into Int32.
+                var imm21 = (immhi << 2) | immlo
+                if (imm21 & (1 << 20)) != 0 {
+                    imm21 |= 0xFFE0_0000
+                }
+                let signedImm = Int32(bitPattern: imm21)
+                let isAdrp = (raw & 0x8000_0000) != 0
+                // ADR: target = PC + signedImm.  ADRP: target = (PC & ~0xFFF) + signedImm << 12.
+                // We only care whether the target can fall inside the region; any ADRP hit that
+                // aligns into the region indicates the region is data-adjacent and reorder is unsafe.
+                if isAdrp {
+                    // ADRP shifts by 12 → targets a page, so region overlap is very unlikely and
+                    // not a correctness risk for instruction reorder (page-aligned labels are
+                    // typically outside __text regions). Skip.
+                    _ = signedImm
+                } else {
+                    let target = offset &+ Int(signedImm)
+                    if target >= regionStart, target < regionEnd {
+                        return true
+                    }
+                }
+                _ = immhi
+                continue
+            }
+
+            // LDR (literal) 32-bit: 0x1800_0000 mask 0xFF00_0000
+            // LDR (literal) 64-bit: 0x5800_0000 mask 0xFF00_0000
+            // LDRSW (literal):      0x9800_0000 mask 0xFF00_0000
+            // PRFM   (literal):     0xD800_0000 mask 0xFF00_0000
+            // LDR (literal) SIMD S: 0x1C00_0000; D: 0x5C00_0000; Q: 0x9C00_0000
+            let top8 = raw & 0xFF00_0000
+            let isLiteral: Bool
+            switch top8 {
+            case 0x1800_0000, 0x5800_0000, 0x9800_0000, 0xD800_0000,
+                 0x1C00_0000, 0x5C00_0000, 0x9C00_0000:
+                isLiteral = true
+            default:
+                isLiteral = false
+            }
+            if isLiteral {
+                var imm19 = (raw >> 5) & 0x7FFFF
+                if (imm19 & (1 << 18)) != 0 {
+                    imm19 |= 0xFFF8_0000
+                }
+                let signed = Int32(bitPattern: imm19)
+                let target = offset &+ Int(signed) * 4
+                if target >= regionStart, target < regionEnd {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     private func computeMultiBasicBlockReorderMutations(
         candidate: CFFManagedFunctionCandidate,
         functionSizeBytes: Int,
@@ -973,6 +1088,18 @@ final class ControlFlowBinaryRewriter {
 
         for block in selected {
             guard case .unconditional = block.terminator else { return [] }
+        }
+
+        // Data-in-code guard: abort the reorder if any LDR-literal / ADR target (PC-relative
+        // pointer) inside the region would be silently invalidated by shuffling. Ordinary B
+        // terminators are patched up below, but literal pools and ADR-targeted labels that
+        // land in a shuffled block have no corresponding fixup path here.
+        if regionContainsInternalPCRelativeReference(
+            file: file,
+            regionStart: regionStart,
+            regionEnd: regionEnd
+        ) {
+            return []
         }
 
         var startToBlockIndex = [Int: Int]()
@@ -1110,6 +1237,19 @@ final class ControlFlowBinaryRewriter {
                 }
             }
 
+            // TBZ / TBNZ are conditional branches too but aren't surfaced by ARM64Codec today.
+            // Include them in leader discovery so reorder doesn't split a basic block in the
+            // middle of a TBZ-guarded edge.
+            if let tbzTarget = testBranchTargetOffset(fileOffset: offset, raw: raw) {
+                if tbzTarget >= functionStart, tbzTarget < functionEnd, tbzTarget % 4 == 0 {
+                    leaders.insert(tbzTarget)
+                }
+                let fallthroughPC = offset + 4
+                if fallthroughPC < functionEnd {
+                    leaders.insert(fallthroughPC)
+                }
+            }
+
             if let target = unconditionalBranchTarget(fileOffset: offset, raw: raw) {
                 if target >= functionStart, target < functionEnd, target % 4 == 0 {
                     leaders.insert(target)
@@ -1203,9 +1343,14 @@ final class ControlFlowBinaryRewriter {
     }
 
     private func encodeCompareAndBranchZero(branchIfZero: Bool, immediateWords: Int) -> UInt32 {
-        let clamped = max(min(immediateWords, 0x3FFFF), 0)
+        // imm19 is SIGNED: valid word range is [-2^18, 2^18). Clamping to [0, 0x3FFFF] silently
+        // drops backward branches (which CBZ/CBNZ must be able to emit) and also accepts the
+        // inverse sign by truncation. Clamp into the signed range and encode via 2's-complement.
+        let maxPos = (1 << 18) - 1
+        let minNeg = -(1 << 18)
+        let clamped = max(min(immediateWords, maxPos), minNeg)
         let base: UInt32 = branchIfZero ? 0xB400_0000 : 0xB500_0000
-        let imm19 = UInt32(clamped) & 0x7FFFF
+        let imm19 = UInt32(bitPattern: Int32(clamped)) & 0x7FFFF
         return base | (imm19 << 5) | ARM64RegisterWidth.zeroRegisterIndex
     }
 }
@@ -1224,10 +1369,14 @@ private struct CFFManagedFunctionCandidate {
         tier.priorityWeight
     }
 
+    /// VM-address stable across Mach-O layout (segment slides, LINKEDIT growth) so Pass9's
+    /// per-function rewrite seed survives codesign / lipo / linker-edit re-runs. Using
+    /// `entryFileOffset` (as before) let trivial re-linking silently rotate every seed.
     var rewriteSeed: UInt64 {
         let base = plan.stateEncodingPlan.perFunctionSeed
         let tierSalt = UInt64(tier.priorityWeight) << 48
-        return base ^ UInt64(entryFileOffset) ^ tierSalt
+        let symbolSalt = cffStableHash64(policySymbol) &* 0x100000001B3
+        return base ^ entryVMAddress ^ tierSalt ^ symbolSalt
     }
 }
 

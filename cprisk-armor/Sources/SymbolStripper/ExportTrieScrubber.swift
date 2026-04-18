@@ -21,6 +21,11 @@ public final class ExportTrieScrubberPass: ArmorPass {
         let sizeFieldOffset: Int
     }
 
+    private struct ExportRegionKey: Hashable {
+        let offset: Int
+        let size: Int
+    }
+
     public init() {}
 
     public func execute(on file: MachOFile, config: PassConfig) throws -> PassResult {
@@ -47,7 +52,9 @@ public final class ExportTrieScrubberPass: ArmorPass {
         var scrubbedBytes = 0
         var scrubbedRegions = 0
         var invalidRegions = 0
-        var seen = Set<String>()
+        // Dedup by (offset, size) tuple — string interpolation of ints is unambiguous for positive
+        // values but a struct key avoids any coercion surprises and is clearer at a glance.
+        var seen = Set<ExportRegionKey>()
 
         for region in regions {
             // Always clear command pointers first.
@@ -57,14 +64,16 @@ public final class ExportTrieScrubberPass: ArmorPass {
 
             guard region.size > 0 else { continue }
             guard region.offset >= 0,
+                  region.size >= 0,
                   region.offset <= file.data.count,
                   region.size <= file.data.count - region.offset else {
                 invalidRegions += 1
                 continue
             }
 
-            // LC_DYLD_INFO_ONLY and LC_DYLD_EXPORTS_TRIE may point to the same blob.
-            let key = "\(region.offset):\(region.size)"
+            // LC_DYLD_INFO_ONLY and LC_DYLD_EXPORTS_TRIE may point to the same blob; skip re-scrub
+            // but zero both commands' fields (done unconditionally above).
+            let key = ExportRegionKey(offset: region.offset, size: region.size)
             guard seen.insert(key).inserted else { continue }
 
             let noise = Self.exportNoise(

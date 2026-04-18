@@ -25,6 +25,50 @@ public final class SymbolStripperPass: ArmorPass {
         "Swift", "Foundation", "UIKit", "SwiftUI",
         "CoreFoundation", "ObjectiveC", "Combine",
         "Darwin", "os", "Dispatch",
+        "Concurrency", "_Concurrency", "CryptoKit",
+    ]
+
+    /// Exact symbol names that the linker / dyld / libSystem resolve by name — obfuscating them
+    /// would break startup (stack guard, TLV bootstrap, mach-o header discovery, stub binder).
+    private static let criticalExactNames: Set<String> = [
+        "_main",
+        "_dyld_stub_binder",
+        "_dyld_stub_binding_helper",
+        "___stack_chk_guard",
+        "___stack_chk_fail",
+        "__mh_execute_header",
+        "__mh_dylib_header",
+        "__mh_bundle_header",
+        "__dyld_private",
+        "___dso_handle",
+        "___bss_start",
+        "___bss_end",
+    ]
+
+    /// Symbol name prefixes that belong to the C / ObjC / Swift / TLV runtimes. Any defined-local
+    /// that matches is left untouched — the dynamic linker or runtime looks these up by name.
+    private static let criticalPrefixes: [String] = [
+        "_objc_",
+        "_OBJC_",
+        "_swift_",
+        "___swift_",
+        "_$sSo",         // Swift ObjC bridge
+        "_$ss",          // Swift stdlib
+        "_$sSa",         // Swift.Array
+        "_$sSS",         // Swift.String
+        "_$sSi",         // Swift.Int
+        "_$sSu",         // Swift.UInt
+        "_$sSb",         // Swift.Bool
+        "_$sSd",         // Swift.Double
+        "_$sSf",         // Swift.Float
+        "_$sSq",         // Swift.Optional
+        "_$sSD",         // Swift.Dictionary
+        "___tlv_",       // TLV bootstrap / atexit
+        "_$s_tlv",       // Swift TLV
+        "___gcc_",       // legacy gcc runtime
+        "_GCC_except_",  // C++ / compiler-rt exception tables
+        "___cxa_",       // C++ runtime
+        "__Unwind_",     // unwinder
     ]
 
     private static let entryPoints: Set<String> = ["_main"]
@@ -180,16 +224,18 @@ public final class SymbolStripperPass: ArmorPass {
     private func shouldObfuscate(_ symbolName: String) -> Bool {
         if symbolName.count <= 1 { return false }
 
+        if Self.criticalExactNames.contains(symbolName) { return false }
+        if Self.entryPoints.contains(symbolName) { return false }
+
+        for prefix in Self.criticalPrefixes where symbolName.hasPrefix(prefix) {
+            return false
+        }
+
         if symbolName.hasPrefix("_$s") {
             for module in Self.systemModulePrefixes where symbolName.contains(module) {
                 return false
             }
         }
-
-        if symbolName.hasPrefix("_objc_") || symbolName.hasPrefix("_OBJC_") { return false }
-        if symbolName.hasPrefix("_swift_") { return false }
-        if symbolName.hasPrefix("___swift_") { return false }
-        if Self.entryPoints.contains(symbolName) { return false }
 
         return true
     }

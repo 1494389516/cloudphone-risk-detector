@@ -765,20 +765,31 @@ public enum ARM64Codec {
             | (destination & 0x1F)
     }
 
+    /// imm19 is a SIGNED 19-bit word offset, valid range [-2^18, 2^18). Clamp in the signed
+    /// domain so CBZ/CBNZ can emit backward branches; a plain `[0, 0x7FFFF]` clamp both drops
+    /// negatives to zero and lets the top half (262144…524287) wrap to negative by truncation.
+    private static func clampImm19Words(_ words: Int) -> Int {
+        let maxPos = (1 << 18) - 1
+        let minNeg = -(1 << 18)
+        return max(min(words, maxPos), minNeg)
+    }
+
     public static func encodeCBZ(destinationRegister: UInt32, immediateWords: Int) -> UInt32 {
-        let clamped = max(0, min(immediateWords, 0x7FFFF))
-        return 0xB400_0000 | ((UInt32(clamped) & 0x7FFFF) << 5) | (destinationRegister & 0x1F)
+        let clamped = clampImm19Words(immediateWords)
+        let imm19 = UInt32(bitPattern: Int32(clamped)) & 0x7FFFF
+        return 0xB400_0000 | (imm19 << 5) | (destinationRegister & 0x1F)
     }
 
     public static func encodeCBNZ(destinationRegister: UInt32, immediateWords: Int) -> UInt32 {
-        let clamped = max(0, min(immediateWords, 0x7FFFF))
-        return 0xB500_0000 | ((UInt32(clamped) & 0x7FFFF) << 5) | (destinationRegister & 0x1F)
+        let clamped = clampImm19Words(immediateWords)
+        let imm19 = UInt32(bitPattern: Int32(clamped)) & 0x7FFFF
+        return 0xB500_0000 | (imm19 << 5) | (destinationRegister & 0x1F)
     }
 
     /// `B.<cond>` PC-relative branch (offset must be a multiple of 4; encoded as signed imm19 words).
     public static func encodeBCond(conditionCode: UInt32, immediateBytes: Int) -> UInt32 {
         precondition(immediateBytes % 4 == 0, "B.cond offset must be 4-byte aligned")
-        let wordOffset = immediateBytes / 4
+        let wordOffset = clampImm19Words(immediateBytes / 4)
         let imm19 = UInt32(bitPattern: Int32(wordOffset)) & 0x7FFFF
         return 0x5400_0000 | (imm19 << 5) | (conditionCode & 0xF)
     }

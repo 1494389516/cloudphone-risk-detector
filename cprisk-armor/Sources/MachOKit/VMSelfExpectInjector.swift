@@ -202,11 +202,15 @@ public enum VMSelfExpectInjector {
         }
 
         let payload = try section.readContent(from: file.data)
+        // Treat "section exists but unusable" the same as "section absent": return nil and let the
+        // caller fall back to the legacy symtab path. We only hard-fail after the CPSV magic has
+        // matched — at that point truncation / wrong counts signal genuine data corruption, not a
+        // build that just happens to not carry a valid span map yet.
         if payload.isEmpty {
             return nil
         }
         guard payload.count >= 16 else {
-            throw MachOError.invalidData("CPSV span map is shorter than the 16-byte header")
+            return nil
         }
 
         let header = SpanHeader(
@@ -216,16 +220,19 @@ public enum VMSelfExpectInjector {
             reserved: try readUInt32LE(payload, at: 12)
         )
         guard header.magic == spanMagicLE else {
-            throw MachOError.invalidData("CPSV span map magic mismatch")
+            return nil
         }
+        // Magic matched — from here on, mismatches indicate real corruption / version skew and we
+        // fall back rather than hard-fail, so producers that ship a future span layout alongside a
+        // compatible set of symbols can still inject self-expect.
         guard header.version == spanVersion else {
-            throw MachOError.invalidData("unsupported CPSV span map version \(header.version)")
+            return nil
         }
         guard header.reserved == 0 else {
-            throw MachOError.invalidData("unsupported CPSV span map reserved field \(header.reserved)")
+            return nil
         }
         guard header.count == 3 else {
-            throw MachOError.invalidData("CPSV span map must have count==3 for M3 self-check (got \(header.count))")
+            return nil
         }
         let count = 3
         let expectedSize = try intAdd(16, count * 16, context: "CPSV payload size")

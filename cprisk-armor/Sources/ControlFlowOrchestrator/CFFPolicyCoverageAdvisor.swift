@@ -112,13 +112,26 @@ private func shouldSkip(_ symbol: String) -> Bool {
         || symbol.hasPrefix("___lldb")
 }
 
+/// Return true only when the symbol is recognisably one of the constructs we must never CFF-flatten:
+/// direct syscalls (raw `svc` shims), the entry-point `main`, Swift object (de)initializers, or the
+/// SwiftUI App module entry. Previously this used `contains("main")` which matched everything from
+/// `remain`, `mainframe`, `domain`, `pragmatic`, etc., silently dropping coverage from Pass9.
 private func shouldNever(_ symbol: String) -> Bool {
     let lowered = symbol.lowercased()
-    return lowered.contains("direct_syscall")
-        || lowered.contains("main")
-        || lowered.contains("app.")
-        || lowered.contains(".init")
-        || lowered.contains("deinit")
+    if lowered.contains("direct_syscall") { return true }
+    if lowered.hasSuffix(".init") || lowered.contains(".init(") || lowered.contains(".init.") {
+        return true
+    }
+    if lowered.hasSuffix(".deinit") || lowered.contains(".deinit(") || lowered.contains(".deinit.") {
+        return true
+    }
+    // Entry point: match exact symbol, not every symbol containing the substring "main".
+    if lowered == "main" || lowered == "_main" { return true }
+    if lowered.hasSuffix(".main") || lowered.hasSuffix(".$main") { return true }
+    // SwiftUI App module entry: match `App.<identifier>` and `$App.<identifier>` prefixes, not
+    // any occurrence of the substring "app." which catches e.g. `strapp.something`.
+    if lowered.hasPrefix("app.") || lowered.hasPrefix("$app.") { return true }
+    return false
 }
 
 private func shouldHeavy(_ symbol: String) -> Bool {

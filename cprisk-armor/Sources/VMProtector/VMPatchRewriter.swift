@@ -2,12 +2,23 @@ import Foundation
 
 public enum VMPatchRewriterError: Error, CustomStringConvertible {
     case blOffsetNotAligned(Int64)
-    case blOutOfRange(Int64)
+    case blOutOfRange(offsetBytes: Int64, fromVMA: UInt64, toVMA: UInt64)
+    case sourceVMANotAligned(UInt64)
+    case targetVMANotAligned(UInt64)
 
     public var description: String {
         switch self {
-        case .blOffsetNotAligned(let o): return "BL offset not 4-byte aligned (\(o))"
-        case .blOutOfRange(let imm): return "BL out of ±128MB range (imm26=\(imm))"
+        case .blOffsetNotAligned(let o):
+            return "BL offset not 4-byte aligned (\(o))"
+        case .blOutOfRange(let offset, let from, let to):
+            return String(
+                format: "BL out of ±128MB range: offset=%lld bytes (0x%016llX → 0x%016llX)",
+                offset, from, to
+            )
+        case .sourceVMANotAligned(let vma):
+            return String(format: "Trampoline source VMA not 4-byte aligned (0x%016llX)", vma)
+        case .targetVMANotAligned(let vma):
+            return String(format: "VM entry target VMA not 4-byte aligned (0x%016llX)", vma)
         }
     }
 }
@@ -68,6 +79,12 @@ public enum VMPatchRewriter {
         vmEntryVMA: UInt64,
         template: VMTrampolineTemplate
     ) throws -> Data {
+        guard functionEntryVMA % 4 == 0 else {
+            throw VMPatchRewriterError.sourceVMANotAligned(functionEntryVMA)
+        }
+        guard vmEntryVMA % 4 == 0 else {
+            throw VMPatchRewriterError.targetVMANotAligned(vmEntryVMA)
+        }
         switch template {
         case .movkClassic:
             return try buildMovkClassic(functionId: functionId, functionEntryVMA: functionEntryVMA, vmEntryVMA: vmEntryVMA, rd: 0)
@@ -97,7 +114,7 @@ public enum VMPatchRewriter {
 
         let blPC = functionEntryVMA + 16
         let blOffset = Int64(vmEntryVMA) - Int64(blPC)
-        words.append(try encodeBL(offsetBytes: blOffset))
+        words.append(try encodeBL(offsetBytes: blOffset, fromVMA: blPC, toVMA: vmEntryVMA))
         words.append(0xD65F_03C0) // ret
         words.append(0xD503_201F) // nop padding
 
@@ -122,7 +139,7 @@ public enum VMPatchRewriter {
         words.append(0xAA01_03E0) // mov x0, x1
         let blPC = functionEntryVMA + 20
         let blOffset = Int64(vmEntryVMA) - Int64(blPC)
-        words.append(try encodeBL(offsetBytes: blOffset))
+        words.append(try encodeBL(offsetBytes: blOffset, fromVMA: blPC, toVMA: vmEntryVMA))
         words.append(0xD65F_03C0) // ret
         // Exactly 7 words (28 B): no trailing NOP — padding slot is folded into fixed patch size.
 
@@ -139,7 +156,7 @@ public enum VMPatchRewriter {
         words.append(encodeLDRXLiteral(rt: 0, imm19: 4))
         let blPC = functionEntryVMA + 4
         let blOffset = Int64(vmEntryVMA) - Int64(blPC)
-        words.append(try encodeBL(offsetBytes: blOffset))
+        words.append(try encodeBL(offsetBytes: blOffset, fromVMA: blPC, toVMA: vmEntryVMA))
         words.append(0xD65F_03C0) // ret
         words.append(0xD503_201F) // nop
         words.append(UInt32(truncatingIfNeeded: functionId))
@@ -169,15 +186,19 @@ public enum VMPatchRewriter {
         0xF280_0000 | ((hw & 3) << 21) | (UInt32(imm16) << 5) | (rd & 31)
     }
 
-    private static func encodeBL(offsetBytes: Int64) throws -> UInt32 {
+    private static func encodeBL(offsetBytes: Int64, fromVMA: UInt64, toVMA: UInt64) throws -> UInt32 {
         guard offsetBytes % 4 == 0 else {
             throw VMPatchRewriterError.blOffsetNotAligned(offsetBytes)
         }
         let imm = offsetBytes >> 2
-        let min26 = -(1 << 25)
-        let max26 = (1 << 25) - 1
+        let min26: Int64 = -(1 << 25)
+        let max26: Int64 = (1 << 25) - 1
         guard imm >= min26 && imm <= max26 else {
-            throw VMPatchRewriterError.blOutOfRange(imm)
+            throw VMPatchRewriterError.blOutOfRange(
+                offsetBytes: offsetBytes,
+                fromVMA: fromVMA,
+                toVMA: toVMA
+            )
         }
         let encoded = UInt32(bitPattern: Int32(imm))
         return 0x9400_0000 | (encoded & 0x03FF_FFFF)

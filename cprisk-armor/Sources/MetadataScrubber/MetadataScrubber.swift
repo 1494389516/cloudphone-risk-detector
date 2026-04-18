@@ -277,9 +277,11 @@ public final class MetadataScrubberPass: ArmorPass {
     /// scrubbing. Descriptor records and relative-pointer fields stay byte-stable so the Swift runtime
     /// and dyld keep a consistent view; IDA/Swift plugins lose readable names tied to those strings.
     ///
-    /// **Aggressive:** Overwrite each section in full with random bytes. This breaks the linear layout
-    /// tools use to follow name/typeref chains, but can break reflection, some dynamic casts, or future
-    /// runtime uses of these blobs — only enable when you accept that risk.
+    /// **Aggressive:** Walk the same sections but scrub *any* printable ASCII run ≥4 bytes, not just
+    /// Swift-mangled or business-keyword matches. Relative-pointer words, descriptor headers, and other
+    /// binary fields are preserved byte-for-byte because they do not present as printable runs of ≥4
+    /// consecutive bytes between null terminators. This keeps the Swift runtime functional (protocol
+    /// conformance, reflection, `as?` casts) while destroying every readable name/type string.
     private func scrubSwiftMetadataExtraSections(
         in file: MachOFile,
         level: SwiftMetadataScrubLevel
@@ -292,10 +294,11 @@ public final class MetadataScrubberPass: ArmorPass {
                 "Swift metadata sections (conservative, string payloads): \(strings) strings, \(bytes) bytes"
             return (strings, bytes, line)
         case .aggressive:
-            let bytes = try scrubAdditionalMetadataSectionsAggressive(in: file)
+            let (strings, bytes) = try scrubSwiftMetadataSectionsAggressive(in: file)
             guard bytes > 0 else { return (0, 0, nil) }
-            let line = "Swift metadata sections (aggressive, full overwrite): \(bytes) bytes"
-            return (1, bytes, line)
+            let line =
+                "Swift metadata sections (aggressive, all printable runs): \(strings) strings, \(bytes) bytes"
+            return (strings, bytes, line)
         }
     }
 
@@ -348,25 +351,39 @@ public final class MetadataScrubberPass: ArmorPass {
         return false
     }
 
-    /// Aggressive: full section overwrite (legacy behavior).
-    private func scrubAdditionalMetadataSectionsAggressive(in file: MachOFile) throws -> Int {
-        var totalBytes = 0
+    /// Aggressive: same walker as conservative, but scrub every printable-ASCII run ≥4 bytes.
+    ///
+    /// Relative pointers, descriptor headers, and other binary fields between null terminators
+    /// are either too short (<4) or contain non-printable bytes, so they're preserved byte-for-byte.
+    /// This keeps the Swift runtime's pointer chains intact while destroying all readable text.
+    private func scrubSwiftMetadataSectionsAggressive(in file: MachOFile) throws -> (strings: Int, bytes: Int) {
+        var strings = 0
+        var bytes = 0
 
         for sectionName in ArmorABI.MetadataSections.additionalScrubSections {
             for segName in ["__TEXT", "__DATA"] {
                 guard let section = try file.section(segment: segName, section: sectionName) else {
                     continue
                 }
-                guard section.size <= UInt64(Int.max) else { continue }
-                let size = Int(section.size)
-                guard size > 0 else { continue }
-
-                try file.replaceBytes(at: UInt64(section.offset), with: randomBytes(count: size))
-                totalBytes += size
+                let r = try scrubSectionCStringPayloads(section, in: file) { utf8 in
+                    Self.looksLikePrintableText(utf8, minLength: 4)
+                }
+                strings += r.strings
+                bytes += r.bytes
             }
         }
 
-        return totalBytes
+        return (strings, bytes)
+    }
+
+    /// True when `s` is entirely printable ASCII (0x20–0x7E) and at least `minLength` chars long.
+    private static func looksLikePrintableText(_ s: String, minLength: Int) -> Bool {
+        guard s.count >= minLength else { return false }
+        for scalar in s.unicodeScalars {
+            let v = scalar.value
+            if v < 0x20 || v > 0x7E { return false }
+        }
+        return true
     }
 
     /// Scan a section as a bag of null-terminated C strings; scrub selected strings in place.
