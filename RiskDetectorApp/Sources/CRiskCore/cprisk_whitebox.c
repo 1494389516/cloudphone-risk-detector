@@ -1,4 +1,5 @@
 #include "include/CRiskCore.h"
+#include "include/cprisk_cff.h"
 #include "include/cprisk_codesign_bind.h"
 
 #include <limits.h>
@@ -60,8 +61,17 @@ static uint64_t cprisk_wbx_splitmix64_next_u(uint64_t *state) {
 
 static uint64_t cprisk_wbx_slide_term_u64(intptr_t slide) {
     uint64_t a = (uint64_t)(slide >= 0 ? slide : -slide);
-    uint64_t st_a = a ^ 0x41534C52374D4958ULL;
-    uint64_t st_b = 0ull ^ 0x41534C52374D4958ULL;
+    /*
+     * Mix in the runtime SPN S-box seed (per-build, written by armor into
+     * __DATA.__anti_debug_plan / __chain_meta) so an attacker who can
+     * compute the ASLR slide cannot also compute slide_term offline
+     * without first recovering the build seed. The previous fixed
+     * "ASLR7MIX" constant alone made slide_term a pure function of the
+     * publicly-visible slide.
+     */
+    const uint64_t build_secret = cprisk_cff_runtime_spn_sbox_seed();
+    uint64_t st_a = a ^ 0x41534C52374D4958ULL ^ build_secret;
+    uint64_t st_b = 0ull ^ 0x41534C52374D4958ULL ^ (build_secret + 0x9E3779B97F4A7C15ULL);
     uint64_t ha = cprisk_wbx_splitmix64_next_u(&st_a);
     uint64_t hb = cprisk_wbx_splitmix64_next_u(&st_b);
     return ha ^ hb;

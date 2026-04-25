@@ -320,6 +320,15 @@ public struct VMBytecodeEmitter: Sendable {
         var classTable = opcodeTable.rawToLogicalTable()
         if dispatchKsEnabled {
             let ks = Self.dispatchKeystreamBytes(seed: dispatchSeed)
+            // Both arrays are produced from `VMBytecodeFormat.dispatchTableSize`
+            // (256), so the lengths must match exactly. Assert the contract
+            // explicitly so any future divergence (e.g. a different dispatch
+            // table layout) fails loudly at build time rather than truncating
+            // half the keystream and producing a non-decryptable bytecode.
+            precondition(
+                ks.count == classTable.count,
+                "VMBytecodeEmitter: dispatch keystream length \(ks.count) != class table length \(classTable.count)"
+            )
             for i in 0..<classTable.count {
                 classTable[i] ^= ks[i]
             }

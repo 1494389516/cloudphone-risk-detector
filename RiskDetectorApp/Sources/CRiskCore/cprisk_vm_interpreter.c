@@ -505,7 +505,17 @@ void cprisk_vm_entry_profile_fallback_i(uint64_t func_id,
                                                uint32_t *semantic_family,
                                                uint32_t *mixed_predicate_profile,
                                                uint32_t *max_subcall_depth) {
+    /*
+     * Mix in a runtime-only secret (the per-build SPN S-box seed) so an
+     * attacker who corrupts `entry->reserved` to force this fallback path
+     * cannot precompute the resulting (sem, mix, depth) triple from
+     * `func_id` and `hdr_reserved` alone — both of which are public in
+     * the on-disk header. Without this mix, forcing fallback gave a
+     * deterministic and externally predictable execution profile.
+     */
+    const uint64_t runtime_secret = cprisk_cff_runtime_spn_sbox_seed();
     uint64_t st = func_id ^ ((uint64_t)hdr_reserved << 32) ^ 0x45584350524F4631ULL; /* "EXCPROF1" */
+    st ^= runtime_secret;
     uint32_t sem = (uint32_t)(cprisk_splitmix64_next_i(&st) % 4u) + 1u;
     uint32_t mix = (uint32_t)(cprisk_splitmix64_next_i(&st) % 8u);
     uint32_t depth = (uint32_t)(cprisk_splitmix64_next_i(&st) % 8u) + 2u;

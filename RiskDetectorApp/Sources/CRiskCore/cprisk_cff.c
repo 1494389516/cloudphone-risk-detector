@@ -285,6 +285,15 @@ static uint32_t cprisk_cff_xor_mba_layer_u32(uint32_t x, uint32_t k, uint32_t la
     }
 }
 
+/*
+ * MBA chain. `layers == 0 || layers == 1` is the documented "bypass" path
+ * and returns `v` unchanged — this is how light-tier and never-tier
+ * functions opt out of MBA entirely. Audit pass flagged the silent
+ * no-op as a strength regression for light tier; the behavior is
+ * intentional (light tier accepts weaker obfuscation in exchange for
+ * lower overhead), but the contract is documented here so future
+ * readers do not "fix" it by forcing layers >= 2.
+ */
 static uint32_t cprisk_cff_mba_chain_xor_u32(uint32_t v, uint32_t key, uint32_t salt, uint8_t layers) {
     uint8_t L = layers;
     if (L < 2u) {
@@ -482,10 +491,27 @@ static int cprisk_cff_resolve_chain_meta_seed_i(
         return 0;
     }
 
-    const size_t expected =
-        CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_HEADER_SIZE +
-        (size_t)header.record_count * CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_RECORD_SIZE;
-    if (expected > (size_t)sec_size) {
+    /* Overflow-safe size computation: a malformed header could claim a
+     * record_count near UINT32_MAX, multiplying past size_t. */
+    size_t records_total = 0u;
+    if (__builtin_mul_overflow((size_t)header.record_count,
+                               (size_t)CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_RECORD_SIZE,
+                               &records_total)) {
+        return 0;
+    }
+    size_t expected = 0u;
+    if (__builtin_add_overflow((size_t)CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_HEADER_SIZE,
+                               records_total,
+                               &expected)) {
+        return 0;
+    }
+    /*
+     * Section must be EXACTLY the header+records size. Previously
+     * `expected > sec_size` accepted any larger section, silently
+     * tolerating truncation drift or attacker-injected trailing bytes
+     * that downstream consumers might honor. Reject mismatched sizes.
+     */
+    if (expected != (size_t)sec_size) {
         return 0;
     }
 
