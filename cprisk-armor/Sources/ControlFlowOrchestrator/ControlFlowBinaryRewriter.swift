@@ -195,6 +195,14 @@ final class ControlFlowBinaryRewriter {
     private static let arm64StpX29X30PreindexMask:    UInt32 = 0xFFE0_7FFF
     private static let arm64StpX29X30PreindexPattern: UInt32 = 0xA9A0_7BFD
 
+    /// Pointer-authentication preamble instructions (CFF#24). Modern Apple arm64e
+    /// binaries emit PACIASP (A key) or PACIBSP (B key) as the very first instruction
+    /// of a signed function, BEFORE the STP x29/x30 frame setup.  Without this check
+    /// the heuristic scan places the function entry at the STP, missing the first
+    /// instruction and attributing the PAC instruction to the preceding function.
+    private static let arm64PacIASP: UInt32 = 0xD503_233F // PACIASP
+    private static let arm64PacIBSP: UInt32 = 0xD503_235F // PACIBSP
+
     /// Minimum distance between two heuristically detected function starts (bytes).
     private static let heuristicMinFunctionGap = 16
     /// Maximum number of functions detected via heuristic scan (guard against pathological binaries).
@@ -256,8 +264,29 @@ final class ControlFlowBinaryRewriter {
                 continue
             }
 
-            let vmAddress = textVMStart + UInt64(slotIndex * 4)
-            let syntheticName = String(format: "__heuristic_func_0x%X", fileOffset - textStart)
+            // CFF#24: if the instruction immediately before the STP is PACIASP or
+            // PACIBSP, back up the function entry by one word so the PAC instruction
+            // is included in the function body (not attributed to the previous function).
+            var actualFileOffset = fileOffset
+            var actualSlotIndex = slotIndex
+            if slotIndex > 0 {
+                let pacOffset = fileOffset - 4
+                if let pacRaw = try? file.data.readUInt32LE(at: pacOffset),
+                   pacRaw == Self.arm64PacIASP || pacRaw == Self.arm64PacIBSP {
+                    let gap = pacOffset - lastFileOffset
+                    if gap >= Self.heuristicMinFunctionGap {
+                        actualFileOffset = pacOffset
+                        actualSlotIndex = slotIndex - 1
+                    }
+                }
+            }
+
+            guard actualFileOffset - lastFileOffset >= Self.heuristicMinFunctionGap else {
+                continue
+            }
+
+            let vmAddress = textVMStart + UInt64(actualSlotIndex * 4)
+            let syntheticName = String(format: "__heuristic_func_0x%X", actualFileOffset - textStart)
             let plan = makeLightFallbackPlan(symbol: syntheticName)
             let profile = FunctionCFFTier.light.rewriteProfile!
 
@@ -267,11 +296,11 @@ final class ControlFlowBinaryRewriter {
                 tier: .light,
                 plan: plan,
                 entryVMAddress: vmAddress,
-                entryFileOffset: fileOffset,
+                entryFileOffset: actualFileOffset,
                 requiredPatchSlots: profile.requiredPatchSlots,
                 scanSlots: profile.scanSlots
             ))
-            lastFileOffset = fileOffset
+            lastFileOffset = actualFileOffset
         }
         return candidates
     }
@@ -1158,6 +1187,29 @@ final class ControlFlowBinaryRewriter {
                     leaders.insert(next)
                 }
             }
+
+            // CFF#23: B.cond (AArch64 encoding bits[31:24]=0x54, bit[4]=0) is not
+            // handled by ARM64Codec.decode, so its target and fallthrough were not
+            // added as leaders.  A B.cond in the middle of a block whose relative
+            // immediate is preserved verbatim during block copy becomes incorrect
+            // after the block is relocated to a new address.
+            // Fix: treat B.cond like CBZ/CBNZ — add target (if in-function) and
+            // fallthrough as leaders.  The resulting block ends with B.cond as its
+            // terminator, which is NOT an unconditional branch, so it receives
+            // .other and the multi-block reorder guard at line 982 rejects it.
+            if (raw & 0xFF00_0010) == 0x5400_0000 {
+                let imm19raw = Int32(bitPattern: (raw >> 5) & 0x0007_FFFF)
+                let imm19 = (imm19raw << 13) >> 13 // sign-extend 19→32 bits
+                let target = offset + Int(imm19) * 4
+                if target >= functionStart, target < functionEnd, target % 4 == 0 {
+                    leaders.insert(target)
+                }
+                let fallthroughPC = offset + 4
+                if fallthroughPC < functionEnd {
+                    leaders.insert(fallthroughPC)
+                }
+            }
+
             offset += 4
         }
 
