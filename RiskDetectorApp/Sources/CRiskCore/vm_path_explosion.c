@@ -115,6 +115,14 @@ typedef struct {
 static uint32_t vm_mba_xor_obfuscate_i(uint32_t a, uint32_t b, uint32_t layers) {
     uint32_t result = a ^ b;  /* 基准结果 */
 
+    /* Hard-clamp `layers` at the static cap so callers passing untrusted or
+     * uninitialized values cannot turn this into a denial-of-service vector
+     * via huge iteration counts. The intra-loop `i < VM_PATH_EXPLOSION_LAYERS`
+     * already bounds execution; this just makes the contract explicit and
+     * lets static analyzers prove the loop terminates in O(1). */
+    if (layers > VM_PATH_EXPLOSION_LAYERS) {
+        layers = VM_PATH_EXPLOSION_LAYERS;
+    }
     for (uint32_t i = 0; i < layers && i < VM_PATH_EXPLOSION_LAYERS; i++) {
         /* MBA等价: XOR = OR - AND */
         uint32_t or_part = a | b;

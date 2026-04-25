@@ -265,7 +265,20 @@ package enum ArmorWhiteBox {
         if let raw = env["CPRISK_ARMOR_BUILD_SEED"] ?? env["CPRISK_BUILD_SEED"] {
             return Data(raw.utf8)
         }
-        return Data("default-build-salt".utf8)
+        // Fall back to a process-unique 32-byte salt rather than the literal
+        // "default-build-salt". The previous default produced byte-identical
+        // domain keys across every binary built without the env override —
+        // i.e. two unrelated builds shared their entire white-box key
+        // material. Use a fresh CSPRNG draw per process so the produced
+        // binaries differ even when the env var is forgotten; CI/release
+        // builds should still set CPRISK_ARMOR_BUILD_SEED for reproducibility.
+        var rng = SystemRandomNumberGenerator()
+        var rnd = Data(count: 32)
+        rnd.withUnsafeMutableBytes { buf in
+            guard let base = buf.baseAddress?.assumingMemoryBound(to: UInt64.self) else { return }
+            for i in 0..<4 { base[i] = rng.next() }
+        }
+        return rnd
     }
 
     private static func makePermutation(domainKey: Data) -> Data {

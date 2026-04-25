@@ -2803,10 +2803,17 @@ int cprisk_init_hybrid_kdf(const uint8_t *root_key) {
     int has_session = (cprisk_get_session_key(session_key) == 0);
 
     /* Compute effective root: the key used for white-box domains 6-9
-     * and any subsequent device/session-bound derivations. */
+     * and any subsequent device/session-bound derivations.
+     *
+     * Note on replay: effective_root MUST stay byte-identical across
+     * process starts on the same device with the same session token,
+     * because it decrypts material encrypted at build time. We deliberately
+     * do NOT mix in a per-process timestamp here — that would diverge
+     * runtime keys from the build-time keys and break decryption. Session
+     * freshness is enforced at the *session_token* level (caller's
+     * responsibility), not at effective_root. */
     if (has_session && s_device_key_ready) {
-        /* effectiveRoot = HMAC(deviceKey, sessionKey)
-         * This binds the key to both the device AND the session. */
+        /* effectiveRoot = HMAC(deviceKey, sessionKey) — binds to device AND session. */
         cprisk_hmac_sha256(s_device_key, CPRISK_ARMOR_KEY_SIZE,
                            session_key, CPRISK_ARMOR_KEY_SIZE,
                            s_effective_root);

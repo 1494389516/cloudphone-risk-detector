@@ -222,6 +222,16 @@ static void cprisk_keystream_path_c(const uint8_t *key, uint32_t sid,
 static void cprisk_keystream_path_d(const uint8_t *key, uint32_t sid,
                                     const uint8_t *nonce, size_t nonce_len,
                                     uint8_t *out, size_t len) {
+    /*
+     * Seed buffer is sized for at most CPRISK_ARMOR_NONCE_SIZE nonce bytes.
+     * If a caller passes nonce_len > CPRISK_ARMOR_NONCE_SIZE the loop below
+     * would write past the buffer. Audit pass flagged this as a stack
+     * overflow vector if string-table parsing is ever fed adversarial data.
+     * Hard-clamp at the contract boundary.
+     */
+    if (nonce_len > CPRISK_ARMOR_NONCE_SIZE) {
+        nonce_len = CPRISK_ARMOR_NONCE_SIZE;
+    }
     uint8_t seed[CPRISK_ARMOR_KEY_SIZE + 4 + CPRISK_ARMOR_NONCE_SIZE];
     for (size_t i = 0; i < CPRISK_ARMOR_KEY_SIZE; i++) {
         seed[i] = key[i] ^ 0x5A;
@@ -493,8 +503,14 @@ void cprisk_cleanup_string_decryptor(void) {
     cprisk_secure_zero(s_dec_key, sizeof(s_dec_key));
     cprisk_secure_zero(s_per_string_key, sizeof(s_per_string_key));
     atomic_store(&s_dec_ready, 0);
-    s_str_acc = 0;
-    s_dispatch_seed = 0;
+    /* Use cprisk_secure_zero (volatile + memset) for the integrity
+     * accumulator and dispatch seed too — even though both are static
+     * uint64s where a plain assignment is observable, the explicit
+     * secure_zero matches the pattern used by the rest of the file and
+     * documents that "this is sensitive material, scrub it" rather than
+     * just "this is a value reset". */
+    cprisk_secure_zero(&s_str_acc, sizeof(s_str_acc));
+    cprisk_secure_zero(&s_dispatch_seed, sizeof(s_dispatch_seed));
 }
 
 uint32_t cprisk_test_select_string_decrypt_path(

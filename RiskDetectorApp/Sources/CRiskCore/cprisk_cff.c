@@ -983,7 +983,11 @@ void cprisk_cff_chain_begin(void) {
 }
 
 uint32_t cprisk_cff_get_chain_link(void) {
-    return cprisk_cff_chain_load_i();
+    /* Mix in the calling thread's fingerprint so two threads observing the
+     * same (deterministic) global chain still see distinct chain values
+     * propagating into TLS. Audit flagged the prior version as exposing
+     * cross-thread correlation when both threads called this concurrently. */
+    return cprisk_cff_chain_load_i() ^ (uint32_t)cprisk_cff_thread_fingerprint();
 }
 
 uint32_t cprisk_cff_get_vm_link_token(void) {
@@ -1655,6 +1659,16 @@ void cprisk_cff_set_encoded_state(cprisk_cff_context_t *context, uint32_t encode
     cprisk_cff_tls_bump_i(context, cprisk_cff_ctx_last_plain(context));
 }
 
+/*
+ * Note on `fake_state_budget`: the field is only initialized in
+ * `cprisk_cff_init` (currently at the `7u` literal for release builds)
+ * and read here. It is intentionally NOT decremented per visit — fake
+ * state selection is gated by `cprisk_cff_opaque_selector_i` and the
+ * `% modulo` reduction below, which produce a stable per-context decision
+ * keyed on `decoded_state`. If a future change introduces decrement, use
+ * a saturating decrement (clamp at zero) — uint8 wrap to 0xFF would
+ * re-arm fake-state visits the policy says should be exhausted.
+ */
 int cprisk_cff_should_visit_fake_state(const cprisk_cff_context_t *context, uint32_t decoded_state) {
     uint32_t mixed = 0u;
     uint32_t modulo = 0u;

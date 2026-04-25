@@ -400,12 +400,22 @@ static inline void cprisk_whitebox_dummy_reads_i(
     const uint8_t dummy_a = (uint8_t)((real_idx * 0x9Du) ^ (uint8_t)(position * 0x6Bu) ^ (uint8_t)(round * 0xA3u));
     const uint8_t dummy_b = (uint8_t)((real_idx ^ dummy_a) * 0xC3u ^ (uint8_t)(position + round));
 
-    /* Read and immediately XOR with itself — net zero, but the memory access
-     * to table[dummy_a] and table[dummy_b] is visible to the tracer. */
+    /*
+     * Read both dummy entries and fold them into the sink. Previously the
+     * code XORed `ra ^ ra` (and `rb ^ rb`) which is the constant 0 — a
+     * reasonable optimizer eliminates the entire fold expression and the
+     * "sink" becomes a no-op even though `s_wb_dummy_sink` is volatile-ish.
+     * The two reads themselves still happen because of `volatile`-style
+     * access pattern on the table, but the tracer-visible *value* of the
+     * sink does not change, weakening the cover-trace.
+     *
+     * Use a real accumulation: sink XOR ra XOR rb. The values still depend
+     * on the table contents at attacker-unguessable indices, so the sink
+     * mutates with every cover read, but they don't leak the real lookup.
+     */
     const uint8_t ra = table[dummy_a];
     const uint8_t rb = table[dummy_b];
-    s_wb_dummy_sink = (uint8_t)(s_wb_dummy_sink ^ ra ^ ra);   /* ra ^ ra == 0 */
-    s_wb_dummy_sink = (uint8_t)(s_wb_dummy_sink ^ rb ^ rb);   /* rb ^ rb == 0 */
+    s_wb_dummy_sink = (uint8_t)(s_wb_dummy_sink ^ ra ^ rb);
 }
 
 static int cprisk_ct_mem_diff_i(const uint8_t *lhs, const uint8_t *rhs, size_t len) {
@@ -665,6 +675,16 @@ static int cprisk_whitebox_validate_bundle_i(struct cprisk_whitebox_bundle_i *ou
         return -1;
     if (!code || code_size == 0 || !data || data_size == 0 || !tag)
         return -1;
+    /*
+     * Tag section must be exactly hash-sized. Without this check, downstream
+     * `cprisk_whitebox_tag_matches_i` reads CPRISK_ARMOR_HASH_SIZE bytes from
+     * `tag` regardless of the section's actual length. A truncated tag
+     * section (sec_size < HASH_SIZE) would read OOB; an over-sized one would
+     * silently ignore trailing bytes that may contain attacker-injected
+     * content elsewhere on the page.
+     */
+    if (tag_size != (unsigned long)CPRISK_ARMOR_HASH_SIZE)
+        return -1;
 
     struct cprisk_armor_whitebox_header header_storage;
     cprisk_whitebox_copy_header_from_meta_i(meta, (size_t)meta_size, &header_storage);
@@ -727,39 +747,65 @@ static int cprisk_whitebox_validate_bundle_i(struct cprisk_whitebox_bundle_i *ou
                                               data_len,
                                               tag,
                                               (size_t)tag_size) != 0) {
+        cprisk_secure_zero(&bundle_view.header, sizeof(bundle_view.header));
         return -1;
     }
 
-    if (cprisk_whitebox_payload_coverage_valid_i(records, record_count, code_len) != 0)
+    if (cprisk_whitebox_payload_coverage_valid_i(records, record_count, code_len) != 0) {
+        cprisk_secure_zero(&bundle_view.header, sizeof(bundle_view.header));
         return -1;
+    }
 
     uint32_t domain_mask = 0;
+    int domain_loop_failed = 0;
     for (size_t i = 0; i < record_count; i++) {
         const struct cprisk_whitebox_domain_record_i *record = &records[i];
         if (record->domain_id < CPRISK_WHITEBOX_DOMAIN_ANCHOR_TAG ||
-            record->domain_id > CPRISK_WHITEBOX_DOMAIN_HEADER_ENCRYPTION)
-            return -1;
-        if (record->round_count != CPRISK_WHITEBOX_ROUND_COUNT)
-            return -1;
-        if (record->table_length != CPRISK_WHITEBOX_DOMAIN_TABLE_BYTES)
-            return -1;
-        if (cprisk_whitebox_permutation_valid_i(record->permutation) != 0)
-            return -1;
-        if (cprisk_whitebox_record_digest_valid_i(&bundle_view, record) != 0)
-            return -1;
+            record->domain_id > CPRISK_WHITEBOX_DOMAIN_HEADER_ENCRYPTION) {
+            domain_loop_failed = 1;
+            break;
+        }
+        if (record->round_count != CPRISK_WHITEBOX_ROUND_COUNT) {
+            domain_loop_failed = 1;
+            break;
+        }
+        if (record->table_length != CPRISK_WHITEBOX_DOMAIN_TABLE_BYTES) {
+            domain_loop_failed = 1;
+            break;
+        }
+        if (cprisk_whitebox_permutation_valid_i(record->permutation) != 0) {
+            domain_loop_failed = 1;
+            break;
+        }
+        if (cprisk_whitebox_record_digest_valid_i(&bundle_view, record) != 0) {
+            domain_loop_failed = 1;
+            break;
+        }
 
         const uint32_t bit = 1u << (record->domain_id - 1u);
-        if ((domain_mask & bit) != 0u)
-            return -1;
+        if ((domain_mask & bit) != 0u) {
+            domain_loop_failed = 1;
+            break;
+        }
         domain_mask |= bit;
     }
-
-    if (domain_mask != ((1u << CPRISK_WHITEBOX_DOMAIN_COUNT) - 1u))
+    if (domain_loop_failed) {
+        cprisk_secure_zero(&bundle_view.header, sizeof(bundle_view.header));
         return -1;
+    }
+
+    if (domain_mask != ((1u << CPRISK_WHITEBOX_DOMAIN_COUNT) - 1u)) {
+        cprisk_secure_zero(&bundle_view.header, sizeof(bundle_view.header));
+        return -1;
+    }
 
     if (out_bundle) {
         memcpy(out_bundle, &bundle_view, sizeof(*out_bundle));
     }
+    /* Always-on cleanup: previously this only ran on the success path, so
+     * any of the above `return -1` exits left the anchor_slide and other
+     * header bytes resident on the stack (potentially still mapped under
+     * subsequent unrelated frames). Zero on every exit. */
     cprisk_secure_zero(&bundle_view.header, sizeof(bundle_view.header));
     return 0;
 }

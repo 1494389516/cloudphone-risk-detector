@@ -41,7 +41,12 @@ public enum DispatcherStyle: String, CaseIterable, Codable, Sendable {
                 return .switchLoop
             }
 
-            switch hash % 4 {
+            // Bitwise AND instead of `% 4` to avoid the residual modulo bias
+            // when reducing a 64-bit avalanche output to 4 buckets. The C
+            // runtime uses the same pattern (`& 3u`) in
+            // `cprisk_cff_normalize_mba_layers`; matching it keeps the
+            // distribution exactly uniform across 4 dispatcher styles.
+            switch hash & 3 {
             case 0:
                 return .switchLoop
             case 1:
