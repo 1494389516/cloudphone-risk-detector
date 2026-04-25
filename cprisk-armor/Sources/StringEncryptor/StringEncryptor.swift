@@ -181,10 +181,21 @@ public final class StringEncryptorPass: ArmorPass {
         for record in records {
             let plaintext = Data(record.value.utf8)
             let nonce = try generateNonce()
+
+            // Mirror cprisk_derive_per_string_key() in the C runtime:
+            //   perStringKey = HMAC(stringKey, sid_le4 || nonce)
+            // Without this step the keystream key differs from what the C
+            // decryptor derives, producing garbage output on every string.
+            var pskMaterial = Data()
+            var sidForPSK = record.id.littleEndian
+            withUnsafeBytes(of: &sidForPSK) { pskMaterial.append(contentsOf: $0) }
+            pskMaterial.append(nonce)
+            let perStringKey = ArmorABI.hmacSHA256(key: stringKey, message: pskMaterial)
+
             let encrypted = xor(
                 plaintext,
                 buildKeystreamForRecord(
-                    key: stringKey,
+                    key: perStringKey,
                     stringID: record.id,
                     nonce: nonce,
                     length: plaintext.count,
