@@ -40,6 +40,11 @@ public struct StateEncodingPlan: Codable, Equatable, Sendable {
         let releaseFakeStateCount: Int
         let unexpectedStateBehavior: UnexpectedStateBehavior
 
+        // `makePerFunctionSeed` guarantees `seed != 0`, so the `(seed & 3)`
+        // and `(seed & 1)` style selectors below cannot all evaluate to 0
+        // for the same function. Defensively assert to catch any future
+        // change to seed derivation that loses the non-zero invariant.
+        precondition(seed != 0, "StateEncodingPlan: per-function seed must be non-zero")
         switch tier {
         case .heavy:
             style = (seed & 3) != 0 ? .feistelSpn : ((seed & 1) == 0 ? .addRotateXor : .affine)

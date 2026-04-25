@@ -320,6 +320,15 @@ public struct VMBytecodeEmitter: Sendable {
         var classTable = opcodeTable.rawToLogicalTable()
         if dispatchKsEnabled {
             let ks = Self.dispatchKeystreamBytes(seed: dispatchSeed)
+            // Both arrays are produced from `VMBytecodeFormat.dispatchTableSize`
+            // (256), so the lengths must match exactly. Assert the contract
+            // explicitly so any future divergence (e.g. a different dispatch
+            // table layout) fails loudly at build time rather than truncating
+            // half the keystream and producing a non-decryptable bytecode.
+            precondition(
+                ks.count == classTable.count,
+                "VMBytecodeEmitter: dispatch keystream length \(ks.count) != class table length \(classTable.count)"
+            )
             for i in 0..<classTable.count {
                 classTable[i] ^= ks[i]
             }
@@ -411,6 +420,14 @@ public struct VMBytecodeEmitter: Sendable {
             encode(program: $0.instructions, functionId: $0.functionId, opcodeTable: opcodeTable, options: options)
         }
         let tableBytes = headerSize + programs.count * entryStride
+        // Bytecode offset / length fields in the entry table are UInt32. If
+        // a build ever produces > 4 GiB of bytecode + header, `UInt32(...)`
+        // would silently truncate, corrupting every offset that follows.
+        // Refuse loudly instead of emitting a malformed bytecode segment.
+        precondition(
+            tableBytes <= Int(UInt32.max),
+            "VMBytecodeEmitter: bytecode entry table (\(tableBytes) bytes) exceeds UInt32.max"
+        )
         var cursor = UInt32(tableBytes)
         var entriesData = Data()
         for (index, program) in programs.enumerated() {
@@ -438,7 +455,15 @@ public struct VMBytecodeEmitter: Sendable {
             if perEntryVpc {
                 entriesData.append(serializeVpcAffine(a: affine.0, b: affine.1, funcId: program.functionId))
             }
-            cursor += UInt32(body.count)
+            // Same UInt32 contract for the running cursor — if a single body
+            // is huge or the running total tips past 4 GiB, refuse rather
+            // than emit a wraparound offset that points back into the header.
+            let nextCursor = cursor.addingReportingOverflow(UInt32(body.count))
+            precondition(
+                !nextCursor.overflow,
+                "VMBytecodeEmitter: cumulative bytecode size overflows UInt32 at function 0x\(String(program.functionId, radix: 16))"
+            )
+            cursor = nextCursor.partialValue
         }
         var flags: UInt32 = VMBytecodeFormat.BytecodeFlags.none
         if options.handlerVariantSeed != 0 {

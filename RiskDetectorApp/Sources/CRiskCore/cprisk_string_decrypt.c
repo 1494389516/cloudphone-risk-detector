@@ -103,6 +103,9 @@ static void cprisk_keystream_path_a(const uint8_t *key, uint32_t sid,
     uint8_t blk[CPRISK_SHA256_DIGEST_LENGTH];
     cprisk_sha256(seed, seed_len, blk);
 
+    /* WB#5: counter-bound extension blocks so each 32-byte chunk is
+     * distinguishable from others.  Swift mirror: sha256(block || ctr_le4). */
+    uint32_t counter = 0;
     size_t off = 0;
     while (off < len) {
         size_t chunk = len - off;
@@ -112,10 +115,15 @@ static void cprisk_keystream_path_a(const uint8_t *key, uint32_t sid,
         memcpy(out + off, blk, chunk);
         off += chunk;
         if (off < len) {
-            uint8_t prev[CPRISK_SHA256_DIGEST_LENGTH];
-            memcpy(prev, blk, sizeof(prev));
-            cprisk_sha256(prev, sizeof(prev), blk);
-            cprisk_secure_zero(prev, sizeof(prev));
+            uint8_t round[CPRISK_SHA256_DIGEST_LENGTH + 4];
+            memcpy(round, blk, CPRISK_SHA256_DIGEST_LENGTH);
+            round[32] = (uint8_t)(counter      );
+            round[33] = (uint8_t)(counter >>  8);
+            round[34] = (uint8_t)(counter >> 16);
+            round[35] = (uint8_t)(counter >> 24);
+            cprisk_sha256(round, sizeof(round), blk);
+            cprisk_secure_zero(round, sizeof(round));
+            counter++;
         }
     }
 
@@ -222,6 +230,16 @@ static void cprisk_keystream_path_c(const uint8_t *key, uint32_t sid,
 static void cprisk_keystream_path_d(const uint8_t *key, uint32_t sid,
                                     const uint8_t *nonce, size_t nonce_len,
                                     uint8_t *out, size_t len) {
+    /*
+     * Seed buffer is sized for at most CPRISK_ARMOR_NONCE_SIZE nonce bytes.
+     * If a caller passes nonce_len > CPRISK_ARMOR_NONCE_SIZE the loop below
+     * would write past the buffer. Audit pass flagged this as a stack
+     * overflow vector if string-table parsing is ever fed adversarial data.
+     * Hard-clamp at the contract boundary.
+     */
+    if (nonce_len > CPRISK_ARMOR_NONCE_SIZE) {
+        nonce_len = CPRISK_ARMOR_NONCE_SIZE;
+    }
     uint8_t seed[CPRISK_ARMOR_KEY_SIZE + 4 + CPRISK_ARMOR_NONCE_SIZE];
     for (size_t i = 0; i < CPRISK_ARMOR_KEY_SIZE; i++) {
         seed[i] = key[i] ^ 0x5A;
@@ -314,12 +332,20 @@ static void cprisk_derive_per_string_key(
     uint32_t string_id,
     const uint8_t *nonce
 ) {
-    uint8_t material[4 + CPRISK_ARMOR_NONCE_SIZE];
-    material[0] = (uint8_t)(string_id);
-    material[1] = (uint8_t)(string_id >> 8);
-    material[2] = (uint8_t)(string_id >> 16);
-    material[3] = (uint8_t)(string_id >> 24);
-    memcpy(material + 4, nonce, CPRISK_ARMOR_NONCE_SIZE);
+    /*
+     * KDF material = "cprisk.str.key.v1" || sid_le4 || nonce
+     * Domain label (WB#4) prevents key-confusion with other HMAC uses of
+     * the same root key. StringEncryptor.swift must use the same prefix.
+     */
+    static const uint8_t label[] = "cprisk.str.key.v1";
+    const size_t label_len = sizeof(label) - 1u;
+    uint8_t material[sizeof(label) - 1u + 4u + CPRISK_ARMOR_NONCE_SIZE];
+    memcpy(material, label, label_len);
+    material[label_len + 0] = (uint8_t)(string_id      );
+    material[label_len + 1] = (uint8_t)(string_id >>  8);
+    material[label_len + 2] = (uint8_t)(string_id >> 16);
+    material[label_len + 3] = (uint8_t)(string_id >> 24);
+    memcpy(material + label_len + 4u, nonce, CPRISK_ARMOR_NONCE_SIZE);
 
     cprisk_hmac_sha256(s_dec_key, CPRISK_ARMOR_KEY_SIZE,
                        material, sizeof(material), s_per_string_key);
@@ -395,17 +421,39 @@ int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) 
 
     const uint8_t *enc = sec + data_base + ent->data_offset;
 
-    /* Verify HMAC-SHA256(key, nonce || ciphertext) before decrypting */
+    /*
+     * Verify HMAC over the canonical encoding written by
+     * StringEncryptor.swift:
+     *   u32 string_id | u32 nonce_len | nonce[nonce_len] |
+     *   u32 ct_len    | ciphertext[ct_len]
+     * String_id binding prevents transposition of two encrypted strings;
+     * length prefixes prevent truncation/extension that finds a matching
+     * length pair against the previous `nonce || ciphertext` scope.
+     */
     {
-        if ((size_t)dlen > SIZE_MAX - CPRISK_ARMOR_NONCE_SIZE)
-            return -1;
-        size_t hmac_msg_len = CPRISK_ARMOR_NONCE_SIZE + dlen;
-        uint8_t *hmac_msg = NULL;
-        hmac_msg = (uint8_t *)malloc(hmac_msg_len);
+        const size_t hmac_msg_len =
+            4u + 4u + (size_t)CPRISK_ARMOR_NONCE_SIZE + 4u + (size_t)dlen;
+        if (dlen > UINT32_MAX) return -1;
+        uint8_t *hmac_msg = (uint8_t *)malloc(hmac_msg_len);
         if (!hmac_msg)
             return -1;
-        memcpy(hmac_msg, ent->nonce, CPRISK_ARMOR_NONCE_SIZE);
-        memcpy(hmac_msg + CPRISK_ARMOR_NONCE_SIZE, enc, dlen);
+        size_t mp = 0u;
+        const uint32_t sid_le = ent->string_id;
+        hmac_msg[mp++] = (uint8_t)(sid_le      );
+        hmac_msg[mp++] = (uint8_t)(sid_le >>  8);
+        hmac_msg[mp++] = (uint8_t)(sid_le >> 16);
+        hmac_msg[mp++] = (uint8_t)(sid_le >> 24);
+        hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE      );
+        hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >>  8);
+        hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 16);
+        hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 24);
+        memcpy(hmac_msg + mp, ent->nonce, CPRISK_ARMOR_NONCE_SIZE);
+        mp += CPRISK_ARMOR_NONCE_SIZE;
+        hmac_msg[mp++] = (uint8_t)(dlen      );
+        hmac_msg[mp++] = (uint8_t)(dlen >>  8);
+        hmac_msg[mp++] = (uint8_t)(dlen >> 16);
+        hmac_msg[mp++] = (uint8_t)(dlen >> 24);
+        memcpy(hmac_msg + mp, enc, dlen);
 
         uint8_t computed_hmac[CPRISK_ARMOR_HASH_SIZE];
         cprisk_hmac_sha256(s_dec_key, CPRISK_ARMOR_KEY_SIZE,
@@ -464,6 +512,20 @@ uint64_t cprisk_get_string_integrity_accumulator(void) {
     return s_str_acc;
 }
 
+/*
+ * Threat model for the lazy cache: callers in the hot path (e.g. risk
+ * scoring) decrypt the same string ID hundreds of times per session. The
+ * cache trades a measurable timing oracle (cache hit ≈ memcpy, cache miss
+ * ≈ full SHA256-keyed decrypt) for ~1000× throughput. The strings stored
+ * here are non-cryptographic (format strings, log labels, error
+ * messages) — knowing *which* string was last accessed leaks far less
+ * than the existing syscall/file-access trace.
+ *
+ * Do NOT use this entry point for decrypting key material or other
+ * data whose access pattern must be constant-time; use
+ * `cprisk_decrypt_string` directly for that, which performs a full
+ * decrypt on every call.
+ */
 int cprisk_decrypt_string_lazy(uint32_t string_id, char *buffer, size_t buffer_size) {
     if (!buffer || buffer_size == 0)
         return -1;
@@ -493,8 +555,14 @@ void cprisk_cleanup_string_decryptor(void) {
     cprisk_secure_zero(s_dec_key, sizeof(s_dec_key));
     cprisk_secure_zero(s_per_string_key, sizeof(s_per_string_key));
     atomic_store(&s_dec_ready, 0);
-    s_str_acc = 0;
-    s_dispatch_seed = 0;
+    /* Use cprisk_secure_zero (volatile + memset) for the integrity
+     * accumulator and dispatch seed too — even though both are static
+     * uint64s where a plain assignment is observable, the explicit
+     * secure_zero matches the pattern used by the rest of the file and
+     * documents that "this is sensitive material, scrub it" rather than
+     * just "this is a value reset". */
+    cprisk_secure_zero(&s_str_acc, sizeof(s_str_acc));
+    cprisk_secure_zero(&s_dispatch_seed, sizeof(s_dispatch_seed));
 }
 
 uint32_t cprisk_test_select_string_decrypt_path(

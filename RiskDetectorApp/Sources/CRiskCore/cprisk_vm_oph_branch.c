@@ -66,7 +66,15 @@ cprisk_vm_flow_t cprisk_vm_oph_branch_ind(cprisk_vm_interp_frame_t *fr,
     }
     uint64_t q = cprisk_vm_branch_ind_compute_q(fr, vidx, acc_byte0);
     const uint32_t insn_count = fr->blen / CPRISK_VM_INSN_WIDTH;
-    if (insn_count == 0u) {
+    /*
+     * Reject single-instruction bytecode here too: with insn_count == 1 the
+     * indirect-branch resolves to PC 0 unconditionally, producing a self-loop
+     * that would burn the entire iteration budget before LEAVE. Callers that
+     * legitimately produce a 1-instruction bytecode never hit this branch
+     * (they have no indirect target to compute), so refusing here is a pure
+     * defensive guard against malformed/truncated bytecode.
+     */
+    if (insn_count < 2u) {
         fr->out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
         fr->out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
         return CPRISK_VM_FLOW_LEAVE;
@@ -127,7 +135,17 @@ cprisk_vm_flow_t cprisk_vm_oph_call(cprisk_vm_interp_frame_t *fr,
     (void)op_raw;
     (void)logical;
     (void)hvar;
-    if (fr->return_sp >= fr->max_subcall_depth) {
+    /*
+     * `max_subcall_depth` is part of the per-frame profile and would normally
+     * be capped at `CPRISK_VM_MAX_SUBCALL_DEPTH` by `cprisk_vm_entry_profile_*`.
+     * If a corrupted profile inflates it past the static return_stack size,
+     * the upper bound below would let us write OOB. Clamp against the actual
+     * array size as a hard ceiling.
+     */
+    const uint32_t depth_cap = (fr->max_subcall_depth < (uint32_t)CPRISK_VM_MAX_SUBCALL_DEPTH)
+        ? fr->max_subcall_depth
+        : (uint32_t)CPRISK_VM_MAX_SUBCALL_DEPTH;
+    if (fr->return_sp >= depth_cap) {
         fr->out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
         fr->out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
         return CPRISK_VM_FLOW_LEAVE;

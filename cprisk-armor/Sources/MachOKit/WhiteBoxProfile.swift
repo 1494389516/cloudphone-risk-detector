@@ -155,7 +155,16 @@ package enum ArmorWhiteBox {
             let roundConstants = makeRoundConstants(domainKey: domainKey)
             let tables = makeTables(domainKey: domainKey, roundConstants: roundConstants)
 
+            // Bind the digest to the domain ID. Without this, two domains
+            // that happened to derive identical (tables, permutation,
+            // final_mask, round_constants) tuples produced identical
+            // digests, so swapping their records past the per-domain
+            // routing layer would not invalidate either record. The C
+            // verifier (cprisk_whitebox_record_digest_valid_i) MUST mirror
+            // this domain-ID prefix.
             var digestMaterial = Data()
+            var domainIDLE = domain.rawValue.littleEndian
+            withUnsafeBytes(of: &domainIDLE) { digestMaterial.append(contentsOf: $0) }
             digestMaterial.append(tables)
             digestMaterial.append(permutation)
             digestMaterial.append(finalMask)
@@ -182,6 +191,12 @@ package enum ArmorWhiteBox {
         tagMaterial.append(dataSection)
         let whiteboxTag = sha256(tagMaterial)
 
+        // configDigest wire format (mirrors cprisk_whitebox_config_digest_valid_i in C):
+        //   label "cprisk.whitebox.config.v2" ||
+        //   uint64_LE(code_len) || code        ||
+        //   uint64_LE(data_len) || data        ||
+        //   uint64_LE(tag_len)  || tag         ||
+        //   uint32_LE(1) .. uint32_LE(DOMAIN_COUNT)
         var configMaterial = Data("cprisk.whitebox.config.v2".utf8)
         appendLittleEndian(UInt64(codeSection.count), to: &configMaterial)
         configMaterial.append(codeSection)
@@ -190,7 +205,8 @@ package enum ArmorWhiteBox {
         appendLittleEndian(UInt64(whiteboxTag.count), to: &configMaterial)
         configMaterial.append(whiteboxTag)
         for domain in ArmorABI.WhiteBox.Domain.allCases.sorted(by: { $0.rawValue < $1.rawValue }) {
-            configMaterial.append(domain.rawValue)
+            var domLE = domain.rawValue.littleEndian
+            withUnsafeBytes(of: &domLE) { configMaterial.append(contentsOf: $0) }
         }
         let configDigest = sha256(configMaterial)
 
@@ -265,7 +281,20 @@ package enum ArmorWhiteBox {
         if let raw = env["CPRISK_ARMOR_BUILD_SEED"] ?? env["CPRISK_BUILD_SEED"] {
             return Data(raw.utf8)
         }
-        return Data("default-build-salt".utf8)
+        // Fall back to a process-unique 32-byte salt rather than the literal
+        // "default-build-salt". The previous default produced byte-identical
+        // domain keys across every binary built without the env override —
+        // i.e. two unrelated builds shared their entire white-box key
+        // material. Use a fresh CSPRNG draw per process so the produced
+        // binaries differ even when the env var is forgotten; CI/release
+        // builds should still set CPRISK_ARMOR_BUILD_SEED for reproducibility.
+        var rng = SystemRandomNumberGenerator()
+        var rnd = Data(count: 32)
+        rnd.withUnsafeMutableBytes { buf in
+            guard let base = buf.baseAddress?.assumingMemoryBound(to: UInt64.self) else { return }
+            for i in 0..<4 { base[i] = rng.next() }
+        }
+        return rnd
     }
 
     private static func makePermutation(domainKey: Data) -> Data {

@@ -1,4 +1,5 @@
 #include "include/CRiskCore.h"
+#include "include/cprisk_cff.h"
 #include "include/cprisk_codesign_bind.h"
 
 #include <limits.h>
@@ -60,8 +61,17 @@ static uint64_t cprisk_wbx_splitmix64_next_u(uint64_t *state) {
 
 static uint64_t cprisk_wbx_slide_term_u64(intptr_t slide) {
     uint64_t a = (uint64_t)(slide >= 0 ? slide : -slide);
-    uint64_t st_a = a ^ 0x41534C52374D4958ULL;
-    uint64_t st_b = 0ull ^ 0x41534C52374D4958ULL;
+    /*
+     * Mix in the runtime SPN S-box seed (per-build, written by armor into
+     * __DATA.__anti_debug_plan / __chain_meta) so an attacker who can
+     * compute the ASLR slide cannot also compute slide_term offline
+     * without first recovering the build seed. The previous fixed
+     * "ASLR7MIX" constant alone made slide_term a pure function of the
+     * publicly-visible slide.
+     */
+    const uint64_t build_secret = cprisk_cff_runtime_spn_sbox_seed();
+    uint64_t st_a = a ^ 0x41534C52374D4958ULL ^ build_secret;
+    uint64_t st_b = 0ull ^ 0x41534C52374D4958ULL ^ (build_secret + 0x9E3779B97F4A7C15ULL);
     uint64_t ha = cprisk_wbx_splitmix64_next_u(&st_a);
     uint64_t hb = cprisk_wbx_splitmix64_next_u(&st_b);
     return ha ^ hb;
@@ -400,12 +410,22 @@ static inline void cprisk_whitebox_dummy_reads_i(
     const uint8_t dummy_a = (uint8_t)((real_idx * 0x9Du) ^ (uint8_t)(position * 0x6Bu) ^ (uint8_t)(round * 0xA3u));
     const uint8_t dummy_b = (uint8_t)((real_idx ^ dummy_a) * 0xC3u ^ (uint8_t)(position + round));
 
-    /* Read and immediately XOR with itself — net zero, but the memory access
-     * to table[dummy_a] and table[dummy_b] is visible to the tracer. */
+    /*
+     * Read both dummy entries and fold them into the sink. Previously the
+     * code XORed `ra ^ ra` (and `rb ^ rb`) which is the constant 0 — a
+     * reasonable optimizer eliminates the entire fold expression and the
+     * "sink" becomes a no-op even though `s_wb_dummy_sink` is volatile-ish.
+     * The two reads themselves still happen because of `volatile`-style
+     * access pattern on the table, but the tracer-visible *value* of the
+     * sink does not change, weakening the cover-trace.
+     *
+     * Use a real accumulation: sink XOR ra XOR rb. The values still depend
+     * on the table contents at attacker-unguessable indices, so the sink
+     * mutates with every cover read, but they don't leak the real lookup.
+     */
     const uint8_t ra = table[dummy_a];
     const uint8_t rb = table[dummy_b];
-    s_wb_dummy_sink = (uint8_t)(s_wb_dummy_sink ^ ra ^ ra);   /* ra ^ ra == 0 */
-    s_wb_dummy_sink = (uint8_t)(s_wb_dummy_sink ^ rb ^ rb);   /* rb ^ rb == 0 */
+    s_wb_dummy_sink = (uint8_t)(s_wb_dummy_sink ^ ra ^ rb);
 }
 
 static int cprisk_ct_mem_diff_i(const uint8_t *lhs, const uint8_t *rhs, size_t len) {
@@ -503,34 +523,62 @@ static int cprisk_whitebox_config_digest_valid_i(
     if (tag_len != CPRISK_ARMOR_HASH_SIZE)
         return -1;
 
+    /*
+     * Mirror the configMaterial format written by WhiteBoxProfile.swift build():
+     *
+     *   "cprisk.whitebox.config.v2"   (no NUL)     ||
+     *   uint64_LE(code_len) || code                 ||
+     *   uint64_LE(data_len) || data                 ||
+     *   uint64_LE(tag_len)  || tag                  ||
+     *   uint32_LE(1) .. uint32_LE(DOMAIN_COUNT)
+     *
+     * The previous implementation hashed only (code||data||tag) and never
+     * matched the Swift-produced configDigest, so whitebox loading always
+     * failed at this check.
+     *
+     * Team-ID binding is handled separately via the ASLR table XOR in
+     * cprisk_whitebox_xor_tables_aslr_i (which mixes cprisk_codesign_team_salt
+     * into the per-block pad).  The CPRISK_ARMOR_WHITEBOX_FLAG_TEAM_ID_BOUND
+     * flag is never set by the current Swift producer, so the old team_salt
+     * branch inside this function was dead code — it has been removed.
+     */
+    static const uint8_t label[] = "cprisk.whitebox.config.v2";
+
     uint8_t digest[CPRISK_ARMOR_HASH_SIZE];
     cprisk_sha256_ctx ctx;
     cprisk_sha256_init(&ctx);
+
+    cprisk_sha256_update(&ctx, label, sizeof(label) - 1u);
+
+    uint8_t len_le[8];
+
+#define CPRISK_WBX_APPEND_LEN64(n) do { \
+    uint64_t _n = (uint64_t)(n); \
+    len_le[0]=(uint8_t)(_n    ); len_le[1]=(uint8_t)(_n>> 8); \
+    len_le[2]=(uint8_t)(_n>>16); len_le[3]=(uint8_t)(_n>>24); \
+    len_le[4]=(uint8_t)(_n>>32); len_le[5]=(uint8_t)(_n>>40); \
+    len_le[6]=(uint8_t)(_n>>48); len_le[7]=(uint8_t)(_n>>56); \
+    cprisk_sha256_update(&ctx, len_le, sizeof(len_le)); \
+} while (0)
+
+    CPRISK_WBX_APPEND_LEN64(code_len);
     cprisk_sha256_update(&ctx, code, code_len);
+
+    CPRISK_WBX_APPEND_LEN64(data_len);
     cprisk_sha256_update(&ctx, data, data_len);
+
+    CPRISK_WBX_APPEND_LEN64(tag_len);
     cprisk_sha256_update(&ctx, tag, tag_len);
 
-    /* Proactive Team ID self-check: when CPRISK_ARMOR_WHITEBOX_FLAG_TEAM_ID_BOUND
-     * is set, the producer computed config_digest over (code||data||tag||team_salt_le8)
-     * using the build-time Team Identifier salt.  Re-derive the salt at runtime via
-     * cprisk_codesign_team_salt() and fold it in before finalising the digest.
-     * A repackaged app with a different Team ID will produce a different salt here,
-     * causing an explicit validation failure rather than silently propagating corrupted
-     * PRF output downstream. */
-    if (!s_test_bundle_i.active &&
-        (header->flags & CPRISK_ARMOR_WHITEBOX_FLAG_TEAM_ID_BOUND) != 0u) {
-        const uint64_t ts = cprisk_codesign_team_salt();
-        uint8_t ts_le[8];
-        ts_le[0] = (uint8_t)(ts & 0xFFu);
-        ts_le[1] = (uint8_t)((ts >>  8) & 0xFFu);
-        ts_le[2] = (uint8_t)((ts >> 16) & 0xFFu);
-        ts_le[3] = (uint8_t)((ts >> 24) & 0xFFu);
-        ts_le[4] = (uint8_t)((ts >> 32) & 0xFFu);
-        ts_le[5] = (uint8_t)((ts >> 40) & 0xFFu);
-        ts_le[6] = (uint8_t)((ts >> 48) & 0xFFu);
-        ts_le[7] = (uint8_t)((ts >> 56) & 0xFFu);
-        cprisk_sha256_update(&ctx, ts_le, sizeof(ts_le));
-        cprisk_secure_zero(ts_le, sizeof(ts_le));
+#undef CPRISK_WBX_APPEND_LEN64
+
+    for (uint32_t d = 1u; d <= CPRISK_WHITEBOX_DOMAIN_COUNT; d++) {
+        uint8_t d_le[4];
+        d_le[0] = (uint8_t)(d      );
+        d_le[1] = (uint8_t)(d >>  8);
+        d_le[2] = (uint8_t)(d >> 16);
+        d_le[3] = (uint8_t)(d >> 24);
+        cprisk_sha256_update(&ctx, d_le, sizeof(d_le));
     }
 
     cprisk_sha256_final(&ctx, digest);
@@ -594,7 +642,19 @@ static int cprisk_whitebox_record_digest_valid_i(
     uint8_t digest[CPRISK_ARMOR_HASH_SIZE];
     cprisk_sha256_ctx ctx;
 
+    /*
+     * Domain-ID-bound digest (matches WhiteBoxProfile.swift). Prefix the
+     * domain_id (u32 LE) so two domains with coincidentally identical
+     * (tables, permutation, final_mask, round_constants) cannot be swapped
+     * past the per-domain routing layer.
+     */
+    uint8_t domain_id_le[4];
+    domain_id_le[0] = (uint8_t)(record->domain_id      );
+    domain_id_le[1] = (uint8_t)(record->domain_id >>  8);
+    domain_id_le[2] = (uint8_t)(record->domain_id >> 16);
+    domain_id_le[3] = (uint8_t)(record->domain_id >> 24);
     cprisk_sha256_init(&ctx);
+    cprisk_sha256_update(&ctx, domain_id_le, sizeof(domain_id_le));
     cprisk_sha256_update(&ctx,
                          bundle->code + record->table_offset,
                          (size_t)record->table_length);
@@ -665,6 +725,16 @@ static int cprisk_whitebox_validate_bundle_i(struct cprisk_whitebox_bundle_i *ou
         return -1;
     if (!code || code_size == 0 || !data || data_size == 0 || !tag)
         return -1;
+    /*
+     * Tag section must be exactly hash-sized. Without this check, downstream
+     * `cprisk_whitebox_tag_matches_i` reads CPRISK_ARMOR_HASH_SIZE bytes from
+     * `tag` regardless of the section's actual length. A truncated tag
+     * section (sec_size < HASH_SIZE) would read OOB; an over-sized one would
+     * silently ignore trailing bytes that may contain attacker-injected
+     * content elsewhere on the page.
+     */
+    if (tag_size != (unsigned long)CPRISK_ARMOR_HASH_SIZE)
+        return -1;
 
     struct cprisk_armor_whitebox_header header_storage;
     cprisk_whitebox_copy_header_from_meta_i(meta, (size_t)meta_size, &header_storage);
@@ -727,39 +797,65 @@ static int cprisk_whitebox_validate_bundle_i(struct cprisk_whitebox_bundle_i *ou
                                               data_len,
                                               tag,
                                               (size_t)tag_size) != 0) {
+        cprisk_secure_zero(&bundle_view.header, sizeof(bundle_view.header));
         return -1;
     }
 
-    if (cprisk_whitebox_payload_coverage_valid_i(records, record_count, code_len) != 0)
+    if (cprisk_whitebox_payload_coverage_valid_i(records, record_count, code_len) != 0) {
+        cprisk_secure_zero(&bundle_view.header, sizeof(bundle_view.header));
         return -1;
+    }
 
     uint32_t domain_mask = 0;
+    int domain_loop_failed = 0;
     for (size_t i = 0; i < record_count; i++) {
         const struct cprisk_whitebox_domain_record_i *record = &records[i];
         if (record->domain_id < CPRISK_WHITEBOX_DOMAIN_ANCHOR_TAG ||
-            record->domain_id > CPRISK_WHITEBOX_DOMAIN_HEADER_ENCRYPTION)
-            return -1;
-        if (record->round_count != CPRISK_WHITEBOX_ROUND_COUNT)
-            return -1;
-        if (record->table_length != CPRISK_WHITEBOX_DOMAIN_TABLE_BYTES)
-            return -1;
-        if (cprisk_whitebox_permutation_valid_i(record->permutation) != 0)
-            return -1;
-        if (cprisk_whitebox_record_digest_valid_i(&bundle_view, record) != 0)
-            return -1;
+            record->domain_id > CPRISK_WHITEBOX_DOMAIN_HEADER_ENCRYPTION) {
+            domain_loop_failed = 1;
+            break;
+        }
+        if (record->round_count != CPRISK_WHITEBOX_ROUND_COUNT) {
+            domain_loop_failed = 1;
+            break;
+        }
+        if (record->table_length != CPRISK_WHITEBOX_DOMAIN_TABLE_BYTES) {
+            domain_loop_failed = 1;
+            break;
+        }
+        if (cprisk_whitebox_permutation_valid_i(record->permutation) != 0) {
+            domain_loop_failed = 1;
+            break;
+        }
+        if (cprisk_whitebox_record_digest_valid_i(&bundle_view, record) != 0) {
+            domain_loop_failed = 1;
+            break;
+        }
 
         const uint32_t bit = 1u << (record->domain_id - 1u);
-        if ((domain_mask & bit) != 0u)
-            return -1;
+        if ((domain_mask & bit) != 0u) {
+            domain_loop_failed = 1;
+            break;
+        }
         domain_mask |= bit;
     }
-
-    if (domain_mask != ((1u << CPRISK_WHITEBOX_DOMAIN_COUNT) - 1u))
+    if (domain_loop_failed) {
+        cprisk_secure_zero(&bundle_view.header, sizeof(bundle_view.header));
         return -1;
+    }
+
+    if (domain_mask != ((1u << CPRISK_WHITEBOX_DOMAIN_COUNT) - 1u)) {
+        cprisk_secure_zero(&bundle_view.header, sizeof(bundle_view.header));
+        return -1;
+    }
 
     if (out_bundle) {
         memcpy(out_bundle, &bundle_view, sizeof(*out_bundle));
     }
+    /* Always-on cleanup: previously this only ran on the success path, so
+     * any of the above `return -1` exits left the anchor_slide and other
+     * header bytes resident on the stack (potentially still mapped under
+     * subsequent unrelated frames). Zero on every exit. */
     cprisk_secure_zero(&bundle_view.header, sizeof(bundle_view.header));
     return 0;
 }

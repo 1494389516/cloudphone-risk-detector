@@ -285,6 +285,15 @@ static uint32_t cprisk_cff_xor_mba_layer_u32(uint32_t x, uint32_t k, uint32_t la
     }
 }
 
+/*
+ * MBA chain. `layers == 0 || layers == 1` is the documented "bypass" path
+ * and returns `v` unchanged — this is how light-tier and never-tier
+ * functions opt out of MBA entirely. Audit pass flagged the silent
+ * no-op as a strength regression for light tier; the behavior is
+ * intentional (light tier accepts weaker obfuscation in exchange for
+ * lower overhead), but the contract is documented here so future
+ * readers do not "fix" it by forcing layers >= 2.
+ */
 static uint32_t cprisk_cff_mba_chain_xor_u32(uint32_t v, uint32_t key, uint32_t salt, uint8_t layers) {
     uint8_t L = layers;
     if (L < 2u) {
@@ -482,10 +491,27 @@ static int cprisk_cff_resolve_chain_meta_seed_i(
         return 0;
     }
 
-    const size_t expected =
-        CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_HEADER_SIZE +
-        (size_t)header.record_count * CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_RECORD_SIZE;
-    if (expected > (size_t)sec_size) {
+    /* Overflow-safe size computation: a malformed header could claim a
+     * record_count near UINT32_MAX, multiplying past size_t. */
+    size_t records_total = 0u;
+    if (__builtin_mul_overflow((size_t)header.record_count,
+                               (size_t)CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_RECORD_SIZE,
+                               &records_total)) {
+        return 0;
+    }
+    size_t expected = 0u;
+    if (__builtin_add_overflow((size_t)CPRISK_ARMOR_SWIFT_METADATA_SHUFFLE_HEADER_SIZE,
+                               records_total,
+                               &expected)) {
+        return 0;
+    }
+    /*
+     * Section must be EXACTLY the header+records size. Previously
+     * `expected > sec_size` accepted any larger section, silently
+     * tolerating truncation drift or attacker-injected trailing bytes
+     * that downstream consumers might honor. Reject mismatched sizes.
+     */
+    if (expected != (size_t)sec_size) {
         return 0;
     }
 
@@ -983,7 +1009,11 @@ void cprisk_cff_chain_begin(void) {
 }
 
 uint32_t cprisk_cff_get_chain_link(void) {
-    return cprisk_cff_chain_load_i();
+    /* Mix in the calling thread's fingerprint so two threads observing the
+     * same (deterministic) global chain still see distinct chain values
+     * propagating into TLS. Audit flagged the prior version as exposing
+     * cross-thread correlation when both threads called this concurrently. */
+    return cprisk_cff_chain_load_i() ^ (uint32_t)cprisk_cff_thread_fingerprint();
 }
 
 uint32_t cprisk_cff_get_vm_link_token(void) {
@@ -998,6 +1028,14 @@ int cprisk_cff_chain_entry_verify(const cprisk_cff_context_t *context) {
     return cprisk_cff_chain_entry_verify_inline(context, observed);
 }
 
+/*
+ * Flat 16-iteration decoy mixer — does NOT recurse into the CFF state
+ * machinery, so there is no stack-blowup vector here despite the function
+ * name suggesting "path" exploration. Audit pass flagged a hypothetical
+ * recursion guard; the actual implementation only spins on a `volatile`
+ * sink and a single `cprisk_cff_os_mix32()` syscall, which is itself
+ * bounded by the OS readiness check inside `os_mix32`.
+ */
 void cprisk_cff_run_fake_path_decoy(const cprisk_cff_context_t *context) {
     if (context == NULL) {
         return;
@@ -1655,6 +1693,16 @@ void cprisk_cff_set_encoded_state(cprisk_cff_context_t *context, uint32_t encode
     cprisk_cff_tls_bump_i(context, cprisk_cff_ctx_last_plain(context));
 }
 
+/*
+ * Note on `fake_state_budget`: the field is only initialized in
+ * `cprisk_cff_init` (currently at the `7u` literal for release builds)
+ * and read here. It is intentionally NOT decremented per visit — fake
+ * state selection is gated by `cprisk_cff_opaque_selector_i` and the
+ * `% modulo` reduction below, which produce a stable per-context decision
+ * keyed on `decoded_state`. If a future change introduces decrement, use
+ * a saturating decrement (clamp at zero) — uint8 wrap to 0xFF would
+ * re-arm fake-state visits the policy says should be exhausted.
+ */
 int cprisk_cff_should_visit_fake_state(const cprisk_cff_context_t *context, uint32_t decoded_state) {
     uint32_t mixed = 0u;
     uint32_t modulo = 0u;

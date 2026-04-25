@@ -897,7 +897,17 @@ int cprisk_text_jit_decrypt(void *fault_addr) {
             pthread_mutex_unlock(&s_text_mutex);
             return 1;
         }
-        size_t hmac_msg_len = CPRISK_ARMOR_NONCE_SIZE + (size_t)ent->size;
+        /*
+         * HMAC over the canonical encoding written by TextSegmentEncryptor.swift:
+         *   u32 section_index | u32 nonce_len | nonce[nonce_len] |
+         *   u32 ct_len        | ciphertext[ct_len]
+         * Section_index binding prevents page transposition; ct_len in the
+         * scope means truncation must invalidate the tag (the previous
+         * `nonce || ciphertext` form let truncation pass with matched
+         * size_field updates).
+         */
+        const size_t hmac_msg_len =
+            4u + 4u + (size_t)CPRISK_ARMOR_NONCE_SIZE + 4u + (size_t)ent->size;
         uint8_t *hmac_msg = (uint8_t *)malloc(hmac_msg_len);
         if (!hmac_msg) {
             cprisk_secure_zero(section_key, sizeof(section_key));
@@ -905,8 +915,22 @@ int cprisk_text_jit_decrypt(void *fault_addr) {
             pthread_mutex_unlock(&s_text_mutex);
             return 0;
         }
-        memcpy(hmac_msg, ent->nonce, CPRISK_ARMOR_NONCE_SIZE);
-        memcpy(hmac_msg + CPRISK_ARMOR_NONCE_SIZE, ptr, (size_t)ent->size);
+        size_t mp = 0u;
+        hmac_msg[mp++] = (uint8_t)(section_index      );
+        hmac_msg[mp++] = (uint8_t)(section_index >>  8);
+        hmac_msg[mp++] = (uint8_t)(section_index >> 16);
+        hmac_msg[mp++] = (uint8_t)(section_index >> 24);
+        hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE      );
+        hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >>  8);
+        hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 16);
+        hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 24);
+        memcpy(hmac_msg + mp, ent->nonce, CPRISK_ARMOR_NONCE_SIZE);
+        mp += CPRISK_ARMOR_NONCE_SIZE;
+        hmac_msg[mp++] = (uint8_t)((uint32_t)ent->size      );
+        hmac_msg[mp++] = (uint8_t)((uint32_t)ent->size >>  8);
+        hmac_msg[mp++] = (uint8_t)((uint32_t)ent->size >> 16);
+        hmac_msg[mp++] = (uint8_t)((uint32_t)ent->size >> 24);
+        memcpy(hmac_msg + mp, ptr, (size_t)ent->size);
         uint8_t computed_hmac[CPRISK_ARMOR_HASH_SIZE];
         cprisk_hmac_sha256(section_key, CPRISK_ARMOR_KEY_SIZE, hmac_msg, hmac_msg_len, computed_hmac);
         cprisk_secure_zero(hmac_msg, hmac_msg_len);

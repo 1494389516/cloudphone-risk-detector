@@ -248,7 +248,8 @@ static void cprisk_decrypt_header_fields(
     cprisk_secure_zero(ks, sizeof(ks));
 }
 
-/* Verify HMAC-SHA256(key, nonce || encrypted_fields) matches the stored tag.
+/* Verify HMAC over the canonical encoding written by HeaderEncryptor.swift:
+ *   u32 nonce_len | nonce[nonce_len] | u32 ct_len | ciphertext[ct_len]
  * Returns 0 on match, -1 on mismatch. */
 static int cprisk_verify_header_hmac(
     const uint8_t key[CPRISK_ARMOR_KEY_SIZE],
@@ -257,13 +258,24 @@ static int cprisk_verify_header_hmac(
     size_t enc_len,
     const uint8_t expected_tag[CPRISK_ARMOR_HASH_SIZE]
 ) {
-    uint8_t hmac_msg[CPRISK_ARMOR_NONCE_SIZE + CPRISK_HBHDR_ENC_FIELDS_SIZE];
-    memcpy(hmac_msg, nonce, CPRISK_ARMOR_NONCE_SIZE);
-    memcpy(hmac_msg + CPRISK_ARMOR_NONCE_SIZE, enc_fields, enc_len);
+    uint8_t hmac_msg[4u + CPRISK_ARMOR_NONCE_SIZE + 4u + CPRISK_HBHDR_ENC_FIELDS_SIZE];
+    size_t mp = 0u;
+    hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE      );
+    hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >>  8);
+    hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 16);
+    hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 24);
+    memcpy(hmac_msg + mp, nonce, CPRISK_ARMOR_NONCE_SIZE);
+    mp += CPRISK_ARMOR_NONCE_SIZE;
+    hmac_msg[mp++] = (uint8_t)((uint32_t)enc_len      );
+    hmac_msg[mp++] = (uint8_t)((uint32_t)enc_len >>  8);
+    hmac_msg[mp++] = (uint8_t)((uint32_t)enc_len >> 16);
+    hmac_msg[mp++] = (uint8_t)((uint32_t)enc_len >> 24);
+    memcpy(hmac_msg + mp, enc_fields, enc_len);
+    mp += enc_len;
 
     uint8_t computed_tag[CPRISK_ARMOR_HASH_SIZE];
     cprisk_hmac_sha256(key, CPRISK_ARMOR_KEY_SIZE,
-                       hmac_msg, CPRISK_ARMOR_NONCE_SIZE + enc_len,
+                       hmac_msg, mp,
                        computed_tag);
 
     const int rc = cprisk_hmac_verify(expected_tag, computed_tag,

@@ -50,10 +50,25 @@ final class WhiteBoxProfileTests: XCTestCase {
         expectedTagSeed.append(bundle.whiteboxData)
         XCTAssertEqual(bundle.whiteboxTag, ArmorWhiteBox.sha256(expectedTagSeed))
 
-        var expectedConfigSeed = Data()
+        // configDigest wire format (mirrors cprisk_whitebox_config_digest_valid_i in C):
+        //   label || uint64_LE(code_len) || code || uint64_LE(data_len) || data ||
+        //   uint64_LE(tag_len) || tag || uint32_LE(1) .. uint32_LE(DOMAIN_COUNT)
+        var expectedConfigSeed = Data("cprisk.whitebox.config.v2".utf8)
+        func appendLE64(_ v: UInt64, to d: inout Data) {
+            var le = v.littleEndian; withUnsafeBytes(of: &le) { d.append(contentsOf: $0) }
+        }
+        func appendLE32(_ v: UInt32, to d: inout Data) {
+            var le = v.littleEndian; withUnsafeBytes(of: &le) { d.append(contentsOf: $0) }
+        }
+        appendLE64(UInt64(bundle.whiteboxCode.count), to: &expectedConfigSeed)
         expectedConfigSeed.append(bundle.whiteboxCode)
+        appendLE64(UInt64(bundle.whiteboxData.count), to: &expectedConfigSeed)
         expectedConfigSeed.append(bundle.whiteboxData)
+        appendLE64(UInt64(bundle.whiteboxTag.count), to: &expectedConfigSeed)
         expectedConfigSeed.append(bundle.whiteboxTag)
+        for domain in ArmorABI.WhiteBox.Domain.allCases.sorted(by: { $0.rawValue < $1.rawValue }) {
+            appendLE32(domain.rawValue, to: &expectedConfigSeed)
+        }
         XCTAssertEqual(bundle.metadata.configDigest, ArmorWhiteBox.sha256(expectedConfigSeed))
         XCTAssertNotEqual(bundle.metadata.payloadSize,
                           UInt32(bundle.whiteboxCode.count + bundle.whiteboxData.count + bundle.whiteboxTag.count),

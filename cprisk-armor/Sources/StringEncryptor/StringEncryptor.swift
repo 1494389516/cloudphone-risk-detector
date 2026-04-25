@@ -181,17 +181,45 @@ public final class StringEncryptorPass: ArmorPass {
         for record in records {
             let plaintext = Data(record.value.utf8)
             let nonce = try generateNonce()
+
+            // Mirror cprisk_derive_per_string_key() in the C runtime:
+            //   perStringKey = HMAC(stringKey, "cprisk.str.key.v1" || sid_le4 || nonce)
+            // Domain label added per WB#4 to prevent key-confusion between this
+            // HMAC use and any other HMAC derivation sharing the same root key.
+            var pskMaterial = Data("cprisk.str.key.v1".utf8)
+            var sidForPSK = record.id.littleEndian
+            withUnsafeBytes(of: &sidForPSK) { pskMaterial.append(contentsOf: $0) }
+            pskMaterial.append(nonce)
+            let perStringKey = ArmorABI.hmacSHA256(key: stringKey, message: pskMaterial)
+
             let encrypted = xor(
                 plaintext,
                 buildKeystreamForRecord(
-                    key: stringKey,
+                    key: perStringKey,
                     stringID: record.id,
                     nonce: nonce,
                     length: plaintext.count,
                     dispatchSeed: dispatchSeed
                 )
             )
-            var hmacMessage = nonce
+            // HMAC scope binds (string_id, nonce_len, nonce, ct_len, ciphertext)
+            // so two strings cannot be transposed without invalidating the
+            // tag, and a truncation/extension cannot find a matching length
+            // pair (the previous `nonce || ciphertext` form was vulnerable to
+            // both). The C-side verifier in cprisk_string_decrypt.c MUST
+            // mirror this exact canonical encoding.
+            //
+            // Wire layout (little-endian):
+            //   u32 string_id | u32 nonce_len | nonce[nonce_len] |
+            //   u32 ct_len    | ciphertext[ct_len]
+            var hmacMessage = Data()
+            var stringIDLE = record.id.littleEndian
+            withUnsafeBytes(of: &stringIDLE) { hmacMessage.append(contentsOf: $0) }
+            var nonceLenLE = UInt32(nonce.count).littleEndian
+            withUnsafeBytes(of: &nonceLenLE) { hmacMessage.append(contentsOf: $0) }
+            hmacMessage.append(nonce)
+            var ctLenLE = UInt32(encrypted.count).littleEndian
+            withUnsafeBytes(of: &ctLenLE) { hmacMessage.append(contentsOf: $0) }
             hmacMessage.append(encrypted)
             let hmacTag = ArmorABI.hmacSHA256(key: stringKey, message: hmacMessage)
 
@@ -751,11 +779,19 @@ private func keystreamPathA(key: Data, stringID: UInt32, nonce: Data, length: In
     var block = sha256(seed)
     var output = Data()
     output.reserveCapacity(length)
+    var counter: UInt32 = 0
+
     while output.count < length {
         let remaining = length - output.count
         output.append(block.prefix(remaining))
         if output.count < length {
-            block = sha256(block)
+            // WB#5: bind counter so extension blocks are distinguishable.
+            // C mirrors: SHA256(prev_block || counter_le4).
+            var round = block
+            var ctrLE = counter.littleEndian
+            withUnsafeBytes(of: &ctrLE) { round.append(contentsOf: $0) }
+            block = sha256(round)
+            counter &+= 1
         }
     }
     return output

@@ -135,7 +135,24 @@ public final class TextSegmentEncryptorPass: ArmorPass {
             let encrypted = xor(plaintext, keystream)
             try file.replaceBytes(at: offset, with: encrypted)
 
-            var hmacMessage = nonce
+            // HMAC scope binds (section_index, nonce_len, nonce, ct_len, ciphertext)
+            // — the previous `nonce || ciphertext` form let an attacker truncate
+            // an encrypted page and update the size descriptor without
+            // invalidating the tag (size was outside the HMAC scope). The C
+            // verifier in cprisk_text_encrypt.c MUST mirror this canonical
+            // encoding.
+            //
+            // Wire layout (little-endian):
+            //   u32 section_index | u32 nonce_len | nonce[nonce_len] |
+            //   u32 ct_len        | ciphertext[ct_len]
+            var hmacMessage = Data()
+            var sectionIndexLE = sectionIndex.littleEndian
+            withUnsafeBytes(of: &sectionIndexLE) { hmacMessage.append(contentsOf: $0) }
+            var nonceLenLE = UInt32(nonce.count).littleEndian
+            withUnsafeBytes(of: &nonceLenLE) { hmacMessage.append(contentsOf: $0) }
+            hmacMessage.append(nonce)
+            var ctLenLE = UInt32(encrypted.count).littleEndian
+            withUnsafeBytes(of: &ctLenLE) { hmacMessage.append(contentsOf: $0) }
             hmacMessage.append(encrypted)
             let hmacTag = ArmorABI.hmacSHA256(key: sectionKey, message: hmacMessage)
 

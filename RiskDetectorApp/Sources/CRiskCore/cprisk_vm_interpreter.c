@@ -505,7 +505,17 @@ void cprisk_vm_entry_profile_fallback_i(uint64_t func_id,
                                                uint32_t *semantic_family,
                                                uint32_t *mixed_predicate_profile,
                                                uint32_t *max_subcall_depth) {
+    /*
+     * Mix in a runtime-only secret (the per-build SPN S-box seed) so an
+     * attacker who corrupts `entry->reserved` to force this fallback path
+     * cannot precompute the resulting (sem, mix, depth) triple from
+     * `func_id` and `hdr_reserved` alone — both of which are public in
+     * the on-disk header. Without this mix, forcing fallback gave a
+     * deterministic and externally predictable execution profile.
+     */
+    const uint64_t runtime_secret = cprisk_cff_runtime_spn_sbox_seed();
     uint64_t st = func_id ^ ((uint64_t)hdr_reserved << 32) ^ 0x45584350524F4631ULL; /* "EXCPROF1" */
+    st ^= runtime_secret;
     uint32_t sem = (uint32_t)(cprisk_splitmix64_next_i(&st) % 4u) + 1u;
     uint32_t mix = (uint32_t)(cprisk_splitmix64_next_i(&st) % 8u);
     uint32_t depth = (uint32_t)(cprisk_splitmix64_next_i(&st) % 8u) + 2u;
@@ -1505,13 +1515,26 @@ static int cprisk_vmp_headers_ok_i(const uint8_t *d_s,
     if ((bh->reserved & CPRISK_VMP_BC_FLAG_ENC_OPCODE) != 0u
         && bh->version < CPRISK_VMP_VERSION_V3)
         return 0;
+    /* Hard cap on entry_count: 4096 entries per bytecode segment (matches the
+     * armor producer's deterministic budget). The cap also prevents the
+     * `entry_count * entry_stride` multiply below from overflowing size_t —
+     * 4096 * 64 = 262144 bytes, well within size_t on every platform. */
     if (bh->entry_count == 0u || bh->entry_count > 4096u)
         return 0;
     const size_t hdr_total = cprisk_vmp_bytecode_header_total_bytes_i(bh);
     if (b_sz < hdr_total)
         return 0;
     const size_t entry_stride = cprisk_vmp_bytecode_entry_stride_i(bh);
-    if (b_sz < hdr_total + (unsigned long)bh->entry_count * entry_stride)
+    /* Overflow-checked addition: with entry_count <= 4096 and reasonable
+     * stride this cannot actually overflow on any 64-bit target, but
+     * downstream readers iterate up to b_sz and the audit pass flagged the
+     * implicit assumption. Use __builtin_add_overflow for an explicit guard. */
+    size_t needed = 0u;
+    if (__builtin_mul_overflow((size_t)bh->entry_count, entry_stride, &needed))
+        return 0;
+    if (__builtin_add_overflow(needed, hdr_total, &needed))
+        return 0;
+    if (b_sz < needed)
         return 0;
     if (out_bh)
         *out_bh = bh;
@@ -1836,6 +1859,15 @@ __attribute__((noinline)) static void cprisk_vm_m3_dead_heavy_shadow_i(uint8_t a
 /**
  * Decoys in read-only const data: resemble handler RVA / stream-XOR / class tags.
  * Values are not executable pointers; XOR-mixed into opaque predicates only.
+ */
+/*
+ * Dead-handler decoy: control should never reach this in a well-formed
+ * bytecode. It is invoked from the dispatcher only on the unreachable
+ * default arm (poisoned/corrupted opcode) and is expected to mutate `acc`
+ * with non-semantic noise then return. We do NOT mark it `noreturn` —
+ * doing so would let the optimiser drop the dispatcher's fall-through
+ * arm entirely, removing the very decoy work units that obscure the
+ * dispatcher's shape from a tracer.
  */
 static void cprisk_vm_m3_dead_dispatch_i(uint8_t acc[32], uint32_t hdr_reserved, uint32_t opkind);
 
