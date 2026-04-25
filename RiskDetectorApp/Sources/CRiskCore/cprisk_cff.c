@@ -9,6 +9,25 @@
 #include <unistd.h>
 #include <mach-o/dyld.h>
 
+/*
+ * OS entropy hook used by `cprisk_cff_default_seed`. `getentropy(2)` is
+ * available on Apple (since iOS 10 / macOS 10.12) and on glibc 2.25+ /
+ * musl 1.1.20+, which covers every platform we build for. When unavailable
+ * the call returns -1 and `default_seed` falls back to its prior mix.
+ */
+#if defined(__APPLE__) || defined(__linux__)
+#include <sys/random.h>
+#define CPRISK_CFF_HAVE_GETENTROPY 1
+#endif
+
+/*
+ * `cprisk_cff_thread_fingerprint` memcpy's a `pthread_t` into a 128-byte
+ * scratch buffer. On Apple targets `pthread_t` is an opaque pointer (8 bytes
+ * on arm64/x86_64) — well below the buffer size — but compile-time-assert it
+ * to catch future toolchain changes loudly instead of corrupting the stack.
+ */
+_Static_assert(sizeof(pthread_t) <= 128, "pthread_t exceeds FNV scratch buffer");
+
 static uint32_t cprisk_cff_rotate_left32(uint32_t value, uint32_t shift) {
     const uint32_t amount = shift & 31u;
     if (amount == 0u) {
@@ -198,6 +217,14 @@ static uint32_t cprisk_cff_dyld_mix32(void) {
         cprisk_cff_derive_const32(0x4346465F44594C44ull, image_count, image_count ^ dyld_salt_k, dyld_base_k);
 }
 
+/*
+ * Affine codec helpers. Multiplication and addition operate mod 2^32 with
+ * unsigned wrap-around (well-defined per C11 6.2.5/9). The codec relies on
+ * this exact wrap behavior — the inverse path uses `mod_inverse_odd32` to
+ * undo `masked * multiplier` and a plain `unxored - addend` subtraction to
+ * undo `+ addend`. Both round-trip exactly under uint32_t arithmetic. The
+ * `| 1u` below ensures the multiplier is odd so its mod-2^32 inverse exists.
+ */
 static uint32_t cprisk_cff_affine_multiplier(uint32_t key, uint32_t salt) {
     const uint32_t mix_const = cprisk_cff_derive_const32(
         0x4346465F53544632ull,
@@ -297,10 +324,13 @@ static uint8_t cprisk_cff_normalize_mba_layers(uint32_t seed, uint8_t requested)
     if (requested == 1u) {
         return 1u;
     }
-    /* 0 or unset: auto 2..5 */
+    /*
+     * 0 (unset) or out-of-range (>= 9): auto-pick uniformly from {2,3,4,5}.
+     * Use `& 3u` to extract two bits (no modulo bias) instead of `% 4u`.
+     */
     return (uint8_t)(2u + (cprisk_cff_avalanche32(
         seed ^ cprisk_cff_derive_const32(0x4346465F4D424134ull, seed, requested, 0x51ED270Bu)
-    ) % 4u));
+    ) & 3u));
 }
 
 static uint8_t cprisk_cff_resolve_dispatch_style_u8(uint32_t seed, uint8_t requested) {
@@ -320,13 +350,29 @@ static uint8_t cprisk_cff_resolve_dispatch_style_u8(uint32_t seed, uint8_t reque
         : (uint8_t)CPRISK_CFF_DISPATCH_DIRECT;
 }
 
+/*
+ * Newton–Raphson modular inverse mod 2^32. Convergence is quadratic, doubling
+ * the number of correct low-order bits each step. Starting from `odd_value`
+ * (which is correct in the lowest bit), 6 iterations guarantee >= 64 correct
+ * bits — saturated within the 32-bit width with margin.
+ *
+ * Precondition: `odd_value` is odd. If even, the modular inverse does not
+ * exist mod 2^32 and the iteration silently produces garbage; callers must
+ * ensure oddness (see `cprisk_cff_affine_multiplier` / `_odd` helpers which
+ * force the low bit set).
+ */
 static uint32_t cprisk_cff_mod_inverse_odd32(uint32_t odd_value) {
-    uint32_t inverse = odd_value;
-    inverse *= 2u - odd_value * inverse;
-    inverse *= 2u - odd_value * inverse;
-    inverse *= 2u - odd_value * inverse;
-    inverse *= 2u - odd_value * inverse;
-    inverse *= 2u - odd_value * inverse;
+    /* Defense in depth: force the low bit to avoid silent corruption if a
+     * caller miswires this. The cost is one OR; semantics for already-odd
+     * inputs are unchanged. */
+    const uint32_t v = odd_value | 1u;
+    uint32_t inverse = v;
+    inverse *= 2u - v * inverse;
+    inverse *= 2u - v * inverse;
+    inverse *= 2u - v * inverse;
+    inverse *= 2u - v * inverse;
+    inverse *= 2u - v * inverse;
+    inverse *= 2u - v * inverse;
     return inverse;
 }
 
@@ -336,6 +382,7 @@ static uint32_t cprisk_cff_mod_inverse_odd32(uint32_t odd_value) {
  */
 static uint8_t g_cff_spn_sbox_fwd[256];
 static pthread_once_t g_cff_spn_sbox_once = PTHREAD_ONCE_INIT;
+static pthread_mutex_t g_cff_spn_sbox_mutex = PTHREAD_MUTEX_INITIALIZER;
 static atomic_uint_fast32_t g_cff_spn_sbox_custom = 0;
 static atomic_uint_fast64_t g_cff_spn_sbox_seed = 0;
 
@@ -355,12 +402,36 @@ static uint64_t cprisk_cff_split_mix64_next(cprisk_cff_split_mix64_t *rng) {
     return z ^ (z >> 31);
 }
 
-static int cprisk_cff_spn_is_bijection_u8(const uint8_t table[256]) {
-    uint8_t seen[256];
-    size_t i = 0u;
+/*
+ * Rejection-sampled uniform draw from [0, bound). Removes modulo bias when
+ * `bound` does not divide 2^64. Threshold = 2^64 mod bound, computed as
+ * `((uint64_t)0 - bound) % bound` (defined unsigned wrap). For bound <= 256
+ * the rejection probability is at most 256/2^64 (≈ 0), but the distribution
+ * is mathematically uniform.
+ *
+ * Cross-language contract: identical algorithm in
+ * `cprisk-armor/.../CFFSBoxPermutation.swift` and
+ * `CloudPhoneRiskKit/.../CFFSBoxRuntime.swift`.
+ */
+static uint64_t cprisk_cff_split_mix64_unbiased(cprisk_cff_split_mix64_t *rng, uint64_t bound) {
+    if (bound == 0u) {
+        return 0u;
+    }
+    const uint64_t threshold = ((uint64_t)0 - bound) % bound;
+    uint64_t r;
+    do {
+        r = cprisk_cff_split_mix64_next(rng);
+    } while (r < threshold);
+    return r % bound;
+}
 
+static int cprisk_cff_spn_is_bijection_sized_u8(const uint8_t *table, size_t len) {
+    if (table == NULL || len != 256u) {
+        return 0;
+    }
+    uint8_t seen[256];
     memset(seen, 0, sizeof(seen));
-    for (i = 0u; i < 256u; ++i) {
+    for (size_t i = 0u; i < 256u; ++i) {
         const uint8_t v = table[i];
         if (seen[v] != 0u) {
             return 0;
@@ -370,22 +441,21 @@ static int cprisk_cff_spn_is_bijection_u8(const uint8_t table[256]) {
     return 1;
 }
 
+static int cprisk_cff_spn_is_bijection_u8(const uint8_t table[256]) {
+    return cprisk_cff_spn_is_bijection_sized_u8(table, 256u);
+}
+
 static void cprisk_cff_spn_sbox_build_from_seed(uint64_t seed) {
     cprisk_cff_split_mix64_t rng;
-    int i;
-
     cprisk_cff_split_mix64_init(&rng, seed);
-    for (i = 0; i < 256; ++i) {
+    for (size_t i = 0u; i < 256u; ++i) {
         g_cff_spn_sbox_fwd[i] = (uint8_t)i;
     }
-    i = 255;
-    while (i > 0) {
-        const uint64_t r = cprisk_cff_split_mix64_next(&rng);
-        const int j = (int)(r % (uint64_t)(i + 1));
+    for (size_t i = 255u; i > 0u; --i) {
+        const uint64_t j = cprisk_cff_split_mix64_unbiased(&rng, (uint64_t)(i + 1u));
         const uint8_t tmp = g_cff_spn_sbox_fwd[i];
-        g_cff_spn_sbox_fwd[i] = g_cff_spn_sbox_fwd[j];
-        g_cff_spn_sbox_fwd[j] = tmp;
-        i--;
+        g_cff_spn_sbox_fwd[i] = g_cff_spn_sbox_fwd[(size_t)j];
+        g_cff_spn_sbox_fwd[(size_t)j] = tmp;
     }
 }
 
@@ -458,6 +528,30 @@ static uint64_t cprisk_cff_resolve_runtime_spn_seed_i(void) {
     return CPRISK_CFF_SPN_CANONICAL_SEED_U64;
 }
 
+/*
+ * Concurrency model for the S-box state:
+ *
+ *  - First read: any caller hitting `cprisk_cff_spn_sbox_ensure()` triggers
+ *    `pthread_once` once, which runs `init_default` under the once-lock —
+ *    no other thread can read the table during that initial build.
+ *  - Subsequent installs (`install_from_seed`, `install_from_bytes`): used
+ *    rarely (typically armor-driven, once at startup). The previous code
+ *    set `custom=1` BEFORE writing the 256-byte table, which let a
+ *    concurrent reader that reached `ensure()` for the first time skip
+ *    `init_default` (since `custom!=0`) and observe an uninitialized table.
+ *
+ * Fix:
+ *  - Both installers now (a) ensure the once-init has run, then (b) take
+ *    `g_cff_spn_sbox_mutex` and write the table under the mutex. The atomic
+ *    `custom` / `seed` flags are stored AFTER the table write so a reader
+ *    that misses the lock either sees the prior table or the new one — never
+ *    a torn intermediate.
+ *  - Hot-path readers (`spn_sbox_byte`) remain lock-free: they only run
+ *    after `_ensure()` and accept that during a rare concurrent install
+ *    they may read either the old or the new byte, both of which are valid
+ *    permutation entries (every byte 0..255 maps to a byte 0..255).
+ */
+
 static void cprisk_cff_spn_sbox_init_default(void) {
     if (atomic_load(&g_cff_spn_sbox_custom) != 0u) {
         return;
@@ -467,28 +561,41 @@ static void cprisk_cff_spn_sbox_init_default(void) {
     cprisk_cff_spn_sbox_build_from_seed(seed);
 }
 
+static void cprisk_cff_spn_sbox_ensure(void) {
+    (void)pthread_once(&g_cff_spn_sbox_once, cprisk_cff_spn_sbox_init_default);
+}
+
 void cprisk_cff_spn_sbox_install_from_seed(uint64_t seed) {
     const uint64_t normalized = seed == 0u ? 1u : seed;
-    atomic_store(&g_cff_spn_sbox_custom, 1u);
-    atomic_store(&g_cff_spn_sbox_seed, (uint_fast64_t)normalized);
+    cprisk_cff_spn_sbox_ensure();
+    pthread_mutex_lock(&g_cff_spn_sbox_mutex);
     cprisk_cff_spn_sbox_build_from_seed(normalized);
+    atomic_store(&g_cff_spn_sbox_seed, (uint_fast64_t)normalized);
+    atomic_store(&g_cff_spn_sbox_custom, 1u);
+    pthread_mutex_unlock(&g_cff_spn_sbox_mutex);
 }
 
 void cprisk_cff_spn_sbox_install_from_bytes(const uint8_t forward256[256]) {
     if (forward256 == NULL) {
         return;
     }
+    /*
+     * Refuse non-bijective input. Previously this fell back to canonical seed,
+     * which let an attacker who could call this API force a downgrade from a
+     * per-build randomized table to the static canonical permutation. Now we
+     * leave whatever table is currently installed; the next consumer that hits
+     * `cprisk_cff_spn_sbox_ensure()` triggers the per-build init via
+     * `cprisk_cff_resolve_runtime_spn_seed_i()`.
+     */
     if (cprisk_cff_spn_is_bijection_u8(forward256) == 0) {
-        cprisk_cff_spn_sbox_install_from_seed(CPRISK_CFF_SPN_CANONICAL_SEED_U64);
         return;
     }
-    atomic_store(&g_cff_spn_sbox_custom, 1u);
-    atomic_store(&g_cff_spn_sbox_seed, 0u);
+    cprisk_cff_spn_sbox_ensure();
+    pthread_mutex_lock(&g_cff_spn_sbox_mutex);
     memcpy(g_cff_spn_sbox_fwd, forward256, 256u);
-}
-
-static void cprisk_cff_spn_sbox_ensure(void) {
-    (void)pthread_once(&g_cff_spn_sbox_once, cprisk_cff_spn_sbox_init_default);
+    atomic_store(&g_cff_spn_sbox_seed, 0u);
+    atomic_store(&g_cff_spn_sbox_custom, 1u);
+    pthread_mutex_unlock(&g_cff_spn_sbox_mutex);
 }
 
 uint64_t cprisk_cff_runtime_spn_sbox_seed(void) {
@@ -501,7 +608,15 @@ int cprisk_cff_spn_sbox_copy_forward(uint8_t out_forward256[256]) {
         return -1;
     }
     cprisk_cff_spn_sbox_ensure();
+    /*
+     * Take the install-mutex to guarantee a consistent snapshot. Without it,
+     * a concurrent `install_from_seed` writing the table could produce a
+     * caller-observable mix of the old and new permutation; the result might
+     * not be a bijection, breaking any consumer that round-trips through it.
+     */
+    pthread_mutex_lock(&g_cff_spn_sbox_mutex);
     memcpy(out_forward256, g_cff_spn_sbox_fwd, 256u);
+    pthread_mutex_unlock(&g_cff_spn_sbox_mutex);
     return 0;
 }
 
@@ -510,6 +625,19 @@ static uint8_t cprisk_cff_spn_sbox_byte(uint8_t idx) {
     return g_cff_spn_sbox_fwd[idx];
 }
 
+uint8_t cprisk_cff_spn_sbox_lookup(uint8_t idx) {
+    return cprisk_cff_spn_sbox_byte(idx);
+}
+
+/*
+ * `shadow_noise16` is a 4-step decoy mixer whose output is XOR'd into a
+ * `volatile` sink and then `(void)`'d — i.e. it does not affect the Feistel
+ * cipher's mathematical output, only the runtime instruction trace and timing
+ * profile. The fixed 4 iterations balance instruction count against per-round
+ * Feistel cost; widening the loop slows the hot dispatcher path with no
+ * additional security in our threat model (instruction-level deobfuscation,
+ * not chosen-plaintext cryptanalysis).
+ */
 static uint16_t cprisk_cff_shadow_noise16(uint16_t r, uint32_t rk, uint32_t salt, uint32_t round) {
     volatile uint32_t sink = ((uint32_t)r << 16u) | (uint32_t)r;
     const uint32_t round_mul = cprisk_cff_derive_const32_odd(
@@ -553,6 +681,15 @@ static uint16_t cprisk_cff_shadow_noise16(uint16_t r, uint32_t rk, uint32_t salt
     return (uint16_t)((shadow ^ sink ^ (shadow >> 16u)) & 0xFFFFu);
 }
 
+/*
+ * 8-round Feistel network. This is a state-encoding primitive for CFF
+ * dispatcher obfuscation, not a data-confidentiality cipher: the round
+ * function combines an avalanche permutation, a SplitMix64-derived 256-byte
+ * S-box (forward-only — Feistel inversion does not need an inverse table),
+ * and double SPN substitution. 8 rounds yields full byte-level diffusion
+ * with margin for this attack model (no chosen-plaintext oracle); higher
+ * round counts only add latency on a hot dispatcher path.
+ */
 #define CPRISK_CFF_FEISTEL_ROUNDS 8u
 
 static uint16_t cprisk_cff_feistel_F(uint16_t r, uint32_t k, uint32_t salt, uint32_t round) {
@@ -618,6 +755,15 @@ static uint32_t cprisk_cff_feistel32_encode_core(uint32_t state, uint32_t key, u
     return mid ^ cprisk_cff_avalanche32(key ^ salt ^ post_xor);
 }
 
+/*
+ * Decode is the strict inverse of `cprisk_cff_feistel32_encode_core`:
+ *   - `pre_xor` and `post_xor` use the SAME derivation as encode (must
+ *     match exactly, otherwise pre/post whitening is not undone);
+ *   - the round loop iterates rounds in REVERSE (R-1 → 0) with the same
+ *     `feistel_F` since Feistel inversion does not need an inverse F.
+ * Constants `0x0F1055A1` ("FLOSS-A1") and `0x0ACC0DEC` ("ACC0DEC") are
+ * retained as call-site bases that get re-mixed through `derive_const32`.
+ */
 static uint32_t cprisk_cff_feistel32_decode_core(uint32_t encoded_state, uint32_t key, uint32_t salt) {
     const uint32_t pre_xor = cprisk_cff_derive_const32(0x4346465F46534531ull, key, salt, 0x0F1055A1u);
     const uint32_t post_xor = cprisk_cff_derive_const32(0x4346465F46534532ull, key, salt, 0x0ACC0DECu);
@@ -671,12 +817,27 @@ static atomic_uint_fast32_t s_cff_vm_link_token = 0;
 static atomic_uint_fast32_t s_cff_chain_link = 0;
 
 static uint32_t cprisk_cff_chain_load_i(void) {
-    uint32_t chain = (uint32_t)atomic_load(&s_cff_chain_link);
+    uint_fast32_t chain = atomic_load(&s_cff_chain_link);
     if (chain == 0u) {
-        chain = cprisk_cff_chain_fallback_sentinel_u32();
-        atomic_store(&s_cff_chain_link, (uint_fast32_t)chain);
+        /*
+         * Race-free initialization: previously a concurrent caller could
+         * race between the load and the store, with both threads computing
+         * the sentinel and storing it. Although the value is deterministic
+         * (so the race was benign), CAS makes the intent explicit and
+         * prevents the second thread from clobbering a value another path
+         * may legitimately have stored in between.
+         */
+        const uint_fast32_t sentinel =
+            (uint_fast32_t)cprisk_cff_chain_fallback_sentinel_u32();
+        uint_fast32_t expected = 0u;
+        if (!atomic_compare_exchange_strong(&s_cff_chain_link, &expected, sentinel)) {
+            /* Some other thread already initialized — adopt their value. */
+            chain = expected;
+        } else {
+            chain = sentinel;
+        }
     }
-    return chain;
+    return (uint32_t)chain;
 }
 
 static void cprisk_cff_ctx_set_last_plain_i(cprisk_cff_context_t *context, uint32_t plain) {
@@ -895,6 +1056,33 @@ static uint32_t cprisk_cff_default_seed(void) {
     seed ^= (uint32_t)(monotonic_ns >> 29u);
     seed ^= (uint32_t)fn_addr_mix;
     seed ^= (uint32_t)(fn_addr_mix >> 32u);
+
+    /*
+     * Mix in 8 bytes of OS entropy when available. The previous derivation
+     * was deterministic given fixed pid/tid/clock state (e.g. forensic
+     * replay, low-jitter test harnesses), which let an attacker narrow the
+     * seed search space. `getentropy` is a one-shot CSPRNG read; we fold it
+     * into the existing avalanche so any failure simply degrades to the
+     * legacy mix instead of zeroing entropy.
+     */
+#ifdef CPRISK_CFF_HAVE_GETENTROPY
+    {
+        uint8_t os_rand[8];
+        if (getentropy(os_rand, sizeof(os_rand)) == 0) {
+            const uint32_t lo = ((uint32_t)os_rand[0]) |
+                                ((uint32_t)os_rand[1] << 8) |
+                                ((uint32_t)os_rand[2] << 16) |
+                                ((uint32_t)os_rand[3] << 24);
+            const uint32_t hi = ((uint32_t)os_rand[4]) |
+                                ((uint32_t)os_rand[5] << 8) |
+                                ((uint32_t)os_rand[6] << 16) |
+                                ((uint32_t)os_rand[7] << 24);
+            seed ^= lo ^ cprisk_cff_rotate_left32(hi, 13u);
+        }
+        cprisk_secure_zero(os_rand, sizeof(os_rand));
+    }
+#endif
+
     seed = cprisk_cff_avalanche32(seed ^ cprisk_cff_tls_mix_derive_base_u32());
     return seed == 0u ? 1u : seed;
 }
@@ -924,6 +1112,13 @@ static uint32_t cprisk_cff_encode_state_with_style_impl(
     cprisk_cff_codec_style_t style,
     uint8_t mba_layers
 ) {
+    /*
+     * AUTO is normally resolved to a concrete style by `cprisk_cff_resolve_style`
+     * during `cprisk_cff_init`. If a caller passes AUTO directly to
+     * `cprisk_cff_encode_state_with_style` the explicit `case AUTO` here keeps
+     * the contract documented: AUTO ≡ FEISTEL_SPN at the codec layer. Decode
+     * mirrors the same fall-through.
+     */
     switch (style) {
         case CPRISK_CFF_CODEC_STYLE_FEISTEL_SPN:
         case CPRISK_CFF_CODEC_STYLE_AUTO:
@@ -1181,6 +1376,24 @@ void cprisk_cff_init(cprisk_cff_context_t *context, const cprisk_cff_config_t *c
     }
 
     memset(context, 0, sizeof(*context));
+    /*
+     * Init ordering invariant (do not reorder without re-deriving):
+     *
+     *   1. `storage_nonce` is set BEFORE any setter that resolves
+     *      `cprisk_cff_ctx_nonce_plain()` (i.e. `set_chain_plain_i`,
+     *      `set_last_plain_i`, `set_entry_guard_plain_i`, and the
+     *      `seed`/`runtime_salt`/`encoded_state` masking writes below).
+     *   2. `storage_mask` derives only from `(uintptr_t)context` and
+     *      `sizeof(*context)`, so it is well-defined the moment the struct
+     *      memory exists — no dependency on any field value.
+     *   3. The `mask_*` helpers all chain through `storage_mask` and
+     *      `nonce_plain`; once both above are valid, every subsequent
+     *      setter is order-independent.
+     *
+     * Audit pass flagged a suspected cycle here; the analysis above shows
+     * the actual order is acyclic. Comment retained so future readers do
+     * not "fix" the perceived issue by reordering and breaking masking.
+     */
     {
         const uint32_t chain_plain = cprisk_cff_chain_load_i();
         const uint32_t seed_plain = cprisk_cff_mix_seed(
@@ -1510,6 +1723,14 @@ void cprisk_cff_poison_default(cprisk_cff_context_t *context) {
     }
 }
 
+/*
+ * Finalize: clears all sensitive material (seed, salt, encoded state, share
+ * splits, nonce, masks). The context struct contains no owning pointers — it
+ * is plain old data — so a single `memset` is sufficient. Allocation lifetime
+ * (stack / heap / arena) is the caller's responsibility; the macros
+ * `CPR_CFF_BEGIN` / `CPR_CFF_BEGIN_EX` use a stack-local context whose storage
+ * is naturally reclaimed when the enclosing block ends.
+ */
 void cprisk_cff_finalize(cprisk_cff_context_t *context) {
     if (context == NULL) {
         return;
@@ -1539,12 +1760,15 @@ void cprisk_cff_finalize(cprisk_cff_context_t *context) {
  * used only once, driving effective cache utilisation toward zero.
  * ──────────────────────────────────────────────────────────────────────────── */
 
-#ifdef __APPLE__
+/*
+ * `_Thread_local` is C11 standard and supported by clang/gcc on every target
+ * we ship to (Apple platforms, Linux test hosts, CI). The previous non-Apple
+ * fallback to a plain `static` variable silently broke the per-thread epoch
+ * invariant under concurrent dispatcher loops on Linux test runs — two
+ * threads would collide on the same counter and the Capstone cache-busting
+ * property degenerated to round-robin. Use thread-local unconditionally.
+ */
 static _Thread_local uint32_t s_dispatch_epoch_tl = 0u;
-#else
-/* Fallback for non-Apple targets (test hosts). */
-static uint32_t s_dispatch_epoch_tl = 0u;
-#endif
 
 void cprisk_cff_rotate_dispatch_epoch(void) {
     /* Weyl sequence step: additive with an odd constant so the counter visits

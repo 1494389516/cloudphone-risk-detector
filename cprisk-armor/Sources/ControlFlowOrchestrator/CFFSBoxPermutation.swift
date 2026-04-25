@@ -8,13 +8,14 @@ import Foundation
 /// `CFFSBoxMaterial.canonicalSeed` (FNV-1a label XOR registry mix). Armor `ControlFlowOrchestrator`
 /// uses a separate `buildSeed` for per-function plans; only this permutation **algorithm** must match.
 public enum CFFSBoxPermutation256 {
-    /// Generate a permutation of all byte values using `seed` (0 is mapped to 1 for the PRNG state).
+    /// Generate a permutation of all byte values using `seed`.
+    /// Seed=0 normalization is centralized in `CFFSplitMix64.init` (single point of truth).
     public static func generate(seed: UInt64) -> [UInt8] {
         var a = Array(0..<256).map { UInt8(truncatingIfNeeded: $0) }
-        var g = CFFSplitMix64(seed: seed == 0 ? 1 : seed)
+        var g = CFFSplitMix64(seed: seed)
         var i = 255
         while i > 0 {
-            let j = Int(g.next() % UInt64(i + 1))
+            let j = Int(g.unbiased(below: UInt64(i + 1)))
             a.swapAt(i, j)
             i -= 1
         }
@@ -35,6 +36,8 @@ public enum CFFSBoxPermutation256 {
 }
 
 /// Local SplitMix64 (same family as `VMProtectorSplitMix64` / other armor PRNGs).
+/// Cross-language contract: identical SplitMix64 + rejection-sampled Fisher–Yates in
+/// `CFFSBoxRuntime.swift` and `cprisk_cff_split_mix64_*` (cprisk_cff.c).
 private struct CFFSplitMix64: RandomNumberGenerator {
     private var state: UInt64
 
@@ -48,5 +51,16 @@ private struct CFFSplitMix64: RandomNumberGenerator {
         z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
         z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
         return z ^ (z >> 31)
+    }
+
+    /// Rejection-sampled uniform draw from `[0, bound)` — removes modulo bias when
+    /// `bound` does not divide 2^64. For `bound ≤ 256` rejection is negligible
+    /// (≤ 256 / 2^64) but the distribution is mathematically uniform.
+    mutating func unbiased(below bound: UInt64) -> UInt64 {
+        precondition(bound > 0, "unbiased(below:) requires positive bound")
+        let threshold = (UInt64(0) &- bound) % bound  // 2^64 mod bound
+        var r: UInt64
+        repeat { r = next() } while r < threshold
+        return r % bound
     }
 }
