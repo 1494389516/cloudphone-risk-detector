@@ -191,6 +191,12 @@ package enum ArmorWhiteBox {
         tagMaterial.append(dataSection)
         let whiteboxTag = sha256(tagMaterial)
 
+        // configDigest wire format (mirrors cprisk_whitebox_config_digest_valid_i in C):
+        //   label "cprisk.whitebox.config.v2" ||
+        //   uint64_LE(code_len) || code        ||
+        //   uint64_LE(data_len) || data        ||
+        //   uint64_LE(tag_len)  || tag         ||
+        //   uint32_LE(1) .. uint32_LE(DOMAIN_COUNT)
         var configMaterial = Data("cprisk.whitebox.config.v2".utf8)
         appendLittleEndian(UInt64(codeSection.count), to: &configMaterial)
         configMaterial.append(codeSection)
@@ -199,7 +205,8 @@ package enum ArmorWhiteBox {
         appendLittleEndian(UInt64(whiteboxTag.count), to: &configMaterial)
         configMaterial.append(whiteboxTag)
         for domain in ArmorABI.WhiteBox.Domain.allCases.sorted(by: { $0.rawValue < $1.rawValue }) {
-            configMaterial.append(domain.rawValue)
+            var domLE = domain.rawValue.littleEndian
+            withUnsafeBytes(of: &domLE) { configMaterial.append(contentsOf: $0) }
         }
         let configDigest = sha256(configMaterial)
 

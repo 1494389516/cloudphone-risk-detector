@@ -183,10 +183,10 @@ public final class StringEncryptorPass: ArmorPass {
             let nonce = try generateNonce()
 
             // Mirror cprisk_derive_per_string_key() in the C runtime:
-            //   perStringKey = HMAC(stringKey, sid_le4 || nonce)
-            // Without this step the keystream key differs from what the C
-            // decryptor derives, producing garbage output on every string.
-            var pskMaterial = Data()
+            //   perStringKey = HMAC(stringKey, "cprisk.str.key.v1" || sid_le4 || nonce)
+            // Domain label added per WB#4 to prevent key-confusion between this
+            // HMAC use and any other HMAC derivation sharing the same root key.
+            var pskMaterial = Data("cprisk.str.key.v1".utf8)
             var sidForPSK = record.id.littleEndian
             withUnsafeBytes(of: &sidForPSK) { pskMaterial.append(contentsOf: $0) }
             pskMaterial.append(nonce)
@@ -779,11 +779,19 @@ private func keystreamPathA(key: Data, stringID: UInt32, nonce: Data, length: In
     var block = sha256(seed)
     var output = Data()
     output.reserveCapacity(length)
+    var counter: UInt32 = 0
+
     while output.count < length {
         let remaining = length - output.count
         output.append(block.prefix(remaining))
         if output.count < length {
-            block = sha256(block)
+            // WB#5: bind counter so extension blocks are distinguishable.
+            // C mirrors: SHA256(prev_block || counter_le4).
+            var round = block
+            var ctrLE = counter.littleEndian
+            withUnsafeBytes(of: &ctrLE) { round.append(contentsOf: $0) }
+            block = sha256(round)
+            counter &+= 1
         }
     }
     return output

@@ -523,34 +523,62 @@ static int cprisk_whitebox_config_digest_valid_i(
     if (tag_len != CPRISK_ARMOR_HASH_SIZE)
         return -1;
 
+    /*
+     * Mirror the configMaterial format written by WhiteBoxProfile.swift build():
+     *
+     *   "cprisk.whitebox.config.v2"   (no NUL)     ||
+     *   uint64_LE(code_len) || code                 ||
+     *   uint64_LE(data_len) || data                 ||
+     *   uint64_LE(tag_len)  || tag                  ||
+     *   uint32_LE(1) .. uint32_LE(DOMAIN_COUNT)
+     *
+     * The previous implementation hashed only (code||data||tag) and never
+     * matched the Swift-produced configDigest, so whitebox loading always
+     * failed at this check.
+     *
+     * Team-ID binding is handled separately via the ASLR table XOR in
+     * cprisk_whitebox_xor_tables_aslr_i (which mixes cprisk_codesign_team_salt
+     * into the per-block pad).  The CPRISK_ARMOR_WHITEBOX_FLAG_TEAM_ID_BOUND
+     * flag is never set by the current Swift producer, so the old team_salt
+     * branch inside this function was dead code — it has been removed.
+     */
+    static const uint8_t label[] = "cprisk.whitebox.config.v2";
+
     uint8_t digest[CPRISK_ARMOR_HASH_SIZE];
     cprisk_sha256_ctx ctx;
     cprisk_sha256_init(&ctx);
+
+    cprisk_sha256_update(&ctx, label, sizeof(label) - 1u);
+
+    uint8_t len_le[8];
+
+#define CPRISK_WBX_APPEND_LEN64(n) do { \
+    uint64_t _n = (uint64_t)(n); \
+    len_le[0]=(uint8_t)(_n    ); len_le[1]=(uint8_t)(_n>> 8); \
+    len_le[2]=(uint8_t)(_n>>16); len_le[3]=(uint8_t)(_n>>24); \
+    len_le[4]=(uint8_t)(_n>>32); len_le[5]=(uint8_t)(_n>>40); \
+    len_le[6]=(uint8_t)(_n>>48); len_le[7]=(uint8_t)(_n>>56); \
+    cprisk_sha256_update(&ctx, len_le, sizeof(len_le)); \
+} while (0)
+
+    CPRISK_WBX_APPEND_LEN64(code_len);
     cprisk_sha256_update(&ctx, code, code_len);
+
+    CPRISK_WBX_APPEND_LEN64(data_len);
     cprisk_sha256_update(&ctx, data, data_len);
+
+    CPRISK_WBX_APPEND_LEN64(tag_len);
     cprisk_sha256_update(&ctx, tag, tag_len);
 
-    /* Proactive Team ID self-check: when CPRISK_ARMOR_WHITEBOX_FLAG_TEAM_ID_BOUND
-     * is set, the producer computed config_digest over (code||data||tag||team_salt_le8)
-     * using the build-time Team Identifier salt.  Re-derive the salt at runtime via
-     * cprisk_codesign_team_salt() and fold it in before finalising the digest.
-     * A repackaged app with a different Team ID will produce a different salt here,
-     * causing an explicit validation failure rather than silently propagating corrupted
-     * PRF output downstream. */
-    if (!s_test_bundle_i.active &&
-        (header->flags & CPRISK_ARMOR_WHITEBOX_FLAG_TEAM_ID_BOUND) != 0u) {
-        const uint64_t ts = cprisk_codesign_team_salt();
-        uint8_t ts_le[8];
-        ts_le[0] = (uint8_t)(ts & 0xFFu);
-        ts_le[1] = (uint8_t)((ts >>  8) & 0xFFu);
-        ts_le[2] = (uint8_t)((ts >> 16) & 0xFFu);
-        ts_le[3] = (uint8_t)((ts >> 24) & 0xFFu);
-        ts_le[4] = (uint8_t)((ts >> 32) & 0xFFu);
-        ts_le[5] = (uint8_t)((ts >> 40) & 0xFFu);
-        ts_le[6] = (uint8_t)((ts >> 48) & 0xFFu);
-        ts_le[7] = (uint8_t)((ts >> 56) & 0xFFu);
-        cprisk_sha256_update(&ctx, ts_le, sizeof(ts_le));
-        cprisk_secure_zero(ts_le, sizeof(ts_le));
+#undef CPRISK_WBX_APPEND_LEN64
+
+    for (uint32_t d = 1u; d <= CPRISK_WHITEBOX_DOMAIN_COUNT; d++) {
+        uint8_t d_le[4];
+        d_le[0] = (uint8_t)(d      );
+        d_le[1] = (uint8_t)(d >>  8);
+        d_le[2] = (uint8_t)(d >> 16);
+        d_le[3] = (uint8_t)(d >> 24);
+        cprisk_sha256_update(&ctx, d_le, sizeof(d_le));
     }
 
     cprisk_sha256_final(&ctx, digest);

@@ -103,6 +103,9 @@ static void cprisk_keystream_path_a(const uint8_t *key, uint32_t sid,
     uint8_t blk[CPRISK_SHA256_DIGEST_LENGTH];
     cprisk_sha256(seed, seed_len, blk);
 
+    /* WB#5: counter-bound extension blocks so each 32-byte chunk is
+     * distinguishable from others.  Swift mirror: sha256(block || ctr_le4). */
+    uint32_t counter = 0;
     size_t off = 0;
     while (off < len) {
         size_t chunk = len - off;
@@ -112,10 +115,15 @@ static void cprisk_keystream_path_a(const uint8_t *key, uint32_t sid,
         memcpy(out + off, blk, chunk);
         off += chunk;
         if (off < len) {
-            uint8_t prev[CPRISK_SHA256_DIGEST_LENGTH];
-            memcpy(prev, blk, sizeof(prev));
-            cprisk_sha256(prev, sizeof(prev), blk);
-            cprisk_secure_zero(prev, sizeof(prev));
+            uint8_t round[CPRISK_SHA256_DIGEST_LENGTH + 4];
+            memcpy(round, blk, CPRISK_SHA256_DIGEST_LENGTH);
+            round[32] = (uint8_t)(counter      );
+            round[33] = (uint8_t)(counter >>  8);
+            round[34] = (uint8_t)(counter >> 16);
+            round[35] = (uint8_t)(counter >> 24);
+            cprisk_sha256(round, sizeof(round), blk);
+            cprisk_secure_zero(round, sizeof(round));
+            counter++;
         }
     }
 
@@ -324,12 +332,20 @@ static void cprisk_derive_per_string_key(
     uint32_t string_id,
     const uint8_t *nonce
 ) {
-    uint8_t material[4 + CPRISK_ARMOR_NONCE_SIZE];
-    material[0] = (uint8_t)(string_id);
-    material[1] = (uint8_t)(string_id >> 8);
-    material[2] = (uint8_t)(string_id >> 16);
-    material[3] = (uint8_t)(string_id >> 24);
-    memcpy(material + 4, nonce, CPRISK_ARMOR_NONCE_SIZE);
+    /*
+     * KDF material = "cprisk.str.key.v1" || sid_le4 || nonce
+     * Domain label (WB#4) prevents key-confusion with other HMAC uses of
+     * the same root key. StringEncryptor.swift must use the same prefix.
+     */
+    static const uint8_t label[] = "cprisk.str.key.v1";
+    const size_t label_len = sizeof(label) - 1u;
+    uint8_t material[sizeof(label) - 1u + 4u + CPRISK_ARMOR_NONCE_SIZE];
+    memcpy(material, label, label_len);
+    material[label_len + 0] = (uint8_t)(string_id      );
+    material[label_len + 1] = (uint8_t)(string_id >>  8);
+    material[label_len + 2] = (uint8_t)(string_id >> 16);
+    material[label_len + 3] = (uint8_t)(string_id >> 24);
+    memcpy(material + label_len + 4u, nonce, CPRISK_ARMOR_NONCE_SIZE);
 
     cprisk_hmac_sha256(s_dec_key, CPRISK_ARMOR_KEY_SIZE,
                        material, sizeof(material), s_per_string_key);
