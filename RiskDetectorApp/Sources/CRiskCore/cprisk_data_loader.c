@@ -757,9 +757,22 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
                     pthread_mutex_unlock(&s_loader_mutex);
                     return 0;
                 }
-                size_t hmac_msg_len = CPRISK_ARMOR_NONCE_SIZE + (size_t)ent->size;
-                uint8_t *hmac_msg = NULL;
-                hmac_msg = (uint8_t *)malloc(hmac_msg_len);
+                /*
+                 * HMAC scope binds (section_index, nonce_len, nonce,
+                 * ct_len, ciphertext) — must match the canonical encoding
+                 * in DataSegmentEncryptor.swift. Without these length
+                 * prefixes and the section_index binding, two sections
+                 * with identical encrypted payloads produced identical
+                 * HMACs (transposable) and a truncation/extension could
+                 * find a matching length pair.
+                 *
+                 * Wire layout (little-endian):
+                 *   u32 section_index | u32 nonce_len | nonce[nonce_len] |
+                 *   u32 ct_len        | ciphertext[ct_len]
+                 */
+                const size_t hmac_msg_len =
+                    4u + 4u + (size_t)CPRISK_ARMOR_NONCE_SIZE + 4u + (size_t)ent->size;
+                uint8_t *hmac_msg = (uint8_t *)malloc(hmac_msg_len);
                 if (!hmac_msg) {
                     if (cprisk_hidden_mprotect(page, span, PROT_NONE) != 0) {
                         cprisk_integrity_poison_data_loader_lane();
@@ -767,8 +780,22 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
                     pthread_mutex_unlock(&s_loader_mutex);
                     return 0;
                 }
-                memcpy(hmac_msg, ent->nonce, CPRISK_ARMOR_NONCE_SIZE);
-                memcpy(hmac_msg + CPRISK_ARMOR_NONCE_SIZE, ptr, (size_t)ent->size);
+                size_t mp = 0u;
+                hmac_msg[mp++] = (uint8_t)(ent->section_index      );
+                hmac_msg[mp++] = (uint8_t)(ent->section_index >>  8);
+                hmac_msg[mp++] = (uint8_t)(ent->section_index >> 16);
+                hmac_msg[mp++] = (uint8_t)(ent->section_index >> 24);
+                hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE      );
+                hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >>  8);
+                hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 16);
+                hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 24);
+                memcpy(hmac_msg + mp, ent->nonce, CPRISK_ARMOR_NONCE_SIZE);
+                mp += CPRISK_ARMOR_NONCE_SIZE;
+                hmac_msg[mp++] = (uint8_t)((uint32_t)ent->size      );
+                hmac_msg[mp++] = (uint8_t)((uint32_t)ent->size >>  8);
+                hmac_msg[mp++] = (uint8_t)((uint32_t)ent->size >> 16);
+                hmac_msg[mp++] = (uint8_t)((uint32_t)ent->size >> 24);
+                memcpy(hmac_msg + mp, ptr, (size_t)ent->size);
                 uint8_t computed_hmac[CPRISK_ARMOR_HASH_SIZE];
                 cprisk_hmac_sha256(decrypt_key, CPRISK_ARMOR_KEY_SIZE,
                                    hmac_msg, hmac_msg_len, computed_hmac);

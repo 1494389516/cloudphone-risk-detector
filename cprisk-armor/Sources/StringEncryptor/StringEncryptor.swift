@@ -191,7 +191,24 @@ public final class StringEncryptorPass: ArmorPass {
                     dispatchSeed: dispatchSeed
                 )
             )
-            var hmacMessage = nonce
+            // HMAC scope binds (string_id, nonce_len, nonce, ct_len, ciphertext)
+            // so two strings cannot be transposed without invalidating the
+            // tag, and a truncation/extension cannot find a matching length
+            // pair (the previous `nonce || ciphertext` form was vulnerable to
+            // both). The C-side verifier in cprisk_string_decrypt.c MUST
+            // mirror this exact canonical encoding.
+            //
+            // Wire layout (little-endian):
+            //   u32 string_id | u32 nonce_len | nonce[nonce_len] |
+            //   u32 ct_len    | ciphertext[ct_len]
+            var hmacMessage = Data()
+            var stringIDLE = record.id.littleEndian
+            withUnsafeBytes(of: &stringIDLE) { hmacMessage.append(contentsOf: $0) }
+            var nonceLenLE = UInt32(nonce.count).littleEndian
+            withUnsafeBytes(of: &nonceLenLE) { hmacMessage.append(contentsOf: $0) }
+            hmacMessage.append(nonce)
+            var ctLenLE = UInt32(encrypted.count).littleEndian
+            withUnsafeBytes(of: &ctLenLE) { hmacMessage.append(contentsOf: $0) }
             hmacMessage.append(encrypted)
             let hmacTag = ArmorABI.hmacSHA256(key: stringKey, message: hmacMessage)
 

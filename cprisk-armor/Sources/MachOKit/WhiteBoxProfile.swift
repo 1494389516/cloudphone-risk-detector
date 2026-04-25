@@ -155,7 +155,16 @@ package enum ArmorWhiteBox {
             let roundConstants = makeRoundConstants(domainKey: domainKey)
             let tables = makeTables(domainKey: domainKey, roundConstants: roundConstants)
 
+            // Bind the digest to the domain ID. Without this, two domains
+            // that happened to derive identical (tables, permutation,
+            // final_mask, round_constants) tuples produced identical
+            // digests, so swapping their records past the per-domain
+            // routing layer would not invalidate either record. The C
+            // verifier (cprisk_whitebox_record_digest_valid_i) MUST mirror
+            // this domain-ID prefix.
             var digestMaterial = Data()
+            var domainIDLE = domain.rawValue.littleEndian
+            withUnsafeBytes(of: &domainIDLE) { digestMaterial.append(contentsOf: $0) }
             digestMaterial.append(tables)
             digestMaterial.append(permutation)
             digestMaterial.append(finalMask)

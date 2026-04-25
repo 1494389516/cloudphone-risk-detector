@@ -614,7 +614,19 @@ static int cprisk_whitebox_record_digest_valid_i(
     uint8_t digest[CPRISK_ARMOR_HASH_SIZE];
     cprisk_sha256_ctx ctx;
 
+    /*
+     * Domain-ID-bound digest (matches WhiteBoxProfile.swift). Prefix the
+     * domain_id (u32 LE) so two domains with coincidentally identical
+     * (tables, permutation, final_mask, round_constants) cannot be swapped
+     * past the per-domain routing layer.
+     */
+    uint8_t domain_id_le[4];
+    domain_id_le[0] = (uint8_t)(record->domain_id      );
+    domain_id_le[1] = (uint8_t)(record->domain_id >>  8);
+    domain_id_le[2] = (uint8_t)(record->domain_id >> 16);
+    domain_id_le[3] = (uint8_t)(record->domain_id >> 24);
     cprisk_sha256_init(&ctx);
+    cprisk_sha256_update(&ctx, domain_id_le, sizeof(domain_id_le));
     cprisk_sha256_update(&ctx,
                          bundle->code + record->table_offset,
                          (size_t)record->table_length);

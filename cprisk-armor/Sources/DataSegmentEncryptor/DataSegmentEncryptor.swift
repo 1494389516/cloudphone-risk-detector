@@ -87,7 +87,23 @@ public final class DataSegmentEncryptorPass: ArmorPass {
             )
             try file.replaceBytes(at: UInt64(section.offset), with: encrypted)
 
-            var hmacMessage = nonce
+            // HMAC scope binds (section_index, nonce_len, nonce, ct_len, ciphertext)
+            // so two sections cannot be transposed without invalidating
+            // the tag, and a truncation/extension cannot find a matching
+            // length pair. The runtime decoder MUST mirror this exact
+            // canonical encoding (see cprisk_data_loader.c verifier).
+            //
+            // Wire format (little-endian):
+            //   u32 section_index | u32 nonce_len | nonce[nonce_len] |
+            //   u32 ciphertext_len | ciphertext[ciphertext_len]
+            var hmacMessage = Data()
+            var sectionIndexLE = sectionIndex.littleEndian
+            withUnsafeBytes(of: &sectionIndexLE) { hmacMessage.append(contentsOf: $0) }
+            var nonceLenLE = UInt32(nonce.count).littleEndian
+            withUnsafeBytes(of: &nonceLenLE) { hmacMessage.append(contentsOf: $0) }
+            hmacMessage.append(nonce)
+            var ctLenLE = UInt32(encrypted.count).littleEndian
+            withUnsafeBytes(of: &ctLenLE) { hmacMessage.append(contentsOf: $0) }
             hmacMessage.append(encrypted)
             let hmacTag = ArmorABI.hmacSHA256(key: sectionKey, message: hmacMessage)
 

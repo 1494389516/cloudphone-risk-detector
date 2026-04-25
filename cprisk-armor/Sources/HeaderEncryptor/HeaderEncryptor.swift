@@ -74,8 +74,19 @@ public final class HeaderEncryptorPass: ArmorPass {
         // --- Encrypt via XOR ---
         let encryptedFields = xor(fieldsData, keystream)
 
-        // --- Compute HMAC-SHA256(key, nonce || encrypted_fields) ---
-        var hmacMessage = nonce
+        // HMAC scope binds (nonce_len, nonce, ct_len, ciphertext) with
+        // length prefixes — see the canonical encoding mirror in
+        // cprisk_header_restore.c. The previous `nonce || ciphertext`
+        // form was vulnerable to truncation/extension attacks in theory;
+        // for the fixed 8+24 layout the practical risk is small but the
+        // pattern matches DataSegmentEncryptor / StringEncryptor for
+        // consistency, so future layout changes inherit the binding.
+        var hmacMessage = Data()
+        var nonceLenLE = UInt32(nonce.count).littleEndian
+        withUnsafeBytes(of: &nonceLenLE) { hmacMessage.append(contentsOf: $0) }
+        hmacMessage.append(nonce)
+        var ctLenLE = UInt32(encryptedFields.count).littleEndian
+        withUnsafeBytes(of: &ctLenLE) { hmacMessage.append(contentsOf: $0) }
         hmacMessage.append(encryptedFields)
         let hmacTag = ArmorABI.hmacSHA256(key: headerKey, message: hmacMessage)
 
