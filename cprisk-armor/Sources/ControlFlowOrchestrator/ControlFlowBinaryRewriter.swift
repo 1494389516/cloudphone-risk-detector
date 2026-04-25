@@ -1145,6 +1145,13 @@ final class ControlFlowBinaryRewriter {
             if let target = unconditionalBranchTarget(fileOffset: offset, raw: raw) {
                 if target >= functionStart, target < functionEnd, target % 4 == 0 {
                     leaders.insert(target)
+                } else if target % 4 == 0 {
+                    // Out-of-function branch (tail call, exception handler,
+                    // unwind hand-off). Producing reorder mutations on a
+                    // function whose branches escape the bounds we know
+                    // about would emit blocks with edges to addresses we
+                    // never validate; refuse to reorder such functions.
+                    return []
                 }
                 let next = offset + 4
                 if next < functionEnd {
@@ -1365,10 +1372,26 @@ private struct CFFPolicySymbolIndex {
             // "...19RiskDetectionEngineC8evaluate..."), so policy tails rarely sit at suffix.
             // Allow substring hits for unique long tails to keep Pass9 effective on stripped
             // Release binaries while still preferring exact/normalized matches above.
-            if normalizedSymbol == tail
-                || normalizedSymbol.hasSuffix(tail)
-                || normalizedSymbol.contains(tail) {
+            if normalizedSymbol == tail || normalizedSymbol.hasSuffix(tail) {
                 return (entry.policySymbol, entry.tier)
+            }
+            // For interior `contains` matches, require the tail to start at a
+            // boundary that signals a separate identifier — either the start
+            // of a Swift mangled length-prefixed segment (a digit), or a
+            // canonical separator (`.`, `_`, `$`). Without this guard a
+            // crafted symbol like `_attackerRiskDetectionEngineHook` would
+            // hijack the heavy-tier classification of `RiskDetectionEngine`.
+            if let range = normalizedSymbol.range(of: tail) {
+                if range.lowerBound == normalizedSymbol.startIndex {
+                    return (entry.policySymbol, entry.tier)
+                }
+                let prevIndex = normalizedSymbol.index(before: range.lowerBound)
+                let prevChar = normalizedSymbol[prevIndex]
+                if prevChar.isNumber || prevChar == "." || prevChar == "_" || prevChar == "$" {
+                    return (entry.policySymbol, entry.tier)
+                }
+                // Else: substring hit but at an interior boundary that doesn't
+                // signal a real identifier break. Skip — fall through to nil.
             }
         }
 

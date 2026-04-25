@@ -145,6 +145,23 @@ public struct FunctionCFFPolicy: Codable, Equatable, Sendable {
             }
         }
 
+        // Cross-tier duplicate detection: a symbol that appears in two
+        // tiers (e.g. accidentally pasted into both `heavy:` and `light:`)
+        // would silently dedupe through `unique()` while `tier()` returns
+        // the higher-precedence classification. Surface the conflict so
+        // the policy author resolves it explicitly.
+        let crossTierDupes = findCrossTierDuplicates(
+            heavy: heavy, medium: medium, light: light, never: never, regionOnly: regionOnly
+        )
+        if !crossTierDupes.isEmpty {
+            FileHandle.standardError.write(Data(
+                ("warning: cprisk_armor cff_policy: symbol(s) listed in multiple tiers — " +
+                 "tier() will use highest precedence (never > regionOnly > heavy > medium > light), " +
+                 "but you should remove the duplicates: " +
+                 crossTierDupes.joined(separator: ", ") + "\n").utf8
+            ))
+        }
+
         return FunctionCFFPolicy(
             version: version,
             heavy: unique(heavy),
@@ -223,4 +240,20 @@ private func append(
 private func unique(_ values: [String]) -> [String] {
     var seen = Set<String>()
     return values.filter { seen.insert($0).inserted }
+}
+
+private func findCrossTierDuplicates(
+    heavy: [String],
+    medium: [String],
+    light: [String],
+    never: [String],
+    regionOnly: [String]
+) -> [String] {
+    var counts: [String: Int] = [:]
+    for tierList in [heavy, medium, light, never, regionOnly] {
+        for symbol in Set(tierList) {
+            counts[symbol, default: 0] += 1
+        }
+    }
+    return counts.filter { $0.value > 1 }.map { $0.key }.sorted()
 }

@@ -1002,6 +1002,14 @@ int cprisk_cff_chain_entry_verify(const cprisk_cff_context_t *context) {
     return cprisk_cff_chain_entry_verify_inline(context, observed);
 }
 
+/*
+ * Flat 16-iteration decoy mixer — does NOT recurse into the CFF state
+ * machinery, so there is no stack-blowup vector here despite the function
+ * name suggesting "path" exploration. Audit pass flagged a hypothetical
+ * recursion guard; the actual implementation only spins on a `volatile`
+ * sink and a single `cprisk_cff_os_mix32()` syscall, which is itself
+ * bounded by the OS readiness check inside `os_mix32`.
+ */
 void cprisk_cff_run_fake_path_decoy(const cprisk_cff_context_t *context) {
     if (context == NULL) {
         return;

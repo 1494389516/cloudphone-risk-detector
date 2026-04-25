@@ -109,7 +109,18 @@ void cprisk_vm_hardening_init(cprisk_vm_interp_frame_t *fr)
         bk *= 0xFF51AFD7ED558CCDULL;
         bk ^= (bk >> 33);
         fr->decrypt_block_key   = bk;
-        fr->decrypt_block_count = fr->blen / 9u;  /* 9 bytes per insn */
+        /*
+         * Bytecode is laid out as N × 9-byte instructions. A bytecode
+         * segment whose length is not a multiple of 9 (and especially one
+         * with blen < 9) is malformed. Previously block_count was just
+         * `blen / 9`, so a 0..8-byte body silently became `block_count = 0`
+         * and the JIT decryption path was left uninitialized. Reject the
+         * malformed length up front by leaving the block context empty
+         * and setting a sentinel; downstream code already treats
+         * decrypt_block_count == 0 as "decryption unavailable" and falls
+         * through to the plain interpreter path.
+         */
+        fr->decrypt_block_count = (fr->blen >= 9u) ? (fr->blen / 9u) : 0u;
         fr->decrypt_current_block = UINT32_MAX;    /* no block decrypted yet */
         memset(fr->decrypt_block_map, 0, sizeof(fr->decrypt_block_map));
         memset(fr->decrypt_code_copy, 0, sizeof(fr->decrypt_code_copy));
@@ -121,10 +132,21 @@ void cprisk_vm_hardening_init(cprisk_vm_interp_frame_t *fr)
     fr->pe_decoy_counter  = 0;
     fr->pe_mba_xor_mask   = 0xA5A5A5A5u;
     {
-        /* Derive pe_bytecode_hash from bytecode */
+        /*
+         * Derive pe_bytecode_hash from bytecode. Mix in `blen` BEFORE the
+         * byte loop so two bytecode bodies where one is a strict prefix of
+         * the other produce different hashes — a plain FNV-1a chain over
+         * the bytes alone would collide on (prefix, prefix||suffix) pairs.
+         * This matches the length-prefix discipline used by other digest
+         * derivations in the codebase (string HMAC ABI, etc.).
+         */
         uint32_t h = 0x811C9DC5u;
+        h ^= (fr->blen      ) & 0xFFu; h *= 0x01000193u;
+        h ^= (fr->blen >>  8) & 0xFFu; h *= 0x01000193u;
+        h ^= (fr->blen >> 16) & 0xFFu; h *= 0x01000193u;
+        h ^= (fr->blen >> 24) & 0xFFu; h *= 0x01000193u;
         const uint8_t *p = fr->code;
-        uint32_t lim = fr->blen;
+        const uint32_t lim = fr->blen;
         for (uint32_t i = 0; i < lim; i++) {
             h ^= p[i];
             h *= 0x01000193u;

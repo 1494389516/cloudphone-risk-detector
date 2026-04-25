@@ -474,6 +474,20 @@ uint64_t cprisk_get_string_integrity_accumulator(void) {
     return s_str_acc;
 }
 
+/*
+ * Threat model for the lazy cache: callers in the hot path (e.g. risk
+ * scoring) decrypt the same string ID hundreds of times per session. The
+ * cache trades a measurable timing oracle (cache hit ≈ memcpy, cache miss
+ * ≈ full SHA256-keyed decrypt) for ~1000× throughput. The strings stored
+ * here are non-cryptographic (format strings, log labels, error
+ * messages) — knowing *which* string was last accessed leaks far less
+ * than the existing syscall/file-access trace.
+ *
+ * Do NOT use this entry point for decrypting key material or other
+ * data whose access pattern must be constant-time; use
+ * `cprisk_decrypt_string` directly for that, which performs a full
+ * decrypt on every call.
+ */
 int cprisk_decrypt_string_lazy(uint32_t string_id, char *buffer, size_t buffer_size) {
     if (!buffer || buffer_size == 0)
         return -1;
