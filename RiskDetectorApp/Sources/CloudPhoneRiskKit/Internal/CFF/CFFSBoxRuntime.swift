@@ -17,15 +17,25 @@ private struct CFFSplitMix64: RandomNumberGenerator {
         z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
         return z ^ (z >> 31)
     }
+
+    /// Rejection-sampled uniform draw from `[0, bound)`.
+    /// Must match the same algorithm in `CFFSBoxPermutation.swift` and `cprisk_cff.c`.
+    mutating func unbiased(below bound: UInt64) -> UInt64 {
+        precondition(bound > 0, "unbiased(below:) requires positive bound")
+        let threshold = (UInt64(0) &- bound) % bound
+        var r: UInt64
+        repeat { r = next() } while r < threshold
+        return r % bound
+    }
 }
 
 private enum CFFSBoxPermutation256 {
     static func generate(seed: UInt64) -> [UInt8] {
         var a = Array(0..<256).map { UInt8(truncatingIfNeeded: $0) }
-        var g = CFFSplitMix64(seed: seed == 0 ? 1 : seed)
+        var g = CFFSplitMix64(seed: seed)
         var i = 255
         while i > 0 {
-            let j = Int(g.next() % UInt64(i + 1))
+            let j = Int(g.unbiased(below: UInt64(i + 1)))
             a.swapAt(i, j)
             i -= 1
         }

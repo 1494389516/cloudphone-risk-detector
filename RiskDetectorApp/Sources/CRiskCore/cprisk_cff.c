@@ -9,6 +9,14 @@
 #include <unistd.h>
 #include <mach-o/dyld.h>
 
+/*
+ * `cprisk_cff_thread_fingerprint` memcpy's a `pthread_t` into a 128-byte
+ * scratch buffer. On Apple targets `pthread_t` is an opaque pointer (8 bytes
+ * on arm64/x86_64) — well below the buffer size — but compile-time-assert it
+ * to catch future toolchain changes loudly instead of corrupting the stack.
+ */
+_Static_assert(sizeof(pthread_t) <= 128, "pthread_t exceeds FNV scratch buffer");
+
 static uint32_t cprisk_cff_rotate_left32(uint32_t value, uint32_t shift) {
     const uint32_t amount = shift & 31u;
     if (amount == 0u) {
@@ -297,10 +305,13 @@ static uint8_t cprisk_cff_normalize_mba_layers(uint32_t seed, uint8_t requested)
     if (requested == 1u) {
         return 1u;
     }
-    /* 0 or unset: auto 2..5 */
+    /*
+     * 0 (unset) or out-of-range (>= 9): auto-pick uniformly from {2,3,4,5}.
+     * Use `& 3u` to extract two bits (no modulo bias) instead of `% 4u`.
+     */
     return (uint8_t)(2u + (cprisk_cff_avalanche32(
         seed ^ cprisk_cff_derive_const32(0x4346465F4D424134ull, seed, requested, 0x51ED270Bu)
-    ) % 4u));
+    ) & 3u));
 }
 
 static uint8_t cprisk_cff_resolve_dispatch_style_u8(uint32_t seed, uint8_t requested) {
@@ -320,13 +331,29 @@ static uint8_t cprisk_cff_resolve_dispatch_style_u8(uint32_t seed, uint8_t reque
         : (uint8_t)CPRISK_CFF_DISPATCH_DIRECT;
 }
 
+/*
+ * Newton–Raphson modular inverse mod 2^32. Convergence is quadratic, doubling
+ * the number of correct low-order bits each step. Starting from `odd_value`
+ * (which is correct in the lowest bit), 6 iterations guarantee >= 64 correct
+ * bits — saturated within the 32-bit width with margin.
+ *
+ * Precondition: `odd_value` is odd. If even, the modular inverse does not
+ * exist mod 2^32 and the iteration silently produces garbage; callers must
+ * ensure oddness (see `cprisk_cff_affine_multiplier` / `_odd` helpers which
+ * force the low bit set).
+ */
 static uint32_t cprisk_cff_mod_inverse_odd32(uint32_t odd_value) {
-    uint32_t inverse = odd_value;
-    inverse *= 2u - odd_value * inverse;
-    inverse *= 2u - odd_value * inverse;
-    inverse *= 2u - odd_value * inverse;
-    inverse *= 2u - odd_value * inverse;
-    inverse *= 2u - odd_value * inverse;
+    /* Defense in depth: force the low bit to avoid silent corruption if a
+     * caller miswires this. The cost is one OR; semantics for already-odd
+     * inputs are unchanged. */
+    const uint32_t v = odd_value | 1u;
+    uint32_t inverse = v;
+    inverse *= 2u - v * inverse;
+    inverse *= 2u - v * inverse;
+    inverse *= 2u - v * inverse;
+    inverse *= 2u - v * inverse;
+    inverse *= 2u - v * inverse;
+    inverse *= 2u - v * inverse;
     return inverse;
 }
 
@@ -355,12 +382,36 @@ static uint64_t cprisk_cff_split_mix64_next(cprisk_cff_split_mix64_t *rng) {
     return z ^ (z >> 31);
 }
 
-static int cprisk_cff_spn_is_bijection_u8(const uint8_t table[256]) {
-    uint8_t seen[256];
-    size_t i = 0u;
+/*
+ * Rejection-sampled uniform draw from [0, bound). Removes modulo bias when
+ * `bound` does not divide 2^64. Threshold = 2^64 mod bound, computed as
+ * `((uint64_t)0 - bound) % bound` (defined unsigned wrap). For bound <= 256
+ * the rejection probability is at most 256/2^64 (≈ 0), but the distribution
+ * is mathematically uniform.
+ *
+ * Cross-language contract: identical algorithm in
+ * `cprisk-armor/.../CFFSBoxPermutation.swift` and
+ * `CloudPhoneRiskKit/.../CFFSBoxRuntime.swift`.
+ */
+static uint64_t cprisk_cff_split_mix64_unbiased(cprisk_cff_split_mix64_t *rng, uint64_t bound) {
+    if (bound == 0u) {
+        return 0u;
+    }
+    const uint64_t threshold = ((uint64_t)0 - bound) % bound;
+    uint64_t r;
+    do {
+        r = cprisk_cff_split_mix64_next(rng);
+    } while (r < threshold);
+    return r % bound;
+}
 
+static int cprisk_cff_spn_is_bijection_sized_u8(const uint8_t *table, size_t len) {
+    if (table == NULL || len != 256u) {
+        return 0;
+    }
+    uint8_t seen[256];
     memset(seen, 0, sizeof(seen));
-    for (i = 0u; i < 256u; ++i) {
+    for (size_t i = 0u; i < 256u; ++i) {
         const uint8_t v = table[i];
         if (seen[v] != 0u) {
             return 0;
@@ -370,22 +421,21 @@ static int cprisk_cff_spn_is_bijection_u8(const uint8_t table[256]) {
     return 1;
 }
 
+static int cprisk_cff_spn_is_bijection_u8(const uint8_t table[256]) {
+    return cprisk_cff_spn_is_bijection_sized_u8(table, 256u);
+}
+
 static void cprisk_cff_spn_sbox_build_from_seed(uint64_t seed) {
     cprisk_cff_split_mix64_t rng;
-    int i;
-
     cprisk_cff_split_mix64_init(&rng, seed);
-    for (i = 0; i < 256; ++i) {
+    for (size_t i = 0u; i < 256u; ++i) {
         g_cff_spn_sbox_fwd[i] = (uint8_t)i;
     }
-    i = 255;
-    while (i > 0) {
-        const uint64_t r = cprisk_cff_split_mix64_next(&rng);
-        const int j = (int)(r % (uint64_t)(i + 1));
+    for (size_t i = 255u; i > 0u; --i) {
+        const uint64_t j = cprisk_cff_split_mix64_unbiased(&rng, (uint64_t)(i + 1u));
         const uint8_t tmp = g_cff_spn_sbox_fwd[i];
-        g_cff_spn_sbox_fwd[i] = g_cff_spn_sbox_fwd[j];
-        g_cff_spn_sbox_fwd[j] = tmp;
-        i--;
+        g_cff_spn_sbox_fwd[i] = g_cff_spn_sbox_fwd[(size_t)j];
+        g_cff_spn_sbox_fwd[(size_t)j] = tmp;
     }
 }
 
@@ -478,8 +528,15 @@ void cprisk_cff_spn_sbox_install_from_bytes(const uint8_t forward256[256]) {
     if (forward256 == NULL) {
         return;
     }
+    /*
+     * Refuse non-bijective input. Previously this fell back to canonical seed,
+     * which let an attacker who could call this API force a downgrade from a
+     * per-build randomized table to the static canonical permutation. Now we
+     * leave whatever table is currently installed; the next consumer that hits
+     * `cprisk_cff_spn_sbox_ensure()` triggers the per-build init via
+     * `cprisk_cff_resolve_runtime_spn_seed_i()`.
+     */
     if (cprisk_cff_spn_is_bijection_u8(forward256) == 0) {
-        cprisk_cff_spn_sbox_install_from_seed(CPRISK_CFF_SPN_CANONICAL_SEED_U64);
         return;
     }
     atomic_store(&g_cff_spn_sbox_custom, 1u);
@@ -553,6 +610,15 @@ static uint16_t cprisk_cff_shadow_noise16(uint16_t r, uint32_t rk, uint32_t salt
     return (uint16_t)((shadow ^ sink ^ (shadow >> 16u)) & 0xFFFFu);
 }
 
+/*
+ * 8-round Feistel network. This is a state-encoding primitive for CFF
+ * dispatcher obfuscation, not a data-confidentiality cipher: the round
+ * function combines an avalanche permutation, a SplitMix64-derived 256-byte
+ * S-box (forward-only — Feistel inversion does not need an inverse table),
+ * and double SPN substitution. 8 rounds yields full byte-level diffusion
+ * with margin for this attack model (no chosen-plaintext oracle); higher
+ * round counts only add latency on a hot dispatcher path.
+ */
 #define CPRISK_CFF_FEISTEL_ROUNDS 8u
 
 static uint16_t cprisk_cff_feistel_F(uint16_t r, uint32_t k, uint32_t salt, uint32_t round) {
