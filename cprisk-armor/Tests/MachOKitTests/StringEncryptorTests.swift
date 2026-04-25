@@ -192,8 +192,17 @@ final class StringEncryptorTests: XCTestCase {
             let encrypted = content.subdata(
                 in: (dataBase + dataOffset)..<(dataBase + dataOffset + dataLength)
             )
+
+            // Mirror the per-string KDF added in the encryption pass (WB#4 fix):
+            //   perStringKey = HMAC(stringKey, "cprisk.str.key.v1" || sid_le4 || nonce)
+            var pskMat = Data("cprisk.str.key.v1".utf8)
+            var sidLE = stringID.littleEndian
+            withUnsafeBytes(of: &sidLE) { pskMat.append(contentsOf: $0) }
+            pskMat.append(nonce)
+            let perStringKey = ArmorABI.hmacSHA256(key: stringKey, message: pskMat)
+
             let keystream = buildKeystreamForRecord(
-                key: stringKey,
+                key: perStringKey,
                 stringID: stringID,
                 nonce: nonce,
                 length: dataLength,
