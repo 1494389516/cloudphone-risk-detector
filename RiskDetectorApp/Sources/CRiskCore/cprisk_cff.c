@@ -10,6 +10,17 @@
 #include <mach-o/dyld.h>
 
 /*
+ * OS entropy hook used by `cprisk_cff_default_seed`. `getentropy(2)` is
+ * available on Apple (since iOS 10 / macOS 10.12) and on glibc 2.25+ /
+ * musl 1.1.20+, which covers every platform we build for. When unavailable
+ * the call returns -1 and `default_seed` falls back to its prior mix.
+ */
+#if defined(__APPLE__) || defined(__linux__)
+#include <sys/random.h>
+#define CPRISK_CFF_HAVE_GETENTROPY 1
+#endif
+
+/*
  * `cprisk_cff_thread_fingerprint` memcpy's a `pthread_t` into a 128-byte
  * scratch buffer. On Apple targets `pthread_t` is an opaque pointer (8 bytes
  * on arm64/x86_64) — well below the buffer size — but compile-time-assert it
@@ -567,6 +578,10 @@ static uint8_t cprisk_cff_spn_sbox_byte(uint8_t idx) {
     return g_cff_spn_sbox_fwd[idx];
 }
 
+uint8_t cprisk_cff_spn_sbox_lookup(uint8_t idx) {
+    return cprisk_cff_spn_sbox_byte(idx);
+}
+
 static uint16_t cprisk_cff_shadow_noise16(uint16_t r, uint32_t rk, uint32_t salt, uint32_t round) {
     volatile uint32_t sink = ((uint32_t)r << 16u) | (uint32_t)r;
     const uint32_t round_mul = cprisk_cff_derive_const32_odd(
@@ -961,6 +976,33 @@ static uint32_t cprisk_cff_default_seed(void) {
     seed ^= (uint32_t)(monotonic_ns >> 29u);
     seed ^= (uint32_t)fn_addr_mix;
     seed ^= (uint32_t)(fn_addr_mix >> 32u);
+
+    /*
+     * Mix in 8 bytes of OS entropy when available. The previous derivation
+     * was deterministic given fixed pid/tid/clock state (e.g. forensic
+     * replay, low-jitter test harnesses), which let an attacker narrow the
+     * seed search space. `getentropy` is a one-shot CSPRNG read; we fold it
+     * into the existing avalanche so any failure simply degrades to the
+     * legacy mix instead of zeroing entropy.
+     */
+#ifdef CPRISK_CFF_HAVE_GETENTROPY
+    {
+        uint8_t os_rand[8];
+        if (getentropy(os_rand, sizeof(os_rand)) == 0) {
+            const uint32_t lo = ((uint32_t)os_rand[0]) |
+                                ((uint32_t)os_rand[1] << 8) |
+                                ((uint32_t)os_rand[2] << 16) |
+                                ((uint32_t)os_rand[3] << 24);
+            const uint32_t hi = ((uint32_t)os_rand[4]) |
+                                ((uint32_t)os_rand[5] << 8) |
+                                ((uint32_t)os_rand[6] << 16) |
+                                ((uint32_t)os_rand[7] << 24);
+            seed ^= lo ^ cprisk_cff_rotate_left32(hi, 13u);
+        }
+        cprisk_secure_zero(os_rand, sizeof(os_rand));
+    }
+#endif
+
     seed = cprisk_cff_avalanche32(seed ^ cprisk_cff_tls_mix_derive_base_u32());
     return seed == 0u ? 1u : seed;
 }
@@ -990,6 +1032,13 @@ static uint32_t cprisk_cff_encode_state_with_style_impl(
     cprisk_cff_codec_style_t style,
     uint8_t mba_layers
 ) {
+    /*
+     * AUTO is normally resolved to a concrete style by `cprisk_cff_resolve_style`
+     * during `cprisk_cff_init`. If a caller passes AUTO directly to
+     * `cprisk_cff_encode_state_with_style` the explicit `case AUTO` here keeps
+     * the contract documented: AUTO ≡ FEISTEL_SPN at the codec layer. Decode
+     * mirrors the same fall-through.
+     */
     switch (style) {
         case CPRISK_CFF_CODEC_STYLE_FEISTEL_SPN:
         case CPRISK_CFF_CODEC_STYLE_AUTO:
@@ -1247,6 +1296,24 @@ void cprisk_cff_init(cprisk_cff_context_t *context, const cprisk_cff_config_t *c
     }
 
     memset(context, 0, sizeof(*context));
+    /*
+     * Init ordering invariant (do not reorder without re-deriving):
+     *
+     *   1. `storage_nonce` is set BEFORE any setter that resolves
+     *      `cprisk_cff_ctx_nonce_plain()` (i.e. `set_chain_plain_i`,
+     *      `set_last_plain_i`, `set_entry_guard_plain_i`, and the
+     *      `seed`/`runtime_salt`/`encoded_state` masking writes below).
+     *   2. `storage_mask` derives only from `(uintptr_t)context` and
+     *      `sizeof(*context)`, so it is well-defined the moment the struct
+     *      memory exists — no dependency on any field value.
+     *   3. The `mask_*` helpers all chain through `storage_mask` and
+     *      `nonce_plain`; once both above are valid, every subsequent
+     *      setter is order-independent.
+     *
+     * Audit pass flagged a suspected cycle here; the analysis above shows
+     * the actual order is acyclic. Comment retained so future readers do
+     * not "fix" the perceived issue by reordering and breaking masking.
+     */
     {
         const uint32_t chain_plain = cprisk_cff_chain_load_i();
         const uint32_t seed_plain = cprisk_cff_mix_seed(
@@ -1605,12 +1672,15 @@ void cprisk_cff_finalize(cprisk_cff_context_t *context) {
  * used only once, driving effective cache utilisation toward zero.
  * ──────────────────────────────────────────────────────────────────────────── */
 
-#ifdef __APPLE__
+/*
+ * `_Thread_local` is C11 standard and supported by clang/gcc on every target
+ * we ship to (Apple platforms, Linux test hosts, CI). The previous non-Apple
+ * fallback to a plain `static` variable silently broke the per-thread epoch
+ * invariant under concurrent dispatcher loops on Linux test runs — two
+ * threads would collide on the same counter and the Capstone cache-busting
+ * property degenerated to round-robin. Use thread-local unconditionally.
+ */
 static _Thread_local uint32_t s_dispatch_epoch_tl = 0u;
-#else
-/* Fallback for non-Apple targets (test hosts). */
-static uint32_t s_dispatch_epoch_tl = 0u;
-#endif
 
 void cprisk_cff_rotate_dispatch_epoch(void) {
     /* Weyl sequence step: additive with an odd constant so the counter visits

@@ -502,6 +502,14 @@ void cprisk_cff_spn_sbox_install_from_bytes(const uint8_t forward256[256]);
 uint64_t cprisk_cff_runtime_spn_sbox_seed(void);
 int cprisk_cff_spn_sbox_copy_forward(uint8_t out_forward256[256]);
 
+/**
+ * Direct byte-level lookup against the runtime SPN forward S-box. Triggers lazy
+ * initialization on first call. Used by VM×CFF fusion to share the same 8-bit
+ * permutation as `cprisk_cff_encode_state` / Feistel round function — keeping
+ * the per-build randomized table consistent across both subsystems.
+ */
+uint8_t cprisk_cff_spn_sbox_lookup(uint8_t idx);
+
 /** Fake-state decoy work unit: non-semantic avalanche + env mix (watchdog ghost lane). */
 void cprisk_cff_run_fake_path_decoy(const cprisk_cff_context_t *context);
 
