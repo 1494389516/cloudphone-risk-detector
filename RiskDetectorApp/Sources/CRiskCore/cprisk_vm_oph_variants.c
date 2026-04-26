@@ -660,3 +660,70 @@ cprisk_vm_flow_t cprisk_vm_oph_select_branch_rel(cprisk_vm_interp_frame_t *fr,
     const uint32_t idx = vv_select_index(fr, logical, CPRISK_VM_OPH_N_VARIANTS_LANE);
     return variants[idx](fr, op_raw, logical, imm, pc, hvar);
 }
+
+/* ── MUL_LANE variants ────────────────────────────────────────────────────── */
+
+/* v0: canonical */
+cprisk_vm_flow_t cprisk_vm_oph_mul_lane_v0(cprisk_vm_interp_frame_t *fr,
+                                            uint8_t op_raw, uint8_t logical,
+                                            uint64_t imm, uint32_t pc, uint32_t hvar) {
+    return cprisk_vm_oph_mul_lane(fr, op_raw, logical, imm, pc, hvar);
+}
+
+/*
+ * v1: imm via add-noise-restore identity.  (imm + N) - N == imm where N is
+ * derived from runtime-opaque session state, preventing the compiler from
+ * folding the operation away.  Result identical to canonical handler.
+ */
+cprisk_vm_flow_t cprisk_vm_oph_mul_lane_v1(cprisk_vm_interp_frame_t *fr,
+                                            uint8_t op_raw, uint8_t logical,
+                                            uint64_t imm, uint32_t pc, uint32_t hvar) {
+    (void)op_raw; (void)logical;
+    const uint64_t noise   = (uint64_t)fr->session_mix ^ (uint64_t)fr->opaque_chain ^ 0x6D31u;
+    const uint64_t imm_eff = (imm + noise) - noise;   /* == imm */
+    const uint32_t route   = cprisk_vmp_avalanche32_i(
+        hvar ^ (uint32_t)fr->steps ^ fr->opaque_chain ^ fr->session_mix ^ 0x6D3u);
+    cprisk_vm_lane_apply_poly_i(fr->acc, fr->acc_lane_map[2], imm_eff,
+        (uint32_t)fr->steps, hvar, fr->semantic_family, fr->func_id, pc, route);
+    cprisk_vm_diophantine_lane_poly_sidefx_i(fr, fr->acc_lane_map[2], imm_eff, route, pc, hvar);
+    if (!cprisk_vm_enc_pc_advance_ctx_i(fr->bh, &fr->encoded_pc,
+                                         fr->vpc_a, fr->vpc_b, fr->out))
+        return CPRISK_VM_FLOW_LEAVE;
+    fr->steps += 1u;
+    return CPRISK_VM_FLOW_CONTINUE;
+}
+
+/*
+ * v2: imm via XOR-fold identity.  (imm ^ K) ^ K == imm.  Generates a different
+ * ARM64 instruction sequence (two EOR ops vs the canonical's straight pass-through)
+ * so the Capstone L1/L2 cache sees a distinct address pattern for v2 invocations.
+ */
+cprisk_vm_flow_t cprisk_vm_oph_mul_lane_v2(cprisk_vm_interp_frame_t *fr,
+                                            uint8_t op_raw, uint8_t logical,
+                                            uint64_t imm, uint32_t pc, uint32_t hvar) {
+    (void)op_raw; (void)logical;
+    const uint64_t key     = (uint64_t)fr->session_mix ^ ((uint64_t)fr->opaque_chain << 32u);
+    const uint64_t imm_eff = (imm ^ key) ^ key;   /* == imm */
+    const uint32_t route   = cprisk_vmp_avalanche32_i(
+        hvar ^ (uint32_t)fr->steps ^ fr->opaque_chain ^ fr->session_mix ^ 0x6D3u);
+    cprisk_vm_lane_apply_poly_i(fr->acc, fr->acc_lane_map[2], imm_eff,
+        (uint32_t)fr->steps, hvar, fr->semantic_family, fr->func_id, pc, route);
+    cprisk_vm_diophantine_lane_poly_sidefx_i(fr, fr->acc_lane_map[2], imm_eff, route, pc, hvar);
+    if (!cprisk_vm_enc_pc_advance_ctx_i(fr->bh, &fr->encoded_pc,
+                                         fr->vpc_a, fr->vpc_b, fr->out))
+        return CPRISK_VM_FLOW_LEAVE;
+    fr->steps += 1u;
+    return CPRISK_VM_FLOW_CONTINUE;
+}
+
+cprisk_vm_flow_t cprisk_vm_oph_select_mul_lane(cprisk_vm_interp_frame_t *fr,
+                                                uint8_t op_raw, uint8_t logical,
+                                                uint64_t imm, uint32_t pc, uint32_t hvar) {
+    static const cprisk_vm_oph_fn variants[CPRISK_VM_OPH_N_VARIANTS_LANE] = {
+        cprisk_vm_oph_mul_lane_v0,
+        cprisk_vm_oph_mul_lane_v1,
+        cprisk_vm_oph_mul_lane_v2,
+    };
+    const uint32_t idx = vv_select_index(fr, logical, CPRISK_VM_OPH_N_VARIANTS_LANE);
+    return variants[idx](fr, op_raw, logical, imm, pc, hvar);
+}

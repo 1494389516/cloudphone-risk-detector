@@ -83,7 +83,7 @@ static cprisk_vm_flow_t cprisk_vm_dispatch_lane_family_i(cprisk_vm_interp_frame_
     case CPRISK_VM_OP_SUB_LANE:
         return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x22u, cprisk_vm_oph_select_sub_lane);
     case CPRISK_VM_OP_MUL_LANE:
-        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x23u, cprisk_vm_oph_mul_lane);
+        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x23u, cprisk_vm_oph_select_mul_lane);
     case CPRISK_VM_OP_XOR_MIX:
         return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x24u, cprisk_vm_oph_select_xor_mix);
     case CPRISK_VM_OP_OR_LANE:
