@@ -245,8 +245,13 @@ components:
           description: 签名密钥标识
         signatureVersion:
           type: string
-          enum: [v1, v2a, v2d]
-          description: 签名版本
+          enum: [v1, v2, v2a, v2d, v2h, v3]
+          description: |
+            签名版本。
+            - `v2`/`v2a`/`v2d`/`v2h`: legacy 签名域 = sigVer|nonce|ts|sessionToken|reportId|keyId|fieldMappingVersion|attestationKeyId|canonicalPayload
+              ⚠️ trustLevel / attestationAssertion / reAttestationAssertion 字节内容**不在签名域内** —— 服务端必须独立验证（见下）
+            - `v3` (推荐): 签名域扩展为 sigVer|nonce|ts|sessionToken|reportId|keyId|fmv|akId|trustLevel|sha256(attestationAssertion)|sha256(reAttestationAssertion)|canonicalPayload
+              所有客户端自报字段已纳入 HMAC，服务端单一信任 envelope.signature 即可
         signature:
           type: string
           description: HMAC 签名（hex 编码）
@@ -255,13 +260,30 @@ components:
           description: 签名绑定模式
         trustLevel:
           type: string
-          description: 信任链评估等级
+          description: |
+            ⚠️ **客户端自报字段，不可独立信任** (legacy 签名版本下不在 HMAC 域内)。
+            服务端 MUST 根据 attestation 验证结果 + 自身风险模型独立计算实际 trustLevel；
+            envelope 中此字段仅作信号参考。
+            v3 签名版本下 trustLevel 已纳入 HMAC，可在签名验证通过后信任。
         attestationKeyId:
           type: string
-          description: App Attest 密钥 ID
+          description: App Attest 密钥 ID（已在所有签名版本的 HMAC 域内）
         attestationAssertion:
           type: string
-          description: App Attest assertion (Base64)
+          description: |
+            App Attest assertion (Base64)。
+            ⚠️ **服务端 MUST 独立验证此字段的密码学有效性**：
+            1. 调用 Apple App Attest 验证流程（attestationKeyId + clientDataHash=sha256(canonicalPayload)）
+            2. 验证 receipt chain 与 Team ID 一致
+            3. 检查 counter / replay
+            SDK 客户端仅做格式与一致性检查，**不在客户端验证密码学链路**。
+            若服务端仅校验 envelope HMAC 而不独立验证 assertion，等价于零硬件信任根（SHA-256("") trap）。
+            v3 签名版本下 sha256(assertion) 已纳入 HMAC，无法被签名后篡改 —— 但 Apple 链验证仍然必须做。
+        reAttestationAssertion:
+          type: string
+          description: |
+            ⚠️ Re-attestation assertion，与 attestationAssertion 同样需服务端独立 Apple 链验证。
+            必须验证 challenge 来源是否为本次会话下发，防止 assertion 重放。
         fieldMappingVersion:
           type: string
           description: 字段混淆映射版本

@@ -264,6 +264,8 @@ public struct ReportEnvelope: Codable, Sendable {
         keyId: String = "k1",
         fieldMapping: PayloadFieldMapping? = nil,
         attestationKeyId: String? = nil,
+        attestationAssertion: Data? = nil,
+        reAttestationAssertion: Data? = nil,
         trustLevel: TrustLevel? = nil,
         config: Config = Config()
     ) throws -> ReportEnvelope {
@@ -275,6 +277,8 @@ public struct ReportEnvelope: Codable, Sendable {
             keyId: keyId,
             fieldMapping: fieldMapping,
             attestationKeyId: attestationKeyId,
+            attestationAssertion: attestationAssertion,
+            reAttestationAssertion: reAttestationAssertion,
             trustLevel: trustLevel,
             config: config,
             signatureProvider: nil
@@ -289,6 +293,8 @@ public struct ReportEnvelope: Codable, Sendable {
         keyId: String = "k1",
         fieldMapping: PayloadFieldMapping? = nil,
         attestationKeyId: String? = nil,
+        attestationAssertion: Data? = nil,
+        reAttestationAssertion: Data? = nil,
         trustLevel: TrustLevel? = nil,
         config: Config = Config(),
         signatureProvider: ((Data) throws -> String)?,
@@ -331,6 +337,13 @@ public struct ReportEnvelope: Codable, Sendable {
         }
 
         let canonicalPayload = try canonicalJSONString(from: effectivePayload)
+        // For v3, the signature domain includes self-reported envelope fields
+        // (trustLevel + assertion digests).  Callers must finalise these BEFORE
+        // signing — i.e., pass the intended trustLevel here, and the assertion
+        // (if any) must be obtained from AppAttestSigner.generateAssertion()
+        // *before* calling create() so its digest can be bound into the HMAC.
+        // For v2/v2a/v2d/v2h, these arguments are ignored in the signature
+        // domain (legacy behaviour preserved).
         let signatureInput = buildSignatureInput(
             sigVer: config.signatureVersion,
             nonce: nonce,
@@ -340,7 +353,10 @@ public struct ReportEnvelope: Codable, Sendable {
             keyId: keyId,
             fieldMappingVersion: fieldMapping?.version,
             attestationKeyId: attestationKeyId,
-            canonicalPayload: canonicalPayload
+            canonicalPayload: canonicalPayload,
+            trustLevel: trustLevel,
+            attestationAssertion: attestationAssertion,
+            reAttestationAssertion: reAttestationAssertion
         )
 
         let signatureData = try signatureInputData(from: signatureInput)
@@ -377,9 +393,13 @@ public struct ReportEnvelope: Codable, Sendable {
             fieldMappingVersion: fieldMapping?.version,
             signature: signatureHex,
             attestationKeyId: attestationKeyId,
-            attestationAssertion: nil,
+            // For v3 the assertion bytes were folded into the HMAC, so the envelope
+            // emits them at signing time (callers must NOT use withAttestation()
+            // afterwards to swap them out).  For legacy versions, assertion is
+            // attached post-signing via withAttestation() as before.
+            attestationAssertion: attestationAssertion,
             trustLevel: trustLevel,
-            reAttestationAssertion: nil,
+            reAttestationAssertion: reAttestationAssertion,
             bindingMode: bindingMode ?? defaultBindingMode(signatureProviderPresent: signatureProvider != nil, sigVer: config.signatureVersion),
             bindingDigest: bindingDigest
         )
@@ -388,8 +408,19 @@ public struct ReportEnvelope: Codable, Sendable {
     /// 返回带 App Attest 断言的副本（SDK 4.4）
     /// attestationKeyId 必须在 create() 时已传入并纳入签名域，此处仅附加断言数据。
     /// 返回带 App Attest 断言的副本（SDK 4.4），trustLevel 设为 .hardware
+    ///
+    /// ⚠️ v3 (SDK 7.5+): 该路径仅适用于 v2/v2a/v2d/v2h legacy 签名版本。
+    /// v3 把 assertion 字节摘要纳入签名域，必须在 `create()` 时传入 `attestationAssertion`，
+    /// 不能在签名后通过本方法附加。若 envelope 是 v3，此处静默忽略写入并返回原值，
+    /// 防止破坏 HMAC（导致 envelope 验签失败）。
     public func withAttestation(attestationKeyId: String, assertion: Data) -> ReportEnvelope {
-        ReportEnvelope(
+        if sigVer == "v3" {
+            // v3 demands assertion bytes are in the HMAC domain at signing time;
+            // mutating them post-sign would invalidate the signature.  Caller
+            // must use create(attestationAssertion:) instead.
+            return self
+        }
+        return ReportEnvelope(
             nonce: nonce,
             ts: ts,
             sessionToken: sessionToken,
@@ -409,8 +440,14 @@ public struct ReportEnvelope: Codable, Sendable {
     }
 
     /// 设置信任等级（SDK 5.0）
+    ///
+    /// ⚠️ v3 (SDK 7.5+): trustLevel 已纳入签名域，签名后修改会破坏 HMAC。
+    /// 必须在 `create(trustLevel:)` 时传入正确值；该方法对 v3 envelope 静默 no-op。
     public func withTrustLevel(_ level: TrustLevel) -> ReportEnvelope {
-        ReportEnvelope(
+        if sigVer == "v3" {
+            return self
+        }
+        return ReportEnvelope(
             nonce: nonce,
             ts: ts,
             sessionToken: sessionToken,
@@ -430,7 +467,16 @@ public struct ReportEnvelope: Codable, Sendable {
     }
 
     /// 附加 re-attestation 断言（SDK 5.0）
+    ///
+    /// ⚠️ v3: reAttestationAssertion 已纳入签名域，需在 `create()` 时传入；v3 此方法 no-op。
     public func withReAttestationAssertion(_ assertion: Data?) -> ReportEnvelope {
+        if sigVer == "v3" {
+            return self
+        }
+        return _withReAttestationAssertionLegacy(assertion)
+    }
+
+    private func _withReAttestationAssertionLegacy(_ assertion: Data?) -> ReportEnvelope {
         ReportEnvelope(
             nonce: nonce,
             ts: ts,
@@ -532,7 +578,10 @@ public struct ReportEnvelope: Codable, Sendable {
             keyId: keyId,
             fieldMappingVersion: fieldMappingVersion,
             attestationKeyId: attestationKeyId,
-            canonicalPayload: canonicalPayload
+            canonicalPayload: canonicalPayload,
+            trustLevel: trustLevel,
+            attestationAssertion: attestationAssertion,
+            reAttestationAssertion: reAttestationAssertion
         )
         guard let signatureData = try? Self.signatureInputData(from: signatureInput) else {
             return false
@@ -613,7 +662,10 @@ public struct ReportEnvelope: Codable, Sendable {
             keyId: keyId,
             fieldMappingVersion: fieldMappingVersion,
             attestationKeyId: attestationKeyId,
-            canonicalPayload: canonicalPayload
+            canonicalPayload: canonicalPayload,
+            trustLevel: trustLevel,
+            attestationAssertion: attestationAssertion,
+            reAttestationAssertion: reAttestationAssertion
         )
         guard let signatureData = try? Self.signatureInputData(from: signatureInput) else {
             return .failure(.signatureMismatch)
@@ -703,7 +755,10 @@ public struct ReportEnvelope: Codable, Sendable {
                 keyId: keyId,
                 fieldMappingVersion: fieldMappingVersion,
                 attestationKeyId: attestationKeyId,
-                canonicalPayload: canonicalPayload
+                canonicalPayload: canonicalPayload,
+                trustLevel: trustLevel,
+                attestationAssertion: attestationAssertion,
+                reAttestationAssertion: reAttestationAssertion
             )
             signatureInputDigestHex = Self.sha256Hex(Data(signatureInput.utf8))
         } else {
@@ -765,7 +820,10 @@ public struct ReportEnvelope: Codable, Sendable {
             keyId: keyId,
             fieldMappingVersion: fieldMappingVersion,
             attestationKeyId: attestationKeyId,
-            canonicalPayload: canonicalPayload
+            canonicalPayload: canonicalPayload,
+            trustLevel: trustLevel,
+            attestationAssertion: attestationAssertion,
+            reAttestationAssertion: reAttestationAssertion
         )
         guard let signatureData = try? Self.signatureInputData(from: signatureInput) else {
             return MaterialBindingObservation(
@@ -781,6 +839,7 @@ public struct ReportEnvelope: Codable, Sendable {
     }
 
     /// v2 签名输入：sigVer|nonce|ts|sessionToken|reportId|keyId|fieldMappingVersion|attestationKeyId|canonicalPayload
+    /// v3 签名输入：v2 字段 + trustLevel + sha256(attestationAssertion) + sha256(reAttestationAssertion)
     /// canonicalPayload 为 payload 的规范 JSON，已包含 compressedDigestHex、signalMappingVersion 等字段，故压缩摘要已纳入签名域。
     private static func buildSignatureInput(
         sigVer: String,
@@ -791,10 +850,23 @@ public struct ReportEnvelope: Codable, Sendable {
         keyId: String,
         fieldMappingVersion: String?,
         attestationKeyId: String?,
-        canonicalPayload: String
+        canonicalPayload: String,
+        trustLevel: TrustLevel? = nil,
+        attestationAssertion: Data? = nil,
+        reAttestationAssertion: Data? = nil
     ) -> String {
         let fmv = fieldMappingVersion ?? ""
         let akId = attestationKeyId ?? ""
+        // v3 binds previously-unsigned envelope fields (trustLevel + assertion bytes)
+        // into the HMAC domain so an attacker holding the signing key cannot tamper
+        // these self-reported fields after signing without breaking the signature.
+        // See SHA-256("") trap analysis: any field NOT in this domain is forgeable.
+        if sigVer == "v3" {
+            let tl = trustLevel?.rawValue ?? ""
+            let aaHex = attestationAssertion.map { sha256Hex($0) } ?? ""
+            let raHex = reAttestationAssertion.map { sha256Hex($0) } ?? ""
+            return "\(sigVer)|\(nonce)|\(ts)|\(sessionToken)|\(reportId)|\(keyId)|\(fmv)|\(akId)|\(tl)|\(aaHex)|\(raHex)|\(canonicalPayload)"
+        }
         return "\(sigVer)|\(nonce)|\(ts)|\(sessionToken)|\(reportId)|\(keyId)|\(fmv)|\(akId)|\(canonicalPayload)"
     }
 
@@ -842,7 +914,11 @@ public struct ReportEnvelope: Codable, Sendable {
 
     private static func defaultBindingMode(signatureProviderPresent: Bool, sigVer: String = "v2h") -> String {
         if signatureProviderPresent { return "external_signature_provider_v1" }
-        return sigVer == "v2h" ? "hkdf_hmac_v1" : "plain_hmac_v1"
+        switch sigVer {
+        case "v3":   return "self_reported_fields_bound_v3"
+        case "v2h":  return "hkdf_hmac_v1"
+        default:     return "plain_hmac_v1"
+        }
     }
 
     private static func bindingDigestHex(for signatureInputData: Data) -> String {
@@ -863,6 +939,8 @@ public struct ReportEnvelope: Codable, Sendable {
             return sigVer == "v2d"
         case "armor_request_binding_sha256_v1":
             return sigVer == "v2a"
+        case "self_reported_fields_bound_v3":
+            return sigVer == "v3"
         case "external_signature_provider_v1":
             return true
         default:
