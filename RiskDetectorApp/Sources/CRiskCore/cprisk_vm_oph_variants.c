@@ -134,7 +134,7 @@ cprisk_vm_flow_t cprisk_vm_oph_nop_v2(cprisk_vm_interp_frame_t *fr,
                                        uint64_t imm,
                                        uint32_t pc,
                                        uint32_t hvar) {
-    (void)op_raw; (void)logical; (void)imm;
+    (void)op_raw; (void)logical; (void)imm; (void)pc;
     const uint32_t delta = vv_avalanche32(hvar ^ (uint32_t)fr->steps ^ 0x4E4F5076u);
     fr->opaque_chain += delta;
     fr->opaque_chain -= delta;   /* net zero */
@@ -233,7 +233,7 @@ cprisk_vm_flow_t cprisk_vm_oph_add_v1(cprisk_vm_interp_frame_t *fr,
                                        uint64_t imm,
                                        uint32_t pc,
                                        uint32_t hvar) {
-    (void)op_raw;
+    (void)op_raw; (void)logical;
     /* Transform imm through negate-negate identity before passing to the
      * canonical poly helper so the immediate value arrives via a different
      * code path (different ARM64 encoding) but is semantically unchanged. */
@@ -243,11 +243,11 @@ cprisk_vm_flow_t cprisk_vm_oph_add_v1(cprisk_vm_interp_frame_t *fr,
         hvar ^ (uint32_t)fr->steps ^ fr->opaque_chain ^ fr->session_mix ^ 0xADD1u
     );
     cprisk_vm_lane_apply_poly_i(
-        fr->acc, 0u, recovered_imm,
+        fr->acc, fr->acc_lane_map[0], recovered_imm,
         (uint32_t)fr->steps, hvar,
         fr->semantic_family, fr->func_id, pc, route
     );
-    cprisk_vm_diophantine_lane_poly_sidefx_i(fr, 0u, recovered_imm, route, pc, hvar);
+    cprisk_vm_diophantine_lane_poly_sidefx_i(fr, fr->acc_lane_map[0], recovered_imm, route, pc, hvar);
     if (!cprisk_vm_enc_pc_advance_ctx_i(fr->bh, &fr->encoded_pc, fr->vpc_a, fr->vpc_b, fr->out))
         return CPRISK_VM_FLOW_LEAVE;
     fr->steps += 1u;
@@ -267,7 +267,7 @@ cprisk_vm_flow_t cprisk_vm_oph_add_v2(cprisk_vm_interp_frame_t *fr,
                                        uint64_t imm,
                                        uint32_t pc,
                                        uint32_t hvar) {
-    (void)op_raw;
+    (void)op_raw; (void)logical;
     const uint64_t K = (uint64_t)vv_avalanche32(fr->session_mix ^ hvar ^ 0xADD2u);
     const uint64_t imm_plus_K  = imm + K;
     const uint64_t route64 = (uint64_t)cprisk_vmp_avalanche32_i(
@@ -277,18 +277,18 @@ cprisk_vm_flow_t cprisk_vm_oph_add_v2(cprisk_vm_interp_frame_t *fr,
 
     /* Step 1: add (imm + K) */
     cprisk_vm_lane_apply_poly_i(
-        fr->acc, 0u, imm_plus_K,
+        fr->acc, fr->acc_lane_map[0], imm_plus_K,
         (uint32_t)fr->steps, hvar,
         fr->semantic_family, fr->func_id, pc, route
     );
     /* Step 2: subtract K to cancel — net result is acc += imm */
     cprisk_vm_lane_apply_poly_i(
-        fr->acc, 0u, K,
+        fr->acc, fr->acc_lane_map[0], K,
         (uint32_t)fr->steps, hvar ^ 0xFFFFFFFFu,
         fr->semantic_family ^ 0xFFu, fr->func_id ^ 0xFFFFFFFFFFFFFFFFULL, pc ^ 0xFFFFFFFFu,
         route ^ 0xFFFFFFFFu
     );
-    cprisk_vm_diophantine_lane_poly_sidefx_i(fr, 0u, imm, route, pc, hvar);
+    cprisk_vm_diophantine_lane_poly_sidefx_i(fr, fr->acc_lane_map[0], imm, route, pc, hvar);
     if (!cprisk_vm_enc_pc_advance_ctx_i(fr->bh, &fr->encoded_pc, fr->vpc_a, fr->vpc_b, fr->out))
         return CPRISK_VM_FLOW_LEAVE;
     fr->steps += 1u;
@@ -371,7 +371,7 @@ cprisk_vm_flow_t cprisk_vm_oph_or_lane_v0(cprisk_vm_interp_frame_t *fr,
 cprisk_vm_flow_t cprisk_vm_oph_or_lane_v1(cprisk_vm_interp_frame_t *fr,
                                            uint8_t op_raw, uint8_t logical,
                                            uint64_t imm, uint32_t pc, uint32_t hvar) {
-    (void)op_raw;
+    (void)op_raw; (void)pc;
     const uint32_t a = hvar ^ fr->opaque_chain;
     const uint32_t b = fr->session_mix ^ 0x0F0Fu;
     const uint32_t route = cprisk_vmp_avalanche32_i(a ^ b);
@@ -392,7 +392,7 @@ cprisk_vm_flow_t cprisk_vm_oph_or_lane_v1(cprisk_vm_interp_frame_t *fr,
 cprisk_vm_flow_t cprisk_vm_oph_or_lane_v2(cprisk_vm_interp_frame_t *fr,
                                            uint8_t op_raw, uint8_t logical,
                                            uint64_t imm, uint32_t pc, uint32_t hvar) {
-    (void)op_raw;
+    (void)op_raw; (void)pc;
     const uint32_t raw = hvar ^ fr->opaque_chain ^ fr->session_mix ^ 0x0F0Fu;
     const uint32_t route = cprisk_vmp_avalanche32_i(~(~raw));   /* ~(~x) == x */
     cprisk_vm_bitwise_lane_poly_i(
@@ -418,7 +418,7 @@ cprisk_vm_flow_t cprisk_vm_oph_and_lane_v0(cprisk_vm_interp_frame_t *fr,
 cprisk_vm_flow_t cprisk_vm_oph_and_lane_v1(cprisk_vm_interp_frame_t *fr,
                                             uint8_t op_raw, uint8_t logical,
                                             uint64_t imm, uint32_t pc, uint32_t hvar) {
-    (void)op_raw;
+    (void)op_raw; (void)pc;
     /* (x << 1 >> 1) kills the MSB, but we XOR it back immediately → net identity */
     const uint32_t base = hvar ^ fr->opaque_chain ^ fr->session_mix ^ 0xF0F0u;
     const uint32_t fold = ((base << 1u) >> 1u) ^ (base & 0x80000000u);
@@ -437,7 +437,7 @@ cprisk_vm_flow_t cprisk_vm_oph_and_lane_v1(cprisk_vm_interp_frame_t *fr,
 cprisk_vm_flow_t cprisk_vm_oph_and_lane_v2(cprisk_vm_interp_frame_t *fr,
                                             uint8_t op_raw, uint8_t logical,
                                             uint64_t imm, uint32_t pc, uint32_t hvar) {
-    (void)op_raw;
+    (void)op_raw; (void)pc;
     const uint32_t k = fr->opaque_chain ^ 0xF0F0u;
     /* (x + k - k) == x, but prevents constant folding since k is runtime. */
     const uint32_t base = (hvar ^ fr->session_mix) + k - k;
@@ -474,9 +474,9 @@ cprisk_vm_flow_t cprisk_vm_oph_sub_lane_v1(cprisk_vm_interp_frame_t *fr,
     const uint64_t imm_eff = (imm + noise) - noise;   /* == imm */
     const uint32_t route   = cprisk_vmp_avalanche32_i(
         hvar ^ (uint32_t)fr->steps ^ fr->opaque_chain ^ fr->session_mix ^ 0x5B2u);
-    cprisk_vm_lane_apply_poly_i(fr->acc, 1u, imm_eff,
+    cprisk_vm_lane_apply_poly_i(fr->acc, fr->acc_lane_map[1], imm_eff,
         (uint32_t)fr->steps, hvar, fr->semantic_family, fr->func_id, pc, route);
-    cprisk_vm_diophantine_lane_poly_sidefx_i(fr, 1u, imm_eff, route, pc, hvar);
+    cprisk_vm_diophantine_lane_poly_sidefx_i(fr, fr->acc_lane_map[1], imm_eff, route, pc, hvar);
     if (!cprisk_vm_enc_pc_advance_ctx_i(fr->bh, &fr->encoded_pc,
                                          fr->vpc_a, fr->vpc_b, fr->out))
         return CPRISK_VM_FLOW_LEAVE;
@@ -496,9 +496,9 @@ cprisk_vm_flow_t cprisk_vm_oph_sub_lane_v2(cprisk_vm_interp_frame_t *fr,
     const uint64_t imm_eff = (~neg1) + 1u;             /* -(-imm) == imm */
     const uint32_t route   = cprisk_vmp_avalanche32_i(
         hvar ^ (uint32_t)fr->steps ^ fr->opaque_chain ^ fr->session_mix ^ 0x5B2u);
-    cprisk_vm_lane_apply_poly_i(fr->acc, 1u, imm_eff,
+    cprisk_vm_lane_apply_poly_i(fr->acc, fr->acc_lane_map[1], imm_eff,
         (uint32_t)fr->steps, hvar, fr->semantic_family, fr->func_id, pc, route);
-    cprisk_vm_diophantine_lane_poly_sidefx_i(fr, 1u, imm_eff, route, pc, hvar);
+    cprisk_vm_diophantine_lane_poly_sidefx_i(fr, fr->acc_lane_map[1], imm_eff, route, pc, hvar);
     if (!cprisk_vm_enc_pc_advance_ctx_i(fr->bh, &fr->encoded_pc,
                                          fr->vpc_a, fr->vpc_b, fr->out))
         return CPRISK_VM_FLOW_LEAVE;
@@ -523,7 +523,7 @@ cprisk_vm_flow_t cprisk_vm_oph_rol_acc_v0(cprisk_vm_interp_frame_t *fr,
 cprisk_vm_flow_t cprisk_vm_oph_rol_acc_v1(cprisk_vm_interp_frame_t *fr,
                                            uint8_t op_raw, uint8_t logical,
                                            uint64_t imm, uint32_t pc, uint32_t hvar) {
-    (void)op_raw; (void)logical; (void)hvar;
+    (void)op_raw; (void)logical; (void)pc; (void)hvar;
     const uint64_t s       = (uint64_t)fr->session_mix;
     const uint64_t rot_imm = (imm + s) - s;   /* == imm, runtime-opaque to compiler */
     cprisk_vm_rol_acc_i(fr->acc, rot_imm);
@@ -541,7 +541,7 @@ cprisk_vm_flow_t cprisk_vm_oph_rol_acc_v1(cprisk_vm_interp_frame_t *fr,
 cprisk_vm_flow_t cprisk_vm_oph_rol_acc_v2(cprisk_vm_interp_frame_t *fr,
                                            uint8_t op_raw, uint8_t logical,
                                            uint64_t imm, uint32_t pc, uint32_t hvar) {
-    (void)op_raw; (void)logical; (void)hvar;
+    (void)op_raw; (void)logical; (void)pc; (void)hvar;
     const uint64_t neg     = (~imm) + 1u;
     const uint64_t rot_imm = (~neg)  + 1u;   /* -(-imm) == imm */
     cprisk_vm_rol_acc_i(fr->acc, rot_imm);
