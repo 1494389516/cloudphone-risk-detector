@@ -44,7 +44,7 @@
 extern "C" {
 #endif
 
-#define CPRISK_VM_DEAD_HANDLER_COUNT 16u
+#define CPRISK_VM_DEAD_HANDLER_COUNT 32u
 
 /*
  * Touch the dead handler table and fold all function-pointer addresses into

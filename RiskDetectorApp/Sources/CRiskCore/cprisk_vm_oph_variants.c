@@ -727,3 +727,51 @@ cprisk_vm_flow_t cprisk_vm_oph_select_mul_lane(cprisk_vm_interp_frame_t *fr,
     const uint32_t idx = vv_select_index(fr, logical, CPRISK_VM_OPH_N_VARIANTS_LANE);
     return variants[idx](fr, op_raw, logical, imm, pc, hvar);
 }
+
+/* ── BRANCH_COND variants ─────────────────────────────────────────────────── */
+
+/*
+ * cprisk_vm_branch_cond_mixed_eval_i takes uint32_t insn = (uint32_t)imm.  The
+ * predicate result depends on (insn, fr->acc, fr->steps, semantic_family,
+ * mixed_predicate_profile) — none of which we modify.  The variants only
+ * transform imm through low-32-bit identity operations before the eval call.
+ */
+
+/* v0: canonical */
+cprisk_vm_flow_t cprisk_vm_oph_branch_cond_v0(cprisk_vm_interp_frame_t *fr,
+                                               uint8_t op_raw, uint8_t logical,
+                                               uint64_t imm, uint32_t pc, uint32_t hvar) {
+    return cprisk_vm_oph_branch_cond(fr, op_raw, logical, imm, pc, hvar);
+}
+
+/* v1: imm via add-noise-restore identity, applied to the low 32 bits. */
+cprisk_vm_flow_t cprisk_vm_oph_branch_cond_v1(cprisk_vm_interp_frame_t *fr,
+                                               uint8_t op_raw, uint8_t logical,
+                                               uint64_t imm, uint32_t pc, uint32_t hvar) {
+    const uint32_t noise   = fr->session_mix ^ fr->opaque_chain ^ 0xBC11u;
+    const uint32_t lo_eff  = ((uint32_t)imm + noise) - noise;   /* == low32(imm) */
+    const uint64_t imm_eff = (imm & 0xFFFFFFFF00000000ULL) | (uint64_t)lo_eff;
+    return cprisk_vm_oph_branch_cond(fr, op_raw, logical, imm_eff, pc, hvar);
+}
+
+/* v2: imm via XOR-fold identity on low 32 bits — different ARM64 EOR sequence. */
+cprisk_vm_flow_t cprisk_vm_oph_branch_cond_v2(cprisk_vm_interp_frame_t *fr,
+                                               uint8_t op_raw, uint8_t logical,
+                                               uint64_t imm, uint32_t pc, uint32_t hvar) {
+    const uint32_t key     = fr->session_mix ^ (fr->opaque_chain << 7u) ^ 0xBC22u;
+    const uint32_t lo_eff  = ((uint32_t)imm ^ key) ^ key;       /* == low32(imm) */
+    const uint64_t imm_eff = (imm & 0xFFFFFFFF00000000ULL) | (uint64_t)lo_eff;
+    return cprisk_vm_oph_branch_cond(fr, op_raw, logical, imm_eff, pc, hvar);
+}
+
+cprisk_vm_flow_t cprisk_vm_oph_select_branch_cond(cprisk_vm_interp_frame_t *fr,
+                                                   uint8_t op_raw, uint8_t logical,
+                                                   uint64_t imm, uint32_t pc, uint32_t hvar) {
+    static const cprisk_vm_oph_fn variants[CPRISK_VM_OPH_N_VARIANTS_LANE] = {
+        cprisk_vm_oph_branch_cond_v0,
+        cprisk_vm_oph_branch_cond_v1,
+        cprisk_vm_oph_branch_cond_v2,
+    };
+    const uint32_t idx = vv_select_index(fr, logical, CPRISK_VM_OPH_N_VARIANTS_LANE);
+    return variants[idx](fr, op_raw, logical, imm, pc, hvar);
+}

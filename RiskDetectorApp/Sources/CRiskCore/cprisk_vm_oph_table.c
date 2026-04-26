@@ -109,7 +109,7 @@ static cprisk_vm_flow_t cprisk_vm_dispatch_branch_family_i(cprisk_vm_interp_fram
     case CPRISK_VM_OP_BRANCH_IND:
         return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x35u, cprisk_vm_oph_branch_ind);
     case CPRISK_VM_OP_BRANCH_COND:
-        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x32u, cprisk_vm_oph_branch_cond);
+        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x32u, cprisk_vm_oph_select_branch_cond);
     case CPRISK_VM_OP_CALL:
         return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x33u, cprisk_vm_oph_call);
     default:

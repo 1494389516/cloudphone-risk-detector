@@ -52,6 +52,12 @@ cprisk_vm_flow_t cprisk_vm_oph_mul_lane_v1     (cprisk_vm_interp_frame_t *fr, ui
 cprisk_vm_flow_t cprisk_vm_oph_mul_lane_v2     (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
 cprisk_vm_flow_t cprisk_vm_oph_select_mul_lane (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
 
+/* BRANCH_COND variant pool (covers B.cond / CBZ / CBNZ / TBZ / TBNZ via predicate eval). */
+cprisk_vm_flow_t cprisk_vm_oph_branch_cond_v0    (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_branch_cond_v1    (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_branch_cond_v2    (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_select_branch_cond(cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+
 #ifdef __cplusplus
 }
 #endif
