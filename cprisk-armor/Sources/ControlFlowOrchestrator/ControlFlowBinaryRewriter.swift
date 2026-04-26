@@ -860,19 +860,58 @@ final class ControlFlowBinaryRewriter {
         let joinOff = runStart + firstJoinWordIndex * 4
 
         let immHeadWords = bogusWords + 1
-        guard let headTBZ = encodeTBZ_WZR(bitIndex: 0, imm14Words: immHeadWords) else {
-            return []
+
+        // P1a — Per-function dispatcher template variation. The previous
+        // implementation hard-coded TBZ #0 / TBZ #1 / TBNZ #0, producing a
+        // single 12-byte signature that matched 100% of switch dispatchers
+        // across the binary. A per-function RNG seeded from the rewrite seed
+        // selects:
+        //   - live arm:  TBZ_WZR(bitN)  or  CBZ_XZR
+        //   - dead arms: TBNZ_WZR(bitM) or  CBNZ_XZR
+        //   - bit indices independently drawn 0..31
+        // All forms share the same always-zero predicate semantics
+        // (WZR / XZR ≡ 0), so live arms always branch and dead arms never do,
+        // preserving the dispatcher's runtime behavior while making the
+        // emitted bytes vary per call site.
+        // Mix a per-call domain tag into the seed so dispatcher RNG state
+        // diverges from the neutral-mutation RNG state on the same function.
+        var rng = CFFSplitMix64(seed: candidate.rewriteSeed ^ 0xD15C_4ED1_5D15_C4ED)
+
+        func pickAlwaysJump(immWords: Int) -> (raw: UInt32, tag: String)? {
+            let useCBZ = (rng.next() & 1) == 0
+            if useCBZ {
+                let raw = encodeCBZ_XZR_immediate(immediateWords: immWords)
+                return raw.map { ($0, "CBZ XZR") }
+            } else {
+                let bit = UInt32(rng.next() & 0x1F)
+                guard let raw = encodeTBZ_WZR(bitIndex: bit, imm14Words: immWords) else { return nil }
+                return (raw, "TBZ WZR #\(bit)")
+            }
         }
 
-        let tagBase = "CFG switch dispatcher (TBZ/TBNZ WZR) + bogus block (bb~\(blockApprox))"
+        func pickNeverJump(immWords: Int) -> (raw: UInt32, tag: String)? {
+            let useCBNZ = (rng.next() & 1) == 0
+            if useCBNZ {
+                let raw = encodeCBNZ_XZR_immediate(immediateWords: immWords)
+                return raw.map { ($0, "CBNZ XZR") }
+            } else {
+                let bit = UInt32(rng.next() & 0x1F)
+                guard let raw = encodeTBNZ_WZR(bitIndex: bit, imm14Words: immWords) else { return nil }
+                return (raw, "TBNZ WZR #\(bit)")
+            }
+        }
+
+        guard let head = pickAlwaysJump(immWords: immHeadWords) else { return [] }
+
+        let tagBase = "CFG switch dispatcher (variable WZR/XZR) + bogus block (bb~\(blockApprox))"
 
         guard let origHead = try? file.data.readUInt32LE(at: runStart) else { return [] }
         var patches: [CFFPatchMutation] = [
             CFFPatchMutation(
                 fileOffset: runStart,
                 originalRawValue: origHead,
-                replacementRawValue: headTBZ,
-                replacementDescription: "\(tagBase) live TBZ skips bogus"
+                replacementRawValue: head.raw,
+                replacementDescription: "\(tagBase) live \(head.tag) skips bogus"
             ),
         ]
 
@@ -881,15 +920,15 @@ final class ControlFlowBinaryRewriter {
             let deltaBytes = joinOff - secondOff
             guard deltaBytes > 0, deltaBytes % 4 == 0 else { return [] }
             let immSecondWords = deltaBytes / 4
-            guard let deadTBZ = encodeTBZ_WZR(bitIndex: 1, imm14Words: immSecondWords),
+            guard let dead2 = pickNeverJump(immWords: immSecondWords),
                   let origSecond = try? file.data.readUInt32LE(at: secondOff) else {
                 return []
             }
             patches.append(CFFPatchMutation(
                 fileOffset: secondOff,
                 originalRawValue: origSecond,
-                replacementRawValue: deadTBZ,
-                replacementDescription: "\(tagBase) unreachable TBZ (dead arm)"
+                replacementRawValue: dead2.raw,
+                replacementDescription: "\(tagBase) unreachable \(dead2.tag) (dead arm)"
             ))
 
             let thirdOff = runStart + 8
@@ -897,20 +936,39 @@ final class ControlFlowBinaryRewriter {
                 let deltaThird = joinOff - thirdOff
                 guard deltaThird > 0, deltaThird % 4 == 0 else { return [] }
                 let immThirdWords = deltaThird / 4
-                guard let deadTBNZ = encodeTBNZ_WZR(bitIndex: 0, imm14Words: immThirdWords),
+                guard let dead3 = pickNeverJump(immWords: immThirdWords),
                       let origThird = try? file.data.readUInt32LE(at: thirdOff) else {
                     return []
                 }
                 patches.append(CFFPatchMutation(
                     fileOffset: thirdOff,
                     originalRawValue: origThird,
-                    replacementRawValue: deadTBNZ,
-                    replacementDescription: "\(tagBase) unreachable TBNZ (dead arm)"
+                    replacementRawValue: dead3.raw,
+                    replacementDescription: "\(tagBase) unreachable \(dead3.tag) (dead arm)"
                 ))
             }
         }
 
         return patches
+    }
+
+    /// CBZ XZR, +imm  — 64-bit "compare and branch if zero" against the
+    /// always-zero register XZR, which means the branch is always taken.
+    /// Equivalent runtime semantics to TBZ WZR but a different opcode pattern.
+    private func encodeCBZ_XZR_immediate(immediateWords: Int) -> UInt32? {
+        guard immediateWords >= -(1 << 18), immediateWords < (1 << 18) else { return nil }
+        let imm19 = UInt32(bitPattern: Int32(immediateWords)) & 0x7FFFF
+        // 0xB4000000 = CBZ Xn, label  ; Xn=31 → XZR
+        return 0xB400_0000 | (imm19 << 5) | 31
+    }
+
+    /// CBNZ XZR, +imm — never taken (XZR is always zero), used for the
+    /// dead arm of the bogus dispatch path.
+    private func encodeCBNZ_XZR_immediate(immediateWords: Int) -> UInt32? {
+        guard immediateWords >= -(1 << 18), immediateWords < (1 << 18) else { return nil }
+        let imm19 = UInt32(bitPattern: Int32(immediateWords)) & 0x7FFFF
+        // 0xB5000000 = CBNZ Xn, label
+        return 0xB500_0000 | (imm19 << 5) | 31
     }
 
     private func findLongestContiguousNOPRun(
