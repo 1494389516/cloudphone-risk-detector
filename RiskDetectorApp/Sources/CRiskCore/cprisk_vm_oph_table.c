@@ -125,13 +125,13 @@ static cprisk_vm_flow_t cprisk_vm_dispatch_emitter_family_i(cprisk_vm_interp_fra
                                                             uint32_t hvar) {
     switch (logical) {
     case CPRISK_VM_OP_MOV_WIDE:
-        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x41u, cprisk_vm_oph_emitter_family);
+        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x41u, cprisk_vm_oph_select_mov_wide);
     case CPRISK_VM_OP_ADR_ADD:
-        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x42u, cprisk_vm_oph_emitter_family);
+        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x42u, cprisk_vm_oph_select_adr_add);
     case CPRISK_VM_OP_COND_SELECT:
-        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x43u, cprisk_vm_oph_emitter_family);
+        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x43u, cprisk_vm_oph_select_cond_select);
     case CPRISK_VM_OP_LOAD_STORE:
-        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x44u, cprisk_vm_oph_emitter_family);
+        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x44u, cprisk_vm_oph_select_load_store);
     default:
         return cprisk_vm_oph_unknown(fr, op_raw, logical, imm, pc, hvar);
     }

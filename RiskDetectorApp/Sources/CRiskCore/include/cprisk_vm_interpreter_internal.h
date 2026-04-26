@@ -359,11 +359,9 @@ cprisk_vm_flow_t cprisk_vm_oph_vreg_mem(cprisk_vm_interp_frame_t *fr,
                                         uint64_t imm,
                                         uint32_t pc,
                                         uint32_t hvar);
-cprisk_vm_flow_t cprisk_vm_oph_emitter_family(cprisk_vm_interp_frame_t *fr,
-                                              uint8_t op_raw,
-                                              uint8_t logical,
-                                              uint64_t imm,
-                                              uint32_t pc,
-                                              uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_mov_wide   (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_adr_add   (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_cond_select(cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_load_store (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
 
 #endif /* CPRISK_VM_INTERPRETER_INTERNAL_H */
