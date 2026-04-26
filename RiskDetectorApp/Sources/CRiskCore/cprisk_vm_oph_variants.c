@@ -728,6 +728,88 @@ cprisk_vm_flow_t cprisk_vm_oph_select_mul_lane(cprisk_vm_interp_frame_t *fr,
     return variants[idx](fr, op_raw, logical, imm, pc, hvar);
 }
 
+/* ── ADD_ROL_ACC variants ─────────────────────────────────────────────────── */
+
+/*
+ * ADD_ROL_ACC is a fused opcode: low-32(imm) feeds the add lane, high-32(imm)
+ * is the rotation amount.  Variants apply independent identity transforms to
+ * each half so both the lane-poly and the rol call receive the correct values
+ * while the ARM64 instruction sequence differs across invocations.
+ */
+
+/* v0: canonical */
+cprisk_vm_flow_t cprisk_vm_oph_add_rol_acc_v0(cprisk_vm_interp_frame_t *fr,
+                                               uint8_t op_raw, uint8_t logical,
+                                               uint64_t imm, uint32_t pc, uint32_t hvar) {
+    return cprisk_vm_oph_add_rol_acc(fr, op_raw, logical, imm, pc, hvar);
+}
+
+/*
+ * v1: double-negate add half + add-noise-restore rotation half.
+ * -(-x) == x  and  (x + N) - N == x — different NEG/ADD/SUB sequence.
+ */
+cprisk_vm_flow_t cprisk_vm_oph_add_rol_acc_v1(cprisk_vm_interp_frame_t *fr,
+                                               uint8_t op_raw, uint8_t logical,
+                                               uint64_t imm, uint32_t pc, uint32_t hvar) {
+    (void)op_raw; (void)logical;
+    const uint64_t raw_add  = imm & 0xFFFFFFFFu;
+    const uint64_t raw_rol  = imm >> 32u;
+    const uint64_t neg_add  = (~raw_add) + 1u;
+    const uint64_t imm_add  = (~neg_add) + 1u;              /* == raw_add */
+    const uint64_t noise    = (uint64_t)fr->session_mix ^ (uint64_t)fr->opaque_chain ^ 0xA001u;
+    const uint64_t imm_rol  = (raw_rol + noise) - noise;    /* == raw_rol */
+    const uint32_t route    = cprisk_vmp_avalanche32_i(
+        hvar ^ (uint32_t)fr->steps ^ fr->opaque_chain ^ fr->session_mix ^ 0xADDu ^ 0xF15510F0u);
+    cprisk_vm_lane_apply_poly_i(
+        fr->acc, fr->acc_lane_map[0], imm_add,
+        (uint32_t)fr->steps, hvar, fr->semantic_family, fr->func_id, pc, route);
+    cprisk_vm_diophantine_lane_poly_sidefx_i(fr, fr->acc_lane_map[0], imm_add, route, pc, hvar);
+    cprisk_vm_rol_acc_i(fr->acc, imm_rol);
+    if (!cprisk_vm_enc_pc_advance_ctx_i(fr->bh, &fr->encoded_pc, fr->vpc_a, fr->vpc_b, fr->out))
+        return CPRISK_VM_FLOW_LEAVE;
+    fr->steps += 1u;
+    return CPRISK_VM_FLOW_CONTINUE;
+}
+
+/*
+ * v2: XOR-fold add half + double-negate rotation half.
+ * (x ^ K) ^ K == x  and  -(-x) == x — different EOR/NEG sequence.
+ */
+cprisk_vm_flow_t cprisk_vm_oph_add_rol_acc_v2(cprisk_vm_interp_frame_t *fr,
+                                               uint8_t op_raw, uint8_t logical,
+                                               uint64_t imm, uint32_t pc, uint32_t hvar) {
+    (void)op_raw; (void)logical;
+    const uint64_t raw_add  = imm & 0xFFFFFFFFu;
+    const uint64_t raw_rol  = imm >> 32u;
+    const uint64_t key      = (uint64_t)fr->session_mix ^ ((uint64_t)fr->opaque_chain << 17u);
+    const uint64_t imm_add  = (raw_add ^ key) ^ key;        /* == raw_add */
+    const uint64_t neg_rol  = (~raw_rol) + 1u;
+    const uint64_t imm_rol  = (~neg_rol) + 1u;              /* == raw_rol */
+    const uint32_t route    = cprisk_vmp_avalanche32_i(
+        hvar ^ (uint32_t)fr->steps ^ fr->opaque_chain ^ fr->session_mix ^ 0xADDu ^ 0xF15510F0u);
+    cprisk_vm_lane_apply_poly_i(
+        fr->acc, fr->acc_lane_map[0], imm_add,
+        (uint32_t)fr->steps, hvar, fr->semantic_family, fr->func_id, pc, route);
+    cprisk_vm_diophantine_lane_poly_sidefx_i(fr, fr->acc_lane_map[0], imm_add, route, pc, hvar);
+    cprisk_vm_rol_acc_i(fr->acc, imm_rol);
+    if (!cprisk_vm_enc_pc_advance_ctx_i(fr->bh, &fr->encoded_pc, fr->vpc_a, fr->vpc_b, fr->out))
+        return CPRISK_VM_FLOW_LEAVE;
+    fr->steps += 1u;
+    return CPRISK_VM_FLOW_CONTINUE;
+}
+
+cprisk_vm_flow_t cprisk_vm_oph_select_add_rol_acc(cprisk_vm_interp_frame_t *fr,
+                                                   uint8_t op_raw, uint8_t logical,
+                                                   uint64_t imm, uint32_t pc, uint32_t hvar) {
+    static const cprisk_vm_oph_fn variants[CPRISK_VM_OPH_N_VARIANTS_LANE] = {
+        cprisk_vm_oph_add_rol_acc_v0,
+        cprisk_vm_oph_add_rol_acc_v1,
+        cprisk_vm_oph_add_rol_acc_v2,
+    };
+    const uint32_t idx = vv_select_index(fr, logical, CPRISK_VM_OPH_N_VARIANTS_LANE);
+    return variants[idx](fr, op_raw, logical, imm, pc, hvar);
+}
+
 /* ── BRANCH_COND variants ─────────────────────────────────────────────────── */
 
 /*
