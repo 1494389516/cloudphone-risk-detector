@@ -1,3 +1,12 @@
+# CFF Policy v2 — 适用 cprisk-armor Pass 9 ControlFlowOrchestrator
+#
+# 自 v7.4 起 dispatcher 变体由 per-function RNG 决定（buildSeed ^ 0xD15C_4ED1_5D15_C4ED），
+# 消除了静态分析中 100% TBZ #0 的模板化特征（P1a 修复）。
+# enable_multi_dispatcher: true 在此基础上叠加跨函数异构分发策略。
+#
+# 关键 ARM64 修复（v7.4）：
+#   - B.cond 指令（bits[31:24]=0x54, bit[4]=0）现被正确识别为 leader（CFF#23）
+#   - PACIASP/PACIBSP（0xD503233F/0xD503235F）序言前置 4 字节纳入 prologue 候选（CFF#24）
 version: 2
 functions:
   # 高强度平坦化：关键决策/挑战/信任链/watchdog 核心路径

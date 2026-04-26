@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
-  <img src="https://img.shields.io/badge/SDK-7.3-FF3B30?style=for-the-badge" alt="SDK">
+  <img src="https://img.shields.io/badge/SDK-7.4-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
   <img src="https://img.shields.io/badge/License-Proprietary-8E8E93?style=for-the-badge" alt="License">
 </p>
@@ -69,6 +69,7 @@
 | **7.1** | **VM 自校验链路对齐 + dispatcher 跨单元散布 + 合规文档收口** | VM self-check 改为优先消费 `__swift5_mdvsi` span map 驱动注入与运行时校验，`cprisk-vm-self-expect` 同时支持 CPSF/CPSH（FNV/HMAC）产物写入；解释器主 dispatcher 延续函数指针表架构，并将 22 个 `cprisk_vm_oph_*` handler 拆分到多个 `.c` 编译单元，减少单文件语义聚合；同步更新 SDK 隐私声明与 App Store 合规文档，明确 7.1 加固升级不扩大 collected data / Required Reason API 边界 |
 | **7.2** | **MIE/MTE 姿态接入 + iPhoneOS 26 SDK 构建兼容** | Release 构建接入 `CPRISK_MTE_COMPILE_SUPPORT` 与 `ENABLE_ENHANCED_SECURITY`，新增 `cprisk_mte_guard` / `MIEPostureDetector`，通过 sysctl + 本地快照 + region canary 保守感知 Apple Memory Integrity Enforcement 姿态，并补齐 `HoneypotMemoryDetector` 在 iPhoneOS 26 SDK 下的 `ucontext_t` / PC 字段兼容路径，使 `xcodebuild -sdk iphoneos` 恢复全绿 |
 | **7.3** | **工程产品化 + 文档体系收口** | 多实例进程隔离（IsolationContext）、ABI 语义化版本契约（v1.0.0）、主入口模块拆分（2928→395 行 + 6 extension）、OpenAPI/Protobuf 服务端协议标准化、性能基准测试套件、XCFramework 构建指南、CocoaPods 集成说明（文档）、多租户密钥管理与轮换（TenantKeyManager）、SLA 文档（TPR≥99.2% / FPR≤0.05%）、标准 CHANGELOG（Keep a Changelog）、接入工时评估（<2h/<4h/<8h 三路径）、Objective-C 完整桥接层、SDK Portal 控制台设计规范、17 份文档归一化至 `CloudPhoneRiskKit_文档/` |
+| **7.4** | **白盒密钥链重建 + CFF 修复 + 反调试纵深 + 检测链证明** | WB#4 字符串解密生产 Bug 修复（per-string KDF 双端对齐）、WB#14 configDigest 格式锁定（标签+长度前缀）、WB#5 Path-A 计数器防密钥流重用、P0b 消除 BSS 明文神谕、S-box 模偏消除 + 8-bit 升级、CFF#23 B.cond 块边界修复、CFF#24 PACIASP/PACIBSP 序言探测、P1a Dispatcher 逐函数随机化（消除 TBZ#0 模板化特征）、Mach 端口基线 8 样本校准、反 Dump 探针 [2,9]s 随机抖动、SW BP 扫描 24 窗口扩展、Watchdog 启动失败异常标志、per-session 检测链 HMAC 证明（`cprisk_detection_attest`）、`DetectorID` 枚举化、PayloadFieldObfuscator DepthScope.all + 会话派生字段映射、ABI v3 跨语言一致性测试（17 项安全修复） |
 
 ---
 
@@ -139,7 +140,7 @@
 源码 ──swift build──▶ SDK (library.static) ──Link──▶ App 二进制
                                                         │
                      cprisk-armor CLI  ◀────────────────┘
-                     (13 Pass · ABI v2 · CPRISK_ARMOR_KEY)
+                     (13 Pass · ABI v3 · CPRISK_ARMOR_KEY)
                      ┌─ Pass  1  StringEncryptor         白盒 PRF + HMAC + nonce
                      ├─ Pass  2  MetadataScrubber        元数据抹除
                      ├─ Pass  8  InstructionSubstitution  1:1 等长语义等价替换
@@ -429,7 +430,7 @@ cd RiskDetectorApp && swift test \
   --scratch-path "${TMPDIR:-/tmp}/cprisk-tests"
 ```
 
-当前测试规模：**67 个测试文件**，覆盖密码学链路、决策树边界、合规降级、反篡改、CFF 链完整性、armor 集成、性能基准。
+当前测试规模：**72 个测试文件**，覆盖密码学链路、决策树边界、合规降级、反篡改、CFF 链完整性、armor 集成、跨语言 ABI 一致性、检测链证明、性能基准。
 
 ---
 
@@ -461,4 +462,4 @@ cd RiskDetectorApp && swift test \
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 7.3 · 186 Swift · 38 C · 67 Tests · 13 Pass · 80+ Detectors · 17 Docs</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 7.4 · 207 Swift · 54 C · 72 Tests · 13 Pass · 80+ Detectors · 17 Docs · ABI v3</sub></p>

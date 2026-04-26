@@ -1,3 +1,11 @@
+# CFF Policy v2 (App Store Safe) — 适用 cprisk-armor Pass 9 ControlFlowOrchestrator
+#
+# 审核友好配置：收窄 heavy/medium tier，更多函数保留在 light；
+# 关闭 enable_pass8_cff_awareness（减少 InstructionSubstitution + CFF 双重加固的审核面）。
+#
+# 自 v7.4 起 dispatcher 变体由 per-function RNG 决定，消除 100% TBZ #0 模板化特征（P1a 修复）。
+# B.cond / PACIASP / PACIBSP 块边界修复（CFF#23/#24）已在 Pass 9 二进制重写器层面生效，
+# 与本策略文件无关，仅需确保使用 cprisk-armor >= v7.4 构建。
 version: 2
 functions:
   # 审核友好：收窄 heavy/medium，更多留在 light；never 与常规 policy 对齐（VM 全量覆盖、syscall、C 核心）

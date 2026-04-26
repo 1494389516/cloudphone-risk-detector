@@ -18,6 +18,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [7.4] - 2026-04-26
+
+### Security
+
+#### 白盒密钥链重建（CPRISK_ARMOR_ABI_VERSION v3）
+- **WB#4（Critical）**: 字符串解密生产 Bug 修复 — Swift `StringEncryptor` 与 C `cprisk_string_decrypt` 现均执行 per-string KDF `HMAC(stringKey, "cprisk.str.key.v1" || sid_le4 || nonce)`；此前 Swift 端直接使用原始 `stringKey`，导致 C 运行时解密后得到乱码
+- **WB#14**: `configDigest` 双端格式锁定 — Swift/C 两侧统一采用标签+长度前缀格式 `"cprisk.whitebox.config.v2" || len64(code) || code || len64(data) || data || len64(tag) || tag || domain_ids_le32[]`；修复白盒 bundle 加载始终静默失败的问题
+- **WB#5**: Path-A 计数器递增 — SHA-256 延伸块引入 4 字节 LE 计数器，消除跨 block 密钥流重用
+- **P0b（WB#12）**: 消除 `s_lazy_buf[512]` BSS 明文神谕 — `cprisk_decrypt_string_lazy` 直接转发至 `cprisk_decrypt_string`，不再将明文缓存到可 dump 的全局 BSS 段
+
+#### S-box 安全加固
+- 模偏修复：Fisher-Yates 洗牌改用拒绝采样 `(0 - bound) % bound`，消除均匀性偏差
+- 8-bit S-box：VM×CFF 融合路径将 4-bit S-box 升级至 8-bit，增强 Feistel-SPN 32-bit codec 扩散层强度
+
+#### 控制流平坦化修复
+- **CFF#23**: B.cond 基本块边界修复 — `bits[31:24]=0x54, bit[4]=0` ARM64 条件分支指令现被正确识别为 leader，修复重排后相对偏移量损坏问题
+- **CFF#24**: PACIASP/PACIBSP 序言调整 — 检测 `0xD503233F`/`0xD503235F` 指针认证指令，向前延伸 4 字节纳入 prologue candidate
+- **P1a**: Dispatcher 模板随机化 — 每个函数的 dispatcher 分支变体（TBZ/TBNZ/CBZ/CBNZ + bit/reg 组合）由 `buildSeed ^ 0xD15C_4ED1_5D15_C4ED` 派生的 per-function RNG 决定，消除 100% TBZ #0 模板化特征
+
+#### 反调试纵深（4 项）
+- **#1**: Anti-dump 探针间隔随机化 — 由固定 5s 升级为 SplitMix64 驱动的 `[2, 9]s` 均匀区间 + 0–999ms sub-second 尾部抖动，消除 5s 时序神谕
+- **#2**: Mach 端口基线 8 样本校准 — 由首次观测直接锁定改为 8 样本滑动最小值 CAS 更新（`CPRISK_MACH_PORT_BASELINE_CALIB_SAMPLES = 8`），校准期内拒绝告警，防止基线投毒
+- **#3**: 软件断点扫描窗口扩展 — watchdog 随机文本窗口 8→24，每窗口扫描字节数 768→1024，降低局部补丁逃逸概率
+- **#4**: Watchdog 启动失败标志 — `pthread_create` 耗尽时设置 `STARTUP_LIVENESS | FUNCTION_PROLOGUE` 异常标志，确保 watchdog 线程创建失败不静默消失
+
+#### 检测链 HMAC 证明（P2b）
+- 新增 `cprisk_detection_attest.c` — per-session 检测结果 HMAC 滚动证明链，密钥由白盒 PRF Domain 5 派生；`cprisk_attest_session_begin` 生成新鲜 nonce，`cprisk_attest_record` 逐 Detector 累积链，`cprisk_attest_session_finalize` 输出 HMAC 标签
+- `JailbreakEngineV2.detectV2` 完成后将 `attest_nonce`/`attest_count`/`attest_tag` 注入 method 标签，服务端可独立验证检测顺序与结论完整性
+- `DetectorID: UInt8` 枚举化（0x11=antiTampering, 0x23=debugger, 0x37=frida…），消除明文字符串标识符旁路
+
+#### 字段混淆与会话绑定（P2a）
+- `PayloadFieldObfuscator` 新增 `DepthScope.all` — 支持递归嵌套字段重命名，默认 `.topLevel` 保持后向兼容
+- `validate()` 冲突检测：构建时检查映射碰撞，防止隐式覆盖
+- `deriveSessionMapping(baseKeys:sessionKey:version:)` — 字段名由 `HMAC<SHA256>(sessionKey, "cprisk.field.v1" || keyName)[..8].hex` 会话派生，每会话映射均不同
+
+### Added
+- `cprisk_detection_attest.c` / `cprisk_detection_attest.h`：检测链 per-session HMAC 证明模块
+- `ABIConsistencyTests.swift`（5 tests）：Swift↔C 跨语言 ABI 一致性套件（域密钥、per-string KDF、configDigest、VM S-box、CFF 编码）
+- `DetectionAttestTests.swift`（5 tests）：证明链序列化、会话隔离、nonce 唯一性、方法标签注入验证
+
+### Fixed
+- `StringEncryptorTests.swift`：per-string KDF roundtrip 验证对齐新格式
+- `WhiteBoxProfileTests.swift`：configDigest 格式对齐新标签+长度前缀格式
+- `CryptoTests.swift`：补充嵌套字段混淆 P2a 回归测试
+
+### Changed
+- `CPRISK_ARMOR_ABI_VERSION` 升级至 v3（per-string KDF domain label、Path-A counter、configDigest 格式为 breaking changes，Swift producer 与 C consumer 已锁步更新）
+
+---
+
 ## [7.3] - 2026-03-27
 
 ### Changed

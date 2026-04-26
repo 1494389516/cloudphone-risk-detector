@@ -1,5 +1,9 @@
 # Pass 13 — VMProtector policy (App Store safe / conservative)
 # 保留基础 VM 混淆能力，关闭易触发审核/兼容性质疑的高阶加固项。
+#
+# ABI v3 注意事项（v7.4 起）：同 vmp_policy.yaml；per-string KDF、Path-A counter、
+# configDigest 格式均为 breaking changes，App Store Safe 构建同样受此约束。
+# VM S-box 已升级为 8-bit，本文件中所有 full/partial 函数的字节码需重新生成。
 
 version: 1
 anti_analysis:
