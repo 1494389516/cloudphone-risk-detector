@@ -145,13 +145,13 @@ static cprisk_vm_flow_t cprisk_vm_dispatch_vreg_family_i(cprisk_vm_interp_frame_
                                                          uint32_t hvar) {
     switch (logical) {
     case CPRISK_VM_OP_VM_CALL_FUNC:
-        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x51u, cprisk_vm_oph_vm_call_func);
+        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x51u, cprisk_vm_oph_select_vm_call_func);
     case CPRISK_VM_OP_VREG_MOV:
-        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x52u, cprisk_vm_oph_vreg_mov);
+        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x52u, cprisk_vm_oph_select_vreg_mov);
     case CPRISK_VM_OP_VREG_ALU:
-        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x53u, cprisk_vm_oph_vreg_alu);
+        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x53u, cprisk_vm_oph_select_vreg_alu);
     case CPRISK_VM_OP_VREG_MEM:
-        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x54u, cprisk_vm_oph_vreg_mem);
+        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x54u, cprisk_vm_oph_select_vreg_mem);
     default:
         return cprisk_vm_oph_unknown(fr, op_raw, logical, imm, pc, hvar);
     }

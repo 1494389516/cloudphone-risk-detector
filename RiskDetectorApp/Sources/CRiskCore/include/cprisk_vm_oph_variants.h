@@ -85,6 +85,27 @@ cprisk_vm_flow_t cprisk_vm_oph_load_store_v1     (cprisk_vm_interp_frame_t *fr, 
 cprisk_vm_flow_t cprisk_vm_oph_load_store_v2     (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
 cprisk_vm_flow_t cprisk_vm_oph_select_load_store (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
 
+/* VREG-family variant pools (imm-only identity transforms; canonical handler delegated). */
+cprisk_vm_flow_t cprisk_vm_oph_vm_call_func_v0     (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_vm_call_func_v1     (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_vm_call_func_v2     (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_select_vm_call_func (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+
+cprisk_vm_flow_t cprisk_vm_oph_vreg_mov_v0      (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_vreg_mov_v1      (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_vreg_mov_v2      (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_select_vreg_mov  (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+
+cprisk_vm_flow_t cprisk_vm_oph_vreg_alu_v0      (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_vreg_alu_v1      (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_vreg_alu_v2      (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_select_vreg_alu  (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+
+cprisk_vm_flow_t cprisk_vm_oph_vreg_mem_v0      (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_vreg_mem_v1      (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_vreg_mem_v2      (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_select_vreg_mem  (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+
 #ifdef __cplusplus
 }
 #endif

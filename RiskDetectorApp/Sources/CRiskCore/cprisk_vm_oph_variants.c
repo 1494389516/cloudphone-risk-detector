@@ -1130,3 +1130,157 @@ cprisk_vm_flow_t cprisk_vm_oph_select_load_store(cprisk_vm_interp_frame_t *fr,
     const uint32_t idx = vv_select_index(fr, logical, CPRISK_VM_OPH_N_VARIANTS_LANE);
     return variants[idx](fr, op_raw, logical, imm, pc, hvar);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * VREG-family variant pools: VM_CALL_FUNC / VREG_MOV / VREG_ALU / VREG_MEM
+ *
+ * Each canonical handler treats imm as an opaque payload (callee_id, alu encoding,
+ * mem-access descriptor, mov source).  v1/v2 apply identity transforms to imm
+ * before delegating to the canonical handler — the resulting bit pattern is
+ * unchanged, but the ARM64 instruction sequence preceding the helper call differs.
+ * Each pool uses a distinct opaque_chain shift so cross-pool encodings stay unique.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── VM_CALL_FUNC variants ────────────────────────────────────────────────── */
+
+cprisk_vm_flow_t cprisk_vm_oph_vm_call_func_v0(cprisk_vm_interp_frame_t *fr,
+                                                uint8_t op_raw, uint8_t logical,
+                                                uint64_t imm, uint32_t pc, uint32_t hvar) {
+    return cprisk_vm_oph_vm_call_func(fr, op_raw, logical, imm, pc, hvar);
+}
+
+cprisk_vm_flow_t cprisk_vm_oph_vm_call_func_v1(cprisk_vm_interp_frame_t *fr,
+                                                uint8_t op_raw, uint8_t logical,
+                                                uint64_t imm, uint32_t pc, uint32_t hvar) {
+    const uint64_t neg     = (~imm) + 1u;
+    const uint64_t imm_eff = (~neg) + 1u;          /* == imm */
+    return cprisk_vm_oph_vm_call_func(fr, op_raw, logical, imm_eff, pc, hvar);
+}
+
+cprisk_vm_flow_t cprisk_vm_oph_vm_call_func_v2(cprisk_vm_interp_frame_t *fr,
+                                                uint8_t op_raw, uint8_t logical,
+                                                uint64_t imm, uint32_t pc, uint32_t hvar) {
+    const uint64_t key     = (uint64_t)fr->session_mix ^ ((uint64_t)fr->opaque_chain << 29u);
+    const uint64_t imm_eff = (imm ^ key) ^ key;    /* == imm */
+    return cprisk_vm_oph_vm_call_func(fr, op_raw, logical, imm_eff, pc, hvar);
+}
+
+cprisk_vm_flow_t cprisk_vm_oph_select_vm_call_func(cprisk_vm_interp_frame_t *fr,
+                                                    uint8_t op_raw, uint8_t logical,
+                                                    uint64_t imm, uint32_t pc, uint32_t hvar) {
+    static const cprisk_vm_oph_fn variants[CPRISK_VM_OPH_N_VARIANTS_LANE] = {
+        cprisk_vm_oph_vm_call_func_v0,
+        cprisk_vm_oph_vm_call_func_v1,
+        cprisk_vm_oph_vm_call_func_v2,
+    };
+    const uint32_t idx = vv_select_index(fr, logical, CPRISK_VM_OPH_N_VARIANTS_LANE);
+    return variants[idx](fr, op_raw, logical, imm, pc, hvar);
+}
+
+/* ── VREG_MOV variants ────────────────────────────────────────────────────── */
+
+cprisk_vm_flow_t cprisk_vm_oph_vreg_mov_v0(cprisk_vm_interp_frame_t *fr,
+                                            uint8_t op_raw, uint8_t logical,
+                                            uint64_t imm, uint32_t pc, uint32_t hvar) {
+    return cprisk_vm_oph_vreg_mov(fr, op_raw, logical, imm, pc, hvar);
+}
+
+cprisk_vm_flow_t cprisk_vm_oph_vreg_mov_v1(cprisk_vm_interp_frame_t *fr,
+                                            uint8_t op_raw, uint8_t logical,
+                                            uint64_t imm, uint32_t pc, uint32_t hvar) {
+    const uint64_t neg     = (~imm) + 1u;
+    const uint64_t imm_eff = (~neg) + 1u;
+    return cprisk_vm_oph_vreg_mov(fr, op_raw, logical, imm_eff, pc, hvar);
+}
+
+cprisk_vm_flow_t cprisk_vm_oph_vreg_mov_v2(cprisk_vm_interp_frame_t *fr,
+                                            uint8_t op_raw, uint8_t logical,
+                                            uint64_t imm, uint32_t pc, uint32_t hvar) {
+    const uint64_t key     = (uint64_t)fr->session_mix ^ ((uint64_t)fr->opaque_chain << 31u);
+    const uint64_t imm_eff = (imm ^ key) ^ key;
+    return cprisk_vm_oph_vreg_mov(fr, op_raw, logical, imm_eff, pc, hvar);
+}
+
+cprisk_vm_flow_t cprisk_vm_oph_select_vreg_mov(cprisk_vm_interp_frame_t *fr,
+                                                uint8_t op_raw, uint8_t logical,
+                                                uint64_t imm, uint32_t pc, uint32_t hvar) {
+    static const cprisk_vm_oph_fn variants[CPRISK_VM_OPH_N_VARIANTS_LANE] = {
+        cprisk_vm_oph_vreg_mov_v0,
+        cprisk_vm_oph_vreg_mov_v1,
+        cprisk_vm_oph_vreg_mov_v2,
+    };
+    const uint32_t idx = vv_select_index(fr, logical, CPRISK_VM_OPH_N_VARIANTS_LANE);
+    return variants[idx](fr, op_raw, logical, imm, pc, hvar);
+}
+
+/* ── VREG_ALU variants ────────────────────────────────────────────────────── */
+
+cprisk_vm_flow_t cprisk_vm_oph_vreg_alu_v0(cprisk_vm_interp_frame_t *fr,
+                                            uint8_t op_raw, uint8_t logical,
+                                            uint64_t imm, uint32_t pc, uint32_t hvar) {
+    return cprisk_vm_oph_vreg_alu(fr, op_raw, logical, imm, pc, hvar);
+}
+
+cprisk_vm_flow_t cprisk_vm_oph_vreg_alu_v1(cprisk_vm_interp_frame_t *fr,
+                                            uint8_t op_raw, uint8_t logical,
+                                            uint64_t imm, uint32_t pc, uint32_t hvar) {
+    const uint64_t neg     = (~imm) + 1u;
+    const uint64_t imm_eff = (~neg) + 1u;
+    return cprisk_vm_oph_vreg_alu(fr, op_raw, logical, imm_eff, pc, hvar);
+}
+
+cprisk_vm_flow_t cprisk_vm_oph_vreg_alu_v2(cprisk_vm_interp_frame_t *fr,
+                                            uint8_t op_raw, uint8_t logical,
+                                            uint64_t imm, uint32_t pc, uint32_t hvar) {
+    const uint64_t key     = (uint64_t)fr->session_mix ^ ((uint64_t)fr->opaque_chain << 37u);
+    const uint64_t imm_eff = (imm ^ key) ^ key;
+    return cprisk_vm_oph_vreg_alu(fr, op_raw, logical, imm_eff, pc, hvar);
+}
+
+cprisk_vm_flow_t cprisk_vm_oph_select_vreg_alu(cprisk_vm_interp_frame_t *fr,
+                                                uint8_t op_raw, uint8_t logical,
+                                                uint64_t imm, uint32_t pc, uint32_t hvar) {
+    static const cprisk_vm_oph_fn variants[CPRISK_VM_OPH_N_VARIANTS_LANE] = {
+        cprisk_vm_oph_vreg_alu_v0,
+        cprisk_vm_oph_vreg_alu_v1,
+        cprisk_vm_oph_vreg_alu_v2,
+    };
+    const uint32_t idx = vv_select_index(fr, logical, CPRISK_VM_OPH_N_VARIANTS_LANE);
+    return variants[idx](fr, op_raw, logical, imm, pc, hvar);
+}
+
+/* ── VREG_MEM variants ────────────────────────────────────────────────────── */
+
+cprisk_vm_flow_t cprisk_vm_oph_vreg_mem_v0(cprisk_vm_interp_frame_t *fr,
+                                            uint8_t op_raw, uint8_t logical,
+                                            uint64_t imm, uint32_t pc, uint32_t hvar) {
+    return cprisk_vm_oph_vreg_mem(fr, op_raw, logical, imm, pc, hvar);
+}
+
+cprisk_vm_flow_t cprisk_vm_oph_vreg_mem_v1(cprisk_vm_interp_frame_t *fr,
+                                            uint8_t op_raw, uint8_t logical,
+                                            uint64_t imm, uint32_t pc, uint32_t hvar) {
+    const uint64_t neg     = (~imm) + 1u;
+    const uint64_t imm_eff = (~neg) + 1u;
+    return cprisk_vm_oph_vreg_mem(fr, op_raw, logical, imm_eff, pc, hvar);
+}
+
+cprisk_vm_flow_t cprisk_vm_oph_vreg_mem_v2(cprisk_vm_interp_frame_t *fr,
+                                            uint8_t op_raw, uint8_t logical,
+                                            uint64_t imm, uint32_t pc, uint32_t hvar) {
+    const uint64_t key     = (uint64_t)fr->session_mix ^ ((uint64_t)fr->opaque_chain << 43u);
+    const uint64_t imm_eff = (imm ^ key) ^ key;
+    return cprisk_vm_oph_vreg_mem(fr, op_raw, logical, imm_eff, pc, hvar);
+}
+
+cprisk_vm_flow_t cprisk_vm_oph_select_vreg_mem(cprisk_vm_interp_frame_t *fr,
+                                                uint8_t op_raw, uint8_t logical,
+                                                uint64_t imm, uint32_t pc, uint32_t hvar) {
+    static const cprisk_vm_oph_fn variants[CPRISK_VM_OPH_N_VARIANTS_LANE] = {
+        cprisk_vm_oph_vreg_mem_v0,
+        cprisk_vm_oph_vreg_mem_v1,
+        cprisk_vm_oph_vreg_mem_v2,
+    };
+    const uint32_t idx = vv_select_index(fr, logical, CPRISK_VM_OPH_N_VARIANTS_LANE);
+    return variants[idx](fr, op_raw, logical, imm, pc, hvar);
+}
