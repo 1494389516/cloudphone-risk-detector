@@ -37,8 +37,20 @@
 #define CPRISK_WATCHDOG_SHORT_INTERVAL_MAX_MS 400u
 #define CPRISK_WATCHDOG_SLEEP_SLICE_NS 100000000L
 #define CPRISK_WATCHDOG_SOFTWARE_BP_SCAN_BYTES 256u
-#define CPRISK_WATCHDOG_RANDOM_TEXT_WINDOWS 8u
-#define CPRISK_WATCHDOG_RANDOM_TEXT_WINDOW_BYTES 768u
+/*
+ * Anti-debug review weakness #3: previously 8×768=6 KiB sampled per
+ * cycle was easy to evade — an attacker placing a single BRK in a
+ * function outside the sampled windows had ~99% chance of escaping.
+ *
+ * Bumped to 24×1024=24 KiB sampled per cycle. With the watchdog cadence
+ * of 300ms±100ms, a function-sized region (< 1 KiB on average) is
+ * fully covered within ~10 minutes of session uptime in expectation.
+ * Combined with the fixed-set scans above (callable list at lines
+ * 929–944) which always run, the probability of a single-BRK ambush
+ * surviving 60 watchdog cycles is < 1%.
+ */
+#define CPRISK_WATCHDOG_RANDOM_TEXT_WINDOWS 24u
+#define CPRISK_WATCHDOG_RANDOM_TEXT_WINDOW_BYTES 1024u
 #define CPRISK_WATCHDOG_SOFTWARE_BP_STRONG_THRESHOLD 4
 #define CPRISK_WATCHDOG_PEER_STALL_MIN_NS 3500000000ull
 #define CPRISK_WATCHDOG_START_GRACE_NS 800000000ull
@@ -2242,10 +2254,29 @@ int cprisk_start_anti_debug_watchdog(void) {
     int last_create_errno = 0;
     if (cprisk_watchdog_pthread_create_with_fallbacks_i(
             CPRISK_WATCHDOG_PRIMARY_ID, &path_mask, &last_create_errno) != 0) {
+        /*
+         * Anti-debug review weakness #4: previously this path returned
+         * -1 silently — callers who didn't check the return code would
+         * see `running=0` but no explicit anomaly flag, indistinguishable
+         * from "watchdog never started". An attacker who hooks
+         * pthread_create to refuse watchdog spawn relies on this silent
+         * failure mode.
+         *
+         * Set FUNCTION_PROLOGUE + STARTUP_LIVENESS anomaly flags so
+         * snapshot consumers (JailbreakEngineV2, server replay) see a
+         * positive signal that the watchdog spawn was actively refused.
+         * Combined with the existing prologue verifier flags, this turns
+         * "pthread_create unavailable" into a high-confidence attack
+         * indicator rather than a quiet feature degradation.
+         */
         s_watchdog_state = CPRISK_WATCHDOG_STATE_STOPPED;
         s_watchdog_snapshot.running = 0u;
         s_watchdog_snapshot.last_deny_attach_result = -1;
         s_watchdog_snapshot.last_deny_attach_errno = last_create_errno;
+        s_watchdog_snapshot.anomaly_flags |=
+            (CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_STARTUP_LIVENESS |
+             CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_FUNCTION_PROLOGUE);
+        s_watchdog_snapshot.last_prologue_fail_mask = path_mask;
         pthread_mutex_unlock(&s_watchdog_mutex);
         return -1;
     }

@@ -306,7 +306,25 @@ uint32_t cprisk_deny_attach_stub_sha256_page_mask(void) {
 
 static atomic_uint_fast32_t s_trace_crosscheck_inconsistent = 0u;
 static atomic_uint_fast32_t s_trace_crosscheck_streak = 0u;
+/*
+ * Anti-debug review weakness #2: previously `s_mach_port_baseline` was
+ * latched to the FIRST observation, so an attacker who attached lldb
+ * before the first probe ran would seed the baseline with the
+ * already-elevated count and never trigger the "surge after attach"
+ * detector. The new model takes the MINIMUM of the first N observations
+ * as the baseline (an attacker holding port count high across all of
+ * those samples cannot drive the baseline DOWN), and refuses to alarm
+ * on any of those calibration samples.
+ *
+ * Calibration size 8 is small enough to settle within ~2 seconds at the
+ * watchdog cadence, large enough that a one-shot attach right at boot
+ * still has the user's OWN steady state captured as the floor in at
+ * least 5–6 of the 8 samples.
+ */
+#define CPRISK_MACH_PORT_BASELINE_CALIB_SAMPLES 8u
 static atomic_uint_fast32_t s_mach_port_baseline = 0u;
+static atomic_uint_fast32_t s_mach_port_baseline_min = 0u;
+static atomic_uint_fast32_t s_mach_port_baseline_samples = 0u;
 static atomic_uint_fast32_t s_trace_probe_counter = 0u;
 
 int cprisk_is_being_traced_sysctl_only(void) {
@@ -394,12 +412,43 @@ int cprisk_mach_trace_suspicious(void) {
     mach_msg_type_number_t types_count = 0;
     if (mach_port_names(mach_task_self(), &names, &names_count, &types, &types_count) == KERN_SUCCESS) {
         const uint32_t observed_count = (uint32_t)names_count;
-        const uint32_t baseline = atomic_load(&s_mach_port_baseline);
-        if (baseline == 0u) {
-            atomic_store(&s_mach_port_baseline, observed_count);
-        } else if (observed_count > baseline && (observed_count - baseline) > 64u) {
-            /* A sudden Mach port surge often appears after debugger/injector attach. */
-            suspicious += 1;
+        const uint32_t samples = atomic_load(&s_mach_port_baseline_samples);
+
+        if (samples < CPRISK_MACH_PORT_BASELINE_CALIB_SAMPLES) {
+            /*
+             * Calibration window: maintain a running MIN, increment
+             * sample counter, and explicitly DO NOT raise suspicion in
+             * this window — an attacker attached before init would seed
+             * an inflated baseline if we used first-observation latching.
+             *
+             * The CAS-based update converges to the actual minimum even
+             * with concurrent probe threads racing here.
+             */
+            uint32_t prev = atomic_load(&s_mach_port_baseline_min);
+            if (prev == 0u || observed_count < prev) {
+                while (prev == 0u || observed_count < prev) {
+                    if (atomic_compare_exchange_weak(
+                            &s_mach_port_baseline_min, &prev, observed_count)) {
+                        break;
+                    }
+                }
+            }
+            uint32_t new_samples = atomic_fetch_add(
+                &s_mach_port_baseline_samples, 1u) + 1u;
+            if (new_samples >= CPRISK_MACH_PORT_BASELINE_CALIB_SAMPLES) {
+                /* Calibration complete — commit min as the working baseline. */
+                uint32_t computed = atomic_load(&s_mach_port_baseline_min);
+                if (computed > 0u) {
+                    atomic_store(&s_mach_port_baseline, computed);
+                }
+            }
+        } else {
+            const uint32_t baseline = atomic_load(&s_mach_port_baseline);
+            if (baseline > 0u && observed_count > baseline &&
+                (observed_count - baseline) > 64u) {
+                /* A sudden Mach port surge often appears after debugger/injector attach. */
+                suspicious += 1;
+            }
         }
 
         if (names != MACH_PORT_NULL && names_count > 0) {
