@@ -13,7 +13,8 @@ public struct VMSectionPayloads {
 
 /// Encoded in `VMBytecodeFormat.Entry.reserved` (producer hint field).
 /// Layout v1 (when magic byte `0xA5` is present in bits 24...31):
-/// - bits 0...7: low 8 bits of handler variant selector
+/// - bits 0...2: acc lane permutation index 0-5 (3! permutations of {add,sub,mul} → physical lane)
+/// - bits 3...7: high bits of handler variant selector (bits 0...2 repurposed for lane perm)
 /// - bits 8...11: semantic family id (runtime polymorphic-equivalent handlers)
 /// - bits 12...15: mixed-predicate profile id (branchCond path expansion)
 /// - bits 16...19: max subcall depth minus 1 (stored range 0...15)
@@ -25,6 +26,10 @@ public struct VMEntryExecutionProfile: Equatable, Sendable {
     public let mixedPredicateProfile: UInt8
     public let maxSubcallDepth: UInt8
     public let entropyTag: UInt8
+    /// Index into the 3! = 6 permutations of accumulator lane assignments.
+    /// 0 = identity {add→lane0, sub→lane1, mul→lane2}; 1–5 are non-trivial rotations.
+    /// Stored in bits [2:0] of entry reserved; index 0 is the safe backward-compatible default.
+    public let lanePermIdx: UInt8
     public let usesExtendedLayout: Bool
 
     public init(
@@ -33,6 +38,7 @@ public struct VMEntryExecutionProfile: Equatable, Sendable {
         mixedPredicateProfile: UInt8,
         maxSubcallDepth: UInt8,
         entropyTag: UInt8,
+        lanePermIdx: UInt8 = 0,
         usesExtendedLayout: Bool
     ) {
         self.handlerVariantLow8 = handlerVariantLow8
@@ -40,6 +46,7 @@ public struct VMEntryExecutionProfile: Equatable, Sendable {
         self.mixedPredicateProfile = mixedPredicateProfile
         self.maxSubcallDepth = Swift.max(UInt8(1), maxSubcallDepth)
         self.entropyTag = entropyTag
+        self.lanePermIdx = lanePermIdx % 6   // clamp to valid permutation range
         self.usesExtendedLayout = usesExtendedLayout
     }
 }
@@ -599,12 +606,14 @@ public struct VMBytecodeEmitter: Sendable {
         let mixedPredicate = UInt8(truncatingIfNeeded: rng.next() % 8) // 0...7
         let subcallDepth = UInt8(truncatingIfNeeded: (rng.next() % 8) + 2) // 2...9
         let entropyTag = UInt8(truncatingIfNeeded: (vpcA ^ (vpcA >> 32) ^ UInt64(rng.next())) & 0xF)
+        let lanePermIdx = UInt8(truncatingIfNeeded: rng.next() % 6)  // uniform over 3! permutations
         return VMEntryExecutionProfile(
             handlerVariantLow8: UInt8(truncatingIfNeeded: handlerVariant),
             semanticFamily: semanticFamily,
             mixedPredicateProfile: mixedPredicate,
             maxSubcallDepth: subcallDepth,
             entropyTag: entropyTag,
+            lanePermIdx: lanePermIdx,
             usesExtendedLayout: true
         )
     }
@@ -615,6 +624,7 @@ public struct VMBytecodeEmitter: Sendable {
         let marker = (reserved >> 24) & 0xFF
         guard marker == entryProfileMagic else { return nil }
         let hv = UInt8(truncatingIfNeeded: reserved & 0xFF)
+        let lanePermIdx = UInt8(truncatingIfNeeded: reserved & 0x7)
         let semantic = UInt8(truncatingIfNeeded: (reserved >> 8) & 0xF)
         let mixed = UInt8(truncatingIfNeeded: (reserved >> 12) & 0xF)
         let subDepthEncoded = UInt8(truncatingIfNeeded: (reserved >> 16) & 0xF)
@@ -625,12 +635,16 @@ public struct VMBytecodeEmitter: Sendable {
             mixedPredicateProfile: mixed,
             maxSubcallDepth: Swift.max(UInt8(1), subDepthEncoded &+ 1),
             entropyTag: entropyTag,
+            lanePermIdx: lanePermIdx,
             usesExtendedLayout: true
         )
     }
 
     private static func packEntryReserved(profile: VMEntryExecutionProfile) -> UInt32 {
-        let hv = UInt32(profile.handlerVariantLow8)
+        // bits [2:0] = lane perm index; bits [7:3] = upper bits of handlerVariantLow8
+        let lanePerm = UInt32(profile.lanePermIdx & 0x7)
+        let hvHigh   = UInt32(profile.handlerVariantLow8 & 0xF8)  // keep bits [7:3]
+        let hv = hvHigh | lanePerm
         let semantic = UInt32(profile.semanticFamily & 0xF) << 8
         let mixed = UInt32(profile.mixedPredicateProfile & 0xF) << 12
         let subDepth = UInt32((Swift.max(UInt8(1), profile.maxSubcallDepth) &- 1) & 0xF) << 16

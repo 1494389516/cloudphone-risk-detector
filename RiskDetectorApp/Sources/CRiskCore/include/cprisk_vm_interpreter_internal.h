@@ -34,6 +34,8 @@ typedef struct {
     uint64_t snap_ret_stack[CPRISK_VM_MAX_SUBCALL_DEPTH];
     uint32_t snap_ret_sp;
     uint64_t snap_vregs[8];
+    uint8_t snap_acc_lane_map[3]; /* caller's per-function lane permutation */
+    uint8_t snap_acc_lane_pad;   /* explicit alignment pad */
 } cprisk_vm_vmcall_snap_t;
 
 struct cprisk_vm_interp_frame {
@@ -78,6 +80,12 @@ struct cprisk_vm_interp_frame {
     uint32_t m3_dead;
     int vm_anti_symbolic_heavy;
     uint32_t session_mix;
+    /** Per-function accumulator lane permutation: acc_lane_map[i] maps the i-th
+     *  opcode family (0=add, 1=sub, 2=mul) to the physical lane index passed to
+     *  cprisk_vm_lane_apply_poly_i.  Decoded from entry->reserved bits [2:0] at
+     *  frame init; defaults to identity {0,1,2} for legacy (no-magic) entries. */
+    uint8_t acc_lane_map[3];
+    uint8_t acc_lane_pad; /* alignment */
     uint64_t decode_fault_mask;
     int32_t opaque_pid;
     int32_t opaque_clock_rc;
