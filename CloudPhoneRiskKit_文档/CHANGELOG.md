@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+#### 签名域闭合 (SHA-256("") trap 修复)
+- **新增 v3 签名版本**：将 `trustLevel`、`sha256(attestationAssertion)`、`sha256(reAttestationAssertion)` 纳入 HMAC 输入域。此前这三个客户端自报字段虽在 envelope 顶级字段，但**不在签名域内**，攻击者持有签名密钥时可在签名后任意篡改而 HMAC 仍然通过（SHA-256("") 类漏洞）
+- 签名域 v3 = `sigVer|nonce|ts|sessionToken|reportId|keyId|fmv|akId|trustLevel|sha256(attestationAssertion)|sha256(reAttestationAssertion)|canonicalPayload`
+- `withAttestation` / `withTrustLevel` / `withReAttestationAssertion` 对 v3 envelope 静默 no-op，防止签名后修改破坏 HMAC（v3 必须在 `create()` 时一次性传入所有字段）
+- **OpenAPI 描述强化**：`attestationAssertion` 增加显式警告，要求服务端 MUST 调用 Apple App Attest 验证流程独立验证（仅校验 envelope HMAC 等价于零硬件信任根）；`trustLevel` 标注为客户端自报字段
+- 校正 v4.6 CHANGELOG 中 "attestation 入签名域" 措辞 — 当时仅 `attestationKeyId` 入域，assertion 字节内容直到 v3 才闭合
+- 新增 binding mode `self_reported_fields_bound_v3`
+
 ### Added
 - XCFramework 构建文档 (`docs/XCFRAMEWORK_BUILD.md`)
 - 集成指南 (`CloudPhoneRiskKit_文档/INTEGRATION_GUIDE.md`，含 CocoaPods 自建 podspec；仓库根目录不跟踪 `CloudPhoneRiskKit.podspec`)
@@ -15,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 集成成本评估 (`docs/INTEGRATION_COST.md`)
 - Objective-C 桥接层 (`CPRiskKitObjCBridge`)
 - SDK Portal 设计规范 (`docs/SDK_PORTAL_SPEC.md`)
+- `ReportEnvelope.create()` 新增 `attestationAssertion` / `reAttestationAssertion` 参数（v3 签名版本必须在创建时传入）
 
 ---
 
@@ -390,7 +401,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [4.6] - 2025-02
 
 ### Fixed
-- App Attest TOCTOU 竞态消除 + attestation 入签名域
+- App Attest TOCTOU 竞态消除 + **attestationKeyId** 入签名域（注：assertion 字节内容当时仍在签名域外，参见 Unreleased v3 签名版本修复）
 - CallStack RTLD_NEXT 双路 + vm_region 交叉校验
 - 蜜罐三页分散 + handler/保护位自检
 - 金丝雀 DualPath 双路 + 随机探针池
