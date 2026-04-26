@@ -2,9 +2,9 @@
  * cprisk_vm_oph_dead.c
  * CRiskCore
  *
- * Dead handler pool — 32 handler-shaped functions that are reachable via the
- * global dead_handler_table[] but whose opcode values never appear in real
- * bytecode produced by the Pass 13 VMProtector.
+ * Dead handler pool — 32 handler-shaped functions whose addresses are folded
+ * into session entropy at session-start, but whose opcode values never appear
+ * in real bytecode produced by the Pass 13 VMProtector.
  *
  * See cprisk_vm_oph_dead.h for design rationale.
  *
@@ -13,6 +13,19 @@
  * collapsed by a deduplication pass.  All unconditionally return FLOW_LEAVE
  * and set POISON_UNKNOWN_OPCODE — matching the behaviour of cprisk_vm_oph_unknown
  * — making them behaviourally indistinguishable from "valid but unissued" opcodes.
+ *
+ * v7.5 dispersion: the previous design kept a single static const fn-pointer
+ * table in __const, which let an attacker enumerate the entire dead pool with
+ * one dref scan ("for offset in __const range: if u64@offset matches a known
+ * handler then we've found a dispatch slot").  See kanxue thread-290993 for
+ * the exact attack pattern.
+ *
+ * The table has been removed.  Function addresses are taken inline inside
+ * cprisk_vm_dead_touch_i via a macro — each reference is its own ADRP+ADD pair
+ * scattered with mixing operations, so static dref of __const finds no
+ * 8-byte function pointer constants to enumerate.  Recovering the dead set
+ * now requires reverse-engineering the touch routine itself, not pattern
+ * matching on data sections.
  */
 
 #include "include/cprisk_vm_interpreter_internal.h"
@@ -67,62 +80,76 @@ DEAD_BODY(1d, 0xDDDDDDDDu)
 DEAD_BODY(1e, 0xEEEEEEEEu)
 DEAD_BODY(1f, 0xFFFFFFFFu)
 
-/* Global table — all 32 pointers are loaded at session start by cprisk_vm_dead_touch_i. */
-static const cprisk_vm_oph_fn s_dead_handler_table[CPRISK_VM_DEAD_HANDLER_COUNT] = {
-    cprisk_vm_oph_dead_0,
-    cprisk_vm_oph_dead_1,
-    cprisk_vm_oph_dead_2,
-    cprisk_vm_oph_dead_3,
-    cprisk_vm_oph_dead_4,
-    cprisk_vm_oph_dead_5,
-    cprisk_vm_oph_dead_6,
-    cprisk_vm_oph_dead_7,
-    cprisk_vm_oph_dead_8,
-    cprisk_vm_oph_dead_9,
-    cprisk_vm_oph_dead_a,
-    cprisk_vm_oph_dead_b,
-    cprisk_vm_oph_dead_c,
-    cprisk_vm_oph_dead_d,
-    cprisk_vm_oph_dead_e,
-    cprisk_vm_oph_dead_f,
-    cprisk_vm_oph_dead_10,
-    cprisk_vm_oph_dead_11,
-    cprisk_vm_oph_dead_12,
-    cprisk_vm_oph_dead_13,
-    cprisk_vm_oph_dead_14,
-    cprisk_vm_oph_dead_15,
-    cprisk_vm_oph_dead_16,
-    cprisk_vm_oph_dead_17,
-    cprisk_vm_oph_dead_18,
-    cprisk_vm_oph_dead_19,
-    cprisk_vm_oph_dead_1a,
-    cprisk_vm_oph_dead_1b,
-    cprisk_vm_oph_dead_1c,
-    cprisk_vm_oph_dead_1d,
-    cprisk_vm_oph_dead_1e,
-    cprisk_vm_oph_dead_1f,
-};
-
 /*
- * Fold all 16 handler addresses into a 32-bit hash and XOR it into
- * fr->session_mix.  This serves two purposes:
+ * Fold all 32 handler addresses into a 32-bit hash and XOR it into
+ * fr->session_mix.  Three properties:
  *
- *   1. Forces the linker to keep all 16 function bodies (their addresses are
- *      taken and consumed at runtime — --gc-sections / COMDAT folding cannot
- *      remove them).
- *   2. Binds the dead-handler layout to the session entropy: if the binary is
- *      modified and the handler addresses change, session_mix changes, which
- *      propagates into vv_select_index and alters every subsequent variant
- *      selection (low-key integrity signal).
+ *   1. Forces the linker to keep all 32 function bodies (their addresses are
+ *      taken and consumed — --gc-sections / COMDAT folding cannot remove them).
+ *   2. Binds the dead-handler layout to session entropy: if the binary is
+ *      modified and addresses shift, session_mix changes, propagating into
+ *      vv_select_index and altering every subsequent variant selection
+ *      (low-key integrity signal).
+ *   3. **No static fn-pointer table**: each address is taken inline at its own
+ *      ADRP+ADD site rather than via a __const array, so a dref scan of data
+ *      sections finds no enumerable dispatch slots.  Recovering the dead set
+ *      requires reverse-engineering this routine, not pattern matching.
+ *
+ * The macro deliberately interleaves a non-trivial mix step between each
+ * reference so the address loads do NOT appear as a contiguous block of
+ * ADRP+ADD pairs that an attacker could pattern-match in __text.
  */
+#define CPRISK_VM_DEAD_FOLD_ONE(fold_var, fn)                                  \
+    do {                                                                       \
+        const uintptr_t _cprisk_addr = (uintptr_t)(const void *)&(fn);          \
+        (fold_var) ^= (uint32_t)_cprisk_addr;                                   \
+        (fold_var) ^= (uint32_t)(_cprisk_addr >> 17u);                          \
+        (fold_var) ^= (uint32_t)(_cprisk_addr >> 32u);                          \
+        (fold_var)  = ((fold_var) << 5u) | ((fold_var) >> 27u);   /* ROTL32 5 */ \
+    } while (0)
+
 void cprisk_vm_dead_touch_i(cprisk_vm_interp_frame_t *fr) {
     uint32_t fold = 0x4C4C4C4Cu;
-    for (uint32_t i = 0u; i < CPRISK_VM_DEAD_HANDLER_COUNT; i++) {
-        const uintptr_t addr = (uintptr_t)(const void *)s_dead_handler_table[i];
-        fold ^= (uint32_t)addr;
-        fold ^= (uint32_t)(addr >> 17u);
-        fold ^= (uint32_t)(addr >> 32u);
-        fold  = (fold << 5u) | (fold >> 27u);   /* ROTL32 5 */
-    }
+
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_0);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_1);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_2);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_3);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_4);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_5);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_6);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_7);
+    /* extra avalanche between batches keeps the fold non-linear so an attacker
+     * cannot trivially solve for individual addresses by isolating the rotor. */
+    fold = (fold * 0x9E3779B9u) ^ (fold >> 13u);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_8);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_9);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_a);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_b);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_c);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_d);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_e);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_f);
+    fold = (fold * 0x85EBCA6Bu) ^ (fold >> 11u);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_10);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_11);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_12);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_13);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_14);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_15);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_16);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_17);
+    fold = (fold * 0xC2B2AE35u) ^ (fold >> 16u);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_18);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_19);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_1a);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_1b);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_1c);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_1d);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_1e);
+    CPRISK_VM_DEAD_FOLD_ONE(fold, cprisk_vm_oph_dead_1f);
+
     fr->session_mix ^= fold;
 }
+
+#undef CPRISK_VM_DEAD_FOLD_ONE
