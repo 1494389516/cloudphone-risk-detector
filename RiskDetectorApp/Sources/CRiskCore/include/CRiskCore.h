@@ -607,6 +607,30 @@ uint64_t cprisk_get_string_integrity_accumulator(void);
 /// Securely wipe decryption key and accumulator state.
 void cprisk_cleanup_string_decryptor(void);
 
+/* -- Detection attestation (cprisk_detection_attest.c) ------------------
+ * Cross-language attestation that binds the sequence of detector results
+ * observed during a JailbreakEngineV2 run.  The Swift engine calls
+ * begin() at the start of each detection cycle, record() after each
+ * detector slot completes, and finalize() to obtain a 32-byte tag for
+ * inclusion in the upload payload.  Server-side replay using the same
+ * key (derived from WhiteBox Domain 5 = runtimeMaterial) reproduces the
+ * tag; mismatch implies the Swift dispatch path was hooked.
+ *
+ * begin() returns 0 and writes a 16-byte session nonce that the engine
+ * can echo to the server so the verifier knows which session to replay.
+ * record() folds (detector_id, score, methods_hash[32]) into a running
+ * SHA256 chain.  finalize() returns 0 plus the HMAC-SHA256 tag and the
+ * recorded count; subsequent record() calls without a fresh begin() are
+ * no-ops.
+ */
+int  cprisk_attest_session_begin(uint8_t out_nonce[16]);
+void cprisk_attest_record(uint8_t detector_id,
+                          int32_t score,
+                          const uint8_t methods_hash[32]);
+int  cprisk_attest_session_finalize(uint8_t out_tag[32],
+                                    uint32_t *out_count);
+void cprisk_attest_get_session_nonce(uint8_t out_nonce[16]);
+
 /// Test-only helper: select the distributed decrypt micro-path using
 /// the same deterministic selector as runtime dispatch.
 /// Returns a value in [0, 3].

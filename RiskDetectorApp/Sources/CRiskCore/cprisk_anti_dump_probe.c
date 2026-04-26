@@ -23,7 +23,17 @@ static pthread_t s_probe_thread;
 static pthread_mutex_t s_probe_mutex = PTHREAD_MUTEX_INITIALIZER;
 static _Atomic int s_probe_running;
 static int s_probe_started;
+/*
+ * Anti-debug review weakness #1: a fixed 5-second interval gave the
+ * attacker a stable window to perform a memory dump and clean up before
+ * the next scan. The new model treats `s_probe_interval_seconds` as the
+ * MEAN of a per-iteration draw clamped to [min, max], so any single
+ * window the attacker observes does not predict the next.
+ */
 static int s_probe_interval_seconds = 5;
+static int s_probe_interval_min = 2;
+static int s_probe_interval_max = 9;
+static _Atomic uint64_t s_probe_jitter_state;
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
 #include <stdatomic.h>
 static atomic_uint_fast32_t s_task_for_pid_baseline = UINT32_MAX;
@@ -110,6 +120,47 @@ static int cprisk_probe_task_for_pid_escalation(void) {
 }
 #endif
 
+/*
+ * SplitMix64 — local PRNG seeded from the static address of the probe
+ * thread + first cycle's monotonic clock, so each process's window
+ * schedule is unique. Not cryptographic; the goal is to deny the
+ * attacker a deterministic time-of-next-scan oracle, not key material.
+ */
+static uint64_t cprisk_probe_jitter_next_i(void) {
+    uint64_t s = atomic_load(&s_probe_jitter_state);
+    if (s == 0u) {
+        struct timespec ts;
+        if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+            ts.tv_sec = (time_t)time(NULL);
+            ts.tv_nsec = 0;
+        }
+        s = (uint64_t)((uintptr_t)&s_probe_jitter_state) ^
+            ((uint64_t)ts.tv_sec << 32) ^ (uint64_t)ts.tv_nsec ^
+            0x9E37_79B9_7F4A_7C15ull;
+        if (s == 0u) s = 0xA5A5_5A5A_5A5A_A5A5ull;
+        atomic_store(&s_probe_jitter_state, s);
+    }
+    s += 0x9E37_79B9_7F4A_7C15ull;
+    uint64_t z = s;
+    z = (z ^ (z >> 30)) * 0xBF58_476D_1CE4_E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D0_49BB_1331_11EBull;
+    atomic_store(&s_probe_jitter_state, s);
+    return z ^ (z >> 31);
+}
+
+/* Per-cycle interval drawn uniformly from [min, max]. Sub-second jitter
+ * (0..999 ms) is folded in via an extra nanosleep so even when the mean
+ * is small, two consecutive cycles never have identical timing. */
+static int cprisk_probe_pick_interval_i(void) {
+    int lo = s_probe_interval_min;
+    int hi = s_probe_interval_max;
+    if (lo < 1) lo = 1;
+    if (hi < lo) hi = lo;
+    uint64_t span = (uint64_t)(hi - lo) + 1u;
+    uint64_t r = cprisk_probe_jitter_next_i();
+    return (int)((r % span) + (uint64_t)lo);
+}
+
 static void cprisk_probe_sleep_cancelable(int total_seconds) {
     if (total_seconds <= 0)
         total_seconds = 1;
@@ -118,6 +169,16 @@ static void cprisk_probe_sleep_cancelable(int total_seconds) {
         req.tv_sec = 1;
         req.tv_nsec = 0;
         (void)nanosleep(&req, NULL);
+    }
+    /* Sub-second tail jitter (0..999ms) — defeats the "wait full interval
+     * then dump" heuristic that fixed-second cadences expose. */
+    if (s_probe_running) {
+        uint64_t r = cprisk_probe_jitter_next_i();
+        long ns = (long)(r % 1000000000ull);
+        struct timespec tail;
+        tail.tv_sec = 0;
+        tail.tv_nsec = ns;
+        (void)nanosleep(&tail, NULL);
     }
 }
 
@@ -206,7 +267,8 @@ static int cprisk_check_dylib_injection(void) {
 static void *cprisk_probe_main(void *arg) {
     (void)arg;
     while (s_probe_running) {
-        cprisk_probe_sleep_cancelable(s_probe_interval_seconds);
+        /* Per-cycle jittered interval — defeats the fixed 5s window. */
+        cprisk_probe_sleep_cancelable(cprisk_probe_pick_interval_i());
         if (!s_probe_running)
             break;
 
@@ -252,17 +314,27 @@ static void *cprisk_probe_main(void *arg) {
  */
 int cprisk_start_anti_dump_probe(int interval_seconds) {
     pthread_mutex_lock(&s_probe_mutex);
+
+    /* Recompute the per-cycle [min, max] band whenever the caller
+     * supplies a new mean. The band is mean ± ~50%, clamped to [1, 30s].
+     * This makes 5s default span [2, 9]; 10s span [5, 16]; etc. */
+    if (interval_seconds > 0) {
+        s_probe_interval_seconds = interval_seconds;
+    }
+    if (s_probe_interval_seconds <= 0)
+        s_probe_interval_seconds = 5;
+
+    int half = s_probe_interval_seconds / 2;
+    if (half < 1) half = 1;
+    s_probe_interval_min = s_probe_interval_seconds - half;
+    s_probe_interval_max = s_probe_interval_seconds + half;
+    if (s_probe_interval_min < 1) s_probe_interval_min = 1;
+    if (s_probe_interval_max > 30) s_probe_interval_max = 30;
+
     if (s_probe_started) {
-        if (interval_seconds > 0)
-            s_probe_interval_seconds = interval_seconds;
         pthread_mutex_unlock(&s_probe_mutex);
         return 0;
     }
-
-    if (interval_seconds > 0)
-        s_probe_interval_seconds = interval_seconds;
-    if (s_probe_interval_seconds <= 0)
-        s_probe_interval_seconds = 5;
 
     s_probe_running = 1;
     int rc = pthread_create(&s_probe_thread, NULL, cprisk_probe_main, NULL);

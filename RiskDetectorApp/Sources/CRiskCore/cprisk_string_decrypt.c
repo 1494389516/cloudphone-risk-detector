@@ -29,10 +29,16 @@ static _Atomic int s_dec_ready;
 static uint64_t s_str_acc;
 static uint64_t s_dispatch_seed;
 static uint8_t  s_per_string_key[CPRISK_ARMOR_KEY_SIZE];
-static uint32_t s_lazy_id;
-static char     s_lazy_buf[512];
-static int      s_lazy_len;
-static int      s_lazy_valid;
+/*
+ * The previous lazy-decrypt path kept a 512-byte plaintext buffer
+ * (s_lazy_buf) at a stable BSS address. Per the red-team self-audit,
+ * this buffer constituted a memory-dump oracle — `vmmap | grep __bss`
+ * locates the address, and a single `readByteArray` exfiltrates the
+ * most recently decrypted plaintext. The performance benefit was
+ * unused (no Swift caller invoked the lazy path), so the cache state
+ * has been removed entirely. `cprisk_decrypt_string_lazy` is retained
+ * as an ABI-stable alias that delegates to `cprisk_decrypt_string`.
+ */
 
 /* ── internal ──────────────────────────────────────────────────────── */
 
@@ -513,45 +519,24 @@ uint64_t cprisk_get_string_integrity_accumulator(void) {
 }
 
 /*
- * Threat model for the lazy cache: callers in the hot path (e.g. risk
- * scoring) decrypt the same string ID hundreds of times per session. The
- * cache trades a measurable timing oracle (cache hit ≈ memcpy, cache miss
- * ≈ full SHA256-keyed decrypt) for ~1000× throughput. The strings stored
- * here are non-cryptographic (format strings, log labels, error
- * messages) — knowing *which* string was last accessed leaks far less
- * than the existing syscall/file-access trace.
- *
- * Do NOT use this entry point for decrypting key material or other
- * data whose access pattern must be constant-time; use
- * `cprisk_decrypt_string` directly for that, which performs a full
- * decrypt on every call.
+ * Lazy alias retained for ABI compatibility. The previous implementation
+ * cached the most-recently-decrypted plaintext in a 512-byte BSS buffer,
+ * exposing a memory-dump oracle at a stable address. Now this just
+ * forwards to the full decrypt path: every call does the SHA256-keyed
+ * keystream computation, plaintext lives only in the caller's buffer
+ * for the duration of its scope, and no plaintext is retained in any
+ * static segment of the runtime.
  */
 int cprisk_decrypt_string_lazy(uint32_t string_id, char *buffer, size_t buffer_size) {
-    if (!buffer || buffer_size == 0)
-        return -1;
-    if (s_lazy_valid != 0 && s_lazy_id == string_id && s_lazy_len > 0 && (size_t)s_lazy_len < buffer_size) {
-        memcpy(buffer, s_lazy_buf, (size_t)s_lazy_len + 1u);
-        return s_lazy_len;
-    }
-    int r = cprisk_decrypt_string(string_id, buffer, buffer_size);
-    if (r > 0 && r < (int)sizeof(s_lazy_buf)) {
-        memcpy(s_lazy_buf, buffer, (size_t)r + 1u);
-        s_lazy_id = string_id;
-        s_lazy_len = r;
-        s_lazy_valid = 1;
-    }
-    return r;
+    return cprisk_decrypt_string(string_id, buffer, buffer_size);
 }
 
 void cprisk_string_lazy_scrub_all(void) {
-    cprisk_secure_zero(s_lazy_buf, sizeof(s_lazy_buf));
-    s_lazy_valid = 0;
-    s_lazy_len = 0;
-    s_lazy_id = 0u;
+    /* No-op: lazy cache was removed. Kept for ABI stability so existing
+     * shutdown paths that call this symbol continue to link. */
 }
 
 void cprisk_cleanup_string_decryptor(void) {
-    cprisk_string_lazy_scrub_all();
     cprisk_secure_zero(s_dec_key, sizeof(s_dec_key));
     cprisk_secure_zero(s_per_string_key, sizeof(s_per_string_key));
     atomic_store(&s_dec_ready, 0);

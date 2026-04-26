@@ -2,6 +2,12 @@
 # full: entry patched to call _cprisk_vm_entry with fn id in x0 + bytecode emitted
 # partial: bytecode only (no __text patch)
 # never: excluded (wins over full/partial if duplicated)
+#
+# ABI v3 注意事项（v7.4 起）：
+#   - per-string KDF domain label、Path-A counter、configDigest 格式为 breaking changes；
+#     构建时须同时更新 Swift producer（StringEncryptor/WhiteBoxProfile）与 C consumer（cprisk_string_decrypt/cprisk_whitebox）。
+#   - 跨语言 ABI 一致性由 ABIConsistencyTests.swift（5 tests）在 CI 覆盖。
+#   - VM S-box 已升级为 8-bit（Feistel-SPN 扩散增强），旧 4-bit 字节码不可兼容。
 
 version: 1
 anti_analysis:

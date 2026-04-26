@@ -1,4 +1,6 @@
 import Foundation
+import CryptoKit
+import CRiskCore
 
 /// JailbreakEngine V2 - 集成新架构检测器
 ///
@@ -190,7 +192,23 @@ public final class JailbreakEngineV2 {
         Double(v2Config.detectionTimeout) / 1000.0
     }
 
-    private func runDetectorWithTimeout(_ work: @escaping () throws -> DetectorResult, detectorName: String, timeout: TimeInterval) -> DetectorResult {
+    /// Numeric identifier replacing the previous `detectorName: String` parameter.
+    /// String literals like "FridaDetector" were a static-analysis goldmine — an
+    /// attacker grepping `__cstring` for the suffix `Detector` immediately
+    /// located every dispatch site. The enum compiles to small integer constants
+    /// and the lookup logger string is decrypted from the encrypted string table
+    /// only when actually emitted (debug builds + log enabled).
+    private enum DetectorID: UInt8 {
+        case antiTampering = 0x11
+        case debugger      = 0x23
+        case frida         = 0x37
+        case codeSignature = 0x4D
+        case memoryIntegrity = 0x59
+        case dylibInjection  = 0x6B
+        case canary          = 0x7F
+    }
+
+    private func runDetectorWithTimeout(_ work: @escaping () throws -> DetectorResult, id: DetectorID, timeout: TimeInterval) -> DetectorResult {
         let semaphore = DispatchSemaphore(value: 0)
         final class ResultBox: @unchecked Sendable {
             var value: DetectorResult
@@ -202,74 +220,250 @@ public final class JailbreakEngineV2 {
             do {
                 box.value = try work()
             } catch {
-                Logger.log("detector \(detectorName) threw: \(error)")
-                box.value = DetectorResult(score: 80, methods: ["detector_anomaly_\(detectorName)"])
+                Logger.log("detector id=\(id.rawValue) threw: \(error)")
+                box.value = DetectorResult(score: 80, methods: ["detector_anomaly:\(id.rawValue)"])
             }
             semaphore.signal()
         }
         let waitResult = semaphore.wait(timeout: .now() + timeout)
         if waitResult == .timedOut {
-            Logger.log("detector \(detectorName) timeout after \(timeout)s")
-            return DetectorResult(score: 80, methods: ["detector_timeout_\(detectorName)"])
+            Logger.log("detector id=\(id.rawValue) timeout after \(timeout)s")
+            return DetectorResult(score: 80, methods: ["detector_timeout:\(id.rawValue)"])
         }
         return box.value
     }
 
     private static let emptyDetectorResult = DetectorResult.empty
 
+    /// Per-process build-seeded RNG used to randomize detector execution order
+    /// per call. The seed is derived from a static base XOR'd with a session
+    /// nonce so every `detectV2` invocation produces a different ordering;
+    /// this defeats the static "attacker waits for the AntiTampering window"
+    /// strategy described in the red-team self-audit.
+    private static func detectorOrderSeed() -> UInt64 {
+        var raw: UInt64 = 0
+        let _ = withUnsafeMutableBytes(of: &raw) { buf in
+            arc4random_buf(buf.baseAddress, buf.count)
+        }
+        // mix in mach_absolute_time to ensure that even if arc4random_buf
+        // is hooked to return a constant, the schedule still varies per call.
+        return raw ^ UInt64(Date().timeIntervalSinceReferenceDate.bitPattern)
+    }
+
+    /// Canary detector: returns a known fixed result. After the dispatch
+    /// loop the engine verifies that this exact result came back. A blanket
+    /// hook on `runDetectorWithTimeout` that returns "all-clean" for every
+    /// caller will fail this canary check, exposing the hook.
+    private static let canaryExpectedScore: Double = 13.0
+    private static let canaryExpectedMethod = "_cprisk_canary_v1"
+    private func canaryDetectorClosure() -> () throws -> DetectorResult {
+        return {
+            DetectorResult(score: Self.canaryExpectedScore, methods: [Self.canaryExpectedMethod])
+        }
+    }
+
 #if !targetEnvironment(simulator)
-    
-    /// 执行 V2 新增检测
+
+    /// One slot in the randomized detector dispatch table.
+    /// Closures are not stored as property types directly because the
+    /// ResultBox path requires `@escaping`; we keep them as opaque trailing
+    /// thunks captured at slot construction.
+    private struct DispatchSlot {
+        let id: DetectorID
+        let work: () throws -> DetectorResult
+    }
+
+    /// Build the dispatch slot array based on enabled detectors. The order of
+    /// elements here is the *deterministic registration* order; the actual
+    /// execution order is decided by `executeRandomized()` below using a
+    /// per-call RNG seed.
+    private func buildEnabledSlots() -> [DispatchSlot] {
+        var slots: [DispatchSlot] = []
+        if v2Config.enableAntiTampering {
+            slots.append(DispatchSlot(id: .antiTampering) { try AntiTamperingDetector().detect() })
+        }
+        if v2Config.enableDebugger {
+            slots.append(DispatchSlot(id: .debugger) { try DebuggerDetector().detect() })
+        }
+        if v2Config.enableFrida {
+            slots.append(DispatchSlot(id: .frida) { try FridaDetector().detect() })
+        }
+        if v2Config.enableCodeSignature {
+            slots.append(DispatchSlot(id: .codeSignature) { try CodeSignatureValidator().detect() })
+        }
+        if v2Config.enableMemoryIntegrity {
+            slots.append(DispatchSlot(id: .memoryIntegrity) { try MemoryIntegrityChecker().detect() })
+        }
+        if v2Config.enableDylibInjection {
+            slots.append(DispatchSlot(id: .dylibInjection) { try DylibInjectionDetector().detect() })
+        }
+        // Canary slot is always inserted, regardless of v2Config — its purpose
+        // is to detect blanket hooks on the dispatch path. A hook returning
+        // "all-clean" for every caller will not produce the expected canary
+        // score/method tuple, and the post-loop check will flag the bypass.
+        slots.append(DispatchSlot(id: .canary, work: canaryDetectorClosure()))
+        return slots
+    }
+
+    /// SplitMix64 PRNG — used to generate the execution order without leaking
+    /// dependencies on Foundation random APIs that an attacker can hook.
+    private struct SplitMix64 {
+        var state: UInt64
+        mutating func next() -> UInt64 {
+            state &+= 0x9E37_79B9_7F4A_7C15
+            var z = state
+            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+            z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+            return z ^ (z >> 31)
+        }
+        mutating func bounded(_ bound: Int) -> Int {
+            // unbiased rejection sampling
+            let b = UInt64(bound)
+            let threshold = (0 &- b) % b
+            while true {
+                let r = next()
+                if r >= threshold { return Int(r % b) }
+            }
+        }
+    }
+
+    /// 执行 V2 新增检测 — randomized order, per-detector jitter, canary verification,
+    /// and cross-language attestation via CRiskCore (P0a full).
     private func detectV2(baseScore: Double) -> V2DetectionResult {
         var score: Double = 0
         var methods: [String] = []
         let timeout = detectionTimeoutSeconds
-        
-        if v2Config.enableAntiTampering {
-            let result = runDetectorWithTimeout({ try AntiTamperingDetector().detect() }, detectorName: "AntiTamperingDetector", timeout: timeout)
-            score += result.score
-            methods.append(contentsOf: result.methods)
-            logV2("AntiTamperingDetector", result.score, result.methods.count)
-        }
-        
-        if v2Config.enableDebugger {
-            let result = runDetectorWithTimeout({ try DebuggerDetector().detect() }, detectorName: "DebuggerDetector", timeout: timeout)
-            score += result.score
-            methods.append(contentsOf: result.methods)
-            logV2("DebuggerDetector", result.score, result.methods.count)
-        }
-        
-        if v2Config.enableFrida {
-            let result = runDetectorWithTimeout({ try FridaDetector().detect() }, detectorName: "FridaDetector", timeout: timeout)
-            score += result.score
-            methods.append(contentsOf: result.methods)
-            logV2("FridaDetector", result.score, result.methods.count)
-        }
-        
-        if v2Config.enableCodeSignature {
-            let result = runDetectorWithTimeout({ try CodeSignatureValidator().detect() }, detectorName: "CodeSignatureValidator", timeout: timeout)
-            score += result.score
-            methods.append(contentsOf: result.methods)
-            logV2("CodeSignatureValidator", result.score, result.methods.count)
-        }
-        
-        if v2Config.enableMemoryIntegrity {
-            let result = runDetectorWithTimeout({ try MemoryIntegrityChecker().detect() }, detectorName: "MemoryIntegrityChecker", timeout: timeout)
-            score += result.score
-            methods.append(contentsOf: result.methods)
-            logV2("MemoryIntegrityChecker", result.score, result.methods.count)
+
+        var slots = buildEnabledSlots()
+        // Fisher-Yates shuffle keyed by per-call seed.
+        var rng = SplitMix64(state: Self.detectorOrderSeed())
+        if slots.count > 1 {
+            for i in stride(from: slots.count - 1, through: 1, by: -1) {
+                let j = rng.bounded(i + 1)
+                if i != j { slots.swapAt(i, j) }
+            }
         }
 
-        if v2Config.enableDylibInjection {
-            let result = runDetectorWithTimeout({ try DylibInjectionDetector().detect() }, detectorName: "DylibInjectionDetector", timeout: timeout)
+        // Begin a CRiskCore-side attestation session. The C runtime
+        // independently records (id, score, methods_hash) tuples into a
+        // running SHA256 chain keyed by a WhiteBox PRF derivation.
+        // Hooking only the Swift dispatch leaves the chain inconsistent
+        // with what the engine reports — server-side replay then catches
+        // the tampering.
+        var sessionNonce = [UInt8](repeating: 0, count: 16)
+        _ = sessionNonce.withUnsafeMutableBufferPointer { buf in
+            cprisk_attest_session_begin(buf.baseAddress)
+        }
+
+        var canarySatisfied = false
+        for slot in slots {
+            // Sub-millisecond jitter (0..1500 microseconds). Visible-from-outside
+            // detection windows ("waits exactly 50 ms before AntiTamper") become
+            // unreliable. The jitter is bounded so total detection latency
+            // stays within the configured timeout budget.
+            let jitterMicros = rng.bounded(1500)
+            if jitterMicros > 0 {
+                usleep(UInt32(jitterMicros))
+            }
+
+            let result = runDetectorWithTimeout(slot.work, id: slot.id, timeout: timeout)
+
+            // Record into the C-side attestation chain BEFORE branching on
+            // canary, so the canary slot also contributes to the chain (and
+            // the server replay must include it). The attacker who skips
+            // calling `cprisk_attest_record` for any slot — or skips it
+            // entirely — produces a tag that cannot be reconstructed from
+            // what the engine reports.
+            recordAttestation(id: slot.id, result: result)
+
+            if slot.id == .canary {
+                let scoreOK = abs(result.score - Self.canaryExpectedScore) < 0.0001
+                let methodsOK = result.methods == [Self.canaryExpectedMethod]
+                if scoreOK && methodsOK {
+                    canarySatisfied = true
+                }
+                continue
+            }
+
             score += result.score
             methods.append(contentsOf: result.methods)
-            logV2("DylibInjectionDetector", result.score, result.methods.count)
+            logV2("d:\(slot.id.rawValue)", result.score, result.methods.count)
         }
-        
+
+        // Finalize the C-side attestation. The 32-byte tag and the slot
+        // count are emitted as method tags using a stable prefix so the
+        // server-side correlator can extract them without protocol
+        // changes. Hex-encoded for compatibility with the existing
+        // [String] methods field.
+        var attestTag = [UInt8](repeating: 0, count: 32)
+        var recordedCount: UInt32 = 0
+        let finalizeRC = attestTag.withUnsafeMutableBufferPointer { tagBuf in
+            cprisk_attest_session_finalize(tagBuf.baseAddress, &recordedCount)
+        }
+        if finalizeRC == 0 {
+            methods.append("attest_nonce:\(Self.hexEncode(sessionNonce))")
+            methods.append("attest_count:\(recordedCount)")
+            methods.append("attest_tag:\(Self.hexEncode(attestTag))")
+        } else {
+            // CRiskCore could not finalize — possible early-boot path or
+            // malicious hook on the attest module itself. Treat as risk.
+            methods.append("attest_unavailable")
+            score += 50
+        }
+
+        if !canarySatisfied {
+            score += 100
+            methods.append("dispatch_attest_failed")
+        }
+
         return V2DetectionResult(score: score, methods: methods)
     }
-    
+
+    /// Compute a stable SHA256 over a sorted detector method list and
+    /// hand it to the C-side attestation chain. Sorting normalizes
+    /// ordering so server replay can reproduce the same hash without
+    /// guessing iteration order inside individual detectors.
+    private func recordAttestation(id: DetectorID, result: DetectorResult) {
+        let sortedMethods = result.methods.sorted()
+        var methodsBlob = Data()
+        for m in sortedMethods {
+            // length-prefixed encoding to prevent ambiguity from method
+            // names containing the separator byte.
+            var lenLE = UInt32(m.utf8.count).littleEndian
+            withUnsafeBytes(of: &lenLE) { methodsBlob.append(contentsOf: $0) }
+            methodsBlob.append(Data(m.utf8))
+        }
+        let hash = SHA256.hash(data: methodsBlob)
+        let hashBytes = Array(hash)
+
+        // Score is double on the Swift side; quantize to integer cents to
+        // give the C side a stable int32 representation. Manual clamp because
+        // direct Int32(_) traps on overflow.
+        let cents = result.score.rounded() * 100
+        let clamped: Int32
+        if cents > Double(Int32.max) {
+            clamped = Int32.max
+        } else if cents < Double(Int32.min) {
+            clamped = Int32.min
+        } else {
+            clamped = Int32(cents)
+        }
+        hashBytes.withUnsafeBufferPointer { buf in
+            cprisk_attest_record(id.rawValue, clamped, buf.baseAddress)
+        }
+    }
+
+    private static func hexEncode(_ bytes: [UInt8]) -> String {
+        let hexChars: [Character] = Array("0123456789abcdef")
+        var out = String()
+        out.reserveCapacity(bytes.count * 2)
+        for b in bytes {
+            out.append(hexChars[Int(b >> 4)])
+            out.append(hexChars[Int(b & 0x0F)])
+        }
+        return out
+    }
+
 #endif
     
     /// 处理模拟器环境

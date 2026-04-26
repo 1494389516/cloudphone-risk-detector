@@ -1,7 +1,133 @@
+import CryptoKit
 import XCTest
 @testable import CloudPhoneRiskKit
 
 final class CryptoTests: XCTestCase {
+
+    // MARK: - P2a — Nested key obfuscation (depthScope: .all)
+
+    func testNestedKeysAreObfuscatedWhenScopeIsAll() throws {
+        // The signal name "jailbreak" in nested form is the exact field
+        // name the red-team report flagged as visible on the wire under
+        // the legacy top-level-only behavior.
+        let original: [String: Any] = [
+            "deviceID": "abc",
+            "signals": [
+                "jailbreak": true,
+                "frida": false,
+                "ptrace": "denied",
+            ] as [String: Any],
+        ]
+        let jsonData = try JSONSerialization.data(withJSONObject: original)
+        let mapping = PayloadFieldMapping(
+            version: "v2",
+            mappings: [
+                "deviceID": "d",
+                "signals": "s",
+                "jailbreak": "jb",
+                "frida": "fr",
+                "ptrace": "pt",
+            ],
+            expiresAtMillis: nil,
+            depthScope: .all
+        )
+
+        let obfuscated = try PayloadFieldObfuscator.obfuscate(jsonData: jsonData, mapping: mapping)
+        let result = try JSONSerialization.jsonObject(with: obfuscated) as! [String: Any]
+
+        // Outer keys renamed.
+        XCTAssertNotNil(result["d"])
+        XCTAssertNotNil(result["s"])
+
+        // Critical: nested "jailbreak" / "frida" / "ptrace" must NOT appear.
+        let nested = result["s"] as! [String: Any]
+        XCTAssertNil(nested["jailbreak"], "literal 'jailbreak' must not appear in obfuscated payload")
+        XCTAssertNil(nested["frida"],     "literal 'frida' must not appear in obfuscated payload")
+        XCTAssertNil(nested["ptrace"],    "literal 'ptrace' must not appear in obfuscated payload")
+        XCTAssertEqual(nested["jb"] as? Bool, true)
+        XCTAssertEqual(nested["fr"] as? Bool, false)
+        XCTAssertEqual(nested["pt"] as? String, "denied")
+
+        // Round-trip restores all keys at all depths.
+        let restored = try PayloadFieldObfuscator.deobfuscate(jsonData: obfuscated, mapping: mapping)
+        let restoredObj = try JSONSerialization.jsonObject(with: restored) as! [String: Any]
+        let restoredSignals = restoredObj["signals"] as! [String: Any]
+        XCTAssertEqual(restoredSignals["jailbreak"] as? Bool, true)
+        XCTAssertEqual(restoredSignals["frida"] as? Bool, false)
+        XCTAssertEqual(restoredSignals["ptrace"] as? String, "denied")
+    }
+
+    func testTopLevelScopeRetainsLegacyBehaviorForNestedKeys() throws {
+        let original: [String: Any] = [
+            "outer": "x",
+            "nested": ["inner": 1] as [String: Any],
+        ]
+        let jsonData = try JSONSerialization.data(withJSONObject: original)
+        let mapping = PayloadFieldMapping(
+            version: "v1",
+            mappings: ["outer": "o", "nested": "n", "inner": "i"],
+            expiresAtMillis: nil,
+            depthScope: .topLevel
+        )
+
+        let obfuscated = try PayloadFieldObfuscator.obfuscate(jsonData: jsonData, mapping: mapping)
+        let result = try JSONSerialization.jsonObject(with: obfuscated) as! [String: Any]
+
+        XCTAssertEqual(result["o"] as? String, "x")
+        let n = result["n"] as! [String: Any]
+        // Legacy: "inner" is NOT renamed under .topLevel
+        XCTAssertEqual(n["inner"] as? Int, 1)
+        XCTAssertNil(n["i"])
+    }
+
+    func testSessionDerivedMappingProducesStableDeterministicOutput() {
+        let key = SymmetricKey(data: Data(repeating: 0x42, count: 32))
+        let baseKeys = ["jailbreak", "frida", "ptrace", "score"]
+
+        let m1 = PayloadFieldObfuscator.deriveSessionMapping(
+            baseKeys: baseKeys, sessionKey: key, version: "session-1"
+        )
+        let m2 = PayloadFieldObfuscator.deriveSessionMapping(
+            baseKeys: baseKeys, sessionKey: key, version: "session-1"
+        )
+        XCTAssertEqual(m1.mappings, m2.mappings, "same key+keys must yield identical mappings")
+        XCTAssertEqual(m1.depthScope, .all)
+
+        // Each obfuscated name is 16 hex chars (8 bytes of HMAC).
+        for v in m1.mappings.values {
+            XCTAssertEqual(v.count, 16)
+            XCTAssertTrue(v.allSatisfy { ("0"..."9").contains($0) || ("a"..."f").contains($0) })
+        }
+        XCTAssertTrue(m1.validate(), "session mapping must be collision-free")
+    }
+
+    func testSessionMappingDiffersPerKey() {
+        let baseKeys = ["jailbreak", "frida"]
+        let k1 = SymmetricKey(data: Data(repeating: 0x01, count: 32))
+        let k2 = SymmetricKey(data: Data(repeating: 0x02, count: 32))
+
+        let m1 = PayloadFieldObfuscator.deriveSessionMapping(baseKeys: baseKeys, sessionKey: k1, version: "v")
+        let m2 = PayloadFieldObfuscator.deriveSessionMapping(baseKeys: baseKeys, sessionKey: k2, version: "v")
+
+        // Each key must map to a different output under different session keys
+        XCTAssertNotEqual(m1.mappings["jailbreak"], m2.mappings["jailbreak"])
+        XCTAssertNotEqual(m1.mappings["frida"],     m2.mappings["frida"])
+    }
+
+    func testValidateRejectsCollidingTargets() {
+        // Two source keys mapping to same target — would corrupt deobfuscation
+        let bad = PayloadFieldMapping(
+            version: "v1",
+            mappings: ["a": "x", "b": "x"]
+        )
+        XCTAssertFalse(bad.validate())
+
+        let good = PayloadFieldMapping(
+            version: "v1",
+            mappings: ["a": "x", "b": "y"]
+        )
+        XCTAssertTrue(good.validate())
+    }
 
     // MARK: - PayloadFieldObfuscator Tests
 
