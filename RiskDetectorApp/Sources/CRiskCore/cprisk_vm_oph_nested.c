@@ -36,6 +36,9 @@ cprisk_vm_flow_t cprisk_vm_oph_vm_call_func(cprisk_vm_interp_frame_t *fr,
     fr->vm_snap[fr->vm_snap_sp].snap_max_subcall_depth = fr->max_subcall_depth;
     memcpy(fr->vm_snap[fr->vm_snap_sp].snap_ret_stack, fr->return_stack, sizeof(fr->return_stack));
     fr->vm_snap[fr->vm_snap_sp].snap_ret_sp = fr->return_sp;
+    fr->vm_snap[fr->vm_snap_sp].snap_acc_lane_map[0] = fr->acc_lane_map[0];
+    fr->vm_snap[fr->vm_snap_sp].snap_acc_lane_map[1] = fr->acc_lane_map[1];
+    fr->vm_snap[fr->vm_snap_sp].snap_acc_lane_map[2] = fr->acc_lane_map[2];
     fr->vm_snap_sp += 1u;
     memset(fr->vregs, 0, sizeof(fr->vregs));
 
@@ -100,6 +103,17 @@ cprisk_vm_flow_t cprisk_vm_oph_vm_call_func(cprisk_vm_interp_frame_t *fr,
     fr->semantic_family = sf;
     fr->mixed_predicate_profile = mp;
     fr->max_subcall_depth = msd;
+    {
+        static const uint8_t s_lane_perms[8][3] = {
+            {0u,1u,2u},{0u,2u,1u},{1u,0u,2u},{1u,2u,0u},
+            {2u,0u,1u},{2u,1u,0u},{0u,1u,2u},{0u,1u,2u},
+        };
+        const uint32_t idx = ((callee_ent->reserved >> 24u) == CPRISK_VMP_ENTRY_PROFILE_MAGIC)
+            ? (callee_ent->reserved & 0x7u) : 0u;
+        fr->acc_lane_map[0] = s_lane_perms[idx][0];
+        fr->acc_lane_map[1] = s_lane_perms[idx][1];
+        fr->acc_lane_map[2] = s_lane_perms[idx][2];
+    }
     fr->return_sp = 0u;
     memset(fr->return_stack, 0, sizeof(fr->return_stack));
     if (fr->vpc_a == 0u) {

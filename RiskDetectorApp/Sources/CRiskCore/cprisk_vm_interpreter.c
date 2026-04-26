@@ -7,6 +7,7 @@
 #include "include/cprisk_sha256.h"
 #include "include/cprisk_secure_zero.h"
 #include "cprisk_vm_hardening.h"
+#include "include/cprisk_vm_oph_dead.h"
 
 #include <stdatomic.h>
 #include <string.h>
@@ -4395,6 +4396,23 @@ static int cprisk_vm_prepare_program_i(const struct mach_header_64 *hdr,
         max_subcall_depth = 1u;
     if (max_subcall_depth > CPRISK_VM_MAX_SUBCALL_DEPTH)
         max_subcall_depth = CPRISK_VM_MAX_SUBCALL_DEPTH;
+
+    /* Per-function accumulator lane permutation: 3-bit index in entry->reserved
+     * bits [2:0] selects among 3! = 6 permutations of {add_lane, sub_lane, mul_lane}.
+     * Index 0 (identity {0,1,2}) is the default for legacy no-magic entries. */
+    static const uint8_t s_acc_lane_perms[8][3] = {
+        {0u, 1u, 2u},  /* 0 — identity (default) */
+        {0u, 2u, 1u},  /* 1 */
+        {1u, 0u, 2u},  /* 2 */
+        {1u, 2u, 0u},  /* 3 */
+        {2u, 0u, 1u},  /* 4 */
+        {2u, 1u, 0u},  /* 5 */
+        {0u, 1u, 2u},  /* 6 — undefined, alias identity */
+        {0u, 1u, 2u},  /* 7 — undefined, alias identity */
+    };
+    const uint32_t lane_perm_idx = ((selected->reserved >> 24u) == CPRISK_VMP_ENTRY_PROFILE_MAGIC)
+        ? (selected->reserved & 0x7u) : 0u;
+
     uint64_t return_stack[CPRISK_VM_MAX_SUBCALL_DEPTH];
     uint32_t return_sp = 0u;
     cprisk_vm_vmcall_snap_t vm_snap[CPRISK_VM_MAX_VM_NEST_DEPTH];
@@ -4504,6 +4522,9 @@ static int cprisk_vm_prepare_program_i(const struct mach_header_64 *hdr,
     fr->semantic_family = semantic_family;
     fr->mixed_predicate_profile = mixed_predicate_profile;
     fr->max_subcall_depth = max_subcall_depth;
+    fr->acc_lane_map[0] = s_acc_lane_perms[lane_perm_idx][0];
+    fr->acc_lane_map[1] = s_acc_lane_perms[lane_perm_idx][1];
+    fr->acc_lane_map[2] = s_acc_lane_perms[lane_perm_idx][2];
     memcpy(fr->return_stack, return_stack, sizeof(return_stack));
     fr->return_sp = return_sp;
     memcpy(fr->vm_snap, vm_snap, sizeof(vm_snap));
@@ -4542,6 +4563,9 @@ static int cprisk_vm_prepare_program_i(const struct mach_header_64 *hdr,
     fr->steps = 0u;
     /* Initialize integrated hardening modules */
     cprisk_vm_hardening_init(fr);
+    /* Fold dead-handler addresses into session_mix: keeps all 16 dead-handler
+     * bodies live in the binary and binds their layout to session entropy. */
+    cprisk_vm_dead_touch_i(fr);
     /* VM sync barrier: external data dependency to break native batch-trace */
     cprisk_vm_sync_barrier_init(&fr->sync_barrier_ctx);
     return 1;

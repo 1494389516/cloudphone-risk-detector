@@ -144,6 +144,9 @@ public struct ARM64Lifter: Sendable {
         if isShiftByRegister64(insn) {
             return VMInstruction(op: .rolAcc, immediate: UInt64(insn))
         }
+        if isImmediateShiftOrBitfield(insn) {
+            return VMInstruction(op: .xorMix, immediate: UInt64(insn))
+        }
         if isCSEL(insn) || isCSETAlias(insn) {
             return VMInstruction(op: .condSelect, immediate: UInt64(insn))
         }
@@ -151,6 +154,9 @@ public struct ARM64Lifter: Sendable {
             return VMInstruction(op: .branchCond, immediate: UInt64(insn))
         }
         if isLoadStoreBasic(insn) {
+            return VMInstruction(op: .loadStore, immediate: UInt64(insn))
+        }
+        if isLoadStorePair(insn) {
             return VMInstruction(op: .loadStore, immediate: UInt64(insn))
         }
         if isBLR(insn) || isBR(insn) {
@@ -161,6 +167,9 @@ public struct ARM64Lifter: Sendable {
             return VMInstruction(op: .rawRegion, immediate: UInt64(insn), rawCategory: .other)
         }
         if isMADD64(insn) {
+            return VMInstruction(op: .mulLane, immediate: UInt64(insn))
+        }
+        if isIntegerDivide64(insn) {
             return VMInstruction(op: .mulLane, immediate: UInt64(insn))
         }
         return nil
@@ -391,5 +400,27 @@ public struct ARM64Lifter: Sendable {
         if (insn & 0xFFFF_FC1F) == 0xDAC1_0C00 { return true } // AUTIB/AUTIZB variants
         if (insn & 0xFFFF_FC1F) == 0xDAC1_1000 { return true } // XPACI/XPACD class
         return false
+    }
+
+    /// LDP/STP (load/store register pair), integer registers, all addressing modes.
+    /// Bit[29]=1 bit[27]=1 (pair class); bit[26]=0 (V=0, GP regs, excludes FP/SIMD pairs).
+    private func isLoadStorePair(_ insn: UInt32) -> Bool {
+        guard (insn & 0x3E00_0000) == 0x2800_0000 else { return false }
+        return (insn & 0x0400_0000) == 0
+    }
+
+    /// UBFM/SBFM/BFM 64-bit — covers LSL/LSR/ASR immediate and bit-field insert/extract.
+    private func isImmediateShiftOrBitfield(_ insn: UInt32) -> Bool {
+        let top9 = insn >> 23
+        return top9 == 0x1A6  // UBFM 64-bit (LSL/LSR immediate aliases)
+            || top9 == 0x126  // SBFM 64-bit (ASR immediate alias)
+            || top9 == 0x166  // BFM  64-bit (bit-field move)
+    }
+
+    /// SDIV/UDIV 64-bit.
+    private func isIntegerDivide64(_ insn: UInt32) -> Bool {
+        let masked = insn & 0xFFE0_FC00
+        return masked == 0x9AC0_0800  // UDIV Xd, Xn, Xm
+            || masked == 0x9AC0_0C00  // SDIV Xd, Xn, Xm
     }
 }

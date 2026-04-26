@@ -14,7 +14,7 @@ cprisk_vm_flow_t cprisk_vm_oph_add(cprisk_vm_interp_frame_t *fr,
     );
     cprisk_vm_lane_apply_poly_i(
         fr->acc,
-        0u,
+        fr->acc_lane_map[0],
         imm,
         (uint32_t)fr->steps,
         hvar,
@@ -23,7 +23,7 @@ cprisk_vm_flow_t cprisk_vm_oph_add(cprisk_vm_interp_frame_t *fr,
         pc,
         route
     );
-    cprisk_vm_diophantine_lane_poly_sidefx_i(fr, 0u, imm, route, pc, hvar);
+    cprisk_vm_diophantine_lane_poly_sidefx_i(fr, fr->acc_lane_map[0], imm, route, pc, hvar);
     if (!cprisk_vm_enc_pc_advance_ctx_i(fr->bh, &fr->encoded_pc, fr->vpc_a, fr->vpc_b, fr->out))
         return CPRISK_VM_FLOW_LEAVE;
     fr->steps += 1u;
@@ -45,7 +45,7 @@ cprisk_vm_flow_t cprisk_vm_oph_add_rol_acc(cprisk_vm_interp_frame_t *fr,
     );
     cprisk_vm_lane_apply_poly_i(
         fr->acc,
-        0u,
+        fr->acc_lane_map[0],
         imm_add,
         (uint32_t)fr->steps,
         hvar,
@@ -54,7 +54,7 @@ cprisk_vm_flow_t cprisk_vm_oph_add_rol_acc(cprisk_vm_interp_frame_t *fr,
         pc,
         route
     );
-    cprisk_vm_diophantine_lane_poly_sidefx_i(fr, 0u, imm_add, route, pc, hvar);
+    cprisk_vm_diophantine_lane_poly_sidefx_i(fr, fr->acc_lane_map[0], imm_add, route, pc, hvar);
     cprisk_vm_rol_acc_i(fr->acc, imm_rol);
     if (!cprisk_vm_enc_pc_advance_ctx_i(fr->bh, &fr->encoded_pc, fr->vpc_a, fr->vpc_b, fr->out))
         return CPRISK_VM_FLOW_LEAVE;
@@ -75,7 +75,7 @@ cprisk_vm_flow_t cprisk_vm_oph_sub_lane(cprisk_vm_interp_frame_t *fr,
     );
     cprisk_vm_lane_apply_poly_i(
         fr->acc,
-        1u,
+        fr->acc_lane_map[1],
         imm,
         (uint32_t)fr->steps,
         hvar,
@@ -84,7 +84,7 @@ cprisk_vm_flow_t cprisk_vm_oph_sub_lane(cprisk_vm_interp_frame_t *fr,
         pc,
         route
     );
-    cprisk_vm_diophantine_lane_poly_sidefx_i(fr, 1u, imm, route, pc, hvar);
+    cprisk_vm_diophantine_lane_poly_sidefx_i(fr, fr->acc_lane_map[1], imm, route, pc, hvar);
     if (!cprisk_vm_enc_pc_advance_ctx_i(fr->bh, &fr->encoded_pc, fr->vpc_a, fr->vpc_b, fr->out))
         return CPRISK_VM_FLOW_LEAVE;
     fr->steps += 1u;
@@ -104,7 +104,7 @@ cprisk_vm_flow_t cprisk_vm_oph_mul_lane(cprisk_vm_interp_frame_t *fr,
     );
     cprisk_vm_lane_apply_poly_i(
         fr->acc,
-        2u,
+        fr->acc_lane_map[2],
         imm,
         (uint32_t)fr->steps,
         hvar,
@@ -113,7 +113,7 @@ cprisk_vm_flow_t cprisk_vm_oph_mul_lane(cprisk_vm_interp_frame_t *fr,
         pc,
         route
     );
-    cprisk_vm_diophantine_lane_poly_sidefx_i(fr, 2u, imm, route, pc, hvar);
+    cprisk_vm_diophantine_lane_poly_sidefx_i(fr, fr->acc_lane_map[2], imm, route, pc, hvar);
     if (!cprisk_vm_enc_pc_advance_ctx_i(fr->bh, &fr->encoded_pc, fr->vpc_a, fr->vpc_b, fr->out))
         return CPRISK_VM_FLOW_LEAVE;
     fr->steps += 1u;

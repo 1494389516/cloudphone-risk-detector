@@ -102,6 +102,9 @@ cprisk_vm_flow_t cprisk_vm_oph_ret(cprisk_vm_interp_frame_t *fr,
         memcpy(fr->return_stack, fr->vm_snap[fr->vm_snap_sp].snap_ret_stack, sizeof(fr->return_stack));
         fr->return_sp = fr->vm_snap[fr->vm_snap_sp].snap_ret_sp;
         memcpy(fr->vregs, fr->vm_snap[fr->vm_snap_sp].snap_vregs, sizeof(fr->vregs));
+        fr->acc_lane_map[0] = fr->vm_snap[fr->vm_snap_sp].snap_acc_lane_map[0];
+        fr->acc_lane_map[1] = fr->vm_snap[fr->vm_snap_sp].snap_acc_lane_map[1];
+        fr->acc_lane_map[2] = fr->vm_snap[fr->vm_snap_sp].snap_acc_lane_map[2];
         fr->steps += 1u;
         return CPRISK_VM_FLOW_CONTINUE;
     }

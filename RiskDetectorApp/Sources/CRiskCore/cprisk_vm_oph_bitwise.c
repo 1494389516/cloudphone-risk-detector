@@ -23,7 +23,7 @@ cprisk_vm_flow_t cprisk_vm_oph_or_lane(cprisk_vm_interp_frame_t *fr,
                                        uint64_t imm,
                                        uint32_t pc,
                                        uint32_t hvar) {
-    (void)op_raw;
+    (void)op_raw; (void)pc;
     const uint32_t route = cprisk_vmp_avalanche32_i(
         hvar ^ fr->opaque_chain ^ fr->session_mix ^ 0x0F0Fu
     );
@@ -48,7 +48,7 @@ cprisk_vm_flow_t cprisk_vm_oph_and_lane(cprisk_vm_interp_frame_t *fr,
                                         uint64_t imm,
                                         uint32_t pc,
                                         uint32_t hvar) {
-    (void)op_raw;
+    (void)op_raw; (void)pc;
     const uint32_t route = cprisk_vmp_avalanche32_i(
         hvar ^ fr->opaque_chain ^ fr->session_mix ^ 0xF0F0u
     );
