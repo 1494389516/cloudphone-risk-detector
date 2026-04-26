@@ -7,6 +7,7 @@
 #include "include/cprisk_sha256.h"
 #include "include/cprisk_secure_zero.h"
 #include "cprisk_vm_hardening.h"
+#include "include/cprisk_vm_oph_dead.h"
 
 #include <stdatomic.h>
 #include <string.h>
@@ -4542,6 +4543,9 @@ static int cprisk_vm_prepare_program_i(const struct mach_header_64 *hdr,
     fr->steps = 0u;
     /* Initialize integrated hardening modules */
     cprisk_vm_hardening_init(fr);
+    /* Fold dead-handler addresses into session_mix: keeps all 16 dead-handler
+     * bodies live in the binary and binds their layout to session entropy. */
+    cprisk_vm_dead_touch_i(fr);
     /* VM sync barrier: external data dependency to break native batch-trace */
     cprisk_vm_sync_barrier_init(&fr->sync_barrier_ctx);
     return 1;
