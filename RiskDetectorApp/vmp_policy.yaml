@@ -46,6 +46,10 @@ functions:
     - cprisk_frida_runtime_snapshot
     - GumTrampolineDetector.detect
     - FridaMemoryLayoutDetector.detect
+    # v7.6 additions: anti-bypass detector + whitebox PRF entry + dead-handler touch
+    - RandomizedDetection.detect
+    - cprisk_whitebox_evaluate_domain
+    - cprisk_vm_dead_touch_i
   partial:
     - AnomalyDetector.detectRiskScoreAnomaly
     - ReportEnvelope.buildSignatureInput
@@ -60,6 +64,10 @@ functions:
     - AntiTamperingSignalProvider.signals
     - CPRiskKit.evaluate
     - UnixSocketSweepDetector.detect
+    # v7.6 additions: watchdog provider + jailbreak + device fingerprint
+    - AntiDebugWatchdogProvider.signals
+    - JailbreakSignalProvider.signals
+    - DeviceFingerprintProvider.signals
   never:
     - direct_syscall.cprisk_direct_syscall0
     - direct_syscall.cprisk_direct_syscall6

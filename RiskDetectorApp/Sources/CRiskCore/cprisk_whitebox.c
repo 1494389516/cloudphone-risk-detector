@@ -8,6 +8,7 @@
 #include <string.h>
 #ifdef __APPLE__
 #include <TargetConditionals.h>
+#include <mach/mach_time.h>
 #endif
 
 #include "include/cprisk_macho.h"
@@ -306,19 +307,68 @@ static uint8_t cprisk_rotl8_i(uint8_t value, unsigned int shift) {
     return (uint8_t)((value << shift) | (value >> (8U - shift)));
 }
 
+/*
+ * DCA countermeasure: per-evaluation Fisher-Yates shuffle over [0, STATE_SIZE).
+ *
+ * Each evaluation generates a random permutation of state-byte indices using a
+ * splitmix64 PRNG seeded from mach_absolute_time() XOR the first 8 input bytes.
+ * Mix layers process state bytes in permuted order (still writing to correct
+ * output slots — see correctness note in cprisk_whitebox_first_mix_layer_i).
+ *
+ * Effect: the table access order is different every evaluation.  First-order DCA
+ * that correlates "which table index is accessed at position j of the trace" with
+ * intermediate state values must now also recover the permutation, which is
+ * derived from a high-resolution timer value and therefore unknown to the attacker
+ * even when input and output are known.
+ */
+static void cprisk_whitebox_gen_shuffle_i(
+    uint8_t perm[CPRISK_WHITEBOX_STATE_SIZE],
+    const uint8_t input[CPRISK_WHITEBOX_STATE_SIZE]
+) {
+    uint64_t seed = mach_absolute_time();
+    /* Mix in first 8 bytes of input so same-time calls with different inputs diverge */
+    uint64_t in64;
+    memcpy(&in64, input, sizeof(in64));
+    seed ^= in64;
+    seed ^= 0x44434120484152Dull; /* "DCA HAR" */
+
+    for (size_t i = 0; i < CPRISK_WHITEBOX_STATE_SIZE; i++)
+        perm[i] = (uint8_t)i;
+
+    /* Fisher-Yates with splitmix64 */
+    for (size_t i = CPRISK_WHITEBOX_STATE_SIZE - 1u; i > 0u; i--) {
+        seed += 0x9E3779B97F4A7C15ULL;
+        uint64_t z = seed;
+        z = (z ^ (z >> 30u)) * 0xBF58476D1CE4E5B9ULL;
+        z = (z ^ (z >> 27u)) * 0x94D049BB133111EBULL;
+        z ^= z >> 31u;
+        const size_t j = (size_t)(z % (uint64_t)(i + 1u));
+        const uint8_t tmp = perm[i];
+        perm[i] = perm[j];
+        perm[j] = tmp;
+    }
+}
+
 static void cprisk_whitebox_first_mix_layer_i(
     const uint8_t *round_tables,
     const uint8_t *round_constants,
     const uint8_t state[CPRISK_WHITEBOX_STATE_SIZE],
     size_t round,
-    uint8_t out[CPRISK_WHITEBOX_STATE_SIZE]
+    uint8_t out[CPRISK_WHITEBOX_STATE_SIZE],
+    const uint8_t perm[CPRISK_WHITEBOX_STATE_SIZE]
 ) {
-    for (size_t i = 0; i < CPRISK_WHITEBOX_STATE_SIZE; i++) {
+    /*
+     * Correctness: state[] is read-only within this loop; out[] is indexed by i
+     * (= perm[j]).  Since no iteration reads from out[], processing bytes in
+     * permuted order yields identical results to sequential order.
+     */
+    for (size_t j = 0; j < CPRISK_WHITEBOX_STATE_SIZE; j++) {
+        const size_t i = perm[j];
         const uint8_t *table = round_tables + i * CPRISK_WHITEBOX_TABLE_WIDTH;
-        /* Dummy reads before real lookup — noise to confuse hexdump tracing */
+        /* Dummy reads before real lookup */
         cprisk_whitebox_dummy_reads_i(table, state[i], i, round);
         const uint8_t table_value = table[state[i]];
-        /* Dummy reads after — attacker sees real read sandwiched by noise */
+        /* Dummy reads after — real read sandwiched by noise */
         cprisk_whitebox_dummy_reads_i(table, table_value, i ^ 0x1Fu, round ^ 0x3u);
         const uint8_t mixed = (uint8_t)(table_value ^
                                         state[(i + 1u) % CPRISK_WHITEBOX_STATE_SIZE] ^
@@ -349,9 +399,11 @@ static void cprisk_whitebox_second_mix_layer_i(
     const uint8_t *round_constants,
     const uint8_t state[CPRISK_WHITEBOX_STATE_SIZE],
     size_t round,
-    uint8_t out[CPRISK_WHITEBOX_STATE_SIZE]
+    uint8_t out[CPRISK_WHITEBOX_STATE_SIZE],
+    const uint8_t perm[CPRISK_WHITEBOX_STATE_SIZE]
 ) {
-    for (size_t i = 0; i < CPRISK_WHITEBOX_STATE_SIZE; i++) {
+    for (size_t j = 0; j < CPRISK_WHITEBOX_STATE_SIZE; j++) {
+        const size_t i = perm[j];
         const uint8_t *table = round_tables + i * CPRISK_WHITEBOX_TABLE_WIDTH;
         cprisk_whitebox_dummy_reads_i(table, state[i], i ^ 0xAu, round + 4u);
         const uint8_t table_value = table[state[i]];
@@ -405,27 +457,23 @@ static inline void cprisk_whitebox_dummy_reads_i(
     size_t position,
     size_t round
 ) {
-    /* Derive two dummy indices from position + round + real_idx to ensure they
-     * are data-dependent (not constant-foldable) while being self-cancelling. */
+    /*
+     * Derive four dummy indices from position + round + real_idx.
+     * Four reads (vs the original two) give the real lookup a 1-in-5 share
+     * of the access trace instead of 1-in-3, raising the noise floor for
+     * first-order DCA correlation attacks that need to isolate the real read.
+     * All indices are data-dependent so they resist constant-folding.
+     */
     const uint8_t dummy_a = (uint8_t)((real_idx * 0x9Du) ^ (uint8_t)(position * 0x6Bu) ^ (uint8_t)(round * 0xA3u));
     const uint8_t dummy_b = (uint8_t)((real_idx ^ dummy_a) * 0xC3u ^ (uint8_t)(position + round));
+    const uint8_t dummy_c = (uint8_t)((dummy_a * 0x53u) ^ dummy_b ^ (uint8_t)(round * 0x7Fu));
+    const uint8_t dummy_d = (uint8_t)((dummy_b * 0x71u) ^ real_idx ^ (uint8_t)(position * 0xB1u));
 
-    /*
-     * Read both dummy entries and fold them into the sink. Previously the
-     * code XORed `ra ^ ra` (and `rb ^ rb`) which is the constant 0 — a
-     * reasonable optimizer eliminates the entire fold expression and the
-     * "sink" becomes a no-op even though `s_wb_dummy_sink` is volatile-ish.
-     * The two reads themselves still happen because of `volatile`-style
-     * access pattern on the table, but the tracer-visible *value* of the
-     * sink does not change, weakening the cover-trace.
-     *
-     * Use a real accumulation: sink XOR ra XOR rb. The values still depend
-     * on the table contents at attacker-unguessable indices, so the sink
-     * mutates with every cover read, but they don't leak the real lookup.
-     */
     const uint8_t ra = table[dummy_a];
     const uint8_t rb = table[dummy_b];
-    s_wb_dummy_sink = (uint8_t)(s_wb_dummy_sink ^ ra ^ rb);
+    const uint8_t rc = table[dummy_c];
+    const uint8_t rd = table[dummy_d];
+    s_wb_dummy_sink = (uint8_t)(s_wb_dummy_sink ^ ra ^ rb ^ rc ^ rd);
 }
 
 static int cprisk_ct_mem_diff_i(const uint8_t *lhs, const uint8_t *rhs, size_t len) {
@@ -909,9 +957,14 @@ static int cprisk_whitebox_eval_record_i(
     uint8_t state[CPRISK_WHITEBOX_STATE_SIZE];
     uint8_t next[CPRISK_WHITEBOX_STATE_SIZE];
     uint8_t scratch[CPRISK_WHITEBOX_STATE_SIZE];
+    uint8_t dca_perm[CPRISK_WHITEBOX_STATE_SIZE];
     const int enhanced_diffusion =
         (bundle->header.flags & CPRISK_ARMOR_WHITEBOX_FLAG_ENHANCED_DIFFUSION) != 0u;
     memcpy(state, input, sizeof(state));
+
+    /* Generate one per-evaluation shuffle; reused across all rounds so the
+     * permutation is stable within a call but random between calls. */
+    cprisk_whitebox_gen_shuffle_i(dca_perm, input);
 
     for (size_t round = 0; round < CPRISK_WHITEBOX_ROUND_COUNT; round++) {
         const uint8_t *round_tables = NULL;
@@ -936,7 +989,7 @@ static int cprisk_whitebox_eval_record_i(
         const uint8_t *round_constants =
             record->round_constants + round * CPRISK_WHITEBOX_STATE_SIZE;
 
-        cprisk_whitebox_first_mix_layer_i(round_tables, round_constants, state, round, next);
+        cprisk_whitebox_first_mix_layer_i(round_tables, round_constants, state, round, next, dca_perm);
         if (enhanced_diffusion) {
             cprisk_whitebox_strong_mix_layer_i(next, round_constants, scratch);
             cprisk_whitebox_second_mix_layer_i(
@@ -944,7 +997,8 @@ static int cprisk_whitebox_eval_record_i(
                 round_constants,
                 scratch,
                 round,
-                next
+                next,
+                dca_perm
             );
         }
 
@@ -965,6 +1019,7 @@ static int cprisk_whitebox_eval_record_i(
     cprisk_secure_zero(state, sizeof(state));
     cprisk_secure_zero(next, sizeof(next));
     cprisk_secure_zero(scratch, sizeof(scratch));
+    cprisk_secure_zero(dca_perm, sizeof(dca_perm));
     return 0;
 }
 
