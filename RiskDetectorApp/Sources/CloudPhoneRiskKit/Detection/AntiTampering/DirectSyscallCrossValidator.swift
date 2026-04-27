@@ -124,7 +124,7 @@ struct DirectSyscallCrossValidator: Detector {
     private func statBothPaths(_ path: String) -> (Bool, Bool) {
         var libcSb = stat()
         let libcRc = path.withCString { cPath in
-            Darwin.stat(cPath, &libcSb)
+            Darwin.lstat(cPath, &libcSb)
         }
 
         var directSb = stat()

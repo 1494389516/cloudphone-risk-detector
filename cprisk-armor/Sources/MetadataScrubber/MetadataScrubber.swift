@@ -314,6 +314,12 @@ public final class MetadataScrubberPass: ArmorPass {
                 }
                 strings += r.strings
                 bytes += r.bytes
+
+                let raw = try scrubSectionAsciiRuns(section, in: file) { utf8 in
+                    Self.shouldScrubSwiftMetadataAsciiRun(utf8)
+                }
+                strings += raw.runs
+                bytes += raw.bytes
             }
         }
 
@@ -323,18 +329,82 @@ public final class MetadataScrubberPass: ArmorPass {
     /// True for Swift 5 (`$s…`) / legacy (`_T…`) mangling prefixes and module keyword matches.
     private static func shouldScrubSwiftMetadataCString(_ utf8: String) -> Bool {
         if looksLikeSwiftSymbolMangling(utf8) { return true }
+        if looksLikeSwiftTypeRefMangling(utf8) { return true }
         if shouldScrubConstString(utf8) { return true }
         let lower = utf8.lowercased()
+        if lower.contains("dispatch") || lower.contains("os_dispatch_queue") { return true }
         if constSectionScrubKeywords.contains(where: { lower.contains($0.lowercased()) }) { return true }
         if utf8.count > riskSubstringMinLength, lower.contains("risk") { return true }
         if SwiftSemanticLeakCatalog.matchesUTF8(utf8) { return true }
         return false
     }
 
+    /// Typeref blobs are not always NUL-delimited. Scan printable runs for
+    /// framework/API tokens that would otherwise survive the CString pass.
+    private static func shouldScrubSwiftMetadataAsciiRun(_ utf8: String) -> Bool {
+        if shouldScrubSwiftMetadataCString(utf8) { return true }
+        if containsSwiftTypeRefMarker(utf8) { return true }
+
+        let lower = utf8.lowercased()
+        let frameworkTokens = [
+            "dispatch",
+            "os_dispatch",
+            "network",
+            "urlsession",
+            "nsurl",
+            "nwpath",
+            "nwinterface",
+            "nwendpoint",
+            "nwparameters",
+            "nwconnection",
+            "cryptokit",
+            "symmetrickey",
+            "symmetric",
+            "sealedbox",
+            "aes",
+            "gcm",
+            "hkdf",
+            "hmac",
+            "sha256",
+        ]
+        return frameworkTokens.contains { lower.contains($0) }
+    }
+
     /// Swift mangled type/symbol text as emitted in metadata (Swift 5 and legacy).
     private static func looksLikeSwiftSymbolMangling(_ s: String) -> Bool {
         if s.hasPrefix("$s") || s.hasPrefix("_$s") { return true }
         if s.hasPrefix("_T") { return true }
+        return false
+    }
+
+    /// Swift typeref payloads often omit the `$s` prefix. Imported Objective-C
+    /// classes show up as `So17OS_dispatch_queueC`; leaving those intact lets
+    /// IDA rebuild meaningful Swift overlay labels around otherwise stripped
+    /// stubs.
+    private static func looksLikeSwiftTypeRefMangling(_ s: String) -> Bool {
+        if s.hasPrefix("So") || s.hasPrefix("SC") || s.hasPrefix("SQ") { return true }
+        return false
+    }
+
+    private static func containsSwiftTypeRefMarker(_ s: String) -> Bool {
+        let bytes = Array(s.utf8)
+        guard bytes.count >= 2 else { return false }
+
+        for i in 0..<(bytes.count - 1) {
+            let first = bytes[i]
+            let second = bytes[i + 1]
+            if first == 0x53, second == 0x43 || second == 0x51 {
+                return true
+            }
+            if first == 0x53, second == 0x6F { // So...
+                if i + 2 == bytes.count || (bytes[i + 2] >= 0x30 && bytes[i + 2] <= 0x39) {
+                    return true
+                }
+            }
+            if first == 0x5F, second == 0x53, i + 2 < bytes.count, bytes[i + 2] == 0x6F {
+                return true // _So...
+            }
+        }
         return false
     }
 
@@ -345,6 +415,9 @@ public final class MetadataScrubberPass: ArmorPass {
         if b[0] == 0x24 && b[1] == 0x73 { return true }
         if b.count >= 3, b[0] == 0x5F, b[1] == 0x24, b[2] == 0x73 { return true }
         if b[0] == 0x5F && b[1] == 0x54 { return true }
+        if b[0] == 0x53, b[1] == 0x6F { return true } // So...
+        if b[0] == 0x53, b[1] == 0x43 { return true } // SC...
+        if b[0] == 0x53, b[1] == 0x51 { return true } // SQ...
         return false
     }
 
@@ -354,8 +427,8 @@ public final class MetadataScrubberPass: ArmorPass {
         let relativePointerCritical: Set<String> = [
             ArmorABI.MetadataSections.swiftProtocols,
             ArmorABI.MetadataSections.swiftFieldMetadata,
-            ArmorABI.MetadataSections.swiftAssociatedTypes,
-            ArmorABI.MetadataSections.swiftTypeReferences,
+            ArmorABI.MetadataSections.swiftAssocTypes,
+            ArmorABI.MetadataSections.swiftTypeRef,
         ]
 
         for sectionName in ArmorABI.MetadataSections.additionalScrubSections {
@@ -431,6 +504,53 @@ public final class MetadataScrubberPass: ArmorPass {
         }
 
         return (strings, bytes)
+    }
+
+    /// Scan printable ASCII runs inside Swift metadata blobs. This catches
+    /// typeref records such as `ySb..._So16NSURLSessionTask...` that are not
+    /// represented as standalone NUL-terminated strings.
+    private func scrubSectionAsciiRuns(
+        _ section: Section,
+        in file: MachOFile,
+        shouldScrubUTF8: (String) -> Bool
+    ) throws -> (runs: Int, bytes: Int) {
+        let content = try section.readContent(from: file.data)
+        guard !content.isEmpty else { return (0, 0) }
+
+        let sectionFileOffset = UInt64(section.offset)
+        var runs = 0
+        var bytes = 0
+        var position = 0
+
+        while position < content.count {
+            while position < content.count, !Self.isPrintableASCII(content[position]) {
+                position += 1
+            }
+            let start = position
+            while position < content.count, Self.isPrintableASCII(content[position]) {
+                position += 1
+            }
+
+            let length = position - start
+            guard length >= 4 else { continue }
+            let slice = content.subdata(in: start..<position)
+            guard let str = String(data: slice, encoding: .utf8), shouldScrubUTF8(str) else {
+                continue
+            }
+
+            try file.replaceBytes(
+                at: sectionFileOffset + UInt64(start),
+                with: randomHexBytes(count: length)
+            )
+            runs += 1
+            bytes += length
+        }
+
+        return (runs, bytes)
+    }
+
+    private static func isPrintableASCII(_ byte: UInt8) -> Bool {
+        byte >= 0x20 && byte <= 0x7E
     }
 
     // MARK: - C. ObjC Method Name Obfuscation

@@ -186,6 +186,71 @@ targets:
       - sdk: AppIntents.framework
         weak: true
     postBuildScripts:
+      - name: Apply cprisk armor
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)
+          - $(DERIVED_FILE_DIR)/apply_cprisk_armor.stamp
+        script: |
+          set -e
+          unset SDKROOT
+          export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+          TOOLROOT="${SRCROOT}/../cprisk-armor"
+          EXEC="${TARGET_BUILD_DIR}/${EXECUTABLE_PATH}"
+          STAMP_PATH="${SCRIPT_OUTPUT_FILE_1}"
+          mkdir -p "$(dirname "$STAMP_PATH")"
+
+          if [ "${CONFIGURATION}" != "Release" ]; then
+            echo "note: cprisk-armor skipped for ${CONFIGURATION} build"
+            /bin/date -u +"%Y-%m-%dT%H:%M:%SZ" > "$STAMP_PATH"
+            exit 0
+          fi
+
+          if [ ! -d "$TOOLROOT" ] || [ ! -f "$EXEC" ]; then
+            echo "warning: cprisk-armor skipped: missing toolroot or executable" >&2
+            /bin/date -u +"%Y-%m-%dT%H:%M:%SZ" > "$STAMP_PATH"
+            exit 0
+          fi
+
+          if [ -z "${CPRISK_ARMOR_KEY:-}" ]; then
+            echo "warning: cprisk-armor skipped: CPRISK_ARMOR_KEY is not set" >&2
+            /bin/date -u +"%Y-%m-%dT%H:%M:%SZ" > "$STAMP_PATH"
+            exit 0
+          fi
+
+          (cd "$TOOLROOT" && swift build --disable-sandbox -c release --product cprisk-armor >/dev/null)
+          BIN="$(cd "$TOOLROOT" && swift build --disable-sandbox -c release --show-bin-path)"
+          TOOL="${BIN}/cprisk-armor"
+          if [ ! -x "$TOOL" ]; then
+            echo "error: cprisk-armor tool not found at $TOOL" >&2
+            exit 1
+          fi
+
+          ARMOR_ARGS="--all"
+          if [ "${CPRISK_ARMOR_PROFILE:-}" = "appstore-safe" ]; then
+            ARMOR_ARGS="--pass3 --pass4 --pass5 --pass6 --pass7 --pass10 --pass11 --safety-profile appstore-safe"
+          fi
+
+          if [ -n "${CPRISK_ARMOR_ARGS:-}" ]; then
+            ARMOR_ARGS="${CPRISK_ARMOR_ARGS}"
+          fi
+
+          VERBOSE_ARG=""
+          if [ "${CPRISK_ARMOR_VERBOSE:-}" = "1" ]; then
+            VERBOSE_ARG="--verbose"
+          fi
+
+          echo "note: running cprisk-armor ${ARMOR_ARGS} on $EXEC"
+          "$TOOL" \
+            --input "$EXEC" \
+            --output "$EXEC" \
+            $ARMOR_ARGS \
+            $VERBOSE_ARG \
+            --key "$CPRISK_ARMOR_KEY"
+
+          /usr/bin/stat -f "%m %z" "$EXEC" > "$STAMP_PATH" || /bin/date -u +"%Y-%m-%dT%H:%M:%SZ" > "$STAMP_PATH"
+
       - name: Inject VM self-expect (mdvsk)
         inputFiles:
           - $(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)
@@ -205,8 +270,8 @@ targets:
             exit 0
           fi
 
-          (cd "$TOOLROOT" && swift build -c release --product cprisk-vm-self-expect >/dev/null) || true
-          BIN="$(cd "$TOOLROOT" && swift build -c release --show-bin-path)"
+          (cd "$TOOLROOT" && swift build --disable-sandbox -c release --product cprisk-vm-self-expect >/dev/null) || true
+          BIN="$(cd "$TOOLROOT" && swift build --disable-sandbox -c release --show-bin-path)"
           TOOL="${BIN}/cprisk-vm-self-expect"
           if [ -x "$TOOL" ]; then
             TOOL_OUTPUT="$("$TOOL" --in "$EXEC" 2>&1)"

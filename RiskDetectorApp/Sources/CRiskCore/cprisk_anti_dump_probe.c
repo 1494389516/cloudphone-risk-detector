@@ -12,6 +12,7 @@
 
 #include "include/CRiskCore.h"
 #include "include/cprisk_secure_zero.h"
+#include <stdatomic.h>
 #include <pthread.h>
 #include <mach/mach.h>
 #include <mach-o/dyld.h>
@@ -35,7 +36,6 @@ static int s_probe_interval_min = 2;
 static int s_probe_interval_max = 9;
 static _Atomic uint64_t s_probe_jitter_state;
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
-#include <stdatomic.h>
 static atomic_uint_fast32_t s_task_for_pid_baseline = UINT32_MAX;
 #endif
 
@@ -136,14 +136,14 @@ static uint64_t cprisk_probe_jitter_next_i(void) {
         }
         s = (uint64_t)((uintptr_t)&s_probe_jitter_state) ^
             ((uint64_t)ts.tv_sec << 32) ^ (uint64_t)ts.tv_nsec ^
-            0x9E37_79B9_7F4A_7C15ull;
-        if (s == 0u) s = 0xA5A5_5A5A_5A5A_A5A5ull;
+            0x9E3779B97F4A7C15ull;
+        if (s == 0u) s = 0xA5A55A5A5A5AA5A5ull;
         atomic_store(&s_probe_jitter_state, s);
     }
-    s += 0x9E37_79B9_7F4A_7C15ull;
+    s += 0x9E3779B97F4A7C15ull;
     uint64_t z = s;
-    z = (z ^ (z >> 30)) * 0xBF58_476D_1CE4_E5B9ull;
-    z = (z ^ (z >> 27)) * 0x94D0_49BB_1331_11EBull;
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
     atomic_store(&s_probe_jitter_state, s);
     return z ^ (z >> 31);
 }

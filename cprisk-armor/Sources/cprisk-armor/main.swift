@@ -318,53 +318,6 @@ let outputPath = options.outputPath ?? (inputPath + "_armored")
 let verbose = options.verbose
 let enabledPasses: Set<Int> = options.allPasses ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] : options.passes
 
-/// Stable topological ordering for pass dependencies.
-private func resolvePassOrder(_ registered: [(Int, ArmorPass)]) throws -> [(Int, ArmorPass)] {
-    let dependencyIDs: [Int: Set<Int>] = [
-        4: [3],         // runtime data expects pass3 outputs pre-anchor
-        5: [4],         // structure obfuscation after anchor sections are created
-        12: [4],        // text encryption depends on anchor metadata
-    ]
-
-    var indegree = [Int: Int]()
-    var outgoing = [Int: Set<Int>]()
-    let present = Set(registered.map(\.0))
-    for (id, _) in registered {
-        indegree[id] = 0
-        outgoing[id] = []
-    }
-    for (id, deps) in dependencyIDs where present.contains(id) {
-        for dep in deps where present.contains(dep) {
-            outgoing[dep, default: []].insert(id)
-            indegree[id, default: 0] += 1
-        }
-    }
-
-    var queue = registered.map(\.0).filter { indegree[$0] == 0 }
-    var sortedIDs = [Int]()
-    while let id = queue.first {
-        queue.removeFirst()
-        sortedIDs.append(id)
-        for nxt in outgoing[id] ?? [] {
-            indegree[nxt, default: 0] -= 1
-            if indegree[nxt] == 0 {
-                queue.append(nxt)
-                queue.sort()
-            }
-        }
-    }
-    guard sortedIDs.count == present.count else {
-        throw NSError(
-            domain: "cprisk-armor",
-            code: 2001,
-            userInfo: [NSLocalizedDescriptionKey: "pass dependency graph contains a cycle"]
-        )
-    }
-
-    let passByID = Dictionary(uniqueKeysWithValues: registered.map { ($0.0, $0.1) })
-    return sortedIDs.compactMap { id in passByID[id].map { (id, $0) } }
-}
-
 if enabledPasses.isEmpty {
     fputs("Warning: No passes enabled. Use --all or --passN flags.\n", stderr)
 }

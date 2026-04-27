@@ -175,8 +175,13 @@ public final class HeaderEncryptorPass: ArmorPass {
         Data(SHA256.hash(data: data))
     }
 
+    /// HeaderEncryptor uses an 8-byte nonce (matches the fixed 64-byte backup layout
+    /// nonce[8] | encrypted[24] | hmac[32], and makeCamouflagedReserved's n0/n1 split).
+    /// This is independent of ArmorABI.nonceSize which other passes use for 16-byte nonces.
+    private static let nonceSize = 8
+
     private func generateNonce() throws -> Data {
-        var bytes = [UInt8](repeating: 0, count: ArmorABI.nonceSize)
+        var bytes = [UInt8](repeating: 0, count: Self.nonceSize)
         let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
         guard status == errSecSuccess else {
             throw MachOError.invalidData("SecRandomCopyBytes failed: \(status)")
@@ -190,7 +195,7 @@ public final class HeaderEncryptorPass: ArmorPass {
     }
 
     private func makeCamouflagedReserved(originalReserved: UInt32, nonce: Data) -> UInt32 {
-        precondition(nonce.count == ArmorABI.nonceSize, "Header nonce must be 8 bytes")
+        precondition(nonce.count == HeaderEncryptorPass.nonceSize, "Header nonce must be 8 bytes")
 
         let n0 = UInt32(nonce[0])
             | (UInt32(nonce[1]) << 8)

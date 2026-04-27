@@ -63,74 +63,97 @@ export CPRISK_ARMOR_KEY=<hex>; .build/release/cprisk-armor --input ... --output 
 
 ### 2.4.1 Build Phase 集成（默认）
 
-使用 **XcodeGen** 生成工程时，`project.yml` 已内置 cprisk-armor 的 Run Script Phase（postBuildScripts）。6.4 起壳脚本位于 `RiskDetectorApp` target，每次 Release 构建完成后会自动对最终 App 二进制执行壳加固 + 全量 strip。
+使用 **XcodeGen** 生成工程时，`project.yml` 已内置两个 Release post-build script：
+
+1. `Apply cprisk armor`：对最终 App 可执行文件执行 `cprisk-armor --all`。
+2. `Inject VM self-expect`：执行 `cprisk-vm-self-expect`，写入 VM 自校验期望值。
+
+脚本只在 `Release` 构建下启用；未设置 `CPRISK_ARMOR_KEY` 时会跳过加固并输出 warning。Xcode Run Script 内部构建 SwiftPM 工具时必须使用 `swift build --disable-sandbox`，否则在部分 Xcode sandbox 环境中会报 `sandbox-exec: sandbox_apply: Operation not permitted`。
 
 **配置步骤**：
 
-1. 在 Xcode Scheme 中设置环境变量 `CPRISK_ARMOR_KEY`（64 字符十六进制密钥），或通过 CI Secrets 注入。
-2. 首次使用前执行 `cd cprisk-armor && swift build -c release` 构建壳工具。
+1. 在 Xcode Scheme、CI Secrets 或命令行环境中设置 `CPRISK_ARMOR_KEY`。推荐使用 64 字符十六进制 root key；如使用口令，需要先在外部固定派生为 SHA-256 hex，避免不同环境派生不一致。
+2. 若 `project.yml`、源文件列表或 Build Phase 有变化，先执行 `cd RiskDetectorApp && xcodegen generate` 同步 `RiskDetectorApp.xcodeproj`。
 3. 运行时需同时配置 `CPRISKKIT_ARMOR_ROOT_KEY_HEX`（与 `CPRISK_ARMOR_KEY` 相同密钥），供 CRiskCore 解密消费。
 
-未设置 `CPRISK_ARMOR_KEY` 时，脚本会跳过加固并输出 warning，不影响构建。
+### 2.4.1.1 固定构建、strip 与 IDA 验证流程（推荐）
 
-### 2.4.1.1 固定构建流程（推荐）
-
-后续若需要稳定地产出**可拖入 IDA 的壳后二进制**，建议固定使用下面这套流程，而不是临时拼装命令：
+后续若需要稳定地产出**可拖入 IDA 的壳后二进制**，固定使用下面这套流程。不要先手动 strip 再加壳；正确顺序是：Release 链接产物 → `cprisk-armor --all` → `cprisk-vm-self-expect` → 系统 `strip -x` 兼容性验证。
 
 ```bash
-# 1) 当 project.yml 有变化、或新增/删除了源文件后，先同步 Xcode 工程
-cd RiskDetectorApp
+# 1) 同步 Xcode 工程
+cd /Users/mac/Desktop/cloudphone-risk-detector/RiskDetectorApp
 xcodegen generate
 
-# 2) 编译 Release 产物（推荐 arm64-only，避免 x86_64 模拟器侧链接噪音）
+# 2) 准备 armor key
+# 推荐直接传 64-char hex。若原始输入是口令，先固定派生：
+printf '%s' '<passphrase>' | shasum -a 256 | awk '{print $1}'
+export CPRISK_ARMOR_KEY='<64-char-hex-string>'
+
+# 3) Release 构建最终 App。post-build script 会自动执行：
+#    cprisk-armor --all
+#    cprisk-vm-self-expect
+CPRISK_ARMOR_VERBOSE=0 \
 xcodebuild \
   -project RiskDetectorApp.xcodeproj \
   -scheme RiskDetectorApp \
   -configuration Release \
   -sdk iphonesimulator \
-  -destination "generic/platform=iOS Simulator" \
+  -destination 'generic/platform=iOS Simulator' \
+  -derivedDataPath /Users/mac/Desktop/.deriveddata-riskdetector-final \
   ARCHS=arm64 \
   EXCLUDED_ARCHS=x86_64 \
   ONLY_ACTIVE_ARCH=YES \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGNING_REQUIRED=NO \
-  STRIP_INSTALLED_PRODUCT=YES \
-  STRIP_STYLE=all \
-  STRIP_SWIFT_SYMBOLS=YES \
-  DEAD_CODE_STRIPPING=YES \
   clean build
 
-# 3) 构建壳工具（首次或壳源码有变更时执行）
-cd ../cprisk-armor
-swift build -c release
+# 4) 定位壳后主二进制
+APP_BIN="/Users/mac/Desktop/.deriveddata-riskdetector-final/Build/Products/Release-iphonesimulator/RiskDetectorApp.app/RiskDetectorApp"
 
-# 4) 对最终 App 二进制执行全量加壳
-export CPRISK_ARMOR_KEY=<64-char-hex-string>
-.build/arm64-apple-macosx/release/cprisk-armor \
-  --input /path/to/RiskDetectorApp.app/RiskDetectorApp \
-  --output /path/to/RiskDetectorApp.app/RiskDetectorApp \
-  --all \
-  --key "$CPRISK_ARMOR_KEY"
+# 5) 用系统 strip 做兼容性验证。
+#    正常结果是 already stripped；不能出现 fatal error。
+xcrun strip -x "$APP_BIN"
+
+# 6) 覆盖桌面目标二进制
+cp -p "$APP_BIN" /Users/mac/Desktop/RiskDetectorApp
 ```
 
-**为什么推荐固定这样做：**
+**最终检查点**：
 
-1. `xcodegen generate` 用来同步 `project.yml` 与 `project.pbxproj`。若新增 `.c/.swift` 后不重新生成工程，Xcode 实际编译列表可能仍是旧的，最终表现为 `libCRiskCore.a` 缺 `.o`、链接时报 `_cprisk_* undefined`。
-2. `xcodebuild ... Release ...` 负责生成干净的最终 App 可执行文件；6.4 起建议对**最终 App 二进制**而不是 framework / static library 单独加壳。
-3. `cprisk-armor --all` 负责字符串加密、metadata 抹除、导入表加密、header 加密、text 页加密等全链路保护。
+```bash
+# 静态符号表应为空
+nm -m /Users/mac/Desktop/RiskDetectorApp
+# 期望：/Users/mac/Desktop/RiskDetectorApp: no symbols
 
-**7.3 当前实现的额外说明：**
+# bind / lazy bind 中不应再出现 Swift API 名或 __imp__$s...
+objdump --macho --bind /Users/mac/Desktop/RiskDetectorApp
+objdump --macho --lazy-bind /Users/mac/Desktop/RiskDetectorApp
 
-- `SymbolStripper` 已在工具链内自动清空 `LC_SYMTAB/LC_DYSYMTAB` 关键字段，**不再需要**额外用 Python 手动修补 `symoff/nsyms` 才能让 IDA 正常显示 `sub_XXXX`。
-- `project.yml` 必须预留以下 section placeholder，否则 Pass 10/11/12/13 可能因尝试“追加 section”而失败：
-  - `__swift5_dyrel`
-  - `__swift5_mhsav`
-  - `__swift5_cgenc`
-  - `__swift5_mdvrt`
-  - `__swift5_mdirt`
-- `__swift5_mdvsk`
-- 白盒 PRF 相关 placeholder（如 `whitebox_code.bin`、`whitebox_data.bin`）尺寸需要与当前 `ArmorABI.WhiteBox.Domain` 数量保持一致；白盒域数量扩展后，应同步更新占位文件大小。当前白盒 header 已扩为支持 `aslr_table_anchor_slide` 的 v2 结构，旧占位文件与旧 ABI 不应混用。
-- `vmp_policy.yaml` 与 `cff_policy.yaml` 需要联动维护：VMP full tier 函数应从 Pass 9 的 heavy/medium 挪到 `never`，避免同一函数被 CFF 与 VM 跳板同时重写。
+# 常见泄漏关键词应无命中；LC_LOAD_DYLIB 中的系统库路径除外
+strings /Users/mac/Desktop/RiskDetectorApp | rg \
+  'CryptoKit\\.AES|Network\\.NWPath|DispatchQueue|SymmetricKey|SealedBox|URLSession|NSURL|__imp__|\\$s9CryptoKit|\\$s7Network|\\$s8Dispatch'
+
+# 系统 strip 兼容性
+xcrun strip -x /Users/mac/Desktop/RiskDetectorApp
+# 期望：warning: input object file already stripped
+```
+
+**IDA 判定标准**：
+
+1. 成功状态：函数主要显示为 `sub_100...`，指针主要显示为 `off_100...` / `qword_100...`。
+2. 不应再看到：`CryptoKit.AES.GCM.open`、`Network.NWPath.isExpensive`、`DispatchQueue.global`、`__imp__$s...` 这类系统 API / Swift overlay 语义名。
+3. 运行版仍可能保留少量 Swift runtime 必需 metadata，IDA 可能合成 `$s...VMa` / `$s...CVMa` 这类无业务语义的 Swift metadata accessor 名。此类名字通常不是二进制里的明文字符串，而是 IDA 根据 `__swift5_*` descriptor 关系自动推导；运行版不能为追求全 `sub_XXXX` 而暴力清零这些 metadata，否则可能影响泛型、协议一致性、动态类型转换、SwiftUI/Network/CryptoKit 等运行时行为。
+4. 如果需要“只给 IDA 看”的更干净副本，可在运行版之外生成 IDA-only 产物，移除 `LC_LOAD_DYLIB` 并破坏/改名 Swift metadata section。该副本不保证运行，不能作为交付包。
+
+**常见坑**：
+
+1. IDA 会生成 `.id0/.id1/.id2/.nam/.til/.i64/.idb` 缓存。若复用旧数据库，即使 Mach-O 已经清干净，旧的 `Network.NWPath.isExpensive` / `CryptoKit.AES.GCM.open` 名字仍可能显示。验证壳效果时必须新建数据库，或删除同名 IDA 缓存后重新导入。
+2. `LC_LOAD_DYLIB` 中的 `CryptoKit.framework/CryptoKit`、`libswiftDispatch.dylib`、`libswiftNetwork.dylib` 是 dyld 运行所需依赖路径，运行版不能直接改名或删除。若 IDA 因这些路径显示库文件夹，这是依赖层信息，不是函数级 thunk 泄漏。
+3. `SymbolStripper` 会清空 `LC_SYMTAB/LC_DYSYMTAB` 并规范化 linkedit；`MachOFile.write` 会移除失效 `LC_CODE_SIGNATURE` 并压缩 `__LINKEDIT` 尾部，保证后续 `xcrun strip -x` 只提示 already stripped，不应再出现 `function starts data out of place`、`code signature data out of place` 或 `link edit information does not fill the __LINKEDIT segment`。
+4. `project.yml` 必须预留以下 section placeholder，否则 Pass 10/11/12/13 可能因尝试追加 section 而失败：`__swift5_dyrel`、`__swift5_mhsav`、`__swift5_cgenc`、`__swift5_mdvrt`、`__swift5_mdirt`、`__swift5_mdvsk`。
+5. 白盒 PRF 相关 placeholder（如 `whitebox_code.bin`、`whitebox_data.bin`）尺寸需要与当前 `ArmorABI.WhiteBox.Domain` 数量保持一致；白盒域数量扩展后，应同步更新占位文件大小。当前白盒 header 已扩为支持 `aslr_table_anchor_slide` 的 v2 结构，旧占位文件与旧 ABI 不应混用。
+6. `vmp_policy.yaml` 与 `cff_policy.yaml` 需要联动维护：VMP full tier 函数应从 Pass 9 的 heavy/medium 挪到 `never`，避免同一函数被 CFF 与 VM 跳板同时重写。
 
 **Pass 13 与「该对哪个 Mach-O 跑」：**
 

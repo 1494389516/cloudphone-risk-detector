@@ -13,7 +13,13 @@
 #include "include/cprisk_vm_sync_barrier.h"
 #include "include/CRiskCore.h"
 
-#include <mach/mach_vm.h>
+#if defined(__APPLE__)
+#  include <TargetConditionals.h>
+#  if !TARGET_OS_SIMULATOR && __has_include(<mach/mach_vm.h>)
+#    include <mach/mach_vm.h>
+#    define CPRISK_EMU_HAVE_MACH_VM_REGION 1
+#  endif
+#endif
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -39,7 +45,6 @@ _Static_assert(('D' ^ 0x55u) == 0x11u, "LD_LIBRARY_PATH[1] XOR 0x55 mismatch");
 /* ─────────────────────────────────────────────────────────────────────────── */
 
 #if defined(__APPLE__)
-#  include <TargetConditionals.h>
 #  include <dlfcn.h>
 #  include <mach/mach.h>
 #  include <mach/mach_time.h>
@@ -103,6 +108,7 @@ static int probe_dyld_cache(void) {
  * A real iOS process has ≥40 VM regions (ASLR, dyld shared cache segments,
  * stack guard regions, commpage, etc.).  unidbg synthesises a minimal map.
  */
+#ifdef CPRISK_EMU_HAVE_MACH_VM_REGION
 static int probe_vm_region_count(void) {
     mach_vm_address_t addr = 0;
     mach_vm_size_t    size = 0;
@@ -122,6 +128,11 @@ static int probe_vm_region_count(void) {
     /* < 40 is anomalous */
     return (regions < 40) ? 0 : 1;
 }
+#else
+static int probe_vm_region_count(void) {
+    return 1;
+}
+#endif
 
 /*
  * Probe 3: main-thread stack address

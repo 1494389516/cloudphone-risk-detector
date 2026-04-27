@@ -20,6 +20,8 @@ public final class SymbolStripperPass: ArmorPass {
 
     private static let LC_SYMTAB:   UInt32 = 0x02
     private static let LC_DYSYMTAB: UInt32 = 0x0B
+    private static let LC_FUNCTION_STARTS: UInt32 = 0x26
+    private static let LC_DATA_IN_CODE: UInt32 = 0x29
 
     private static let systemModulePrefixes: [String] = [
         "Swift", "Foundation", "UIKit", "SwiftUI",
@@ -33,15 +35,6 @@ public final class SymbolStripperPass: ArmorPass {
 
     public func execute(on file: MachOFile, config: PassConfig) throws -> PassResult {
         let symbols = try file.readSymbols()
-        guard !symbols.isEmpty else {
-            return PassResult(
-                passName: name,
-                itemsProcessed: 0,
-                bytesModified: 0,
-                details: ["No symbol table found or empty"]
-            )
-        }
-
         let symtabSnapshot = try file.findSymbolTable()
 
         var obfuscatedCount = 0
@@ -66,8 +59,14 @@ public final class SymbolStripperPass: ArmorPass {
 
         // Zero LC_SYMTAB and LC_DYSYMTAB count/offset fields so disassemblers
         // treat the symbol table as empty and show sub_XXXX for all functions.
+        // This still runs when `readSymbols()` is empty: pre-stripped inputs may
+        // retain nonzero LC_DYSYMTAB linkedit pointers that make post-armor
+        // system strip fail.
         let headerBytes = try zeroSymtabHeaders(in: file)
         bytesModified += headerBytes
+
+        let staticAnalysisBytes = try zeroStaticAnalysisLinkeditCommands(in: file)
+        bytesModified += staticAnalysisBytes
 
         var scrubbed = 0
         if let snap = symtabSnapshot {
@@ -75,11 +74,23 @@ public final class SymbolStripperPass: ArmorPass {
             bytesModified += scrubbed
         }
 
+        let removedCodeSignatureBytes = try file.removeCodeSignatureCommands()
+        bytesModified += removedCodeSignatureBytes
+
+        let compactedBytes = try file.compactUnreferencedLinkeditTail()
+        bytesModified += compactedBytes
+
         let localCount = symbols.filter { $0.nlist.isDefinedLocal }.count
         details.insert(
-            "Local symbols: \(localCount)/\(symbols.count) total, \(obfuscatedCount) obfuscated, symtab header zeroed, stale sym payload scrub: \(scrubbed) B",
+            "Local symbols: \(localCount)/\(symbols.count) total, \(obfuscatedCount) obfuscated, symtab/dysymtab normalized, stale sym payload scrub: \(scrubbed) B, code signature command removed: \(removedCodeSignatureBytes) B, linkedit compacted: \(compactedBytes) B",
             at: 0
         )
+        if staticAnalysisBytes > 0 {
+            details.append("Static linkedit analysis commands cleared: \(staticAnalysisBytes) B")
+        }
+        if symbols.isEmpty {
+            details.append("No nlist symbols found; linkedit symbol metadata still normalized")
+        }
 
         return PassResult(
             passName: name,
@@ -89,12 +100,49 @@ public final class SymbolStripperPass: ArmorPass {
         )
     }
 
+    /// Function starts and data-in-code tables are static-analysis hints, not
+    /// runtime requirements. Once we intentionally remove the symbol table, stale
+    /// linkedit gaps before these tables make Apple's `strip` fail its strict
+    /// ordering checks. Clear them so a later linkedit compaction can produce a
+    /// self-consistent already-stripped file.
+    private func zeroStaticAnalysisLinkeditCommands(in file: MachOFile) throws -> Int {
+        var bytesZeroed = 0
+        var cmdOffset = MachOHeader.size
+
+        for _ in 0..<Int(file.header.numberOfCommands) {
+            let cmd = try file.readUInt32(at: cmdOffset)
+            let cmdSize = try file.readUInt32(at: cmdOffset + 4)
+            guard cmdSize >= 8 else { break }
+
+            if (cmd == Self.LC_FUNCTION_STARTS || cmd == Self.LC_DATA_IN_CODE), cmdSize >= 16 {
+                let oldOff = try file.readUInt32(at: cmdOffset + 8)
+                let oldSize = try file.readUInt32(at: cmdOffset + 12)
+                if oldOff != 0 || oldSize != 0 {
+                    try file.writeUInt32(0, at: cmdOffset + 8)
+                    try file.writeUInt32(0, at: cmdOffset + 12)
+                    bytesZeroed += 8
+                }
+            }
+
+            cmdOffset += Int(cmdSize)
+        }
+
+        return bytesZeroed
+    }
+
     // MARK: - Symtab Header Zeroing
 
     /// Walk the load-command list and zero the count/offset fields in
-    /// LC_SYMTAB (symoff, nsyms, stroff, strsize) and the six sym-count
-    /// fields in LC_DYSYMTAB.  The cmdsize fields are deliberately preserved
-    /// so the load-command chain stays intact and IDA can parse the binary.
+    /// LC_SYMTAB (symoff, nsyms, stroff, strsize) and every linkedit table
+    /// pointer/count pair in LC_DYSYMTAB. The cmdsize fields are deliberately
+    /// preserved so the load-command chain stays intact and IDA can parse the
+    /// binary.
+    ///
+    /// Keeping `indirectsymoff/nindirectsyms` after clearing `LC_SYMTAB` leaves
+    /// a dangling linkedit table. Apple's `strip` then tries to preserve that
+    /// later table and rejects earlier `LC_FUNCTION_STARTS` payloads as "out of
+    /// place". Clearing the whole dysymtab metadata makes the armored binary
+    /// self-consistent for both static tools and post-armor strip invocations.
     private func zeroSymtabHeaders(in file: MachOFile) throws -> Int {
         var bytesZeroed = 0
         let header = file.header
@@ -121,15 +169,21 @@ public final class SymbolStripperPass: ArmorPass {
                 bytesZeroed += 16
 
             } else if cmd == Self.LC_DYSYMTAB {
-                // LC_DYSYMTAB — zero the six local/ext/undef sym count fields:
-                //  +8  ilocalsym   +12 nlocalsym
-                //  +16 iextdefsym  +20 nextdefsym
-                //  +24 iundefsym   +28 nundefsym
+                // LC_DYSYMTAB — zero every offset/count pair after cmd/cmdsize:
+                //  +8  ilocalsym      +12 nlocalsym
+                //  +16 iextdefsym     +20 nextdefsym
+                //  +24 iundefsym      +28 nundefsym
+                //  +32 tocoff         +36 ntoc
+                //  +40 modtaboff      +44 nmodtab
+                //  +48 extrefsymoff   +52 nextrefsyms
+                //  +56 indirectsymoff +60 nindirectsyms
+                //  +64 extreloff      +68 nextrel
+                //  +72 locreloff      +76 nlocrel
                 guard cmdSize >= 32 else { cmdOffset += Int(cmdSize); continue }
-                for fieldOff in [8, 12, 16, 20, 24, 28] {
+                for fieldOff in stride(from: 8, through: min(Int(cmdSize) - 4, 76), by: 4) {
                     try file.writeUInt32(0, at: cmdOffset + fieldOff)
+                    bytesZeroed += 4
                 }
-                bytesZeroed += 24
             }
 
             cmdOffset += Int(cmdSize)

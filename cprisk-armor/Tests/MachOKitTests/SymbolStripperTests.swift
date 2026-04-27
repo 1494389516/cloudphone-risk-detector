@@ -365,7 +365,7 @@ final class SymbolStripperTests: XCTestCase {
 
         XCTAssertEqual(result.itemsProcessed, 0)
         XCTAssertEqual(result.bytesModified, 0)
-        XCTAssertTrue(result.details.first?.contains("No symbol table") == true)
+        XCTAssertTrue(result.details.contains { $0.contains("No nlist symbols found") })
     }
 
     // MARK: - D. PassResult

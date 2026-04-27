@@ -37,33 +37,21 @@ public final class IntegrityAnchorPass: ArmorPass {
             align: 3
         )
 
-        _ = try file.addOrUpdateSection(
-            segment: ArmorABI.dataSegmentName,
-            section: ArmorABI.WhiteBox.Sections.metadata,
-            content: whiteboxBundle.metadataSection,
-            align: 3
-        )
-
-        _ = try file.addOrUpdateSection(
-            segment: ArmorABI.dataSegmentName,
-            section: ArmorABI.WhiteBox.Sections.code,
-            content: whiteboxBundle.whiteboxCode,
-            align: 3
-        )
-
-        _ = try file.addOrUpdateSection(
-            segment: ArmorABI.dataSegmentName,
-            section: ArmorABI.WhiteBox.Sections.data,
-            content: whiteboxBundle.whiteboxData,
-            align: 3
-        )
-
-        _ = try file.addOrUpdateSection(
-            segment: ArmorABI.dataSegmentName,
-            section: ArmorABI.WhiteBox.Sections.tag,
-            content: whiteboxBundle.whiteboxTag,
-            align: 3
-        )
+        // Whitebox sections are optional placeholders — older app builds may not link them in.
+        // Only write when the placeholder already exists; otherwise skip silently to keep the pass functional.
+        func writeIfPresent(_ section: String, _ content: Data) throws {
+            guard try file.section(segment: ArmorABI.dataSegmentName, section: section) != nil else { return }
+            _ = try file.addOrUpdateSection(
+                segment: ArmorABI.dataSegmentName,
+                section: section,
+                content: content,
+                align: 3
+            )
+        }
+        try writeIfPresent(ArmorABI.WhiteBox.Sections.metadata, whiteboxBundle.metadataSection)
+        try writeIfPresent(ArmorABI.WhiteBox.Sections.code, whiteboxBundle.whiteboxCode)
+        try writeIfPresent(ArmorABI.WhiteBox.Sections.data, whiteboxBundle.whiteboxData)
+        try writeIfPresent(ArmorABI.WhiteBox.Sections.tag, whiteboxBundle.whiteboxTag)
 
         return PassResult(
             passName: name,

@@ -1,6 +1,7 @@
 import CRiskCore
 import Darwin
 import Foundation
+import MachO
 
 /// Detects unidbg / Unicorn-engine emulation environments by probing memory
 /// layout invariants that hold on real iOS devices but not on Linux-hosted

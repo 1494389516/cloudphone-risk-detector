@@ -246,6 +246,172 @@ public final class MachOWriter {
         return invalidated
     }
 
+    /// Remove LC_CODE_SIGNATURE load commands without moving segment contents.
+    ///
+    /// Armoring mutates the Mach-O after link, so any embedded code signature is
+    /// invalid anyway. Leaving a zeroed LC_CODE_SIGNATURE behind makes Apple's
+    /// `strip` treat offset 0 as an out-of-order linkedit payload. We compact only
+    /// the load-command byte range and zero the trailing padding; file offsets for
+    /// segments/sections remain unchanged.
+    @discardableResult
+    public static func removeCodeSignatureCommands(in data: inout Data) throws -> Int {
+        let header = try MachOHeader(from: data)
+        guard header.isValid else {
+            throw MachOError.invalidMagic
+        }
+
+        let loadCommandsStart = MachOHeader.size
+        let loadCommandsEnd = loadCommandsStart + Int(header.sizeOfCommands)
+        guard loadCommandsEnd <= data.count else {
+            throw MachOError.malformedLoadCommands("sizeofcmds extends beyond file size")
+        }
+
+        var cmdOffset = loadCommandsStart
+        var keptCommands = Data(capacity: Int(header.sizeOfCommands))
+        var removedBytes = 0
+        var removedCommands: UInt32 = 0
+
+        for index in 0..<Int(header.numberOfCommands) {
+            let command = try LoadCommand(from: data, offset: UInt64(cmdOffset))
+            let nextOffset = cmdOffset + Int(command.cmdSize)
+            guard nextOffset <= loadCommandsEnd else {
+                throw MachOError.malformedLoadCommands("command #\(index) extends beyond sizeofcmds")
+            }
+
+            if command.cmd == LoadCommand.LC_CODE_SIGNATURE {
+                removedBytes += Int(command.cmdSize)
+                removedCommands += 1
+            } else {
+                keptCommands.append(contentsOf: data[cmdOffset..<nextOffset])
+            }
+
+            cmdOffset = nextOffset
+        }
+
+        guard removedCommands > 0 else { return 0 }
+        guard cmdOffset == loadCommandsEnd else {
+            throw MachOError.malformedLoadCommands(
+                "sizeofcmds mismatch while removing LC_CODE_SIGNATURE"
+            )
+        }
+
+        let keptEnd = loadCommandsStart + keptCommands.count
+        data.replaceSubrange(loadCommandsStart..<keptEnd, with: keptCommands)
+        data.replaceSubrange(keptEnd..<loadCommandsEnd, with: Data(count: removedBytes))
+
+        try updateHeader(
+            in: &data,
+            numberOfCommands: header.numberOfCommands - removedCommands,
+            sizeOfCommands: header.sizeOfCommands - UInt32(removedBytes)
+        )
+
+        return removedBytes
+    }
+
+    /// Trim unreferenced bytes from the tail of `__LINKEDIT` after strip-oriented
+    /// passes have zeroed symbol/static-analysis load commands.
+    ///
+    /// Apple's `strip` requires the live linkedit data described by load commands
+    /// to fill the `__LINKEDIT` segment. If a pass clears `LC_SYMTAB` but leaves
+    /// stale nlist/string-table bytes in the segment tail, `strip` rejects earlier
+    /// payloads such as `LC_FUNCTION_STARTS` as "out of place". This routine keeps
+    /// only the highest byte still referenced by live linkedit data commands, then
+    /// updates `__LINKEDIT.filesize/vmsize` and truncates the file.
+    @discardableResult
+    public static func compactUnreferencedLinkeditTail(in data: inout Data) throws -> Int {
+        let header = try MachOHeader(from: data)
+        guard header.isValid else {
+            throw MachOError.invalidMagic
+        }
+
+        var linkeditCommandOffset: Int?
+        var linkeditFileOffset: UInt64 = 0
+        var linkeditFileSize: UInt64 = 0
+        var maxReferencedEnd: UInt64 = 0
+
+        func includeRange(offset: UInt32, size: UInt32) {
+            guard offset != 0, size != 0 else { return }
+            maxReferencedEnd = max(maxReferencedEnd, UInt64(offset) + UInt64(size))
+        }
+
+        var cmdOffset = MachOHeader.size
+        for _ in 0..<Int(header.numberOfCommands) {
+            let command = try LoadCommand(from: data, offset: UInt64(cmdOffset))
+            switch command.cmd {
+            case LoadCommand.LC_SEGMENT_64:
+                let segment = try Segment(from: data, commandOffset: UInt64(cmdOffset))
+                if segment.name == "__LINKEDIT" {
+                    linkeditCommandOffset = cmdOffset
+                    linkeditFileOffset = segment.fileOffset
+                    linkeditFileSize = segment.fileSize
+                }
+
+            case LoadCommand.LC_SYMTAB:
+                if command.cmdSize >= 24 {
+                    let symoff = try data.readUInt32(at: cmdOffset + 8)
+                    let nsyms = try data.readUInt32(at: cmdOffset + 12)
+                    let stroff = try data.readUInt32(at: cmdOffset + 16)
+                    let strsize = try data.readUInt32(at: cmdOffset + 20)
+                    includeRange(offset: symoff, size: nsyms &* UInt32(Nlist64Entry.entrySize))
+                    includeRange(offset: stroff, size: strsize)
+                }
+
+            case LoadCommand.LC_DYLD_INFO_ONLY:
+                if command.cmdSize >= 48 {
+                    for off in stride(from: 8, through: 40, by: 8) {
+                        includeRange(
+                            offset: try data.readUInt32(at: cmdOffset + off),
+                            size: try data.readUInt32(at: cmdOffset + off + 4)
+                        )
+                    }
+                }
+
+            case LoadCommand.LC_DYLD_EXPORTS_TRIE,
+                 LoadCommand.LC_CODE_SIGNATURE,
+                 LoadCommand.LC_FUNCTION_STARTS,
+                 LoadCommand.LC_DATA_IN_CODE,
+                 0x1E,       // LC_SEGMENT_SPLIT_INFO
+                 0x2B,       // LC_DYLIB_CODE_SIGN_DRS
+                 0x2E,       // LC_LINKER_OPTIMIZATION_HINT
+                 0x80000034: // LC_DYLD_CHAINED_FIXUPS
+                if command.cmdSize >= 16 {
+                    includeRange(
+                        offset: try data.readUInt32(at: cmdOffset + 8),
+                        size: try data.readUInt32(at: cmdOffset + 12)
+                    )
+                }
+
+            default:
+                break
+            }
+            cmdOffset += Int(command.cmdSize)
+        }
+
+        guard let linkeditCommandOffset else { return 0 }
+        guard linkeditFileOffset > 0, linkeditFileSize > 0 else { return 0 }
+
+        if maxReferencedEnd < linkeditFileOffset {
+            maxReferencedEnd = linkeditFileOffset
+        }
+        guard maxReferencedEnd <= UInt64(data.count) else {
+            throw MachOError.validationFailed(
+                "Referenced __LINKEDIT data extends beyond file size (\(maxReferencedEnd) > \(data.count))"
+            )
+        }
+
+        let oldEnd = min(UInt64(data.count), linkeditFileOffset + linkeditFileSize)
+        guard maxReferencedEnd < oldEnd else { return 0 }
+
+        let newFileSize = maxReferencedEnd - linkeditFileOffset
+        let newVMSize = try align(newFileSize, to: 0x1000)
+        try data.writeUInt64(newVMSize, at: linkeditCommandOffset + 32)
+        try data.writeUInt64(newFileSize, at: linkeditCommandOffset + 48)
+
+        let removed = Int(oldEnd - maxReferencedEnd)
+        data.removeSubrange(Int(maxReferencedEnd)..<Int(oldEnd))
+        return removed
+    }
+
     // MARK: - Private Helpers
 
     /// Serialize a `Section` into an 80-byte section_64 blob.

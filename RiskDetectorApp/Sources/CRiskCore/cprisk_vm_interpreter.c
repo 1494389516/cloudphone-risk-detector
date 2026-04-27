@@ -17,9 +17,13 @@
 #include <mach/mach.h>
 #include <mach/mach_time.h>
 #include <pthread.h>
+#include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
+#if __has_include(<sys/random.h>)
 #include <sys/random.h>
+#define CPRISK_VM_HAVE_GETENTROPY 1
+#endif
 #endif
 
 #define CPRISK_VM_MAX_STEPS 65536u
@@ -407,12 +411,17 @@ static uint32_t cprisk_vm_session_mix_i(void) {
     }
     mix ^= (uint32_t)getpid() * 0x45D9F3Bu;
 
-    /* getentropy: 从内核 CSPRNG 获取密码学安全随机数 (iOS 10+) */
     uint32_t entropy_word = 0;
+#ifdef CPRISK_VM_HAVE_GETENTROPY
     if (getentropy(&entropy_word, sizeof(entropy_word)) != 0) {
-        /* fallback: mach_absolute_time 在 getentropy 不可用时使用 */
         entropy_word = (uint32_t)mach_absolute_time();
     }
+#else
+    arc4random_buf(&entropy_word, sizeof(entropy_word));
+    if (entropy_word == 0u) {
+        entropy_word = (uint32_t)mach_absolute_time();
+    }
+#endif
     mix ^= entropy_word;
 #endif
 

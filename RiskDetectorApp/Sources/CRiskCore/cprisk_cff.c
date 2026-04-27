@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
 #include <mach-o/dyld.h>
@@ -15,9 +16,11 @@
  * musl 1.1.20+, which covers every platform we build for. When unavailable
  * the call returns -1 and `default_seed` falls back to its prior mix.
  */
-#if defined(__APPLE__) || defined(__linux__)
+#if (defined(__APPLE__) || defined(__linux__)) && __has_include(<sys/random.h>)
 #include <sys/random.h>
 #define CPRISK_CFF_HAVE_GETENTROPY 1
+#elif defined(__APPLE__)
+#define CPRISK_CFF_HAVE_ARC4RANDOM 1
 #endif
 
 /*
@@ -1103,10 +1106,14 @@ static uint32_t cprisk_cff_default_seed(void) {
      * into the existing avalanche so any failure simply degrades to the
      * legacy mix instead of zeroing entropy.
      */
-#ifdef CPRISK_CFF_HAVE_GETENTROPY
+#if defined(CPRISK_CFF_HAVE_GETENTROPY) || defined(CPRISK_CFF_HAVE_ARC4RANDOM)
     {
         uint8_t os_rand[8];
+#ifdef CPRISK_CFF_HAVE_GETENTROPY
         if (getentropy(os_rand, sizeof(os_rand)) == 0) {
+#else
+        arc4random_buf(os_rand, sizeof(os_rand));
+#endif
             const uint32_t lo = ((uint32_t)os_rand[0]) |
                                 ((uint32_t)os_rand[1] << 8) |
                                 ((uint32_t)os_rand[2] << 16) |
@@ -1116,7 +1123,9 @@ static uint32_t cprisk_cff_default_seed(void) {
                                 ((uint32_t)os_rand[6] << 16) |
                                 ((uint32_t)os_rand[7] << 24);
             seed ^= lo ^ cprisk_cff_rotate_left32(hi, 13u);
+#ifdef CPRISK_CFF_HAVE_GETENTROPY
         }
+#endif
         cprisk_secure_zero(os_rand, sizeof(os_rand));
     }
 #endif

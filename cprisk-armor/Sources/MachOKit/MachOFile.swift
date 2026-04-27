@@ -559,6 +559,24 @@ public final class MachOFile {
         try MachOWriter.replaceBytes(in: &data, at: Int(offset), with: bytes)
     }
 
+    @discardableResult
+    public func compactUnreferencedLinkeditTail() throws -> Int {
+        let removed = try MachOWriter.compactUnreferencedLinkeditTail(in: &data)
+        if removed > 0 {
+            try reparse()
+        }
+        return removed
+    }
+
+    @discardableResult
+    public func removeCodeSignatureCommands() throws -> Int {
+        let removed = try MachOWriter.removeCodeSignatureCommands(in: &data)
+        if removed > 0 {
+            try reparse()
+        }
+        return removed
+    }
+
     public func insertSection(_ section: Section, inSegment segmentName: String) throws {
         try MachOWriter.insertSectionHeader(in: &data, section: section, segmentName: segmentName)
         try reparse()
@@ -647,7 +665,8 @@ public final class MachOFile {
 
     @discardableResult
     public func write(to url: URL, validateRoundTrip: Bool = true) throws -> MachOWriteValidation {
-        let codeSignatureWasInvalidated = try MachOWriter.invalidateCodeSignatureIfPresent(in: &data)
+        let codeSignatureWasInvalidated = try MachOWriter.removeCodeSignatureCommands(in: &data) > 0
+        _ = try MachOWriter.compactUnreferencedLinkeditTail(in: &data)
         let inMemoryReport = try validateStructure()
         try data.write(to: url)
 

@@ -279,7 +279,9 @@ final class MachOKitTests: XCTestCase {
         let validation = try file.write(to: outputURL)
 
         XCTAssertTrue(validation.codeSignatureWasInvalidated)
-        XCTAssertEqual(validation.report.codeSignatureCommandCount, 1)
+        XCTAssertEqual(validation.report.numberOfCommands, 1)
+        XCTAssertEqual(validation.report.sizeOfCommands, 152)
+        XCTAssertEqual(validation.report.codeSignatureCommandCount, 0)
 
         let writtenData = try Data(contentsOf: outputURL)
         XCTAssertEqual(try writtenData.readLEUInt32(at: 192), 0)

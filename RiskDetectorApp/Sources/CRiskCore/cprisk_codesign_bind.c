@@ -16,6 +16,10 @@
 #if defined(__APPLE__)
 #  include <TargetConditionals.h>
 #  include <Security/Security.h>
+#  if __has_include(<Security/SecTask.h>)
+#    include <Security/SecTask.h>
+#    define CPRISK_CODESIGN_HAVE_SECTASK 1
+#  endif
 #  include <mach-o/dyld.h>
 #  include <stddef.h>
 #endif
@@ -49,6 +53,9 @@ static uint64_t fnv1a64(const uint8_t *data, size_t len) {
 #if defined(__APPLE__)
 
 static uint64_t derive_from_team_id(void) {
+#ifndef CPRISK_CODESIGN_HAVE_SECTASK
+    return 0u;
+#else
     /* Entitlement key: "com.apple.developer.team-identifier"
      * XOR-obfuscated with key 0x55 to avoid plain-text scanning.
      *
@@ -98,6 +105,7 @@ static uint64_t derive_from_team_id(void) {
     }
     CFRelease(val);
     return salt;
+#endif
 }
 
 static uint64_t derive_from_executable_path(void) {
