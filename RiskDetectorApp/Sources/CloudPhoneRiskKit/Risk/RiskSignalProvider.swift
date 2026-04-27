@@ -46,30 +46,40 @@ enum BuiltInProviderBootstrap {
 
     private static let tokenMix: UInt64 = 0x8F42_C193_A55E_17D4
 
-    private static let internalProviders: [RiskSignalProvider] = [
-        ExternalServerAggregateProvider.shared,
-        DeviceHardwareProvider.shared,
-        DeviceAgeProvider.shared,
-        AppAttestSignalProvider.shared,
-        VPhoneHardwareProvider.shared,
-        HardwareCapabilityProvider.shared,
-        DisplayMuxProvider.shared,
-        BiometricStateProvider.shared,
-        LayeredConsistencyProvider.shared,
-        MountPointProvider.shared,
-        NetworkInterfaceProvider.shared,
-        DRMCapabilityProvider.shared,
-        BatteryEntropyProvider.shared,
-        EnvironmentConsistencyProvider.shared,
-        AudioRouteProvider.shared,
-        BasebandIsolationProvider.shared,
-        GPURenderFingerprintProvider.shared,
-        IMUNoiseSpectrumProvider.shared,
-        TimePatternProvider.shared,
-        AntiTamperingSignalProvider.shared,
-        CloudPhoneEnvironmentProvider.shared,
-        CertificatePinningTelemetryProvider.shared,
-    ]
+    private static let internalProviders: [RiskSignalProvider] =
+        [
+            ExternalServerAggregateProvider.shared,
+            DeviceHardwareProvider.shared,
+            DeviceAgeProvider.shared,
+            AppAttestSignalProvider.shared,
+            VPhoneHardwareProvider.shared,
+            HardwareCapabilityProvider.shared,
+            DisplayMuxProvider.shared,
+            BiometricStateProvider.shared,
+            LayeredConsistencyProvider.shared,
+            MountPointProvider.shared,
+            NetworkInterfaceProvider.shared,
+            DRMCapabilityProvider.shared,
+            BatteryEntropyProvider.shared,
+            EnvironmentConsistencyProvider.shared,
+            AudioRouteProvider.shared,
+            BasebandIsolationProvider.shared,
+            GPURenderFingerprintProvider.shared,
+            IMUNoiseSpectrumProvider.shared,
+            TimePatternProvider.shared,
+            AntiTamperingSignalProvider.shared,
+            CloudPhoneEnvironmentProvider.shared,
+            CertificatePinningTelemetryProvider.shared,
+        ]
+        // Decoy pool — see DecoyProviders.swift for rationale.  Adding these
+        // to internalProviderIDs has two effects: (1) they get sealed against
+        // unregister/replace tampering exactly like real providers, and
+        // (2) they do not trigger "previously active now empty" tamper
+        // signals because they never enter activeProviderIDs (their signals
+        // arrays are always empty).  From an attacker enumerating __data,
+        // the plan and internalProviders arrays both show 30 entries with
+        // no static tell distinguishing real from decoy.
+        + DecoyProviderBootstrap.providers
 
     private static let plan: [Entry] = [
         Entry(token: 0x1010_A001_B201_C301, isEnabled: { _ in true }) { registry in
@@ -140,6 +150,35 @@ enum BuiltInProviderBootstrap {
         },
         Entry(token: 0x1010_A017_B217_C317, isEnabled: { _ in true }) { registry in
             registry.register(CertificatePinningTelemetryProvider.shared)
+        },
+        // ── Decoy entries — see DecoyProviders.swift ─────────────────────────
+        // These look identical to real providers in __data.  Tokens are drawn
+        // from a different mix space so post-XOR sort interleaves them with
+        // real entries (i.e. they don't cluster at end of plan, which would
+        // be statically obvious as a contiguous batch).
+        Entry(token: 0x7E94_3F2A_18B6_D571, isEnabled: { _ in true }) { registry in
+            registry.register(EnclaveAttestEntropyProvider.shared)
+        },
+        Entry(token: 0x4C58_E0A1_B7D3_2691, isEnabled: { _ in true }) { registry in
+            registry.register(ThermalThrottleAnomalyProvider.shared)
+        },
+        Entry(token: 0xA39B_5C04_F2E8_481D, isEnabled: { _ in true }) { registry in
+            registry.register(IndirectBranchPredictionProvider.shared)
+        },
+        Entry(token: 0x2D67_BA12_905E_C7F4, isEnabled: { _ in true }) { registry in
+            registry.register(KernelPageTableScanProvider.shared)
+        },
+        Entry(token: 0xF815_4928_60AC_3E73, isEnabled: { _ in true }) { registry in
+            registry.register(MachVoucherChainProvider.shared)
+        },
+        Entry(token: 0x5BCE_71D5_8324_6A0B, isEnabled: { _ in true }) { registry in
+            registry.register(DyldClosureCacheProvider.shared)
+        },
+        Entry(token: 0x9302_FE6B_47CD_152A, isEnabled: { _ in true }) { registry in
+            registry.register(ARM64PointerAuthProvider.shared)
+        },
+        Entry(token: 0x68A4_DC93_B105_72EF, isEnabled: { _ in true }) { registry in
+            registry.register(XPCConnectionAuditProvider.shared)
         },
     ]
 
