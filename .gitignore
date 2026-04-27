@@ -27,6 +27,7 @@ RiskDetectorApp/BuildSupport/RiskDetectorApp.armored
 
 # Local tooling state
 .cursor/
+.vscode/
 
 # Old/legacy copies (not part of shipping app)
 RiskDetectorApp/Legacy/
