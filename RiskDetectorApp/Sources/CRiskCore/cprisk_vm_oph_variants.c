@@ -1284,3 +1284,204 @@ cprisk_vm_flow_t cprisk_vm_oph_select_vreg_mem(cprisk_vm_interp_frame_t *fr,
     const uint32_t idx = vv_select_index(fr, logical, CPRISK_VM_OPH_N_VARIANTS_LANE);
     return variants[idx](fr, op_raw, logical, imm, pc, hvar);
 }
+
+/* ── RET variants ─────────────────────────────────────────────────────────── */
+
+/* v0: canonical */
+cprisk_vm_flow_t cprisk_vm_oph_ret_v0(cprisk_vm_interp_frame_t *fr,
+                                       uint8_t op_raw, uint8_t logical,
+                                       uint64_t imm, uint32_t pc, uint32_t hvar) {
+    return cprisk_vm_oph_ret(fr, op_raw, logical, imm, pc, hvar);
+}
+
+/* v1: double-XOR identity on acc slot keyed from return-stack depth — net zero */
+cprisk_vm_flow_t cprisk_vm_oph_ret_v1(cprisk_vm_interp_frame_t *fr,
+                                       uint8_t op_raw, uint8_t logical,
+                                       uint64_t imm, uint32_t pc, uint32_t hvar) {
+    const uint8_t  mask = (uint8_t)(fr->session_mix ^ (uint32_t)fr->return_sp ^ 0x52u);
+    const uint32_t slot = fr->return_sp & 3u;
+    fr->acc[slot] ^= mask;
+    fr->acc[slot] ^= mask;   /* net zero */
+    return cprisk_vm_oph_ret(fr, op_raw, logical, imm, pc, hvar);
+}
+
+/* v2: add-subtract identity on opaque_chain — net zero */
+cprisk_vm_flow_t cprisk_vm_oph_ret_v2(cprisk_vm_interp_frame_t *fr,
+                                       uint8_t op_raw, uint8_t logical,
+                                       uint64_t imm, uint32_t pc, uint32_t hvar) {
+    const uint32_t delta = vv_avalanche32((uint32_t)fr->func_id ^ hvar ^ 0x52455476u); /* "RETv" */
+    fr->opaque_chain += delta;
+    fr->opaque_chain -= delta;   /* net zero */
+    return cprisk_vm_oph_ret(fr, op_raw, logical, imm, pc, hvar);
+}
+
+cprisk_vm_flow_t cprisk_vm_oph_select_ret(cprisk_vm_interp_frame_t *fr,
+                                           uint8_t op_raw, uint8_t logical,
+                                           uint64_t imm, uint32_t pc, uint32_t hvar) {
+    static const cprisk_vm_oph_fn variants[CPRISK_VM_OPH_N_VARIANTS_LANE] = {
+        cprisk_vm_oph_ret_v0,
+        cprisk_vm_oph_ret_v1,
+        cprisk_vm_oph_ret_v2,
+    };
+    const uint32_t idx = vv_select_index(fr, logical, CPRISK_VM_OPH_N_VARIANTS_LANE);
+    return variants[idx](fr, op_raw, logical, imm, pc, hvar);
+}
+
+/* ── HALT variants ────────────────────────────────────────────────────────── */
+
+/* v0: canonical */
+cprisk_vm_flow_t cprisk_vm_oph_halt_v0(cprisk_vm_interp_frame_t *fr,
+                                        uint8_t op_raw, uint8_t logical,
+                                        uint64_t imm, uint32_t pc, uint32_t hvar) {
+    return cprisk_vm_oph_halt(fr, op_raw, logical, imm, pc, hvar);
+}
+
+/* v1: double-XOR identity on acc slot keyed from steps — net zero */
+cprisk_vm_flow_t cprisk_vm_oph_halt_v1(cprisk_vm_interp_frame_t *fr,
+                                        uint8_t op_raw, uint8_t logical,
+                                        uint64_t imm, uint32_t pc, uint32_t hvar) {
+    const uint8_t  mask = (uint8_t)(fr->session_mix ^ (uint32_t)fr->steps ^ 0x48u); /* 'H' */
+    const uint32_t slot = (fr->steps + 1u) & 3u;
+    fr->acc[slot] ^= mask;
+    fr->acc[slot] ^= mask;   /* net zero */
+    return cprisk_vm_oph_halt(fr, op_raw, logical, imm, pc, hvar);
+}
+
+/* v2: add-subtract identity on opaque_chain — net zero */
+cprisk_vm_flow_t cprisk_vm_oph_halt_v2(cprisk_vm_interp_frame_t *fr,
+                                        uint8_t op_raw, uint8_t logical,
+                                        uint64_t imm, uint32_t pc, uint32_t hvar) {
+    const uint32_t delta = vv_avalanche32((uint32_t)(fr->func_id >> 16u) ^ hvar ^ 0x48414C54u); /* "HALT" */
+    fr->opaque_chain += delta;
+    fr->opaque_chain -= delta;   /* net zero */
+    return cprisk_vm_oph_halt(fr, op_raw, logical, imm, pc, hvar);
+}
+
+cprisk_vm_flow_t cprisk_vm_oph_select_halt(cprisk_vm_interp_frame_t *fr,
+                                            uint8_t op_raw, uint8_t logical,
+                                            uint64_t imm, uint32_t pc, uint32_t hvar) {
+    static const cprisk_vm_oph_fn variants[CPRISK_VM_OPH_N_VARIANTS_LANE] = {
+        cprisk_vm_oph_halt_v0,
+        cprisk_vm_oph_halt_v1,
+        cprisk_vm_oph_halt_v2,
+    };
+    const uint32_t idx = vv_select_index(fr, logical, CPRISK_VM_OPH_N_VARIANTS_LANE);
+    return variants[idx](fr, op_raw, logical, imm, pc, hvar);
+}
+
+/* ── RAW_REGION variants ──────────────────────────────────────────────────── */
+
+/* v0: canonical */
+cprisk_vm_flow_t cprisk_vm_oph_raw_region_v0(cprisk_vm_interp_frame_t *fr,
+                                              uint8_t op_raw, uint8_t logical,
+                                              uint64_t imm, uint32_t pc, uint32_t hvar) {
+    return cprisk_vm_oph_raw_region(fr, op_raw, logical, imm, pc, hvar);
+}
+
+/* v1: double-negate imm identity (−(−imm) == imm in two's complement) */
+cprisk_vm_flow_t cprisk_vm_oph_raw_region_v1(cprisk_vm_interp_frame_t *fr,
+                                              uint8_t op_raw, uint8_t logical,
+                                              uint64_t imm, uint32_t pc, uint32_t hvar) {
+    const uint64_t neg     = (~imm) + 1u;
+    const uint64_t imm_eff = (~neg) + 1u;
+    return cprisk_vm_oph_raw_region(fr, op_raw, logical, imm_eff, pc, hvar);
+}
+
+/* v2: XOR-fold imm identity ((imm ^ key) ^ key == imm) */
+cprisk_vm_flow_t cprisk_vm_oph_raw_region_v2(cprisk_vm_interp_frame_t *fr,
+                                              uint8_t op_raw, uint8_t logical,
+                                              uint64_t imm, uint32_t pc, uint32_t hvar) {
+    const uint64_t key     = (uint64_t)fr->session_mix ^ ((uint64_t)fr->opaque_chain << 47u);
+    const uint64_t imm_eff = (imm ^ key) ^ key;
+    return cprisk_vm_oph_raw_region(fr, op_raw, logical, imm_eff, pc, hvar);
+}
+
+cprisk_vm_flow_t cprisk_vm_oph_select_raw_region(cprisk_vm_interp_frame_t *fr,
+                                                  uint8_t op_raw, uint8_t logical,
+                                                  uint64_t imm, uint32_t pc, uint32_t hvar) {
+    static const cprisk_vm_oph_fn variants[CPRISK_VM_OPH_N_VARIANTS_LANE] = {
+        cprisk_vm_oph_raw_region_v0,
+        cprisk_vm_oph_raw_region_v1,
+        cprisk_vm_oph_raw_region_v2,
+    };
+    const uint32_t idx = vv_select_index(fr, logical, CPRISK_VM_OPH_N_VARIANTS_LANE);
+    return variants[idx](fr, op_raw, logical, imm, pc, hvar);
+}
+
+/* ── BRANCH_IND variants ──────────────────────────────────────────────────── */
+
+/* v0: canonical */
+cprisk_vm_flow_t cprisk_vm_oph_branch_ind_v0(cprisk_vm_interp_frame_t *fr,
+                                              uint8_t op_raw, uint8_t logical,
+                                              uint64_t imm, uint32_t pc, uint32_t hvar) {
+    return cprisk_vm_oph_branch_ind(fr, op_raw, logical, imm, pc, hvar);
+}
+
+/* v1: double-negate imm identity */
+cprisk_vm_flow_t cprisk_vm_oph_branch_ind_v1(cprisk_vm_interp_frame_t *fr,
+                                              uint8_t op_raw, uint8_t logical,
+                                              uint64_t imm, uint32_t pc, uint32_t hvar) {
+    const uint64_t neg     = (~imm) + 1u;
+    const uint64_t imm_eff = (~neg) + 1u;
+    return cprisk_vm_oph_branch_ind(fr, op_raw, logical, imm_eff, pc, hvar);
+}
+
+/* v2: XOR-fold imm identity */
+cprisk_vm_flow_t cprisk_vm_oph_branch_ind_v2(cprisk_vm_interp_frame_t *fr,
+                                              uint8_t op_raw, uint8_t logical,
+                                              uint64_t imm, uint32_t pc, uint32_t hvar) {
+    const uint64_t key     = (uint64_t)fr->session_mix ^ ((uint64_t)fr->opaque_chain << 53u);
+    const uint64_t imm_eff = (imm ^ key) ^ key;
+    return cprisk_vm_oph_branch_ind(fr, op_raw, logical, imm_eff, pc, hvar);
+}
+
+cprisk_vm_flow_t cprisk_vm_oph_select_branch_ind(cprisk_vm_interp_frame_t *fr,
+                                                  uint8_t op_raw, uint8_t logical,
+                                                  uint64_t imm, uint32_t pc, uint32_t hvar) {
+    static const cprisk_vm_oph_fn variants[CPRISK_VM_OPH_N_VARIANTS_LANE] = {
+        cprisk_vm_oph_branch_ind_v0,
+        cprisk_vm_oph_branch_ind_v1,
+        cprisk_vm_oph_branch_ind_v2,
+    };
+    const uint32_t idx = vv_select_index(fr, logical, CPRISK_VM_OPH_N_VARIANTS_LANE);
+    return variants[idx](fr, op_raw, logical, imm, pc, hvar);
+}
+
+/* ── CALL variants ────────────────────────────────────────────────────────── */
+
+/* v0: canonical */
+cprisk_vm_flow_t cprisk_vm_oph_call_v0(cprisk_vm_interp_frame_t *fr,
+                                        uint8_t op_raw, uint8_t logical,
+                                        uint64_t imm, uint32_t pc, uint32_t hvar) {
+    return cprisk_vm_oph_call(fr, op_raw, logical, imm, pc, hvar);
+}
+
+/* v1: double-negate imm identity */
+cprisk_vm_flow_t cprisk_vm_oph_call_v1(cprisk_vm_interp_frame_t *fr,
+                                        uint8_t op_raw, uint8_t logical,
+                                        uint64_t imm, uint32_t pc, uint32_t hvar) {
+    const uint64_t neg     = (~imm) + 1u;
+    const uint64_t imm_eff = (~neg) + 1u;
+    return cprisk_vm_oph_call(fr, op_raw, logical, imm_eff, pc, hvar);
+}
+
+/* v2: XOR-fold imm identity */
+cprisk_vm_flow_t cprisk_vm_oph_call_v2(cprisk_vm_interp_frame_t *fr,
+                                        uint8_t op_raw, uint8_t logical,
+                                        uint64_t imm, uint32_t pc, uint32_t hvar) {
+    const uint64_t key     = (uint64_t)fr->session_mix ^ ((uint64_t)fr->opaque_chain << 59u);
+    const uint64_t imm_eff = (imm ^ key) ^ key;
+    return cprisk_vm_oph_call(fr, op_raw, logical, imm_eff, pc, hvar);
+}
+
+cprisk_vm_flow_t cprisk_vm_oph_select_call(cprisk_vm_interp_frame_t *fr,
+                                            uint8_t op_raw, uint8_t logical,
+                                            uint64_t imm, uint32_t pc, uint32_t hvar) {
+    static const cprisk_vm_oph_fn variants[CPRISK_VM_OPH_N_VARIANTS_LANE] = {
+        cprisk_vm_oph_call_v0,
+        cprisk_vm_oph_call_v1,
+        cprisk_vm_oph_call_v2,
+    };
+    const uint32_t idx = vv_select_index(fr, logical, CPRISK_VM_OPH_N_VARIANTS_LANE);
+    return variants[idx](fr, op_raw, logical, imm, pc, hvar);
+}

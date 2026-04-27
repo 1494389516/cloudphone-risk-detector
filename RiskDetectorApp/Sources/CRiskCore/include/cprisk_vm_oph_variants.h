@@ -106,6 +106,32 @@ cprisk_vm_flow_t cprisk_vm_oph_vreg_mem_v1      (cprisk_vm_interp_frame_t *fr, u
 cprisk_vm_flow_t cprisk_vm_oph_vreg_mem_v2      (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
 cprisk_vm_flow_t cprisk_vm_oph_select_vreg_mem  (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
 
+/* Control-flow / terminal opcode variant pools (no-imm: NOP-pattern; with-imm: identity-transform delegate). */
+cprisk_vm_flow_t cprisk_vm_oph_ret_v0           (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_ret_v1           (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_ret_v2           (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_select_ret       (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+
+cprisk_vm_flow_t cprisk_vm_oph_halt_v0          (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_halt_v1          (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_halt_v2          (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_select_halt      (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+
+cprisk_vm_flow_t cprisk_vm_oph_raw_region_v0    (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_raw_region_v1    (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_raw_region_v2    (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_select_raw_region(cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+
+cprisk_vm_flow_t cprisk_vm_oph_branch_ind_v0    (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_branch_ind_v1    (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_branch_ind_v2    (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_select_branch_ind(cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+
+cprisk_vm_flow_t cprisk_vm_oph_call_v0          (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_call_v1          (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_call_v2          (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+cprisk_vm_flow_t cprisk_vm_oph_select_call      (cprisk_vm_interp_frame_t *fr, uint8_t op_raw, uint8_t logical, uint64_t imm, uint32_t pc, uint32_t hvar);
+
 #ifdef __cplusplus
 }
 #endif

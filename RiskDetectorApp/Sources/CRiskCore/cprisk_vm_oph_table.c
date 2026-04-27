@@ -59,11 +59,11 @@ static cprisk_vm_flow_t cprisk_vm_dispatch_core_family_i(cprisk_vm_interp_frame_
          * defeat Capstone L1/L2 address-keyed disassembly caching. */
         return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x11u, cprisk_vm_oph_select_nop);
     case CPRISK_VM_OP_RET:
-        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x12u, cprisk_vm_oph_ret);
+        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x12u, cprisk_vm_oph_select_ret);
     case CPRISK_VM_OP_RAW_REGION:
-        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x13u, cprisk_vm_oph_raw_region);
+        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x13u, cprisk_vm_oph_select_raw_region);
     case CPRISK_VM_OP_HALT:
-        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x14u, cprisk_vm_oph_halt);
+        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x14u, cprisk_vm_oph_select_halt);
     default:
         return cprisk_vm_oph_unknown(fr, op_raw, logical, imm, pc, hvar);
     }
@@ -107,11 +107,11 @@ static cprisk_vm_flow_t cprisk_vm_dispatch_branch_family_i(cprisk_vm_interp_fram
     case CPRISK_VM_OP_BRANCH_REL:
         return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x31u, cprisk_vm_oph_select_branch_rel);
     case CPRISK_VM_OP_BRANCH_IND:
-        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x35u, cprisk_vm_oph_branch_ind);
+        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x35u, cprisk_vm_oph_select_branch_ind);
     case CPRISK_VM_OP_BRANCH_COND:
         return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x32u, cprisk_vm_oph_select_branch_cond);
     case CPRISK_VM_OP_CALL:
-        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x33u, cprisk_vm_oph_call);
+        return cprisk_vm_dispatch_leaf_i(fr, op_raw, logical, imm, pc, hvar, 0x33u, cprisk_vm_oph_select_call);
     default:
         return cprisk_vm_oph_unknown(fr, op_raw, logical, imm, pc, hvar);
     }
