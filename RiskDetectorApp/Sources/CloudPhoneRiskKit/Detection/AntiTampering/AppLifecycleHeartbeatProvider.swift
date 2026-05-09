@@ -18,13 +18,11 @@ import UIKit
  *   驱动的 — 典型场景：headless 反编译注入、unidbg/Frida 直接拉起 SDK 模拟
  *   接口调用。
  *
- * 加权策略：
- *   - 启动 < warmupSeconds: 静默期，不报；
- *   - 启动 ≥ warmupSeconds 且 0 个事件 + applicationState == active: 强信号 (60)；
- *   - 启动 ≥ warmupSeconds 且 0 个事件 + applicationState ∈ {inactive, background}:
- *     合理（如 BackgroundFetch / Push extension），不报；
- *   - 启动 ≥ warmupSeconds 且仅 willResign/didEnterBackground 没有 didBecomeActive:
- *     轻信号 (25) — 异常但不致命。
+ * 关键决策：
+ *   - **observer 在 init() 立即注册**（singleton init 仅执行一次，无 race），
+ *     避免"注册前的 didBecomeActive 漏掉"的 FP。
+ *   - applicationState 主线程探测 250ms 超时；超时返回 "unknown"，与 "active"
+ *     一并触发头条信号（轻分），避免 main 拥塞时误判为合法。
  */
 
 final class AppLifecycleHeartbeatProvider: RiskSignalProvider {
@@ -33,9 +31,10 @@ final class AppLifecycleHeartbeatProvider: RiskSignalProvider {
     let id = "app_lifecycle_heartbeat"
 
     private static let warmupSeconds: TimeInterval = 5.0
+    private static let appStateProbeTimeoutMs: Int = 250
 
     private let lock = UnfairLock()
-    private var providerStartTime: Date = Date()
+    private let providerStartTime: Date
     private var didBecomeActiveCount: Int = 0
     private var willResignActiveCount: Int = 0
     private var didEnterBackgroundCount: Int = 0
@@ -43,8 +42,8 @@ final class AppLifecycleHeartbeatProvider: RiskSignalProvider {
     private var observers: [NSObjectProtocol] = []
 
     private init() {
-        // 立即记录启动时间。observers 在第一次 signals() 调用时延迟注册，
-        // 避免 init 期间访问 UIApplication（可能不在主线程，会触发警告）。
+        self.providerStartTime = Date()
+        registerObservers()
     }
 
     deinit {
@@ -52,9 +51,7 @@ final class AppLifecycleHeartbeatProvider: RiskSignalProvider {
     }
 
     func signals(snapshot: RiskSnapshot) -> [RiskSignal] {
-        ensureObserversRegistered()
-
-        let elapsed = Date().timeIntervalSince(providerStartTimeSnapshot())
+        let elapsed = Date().timeIntervalSince(providerStartTime)
         let counts = countsSnapshot()
         let totalEvents = counts.didBecomeActiveCount
             + counts.willResignActiveCount
@@ -70,7 +67,8 @@ final class AppLifecycleHeartbeatProvider: RiskSignalProvider {
 
         if totalEvents == 0 {
             // 0 个事件 — 是真的 headless 还是合理的后台启动？
-            if appState == "active" {
+            switch appState {
+            case "active":
                 // 进程 active 但 0 个生命周期事件 — 强信号。
                 return [
                     RiskSignal(
@@ -87,7 +85,24 @@ final class AppLifecycleHeartbeatProvider: RiskSignalProvider {
                         weightHint: 70
                     )
                 ]
-            } else {
+            case "unknown":
+                // appState 探测超时（main 拥塞）。可能是合法重负载，也可能是 headless 故意把
+                // main 卡死阻止我们查询 — 给一个轻信号。
+                return [
+                    RiskSignal(
+                        id: "lifecycle_state_unknown_during_check",
+                        category: ObfuscatedConstants.categoryAntiTamper,
+                        score: 15,
+                        evidence: [
+                            "elapsed_seconds": String(format: "%.1f", elapsed),
+                            "hint": "main thread state probe timed out + 0 lifecycle events",
+                        ],
+                        state: .soft(confidence: 0.4),
+                        layer: 1,
+                        weightHint: 35
+                    )
+                ]
+            default:
                 // 后台 / 不活跃 — 合理静默。
                 return []
             }
@@ -119,10 +134,6 @@ final class AppLifecycleHeartbeatProvider: RiskSignalProvider {
 
     // MARK: - State
 
-    private func providerStartTimeSnapshot() -> Date {
-        lock.withLock { providerStartTime }
-    }
-
     private struct Counts {
         let didBecomeActiveCount: Int
         let willResignActiveCount: Int
@@ -143,10 +154,7 @@ final class AppLifecycleHeartbeatProvider: RiskSignalProvider {
 
     // MARK: - Observers
 
-    private func ensureObserversRegistered() {
-        let alreadyRegistered = lock.withLock { !observers.isEmpty }
-        guard !alreadyRegistered else { return }
-
+    private func registerObservers() {
         #if canImport(UIKit)
         let center = NotificationCenter.default
         let queue = OperationQueue.main
@@ -155,25 +163,29 @@ final class AppLifecycleHeartbeatProvider: RiskSignalProvider {
             forName: UIApplication.didBecomeActiveNotification,
             object: nil, queue: queue
         ) { [weak self] _ in
-            self?.lock.withLock { self?.didBecomeActiveCount += 1 }
+            guard let self = self else { return }
+            self.lock.withLock { self.didBecomeActiveCount += 1 }
         }
         let willResign = center.addObserver(
             forName: UIApplication.willResignActiveNotification,
             object: nil, queue: queue
         ) { [weak self] _ in
-            self?.lock.withLock { self?.willResignActiveCount += 1 }
+            guard let self = self else { return }
+            self.lock.withLock { self.willResignActiveCount += 1 }
         }
         let didBackground = center.addObserver(
             forName: UIApplication.didEnterBackgroundNotification,
             object: nil, queue: queue
         ) { [weak self] _ in
-            self?.lock.withLock { self?.didEnterBackgroundCount += 1 }
+            guard let self = self else { return }
+            self.lock.withLock { self.didEnterBackgroundCount += 1 }
         }
         let willForeground = center.addObserver(
             forName: UIApplication.willEnterForegroundNotification,
             object: nil, queue: queue
         ) { [weak self] _ in
-            self?.lock.withLock { self?.willEnterForegroundCount += 1 }
+            guard let self = self else { return }
+            self.lock.withLock { self.willEnterForegroundCount += 1 }
         }
 
         lock.withLock {
@@ -205,8 +217,7 @@ final class AppLifecycleHeartbeatProvider: RiskSignalProvider {
             captured = Self.applicationStateString(UIApplication.shared.applicationState)
             semaphore.signal()
         }
-        // 100ms 超时上限 — 防止主线程死锁场景拖死 signal pipeline
-        _ = semaphore.wait(timeout: .now() + .milliseconds(100))
+        _ = semaphore.wait(timeout: .now() + .milliseconds(Self.appStateProbeTimeoutMs))
         return captured
         #else
         return "unsupported"

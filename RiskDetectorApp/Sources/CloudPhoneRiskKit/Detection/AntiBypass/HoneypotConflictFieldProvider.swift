@@ -16,15 +16,16 @@ import UIKit
  * 客户端单端的价值：
  *   1. **误导成本**：分析者在 IDA 里看到我们故意输出 vendor_a/vendor_b 矛盾对，
  *      自然会去研究"这是不是个 bug、要不要 patch 掉"，浪费时间。
- *   2. **印章防伪**：vendor_a/vendor_b 由 GF(2) 仿射 seal 绑定。攻击者改任一字段
- *      seal 就不再有效；要同时伪造 seal 必须先还原 128×128 矩阵。
- *   3. **未来服务器扩展锚点**：当 SDK 上传到服务器（即使现在没有），服务器只要知道
- *      这条矛盾应该存在，就能用一行规则识别"被清洗过的载荷"。
+ *   2. **常量篡改检测**：vendor_b 是编译期常量。每次 emit 与编译期 expected 比对；
+ *      若不一致说明某个 hook 或 .data 篡改了字符串。
+ *   3. **印章绑定**：vendor_a/vendor_b 由 GF(2) 仿射 seal 绑定。
+ *   4. **未来服务器扩展锚点**：服务器只要看 vendor_b == expected 就能识别"被清洗
+ *      过的载荷"。
  *
- * 自我审计：
- *   首次 emit 时把 (vendor_a, vendor_b, seal) 元组写进 lock 保护的 baseline。后续 emit
- *   时重新计算 seal — 如果跟 baseline 不一致，说明某个 hook 修改了我们的输出常量，
- *   作为强信号上报 honeypot_baseline_drift。
+ * 注意（攻击者已在 launch 时 hook 的场景）：
+ *   如果 hook 在 SDK 加载前就已经在了，攻击者可以同时改 vendor_b 字符串和我们读取它的
+ *   逻辑。常量比对仅能检测 hook 不到位的攻击者。这是已知的限制；与服务器端验证组合
+ *   使用时威力最大。
  */
 
 final class HoneypotConflictFieldProvider: RiskSignalProvider {
@@ -32,14 +33,9 @@ final class HoneypotConflictFieldProvider: RiskSignalProvider {
     static let shared = HoneypotConflictFieldProvider()
     let id = "honeypot_conflict_field"
 
-    private struct Baseline {
-        let vendorA: String
-        let vendorB: String
-        let sealHex: String
-    }
-
-    private let lock = UnfairLock()
-    private var baseline: Baseline?
+    /// 编译期常量：vendor_b 必须始终等于这个字符串。
+    /// 取自 NES 早期文化梗，不会在任何设备字段里自然出现。
+    private static let expectedVendorB = "Konami_x42"
 
     private init() {}
 
@@ -49,25 +45,12 @@ final class HoneypotConflictFieldProvider: RiskSignalProvider {
         let seal = IntegritySealComputer.seal(forCanonicalString: canonical)
         let observedSealHex = seal.hexString
 
-        let drift = lock.withLock { () -> Bool in
-            if let cached = baseline {
-                if cached.vendorA != observed.vendorA
-                    || cached.vendorB != observed.vendorB
-                    || cached.sealHex != observedSealHex {
-                    return true
-                }
-                return false
-            } else {
-                baseline = Baseline(vendorA: observed.vendorA, vendorB: observed.vendorB, sealHex: observedSealHex)
-                return false
-            }
-        }
+        let matrixIntact = IntegritySealComputer.isMatrixIntact
+        let vendorBMatchesExpected = observed.vendorB == Self.expectedVendorB
 
         var signals: [RiskSignal] = []
 
-        // 蜜罐主信号：分数 0，纯粹为了把矛盾对 + seal 传出去。
-        // 若 seal 矩阵自校验失败，把分数提到 35（说明 .rodata 里的矩阵被改）。
-        let matrixIntact = IntegritySealComputer.isMatrixIntact
+        // 主信号：分数 0 = 良性遥测；矩阵被改 → 35。
         signals.append(
             RiskSignal(
                 id: "honeypot_vendor_conflict",
@@ -85,17 +68,17 @@ final class HoneypotConflictFieldProvider: RiskSignalProvider {
             )
         )
 
-        if drift {
-            // 我们自己的输出常量被在内存里改了 — 强信号。
+        // 编译期 vendor_b 检查 — 任何 hook 修正了我们的硬编码字符串都会落到这。
+        if !vendorBMatchesExpected {
             signals.append(
                 RiskSignal(
-                    id: "honeypot_baseline_drift",
+                    id: "honeypot_constant_drift",
                     category: ObfuscatedConstants.categoryAntiTamper,
                     score: 75,
                     evidence: [
-                        "reason": "first-seen vendor pair / seal differs from current emission",
-                        "expected_seal": baselineSealHex() ?? "",
-                        "observed_seal": observedSealHex,
+                        "expected_vendor_b": Self.expectedVendorB,
+                        "observed_vendor_b": observed.vendorB,
+                        "hint": "硬编码常量被 hook 或字符串段被修改",
                     ],
                     state: .tampered,
                     layer: 1,
@@ -119,24 +102,15 @@ final class HoneypotConflictFieldProvider: RiskSignalProvider {
     private func currentObservation() -> Observation {
         return Observation(
             vendorA: realVendorString(),
-            vendorB: hardcodedDecoyVendor()
+            vendorB: Self.expectedVendorB
         )
     }
 
+    /// 真实平台标识。形如 "iPhone15,2:23.1.0" — 设备相关，无法编译期固定。
     private func realVendorString() -> String {
-        #if canImport(UIKit)
-        // 真机预期是 "Apple Inc." — 不依赖 UIDevice 一类容易被 swizzle 的 API，
-        // 直接读 sysctl hw.product / hw.machine 拼出。
-        return "\(sysctlString("hw.machine")):\(sysctlString("kern.osrelease"))"
-        #else
-        return "macos:\(sysctlString("kern.osrelease"))"
-        #endif
-    }
-
-    /// 故意硬编码的"假" vendor — 跟真机不可能匹配的字符串。
-    /// 取自 NES 早期文化梗，不会在任何设备字段里自然出现。
-    private func hardcodedDecoyVendor() -> String {
-        "Konami_x42"
+        let machine = sysctlString("hw.machine")
+        let osrel = sysctlString("kern.osrelease")
+        return "\(machine):\(osrel)"
     }
 
     private func sysctlString(_ name: String) -> String {
@@ -145,9 +119,5 @@ final class HoneypotConflictFieldProvider: RiskSignalProvider {
         var buf = [CChar](repeating: 0, count: size)
         guard sysctlbyname(name, &buf, &size, nil, 0) == 0 else { return "" }
         return String(cString: buf)
-    }
-
-    private func baselineSealHex() -> String? {
-        lock.withLock { baseline?.sealHex }
     }
 }
