@@ -38,10 +38,10 @@ struct CLIOptions {
     var swiftSemanticDecoys: Bool = false
     /// `standard` (default) or `appstore-safe` — selects default CFF/VMP YAML when paths not overridden.
     var safetyProfileRaw: String?
-    /// v7.7 audit-fix F12: when set, run `verify_honeypot_bytes_stripped.py` against the armored
-    /// output. Non-zero exit code from the script causes cprisk-armor to fail (after writing the
-    /// output, so the offending binary is inspectable). Default off — opt-in for callers that
-    /// know the binary contains HoneypotConflictFieldProvider.
+    /// v7.7 audit-fix F12 (Swift-native): when set, scan the armored output for the
+    /// HoneypotConflictFieldProvider byte patterns. Failure causes cprisk-armor to fail
+    /// (after writing the output, so the offending binary is inspectable). Default off —
+    /// opt-in for callers that know the binary contains HoneypotConflictFieldProvider.
     var verifyHoneypotBytes: Bool = false
 }
 
@@ -139,10 +139,10 @@ func printUsage() {
       --vmp-policy      Override vmp_policy.yaml path for Pass 13 (default: RiskDetectorApp/vmp_policy.yaml search)
       --safety-profile standard|appstore-safe
                         Build policy profile: appstore-safe defaults to *_appstore_safe.yaml when --cff-policy/--vmp-policy omitted
-      --verify-honeypot Post-armor: run BuildSupport/scripts/verify_honeypot_bytes_stripped.py
-                        on the output binary; fail (exit 1) if HoneypotConflictFieldProvider's
-                        XOR-input bytes [09 2D 2C 23 2F 2B 1D 3A 76 70] or the plaintext
-                        "Konami_x42" survive in the armored output. Audit fix F12.
+      --verify-honeypot Post-armor: scan the output binary for HoneypotConflictFieldProvider's
+                        XOR-input bytes [09 2D 2C 23 2F 2B 1D 3A 76 70] and the plaintext
+                        "Konami_x42". Either pattern present in armored output = exit 1.
+                        Native Swift implementation (no external dependencies). Audit fix F12.
       --build-seed      Build randomization seed (u64, decimal or 0x-prefixed hex)
       --metadata-scrub-level conservative|aggressive
                         Pass 2 Swift metadata: conservative (default, string payloads only)
@@ -491,30 +491,26 @@ do {
         print("    \(result.passName): \(result.itemsProcessed) items, \(result.bytesModified) bytes modified")
     }
 
-    // v7.7 audit-fix F12: post-armor honeypot byte-stripping check.
-    // Opt-in via --verify-honeypot. Runs the Python acceptance script against the
-    // output binary; non-zero exit from the script propagates to cprisk-armor's exit.
+    // v7.7 audit-fix F12 (Swift-native): post-armor honeypot byte-stripping check.
+    // Opt-in via --verify-honeypot. Scans the output binary for the two byte patterns
+    // that would let an attacker bypass HoneypotConflictFieldProvider:
+    //   - XOR-input array [09 2D 2C 23 2F 2B 1D 3A 76 70] (^ 0x42 = "Konami_x42")
+    //   - Plaintext "Konami_x42" (observedVendorBLiteral)
+    // Native implementation, zero external dependencies.
     if options.verifyHoneypotBytes {
-        let scriptPath = locateHoneypotVerifyScript()
-        if let scriptPath = scriptPath {
-            print("[*] Verifying honeypot byte stripping via \(scriptPath)")
-            let process = Process()
-            process.launchPath = "/usr/bin/env"
-            process.arguments = ["python3", scriptPath, "--armored", outputPath]
-            do {
-                try process.run()
-                process.waitUntilExit()
-                if process.terminationStatus != 0 {
-                    fputs("[!] verify_honeypot_bytes_stripped.py exited \(process.terminationStatus) — armored binary still contains honeypot byte patterns\n", stderr)
-                    exit(Int32(process.terminationStatus))
-                }
-                print("[+] Honeypot byte stripping verified")
-            } catch {
-                fputs("[!] Failed to invoke verify_honeypot_bytes_stripped.py: \(error)\n", stderr)
-                exit(1)
+        print("[*] Verifying honeypot byte stripping in \(outputPath)")
+        let result = HoneypotByteStripCheck.run(binaryPath: outputPath)
+        switch result {
+        case .pass(let scannedBytes):
+            print("[+] Honeypot byte stripping verified (\(scannedBytes) bytes scanned)")
+        case .fileError(let message):
+            fputs("[!] verify-honeypot: \(message)\n", stderr)
+            exit(1)
+        case .fail(let findings):
+            for finding in findings {
+                fputs("[!] verify-honeypot FAIL: \(finding)\n", stderr)
             }
-        } else {
-            fputs("[!] --verify-honeypot requested but verify_honeypot_bytes_stripped.py not found in known locations\n", stderr)
+            fputs("[!] armored binary still contains honeypot byte patterns; armor pipeline must be extended to cover __const fixed-size [UInt8] literals (HoneypotConflictFieldProvider.expectedVendorB)\n", stderr)
             exit(1)
         }
     }
@@ -523,29 +519,79 @@ do {
     exit(1)
 }
 
-/// Locate `verify_honeypot_bytes_stripped.py`. Tries (in order):
-///   1. `$CPRISK_HONEYPOT_VERIFY_SCRIPT` env var
-///   2. `RiskDetectorApp/BuildSupport/scripts/verify_honeypot_bytes_stripped.py` relative to CWD
-///   3. Same path relative to the executable's parent (for installed builds)
-func locateHoneypotVerifyScript() -> String? {
-    let fm = FileManager.default
-    if let envPath = ProcessInfo.processInfo.environment["CPRISK_HONEYPOT_VERIFY_SCRIPT"],
-       fm.fileExists(atPath: envPath) {
-        return envPath
+/// v7.7 audit-fix F12: Swift-native scanner for HoneypotConflictFieldProvider byte
+/// patterns in an armored binary. Runs in-process — no shell, no Python, no external
+/// scripts. Two patterns checked:
+///   - The 10-byte XOR-input array used by `expectedVendorB()` to reconstruct
+///     "Konami_x42" at runtime. VMP `full` defends the derivation flow but NOT the
+///     `[UInt8]` literal that compiles into __const.
+///   - The plaintext "Konami_x42" (observedVendorBLiteral). StringEncryptor's
+///     "konami" keyword (audit-fix F3) should catch this; the check is belt-and-braces.
+enum HoneypotByteStripCheck {
+    enum Result {
+        case pass(scannedBytes: Int)
+        case fail(findings: [String])
+        case fileError(String)
     }
-    let relative = "RiskDetectorApp/BuildSupport/scripts/verify_honeypot_bytes_stripped.py"
-    let cwdCandidate = (fm.currentDirectoryPath as NSString).appendingPathComponent(relative)
-    if fm.fileExists(atPath: cwdCandidate) {
-        return cwdCandidate
-    }
-    // Walk up from CWD looking for the repo root marker.
-    var dir = (fm.currentDirectoryPath as NSString)
-    for _ in 0..<6 {
-        let candidate = (dir as String) + "/" + relative
-        if fm.fileExists(atPath: candidate) {
-            return candidate
+
+    private static let xorInput: [UInt8] = [
+        0x09, 0x2D, 0x2C, 0x23, 0x2F, 0x2B, 0x1D, 0x3A, 0x76, 0x70,
+    ]
+    private static let observedPlaintext: [UInt8] = Array("Konami_x42".utf8)
+
+    static func run(binaryPath: String) -> Result {
+        guard FileManager.default.fileExists(atPath: binaryPath) else {
+            return .fileError("\(binaryPath): not a file")
         }
-        dir = (dir.deletingLastPathComponent as NSString)
+        let data: Data
+        do {
+            data = try Data(contentsOf: URL(fileURLWithPath: binaryPath), options: .mappedIfSafe)
+        } catch {
+            return .fileError("failed to read \(binaryPath): \(error)")
+        }
+
+        var findings: [String] = []
+
+        let xorHits = findAllOccurrences(of: xorInput, in: data)
+        if !xorHits.isEmpty {
+            let hexPattern = xorInput.map { String(format: "%02X", $0) }.joined(separator: " ")
+            findings.append(
+                "expectedVendorB XOR-input bytes [\(hexPattern)] found at "
+                + "\(xorHits.count) offset(s) (first: 0x\(String(xorHits[0], radix: 16, uppercase: true)))"
+            )
+        }
+
+        let plainHits = findAllOccurrences(of: observedPlaintext, in: data)
+        if !plainHits.isEmpty {
+            findings.append(
+                "observedVendorBLiteral plaintext 'Konami_x42' found at "
+                + "\(plainHits.count) offset(s) (first: 0x\(String(plainHits[0], radix: 16, uppercase: true)))"
+            )
+        }
+
+        return findings.isEmpty ? .pass(scannedBytes: data.count) : .fail(findings: findings)
     }
-    return nil
+
+    /// Naive byte-search; needle ≤ 16 bytes and haystack typically ≤ 200 MB so
+    /// O(n·m) is fine. No allocations beyond the result array.
+    private static func findAllOccurrences(of needle: [UInt8], in haystack: Data) -> [Int] {
+        guard !needle.isEmpty, haystack.count >= needle.count else { return [] }
+        var results: [Int] = []
+        let limit = haystack.count - needle.count
+        var i = 0
+        while i <= limit {
+            var match = true
+            for j in 0..<needle.count where haystack[haystack.startIndex + i + j] != needle[j] {
+                match = false
+                break
+            }
+            if match {
+                results.append(i)
+                i += 1
+            } else {
+                i += 1
+            }
+        }
+        return results
+    }
 }
