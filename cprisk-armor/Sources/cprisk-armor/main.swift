@@ -38,6 +38,11 @@ struct CLIOptions {
     var swiftSemanticDecoys: Bool = false
     /// `standard` (default) or `appstore-safe` — selects default CFF/VMP YAML when paths not overridden.
     var safetyProfileRaw: String?
+    /// v7.7 audit-fix F12 (Swift-native): when set, scan the armored output for the
+    /// HoneypotConflictFieldProvider byte patterns. Failure causes cprisk-armor to fail
+    /// (after writing the output, so the offending binary is inspectable). Default off —
+    /// opt-in for callers that know the binary contains HoneypotConflictFieldProvider.
+    var verifyHoneypotBytes: Bool = false
 }
 
 func parseArguments() -> CLIOptions {
@@ -94,6 +99,8 @@ func parseArguments() -> CLIOptions {
         case "--safety-profile":
             i += 1
             if i < args.count { options.safetyProfileRaw = args[i] }
+        case "--verify-honeypot":
+            options.verifyHoneypotBytes = true
         case "--help":
             printUsage()
             exit(0)
@@ -132,6 +139,10 @@ func printUsage() {
       --vmp-policy      Override vmp_policy.yaml path for Pass 13 (default: RiskDetectorApp/vmp_policy.yaml search)
       --safety-profile standard|appstore-safe
                         Build policy profile: appstore-safe defaults to *_appstore_safe.yaml when --cff-policy/--vmp-policy omitted
+      --verify-honeypot Post-armor: scan the output binary for HoneypotConflictFieldProvider's
+                        XOR-input bytes [09 2D 2C 23 2F 2B 1D 3A 76 70] and the plaintext
+                        "Konami_x42". Either pattern present in armored output = exit 1.
+                        Native Swift implementation (no external dependencies). Audit fix F12.
       --build-seed      Build randomization seed (u64, decimal or 0x-prefixed hex)
       --metadata-scrub-level conservative|aggressive
                         Pass 2 Swift metadata: conservative (default, string payloads only)
@@ -479,7 +490,108 @@ do {
     for result in allResults {
         print("    \(result.passName): \(result.itemsProcessed) items, \(result.bytesModified) bytes modified")
     }
+
+    // v7.7 audit-fix F12 (Swift-native): post-armor honeypot byte-stripping check.
+    // Opt-in via --verify-honeypot. Scans the output binary for the two byte patterns
+    // that would let an attacker bypass HoneypotConflictFieldProvider:
+    //   - XOR-input array [09 2D 2C 23 2F 2B 1D 3A 76 70] (^ 0x42 = "Konami_x42")
+    //   - Plaintext "Konami_x42" (observedVendorBLiteral)
+    // Native implementation, zero external dependencies.
+    if options.verifyHoneypotBytes {
+        print("[*] Verifying honeypot byte stripping in \(outputPath)")
+        let result = HoneypotByteStripCheck.run(binaryPath: outputPath)
+        switch result {
+        case .pass(let scannedBytes):
+            print("[+] Honeypot byte stripping verified (\(scannedBytes) bytes scanned)")
+        case .fileError(let message):
+            fputs("[!] verify-honeypot: \(message)\n", stderr)
+            exit(1)
+        case .fail(let findings):
+            for finding in findings {
+                fputs("[!] verify-honeypot FAIL: \(finding)\n", stderr)
+            }
+            fputs("[!] armored binary still contains honeypot byte patterns; armor pipeline must be extended to cover __const fixed-size [UInt8] literals (HoneypotConflictFieldProvider.expectedVendorB)\n", stderr)
+            exit(1)
+        }
+    }
 } catch {
     fputs("Error: \(error)\n", stderr)
     exit(1)
+}
+
+/// v7.7 audit-fix F12: Swift-native scanner for HoneypotConflictFieldProvider byte
+/// patterns in an armored binary. Runs in-process — no shell, no Python, no external
+/// scripts. Two patterns checked:
+///   - The 10-byte XOR-input array used by `expectedVendorB()` to reconstruct
+///     "Konami_x42" at runtime. VMP `full` defends the derivation flow but NOT the
+///     `[UInt8]` literal that compiles into __const.
+///   - The plaintext "Konami_x42" (observedVendorBLiteral). StringEncryptor's
+///     "konami" keyword (audit-fix F3) should catch this; the check is belt-and-braces.
+enum HoneypotByteStripCheck {
+    enum Result {
+        case pass(scannedBytes: Int)
+        case fail(findings: [String])
+        case fileError(String)
+    }
+
+    private static let xorInput: [UInt8] = [
+        0x09, 0x2D, 0x2C, 0x23, 0x2F, 0x2B, 0x1D, 0x3A, 0x76, 0x70,
+    ]
+    private static let observedPlaintext: [UInt8] = Array("Konami_x42".utf8)
+
+    static func run(binaryPath: String) -> Result {
+        guard FileManager.default.fileExists(atPath: binaryPath) else {
+            return .fileError("\(binaryPath): not a file")
+        }
+        let data: Data
+        do {
+            data = try Data(contentsOf: URL(fileURLWithPath: binaryPath), options: .mappedIfSafe)
+        } catch {
+            return .fileError("failed to read \(binaryPath): \(error)")
+        }
+
+        var findings: [String] = []
+
+        let xorHits = findAllOccurrences(of: xorInput, in: data)
+        if !xorHits.isEmpty {
+            let hexPattern = xorInput.map { String(format: "%02X", $0) }.joined(separator: " ")
+            findings.append(
+                "expectedVendorB XOR-input bytes [\(hexPattern)] found at "
+                + "\(xorHits.count) offset(s) (first: 0x\(String(xorHits[0], radix: 16, uppercase: true)))"
+            )
+        }
+
+        let plainHits = findAllOccurrences(of: observedPlaintext, in: data)
+        if !plainHits.isEmpty {
+            findings.append(
+                "observedVendorBLiteral plaintext 'Konami_x42' found at "
+                + "\(plainHits.count) offset(s) (first: 0x\(String(plainHits[0], radix: 16, uppercase: true)))"
+            )
+        }
+
+        return findings.isEmpty ? .pass(scannedBytes: data.count) : .fail(findings: findings)
+    }
+
+    /// Naive byte-search; needle ≤ 16 bytes and haystack typically ≤ 200 MB so
+    /// O(n·m) is fine. No allocations beyond the result array.
+    private static func findAllOccurrences(of needle: [UInt8], in haystack: Data) -> [Int] {
+        guard !needle.isEmpty, haystack.count >= needle.count else { return [] }
+        var results: [Int] = []
+        let limit = haystack.count - needle.count
+        var i = 0
+        while i <= limit {
+            var match = true
+            for j in 0..<needle.count where haystack[haystack.startIndex + i + j] != needle[j] {
+                match = false
+                break
+            }
+            if match {
+                results.append(i)
+                i += 1
+            } else {
+                i += 1
+            }
+        }
+        return results
+    }
 }

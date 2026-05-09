@@ -52,7 +52,14 @@ static uint64_t cprisk_gf2_fnv1a(const uint8_t *data, size_t len) {
     return h;
 }
 
-static uint64_t cprisk_gf2_compute_full_checksum(void) {
+// Exposed via public CRiskCore.h + visibility("default") so the symbol survives
+// `-fvisibility=hidden` and Release strip — armor CFF/VMP policies target this name.
+// Removing `static` alone is NOT sufficient under -fvisibility=hidden (which makes
+// non-static functions N_PEXT and dead-strippable); the explicit attribute promotes
+// to N_EXT. v7.7 audit-fix F1+F4 (post-1st-pass: comment was wrong about the mechanism).
+// FNV-1a basis/prime are materialized as immediates here — VMP partial covers them.
+__attribute__((visibility("default")))
+uint64_t cprisk_gf2_compute_full_checksum(void) {
     // 链式 FNV：先 matrix 再 translation，保证两者都被覆盖。
     uint64_t h = cprisk_gf2_fnv1a(kCpriskGf2Matrix, CPRISK_GF2_MATRIX_BYTES);
     // 用 matrix hash 当 translation 的 offset basis 续算
@@ -63,7 +70,15 @@ static uint64_t cprisk_gf2_compute_full_checksum(void) {
     return h;
 }
 
-static void cprisk_gf2_init_real(void) {
+// Exposed via public CRiskCore.h + visibility("default") so the symbol survives
+// `-fvisibility=hidden` and Release strip — armor CFF/VMP policies target this name.
+// Removing `static` alone is NOT sufficient under -fvisibility=hidden (which makes
+// non-static functions N_PEXT and dead-strippable); the explicit attribute promotes
+// to N_EXT. v7.7 audit-fix F1+F4 (post-1st-pass: comment was wrong about the mechanism).
+// Seed kCpriskGf2InitSeed (0xCAFEBABEDEADBEEFULL) is materialized as immediate here —
+// VMP partial walks it through VPC to defeat constant-search matrix recovery.
+__attribute__((visibility("default")))
+void cprisk_gf2_init_real(void) {
     uint64_t s = kCpriskGf2InitSeed;
     for (size_t i = 0u; i < CPRISK_GF2_MATRIX_BYTES; ++i) {
         s = cprisk_gf2_xorshift64(s);

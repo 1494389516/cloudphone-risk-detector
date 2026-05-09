@@ -27,6 +27,20 @@ functions:
     - RiskDetectionEngine.scoreAndForceDecision
     - RiskDetectionEngine.treeCommitVerdict
     - DecisionTree.decide
+    # v7.7 — GF(2) 主完整性链 / 蜜罐期望值 / 16 字节 seal 计算 / GF(2) 仿射核心
+    # 攻击者最高价值目标：canonical 字段顺序 / SE keychain tag / XOR 密钥 / 矩阵种子。
+    # heavy 平坦化 + 后续 VMP partial/full 双层。
+    - IntegrityChainSealProvider.computeSeal
+    - HoneypotConflictFieldProvider.expectedVendorB
+    - IntegritySealComputer.seal
+    # v7.7 audit-fix F6: 拆分后的 GF(2) 直入入口（接 16 字节摘要，跳过 SHA-256）
+    # 即使 inline 进 seal(_:) 仍列入 — matcher 找不到只是 skip。
+    - IntegritySealComputer.sealFromDigestPrefix
+    - cprisk_gf2_affine_transform_16
+    # v7.7 audit-fix F1: seed kCpriskGf2InitSeed=0xCAFEBABEDEADBEEFULL 在此函数 .rodata 里
+    # 作为 immediate 出现；CFF heavy 把加载点拆散，VMP partial 进一步把 immediate 走 VPC。
+    # init 一次性调用，性能成本可忽略；保护价值高。
+    - cprisk_gf2_init_real
 
   # 中等：整函数二进制改写预算介于 light/heavy 之间（Pass9 默认更宽的扫描窗口）
   medium:
@@ -71,6 +85,24 @@ functions:
     # VM 解释器主循环：CFF 保护对抗 trace-based 分析
     - cprisk_vm_interp_loop_a
     - cprisk_vm_interp_loop_b
+    # v7.7 — Provider 入口 / SE 签名 / canonical 字段拼接 / 矩阵自校验 / FNV checksum
+    # signals() 是攻击者识别 Provider 责任的入口；ensureKeyInternal 是 SE 密钥加载点；
+    # buildCanonical 决定 seal 的输入字段顺序，泄露即可定向 hook；self_check 是 attacker
+    # 倾向于补丁返回 0 的位置，必须 CFF 化让 NOP-patch 不可行。
+    - IntegrityChainSealProvider.signals
+    - IntegrityChainSealProvider.kickOffSeal
+    - IntegrityChainSealProvider.buildCanonical
+    - SecureEnclaveSigner.sign
+    - SecureEnclaveSigner.ensureKeyInternal
+    - SecureEnclaveSigner.publicKeyX962
+    - HoneypotConflictFieldProvider.signals
+    - AppAttestActiveProbeProvider.signals
+    - AppAttestActiveProbeProvider.runActiveProbe
+    - cprisk_gf2_affine_self_check
+    - cprisk_gf2_compute_full_checksum
+    # v7.7 audit-fix F10: drift 缓存清零的判定函数 — 攻击者 hook 让其常 return / 常 clear
+    # 都能让 invariant_seal_drift 永远不发；medium 平坦化让 hook 落点变难。
+    - IntegrityChainSealProvider.clearDriftFromCacheIfNeeded
 
   # 轻量平坦化：高频检测流程，强调低开销与异构分发
   light:
@@ -96,6 +128,19 @@ functions:
     - cprisk_scan_instant_return_key_symbols_prefix
     - cprisk_scan_hook_surface_trampoline_prefixes
     - cprisk_is_being_traced_sysctl_only
+    # v7.7 — 跨 session keychain kv / lifecycle observer / SE isSupported probe-cache helpers
+    - LongitudinalStateStore.save
+    - LongitudinalStateStore.load
+    - LongitudinalStateStore.delete
+    - LongitudinalStateStore.saveString
+    - LongitudinalStateStore.loadString
+    - AppLifecycleHeartbeatProvider.signals
+    - AppLifecycleHeartbeatProvider.currentApplicationStateString
+    - SecureEnclaveSigner.readCachedSupport
+    - SecureEnclaveSigner.cacheSupport
+    # v7.7 audit-fix F11: UIApplication.State → String 的纯映射函数。低安全价值但
+    # 是 headless detector 判定的"最易单字节 hook"目标 — light 平坦化是性价比之选。
+    - AppLifecycleHeartbeatProvider.applicationStateString
 
   # 绝不平坦化：底层 syscall 包装、App 入口、测试等
   never:

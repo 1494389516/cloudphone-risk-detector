@@ -222,7 +222,7 @@ final class IntegrityChainSealProvider: RiskSignalProvider {
     /// 由 kickOffSeal 包在 Task.detached 里调用，把同步的 Keychain / SE I/O 移出
     /// signal pipeline 主线程。本身不需要 async — Keychain / SecKey API 都是同步调用。
     private static func computeSeal(canonical: String) -> SealResult {
-        let seal = IntegritySealComputer.seal(forCanonicalString: canonical)
+        let seal = IntegritySealComputer.seal(Data(canonical.utf8))
         let sealHex = seal.hexString
         let sealBytes = Data(seal.bytes)
 

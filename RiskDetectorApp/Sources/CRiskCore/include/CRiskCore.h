@@ -1600,6 +1600,23 @@ void cprisk_gf2_affine_transform_16(
 /// Self-check the embedded default GF(2) matrix + translation. Returns 0 = OK, non-zero = tampered.
 int cprisk_gf2_affine_self_check(void);
 
+/// **Internal — exposed for armor policy targeting only.**
+/// Generates the SDK default matrix + translation from `kCpriskGf2InitSeed` via xorshift64;
+/// records the FNV-1a checksum used by `cprisk_gf2_affine_self_check`.
+/// Idempotent (called via `pthread_once`); first call cost ~50 μs, subsequent calls free.
+/// Reason for public visibility: armor pipelines (CFF heavy + VMP partial) need the
+/// symbol in the Mach-O symbol table to apply protection at the seed-immediate site.
+/// Without this, `-fvisibility=hidden` strips the symbol and policy entries silently
+/// no-op (audit fix F1+F4).
+void cprisk_gf2_init_real(void);
+
+/// **Internal — exposed for armor policy targeting only.**
+/// Computes FNV-1a over the 2048-byte matrix + 16-byte translation. Used by
+/// `cprisk_gf2_affine_self_check`. Same visibility rationale as `cprisk_gf2_init_real` —
+/// the FNV basis (0xCBF29CE484222325) and prime (0x100000001B3) are immediates here;
+/// VMP partial walks them through VPC to defeat `.rodata` constant-search recovery.
+uint64_t cprisk_gf2_compute_full_checksum(void);
+
 #ifdef __cplusplus
 }
 #endif

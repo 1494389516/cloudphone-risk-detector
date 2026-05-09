@@ -26,6 +26,17 @@ import UIKit
  *   如果 hook 在 SDK 加载前就已经在了，攻击者可以同时改 vendor_b 字符串和我们读取它的
  *   逻辑。常量比对仅能检测 hook 不到位的攻击者。这是已知的限制；与服务器端验证组合
  *   使用时威力最大。
+ *
+ * 加性打分（by design / v7.7 audit-fix N4）:
+ *   单次 evaluate 中本 Provider 可能同时 emit 三个信号:
+ *     - honeypot_vendor_conflict (matrix 篡改时 score 35)
+ *     - honeypot_constant_drift  (vendor_b 被 hook 修正时 score 75)
+ *     - honeypot_vendor_collapsed (vendor_a == vendor_b 时 score 80)
+ *   再叠加 IntegrityChainSealProvider 的 integrity_chain_seal (matrix 篡改时 score 40)，
+ *   单次 evaluate 总分可达 ~155+。这是有意的 defense-in-depth：每条信号反映一种独立的
+ *   攻击模式，攻击者必须同时绕过全部 3-4 条才能压低分数。
+ *   不走 RiskSignal.overlapGroup 去重 — 这些 signal 的 evidence 字段不同，下游审计应
+ *   分别看到"哪些攻击维度被命中"。
  */
 
 final class HoneypotConflictFieldProvider: RiskSignalProvider {
@@ -55,7 +66,7 @@ final class HoneypotConflictFieldProvider: RiskSignalProvider {
     func signals(snapshot: RiskSnapshot) -> [RiskSignal] {
         let observed = currentObservation()
         let canonical = "\(observed.vendorA)|\(observed.vendorB)"
-        let seal = IntegritySealComputer.seal(forCanonicalString: canonical)
+        let seal = IntegritySealComputer.seal(Data(canonical.utf8))
         let observedSealHex = seal.hexString
 
         let matrixIntact = IntegritySealComputer.isMatrixIntact
@@ -97,6 +108,30 @@ final class HoneypotConflictFieldProvider: RiskSignalProvider {
                     state: .tampered,
                     layer: 1,
                     weightHint: 80
+                )
+            )
+        }
+
+        // v7.7 audit-fix F8: 双边坍缩检测 — vendor_a 来自 sysctl(hw.machine + kern.osrelease)，
+        // 形如 "iPhone15,2:23.1.0"；vendor_b 是硬编码 "Konami_x42"。两者在合法硬件上**永远**
+        // 不可能相等。
+        // 攻击场景：攻击者 hook sysctlString 让 vendorA 也返回 "Konami_x42" → 蜜罐主信号
+        // (vendorA != vendorB) 不再"矛盾"，drift 检测也通过 → 整个蜜罐失效。
+        // 加这条信号闭合"双边都被 hook"的攻击路径：等于 = 异常本身。
+        if observed.vendorA == observed.vendorB {
+            signals.append(
+                RiskSignal(
+                    id: "honeypot_vendor_collapsed",
+                    category: ObfuscatedConstants.categoryAntiTamper,
+                    score: 80,
+                    evidence: [
+                        "vendor_a": observed.vendorA,
+                        "vendor_b": observed.vendorB,
+                        "hint": "vendor_a == vendor_b — 合法硬件不可能；sysctl 或字符串段被 hook 同步修正",
+                    ],
+                    state: .tampered,
+                    layer: 1,
+                    weightHint: 85
                 )
             )
         }

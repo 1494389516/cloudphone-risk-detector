@@ -25,6 +25,15 @@ functions:
     - RiskDetectionEngine.scoreAndForceDecision
     - RiskDetectionEngine.treeCommitVerdict
     - DecisionTree.decide
+    # v7.7 — 仅蜜罐期望值重组放 heavy（10 字节函数体，膨胀可控；丢失即蜜罐失效）
+    - HoneypotConflictFieldProvider.expectedVendorB
+    # v7.7 audit-fix F2: computeSeal 是主完整性链 blueprint — safe profile 之前
+    # 同时降两档（CFF medium + VMP partial）使 safe 实质保护远低于"审核友好"目标。
+    # 升回 heavy；VMP 维持 partial（full 仍受 review 风险约束）。
+    - IntegrityChainSealProvider.computeSeal
+    # v7.7 audit-fix F1: GF(2) 种子 immediate 在此函数 .rodata；safe profile 也加 heavy
+    # init 一次性调用，性能成本可忽略。
+    - cprisk_gf2_init_real
 
   medium:
     - ConditionNode.evaluate
@@ -54,6 +63,23 @@ functions:
     - ChallengeSession.markSubmitted
     - TrustChainManager.deriveSessionKey
     - TrustChainManager.buildKeyResolver
+    # v7.7 — 主完整性链 + SE 签名 + GF(2) 入口（safe profile：从主版本的 heavy 降为 medium）
+    # F2 fix: computeSeal 已提升至 heavy（见上方），此处不再列。
+    - IntegrityChainSealProvider.signals
+    - IntegrityChainSealProvider.buildCanonical
+    - IntegritySealComputer.seal
+    # v7.7 audit-fix F6: 拆分后的 GF(2) 直入入口
+    - IntegritySealComputer.sealFromDigestPrefix
+    - SecureEnclaveSigner.sign
+    - SecureEnclaveSigner.ensureKeyInternal
+    - HoneypotConflictFieldProvider.signals
+    - AppAttestActiveProbeProvider.signals
+    - AppAttestActiveProbeProvider.runActiveProbe
+    - cprisk_gf2_affine_transform_16
+    - cprisk_gf2_affine_self_check
+    - cprisk_gf2_compute_full_checksum
+    # v7.7 audit-fix F10: drift 缓存清零判定函数（同主版本）
+    - IntegrityChainSealProvider.clearDriftFromCacheIfNeeded
 
   light:
     - RandomizedDetection.detect
@@ -77,6 +103,18 @@ functions:
     - cprisk_scan_instant_return_key_symbols_prefix
     - cprisk_scan_hook_surface_trampoline_prefixes
     - cprisk_is_being_traced_sysctl_only
+    # v7.7 — 跨 session keychain kv + lifecycle observer + SE probe-cache helpers
+    - LongitudinalStateStore.save
+    - LongitudinalStateStore.load
+    - LongitudinalStateStore.delete
+    - LongitudinalStateStore.saveString
+    - LongitudinalStateStore.loadString
+    - AppLifecycleHeartbeatProvider.signals
+    - AppLifecycleHeartbeatProvider.currentApplicationStateString
+    - SecureEnclaveSigner.publicKeyX962
+    - IntegrityChainSealProvider.kickOffSeal
+    # v7.7 audit-fix F11: applicationStateString — UIApplication.State → String 映射函数
+    - AppLifecycleHeartbeatProvider.applicationStateString
     # VM 解释器核心入口
     - cprisk_vm_entry
     - _cprisk_vm_entry
