@@ -34,6 +34,10 @@ functions:
     - HoneypotConflictFieldProvider.expectedVendorB
     - IntegritySealComputer.seal
     - cprisk_gf2_affine_transform_16
+    # v7.7 audit-fix F1: seed kCpriskGf2InitSeed=0xCAFEBABEDEADBEEFULL 在此函数 .rodata 里
+    # 作为 immediate 出现；CFF heavy 把加载点拆散，VMP partial 进一步把 immediate 走 VPC。
+    # init 一次性调用，性能成本可忽略；保护价值高。
+    - cprisk_gf2_init_real
 
   # 中等：整函数二进制改写预算介于 light/heavy 之间（Pass9 默认更宽的扫描窗口）
   medium:
@@ -93,6 +97,9 @@ functions:
     - AppAttestActiveProbeProvider.runActiveProbe
     - cprisk_gf2_affine_self_check
     - cprisk_gf2_compute_full_checksum
+    # v7.7 audit-fix F10: drift 缓存清零的判定函数 — 攻击者 hook 让其常 return / 常 clear
+    # 都能让 invariant_seal_drift 永远不发；medium 平坦化让 hook 落点变难。
+    - IntegrityChainSealProvider.clearDriftFromCacheIfNeeded
 
   # 轻量平坦化：高频检测流程，强调低开销与异构分发
   light:
@@ -128,6 +135,9 @@ functions:
     - AppLifecycleHeartbeatProvider.currentApplicationStateString
     - SecureEnclaveSigner.readCachedSupport
     - SecureEnclaveSigner.cacheSupport
+    # v7.7 audit-fix F11: UIApplication.State → String 的纯映射函数。低安全价值但
+    # 是 headless detector 判定的"最易单字节 hook"目标 — light 平坦化是性价比之选。
+    - AppLifecycleHeartbeatProvider.applicationStateString
 
   # 绝不平坦化：底层 syscall 包装、App 入口、测试等
   never:

@@ -87,6 +87,20 @@ functions:
     - IntegritySealComputer.seal
     - LongitudinalStateStore.save
     - LongitudinalStateStore.load
+    # v7.7 audit-fix F1: GF(2) 种子 + FNV 常量 immediate 加载点 — 之前 commit message 错误
+    # 假设"matrix 在 BSS = 无 dump 目标"。实际种子 0xCAFEBABEDEADBEEFULL 在 init_real 的
+    # .rodata、FNV basis 0xCBF29CE484222325 + prime 0x100000001B3 在 compute_full_checksum
+    # 的 .rodata；攻击者 strings/搜常量 30s 即可还原矩阵。VMP partial 把这两个 immediate
+    # 走 VPC，让常量搜不到。
+    - cprisk_gf2_init_real
+    - cprisk_gf2_compute_full_checksum
+    # v7.7 audit-fix F7: delete 是"清掉 drift 基线让下次不报"的攻击原语 — 必须 VMP 化
+    # saveString: write 包装；hook 它能绕过已 VMP 化的 save
+    - LongitudinalStateStore.delete
+    - LongitudinalStateStore.saveString
+    # v7.7 audit-fix F9: publicKeyX962 是未来 server-verify 的公钥导出点 — 攻击者替换返回
+    # 值即可注册自己的密钥。partial 化让 hook 落点变难。
+    - SecureEnclaveSigner.publicKeyX962
   never:
     - direct_syscall.cprisk_direct_syscall0
     - direct_syscall.cprisk_direct_syscall6

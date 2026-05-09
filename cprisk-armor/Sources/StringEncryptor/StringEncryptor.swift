@@ -36,6 +36,11 @@ public enum StringClassifier {
         // Detection config keys embedded in JSON literals
         "enablecloudphone", "jailbreakthreshold", "enablebehaviordetect",
         "enablenetworksignals", "cloudphonerisk",
+        // Honeypot literals — keep observed/expected vendor strings on the mustEncrypt path
+        // even if the generic shouldEncrypt fallback ever tightens. Without this the
+        // honeypot's observed-side "Konami_x42" can ship in cleartext after a heuristic
+        // change and the constant-drift detector silently breaks.
+        "konami", "honeypot", "invariant_seal",
     ]
 
     /// 按以下优先级判断字符串敏感度：

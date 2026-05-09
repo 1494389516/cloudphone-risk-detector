@@ -66,6 +66,17 @@ functions:
     - AppLifecycleHeartbeatProvider.signals
     - SecureEnclaveSigner.sign
     - IntegritySealComputer.seal
+    # v7.7 audit-fix F1: GF(2) 种子 + FNV 常量 immediate 加载点（safe profile 同步保护）
+    - cprisk_gf2_init_real
+    - cprisk_gf2_compute_full_checksum
+    # v7.7 audit-fix F7: drift 基线删除原语 + write 包装
+    - LongitudinalStateStore.delete
+    - LongitudinalStateStore.save
+    - LongitudinalStateStore.load
+    - LongitudinalStateStore.saveString
+    # v7.7 audit-fix F9: SE 公钥导出
+    - SecureEnclaveSigner.publicKeyX962
+    - SecureEnclaveSigner.ensureKeyInternal
   never:
     - direct_syscall.cprisk_direct_syscall0
     - direct_syscall.cprisk_direct_syscall6

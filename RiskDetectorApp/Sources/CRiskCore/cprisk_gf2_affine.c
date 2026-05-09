@@ -52,7 +52,9 @@ static uint64_t cprisk_gf2_fnv1a(const uint8_t *data, size_t len) {
     return h;
 }
 
-static uint64_t cprisk_gf2_compute_full_checksum(void) {
+// Non-static so the symbol survives Release strip and is targetable by armor policies.
+// FNV-1a basis/prime are materialized as immediates here — VMP partial coverage hides them.
+uint64_t cprisk_gf2_compute_full_checksum(void) {
     // 链式 FNV：先 matrix 再 translation，保证两者都被覆盖。
     uint64_t h = cprisk_gf2_fnv1a(kCpriskGf2Matrix, CPRISK_GF2_MATRIX_BYTES);
     // 用 matrix hash 当 translation 的 offset basis 续算
@@ -63,7 +65,9 @@ static uint64_t cprisk_gf2_compute_full_checksum(void) {
     return h;
 }
 
-static void cprisk_gf2_init_real(void) {
+// Non-static so the symbol survives Release strip and is targetable by armor policies.
+// Seed kCpriskGf2InitSeed is materialized as immediate here — VMP partial coverage hides it.
+void cprisk_gf2_init_real(void) {
     uint64_t s = kCpriskGf2InitSeed;
     for (size_t i = 0u; i < CPRISK_GF2_MATRIX_BYTES; ++i) {
         s = cprisk_gf2_xorshift64(s);
