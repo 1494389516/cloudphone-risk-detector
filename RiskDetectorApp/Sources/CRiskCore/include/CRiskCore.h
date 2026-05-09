@@ -1586,6 +1586,20 @@ uint32_t cprisk_run_all_signal_probes(void);
 /// Returns 1 when CNTPCT_EL0 hardware monotonic clock path is available.
 int cprisk_is_cntpct_clock_available(void);
 
+/// GF(2) 128-bit affine transform on a 16-byte buffer.
+/// matrix: optional 256-byte (128 rows × 16 bytes) packed binary matrix; NULL = SDK default.
+/// translation: optional 16-byte vector; NULL = SDK default.
+/// output may alias input.
+void cprisk_gf2_affine_transform_16(
+    uint8_t output[16],
+    const uint8_t input[16],
+    const uint8_t *matrix,
+    const uint8_t *translation
+);
+
+/// Self-check the embedded default GF(2) matrix + translation. Returns 0 = OK, non-zero = tampered.
+int cprisk_gf2_affine_self_check(void);
+
 #ifdef __cplusplus
 }
 #endif

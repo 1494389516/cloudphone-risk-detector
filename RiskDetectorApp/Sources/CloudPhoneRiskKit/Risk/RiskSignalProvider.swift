@@ -52,6 +52,7 @@ enum BuiltInProviderBootstrap {
             DeviceHardwareProvider.shared,
             DeviceAgeProvider.shared,
             AppAttestSignalProvider.shared,
+            AppAttestActiveProbeProvider.shared,
             VPhoneHardwareProvider.shared,
             HardwareCapabilityProvider.shared,
             DisplayMuxProvider.shared,
@@ -70,6 +71,8 @@ enum BuiltInProviderBootstrap {
             AntiTamperingSignalProvider.shared,
             CloudPhoneEnvironmentProvider.shared,
             CertificatePinningTelemetryProvider.shared,
+            HoneypotConflictFieldProvider.shared,
+            AppLifecycleHeartbeatProvider.shared,
         ]
         // Decoy pool — see DecoyProviders.swift for rationale.  Adding these
         // to internalProviderIDs has two effects: (1) they get sealed against
@@ -93,6 +96,9 @@ enum BuiltInProviderBootstrap {
         },
         Entry(token: 0x1010_A004_B204_C304, isEnabled: { _ in true }) { registry in
             registry.register(AppAttestSignalProvider.shared)
+        },
+        Entry(token: 0x1010_A018_B218_C318, isEnabled: { _ in true }) { registry in
+            registry.register(AppAttestActiveProbeProvider.shared)
         },
         Entry(token: 0x1010_A005_B205_C305, isEnabled: { _ in true }) { registry in
             registry.register(VPhoneHardwareProvider.shared)
@@ -150,6 +156,12 @@ enum BuiltInProviderBootstrap {
         },
         Entry(token: 0x1010_A017_B217_C317, isEnabled: { _ in true }) { registry in
             registry.register(CertificatePinningTelemetryProvider.shared)
+        },
+        Entry(token: 0x1010_A019_B219_C319, isEnabled: { _ in true }) { registry in
+            registry.register(HoneypotConflictFieldProvider.shared)
+        },
+        Entry(token: 0x1010_A01A_B21A_C31A, isEnabled: { _ in true }) { registry in
+            registry.register(AppLifecycleHeartbeatProvider.shared)
         },
         // ── Decoy entries — see DecoyProviders.swift ─────────────────────────
         // These look identical to real providers in __data.  Tokens are drawn
