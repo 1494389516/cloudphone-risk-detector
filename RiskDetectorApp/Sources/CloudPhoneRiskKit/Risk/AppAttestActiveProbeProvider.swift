@@ -55,7 +55,7 @@ final class AppAttestActiveProbeProvider: RiskSignalProvider {
             case .notProbed:
                 return .kickOff(currentOutcome: nil)
             case .probing:
-                return .wait(currentOutcome: nil)
+                return .wait
             case .probed(let outcome, let at):
                 if Date().timeIntervalSince(at) > Self.probeTTL {
                     return .kickOff(currentOutcome: outcome)
@@ -83,7 +83,7 @@ final class AppAttestActiveProbeProvider: RiskSignalProvider {
 
     private enum StateAction {
         case kickOff(currentOutcome: ProbeOutcome?)
-        case wait(currentOutcome: ProbeOutcome?)
+        case wait
         case emit(ProbeOutcome)
     }
 
@@ -127,7 +127,8 @@ final class AppAttestActiveProbeProvider: RiskSignalProvider {
         if #available(iOS 14.0, macOS 11.0, *) {
             Task.detached(priority: .background) { [weak self] in
                 let outcome = await Self.runActiveProbe()
-                self?.stateLock.withLock { self?.state = .probed(outcome, at: Date()) }
+                guard let self = self else { return }
+                self.stateLock.withLock { self.state = .probed(outcome, at: Date()) }
             }
         } else {
             stateLock.withLock { state = .probed(.ok, at: Date()) }

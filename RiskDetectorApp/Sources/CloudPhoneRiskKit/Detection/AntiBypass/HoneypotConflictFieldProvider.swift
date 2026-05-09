@@ -33,9 +33,22 @@ final class HoneypotConflictFieldProvider: RiskSignalProvider {
     static let shared = HoneypotConflictFieldProvider()
     let id = "honeypot_conflict_field"
 
-    /// 编译期常量：vendor_b 必须始终等于这个字符串。
-    /// 取自 NES 早期文化梗，不会在任何设备字段里自然出现。
-    private static let expectedVendorB = "Konami_x42"
+    /// vendor_b 输出值 — 故意暴露在 .cstring。攻击者若用字节级 patch 改这个字面量，
+    /// `currentObservation()` 返回的 vendorB 会变；下面 `expectedVendorB()` 重组的
+    /// 期望值不动，触发 drift 告警。
+    private static let observedVendorBLiteral = "Konami_x42"
+
+    /// 期望值，运行时从 XOR 编码字节重组（key=0x42）。源代码里看不到 "Konami_x42" 字面量，
+    /// 字节序列也不在 .cstring 段，跟 observedVendorBLiteral 不共享存储 — 防止编译器
+    /// 把 observed == expected 折叠为 true，也防止单点 .cstring patch 同时命中两侧。
+    @inline(never)
+    private static func expectedVendorB() -> String {
+        var bytes: [UInt8] = [0x09, 0x2D, 0x2C, 0x23, 0x2F, 0x2B, 0x1D, 0x3A, 0x76, 0x70]
+        for i in 0..<bytes.count {
+            bytes[i] ^= 0x42
+        }
+        return String(decoding: bytes, as: UTF8.self)
+    }
 
     private init() {}
 
@@ -46,7 +59,8 @@ final class HoneypotConflictFieldProvider: RiskSignalProvider {
         let observedSealHex = seal.hexString
 
         let matrixIntact = IntegritySealComputer.isMatrixIntact
-        let vendorBMatchesExpected = observed.vendorB == Self.expectedVendorB
+        let expectedVendorB = Self.expectedVendorB()
+        let vendorBMatchesExpected = observed.vendorB == expectedVendorB
 
         var signals: [RiskSignal] = []
 
@@ -76,7 +90,7 @@ final class HoneypotConflictFieldProvider: RiskSignalProvider {
                     category: ObfuscatedConstants.categoryAntiTamper,
                     score: 75,
                     evidence: [
-                        "expected_vendor_b": Self.expectedVendorB,
+                        "expected_vendor_b": expectedVendorB,
                         "observed_vendor_b": observed.vendorB,
                         "hint": "硬编码常量被 hook 或字符串段被修改",
                     ],
@@ -102,7 +116,7 @@ final class HoneypotConflictFieldProvider: RiskSignalProvider {
     private func currentObservation() -> Observation {
         return Observation(
             vendorA: realVendorString(),
-            vendorB: Self.expectedVendorB
+            vendorB: Self.observedVendorBLiteral
         )
     }
 
