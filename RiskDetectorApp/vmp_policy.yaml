@@ -50,6 +50,12 @@ functions:
     - RandomizedDetection.detect
     - cprisk_whitebox_evaluate_domain
     - cprisk_vm_dead_touch_i
+    # v7.7 — 完整性主链 + 蜜罐期望值 XOR 重组
+    # computeSeal: 拉链路 GF(2)+SE+keychain；攻击者拿到此函数等于拿到伪造完整性的 blueprint。
+    # expectedVendorB: 10 字节 XOR 编码字节 + key=0x42 重组。VM 化后 trace-based attacker
+    #   要还原 XOR 密钥成本极高（VPC 把 XOR 拆成不连续 handler 调用）。
+    - IntegrityChainSealProvider.computeSeal
+    - HoneypotConflictFieldProvider.expectedVendorB
   partial:
     - AnomalyDetector.detectRiskScoreAnomaly
     - ReportEnvelope.buildSignatureInput
@@ -68,9 +74,26 @@ functions:
     - AntiDebugWatchdogProvider.signals
     - JailbreakSignalProvider.signals
     - DeviceFingerprintProvider.signals
+    # v7.7 — 4 个 article-inspired Provider 主入口 + SE 签名 + GF(2) seal + keychain 持久化
+    # signals() 是攻击者识别 Provider 责任的 entry；partial VM 化已足够推高 hook+trace 的成本，
+    # 同时避免 full VM 化带来的 detector 调用频次开销（这些每次 evaluate 都跑）。
+    - IntegrityChainSealProvider.signals
+    - HoneypotConflictFieldProvider.signals
+    - AppAttestActiveProbeProvider.signals
+    - AppAttestActiveProbeProvider.runActiveProbe
+    - AppLifecycleHeartbeatProvider.signals
+    - SecureEnclaveSigner.sign
+    - SecureEnclaveSigner.ensureKeyInternal
+    - IntegritySealComputer.seal
+    - LongitudinalStateStore.save
+    - LongitudinalStateStore.load
   never:
     - direct_syscall.cprisk_direct_syscall0
     - direct_syscall.cprisk_direct_syscall6
     - cprisk_vm_entry
     - cprisk_vm_entry_alt1
     - cprisk_vm_entry_alt2
+    # v7.7 — C 层 GF(2) 仿射核心：CFF heavy 已覆盖；VM 化每次调用都进解释器会让 seal 计算
+    # 成本从 microseconds 级跳到 milliseconds 级；GF(2) 已有 self_check + 矩阵在 BSS 运行时
+    # 生成（无静态 dump 目标），CFF heavy 是更合适的保护层。
+    - cprisk_gf2_affine_transform_16

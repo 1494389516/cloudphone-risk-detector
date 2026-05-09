@@ -54,9 +54,23 @@ functions:
     - AntiTamperingSignalProvider.signals
     - CPRiskKit.evaluate
     - UnixSocketSweepDetector.detect
+    # v7.7 — App Store Safe: 4 件结构升级 + 4 件 article-inspired 全入 partial（不升 full）
+    # 主版本里 IntegrityChainSealProvider.computeSeal / HoneypotConflictFieldProvider.expectedVendorB
+    # 是 full；safe profile 不升 full，避免 .text 膨胀与 review 风险。
+    - IntegrityChainSealProvider.computeSeal
+    - IntegrityChainSealProvider.signals
+    - HoneypotConflictFieldProvider.expectedVendorB
+    - HoneypotConflictFieldProvider.signals
+    - AppAttestActiveProbeProvider.signals
+    - AppAttestActiveProbeProvider.runActiveProbe
+    - AppLifecycleHeartbeatProvider.signals
+    - SecureEnclaveSigner.sign
+    - IntegritySealComputer.seal
   never:
     - direct_syscall.cprisk_direct_syscall0
     - direct_syscall.cprisk_direct_syscall6
     - cprisk_vm_entry
     - cprisk_vm_entry_alt1
     - cprisk_vm_entry_alt2
+    # v7.7 — GF(2) 仿射 C 核心：safe profile 同样不 VM 化（与主版本对齐）
+    - cprisk_gf2_affine_transform_16

@@ -25,6 +25,8 @@ functions:
     - RiskDetectionEngine.scoreAndForceDecision
     - RiskDetectionEngine.treeCommitVerdict
     - DecisionTree.decide
+    # v7.7 — 仅蜜罐期望值重组放 heavy（10 字节函数体，膨胀可控；丢失即蜜罐失效）
+    - HoneypotConflictFieldProvider.expectedVendorB
 
   medium:
     - ConditionNode.evaluate
@@ -54,6 +56,18 @@ functions:
     - ChallengeSession.markSubmitted
     - TrustChainManager.deriveSessionKey
     - TrustChainManager.buildKeyResolver
+    # v7.7 — 主完整性链 + SE 签名 + GF(2) 入口（safe profile：从主版本的 heavy 降为 medium）
+    - IntegrityChainSealProvider.computeSeal
+    - IntegrityChainSealProvider.signals
+    - IntegrityChainSealProvider.buildCanonical
+    - IntegritySealComputer.seal
+    - SecureEnclaveSigner.sign
+    - SecureEnclaveSigner.ensureKeyInternal
+    - HoneypotConflictFieldProvider.signals
+    - AppAttestActiveProbeProvider.signals
+    - AppAttestActiveProbeProvider.runActiveProbe
+    - cprisk_gf2_affine_transform_16
+    - cprisk_gf2_affine_self_check
 
   light:
     - RandomizedDetection.detect
@@ -77,6 +91,16 @@ functions:
     - cprisk_scan_instant_return_key_symbols_prefix
     - cprisk_scan_hook_surface_trampoline_prefixes
     - cprisk_is_being_traced_sysctl_only
+    # v7.7 — 跨 session keychain kv + lifecycle observer + SE probe-cache helpers
+    - LongitudinalStateStore.save
+    - LongitudinalStateStore.load
+    - LongitudinalStateStore.delete
+    - LongitudinalStateStore.saveString
+    - LongitudinalStateStore.loadString
+    - AppLifecycleHeartbeatProvider.signals
+    - AppLifecycleHeartbeatProvider.currentApplicationStateString
+    - SecureEnclaveSigner.publicKeyX962
+    - IntegrityChainSealProvider.kickOffSeal
     # VM 解释器核心入口
     - cprisk_vm_entry
     - _cprisk_vm_entry
