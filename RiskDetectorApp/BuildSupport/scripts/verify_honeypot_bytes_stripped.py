@@ -13,18 +13,27 @@
 # 的回归。
 #
 # 用法:
-#   python3 verify_honeypot_bytes_stripped.py <path-to-armored-mach-o>
+#   python3 verify_honeypot_bytes_stripped.py [--armored] <path-to-mach-o>
+#
+# 选项:
+#   --armored    断言输入是 armored binary。开启后:
+#                  - 找到字节序列 → exit 1 (FAIL，回归)
+#                  - 未找到 → exit 0 (PASS)
+#                未开启时（默认）:
+#                  - 找到字节序列 → exit 0 + warning to stderr (debug binary 预期会有)
+#                  - 未找到 → exit 0 (PASS)
+#                防止误把 unarmored debug binary 跑出"FAIL"造成混淆 (audit fix N1
+#                + F12 post-1st-pass)。
 #
 # 退出码:
-#   0 — 字节序列未出现，验证通过
-#   1 — 字节序列出现，验证失败（armor pipeline 未覆盖到此 .rodata 字面量）
+#   0 — 验证通过 (或 non-armored 模式下找到也算通过)
+#   1 — armored 模式下字节序列出现，验证失败 (armor pipeline 未覆盖此 .rodata)
 #   2 — 命令行用法错误
 #
 # CI 集成:
-#   armor pipeline 完成后调用，例如:
-#     python3 BuildSupport/scripts/verify_honeypot_bytes_stripped.py \
+#   armor pipeline 完成后调用 (cprisk-armor --verify-honeypot 已自动调用此脚本):
+#     python3 BuildSupport/scripts/verify_honeypot_bytes_stripped.py --armored \
 #       build/Release-iphoneos/CloudPhoneRiskKit.framework/CloudPhoneRiskKit
-#   非零退出 → fail build。
 
 import os
 import sys
@@ -52,14 +61,25 @@ def find_byte_sequence(haystack: bytes, needle: bytes) -> list[int]:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
+    armored_mode = False
+    positional: list[str] = []
+    for arg in argv[1:]:
+        if arg == "--armored":
+            armored_mode = True
+        elif arg.startswith("-"):
+            print(f"error: unknown option {arg}", file=sys.stderr)
+            return 2
+        else:
+            positional.append(arg)
+
+    if len(positional) != 1:
         print(
-            f"usage: {argv[0]} <path-to-armored-mach-o>",
+            f"usage: {argv[0]} [--armored] <path-to-mach-o>",
             file=sys.stderr,
         )
         return 2
 
-    binary_path = argv[1]
+    binary_path = positional[0]
     if not os.path.isfile(binary_path):
         print(f"error: {binary_path} is not a file", file=sys.stderr)
         return 2
@@ -67,13 +87,13 @@ def main(argv: list[str]) -> int:
     with open(binary_path, "rb") as f:
         data = f.read()
 
-    failures: list[str] = []
+    findings: list[str] = []
 
     xor_hits = find_byte_sequence(data, HONEYPOT_XOR_INPUT)
     if xor_hits:
         hex_pattern = " ".join(f"{b:02X}" for b in HONEYPOT_XOR_INPUT)
-        failures.append(
-            f"FAIL: expectedVendorB XOR-input bytes [{hex_pattern}] found at "
+        findings.append(
+            f"expectedVendorB XOR-input bytes [{hex_pattern}] found at "
             f"{len(xor_hits)} offset(s) (first: 0x{xor_hits[0]:08X}). "
             "VMP full on expectedVendorB() does NOT protect this .rodata array; "
             "extend StringEncryptor / DataSegmentEncryptor to cover __const "
@@ -83,28 +103,37 @@ def main(argv: list[str]) -> int:
 
     plaintext_hits = find_byte_sequence(data, HONEYPOT_OBSERVED_PLAINTEXT)
     if plaintext_hits:
-        failures.append(
-            f"FAIL: observedVendorBLiteral plaintext 'Konami_x42' found at "
+        findings.append(
+            f"observedVendorBLiteral plaintext 'Konami_x42' found at "
             f"{len(plaintext_hits)} offset(s) (first: 0x{plaintext_hits[0]:08X}). "
             "StringEncryptor 'konami' keyword (v7.7 audit-fix F3) should have "
             "caught this — verify cprisk-armor pipeline ran Pass 1 successfully."
         )
 
-    if failures:
-        for line in failures:
-            print(line, file=sys.stderr)
-        print(
-            f"\nverify_honeypot_bytes_stripped: 2/{2} checks failed against {binary_path}"
-            if len(failures) == 2
-            else f"\nverify_honeypot_bytes_stripped: {len(failures)}/2 check(s) failed "
-            f"against {binary_path}",
-            file=sys.stderr,
-        )
-        return 1
+    if findings:
+        prefix = "FAIL" if armored_mode else "WARN"
+        for line in findings:
+            print(f"{prefix}: {line}", file=sys.stderr)
+        if armored_mode:
+            print(
+                f"\nverify_honeypot_bytes_stripped: armored mode — "
+                f"{len(findings)}/2 check(s) failed against {binary_path}",
+                file=sys.stderr,
+            )
+            return 1
+        else:
+            print(
+                f"\nverify_honeypot_bytes_stripped: non-armored mode — "
+                f"{len(findings)}/2 finding(s) in {binary_path} (expected for unarmored "
+                f"debug binaries; pass --armored to enforce)",
+                file=sys.stderr,
+            )
+            return 0
 
+    suffix = " (armored mode)" if armored_mode else ""
     print(
-        f"verify_honeypot_bytes_stripped: PASS — both honeypot byte patterns absent "
-        f"from {binary_path} ({len(data):,} bytes scanned)"
+        f"verify_honeypot_bytes_stripped: PASS{suffix} — both honeypot byte patterns "
+        f"absent from {binary_path} ({len(data):,} bytes scanned)"
     )
     return 0
 

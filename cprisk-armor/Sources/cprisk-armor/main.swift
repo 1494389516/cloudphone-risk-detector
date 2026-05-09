@@ -38,6 +38,11 @@ struct CLIOptions {
     var swiftSemanticDecoys: Bool = false
     /// `standard` (default) or `appstore-safe` — selects default CFF/VMP YAML when paths not overridden.
     var safetyProfileRaw: String?
+    /// v7.7 audit-fix F12: when set, run `verify_honeypot_bytes_stripped.py` against the armored
+    /// output. Non-zero exit code from the script causes cprisk-armor to fail (after writing the
+    /// output, so the offending binary is inspectable). Default off — opt-in for callers that
+    /// know the binary contains HoneypotConflictFieldProvider.
+    var verifyHoneypotBytes: Bool = false
 }
 
 func parseArguments() -> CLIOptions {
@@ -94,6 +99,8 @@ func parseArguments() -> CLIOptions {
         case "--safety-profile":
             i += 1
             if i < args.count { options.safetyProfileRaw = args[i] }
+        case "--verify-honeypot":
+            options.verifyHoneypotBytes = true
         case "--help":
             printUsage()
             exit(0)
@@ -132,6 +139,10 @@ func printUsage() {
       --vmp-policy      Override vmp_policy.yaml path for Pass 13 (default: RiskDetectorApp/vmp_policy.yaml search)
       --safety-profile standard|appstore-safe
                         Build policy profile: appstore-safe defaults to *_appstore_safe.yaml when --cff-policy/--vmp-policy omitted
+      --verify-honeypot Post-armor: run BuildSupport/scripts/verify_honeypot_bytes_stripped.py
+                        on the output binary; fail (exit 1) if HoneypotConflictFieldProvider's
+                        XOR-input bytes [09 2D 2C 23 2F 2B 1D 3A 76 70] or the plaintext
+                        "Konami_x42" survive in the armored output. Audit fix F12.
       --build-seed      Build randomization seed (u64, decimal or 0x-prefixed hex)
       --metadata-scrub-level conservative|aggressive
                         Pass 2 Swift metadata: conservative (default, string payloads only)
@@ -479,7 +490,62 @@ do {
     for result in allResults {
         print("    \(result.passName): \(result.itemsProcessed) items, \(result.bytesModified) bytes modified")
     }
+
+    // v7.7 audit-fix F12: post-armor honeypot byte-stripping check.
+    // Opt-in via --verify-honeypot. Runs the Python acceptance script against the
+    // output binary; non-zero exit from the script propagates to cprisk-armor's exit.
+    if options.verifyHoneypotBytes {
+        let scriptPath = locateHoneypotVerifyScript()
+        if let scriptPath = scriptPath {
+            print("[*] Verifying honeypot byte stripping via \(scriptPath)")
+            let process = Process()
+            process.launchPath = "/usr/bin/env"
+            process.arguments = ["python3", scriptPath, "--armored", outputPath]
+            do {
+                try process.run()
+                process.waitUntilExit()
+                if process.terminationStatus != 0 {
+                    fputs("[!] verify_honeypot_bytes_stripped.py exited \(process.terminationStatus) — armored binary still contains honeypot byte patterns\n", stderr)
+                    exit(Int32(process.terminationStatus))
+                }
+                print("[+] Honeypot byte stripping verified")
+            } catch {
+                fputs("[!] Failed to invoke verify_honeypot_bytes_stripped.py: \(error)\n", stderr)
+                exit(1)
+            }
+        } else {
+            fputs("[!] --verify-honeypot requested but verify_honeypot_bytes_stripped.py not found in known locations\n", stderr)
+            exit(1)
+        }
+    }
 } catch {
     fputs("Error: \(error)\n", stderr)
     exit(1)
+}
+
+/// Locate `verify_honeypot_bytes_stripped.py`. Tries (in order):
+///   1. `$CPRISK_HONEYPOT_VERIFY_SCRIPT` env var
+///   2. `RiskDetectorApp/BuildSupport/scripts/verify_honeypot_bytes_stripped.py` relative to CWD
+///   3. Same path relative to the executable's parent (for installed builds)
+func locateHoneypotVerifyScript() -> String? {
+    let fm = FileManager.default
+    if let envPath = ProcessInfo.processInfo.environment["CPRISK_HONEYPOT_VERIFY_SCRIPT"],
+       fm.fileExists(atPath: envPath) {
+        return envPath
+    }
+    let relative = "RiskDetectorApp/BuildSupport/scripts/verify_honeypot_bytes_stripped.py"
+    let cwdCandidate = (fm.currentDirectoryPath as NSString).appendingPathComponent(relative)
+    if fm.fileExists(atPath: cwdCandidate) {
+        return cwdCandidate
+    }
+    // Walk up from CWD looking for the repo root marker.
+    var dir = (fm.currentDirectoryPath as NSString)
+    for _ in 0..<6 {
+        let candidate = (dir as String) + "/" + relative
+        if fm.fileExists(atPath: candidate) {
+            return candidate
+        }
+        dir = (dir.deletingLastPathComponent as NSString)
+    }
+    return nil
 }

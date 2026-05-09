@@ -26,6 +26,17 @@ import UIKit
  *   如果 hook 在 SDK 加载前就已经在了，攻击者可以同时改 vendor_b 字符串和我们读取它的
  *   逻辑。常量比对仅能检测 hook 不到位的攻击者。这是已知的限制；与服务器端验证组合
  *   使用时威力最大。
+ *
+ * 加性打分（by design / v7.7 audit-fix N4）:
+ *   单次 evaluate 中本 Provider 可能同时 emit 三个信号:
+ *     - honeypot_vendor_conflict (matrix 篡改时 score 35)
+ *     - honeypot_constant_drift  (vendor_b 被 hook 修正时 score 75)
+ *     - honeypot_vendor_collapsed (vendor_a == vendor_b 时 score 80)
+ *   再叠加 IntegrityChainSealProvider 的 integrity_chain_seal (matrix 篡改时 score 40)，
+ *   单次 evaluate 总分可达 ~155+。这是有意的 defense-in-depth：每条信号反映一种独立的
+ *   攻击模式，攻击者必须同时绕过全部 3-4 条才能压低分数。
+ *   不走 RiskSignal.overlapGroup 去重 — 这些 signal 的 evidence 字段不同，下游审计应
+ *   分别看到"哪些攻击维度被命中"。
  */
 
 final class HoneypotConflictFieldProvider: RiskSignalProvider {
