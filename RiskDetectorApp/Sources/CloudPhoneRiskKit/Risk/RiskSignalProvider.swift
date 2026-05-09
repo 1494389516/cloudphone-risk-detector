@@ -73,6 +73,7 @@ enum BuiltInProviderBootstrap {
             CertificatePinningTelemetryProvider.shared,
             HoneypotConflictFieldProvider.shared,
             AppLifecycleHeartbeatProvider.shared,
+            IntegrityChainSealProvider.shared,
         ]
         // Decoy pool — see DecoyProviders.swift for rationale.  Adding these
         // to internalProviderIDs has two effects: (1) they get sealed against
@@ -162,6 +163,9 @@ enum BuiltInProviderBootstrap {
         },
         Entry(token: 0x1010_A01A_B21A_C31A, isEnabled: { _ in true }) { registry in
             registry.register(AppLifecycleHeartbeatProvider.shared)
+        },
+        Entry(token: 0x1010_A01B_B21B_C31B, isEnabled: { _ in true }) { registry in
+            registry.register(IntegrityChainSealProvider.shared)
         },
         // ── Decoy entries — see DecoyProviders.swift ─────────────────────────
         // These look identical to real providers in __data.  Tokens are drawn
