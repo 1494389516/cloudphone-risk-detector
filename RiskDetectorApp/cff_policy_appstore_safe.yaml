@@ -68,6 +68,8 @@ functions:
     - IntegrityChainSealProvider.signals
     - IntegrityChainSealProvider.buildCanonical
     - IntegritySealComputer.seal
+    # v7.7 audit-fix F6: 拆分后的 GF(2) 直入入口
+    - IntegritySealComputer.sealFromDigestPrefix
     - SecureEnclaveSigner.sign
     - SecureEnclaveSigner.ensureKeyInternal
     - HoneypotConflictFieldProvider.signals

@@ -66,6 +66,8 @@ functions:
     - AppLifecycleHeartbeatProvider.signals
     - SecureEnclaveSigner.sign
     - IntegritySealComputer.seal
+    # v7.7 audit-fix F6: 拆分后的 GF(2) 直入入口
+    - IntegritySealComputer.sealFromDigestPrefix
     # v7.7 audit-fix F1: GF(2) 种子 + FNV 常量 immediate 加载点（safe profile 同步保护）
     - cprisk_gf2_init_real
     - cprisk_gf2_compute_full_checksum

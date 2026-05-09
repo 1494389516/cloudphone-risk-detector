@@ -55,7 +55,7 @@ final class HoneypotConflictFieldProvider: RiskSignalProvider {
     func signals(snapshot: RiskSnapshot) -> [RiskSignal] {
         let observed = currentObservation()
         let canonical = "\(observed.vendorA)|\(observed.vendorB)"
-        let seal = IntegritySealComputer.seal(forCanonicalString: canonical)
+        let seal = IntegritySealComputer.seal(Data(canonical.utf8))
         let observedSealHex = seal.hexString
 
         let matrixIntact = IntegritySealComputer.isMatrixIntact
@@ -97,6 +97,30 @@ final class HoneypotConflictFieldProvider: RiskSignalProvider {
                     state: .tampered,
                     layer: 1,
                     weightHint: 80
+                )
+            )
+        }
+
+        // v7.7 audit-fix F8: 双边坍缩检测 — vendor_a 来自 sysctl(hw.machine + kern.osrelease)，
+        // 形如 "iPhone15,2:23.1.0"；vendor_b 是硬编码 "Konami_x42"。两者在合法硬件上**永远**
+        // 不可能相等。
+        // 攻击场景：攻击者 hook sysctlString 让 vendorA 也返回 "Konami_x42" → 蜜罐主信号
+        // (vendorA != vendorB) 不再"矛盾"，drift 检测也通过 → 整个蜜罐失效。
+        // 加这条信号闭合"双边都被 hook"的攻击路径：等于 = 异常本身。
+        if observed.vendorA == observed.vendorB {
+            signals.append(
+                RiskSignal(
+                    id: "honeypot_vendor_collapsed",
+                    category: ObfuscatedConstants.categoryAntiTamper,
+                    score: 80,
+                    evidence: [
+                        "vendor_a": observed.vendorA,
+                        "vendor_b": observed.vendorB,
+                        "hint": "vendor_a == vendor_b — 合法硬件不可能；sysctl 或字符串段被 hook 同步修正",
+                    ],
+                    state: .tampered,
+                    layer: 1,
+                    weightHint: 85
                 )
             )
         }

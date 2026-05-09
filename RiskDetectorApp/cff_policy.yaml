@@ -33,6 +33,9 @@ functions:
     - IntegrityChainSealProvider.computeSeal
     - HoneypotConflictFieldProvider.expectedVendorB
     - IntegritySealComputer.seal
+    # v7.7 audit-fix F6: 拆分后的 GF(2) 直入入口（接 16 字节摘要，跳过 SHA-256）
+    # 即使 inline 进 seal(_:) 仍列入 — matcher 找不到只是 skip。
+    - IntegritySealComputer.sealFromDigestPrefix
     - cprisk_gf2_affine_transform_16
     # v7.7 audit-fix F1: seed kCpriskGf2InitSeed=0xCAFEBABEDEADBEEFULL 在此函数 .rodata 里
     # 作为 immediate 出现；CFF heavy 把加载点拆散，VMP partial 进一步把 immediate 走 VPC。
