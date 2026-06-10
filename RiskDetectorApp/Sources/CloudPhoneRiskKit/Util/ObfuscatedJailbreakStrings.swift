@@ -34,6 +34,10 @@ extension ObfuscatedConstants {
             (b64("L3Vzci9zYmluL3NzaGQ="), 15),
             (b64("L3Vzci9iaW4vc3No"), 10),
             (b64("L2Jpbi9iYXNo"), 10),
+            (b64("L3Zhci9tb2JpbGUvLnJvb3RoaWRl"), 30),
+            (b64("L3Zhci9tb2JpbGUvLmluc3RhbGxlZF9yb290aGlkZQ=="), 30),
+            (b64("L3Zhci9tb2JpbGUvLnByb2N1cnN1c19zdHJhcHBlZA=="), 25),
+            (b64("L3Zhci9qYi8ucHJvY3Vyc3VzX3N0cmFwcGVk"), 25),
         ]
     }
 
@@ -44,6 +48,7 @@ extension ObfuscatedConstants {
             b64("L3Zhci9qYg=="),
             b64("L3Vzci9saWIvRWxsZUtpdC5keWxpYg=="),
             b64("L0xpYnJhcnkvTW9iaWxlU3Vic3RyYXRlL01vYmlsZVN1YnN0cmF0ZS5keWxpYg=="),
+            b64("L3Zhci9tb2JpbGUvLnJvb3RoaWRl"),
         ]
     }
 
@@ -73,6 +78,8 @@ extension ObfuscatedConstants {
             b64("ZWxsZWtpdA=="),
             b64("YXB0"),
             b64("ZHBrZw=="),
+            b64("cm9vdGhpZGVpbml0"),
+            b64("cm9vdGhpZGVwYXRjaGVy"),
         ]
     }
 
@@ -98,6 +105,14 @@ extension ObfuscatedConstants {
             b64("dGF1cmluZQ=="),
             b64("dW5jMHZlcg=="),
             b64("Y2hpbWVyYQ=="),
+        ]
+    }
+
+    static var roothideEnvVars: [(name: String, score: Double)] {
+        [
+            (b64("SkJST09U"), 40),
+            (b64("SkJfUk9PVF9QQVRI"), 40),
+            (b64("SkJSQU5E"), 35),
         ]
     }
 

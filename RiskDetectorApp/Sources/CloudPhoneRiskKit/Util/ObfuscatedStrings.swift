@@ -1057,6 +1057,7 @@ enum ObfuscatedConstants {
             StringDeobfuscator.base64Decode("dHdlYWs="),
             StringDeobfuscator.base64Decode("eHBvc2Vk"),
             keywordHook,
+            StringDeobfuscator.base64Decode("cm9vdGhpZGU="),
         ]
     }
 
@@ -1071,6 +1072,7 @@ enum ObfuscatedConstants {
             StringDeobfuscator.base64Decode("ZWxsZWtpdA=="),
             StringDeobfuscator.base64Decode("dHdlYWs="),
             keywordHook,
+            StringDeobfuscator.base64Decode("cm9vdGhpZGU="),
         ]
     }
 
@@ -1091,6 +1093,7 @@ enum ObfuscatedConstants {
             StringDeobfuscator.base64Decode("ZWxsZWtpdA=="),
             StringDeobfuscator.base64Decode("c2hhZG93"),
             StringDeobfuscator.base64Decode("ZG9wYW1pbmU="),
+            StringDeobfuscator.base64Decode("cm9vdGhpZGU="),
         ]
     }
 
@@ -1146,6 +1149,10 @@ enum ObfuscatedConstants {
             StringDeobfuscator.base64Decode("Q1BEaXN0cmlidXRlZE1lc3NhZ2luZw=="),
             StringDeobfuscator.base64Decode("SEJQcmVmZXJlbmNlcw=="),
             StringDeobfuscator.base64Decode("SEJMT3B0aW9uc0NvbnRyb2xsZXI="),
+            StringDeobfuscator.base64Decode("Um9vdEhpZGVNYW5hZ2Vy"),
+            StringDeobfuscator.base64Decode("Um9vdEhpZGVQYXRjaGVy"),
+            StringDeobfuscator.base64Decode("Um9vdEhpZGVBUEk="),
+            StringDeobfuscator.base64Decode("bGliUm9vdEhpZGVy"),
         ]
     }
 
@@ -1207,6 +1214,8 @@ enum ObfuscatedConstants {
             StringDeobfuscator.base64Decode("dHdlYWtpbmplY3Q="),
             StringDeobfuscator.base64Decode("c2hhZG93"),
             StringDeobfuscator.base64Decode("ZG9wYW1pbmU="),
+            StringDeobfuscator.base64Decode("cm9vdGhpZGU="),
+            StringDeobfuscator.base64Decode("bGliUm9vdEhpZGU="),
         ]
     }
 
@@ -1249,6 +1258,9 @@ enum ObfuscatedConstants {
             StringDeobfuscator.base64Decode("ZmxleA=="),
             StringDeobfuscator.base64Decode("cmV2ZWFsZGVidWc="),
             StringDeobfuscator.base64Decode("Y3ljcmlwdA=="),
+            StringDeobfuscator.base64Decode("cm9vdGhpZGU="),
+            StringDeobfuscator.base64Decode("cm9vdGhpZGVy"),
+            StringDeobfuscator.base64Decode("cHJvY3Vyc3Vz"),
         ]
     }
 
