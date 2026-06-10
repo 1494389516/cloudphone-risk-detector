@@ -26,7 +26,11 @@ struct ModuleWhitelistDetector: Detector {
         "/private/var/containers/",       // App sandbox — own bundle allowed
         "/developer/",                     // Developer disk (already flagged by other detector)
         "/var/staged_system_apps/",        // OTA updates staging
-        "/private/preboot/",               // Preboot volume
+    ]
+
+    private static let prebootSystemSubpaths: [String] = [
+        "/cryptexes/",
+        "/system/",
     ]
 
     /// Additional rootless jailbreak paths that are already covered by DylibInjectionDetector
@@ -37,6 +41,10 @@ struct ModuleWhitelistDetector: Detector {
         "/var/ulb/",
         "/usr/lib/tweaks/",
         "/bootstrap/",
+    ]
+
+    private static let roothideSuspiciousKeywords: [String] = [
+        "roothide", "procursus", "ellekit",
     ]
 
     /// File extensions that must appear in any legitimate framework or dylib name.
@@ -82,6 +90,21 @@ struct ModuleWhitelistDetector: Detector {
 
             // Skip the app's own bundle
             if lowerPath.hasPrefix(appBundlePath) {
+                continue
+            }
+
+            // Preboot volume: allow known system subpaths, flag everything else
+            if lowerPath.hasPrefix("/private/preboot/") {
+                let isSystemPreboot = Self.prebootSystemSubpaths.contains(where: { sub in
+                    lowerPath.contains(sub)
+                })
+                if isSystemPreboot {
+                    continue
+                }
+                let hasRoothideKeyword = Self.roothideSuspiciousKeywords.contains(where: { lowerPath.contains($0) })
+                let roothideBonus: Double = hasRoothideKeyword ? 8 : 0
+                score += Self.scoreJailbreakPath + roothideBonus
+                methods.append("mwl:preboot_nonstandard\(hasRoothideKeyword ? "_roothide" : ""):\(sanitizeName(imagePath))")
                 continue
             }
 

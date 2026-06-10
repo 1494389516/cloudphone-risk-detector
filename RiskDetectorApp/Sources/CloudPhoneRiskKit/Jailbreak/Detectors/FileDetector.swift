@@ -175,6 +175,14 @@ struct FileDetector: Detector {
             Logger.log("jailbreak.file.hit: preboot_jb (+20)")
         }
 
+        let roothideResult = detectRootHideBootstrap()
+        score += roothideResult.score
+        methods.append(contentsOf: roothideResult.methods)
+
+        let roothideEnvResult = detectRootHideEnvVars()
+        score += roothideEnvResult.score
+        methods.append(contentsOf: roothideEnvResult.methods)
+
         return DetectorResult(score: score, methods: methods)
 #endif
     }
@@ -257,10 +265,8 @@ struct FileDetector: Detector {
 
     private func hasPrebootJBDirectory() -> Bool {
 #if targetEnvironment(simulator)
-        // Simulator doesn't have the same preboot filesystem layout as real devices.
         return false
 #else
-        // Rootless jailbreaks often have /private/preboot/<UUID>/jb
         let root = "/private/preboot"
         guard DualPathValidator.validateFileStat(path: root).exists else { return false }
         guard let dir = opendir(root) else { return false }
@@ -282,6 +288,111 @@ struct FileDetector: Detector {
             scanned += 1
         }
         return false
+#endif
+    }
+
+    private func detectRootHideBootstrap() -> DetectorResult {
+#if targetEnvironment(simulator)
+        return .empty
+#else
+        var score: Double = 0
+        var methods: [String] = []
+
+        let root = "/private/preboot"
+        guard DualPathValidator.validateFileStat(path: root).exists else {
+            return DetectorResult(score: score, methods: methods)
+        }
+        guard let dir = opendir(root) else {
+            return DetectorResult(score: score, methods: methods)
+        }
+        defer { closedir(dir) }
+
+        let bootstrapMarkers = ["usr", "Library", "bin", "etc", "var"]
+
+        var scanned = 0
+        while scanned < 10, let entry = readdir(dir) {
+            var nameBuf = entry.pointee.d_name
+            let name = withUnsafePointer(to: &nameBuf.0) { ptr in
+                let len = strnlen(ptr, Int(MAXPATHLEN))
+                return (String(data: Data(bytes: ptr, count: len), encoding: .utf8) ?? "")
+            }
+            guard name != "." && name != ".." else { continue }
+
+            let uuidDir = "\(root)/\(name)"
+            guard isDirectoryPath(uuidDir) else {
+                scanned += 1
+                continue
+            }
+            guard let subDir = opendir(uuidDir) else {
+                scanned += 1
+                continue
+            }
+            defer { closedir(subDir) }
+
+            var subScanned = 0
+            while subScanned < 20, let subEntry = readdir(subDir) {
+                var subNameBuf = subEntry.pointee.d_name
+                let subName = withUnsafePointer(to: &subNameBuf.0) { ptr in
+                    let len = strnlen(ptr, Int(MAXPATHLEN))
+                    return (String(data: Data(bytes: ptr, count: len), encoding: .utf8) ?? "")
+                }
+                guard subName != "." && subName != ".." else { continue }
+
+                let candidateBase = "\(uuidDir)/\(subName)"
+                guard isDirectoryPath(candidateBase) else {
+                    subScanned += 1
+                    continue
+                }
+
+                if subName == "jb" { subScanned += 1; continue }
+
+                let lowerSub = subName.lowercased()
+                if lowerSub.contains("procursus") || lowerSub.contains("roothide") {
+                    score += 30
+                    methods.append("roothide:preboot_bootstrap:\(subName)")
+                    Logger.log("jailbreak.file.hit: roothide preboot bootstrap \(subName) (+30)")
+                    return DetectorResult(score: score, methods: methods)
+                }
+
+                var markerHits = 0
+                for marker in bootstrapMarkers {
+                    let markerPath = "\(candidateBase)/\(marker)"
+                    if isDirectoryPath(markerPath) {
+                        markerHits += 1
+                    }
+                }
+                if markerHits >= 3 {
+                    score += 25
+                    methods.append("roothide:preboot_hidden_bootstrap:\(subName)")
+                    Logger.log("jailbreak.file.hit: roothide hidden bootstrap structure \(subName) markers=\(markerHits) (+25)")
+                    return DetectorResult(score: score, methods: methods)
+                }
+
+                subScanned += 1
+            }
+            scanned += 1
+        }
+
+        return DetectorResult(score: score, methods: methods)
+#endif
+    }
+
+    private func detectRootHideEnvVars() -> DetectorResult {
+#if targetEnvironment(simulator)
+        return .empty
+#else
+        var score: Double = 0
+        var methods: [String] = []
+
+        for item in ObfuscatedConstants.roothideEnvVars {
+            if let val = getenv(item.name), strlen(val) > 0 {
+                score += item.score
+                methods.append("roothide:env:\(item.name)")
+                Logger.log("jailbreak.file.hit: roothide env \(item.name) (+\(item.score))")
+            }
+        }
+
+        return DetectorResult(score: score, methods: methods)
 #endif
     }
 

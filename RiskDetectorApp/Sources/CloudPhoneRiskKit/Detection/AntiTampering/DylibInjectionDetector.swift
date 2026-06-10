@@ -33,6 +33,7 @@ struct DylibInjectionDetector: Detector {
         "/var/LIB/",
         "/var/ulb/",
         "/usr/lib/tweaks/",
+        "/bootstrap/",
     ]
 
     /// System / legitimate path prefixes that are expected on a stock device.
