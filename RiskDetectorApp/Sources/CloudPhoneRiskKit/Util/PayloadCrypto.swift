@@ -161,9 +161,17 @@ enum PayloadCrypto {
     }
 
     private static func keychainStatusIndicatesUnavailable(_ status: OSStatus) -> Bool {
-        status == errSecInteractionNotAllowed ||
-        status == errSecMissingEntitlement ||
-        status == errSecNotAvailable
+        if status == errSecInteractionNotAllowed ||
+            status == errSecMissingEntitlement ||
+            status == errSecNotAvailable {
+            return true
+        }
+        #if DEBUG && os(macOS)
+        // macOS SwiftPM/XCTest can map sandboxed keychain access failures to
+        // errSecParam. Keep this test-host escape hatch out of iOS and Release.
+        return status == errSecParam
+        #else
+        return false
+        #endif
     }
 }
-

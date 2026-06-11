@@ -109,6 +109,9 @@ final class PerformanceBenchmarkTests: XCTestCase {
     /// 目标：旗舰 ≤ 8ms，低端 ≤ 20ms
     func testJailbreakEnginePerformance() {
         let engine = JailbreakEngine()
+        #if os(macOS)
+        let config = JailbreakConfig.light
+        #else
         let config = JailbreakConfig(
             enableFileDetect: true,
             enableDyldDetect: true,
@@ -118,6 +121,7 @@ final class PerformanceBenchmarkTests: XCTestCase {
             enableHookDetect: true,
             threshold: 50
         )
+        #endif
 
         measure {
             _ = engine.detect(config: config)

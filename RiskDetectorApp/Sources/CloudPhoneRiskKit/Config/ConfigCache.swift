@@ -75,10 +75,11 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
     private let persistToDisk: Bool
     private let fileStore: SecureFileStore
 
-    private init(
+    init(
         namespace: String? = nil,
         persistToDisk: Bool = true,
-        maxDiskEntries: Int = 5
+        maxDiskEntries: Int = 5,
+        fileStore: SecureFileStore = .shared
     ) {
         if let namespace, !namespace.isEmpty {
             self.diskKey = "com.cloudphone.riskkit.remote_config_cache.\(namespace)"
@@ -93,7 +94,7 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         }
         self.persistToDisk = persistToDisk
         self.maxDiskEntries = maxDiskEntries
-        self.fileStore = SecureFileStore.shared
+        self.fileStore = fileStore
         self.memoryCache = nil
         self.memoryCache = ConfigCache.globalLock.withLock { loadLatestFromDisk() }
     }
@@ -144,9 +145,11 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
                 cachedAt: Date().timeIntervalSince1970,
                 isVerifiedByServer: verifiedByServer
             )
-            memoryCache = entry
 
-            guard persistToDisk else { return }
+            guard persistToDisk else {
+                memoryCache = entry
+                return
+            }
 
             var entries = loadAllDiskEntries()
             entries.removeAll { $0.config.version == config.version }
@@ -157,11 +160,21 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
                 entries = Array(entries.prefix(maxDiskEntries))
             }
 
-            saveDiskEntries(entries)
+            guard saveDiskEntries(entries) else {
+                Logger.log("ConfigCache.save: failed to persist config cache version=\(config.version)")
+                fileStore.remove(key: versionKey)
+                fileStore.remove(key: rollbackVersionKey)
+                return
+            }
             if let vData = "\(config.version)".data(using: .utf8) {
-                fileStore.write(key: versionKey, data: vData)
+                guard fileStore.write(key: versionKey, data: vData) else {
+                    Logger.log("ConfigCache.save: failed to persist current version=\(config.version)")
+                    fileStore.remove(key: versionKey)
+                    return
+                }
             }
             fileStore.remove(key: rollbackVersionKey)
+            memoryCache = entry
         }
     }
 
@@ -204,8 +217,9 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
             }
 
             memoryCache = target
-            if persistToDisk, let data = "\(version)".data(using: .utf8) {
-                fileStore.write(key: rollbackVersionKey, data: data)
+            if persistToDisk, let data = "\(version)".data(using: .utf8),
+               !fileStore.write(key: rollbackVersionKey, data: data) {
+                Logger.log("ConfigCache.rollback: failed to persist rollback version=\(version)")
             }
             return target.config
         }
@@ -234,10 +248,12 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
                 Logger.log("ConfigCache.rollbackToNewestVerifiedVersion: no candidate below ceiling=\(ceilingVersion)")
                 return nil
             }
-            memoryCache = target
-            if persistToDisk, let data = "\(target.config.version)".data(using: .utf8) {
-                fileStore.write(key: rollbackVersionKey, data: data)
+            if persistToDisk, let data = "\(target.config.version)".data(using: .utf8),
+               !fileStore.write(key: rollbackVersionKey, data: data) {
+                Logger.log("ConfigCache.rollbackToNewestVerifiedVersion: failed to persist pinned version=\(target.config.version)")
+                return nil
             }
+            memoryCache = target
             Logger.log("ConfigCache.rollbackToNewestVerifiedVersion: pinned version=\(target.config.version) verified=\(target.isVerifiedByServer)")
             return target.config
         }
@@ -359,21 +375,29 @@ public final class ConfigCache: @unchecked Sendable, ConfigCaching {
         return (try? JSONDecoder().decode([CacheEntry].self, from: data)) ?? []
     }
 
-    private func saveDiskEntries(_ entries: [CacheEntry]) {
+    private func saveDiskEntries(_ entries: [CacheEntry]) -> Bool {
         guard persistToDisk,
               let encoded = try? JSONEncoder().encode(entries) else {
-            return
+            return false
         }
         #if DEBUG
         let stored = (try? PayloadCrypto.encrypt(encoded)) ?? encoded
         #else
         guard let stored = try? PayloadCrypto.encrypt(encoded) else {
             Logger.log("ConfigCache: encrypt failed, skipping save in release build")
-            return
+            return false
         }
         #endif
-        fileStore.write(key: diskKey, data: stored)
-        fileStore.write(key: hmacDiskKey, data: StorageIntegrityGuard.sign(stored, purpose: "config_cache"))
+        let signature = StorageIntegrityGuard.sign(stored, purpose: "config_cache")
+        let didWritePayload = fileStore.write(key: diskKey, data: stored)
+        let didWriteSignature = fileStore.write(key: hmacDiskKey, data: signature)
+        guard didWritePayload && didWriteSignature else {
+            Logger.log("ConfigCache: failed to persist cache atomically")
+            fileStore.remove(key: diskKey)
+            fileStore.remove(key: hmacDiskKey)
+            return false
+        }
+        return true
     }
 
     private func isUsableTrustedEntry(_ entry: CacheEntry, source: String) -> Bool {

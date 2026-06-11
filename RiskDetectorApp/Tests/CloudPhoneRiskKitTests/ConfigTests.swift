@@ -200,6 +200,27 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(stats.diskEntryCount, 0)
     }
 
+    func testPersistentCacheDoesNotPublishMemoryEntryWhenDiskWriteFails() throws {
+        let blocker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ConfigTests.blocker.\(UUID().uuidString)")
+        try Data("not a directory".utf8).write(to: blocker)
+        defer { try? FileManager.default.removeItem(at: blocker) }
+
+        let fileStore = SecureFileStore(
+            subdirectory: "blocked_config_cache",
+            baseDirectory: blocker
+        )
+        let cache = ConfigCache(
+            namespace: "blocked.\(UUID().uuidString)",
+            persistToDisk: true,
+            fileStore: fileStore
+        )
+        cache.save(RemoteConfig.default, verifiedByServer: true)
+
+        XCTAssertNil(cache.load())
+        XCTAssertEqual(cache.cacheStats().diskEntryCount, 0)
+    }
+
     // MARK: - ExperimentConfig Tests
 
     func testExperimentVariantParameter() {

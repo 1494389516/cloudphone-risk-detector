@@ -30,7 +30,7 @@ struct DylibInjectionDetector: Detector {
     /// Rootless jailbreak and other non-standard prefixes.
     private static let suspiciousPrefixes: [String] = [
         "/var/jb/",
-        "/var/LIB/",
+        "/var/lib/",
         "/var/ulb/",
         "/usr/lib/tweaks/",
         "/bootstrap/",
@@ -114,7 +114,7 @@ struct DylibInjectionDetector: Detector {
             }
 
             for prefix in Self.suspiciousPrefixes {
-                if path.hasPrefix(prefix) {
+                if lower.hasPrefix(prefix) {
                     score += 20
                     methods.append("dylib_inject:rootless_path:\(prefix)")
                     break
@@ -122,6 +122,11 @@ struct DylibInjectionDetector: Detector {
             }
         }
         return (min(score, 50), methods)
+    }
+
+    static func isSuspiciousPrefixPath(_ path: String) -> Bool {
+        let lower = path.lowercased()
+        return suspiciousPrefixes.contains { lower.hasPrefix($0) }
     }
 
     // MARK: - 1c. DYLD_INSERT_LIBRARIES

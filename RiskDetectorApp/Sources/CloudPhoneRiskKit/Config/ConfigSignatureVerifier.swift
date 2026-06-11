@@ -227,9 +227,19 @@ public enum ConfigSignatureVerifier {
     }
 
     private static func keychainStatusIndicatesUnavailable(_ status: OSStatus) -> Bool {
-        status == errSecInteractionNotAllowed ||
-        status == errSecMissingEntitlement ||
-        status == errSecNotAvailable
+        if status == errSecInteractionNotAllowed ||
+            status == errSecMissingEntitlement ||
+            status == errSecNotAvailable {
+            return true
+        }
+        #if DEBUG && os(macOS)
+        // SwiftPM/XCTest hosts without a usable login keychain can surface
+        // keychain unavailability as errSecParam. Keep this out of iOS and
+        // all Release builds so real query bugs do not become production fallback.
+        return status == errSecParam
+        #else
+        return false
+        #endif
     }
 }
 

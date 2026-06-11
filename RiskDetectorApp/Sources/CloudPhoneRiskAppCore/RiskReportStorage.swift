@@ -11,6 +11,15 @@ public struct StoredRiskReport: Sendable, Hashable {
 
 /// 检测 App 的“报告存储层”：负责列举/读取/清空本地报告文件。
 public enum RiskReportStorage {
+  #if DEBUG
+    private static let testOverrideLock = NSLock()
+    private static var _testBaseDirectoryOverride: URL?
+    static var testBaseDirectoryOverride: URL? {
+      get { testOverrideLock.withLock { _testBaseDirectoryOverride } }
+      set { testOverrideLock.withLock { _testBaseDirectoryOverride = newValue } }
+    }
+  #endif
+
   static func resolveBaseDirectory(
     applicationSupportDirectories: [URL],
     cachesDirectories: [URL],
@@ -26,6 +35,12 @@ public enum RiskReportStorage {
   }
 
   public static func reportsDirectoryURL() throws -> URL {
+    #if DEBUG
+      if let testBaseDirectoryOverride {
+        return testBaseDirectoryOverride.appendingPathComponent("reports", isDirectory: true)
+      }
+    #endif
+
     let fileManager = FileManager.default
     let base = resolveBaseDirectory(
       applicationSupportDirectories: fileManager.urls(

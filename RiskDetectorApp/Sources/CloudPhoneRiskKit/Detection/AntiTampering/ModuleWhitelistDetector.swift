@@ -28,9 +28,9 @@ struct ModuleWhitelistDetector: Detector {
         "/var/staged_system_apps/",        // OTA updates staging
     ]
 
-    private static let prebootSystemSubpaths: [String] = [
-        "/cryptexes/",
-        "/system/",
+    private static let prebootSystemRoots: Set<String> = [
+        "cryptexes",
+        "system",
     ]
 
     /// Additional rootless jailbreak paths that are already covered by DylibInjectionDetector
@@ -95,10 +95,7 @@ struct ModuleWhitelistDetector: Detector {
 
             // Preboot volume: allow known system subpaths, flag everything else
             if lowerPath.hasPrefix("/private/preboot/") {
-                let isSystemPreboot = Self.prebootSystemSubpaths.contains(where: { sub in
-                    lowerPath.contains(sub)
-                })
-                if isSystemPreboot {
+                if Self.isAllowedPrebootSystemPath(lowerPath) {
                     continue
                 }
                 let hasRoothideKeyword = Self.roothideSuspiciousKeywords.contains(where: { lowerPath.contains($0) })
@@ -173,6 +170,36 @@ struct ModuleWhitelistDetector: Detector {
             return .containerData
         }
         return .unknown
+    }
+
+    static func isAllowedPrebootSystemPath(_ lowerPath: String) -> Bool {
+        let prefix = "/private/preboot/"
+        guard lowerPath.hasPrefix(prefix) else { return false }
+
+        let relative = lowerPath.dropFirst(prefix.count)
+        let components = relative.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        guard !components.isEmpty else { return false }
+
+        if Self.prebootSystemRoots.contains(components[0]) {
+            return true
+        }
+
+        guard components.count >= 2 else { return false }
+        return isLikelyPrebootVolumeID(components[0]) && Self.prebootSystemRoots.contains(components[1])
+    }
+
+    private static func isLikelyPrebootVolumeID(_ component: String) -> Bool {
+        guard component.count == 36 else { return false }
+        for (index, byte) in component.utf8.enumerated() {
+            let shouldBeHyphen = index == 8 || index == 13 || index == 18 || index == 23
+            if shouldBeHyphen {
+                guard byte == 45 else { return false }
+            } else {
+                let isHex = (byte >= 48 && byte <= 57) || (byte >= 97 && byte <= 102)
+                guard isHex else { return false }
+            }
+        }
+        return true
     }
 
     // MARK: - Code Signature Check

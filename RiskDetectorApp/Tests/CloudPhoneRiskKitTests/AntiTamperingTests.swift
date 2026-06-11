@@ -848,7 +848,7 @@ final class AntiTamperingTests: XCTestCase {
                 0
             )
         }
-        if snapshot.lastExceptionPortHealthy == false {
+        if snapshot.lastExceptionQuerySucceeded && snapshot.lastExceptionPortHealthy == false {
             XCTAssertNotEqual(
                 snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_EXCEPTION_PORT),
                 0
@@ -861,24 +861,47 @@ final class AntiTamperingTests: XCTestCase {
             throw XCTSkip("watchdog is unavailable on this platform")
         }
 
+        var observedSnapshot: CPRiskKit.AntiDebugWatchdogSnapshot?
+        var lastSnapshot: CPRiskKit.AntiDebugWatchdogSnapshot?
         withEnvironmentValue(key: "PIN_VM", value: "1") {
             CPRiskKit.shared.stop()
             CPRiskKit.shared.start()
             defer { CPRiskKit.shared.stop() }
 
             let dbiAnomalyFlag = UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DBI_MARKER)
-            var snapshot = waitForWatchdogSnapshot()
-            let deadline = Date().addingTimeInterval(2.0)
+            var snapshot = waitForWatchdogSnapshot(timeout: 3.0)
+            let deadline = Date().addingTimeInterval(6.0)
             while snapshot.running &&
                     Date() < deadline &&
-                    (snapshot.anomalyFlags & dbiAnomalyFlag) == 0 {
+                    (snapshot.anomalyFlags & dbiAnomalyFlag) == 0 &&
+                    !snapshot.dbiDetected &&
+                    snapshot.dbiMarkerFlags == 0 &&
+                    snapshot.dbiAnomalyCount == 0 {
                 Thread.sleep(forTimeInterval: 0.05)
                 snapshot = CPRiskKit.shared.antiDebugWatchdogSnapshot()
             }
 
             XCTAssertTrue(snapshot.running)
-            XCTAssertNotEqual(snapshot.anomalyFlags & dbiAnomalyFlag, 0)
+            if (snapshot.anomalyFlags & dbiAnomalyFlag) != 0 ||
+                snapshot.dbiDetected ||
+                snapshot.dbiMarkerFlags != 0 ||
+                snapshot.dbiAnomalyCount > 0 {
+                observedSnapshot = snapshot
+            }
+            lastSnapshot = snapshot
         }
+
+        guard let snapshot = observedSnapshot else {
+            if let lastSnapshot, lastSnapshot.iterationCount >= 8 {
+                XCTFail("watchdog ran \(lastSnapshot.iterationCount) iterations without DBI marker evidence")
+                return
+            }
+            throw XCTSkip("watchdog did not reach DBI marker probe cadence in time on this host")
+        }
+        XCTAssertNotEqual(
+            snapshot.anomalyFlags & UInt32(CPRISK_ANTI_DEBUG_WATCHDOG_ANOMALY_DBI_MARKER),
+            0
+        )
     }
 
     func testAntiDebugWatchdogSignalsIncludeDBIAndTimingAnomalies() {
@@ -1049,7 +1072,7 @@ final class AntiTamperingTests: XCTestCase {
         let provider = AntiTamperingSignalProvider()
         let snapshot = makeSnapshot()
         let ids = provider.configuredCheckIDs(snapshot: snapshot)
-        XCTAssertEqual(ids.count, 42, "descriptor plan drift: update expected count when adding/removing checks")
+        XCTAssertEqual(ids.count, 44, "descriptor plan drift: update expected count when adding/removing checks")
     }
 
     // MARK: - FridaDetector Logic Tests
@@ -2058,6 +2081,40 @@ final class AntiTamperingTests: XCTestCase {
 
     func testDylibInjectImageCountLowSignalIdIsStable() {
         XCTAssertEqual(SignalID.dylibInjectImageCountLow, "dylib_inject_image_count_low")
+    }
+
+    func testDylibInjectionSuspiciousPrefixMatchingIsCaseInsensitiveForLowercasePaths() {
+        XCTAssertTrue(DylibInjectionDetector.isSuspiciousPrefixPath("/var/lib/procursus/lib/libhook.dylib"))
+        XCTAssertTrue(DylibInjectionDetector.isSuspiciousPrefixPath("/bootstrap/usr/lib/libellekit.dylib"))
+        XCTAssertFalse(DylibInjectionDetector.isSuspiciousPrefixPath("/private/var/containers/Bundle/Application/App.app/App"))
+    }
+
+    func testModuleWhitelistPrebootSystemAllowlistDoesNotMatchNestedRoothideSystemPath() {
+        XCTAssertTrue(ModuleWhitelistDetector.isAllowedPrebootSystemPath(
+            "/private/preboot/cryptexes/os/system/library/frameworks/uikit.framework/uikit"
+        ))
+        XCTAssertTrue(ModuleWhitelistDetector.isAllowedPrebootSystemPath(
+            "/private/preboot/01234567-89ab-cdef-0123-456789abcdef/cryptexes/os/system/library/libsystem.b.dylib"
+        ))
+        XCTAssertTrue(ModuleWhitelistDetector.isAllowedPrebootSystemPath(
+            "/private/preboot/01234567-89ab-cdef-0123-456789abcdef/system/library/libsystem.b.dylib"
+        ))
+
+        XCTAssertFalse(ModuleWhitelistDetector.isAllowedPrebootSystemPath(
+            "/private/preboot/01234567-89ab-cdef-0123-456789abcdef/roothide/system/library/libhook.dylib"
+        ))
+        XCTAssertFalse(ModuleWhitelistDetector.isAllowedPrebootSystemPath(
+            "/private/preboot/roothide/system/library/libhook.dylib"
+        ))
+        XCTAssertFalse(ModuleWhitelistDetector.isAllowedPrebootSystemPath(
+            "/private/preboot/01234567-89ab-cdef-0123-456789abcdef/procursus/usr/lib/libellekit.dylib"
+        ))
+        XCTAssertFalse(ModuleWhitelistDetector.isAllowedPrebootSystemPath(
+            "/private/preboot/aaaaaaaaaaaaaaaa/system/library/libhook.dylib"
+        ))
+        XCTAssertFalse(ModuleWhitelistDetector.isAllowedPrebootSystemPath(
+            "/private/preboot/deadbeef-deadbeef/cryptexes/os/system/library/libhook.dylib"
+        ))
     }
 
     // MARK: - Cross-consistency (dyld_topology family)

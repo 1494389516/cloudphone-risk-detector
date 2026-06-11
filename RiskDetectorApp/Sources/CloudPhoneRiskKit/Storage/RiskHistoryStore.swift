@@ -229,8 +229,14 @@ public final class RiskHistoryStore {
             return
         }
         #endif
-        fileStore.write(key: key, data: stored)
-        fileStore.write(key: hmacKey, data: StorageIntegrityGuard.sign(stored, purpose: hmacPurpose))
+        let signature = StorageIntegrityGuard.sign(stored, purpose: hmacPurpose)
+        let didWritePayload = fileStore.write(key: key, data: stored)
+        let didWriteSignature = fileStore.write(key: hmacKey, data: signature)
+        guard didWritePayload && didWriteSignature else {
+            Logger.log("RiskHistoryStore: failed to persist encrypted history atomically")
+            clearPersistedDataLocked(resetAnchor: false)
+            return
+        }
 
         guard freshnessAnchor.write(freshness) else {
             Logger.log("RiskHistoryStore: failed to update freshness anchor")

@@ -106,7 +106,13 @@ final class StorageTests: XCTestCase {
     // MARK: - RiskHistoryStore Tests
 
     func testHistoryStoreAppendAndPattern() {
-        let store = RiskHistoryStore(fileStore: SecureFileStore(subdirectory: "test_history_\(UUID().uuidString)"))
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StorageTests.\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let store = RiskHistoryStore(fileStore: SecureFileStore(
+            subdirectory: "test_history_\(UUID().uuidString)",
+            baseDirectory: tempRoot
+        ))
         let now = Date().timeIntervalSince1970
 
         store.append(RiskHistoryEvent(t: now - 3600, score: 30, isHighRisk: false, summary: "low"))
@@ -119,7 +125,13 @@ final class StorageTests: XCTestCase {
     }
 
     func testHistoryStoreEmptyPattern() {
-        let store = RiskHistoryStore(fileStore: SecureFileStore(subdirectory: "test_empty_\(UUID().uuidString)"))
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StorageTests.\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let store = RiskHistoryStore(fileStore: SecureFileStore(
+            subdirectory: "test_empty_\(UUID().uuidString)",
+            baseDirectory: tempRoot
+        ))
         let now = Date().timeIntervalSince1970
 
         let pattern = store.pattern(now: now)
@@ -127,6 +139,27 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(pattern.uniqueHours24h, 0)
         XCTAssertNil(pattern.nightRatio24h)
         XCTAssertNil(pattern.averageIntervalSeconds24h)
+    }
+
+    func testHistoryStoreDoesNotAdvanceStateWhenFilePersistenceFails() throws {
+        let blocker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StorageTests.blocker.\(UUID().uuidString)")
+        try Data("not a directory".utf8).write(to: blocker)
+        defer { try? FileManager.default.removeItem(at: blocker) }
+
+        let fileStore = SecureFileStore(
+            subdirectory: "blocked_history",
+            baseDirectory: blocker
+        )
+        let store = RiskHistoryStore(fileStore: fileStore)
+        let now = Date().timeIntervalSince1970
+
+        store.append(RiskHistoryEvent(t: now, score: 90, isHighRisk: true, summary: "blocked"))
+
+        let pattern = store.pattern(now: now)
+        XCTAssertEqual(pattern.events24h, 0)
+        XCTAssertFalse(fileStore.exists(key: "cloudphone_risk_history_v1"))
+        XCTAssertFalse(fileStore.exists(key: "cloudphone_risk_history_v1_hmac"))
     }
 
     func testHistoryStorePatternNightRatioCalculation() {

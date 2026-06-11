@@ -604,8 +604,14 @@ public final class ProtectionStabilityStore: @unchecked Sendable {
             return
         }
         #endif
-        fileStore.write(key: key, data: stored)
-        fileStore.write(key: hmacKey, data: StorageIntegrityGuard.sign(stored, purpose: hmacPurpose))
+        let signature = StorageIntegrityGuard.sign(stored, purpose: hmacPurpose)
+        let didWritePayload = fileStore.write(key: key, data: stored)
+        let didWriteSignature = fileStore.write(key: hmacKey, data: signature)
+        guard didWritePayload && didWriteSignature else {
+            Logger.log("ProtectionStabilityStore: failed to persist state atomically")
+            clearPersistedLocked(resetAnchor: false)
+            return
+        }
         if !freshnessAnchor.write(toSave.freshness) {
             Logger.log("ProtectionStabilityStore: freshness write failed")
         }
