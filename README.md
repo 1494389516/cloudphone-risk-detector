@@ -3,7 +3,7 @@
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
   <img src="https://img.shields.io/badge/SDK-7.4-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
-  <img src="https://img.shields.io/badge/License-Proprietary-8E8E93?style=for-the-badge" alt="License">
+  <img src="https://img.shields.io/badge/License-TBD-8E8E93?style=for-the-badge" alt="License">
 </p>
 
 <h1 align="center">CloudPhoneRiskKit</h1>
@@ -29,6 +29,32 @@
   - `RiskDetectorApp/App/`：SwiftUI 示例 App（Dashboard、配置、结果展示、历史页）。
   - `RiskDetectorApp/Tests/CloudPhoneRiskKitTests/`：核心单元测试（决策树、策略、评分、信号模型）。
 - **本地运行（SPM）**：在仓库根目录执行 `cd RiskDetectorApp && swift test` 可先验证核心逻辑测试；如需隔离构建目录（例如 CI 或并发测试），可追加 `--scratch-path "${TMPDIR:-/tmp}/cloudphone-risk-detector-riskdetector-tests"`。
+
+## 开源发布入口
+
+这个仓库的代码密度更接近“端侧风控 SDK + 反篡改实验室”，而不是单点 jailbreak detector。为了让外部开发者能快速判断是否值得接入，建议从下面几件事开始：
+
+| 你想确认什么 | 入口 |
+|--------------|------|
+| 三分钟跑起来 | `cd RiskDetectorApp && swift test --disable-sandbox` |
+| 最小接入代码 | [集成方式](#集成方式) 与 `CloudPhoneRiskKit_文档/INTEGRATION_GUIDE.md` |
+| 能力边界和安全模式 | `CloudPhoneRiskKit_文档/OPEN_SOURCE_READINESS.md` |
+| 性能目标和基准方法 | `CloudPhoneRiskKit_文档/PERFORMANCE_BENCHMARK.md` |
+| App Store / 隐私披露 | `CloudPhoneRiskKit_文档/CloudPhoneRiskKit_AppStore_合规指南.md` |
+| 攻击者模型和剩余风险 | `CloudPhoneRiskKit_文档/威胁模型文档.md` |
+
+### 能力分层
+
+| 模式 | 推荐场景 | 特点 |
+|------|----------|------|
+| `App Store Safe` | 普通 App Store 分发 | 以本地风险信号、合规权限、低侵入检测为主，避免审核敏感能力默认打开 |
+| `Enhanced` | 高风险业务场景 | 启用更完整的 anti-tamper、环境一致性和服务端信号融合 |
+| `Research / Enterprise` | 企业包、安全研究、内部灰度 | 可打开更强的反调试、动态插桩、运行时完整性探针 |
+| `Armored Release` | 加固发布产物 | 配合 `cprisk-armor`，把壳保护、白盒派生、签名材料毒化纳入生产链路 |
+
+### 重要边界
+
+`CloudPhoneRiskKit` 输出的是风险信号和策略建议，不承诺在本地完全受控的攻击环境中“不可绕过”。正确用法是把端侧检测、服务端策略、账号/设备画像、挑战验证和人工审核组合起来，提高攻击成本并降低批量化成功率。
 
 ## 版本演进
 
@@ -451,6 +477,7 @@ cd RiskDetectorApp && swift test \
 | **协议** | Protobuf v3 消息定义 | `CloudPhoneRiskKit_文档/api/risk_service.proto` |
 | **运营** | 服务等级协议 (SLA) | `CloudPhoneRiskKit_文档/SLA.md` |
 | **运营** | 性能基准报告 | `CloudPhoneRiskKit_文档/PERFORMANCE_BENCHMARK.md` |
+| **运营** | 开源发布与可验证性清单 | `CloudPhoneRiskKit_文档/OPEN_SOURCE_READINESS.md` |
 | **运营** | 变更日志 (CHANGELOG) | `CloudPhoneRiskKit_文档/CHANGELOG.md` |
 | **运营** | SDK Portal 控制台设计 | `CloudPhoneRiskKit_文档/SDK_PORTAL_SPEC.md` |
 
