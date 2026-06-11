@@ -13,9 +13,11 @@ final class RiskReportStorageTests: XCTestCase {
     tempDir = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    RiskReportStorage.testBaseDirectoryOverride = tempDir
   }
 
   override func tearDown() {
+    RiskReportStorage.testBaseDirectoryOverride = nil
     try? FileManager.default.removeItem(at: tempDir)
     super.tearDown()
   }

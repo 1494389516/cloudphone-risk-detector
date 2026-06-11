@@ -103,8 +103,17 @@ enum StorageIntegrityGuard {
     }
 
     private static func keychainStatusIndicatesUnavailable(_ status: OSStatus) -> Bool {
-        status == errSecInteractionNotAllowed ||
-        status == errSecMissingEntitlement ||
-        status == errSecNotAvailable
+        if status == errSecInteractionNotAllowed ||
+            status == errSecMissingEntitlement ||
+            status == errSecNotAvailable {
+            return true
+        }
+        #if DEBUG && os(macOS)
+        // Some macOS SwiftPM/XCTest sandboxes report keychain unavailability
+        // as errSecParam. Do not allow this fallback in iOS or Release builds.
+        return status == errSecParam
+        #else
+        return false
+        #endif
     }
 }

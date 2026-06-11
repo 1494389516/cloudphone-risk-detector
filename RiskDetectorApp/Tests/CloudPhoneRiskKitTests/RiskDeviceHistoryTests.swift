@@ -376,7 +376,13 @@ final class RiskHistoryStoreFreshnessTests: XCTestCase {
         // End-to-end: append an event, then verify store can still load it
         // even after a simulated clock adjustment (which would wrongly trigger
         // the old || condition)
-        let testStore = SecureFileStore(subdirectory: "test_freshness_\(UUID().uuidString)")
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RiskHistoryStoreFreshnessTests.\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let testStore = SecureFileStore(
+            subdirectory: "test_freshness_\(UUID().uuidString)",
+            baseDirectory: tempRoot
+        )
         let store = RiskHistoryStore(fileStore: testStore)
         let now = Date().timeIntervalSince1970
 

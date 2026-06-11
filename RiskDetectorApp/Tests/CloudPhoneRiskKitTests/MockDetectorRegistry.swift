@@ -125,7 +125,8 @@ final class MockDetectorRegistry: DetectorRegistering {
         switch type {
         case .file, .dyld, .env, .sysctl, .scheme, .hook:
             return .jailbreak
-        case .antiTampering, .debugger, .frida, .fridaModule, .dylibInjection:
+        case .antiTampering, .debugger, .frida, .fridaModule, .dylibInjection,
+             .functionIntegrityHash, .moduleWhitelist, .syscallCrossValidator:
             return .antiTamper
         case .codeSignature, .memoryIntegrity, .runtimeIntegrity:
             return .integrity

@@ -5,22 +5,19 @@ final class SecureFileStoreTests: XCTestCase {
 
     private var store: SecureFileStore!
     private let testSubdir = "test_secure_store_\(UUID().uuidString)"
+    private var tempRoot: URL!
 
     override func setUp() {
         super.setUp()
-        store = SecureFileStore(subdirectory: testSubdir)
+        tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SecureFileStoreTests.\(UUID().uuidString)", isDirectory: true)
+        store = SecureFileStore(subdirectory: testSubdir, baseDirectory: tempRoot)
     }
 
     override func tearDown() {
-        // Clean up test files
-        if let appSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first {
-            let testDir = appSupport.appendingPathComponent(testSubdir)
-            try? FileManager.default.removeItem(at: testDir)
-        }
+        try? FileManager.default.removeItem(at: tempRoot)
         store = nil
+        tempRoot = nil
         super.tearDown()
     }
 
@@ -117,6 +114,21 @@ final class SecureFileStoreTests: XCTestCase {
 
         let readBack = store.read(key: "empty_key")
         XCTAssertEqual(readBack, emptyData)
+    }
+
+    func testWriteFailsWhenBaseDirectoryParentIsFile() throws {
+        let blocker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SecureFileStoreTests.blocker.\(UUID().uuidString)")
+        try Data("not a directory".utf8).write(to: blocker)
+        defer { try? FileManager.default.removeItem(at: blocker) }
+
+        let blockedStore = SecureFileStore(
+            subdirectory: "blocked",
+            baseDirectory: blocker
+        )
+
+        XCTAssertFalse(blockedStore.write(key: "blocked_key", data: Data("payload".utf8)))
+        XCTAssertNil(blockedStore.read(key: "blocked_key"))
     }
 
     // MARK: - Thread Safety

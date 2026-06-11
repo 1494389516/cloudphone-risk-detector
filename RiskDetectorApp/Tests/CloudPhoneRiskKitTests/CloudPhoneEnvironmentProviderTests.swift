@@ -68,6 +68,8 @@ final class CloudPhoneEnvironmentProviderTests: XCTestCase {
         // On non-simulator with < 3 readings, it should also be .unavailable.
         #if targetEnvironment(simulator)
         XCTAssertEqual(thermal?.evidence["detail"], "simulator")
+        #elseif os(macOS)
+        XCTAssertEqual(thermal?.evidence["detail"], "platform_unsupported")
         #else
         XCTAssertEqual(thermal?.evidence["detail"], "insufficient_history")
         #endif

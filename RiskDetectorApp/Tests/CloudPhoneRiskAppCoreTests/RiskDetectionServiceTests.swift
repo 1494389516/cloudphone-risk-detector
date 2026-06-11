@@ -6,14 +6,21 @@ import XCTest
 final class RiskDetectionServiceTests: XCTestCase {
 
     private let service = RiskDetectionService.shared
+    private var tempRoot: URL!
 
     override func setUp() {
         super.setUp()
+        tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RiskDetectionServiceTests.\(UUID().uuidString)", isDirectory: true)
+        RiskReportStorage.testBaseDirectoryOverride = tempRoot
         service.clearExternalServerSignals()
     }
 
     override func tearDown() {
         service.clearExternalServerSignals()
+        RiskReportStorage.testBaseDirectoryOverride = nil
+        try? FileManager.default.removeItem(at: tempRoot)
+        tempRoot = nil
         super.tearDown()
     }
 

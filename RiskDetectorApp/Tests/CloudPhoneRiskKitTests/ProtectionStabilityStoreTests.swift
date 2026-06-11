@@ -1,16 +1,106 @@
 import XCTest
 @testable import CloudPhoneRiskKit
 
+private final class TestProtectionConfigCache: @unchecked Sendable, ConfigCaching {
+    private let lock = NSLock()
+    private var entries: [Int: (config: RemoteConfig, verified: Bool, cachedAt: TimeInterval)] = [:]
+    private var currentVersion: Int?
+
+    func load() -> CachedConfig? {
+        lock.withLock {
+            guard let currentVersion, let entry = entries[currentVersion] else {
+                return nil
+            }
+            return CachedConfig(
+                config: entry.config,
+                cachedAt: entry.cachedAt,
+                isVerifiedByServer: entry.verified,
+                contentHash: nil
+            )
+        }
+    }
+
+    func save(_ config: RemoteConfig, verifiedByServer: Bool) {
+        lock.withLock {
+            entries[config.version] = (config, verifiedByServer, Date().timeIntervalSince1970)
+            currentVersion = config.version
+        }
+    }
+
+    func clear() {
+        lock.withLock {
+            entries.removeAll()
+            currentVersion = nil
+        }
+    }
+
+    func cacheSize() -> Int {
+        lock.withLock { entries.count }
+    }
+
+    func cacheStats() -> CacheStats {
+        lock.withLock {
+            CacheStats(
+                hasMemoryCache: currentVersion != nil,
+                diskSizeBytes: 0,
+                diskEntryCount: entries.count
+            )
+        }
+    }
+
+    func rollbackToNewestVerifiedVersion(below ceilingVersion: Int) -> RemoteConfig? {
+        lock.withLock {
+            guard let target = entries.values
+                .filter({ $0.verified && $0.config.version < ceilingVersion })
+                .max(by: { $0.config.version < $1.config.version }) else {
+                return nil
+            }
+            currentVersion = target.config.version
+            return target.config
+        }
+    }
+}
+
 final class ProtectionStabilityStoreTests: XCTestCase {
+    private var tempRoot: URL!
+
+    override func setUp() {
+        super.setUp()
+        tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ProtectionStabilityStoreTests.\(UUID().uuidString)", isDirectory: true)
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(at: tempRoot)
+        tempRoot = nil
+        super.tearDown()
+    }
 
     private func makeStore() -> ProtectionStabilityStore {
-        let fs = SecureFileStore(subdirectory: "ProtectionStabilityStoreTests.\(UUID().uuidString)")
-        let cache = ConfigCache.inMemoryCache()
+        let fs = makeFileStore("store")
+        let cache = TestProtectionConfigCache()
         return ProtectionStabilityStore(fileStore: fs, configCache: cache)
     }
 
-    private func makePersistentCache() -> ConfigCache {
-        let cache = ConfigCache.instance(withNamespace: "ProtectionStabilityStoreTests.\(UUID().uuidString)")
+    private func makeFileStore(_ name: String) -> SecureFileStore {
+        SecureFileStore(
+            subdirectory: "\(name).\(UUID().uuidString)",
+            baseDirectory: tempRoot
+        )
+    }
+
+    private func makeBlockedFileStore(_ name: String) throws -> SecureFileStore {
+        let blocker = tempRoot.appendingPathComponent("blocked-parent.\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        try Data("not a directory".utf8).write(to: blocker)
+        return SecureFileStore(
+            subdirectory: name,
+            baseDirectory: blocker
+        )
+    }
+
+    private func makePersistentCache() -> TestProtectionConfigCache {
+        let cache = TestProtectionConfigCache()
         cache.clear()
         return cache
     }
@@ -36,7 +126,7 @@ final class ProtectionStabilityStoreTests: XCTestCase {
     // MARK: - 1. 编解码 / 持久化
 
     func testStorePersistenceRoundTrip() {
-        let fs = SecureFileStore(subdirectory: "ProtectionStabilityStoreTests.persist.\(UUID().uuidString)")
+        let fs = makeFileStore("persist")
         let cache = makePersistentCache()
         let store1 = ProtectionStabilityStore(fileStore: fs, configCache: cache)
         store1.resetForTesting()
@@ -81,10 +171,30 @@ final class ProtectionStabilityStoreTests: XCTestCase {
         XCTAssertEqual(bootstrap.attribution?.phase, .armorRuntimeInit)
     }
 
+    func testPersistenceFailureDoesNotCreateRecoverableStartupSession() throws {
+        let fs = try makeBlockedFileStore("blocked_stability")
+        let cache = makePersistentCache()
+        let store = ProtectionStabilityStore(fileStore: fs, configCache: cache)
+        store.resetForTesting()
+
+        _ = store.beginSession(
+            remoteConfigVersion: 42,
+            antiDebugMode: .production,
+            safeProfileAlreadyActive: false
+        )
+        store.markPhase(.armorRuntimeInit)
+
+        let reloaded = ProtectionStabilityStore(fileStore: fs, configCache: cache)
+        let snapshot = reloaded.currentSnapshot()
+        XCTAssertNil(snapshot.currentSessionId)
+        XCTAssertEqual(snapshot.currentPhase, .startInvoked)
+        XCTAssertNil(reloaded.detectPreviousAbnormalTermination())
+    }
+
     // MARK: - 3. 同版本连续两次启动前崩溃 -> 回滚到已验证旧版本
 
     func testSameVersionRepeatedFailureRollsBackToVerifiedOlderConfig() {
-        let fs = SecureFileStore(subdirectory: "ProtectionStabilityStoreTests.rollback.\(UUID().uuidString)")
+        let fs = makeFileStore("rollback")
         let cache = makePersistentCache()
         cache.save(sampleRemoteConfig(version: 10), verifiedByServer: true)
         cache.save(sampleRemoteConfig(version: 20), verifiedByServer: true)
@@ -112,7 +222,7 @@ final class ProtectionStabilityStoreTests: XCTestCase {
     // MARK: - 4. 无可回滚版本 -> 本地 safe profile + kill switch
 
     func testNoRollbackCandidateEntersLocalDegradedMode() {
-        let fs = SecureFileStore(subdirectory: "ProtectionStabilityStoreTests.degraded.\(UUID().uuidString)")
+        let fs = makeFileStore("degraded")
         let cache = makePersistentCache()
         cache.save(sampleRemoteConfig(version: 5), verifiedByServer: true)
         // 仅 v5，无法找到 <5 的候选
