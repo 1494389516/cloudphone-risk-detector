@@ -14,6 +14,17 @@ public enum UnexpectedStateBehavior: String, Codable, Sendable {
     case trap
 }
 
+/// Per-function CFF state-encoding plan.
+///
+/// IMPORTANT — what actually reaches the emitted binary: `ControlFlowBinaryRewriter`
+/// consumes ONLY `perFunctionSeed` when rewriting bytes. The remaining fields
+/// (`style` = affine/feistelSpn/…, `usesRuntimeSalt`, `releaseFakeStateCount`,
+/// `unexpectedStateBehavior` = poison/trap/…) do NOT change the bytes armor writes;
+/// whether they take effect is contingent on the CRiskCore runtime (`cprisk_cff`)
+/// honoring the matching policy. Today they drive policy expression, cross-field
+/// validation, and build logs only. Do NOT infer from these plan fields that a
+/// binary actually has feistel/affine encoding, runtime-coupled salt, fake states,
+/// or poison-on-unexpected-state behavior — verify against the runtime.
 public struct StateEncodingPlan: Codable, Equatable, Sendable {
     public let style: StateEncodingStyle
     public let perFunctionSeed: UInt64

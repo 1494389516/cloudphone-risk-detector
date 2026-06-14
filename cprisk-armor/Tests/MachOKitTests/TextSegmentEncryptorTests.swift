@@ -107,7 +107,7 @@ final class TextSegmentEncryptorTests: XCTestCase {
         let payload = try meta.readContent(from: file.data)
         XCTAssertEqual(Self.readLE32(payload, at: 8), 5)
 
-        let entrySize = 96
+        let entrySize = 104  // ABI v3: vmAddr8+size8+keyID4+flags4+nonce16+hmac32+contentHash32
         let lastEntryOffset = 16 + (4 * entrySize)
         XCTAssertEqual(Self.readLE64(payload, at: lastEntryOffset + 8), UInt64(partialTail))
 
@@ -147,7 +147,7 @@ final class TextSegmentEncryptorTests: XCTestCase {
         let payload = try meta.readContent(from: file.data)
         XCTAssertEqual(Self.readLE32(payload, at: 8), 5)
 
-        let entrySize = 96
+        let entrySize = 104  // ABI v3 entry width
         let lastEntryOffset = 16 + (4 * entrySize)
         XCTAssertEqual(Self.readLE64(payload, at: lastEntryOffset + 8), UInt64(partialTail))
 

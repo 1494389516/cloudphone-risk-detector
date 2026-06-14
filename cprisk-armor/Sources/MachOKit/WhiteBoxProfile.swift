@@ -281,13 +281,27 @@ package enum ArmorWhiteBox {
         if let raw = env["CPRISK_ARMOR_BUILD_SEED"] ?? env["CPRISK_BUILD_SEED"] {
             return Data(raw.utf8)
         }
-        // Fall back to a process-unique 32-byte salt rather than the literal
+        // Fall back to a *process-stable* 32-byte salt rather than the literal
         // "default-build-salt". The previous default produced byte-identical
         // domain keys across every binary built without the env override —
         // i.e. two unrelated builds shared their entire white-box key
-        // material. Use a fresh CSPRNG draw per process so the produced
-        // binaries differ even when the env var is forgotten; CI/release
-        // builds should still set CPRISK_ARMOR_BUILD_SEED for reproducibility.
+        // material. Use a fresh CSPRNG draw, but compute it exactly ONCE per
+        // process and cache it: every pass in a single armor invocation calls
+        // ArmorWhiteBox.build() independently (StringEncryptor, ImportEncryptor,
+        // IntegrityAnchor, the loader, ...). If the salt were redrawn per call,
+        // each pass would derive a different white-box and the runtime could
+        // never decrypt what an earlier pass encrypted. The salt must therefore
+        // be stable within a process and only differ across separate builds;
+        // CI/release builds should still set CPRISK_ARMOR_BUILD_SEED for
+        // cross-process reproducibility.
+        return cachedRandomBuildSalt
+    }
+
+    /// Lazily-initialized, process-stable random salt used when no build-seed
+    /// env var is present. Swift guarantees a `static let` initializer runs at
+    /// most once and is thread-safe, giving us the "draw once per process"
+    /// semantics every pass relies on.
+    private static let cachedRandomBuildSalt: Data = {
         var rng = SystemRandomNumberGenerator()
         var rnd = Data(count: 32)
         rnd.withUnsafeMutableBytes { buf in
@@ -295,7 +309,7 @@ package enum ArmorWhiteBox {
             for i in 0..<4 { base[i] = rng.next() }
         }
         return rnd
-    }
+    }()
 
     private static func makePermutation(domainKey: Data) -> Data {
         var values = (0..<ArmorABI.WhiteBox.permutationSize).map(UInt8.init)

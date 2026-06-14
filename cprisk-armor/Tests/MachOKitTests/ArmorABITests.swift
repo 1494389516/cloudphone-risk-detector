@@ -48,10 +48,10 @@ final class ArmorABITests: XCTestCase {
         XCTAssertEqual(readLE64(entry, at: 40), 0x1122334455667788)
         XCTAssertEqual(readLE64(entry, at: 48), 0x0102030405060708)
         XCTAssertEqual(entry.subdata(in: 56..<88), hash)
-        XCTAssertEqual(entry.subdata(in: 88..<96), nonce)
-        XCTAssertEqual(entry.subdata(in: 96..<128), hmac)
-        XCTAssertEqual(readLE32(entry, at: 128), 1)
-        XCTAssertEqual(readLE32(entry, at: 132), 1)
+        XCTAssertEqual(entry.subdata(in: 88..<104), nonce)
+        XCTAssertEqual(entry.subdata(in: 104..<136), hmac)
+        XCTAssertEqual(readLE32(entry, at: 136), 1)
+        XCTAssertEqual(readLE32(entry, at: 140), 1)
     }
 
     func testIntegrityHelpersMatchRuntimeContract() {

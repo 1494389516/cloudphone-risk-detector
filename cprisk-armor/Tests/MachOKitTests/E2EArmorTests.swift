@@ -252,6 +252,7 @@ final class E2EArmorTests: XCTestCase {
         let file = try MachOFile(url: inputURL)
         let config = PassConfig(encryptionKey: Data("test-whitebox-key".utf8))
 
+        try Self.seedWhiteBoxPlaceholders(in: file, rootKey: config.encryptionKey)
         _ = try IntegrityAnchorPass().execute(on: file, config: config)
 
         let metadataSection = try XCTUnwrap(
@@ -284,6 +285,7 @@ final class E2EArmorTests: XCTestCase {
         let file = try MachOFile(url: inputURL)
         let config = PassConfig(encryptionKey: Data("test-whitebox-config".utf8))
 
+        try Self.seedWhiteBoxPlaceholders(in: file, rootKey: config.encryptionKey)
         _ = try IntegrityAnchorPass().execute(on: file, config: config)
 
         let metadataSection = try XCTUnwrap(
@@ -355,6 +357,31 @@ final class E2EArmorTests: XCTestCase {
     }
 
     // MARK: - Fixture Builder
+
+    /// Seed empty white-box placeholder sections into __DATA so Pass 4 will
+    /// populate them. IntegrityAnchorPass only writes the white-box sections
+    /// when they already exist (writeIfPresent — older app builds may omit
+    /// them), so a fixture that wants populated white-box sections must declare
+    /// the placeholders first. Each placeholder is sized to the corresponding
+    /// bundle section (sizes are salt-independent and stable within a process)
+    /// because addOrUpdateSection refuses to grow an existing section.
+    private static func seedWhiteBoxPlaceholders(in file: MachOFile, rootKey: Data?) throws {
+        let bundle = ArmorWhiteBox.build(rootKey: rootKey)
+        let placeholders: [(String, Int)] = [
+            (ArmorABI.WhiteBox.Sections.metadata, bundle.metadataSection.count),
+            (ArmorABI.WhiteBox.Sections.code, bundle.whiteboxCode.count),
+            (ArmorABI.WhiteBox.Sections.data, bundle.whiteboxData.count),
+            (ArmorABI.WhiteBox.Sections.tag, bundle.whiteboxTag.count),
+        ]
+        for (name, size) in placeholders {
+            _ = try file.addOrUpdateSection(
+                segment: ArmorABI.dataSegmentName,
+                section: name,
+                content: Data(repeating: 0, count: size),
+                align: 3
+            )
+        }
+    }
 
     private static func writeFixture(named name: String) throws -> URL {
         let url = temporaryURL(named: name)

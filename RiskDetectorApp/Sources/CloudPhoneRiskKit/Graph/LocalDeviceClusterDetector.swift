@@ -5,10 +5,12 @@ import Foundation
 /// 本地维护最近 N 次评估的设备指纹摘要，若短时间内同一 IP/WiFi 下出现大量不同设备指纹，
 /// 产出 local_device_cluster 信号。使用简单内存缓存，不做完整图算法。
 ///
-/// ## 隐私保护
-/// - 上报的图特征必须单向哈希（由 GraphFeatureCollector 保证）
-/// - 可选：对聚合度计数添加拉普拉斯噪声（Laplace mechanism）以增强差分隐私；
-///   占位说明，暂不实现；若未来需要，可在 distinctHashes.count 输出前注入噪声。
+/// ## 隐私
+/// - 上报的图特征均为带盐单向哈希（由 GraphFeatureCollector 保证）。
+/// - distinct_devices 为聚合计数，不含任何个体标识，仅上报给自有风控服务端用于
+///   阈值判定（非对外发布统计）。该场景不适用差分隐私：聚合计数本身是检测目标，
+///   注入拉普拉斯噪声只会损害阈值判定精度而不带来实际隐私收益，故不实现，
+///   也不在文档/注释中作差分隐私承诺。
 public final class LocalDeviceClusterDetector: @unchecked Sendable {
 
     public static let shared = LocalDeviceClusterDetector()
