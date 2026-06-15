@@ -62,9 +62,15 @@ final class KDFChainTests: XCTestCase {
         let file = try MachOFile(url: url)
         let config = PassConfig(encryptionKey: Self.testRootKey)
         let bundle = ArmorWhiteBox.build(rootKey: Self.testRootKey)
+        // Must mirror StringEncryptor.deriveStringKey(rootKey:): the PRF input
+        // is SHA256 over the domain-separated seed material, not a zero block.
+        var stringSeed = Data("cprisk.string.domain1.v2".utf8)
+        if let raw = ProcessInfo.processInfo.environment["CPRISK_ARMOR_BUILD_SEED"] {
+            stringSeed.append(Data(raw.utf8))
+        }
         let expectedStringKey = bundle.prf(
             domain: .pass1StringKey,
-            input: Data(repeating: 0, count: ArmorABI.hashSize)
+            input: Self.sha256(stringSeed)
         )
 
         _ = try StringEncryptorPass().execute(on: file, config: config)
@@ -81,14 +87,22 @@ final class KDFChainTests: XCTestCase {
         let firstID = Self.readLE32(content, at: indexBase)
         let firstOffset = Int(Self.readLE32(content, at: indexBase + 4))
         let firstLength = Int(Self.readLE32(content, at: indexBase + 8))
-        let firstNonce = content.subdata(in: (indexBase + 12)..<(indexBase + 20))
+        let firstNonce = content.subdata(in: (indexBase + 12)..<(indexBase + 28))
         let firstEncrypted = content.subdata(
             in: (dataBase + firstOffset)..<(dataBase + firstOffset + firstLength)
         )
         let dispatchSeed = deriveKeystreamDispatchSeed(key: expectedStringKey)
 
+        // Mirror StringEncryptor per-string KDF:
+        //   perStringKey = HMAC(stringKey, "cprisk.str.key.v1" || sid_le4 || nonce)
+        var pskMaterial = Data("cprisk.str.key.v1".utf8)
+        var sidLE = firstID.littleEndian
+        withUnsafeBytes(of: &sidLE) { pskMaterial.append(contentsOf: $0) }
+        pskMaterial.append(firstNonce)
+        let perStringKey = ArmorABI.hmacSHA256(key: expectedStringKey, message: pskMaterial)
+
         let keystream = buildKeystreamForRecord(
-            key: expectedStringKey,
+            key: perStringKey,
             stringID: firstID,
             nonce: firstNonce,
             length: firstLength,
@@ -198,7 +212,17 @@ final class KDFChainTests: XCTestCase {
                 try file.section(segment: entry.segmentName, section: entry.sectionName)
             )
             let ciphertext = try section.readContent(from: file.data)
-            var hmacMsg = entry.nonce
+            // Mirror DataSegmentEncryptor's canonical HMAC scope:
+            //   u32 section_index | u32 nonce_len | nonce | u32 ct_len | ciphertext
+            // (the old `nonce || ciphertext` form was replaced to bind lengths).
+            var hmacMsg = Data()
+            var sectionIndexLE = entry.sectionIndex.littleEndian
+            withUnsafeBytes(of: &sectionIndexLE) { hmacMsg.append(contentsOf: $0) }
+            var nonceLenLE = UInt32(entry.nonce.count).littleEndian
+            withUnsafeBytes(of: &nonceLenLE) { hmacMsg.append(contentsOf: $0) }
+            hmacMsg.append(entry.nonce)
+            var ctLenLE = UInt32(ciphertext.count).littleEndian
+            withUnsafeBytes(of: &ctLenLE) { hmacMsg.append(contentsOf: $0) }
             hmacMsg.append(ciphertext)
 
             let expectedTag = ArmorABI.hmacSHA256(key: sectionKey, message: hmacMsg)
@@ -253,7 +277,7 @@ final class KDFChainTests: XCTestCase {
         let headerSize = 12
         guard data.count >= headerSize else { throw XCTSkip("loader header truncated") }
         let count = readLE32(data, at: 8)
-        let entrySize = 136
+        let entrySize = 144
         var entries: [LoaderEntry] = []
         var offset = headerSize
         for _ in 0..<count {
@@ -273,10 +297,10 @@ final class KDFChainTests: XCTestCase {
             let vmAddr = entry.subdata(in: 40..<48).withUnsafeBytes { UInt64(littleEndian: $0.load(as: UInt64.self)) }
             let size = entry.subdata(in: 48..<56).withUnsafeBytes { UInt64(littleEndian: $0.load(as: UInt64.self)) }
             let contentHash = entry.subdata(in: 56..<88)
-            let nonce = entry.subdata(in: 88..<96)
-            let hmacTag = entry.subdata(in: 96..<128)
-            let sectionIndex = entry.subdata(in: 128..<132).withUnsafeBytes { UInt32(littleEndian: $0.load(as: UInt32.self)) }
-            let chainedDepth = entry.subdata(in: 132..<136).withUnsafeBytes { UInt32(littleEndian: $0.load(as: UInt32.self)) }
+            let nonce = entry.subdata(in: 88..<104)
+            let hmacTag = entry.subdata(in: 104..<136)
+            let sectionIndex = entry.subdata(in: 136..<140).withUnsafeBytes { UInt32(littleEndian: $0.load(as: UInt32.self)) }
+            let chainedDepth = entry.subdata(in: 140..<144).withUnsafeBytes { UInt32(littleEndian: $0.load(as: UInt32.self)) }
             entries.append(LoaderEntry(
                 segmentName: segmentName,
                 sectionName: sectionName,
@@ -329,6 +353,22 @@ final class KDFChainTests: XCTestCase {
     }
 
     private static func makeFixture() -> Data {
+        // Pass 4 (IntegrityAnchor) only *populates* the white-box sections when
+        // they already exist as placeholders (writeIfPresent in
+        // IntegrityAnchor.swift — older app builds may not link them in). The
+        // synthetic fixture must therefore pre-declare __swift5_mdext/mdbdy/
+        // mddsc/mdchk in __DATA, each large enough to hold the corresponding
+        // bundle section (addOrUpdateSection refuses to grow an existing
+        // section). Size them from a freshly built bundle so the placeholders
+        // auto-track any ABI change; bundle section *sizes* are salt-independent.
+        let sizingBundle = ArmorWhiteBox.build(rootKey: testRootKey)
+        let wbSections: [(name: String, size: Int)] = [
+            (ArmorABI.WhiteBox.Sections.metadata, sizingBundle.metadataSection.count),
+            (ArmorABI.WhiteBox.Sections.code, sizingBundle.whiteboxCode.count),
+            (ArmorABI.WhiteBox.Sections.data, sizingBundle.whiteboxData.count),
+            (ArmorABI.WhiteBox.Sections.tag, sizingBundle.whiteboxTag.count),
+        ]
+
         let textCodeContent = Data([
             0xFD, 0x7B, 0xBF, 0xA9,
             0xFD, 0x03, 0x00, 0x91,
@@ -352,15 +392,30 @@ final class KDFChainTests: XCTestCase {
             cstringData.append(0)
         }
 
+        // __DATA now carries __const + 4 white-box placeholder sections.
+        let dataSectionCount = 1 + wbSections.count
         let textSegCmdSize = 72 + 80 + 80
-        let dataSegCmdSize = 72 + 80
+        let dataSegCmdSize = 72 + 80 * dataSectionCount
         let sizeOfCmds = textSegCmdSize + dataSegCmdSize
 
         let textCodeOffset = 2048
         let cstringOffset = textCodeOffset + textCodeContent.count
         let textSegFileSize = 4096
         let dataSegOffset = 4096
-        let dataSegSize = 4096
+
+        // Lay __const then each white-box placeholder back-to-back in __DATA,
+        // 8-byte aligned. Track per-section file offsets for the headers.
+        let constSize = 8
+        func align8(_ v: Int) -> Int { (v + 7) & ~7 }
+        var cursor = 0
+        let constRel = cursor
+        cursor = align8(cursor + constSize)
+        var wbRel: [Int] = []
+        for s in wbSections {
+            wbRel.append(cursor)
+            cursor = align8(cursor + s.size)
+        }
+        let dataSegSize = max(4096, cursor)
         let fileSize = dataSegOffset + dataSegSize
 
         var data = Data()
@@ -420,14 +475,15 @@ final class KDFChainTests: XCTestCase {
         data.appendLE64(UInt64(dataSegSize))
         data.appendLE32(3)
         data.appendLE32(3)
-        data.appendLE32(1)
+        data.appendLE32(UInt32(dataSectionCount))
         data.appendLE32(0)
 
+        // __DATA.__const
         data.appendFixedCString16("__const")
         data.appendFixedCString16("__DATA")
-        data.appendLE64(0x2000)
-        data.appendLE64(8)
-        data.appendLE32(UInt32(dataSegOffset))
+        data.appendLE64(0x2000 + UInt64(constRel))
+        data.appendLE64(UInt64(constSize))
+        data.appendLE32(UInt32(dataSegOffset + constRel))
         data.appendLE32(0)
         data.appendLE32(0)
         data.appendLE32(0)
@@ -435,6 +491,22 @@ final class KDFChainTests: XCTestCase {
         data.appendLE32(0)
         data.appendLE32(0)
         data.appendLE32(0)
+
+        // __DATA white-box placeholder sections.
+        for (i, s) in wbSections.enumerated() {
+            data.appendFixedCString16(s.name)
+            data.appendFixedCString16("__DATA")
+            data.appendLE64(0x2000 + UInt64(wbRel[i]))
+            data.appendLE64(UInt64(s.size))
+            data.appendLE32(UInt32(dataSegOffset + wbRel[i]))
+            data.appendLE32(3)
+            data.appendLE32(0)
+            data.appendLE32(0)
+            data.appendLE32(0)
+            data.appendLE32(0)
+            data.appendLE32(0)
+            data.appendLE32(0)
+        }
 
         if data.count < textCodeOffset {
             data.append(Data(count: textCodeOffset - data.count))
@@ -446,8 +518,8 @@ final class KDFChainTests: XCTestCase {
         }
         data.append(cstringData)
 
-        if data.count < dataSegOffset {
-            data.append(Data(count: dataSegOffset - data.count))
+        if data.count < dataSegOffset + constRel {
+            data.append(Data(count: dataSegOffset + constRel - data.count))
         }
         data.append(Data([0x10, 0x20, 0x30, 0x40, 0xAA, 0xBB, 0xCC, 0xDD]))
 

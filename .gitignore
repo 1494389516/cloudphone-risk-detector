@@ -26,6 +26,7 @@ RiskDetectorApp/.deriveddata-cursor/
 RiskDetectorApp/BuildSupport/RiskDetectorApp.armored
 
 # Local tooling state
+.claude/
 .cursor/
 .vscode/
 

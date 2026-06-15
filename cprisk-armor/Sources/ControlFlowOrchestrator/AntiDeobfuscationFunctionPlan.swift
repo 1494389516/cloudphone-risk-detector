@@ -6,6 +6,15 @@ public enum RuntimeSaltMode: String, Codable, CaseIterable, Sendable {
     case coupled
 }
 
+/// Per-function anti-deobfuscation plan.
+///
+/// IMPORTANT — none of these flags (`runtimeSaltMode` = coupled/advisory,
+/// `fakeStateReleaseOnlyEnabled`, `multiDispatcherEnabled`, `pass8CFFAwarenessEnabled`)
+/// are consumed by `ControlFlowBinaryRewriter`; they do not alter the bytes armor
+/// emits. Their real effect is contingent on the CRiskCore runtime (`cprisk_cff`)
+/// honoring the corresponding policy. As of now they serve policy expression,
+/// cross-field consistency checks, and build logs. Treat them as declared intent,
+/// not as proof the binary is hardened — verify against the runtime.
 public struct AntiDeobfuscationFunctionPlan: Codable, Equatable, Sendable {
     public let runtimeSaltEnabled: Bool
     public let runtimeSaltMode: RuntimeSaltMode

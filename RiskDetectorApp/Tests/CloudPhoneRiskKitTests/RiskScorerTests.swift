@@ -148,6 +148,64 @@ final class RiskScorerTests: XCTestCase {
         XCTAssertEqual(signal?.score, 5)
     }
 
+    /// #10/#11: app 被实际驱动（actionCount 过地板）却零真实触摸样本 = 合成/自动化输入，
+    /// 必须升格为更强信号，而不是软兜底 +5（“最需要检测时最弱”）。
+    func testInteractionExpectedButAbsentEscalatesBeyondSoftFloor() {
+        let touch = TestFixtures.makeTouchMetrics(
+            sampleCount: 0, tapCount: 0, swipeCount: 0,
+            coordinateSpread: nil, intervalCV: nil, averageLinearity: nil
+        )
+        let behavior = BehaviorSignals(
+            touch: touch,
+            motion: MotionMetrics(sampleCount: 0, stillnessRatio: nil, motionEnergy: nil),
+            touchMotionCorrelation: nil,
+            actionCount: 12
+        )
+        let context = RiskContext(
+            device: TestFixtures.makeDeviceFingerprint(),
+            deviceID: "test-device-id",
+            network: TestFixtures.makeNetworkSignals(),
+            behavior: behavior,
+            jailbreak: TestFixtures.makeDetectionResult()
+        )
+        let report = RiskScorer.score(context: context, config: TestFixtures.defaultRiskConfig)
+
+        XCTAssertNil(
+            report.signals.first { $0.id == SignalID.insufficientBehaviorData },
+            "被操作但无触摸足迹不应退回软兜底 +5"
+        )
+        let escalated = report.signals.first { $0.id == SignalID.behaviorInteractionExpectedButAbsent }
+        XCTAssertNotNil(escalated, "活跃会话无触摸足迹必须升格")
+        XCTAssertEqual(escalated?.score, 25)
+    }
+
+    /// 反向校验低误报：真实空闲会话（无操作、无样本）应仍是软兜底 +5，不被升格。
+    func testGenuineIdleSessionStaysSoftFloor() {
+        let touch = TestFixtures.makeTouchMetrics(
+            sampleCount: 0, tapCount: 0, swipeCount: 0,
+            coordinateSpread: nil, intervalCV: nil, averageLinearity: nil
+        )
+        let behavior = BehaviorSignals(
+            touch: touch,
+            motion: MotionMetrics(sampleCount: 0, stillnessRatio: nil, motionEnergy: nil),
+            touchMotionCorrelation: nil,
+            actionCount: 0
+        )
+        let context = RiskContext(
+            device: TestFixtures.makeDeviceFingerprint(),
+            deviceID: "test-device-id",
+            network: TestFixtures.makeNetworkSignals(),
+            behavior: behavior,
+            jailbreak: TestFixtures.makeDetectionResult()
+        )
+        let report = RiskScorer.score(context: context, config: TestFixtures.defaultRiskConfig)
+
+        let soft = report.signals.first { $0.id == SignalID.insufficientBehaviorData }
+        XCTAssertNotNil(soft)
+        XCTAssertEqual(soft?.score, 5)
+        XCTAssertNil(report.signals.first { $0.id == SignalID.behaviorInteractionExpectedButAbsent })
+    }
+
     // MARK: - Extra Signals
 
     func testExtraSignalsCappedAt20() {

@@ -148,6 +148,42 @@ final class ScorePipelineInvariantTests: XCTestCase {
         XCTAssertLessThanOrEqual(verdict.score, 100, "engine.evaluate score 不得大于 100")
     }
 
+    func testEngineEscalatesActionsWithoutTouchFootprint() {
+        let touch = TestFixtures.makeTouchMetrics(
+            sampleCount: 0,
+            tapCount: 0,
+            swipeCount: 0,
+            coordinateSpread: nil,
+            intervalCV: nil,
+            averageLinearity: nil
+        )
+        let behavior = BehaviorSignals(
+            touch: touch,
+            motion: MotionMetrics(sampleCount: 0, stillnessRatio: nil, motionEnergy: nil),
+            touchMotionCorrelation: nil,
+            actionCount: 12
+        )
+        let context = RiskContext(
+            device: TestFixtures.makeDeviceFingerprint(),
+            deviceID: "test-device-id",
+            network: TestFixtures.makeNetworkSignals(),
+            behavior: behavior,
+            jailbreak: TestFixtures.makeDetectionResult()
+        )
+
+        let engine = RiskDetectionEngine(policy: .default, enableLogging: false)
+        let verdict = engine.evaluate(context: context)
+
+        XCTAssertNotNil(
+            verdict.signals.first { $0.id == SignalID.behaviorInteractionExpectedButAbsent },
+            "主评估链路必须产出活跃会话无触摸足迹信号"
+        )
+        XCTAssertNil(
+            verdict.signals.first { $0.id == SignalID.insufficientBehaviorData },
+            "被操作但无触摸足迹不应退回软兜底 insufficient_behavior_data"
+        )
+    }
+
     func testEngineScoreWithNegativeChallengeOffset() {
         // 注入大额负偏移，验证引擎不会产生 score < 0 或误报 .critical
         let store = ChallengeResultStore.shared

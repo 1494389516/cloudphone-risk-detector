@@ -16,8 +16,6 @@ final class LayeredConsistencyProvider: RiskSignalProvider {
         ObfuscatedConstants.denyAttachToken,
     ]
 
-    private static let rtldDefault = UnsafeMutableRawPointer(bitPattern: -2)
-
     func signals(snapshot: RiskSnapshot) -> [RiskSignal] {
         let planner = MutationPlanner(
             strategy: activeMutationStrategy(),
@@ -55,24 +53,11 @@ final class LayeredConsistencyProvider: RiskSignalProvider {
     private func detectPrologueIntegrity() -> [RiskSignal] {
         var tampered: [String] = []
         for symbol in Self.criticalSymbols {
-            guard let ptr = dlsym(Self.rtldDefault, symbol) else { continue }
-            let bytes = ptr.assumingMemoryBound(to: UInt8.self)
-            let first = bytes[0]
-            let second = bytes[1]
-
-            let hooked: Bool
-            switch first {
-            case 0x14, 0x17:
-                hooked = true
-            case 0xD6:
-                hooked = true
-            case 0x00 where second == 0x00:
-                hooked = true
-            default:
-                hooked = false
-            }
-
-            if hooked {
+            // 复用 LibcPrologueGuard 的安全检测：vm_read_overwrite 读 16 字节 + 完整
+            // trampoline 模式匹配（B/BL/BR/BLR x16-17、LDR literal、ADRP+BR）。取代此前
+            // 不安全的 dlsym + assumingMemoryBound 2 字节读——后者在符号页不可读时会崩溃，
+            // 且仅看头 2 字节，对 inline hook 的覆盖弱于 16 字节版，两处逻辑也不再分裂。
+            if LibcPrologueGuard.isInlineHooked(symbol: symbol) {
                 tampered.append(symbol)
             }
         }

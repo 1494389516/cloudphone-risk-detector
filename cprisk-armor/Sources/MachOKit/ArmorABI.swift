@@ -58,7 +58,9 @@ private enum ArmorMessageAuth {
 /// The goal of this namespace is to freeze the section names and packed layout
 /// semantics that the Swift producer emits and the C runtime consumes.
 public enum ArmorABI {
-    public static let version: UInt32 = 2
+    // ABI v3: aligned with CRiskCore C header `CPRISK_ARMOR_ABI_VERSION 3u`
+    // (nonce widened 8→16B; loader entry 136→144B; strtab index entry 52→60B).
+    public static let version: UInt32 = 3
     public static let keySize = 32
     public static let hashSize = 32
     public static let nonceSize = 16
@@ -520,7 +522,9 @@ public enum ArmorABI {
         public static let magic: UInt32 = 0x43505354
         public static let sectionName = Sections.stringTable
         public static let headerSize = 12
-        public static let indexEntrySize = 52
+        // 60 = 4(stringID) + 4(dataOffset) + 4(dataLength) + 16(nonce) + 32(hmacTag).
+        // Matches C header `_Static_assert(sizeof(strtab_index_entry) == 60)`.
+        public static let indexEntrySize = 60
 
         /// Packed layout: { magic, version, count }.
         public struct Header {
@@ -547,7 +551,7 @@ public enum ArmorABI {
             }
         }
 
-        /// Packed layout: { string_id, data_offset, data_length, nonce[8], hmac_tag[32] }.
+        /// Packed layout: { string_id, data_offset, data_length, nonce[16], hmac_tag[32] }.
         public struct IndexEntry {
             public let stringID: UInt32
             public let dataOffset: UInt32
@@ -584,7 +588,10 @@ public enum ArmorABI {
         public static let sectionName = Sections.loader
         public static let protectedSectionName = Sections.protectedBlob
         public static let headerSize = 12
-        public static let entrySize = 136
+        // 144 = 16(seg) + 16(sect) + 4(keyID) + 4(flags) + 8(vmAddr) + 8(size)
+        //     + 32(contentHash) + 16(nonce) + 32(hmacTag) + 4(sectionIndex) + 4(chainedKeyDepth).
+        // Matches C header `_Static_assert(sizeof(loader_entry) == 144)`.
+        public static let entrySize = 144
 
         /// Packed layout: { magic, version, count }.
         public struct Header {
@@ -613,7 +620,7 @@ public enum ArmorABI {
 
         /// Packed layout:
         /// { segment_name[16], section_name[16], key_id, flags, vm_addr, size,
-        ///   content_hash[32], nonce[8], hmac_tag[32], section_index, chained_key_depth }.
+        ///   content_hash[32], nonce[16], hmac_tag[32], section_index, chained_key_depth }.
         public struct Entry {
             public let segmentName: String
             public let sectionName: String

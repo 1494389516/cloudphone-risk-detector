@@ -25,6 +25,9 @@ public enum SignalID {
     static let motionTooStill = "motion_too_still"
     static let touchMotionWeakCoupling = "touch_motion_weak_coupling"
     static let insufficientBehaviorData = "insufficient_behavior_data"
+    /// 该有交互上下文（app 被驱动/actionCount 过活动地板）却无真实触摸足迹（touch 样本≈0），
+    /// 合成/自动化输入的签名。比 insufficient_behavior_data 强,贯彻 fail-closed。
+    static let behaviorInteractionExpectedButAbsent = "behavior_interaction_expected_but_absent"
     static let forceTooUniform = "force_too_uniform"
     static let radiusTooUniform = "radius_too_uniform"
     static let swipeSpeedTooRegular = "swipe_speed_too_regular"

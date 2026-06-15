@@ -133,7 +133,18 @@ final class ControlFlowOrchestratorTests: XCTestCase {
             "cprisk_detect_hardware_breakpoints",
             "cprisk_scan_instant_return_key_symbols_prefix",
             "cprisk_scan_hook_surface_trampoline_prefixes",
-            "cprisk_is_being_traced_sysctl_only"
+            "cprisk_is_being_traced_sysctl_only",
+            // v7.7 — cross-session keychain kv / lifecycle observer / SE probe-cache
+            "LongitudinalStateStore.save",
+            "LongitudinalStateStore.load",
+            "LongitudinalStateStore.delete",
+            "LongitudinalStateStore.saveString",
+            "LongitudinalStateStore.loadString",
+            "AppLifecycleHeartbeatProvider.signals",
+            "AppLifecycleHeartbeatProvider.currentApplicationStateString",
+            "SecureEnclaveSigner.readCachedSupport",
+            "SecureEnclaveSigner.cacheSupport",
+            "AppLifecycleHeartbeatProvider.applicationStateString"
         ]
         let legacyNames: Set<String> = [
             "DetectorRegistry.dispatchSensitiveDetectors",
@@ -502,14 +513,30 @@ final class ControlFlowOrchestratorTests: XCTestCase {
         let nopRunSectionOffset = eightData.count * 4
         let head = Self.readWordLE(after, at: nopRunSectionOffset)
         XCTAssertNotEqual(head, 0xD503_201F, "first NOP should become TBZ dispatcher")
-        XCTAssertEqual((head >> 24) & 0xFF, 0x36, "live dispatcher should be TBZ (WZR)")
+        // P1a: the dispatcher template varies per function — the live arm is an
+        // always-jump emitted as either TBZ_WZR (0x36) or CBZ_XZR (0xB4) (both
+        // branch unconditionally because WZR/XZR ≡ 0). Accept either family.
+        let headOp = (head >> 24) & 0xFF
+        XCTAssertTrue(
+            headOp == 0x36 || headOp == 0xB4,
+            "live dispatcher is TBZ(WZR) or CBZ(XZR); got 0x\(String(headOp, radix: 16))"
+        )
 
         let dead1 = Self.readWordLE(after, at: nopRunSectionOffset + 4)
         let dead2 = Self.readWordLE(after, at: nopRunSectionOffset + 8)
         XCTAssertNotEqual(dead1, 0xD503_201F, "second slot is unreachable TBZ/TBNZ (dead arm), not NOP")
         XCTAssertNotEqual(dead2, 0xD503_201F, "third slot is unreachable TBZ/TBNZ (dead arm), not NOP")
-        XCTAssertEqual((dead1 >> 24) & 0xFF, 0x36, "dead arm[1] is TBZ")
-        XCTAssertEqual((dead2 >> 24) & 0xFF, 0x37, "dead arm[2] is TBNZ")
+        // Dead arms are never-jumps: TBNZ_WZR (0x37) or CBNZ_XZR (0xB5).
+        let dead1Op = (dead1 >> 24) & 0xFF
+        let dead2Op = (dead2 >> 24) & 0xFF
+        XCTAssertTrue(
+            dead1Op == 0x37 || dead1Op == 0xB5,
+            "dead arm[1] is never-jump TBNZ(WZR) or CBNZ(XZR); got 0x\(String(dead1Op, radix: 16))"
+        )
+        XCTAssertTrue(
+            dead2Op == 0x37 || dead2Op == 0xB5,
+            "dead arm[2] is never-jump TBNZ(WZR) or CBNZ(XZR); got 0x\(String(dead2Op, radix: 16))"
+        )
 
         XCTAssertEqual(Self.readWordLE(after, at: nopRunSectionOffset + 12), 0xD503_201F, "join slot stays NOP")
 

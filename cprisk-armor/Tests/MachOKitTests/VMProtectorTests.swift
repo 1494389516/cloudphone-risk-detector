@@ -865,8 +865,10 @@ final class VMProtectorTests: XCTestCase {
 
         let blr = Data([0x00, 0x00, 0x3F, 0xD6]) // BLR X0
         let br = lifter.liftPrologue(bytes: blr, maxInstructions: 4)
-        XCTAssertEqual(br.first?.op, VMLogicalOp.rawRegion)
-        XCTAssertEqual(br.first?.rawCategory, VMRawRegionCategory.branchTest)
+        // BLR/BR now lift to the dedicated indirect-branch opcode rather than
+        // the legacy rawRegion/branchTest catch-all (ARM64Lifter.swift isBLR/isBR).
+        XCTAssertEqual(br.first?.op, VMLogicalOp.branchInd)
+        XCTAssertNil(br.first?.rawCategory, "branchInd is not a rawRegion, so it carries no rawCategory")
     }
 
     func testLifterFusesAddLaneAndRolAccIntoSuperInstruction() {

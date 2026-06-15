@@ -110,7 +110,7 @@ public enum SignalCompressor {
         if ids.contains("touch_interval_too_regular") || ids.contains("touch_interval_too_chaotic") { bits |= 0x08 }
         if ids.contains("swipe_too_linear") || ids.contains("swipe_too_curvy") { bits |= 0x10 }
         if ids.contains("motion_too_still") || ids.contains("touch_motion_weak_coupling") { bits |= 0x20 }
-        if ids.contains("insufficient_behavior_data") { bits |= 0x40 }
+        if ids.contains("insufficient_behavior_data") || ids.contains(SignalID.behaviorInteractionExpectedButAbsent) { bits |= 0x40 }
         if ids.contains("sensor_replay_detected") || ids.contains("gpu_render_anomaly") { bits |= 0x80 }
 
         return bits

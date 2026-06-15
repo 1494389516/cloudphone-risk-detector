@@ -7,9 +7,29 @@ import Foundation
 /// 标准化为服务端可直接入图的格式。
 ///
 /// ## 隐私保护
-/// - 所有哈希为单向 SHA256，不可逆推原始值
+/// - 所有哈希为单向 SHA256，**加固定盐**后输出
 /// - IP、账号 ID、BSSID、应用列表等敏感字段均以哈希形式上报
+///
+/// ## 关于可逆推性（诚实描述）
+/// SHA256 本身单向，但 `hwProfileHash` 的原像由 `deviceID|hardwareMachine|model`
+/// 组成，其中 `hardwareMachine`/`model` 是**低熵**字段（iPhone 机型空间仅几十个）。
+/// 无盐确定性哈希可被攻击者预先构造彩虹表 / 字典，对低熵分量直接反查出设备型号，
+/// 因此“不可逆推”是不成立的。
+/// 这里引入**应用/租户级固定盐**（compile-time 常量，**非** per-install 随机盐）：
+/// - 抬高反推成本：攻击者必须知道盐才能重建字典，盐随 SDK 版本可轮换。
+/// - 保留可关联性：同一应用内所有设备/所有上报使用同一盐，跨设备/跨上报的
+///   `hwProfileHash` 仍可在服务端聚类（per-install 随机盐会破坏这一点）。
+/// 注意：固定盐**不是**绝对不可逆——只要盐泄露，低熵分量仍可被字典攻击；
+/// 它提供的是“成本抬升 + 可轮换”，而非密码学意义上的不可逆。
 public enum GraphFeatureCollector {
+
+    /// 应用/租户级固定盐（域分隔常量）。
+    ///
+    /// 设计约束（见上方文档）：
+    /// - **compile-time 固定**：所有安装、所有设备共享同一值 → 保留跨设备哈希可关联性。
+    /// - **非随机、非持久化**：不引入新的 per-install 随机源（那会破坏聚类）。
+    /// - 命名沿用本仓库 `*_v1` 域标签约定，版本号 bump 即可整体轮换盐。
+    private static let hwProfileSaltDomainTag = "cprisk_graph_hwprofile_salt_v1"
 
     /// 从 RiskSnapshot 与 ServerSignals 收集图节点描述符
     /// - Parameters:
@@ -59,13 +79,16 @@ public enum GraphFeatureCollector {
 
     // MARK: - 哈希工具
 
-    /// 设备指纹哈希：SHA256(deviceID + hardwareMachine + model)
+    /// 设备指纹哈希：SHA256(salt + deviceID + hardwareMachine + model)
+    ///
+    /// 引入应用/租户级固定盐前缀以抬高对低熵分量（机型/型号）的反推成本。
+    /// 见类型文档中“关于可逆推性”一节——这是成本抬升而非绝对不可逆。
     private static func computeHwProfileHash(
         deviceID: String,
         hardwareMachine: String,
         model: String
     ) -> String {
-        let raw = "\(deviceID)|\(hardwareMachine)|\(model)"
+        let raw = "\(hwProfileSaltDomainTag)|\(deviceID)|\(hardwareMachine)|\(model)"
         return sha256Hex(raw)
     }
 

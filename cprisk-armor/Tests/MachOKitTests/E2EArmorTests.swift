@@ -252,6 +252,7 @@ final class E2EArmorTests: XCTestCase {
         let file = try MachOFile(url: inputURL)
         let config = PassConfig(encryptionKey: Data("test-whitebox-key".utf8))
 
+        try Self.seedWhiteBoxPlaceholders(in: file, rootKey: config.encryptionKey)
         _ = try IntegrityAnchorPass().execute(on: file, config: config)
 
         let metadataSection = try XCTUnwrap(
@@ -284,6 +285,7 @@ final class E2EArmorTests: XCTestCase {
         let file = try MachOFile(url: inputURL)
         let config = PassConfig(encryptionKey: Data("test-whitebox-config".utf8))
 
+        try Self.seedWhiteBoxPlaceholders(in: file, rootKey: config.encryptionKey)
         _ = try IntegrityAnchorPass().execute(on: file, config: config)
 
         let metadataSection = try XCTUnwrap(
@@ -306,14 +308,31 @@ final class E2EArmorTests: XCTestCase {
 
         XCTAssertGreaterThanOrEqual(metadata.count, 48)
 
-        var expectedDigest = Data()
-        expectedDigest.append(code)
-        expectedDigest.append(data)
-        expectedDigest.append(tag)
+        // configDigest wire format (mirrors WhiteBoxProfile.build and
+        // cprisk_whitebox_config_digest_valid_i in C):
+        //   "cprisk.whitebox.config.v2"
+        //   || u64_LE(code_len) || code
+        //   || u64_LE(data_len) || data
+        //   || u64_LE(tag_len)  || tag
+        //   || u32_LE(domain.rawValue) for each domain sorted ascending
+        // Length prefixes prevent a code/data/tag boundary-shift collision that a
+        // bare code||data||tag concatenation would allow.
+        var configMaterial = Data("cprisk.whitebox.config.v2".utf8)
+        func appendLE64(_ value: UInt64) {
+            var le = value.littleEndian
+            withUnsafeBytes(of: &le) { configMaterial.append(contentsOf: $0) }
+        }
+        appendLE64(UInt64(code.count)); configMaterial.append(code)
+        appendLE64(UInt64(data.count)); configMaterial.append(data)
+        appendLE64(UInt64(tag.count)); configMaterial.append(tag)
+        for domain in ArmorABI.WhiteBox.Domain.allCases.sorted(by: { $0.rawValue < $1.rawValue }) {
+            var domLE = domain.rawValue.littleEndian
+            withUnsafeBytes(of: &domLE) { configMaterial.append(contentsOf: $0) }
+        }
 
         XCTAssertEqual(
             metadata.subdata(in: 16..<48),
-            Data(SHA256.hash(data: expectedDigest)),
+            Data(SHA256.hash(data: configMaterial)),
             "configDigest must bind white-box code, data, and detached tag so the runtime can reject tampered metadata"
         )
     }
@@ -355,6 +374,31 @@ final class E2EArmorTests: XCTestCase {
     }
 
     // MARK: - Fixture Builder
+
+    /// Seed empty white-box placeholder sections into __DATA so Pass 4 will
+    /// populate them. IntegrityAnchorPass only writes the white-box sections
+    /// when they already exist (writeIfPresent — older app builds may omit
+    /// them), so a fixture that wants populated white-box sections must declare
+    /// the placeholders first. Each placeholder is sized to the corresponding
+    /// bundle section (sizes are salt-independent and stable within a process)
+    /// because addOrUpdateSection refuses to grow an existing section.
+    private static func seedWhiteBoxPlaceholders(in file: MachOFile, rootKey: Data?) throws {
+        let bundle = ArmorWhiteBox.build(rootKey: rootKey)
+        let placeholders: [(String, Int)] = [
+            (ArmorABI.WhiteBox.Sections.metadata, bundle.metadataSection.count),
+            (ArmorABI.WhiteBox.Sections.code, bundle.whiteboxCode.count),
+            (ArmorABI.WhiteBox.Sections.data, bundle.whiteboxData.count),
+            (ArmorABI.WhiteBox.Sections.tag, bundle.whiteboxTag.count),
+        ]
+        for (name, size) in placeholders {
+            _ = try file.addOrUpdateSection(
+                segment: ArmorABI.dataSegmentName,
+                section: name,
+                content: Data(repeating: 0, count: size),
+                align: 3
+            )
+        }
+    }
 
     private static func writeFixture(named name: String) throws -> URL {
         let url = temporaryURL(named: name)

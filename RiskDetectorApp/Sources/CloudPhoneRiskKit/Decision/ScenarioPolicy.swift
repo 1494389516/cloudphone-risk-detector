@@ -106,7 +106,13 @@ public struct ScenarioPolicy: Codable, Sendable {
 
     // MARK: - 预设策略
 
-    /// SDK 5.2 Impossible States：录屏+充电static+USB音频+无蜂窝+未录入生物识别 -> 强制 block
+    /// SDK 5.2 Impossible States：云手机不可能状态组合 -> 强制 block。
+    ///
+    /// 由硬 AND（全部 5 信号在场）改为 N-of-M 带权阈值（v7.x）：给最难伪造的虚拟化
+    /// 内在信号高权重、给合法设备常见（易误报）信号低权重。阈值 70 + 至少 4/5 +
+    /// usb_audio_routed 必备，抑制单个低/中权重信号仍触发（鲁棒），但不会让 3 个
+    /// 常见边界信号直接 force block；合法 WiFi-only iPad 即便凑齐其余 4 信号也仅
+    /// 66 < 70，误报不上升。
     private static let impossibleStatesRule = ComboRule(
         name: "impossible_states_cloudphone",
         requiredSignals: [
@@ -118,7 +124,17 @@ public struct ScenarioPolicy: Codable, Sendable {
         ],
         bonusScore: 100,
         forceAction: .block,
-        description: "录屏+充电态静态+USB音频+无蜂窝+未录入生物识别 -> 云手机不可能状态"
+        description: "录屏+充电态静态+USB音频+无蜂窝+未录入生物识别 -> 云手机不可能状态（N-of-M 带权）",
+        weightThreshold: 70,
+        signalWeights: [
+            "usb_audio_routed": 34,        // 虚拟化内在，最难伪造
+            "battery_state_static": 26,    // 充电态静态，较难
+            "screen_captured": 18,         // 可疑但合法录屏常见
+            "no_cellular_provider": 11,    // WiFi-only iPad 常见，易误报
+            "biometric_not_enrolled": 11,  // 未设生物识别常见，易误报
+        ],
+        minimumMatchedCount: 4,
+        mandatorySignals: ["usb_audio_routed"]
     )
 
     // MARK: - 信号融合规则 CR-001 ~ CR-006
@@ -479,6 +495,20 @@ public struct ComboRule: Codable, Sendable {
     public let bonusScore: Double
     public let forceAction: RiskAction?
     public let description: String?
+    /// N-of-M 带权阈值（可选）。与 `signalWeights` 同时提供时，`matches` 改用带权
+    /// 求和判定：累加“在场的 required 信号”的权重，达到阈值即命中。缺省（nil）时
+    /// 退回硬 AND（要求全部 required 信号在场）。
+    ///
+    /// 设计动机：硬 AND 的脆弱点是“对抗者让任一 required 信号不成立即整体规避”。
+    /// 给最难伪造的信号高权重、给合法设备常见（易误报）的信号低权重后，抑制单个
+    /// 低权重信号不再能逃逸，而合法设备凑不出高权重组合，误报不上升。
+    public let weightThreshold: Double?
+    public let signalWeights: [String: Double]?
+    /// 加权模式下至少需要命中的 required 信号数。用于防止少数高权重信号直接触发
+    /// 强制动作，尤其适合 forceAction=.block 的组合规则。
+    public let minimumMatchedCount: Int?
+    /// 加权模式下必须在场的信号。用于表达“杀手锏”信号必须存在，否则不应触发。
+    public let mandatorySignals: [String]?
 
     private enum CodingKeys: String, CodingKey {
         case name = "n"
@@ -486,6 +516,10 @@ public struct ComboRule: Codable, Sendable {
         case bonusScore = "bs"
         case forceAction = "fa"
         case description = "ds"
+        case weightThreshold = "wt"
+        case signalWeights = "sw"
+        case minimumMatchedCount = "mm"
+        case mandatorySignals = "ms"
     }
 
     public init(
@@ -493,13 +527,21 @@ public struct ComboRule: Codable, Sendable {
         requiredSignals: [String],
         bonusScore: Double = 20,
         forceAction: RiskAction? = nil,
-        description: String? = nil
+        description: String? = nil,
+        weightThreshold: Double? = nil,
+        signalWeights: [String: Double]? = nil,
+        minimumMatchedCount: Int? = nil,
+        mandatorySignals: [String]? = nil
     ) {
         self.name = name
         self.requiredSignals = requiredSignals
         self.bonusScore = bonusScore
         self.forceAction = forceAction
         self.description = description
+        self.weightThreshold = weightThreshold
+        self.signalWeights = signalWeights
+        self.minimumMatchedCount = minimumMatchedCount
+        self.mandatorySignals = mandatorySignals
     }
 
     /// 检查信号是否匹配此规则
@@ -507,6 +549,35 @@ public struct ComboRule: Codable, Sendable {
         guard !requiredSignals.isEmpty else { return false }
         let signalIds = Set(signals.map { $0.id })
         let required = Set(requiredSignals)
+
+        // N-of-M 带权模式：累加在场 required 信号的权重，达阈值即命中。
+        if let threshold = weightThreshold, let weights = signalWeights {
+            guard threshold.isFinite, threshold > 0 else {
+                return required.isSubset(of: signalIds)
+            }
+            guard requiredSignals.allSatisfy({ sid in
+                guard let weight = weights[sid] else { return false }
+                return weight.isFinite && weight >= 0
+            }) else {
+                return required.isSubset(of: signalIds)
+            }
+            if let mandatorySignals, !Set(mandatorySignals).isSubset(of: signalIds) {
+                return false
+            }
+
+            var matchedCount = 0
+            let score = requiredSignals.reduce(0.0) { partial, sid in
+                guard signalIds.contains(sid) else { return partial }
+                matchedCount += 1
+                return partial + (weights[sid] ?? 0)
+            }
+            if let minimumMatchedCount, minimumMatchedCount > 0, matchedCount < minimumMatchedCount {
+                return false
+            }
+            return score >= threshold
+        }
+
+        // 默认：硬 AND（全部 required 信号必须在场）。
         return required.isSubset(of: signalIds)
     }
 }
