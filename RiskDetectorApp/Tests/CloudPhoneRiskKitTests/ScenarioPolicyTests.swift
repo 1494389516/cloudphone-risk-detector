@@ -106,6 +106,62 @@ final class ScenarioPolicyTests: XCTestCase {
         XCTAssertFalse(rule.matches(signals: partialSignals))
     }
 
+    /// N-of-M 带权：抑制单个低权重信号仍命中（鲁棒性），仅抑制最高权重信号才逃逸，
+    /// 且合法设备凑不出高权重组合（低误报）。镜像 impossible_states 的权重设计。
+    func testComboRuleWeightedNofMMatching() {
+        let rule = ComboRule(
+            name: "impossible_weighted",
+            requiredSignals: [
+                "screen_captured", "battery_state_static", "usb_audio_routed",
+                "no_cellular_provider", "biometric_not_enrolled",
+            ],
+            bonusScore: 100,
+            forceAction: .block,
+            weightThreshold: 70,
+            signalWeights: [
+                "usb_audio_routed": 34, "battery_state_static": 26, "screen_captured": 18,
+                "no_cellular_provider": 11, "biometric_not_enrolled": 11,
+            ],
+            minimumMatchedCount: 4,
+            mandatorySignals: ["usb_audio_routed"]
+        )
+        func sig(_ id: String) -> RiskSignal { RiskSignal(id: id, category: "device", score: 1, evidence: [:]) }
+        let all = ["screen_captured", "battery_state_static", "usb_audio_routed",
+                   "no_cellular_provider", "biometric_not_enrolled"]
+
+        // 全 5 信号 -> 100 >= 70，命中。
+        XCTAssertTrue(rule.matches(signals: all.map(sig)))
+        // 抑制低权重信号（no_cellular，11）-> 89 >= 70，仍命中（硬 AND 下会逃逸）。
+        XCTAssertTrue(rule.matches(signals: all.filter { $0 != "no_cellular_provider" }.map(sig)))
+        // 抑制次高权重（battery，26）-> 74 >= 70，仍命中。
+        XCTAssertTrue(rule.matches(signals: all.filter { $0 != "battery_state_static" }.map(sig)))
+        // 抑制最高权重（usb_audio，34）-> 66 < 70，逃逸（最难伪造信号是唯一杀手锏）。
+        XCTAssertFalse(rule.matches(signals: all.filter { $0 != "usb_audio_routed" }.map(sig)))
+        // 合法 WiFi-iPad 易误报组合（无 usb_audio）-> 66 < 70，不误报。
+        XCTAssertFalse(rule.matches(signals: ["screen_captured", "battery_state_static",
+                                              "no_cellular_provider", "biometric_not_enrolled"].map(sig)))
+        // 仅 3 个信号即使权重过阈值（34+26+11=71），也不能直接 force block。
+        XCTAssertFalse(rule.matches(signals: ["usb_audio_routed", "battery_state_static",
+                                              "no_cellular_provider"].map(sig)))
+        // 仅两个低权重信号 -> 22 < 70，不命中。
+        XCTAssertFalse(rule.matches(signals: ["no_cellular_provider", "biometric_not_enrolled"].map(sig)))
+    }
+
+    func testComboRuleInvalidWeightedConfigFallsBackToHardAnd() {
+        let rule = ComboRule(
+            name: "invalid_weighted",
+            requiredSignals: ["a", "b"],
+            bonusScore: 10,
+            weightThreshold: 0,
+            signalWeights: ["a": 10, "b": 10]
+        )
+        func sig(_ id: String) -> RiskSignal { RiskSignal(id: id, category: "device", score: 1, evidence: [:]) }
+
+        XCTAssertFalse(rule.matches(signals: []), "非法阈值不能让加权规则空信号命中")
+        XCTAssertFalse(rule.matches(signals: ["a"].map(sig)), "非法阈值应回退硬 AND，而不是部分命中")
+        XCTAssertTrue(rule.matches(signals: ["a", "b"].map(sig)), "回退硬 AND 后完整 required 信号仍应命中")
+    }
+
     func testPaymentPolicyHasComboRules() {
         let payment = ScenarioPolicy.payment
         XCTAssertFalse(payment.comboRules.isEmpty)

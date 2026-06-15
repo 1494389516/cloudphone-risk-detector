@@ -308,14 +308,31 @@ final class E2EArmorTests: XCTestCase {
 
         XCTAssertGreaterThanOrEqual(metadata.count, 48)
 
-        var expectedDigest = Data()
-        expectedDigest.append(code)
-        expectedDigest.append(data)
-        expectedDigest.append(tag)
+        // configDigest wire format (mirrors WhiteBoxProfile.build and
+        // cprisk_whitebox_config_digest_valid_i in C):
+        //   "cprisk.whitebox.config.v2"
+        //   || u64_LE(code_len) || code
+        //   || u64_LE(data_len) || data
+        //   || u64_LE(tag_len)  || tag
+        //   || u32_LE(domain.rawValue) for each domain sorted ascending
+        // Length prefixes prevent a code/data/tag boundary-shift collision that a
+        // bare code||data||tag concatenation would allow.
+        var configMaterial = Data("cprisk.whitebox.config.v2".utf8)
+        func appendLE64(_ value: UInt64) {
+            var le = value.littleEndian
+            withUnsafeBytes(of: &le) { configMaterial.append(contentsOf: $0) }
+        }
+        appendLE64(UInt64(code.count)); configMaterial.append(code)
+        appendLE64(UInt64(data.count)); configMaterial.append(data)
+        appendLE64(UInt64(tag.count)); configMaterial.append(tag)
+        for domain in ArmorABI.WhiteBox.Domain.allCases.sorted(by: { $0.rawValue < $1.rawValue }) {
+            var domLE = domain.rawValue.littleEndian
+            withUnsafeBytes(of: &domLE) { configMaterial.append(contentsOf: $0) }
+        }
 
         XCTAssertEqual(
             metadata.subdata(in: 16..<48),
-            Data(SHA256.hash(data: expectedDigest)),
+            Data(SHA256.hash(data: configMaterial)),
             "configDigest must bind white-box code, data, and detached tag so the runtime can reject tampered metadata"
         )
     }

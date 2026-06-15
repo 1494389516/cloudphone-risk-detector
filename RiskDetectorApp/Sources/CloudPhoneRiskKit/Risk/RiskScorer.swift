@@ -42,6 +42,10 @@ enum RiskScorer {
     private static let radiusTooUniformScore: Double = 8
     private static let swipeSpeedTooRegularScore: Double = 6
     private static let insufficientDataScore: Double = 5
+    /// 升格分:app 被实际驱动(actionCount≥地板)却零真实触摸样本时,这是合成/自动化输入
+    /// 的高精度签名(真人完成 ≥8 次操作不可能产生 0 触摸样本)。比软兜底 +5 显著更强,
+    /// 落实"最需要检测时不能最弱"(#10/#11)。单独仍非 block 级,与其它信号叠加才升级。
+    private static let interactionExpectedButAbsentScore: Double = 25
 
     // MARK: - Behavior Sample Counts (fixed)
 
@@ -146,10 +150,32 @@ enum RiskScorer {
         var total: Double = 0
         var signals: [RiskSignal] = []
 
-        // 样本不足时跳过高置信度启发式，仅产出 insufficient_data 软信号
-        // 防止低样本量下 Pearson 相关等统计量产生不稳定的误判
+        // 样本不足时跳过高置信度启发式（防止低样本量下 Pearson 相关等统计量误判）。
+        // 但“样本不足”不再一律软兜底 +5：若 app 实际被驱动（actionCount 过人类活动地板）
+        // 却没有真实触摸足迹（touch 样本为 0），这是合成/自动化输入的高精度签名——
+        // 自动化最擅长在“无交互样本”窗口让强启发式全沉默，旧的 +5 等于“最需要检测时最弱”。
+        // 此处对该情形升格（#10 低交互升格 / #11 基线建立期不可信），其余冷启动/空闲仍 +5。
         switch behavior.sampleSufficiency {
-        case .none:
+        case .none, .insufficient:
+            let reason = behavior.sampleSufficiency == .none ? "no_samples" : "below_minimum_threshold"
+            // 操作发生但零真实触摸足迹 = 该有交互却没有 → fail-closed 升格。
+            let interactionExpectedButAbsent =
+                behavior.actionCount >= BehaviorSignals.minimumActionCount
+                && behavior.touch.sampleCount == 0
+            if interactionExpectedButAbsent {
+                return (interactionExpectedButAbsentScore, [RiskSignal(
+                    id: SignalID.behaviorInteractionExpectedButAbsent,
+                    category: SignalCategory.behavior,
+                    score: interactionExpectedButAbsentScore,
+                    evidence: [
+                        "actionCount": "\(behavior.actionCount)",
+                        "touchSampleCount": "\(behavior.touch.sampleCount)",
+                        "motionSampleCount": "\(behavior.motion.sampleCount)",
+                        "reason": "actions_without_touch_footprint",
+                        "policy": "fail_closed_low_interaction",
+                    ]
+                )])
+            }
             return (insufficientDataScore, [RiskSignal(
                 id: SignalID.insufficientBehaviorData,
                 category: SignalCategory.behavior,
@@ -158,20 +184,8 @@ enum RiskScorer {
                     "tapCount": "\(behavior.touch.tapCount)",
                     "sampleCount": "\(behavior.touch.sampleCount)",
                     "motionSampleCount": "\(behavior.motion.sampleCount)",
-                    "reason": "no_samples",
-                ]
-            )])
-        case .insufficient:
-            // 样本不足：仅产出 insufficient_data 信号，跳过所有启发式
-            return (insufficientDataScore, [RiskSignal(
-                id: SignalID.insufficientBehaviorData,
-                category: SignalCategory.behavior,
-                score: insufficientDataScore,
-                evidence: [
-                    "tapCount": "\(behavior.touch.tapCount)",
-                    "sampleCount": "\(behavior.touch.sampleCount)",
-                    "motionSampleCount": "\(behavior.motion.sampleCount)",
-                    "reason": "below_minimum_threshold",
+                    "actionCount": "\(behavior.actionCount)",
+                    "reason": reason,
                     "minimumRequired": "\(BehaviorSignals.minimumTouchSamples)",
                 ]
             )])

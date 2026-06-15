@@ -907,7 +907,30 @@ public struct RiskDetectionEngine: Sendable {
         }
 
         let totalActions = behavior.touch.tapCount + behavior.touch.swipeCount
-        if totalActions < 3, behavior.touch.sampleCount < 5 {
+        let interactionExpectedButAbsent =
+            behavior.actionCount >= BehaviorSignals.minimumActionCount
+            && behavior.touch.sampleCount == 0
+        if interactionExpectedButAbsent {
+            signals.append(
+                RiskSignal(
+                    id: SignalID.behaviorInteractionExpectedButAbsent,
+                    category: "behavior",
+                    score: 25,
+                    evidence: [
+                        "actionCount": "\(behavior.actionCount)",
+                        "tapCount": "\(behavior.touch.tapCount)",
+                        "swipeCount": "\(behavior.touch.swipeCount)",
+                        "touchSampleCount": "\(behavior.touch.sampleCount)",
+                        "motionSampleCount": "\(behavior.motion.sampleCount)",
+                        "reason": "actions_without_touch_footprint",
+                        "policy": "fail_closed_low_interaction"
+                    ],
+                    state: .soft(confidence: 0.75),
+                    layer: 3,
+                    weightHint: 25
+                )
+            )
+        } else if totalActions < 3, behavior.touch.sampleCount < 5 {
             signals.append(
                 RiskSignal(
                     id: "insufficient_behavior_data",

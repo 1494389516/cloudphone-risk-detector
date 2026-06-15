@@ -29,6 +29,7 @@ final class SignalIDRuntimeContractTests: XCTestCase {
         XCTAssertEqual(SignalID.dylibInjectImageCountLow, "dylib_inject_image_count_low")
         XCTAssertEqual(SignalID.ifaceSpawnPathDivergence, "iface_spawn_path_divergence")
         XCTAssertEqual(SignalID.certificatePinningAnomaly, "certificate_pinning_anomaly")
+        XCTAssertEqual(SignalID.behaviorInteractionExpectedButAbsent, "behavior_interaction_expected_but_absent")
     }
 
     func testPreviouslyObfuscatedSignalIDsStillStable() {
