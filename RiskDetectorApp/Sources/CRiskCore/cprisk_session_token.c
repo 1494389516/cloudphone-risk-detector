@@ -13,7 +13,7 @@
  * Session tokens carry a 24-hour TTL to limit the impact of key exposure.
  * Supported token formats:
  *   - legacy: raw 32-byte token
- *   - signed: 32-byte token + 32-byte HMAC
+ *   - sealed v2: 32-byte token + 32-byte HMAC(deviceKey-derived MAC key)
  * The TTL guards against replay even when the caller keeps using
  * stale in-memory material.
  */
@@ -30,11 +30,32 @@
 
 /* Backward-compatible token format support:
  * - v1 legacy: raw 32-byte session token
- * - v2 signed: [32-byte token || 32-byte HMAC(token)]
+ * - v2 sealed: [32-byte token || 32-byte HMAC(token)]
  *
- * Local HMAC validation is a tamper filter. Server-side attestation remains
- * the source of truth. */
-static const uint8_t s_session_mac_key[] = "cprisk.session.token.v2.local.mac";
+ * The v2 tag is a device-bound local seal: the MAC key is derived as
+ * HMAC(deviceKey, context) where deviceKey is the Layer-2 key
+ * (cprisk_get_device_key), so a tag cannot be forged from static binary
+ * analysis alone. Seals are produced on-device via
+ * cprisk_seal_session_token() — the host app receives the raw token from
+ * the attestation server over a pinned channel, seals it locally, and
+ * installs / re-installs the sealed form with tamper detection.
+ * Server-side attestation remains the source of truth. */
+static const uint8_t s_session_mac_context[] = "cprisk.session.token.v2.local.mac";
+
+/* Derive the v2 seal MAC key from the Layer-2 device key.
+ * Returns 0 on success, -1 when the device key is not ready. */
+static int cprisk_session_mac_key_i(uint8_t out_key[CPRISK_ARMOR_HASH_SIZE]) {
+    uint8_t device_key[CPRISK_ARMOR_KEY_SIZE];
+    if (cprisk_get_device_key(device_key) != 0)
+        return -1;
+    cprisk_hmac_sha256(
+        device_key, sizeof(device_key),
+        s_session_mac_context, sizeof(s_session_mac_context) - 1,
+        out_key
+    );
+    cprisk_secure_zero(device_key, sizeof(device_key));
+    return 0;
+}
 
 /* Per-instance session state — single-thread assumption matches
  * cprisk_integrity.c (s_runtime_material etc.).  Guard with
@@ -66,17 +87,26 @@ static int cprisk_verify_signed_token_i(const uint8_t *token, size_t token_len) 
     if (!token || token_len != CPRISK_SESSION_TOKEN_SIGNED_SIZE)
         return -1;
 
+    uint8_t mac_key[CPRISK_ARMOR_HASH_SIZE];
+    /* Sealed format requires the Layer-2 device key; without it the tag
+     * cannot be authenticated, so reject instead of degrading to a
+     * binary-embedded constant. Callers must run cprisk_init_hybrid_kdf()
+     * before installing sealed tokens. */
+    if (cprisk_session_mac_key_i(mac_key) != 0)
+        return -1;
+
     const uint8_t *payload = token;
     const uint8_t *provided_tag = token + CPRISK_ARMOR_KEY_SIZE;
     uint8_t expected_tag[CPRISK_ARMOR_HASH_SIZE];
 
     cprisk_hmac_sha256_i(
-        s_session_mac_key,
-        sizeof(s_session_mac_key) - 1,
+        mac_key,
+        sizeof(mac_key),
         payload,
         CPRISK_ARMOR_KEY_SIZE,
         expected_tag
     );
+    cprisk_secure_zero(mac_key, sizeof(mac_key));
 
     const int rc = cprisk_hmac_verify(provided_tag, expected_tag, CPRISK_ARMOR_HASH_SIZE);
     cprisk_secure_zero(expected_tag, sizeof(expected_tag));
@@ -140,4 +170,27 @@ void cprisk_clear_session_token(void) {
     cprisk_secure_zero(s_session_token, sizeof(s_session_token));
     s_session_token_valid = 0;
     s_session_token_expires_at = 0;
+}
+
+int cprisk_seal_session_token(
+    const uint8_t raw_token[CPRISK_ARMOR_KEY_SIZE],
+    uint8_t out_sealed[CPRISK_ARMOR_KEY_SIZE + CPRISK_ARMOR_HASH_SIZE]
+) {
+    if (!raw_token || !out_sealed)
+        return -1;
+
+    uint8_t mac_key[CPRISK_ARMOR_HASH_SIZE];
+    if (cprisk_session_mac_key_i(mac_key) != 0)
+        return -1;
+
+    memcpy(out_sealed, raw_token, CPRISK_ARMOR_KEY_SIZE);
+    cprisk_hmac_sha256_i(
+        mac_key,
+        sizeof(mac_key),
+        raw_token,
+        CPRISK_ARMOR_KEY_SIZE,
+        out_sealed + CPRISK_ARMOR_KEY_SIZE
+    );
+    cprisk_secure_zero(mac_key, sizeof(mac_key));
+    return 0;
 }

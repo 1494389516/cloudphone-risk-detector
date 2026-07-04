@@ -53,8 +53,16 @@ public enum ConfigSignatureVerifier {
         }
     }
 
+    /// 是否具备可用的验签配置。Release 下仅认 Ed25519 公钥（对称 MAC 回退已禁用）；
+    /// DEBUG 下 Ed25519 或对称 key 任一配置即可。
     public static var isConfigured: Bool {
-        lock.withLock { keychainHasKey() }
+        #if DEBUG
+        return lock.withLock {
+            readFromKeychain(account: ed25519KeychainAccount) != nil || keychainHasKey()
+        }
+        #else
+        return isEd25519Configured
+        #endif
     }
 
     public static var isConfiguredForDebug: Bool {
@@ -75,12 +83,12 @@ public enum ConfigSignatureVerifier {
             return ed25519Result
         }
 
-        // 回退到自定义 pad 的 SHA-256 MAC 对称验签（兼容旧配置接口）
+        #if DEBUG
+        // 对称 MAC 回退仅限 DEBUG（兼容旧配置接口 / 测试）。对称 key 存于设备
+        // Keychain，攻击者控制设备时可提取并伪造配置，因此 Release 一律拒绝。
         let keyBytes: Data? = lock.withLock { readKeyFromKeychain() }
         guard let keyBytes else {
-            #if DEBUG
             Logger.log("⚠️ ConfigSignatureVerifier.verify: not configured in DEBUG — returning isValid=false. Use isConfiguredForDebug to check setup.")
-            #endif
             return VerificationResult(isValid: false, reason: "verification_not_configured")
         }
 
@@ -94,6 +102,10 @@ public enum ConfigSignatureVerifier {
         let isValid = CPRiskMessageAuth.isValidAuthenticationCode(signatureData, authenticating: payload, keyData: mutableKeyBytes)
 
         return VerificationResult(isValid: isValid, reason: isValid ? nil : "signature_mismatch")
+        #else
+        Logger.log("ConfigSignatureVerifier.verify: Ed25519 public key not configured — rejecting (symmetric MAC fallback is disabled in release builds; call configureEd25519PublicKey)")
+        return VerificationResult(isValid: false, reason: "ed25519_not_configured")
+        #endif
     }
 
     // MARK: - Ed25519 非对称签名

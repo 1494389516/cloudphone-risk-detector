@@ -941,9 +941,23 @@ int cprisk_is_device_bound(void);
 /* Install a session token for Layer-3 key derivation.
  * Accepted formats:
  *   - legacy: 32-byte raw token
- *   - signed: [32-byte token_data][32-byte HMAC(token_data)]
- * Returns 0 on success, -1 on invalid token or HMAC mismatch. */
+ *   - sealed v2: [32-byte token_data][32-byte HMAC(token_data)]
+ * The v2 tag is a device-bound local seal (MAC key derived from the
+ * Layer-2 device key), produced on-device via cprisk_seal_session_token().
+ * It is NOT a server signature; server-side attestation remains the
+ * source of truth. Sealed tokens require cprisk_init_hybrid_kdf() to have
+ * run first and are rejected otherwise.
+ * Returns 0 on success, -1 on invalid token or seal mismatch. */
 int cprisk_set_session_token(const uint8_t *token, size_t token_len);
+
+/* Seal a raw 32-byte session token into the v2 sealed format:
+ * [32-byte token][32-byte HMAC(token)] using a MAC key derived from the
+ * Layer-2 device key. Use this to persist / hand around the token with
+ * local tamper detection. Requires cprisk_init_hybrid_kdf().
+ * Returns 0 on success, -1 on invalid input or device key not ready. */
+int cprisk_seal_session_token(
+    const uint8_t raw_token[CPRISK_ARMOR_KEY_SIZE],
+    uint8_t out_sealed[CPRISK_ARMOR_KEY_SIZE + CPRISK_ARMOR_HASH_SIZE]);
 
 /* Retrieve the session key (Layer-3) for composing effectiveRoot.
  * Returns 0 on success (session key copied to out_key), -1 if no
