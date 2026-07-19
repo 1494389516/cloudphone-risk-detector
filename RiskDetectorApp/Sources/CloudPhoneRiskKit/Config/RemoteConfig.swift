@@ -789,11 +789,17 @@ public struct WhitelistRules: Codable, Sendable {
             return false
         }
 
-        // 兜底：CIDR 匹配
         for entry in ipWhitelist {
-            guard let cidr = ParsedCIDR.parse(entry) else { continue }
-            if cidr.contains(targetAddress) {
-                return true
+            if let cidr = ParsedCIDR.parse(entry) {
+                if cidr.contains(targetAddress) {
+                    return true
+                }
+            } else if let entryAddress = ParsedIPAddress.parse(entry) {
+                // 单个 IP 条目：按数值等价比较，兼容不同书写形式
+                // （如压缩/展开的 IPv6，或 IPv4-mapped IPv6 与其对应的 IPv4）
+                if entryAddress.matches(targetAddress) {
+                    return true
+                }
             }
         }
         return false
@@ -831,6 +837,39 @@ private enum ParsedIPAddress {
 
         return nil
     }
+
+    /// 数值相等比较，并将 IPv4-mapped IPv6 地址（::ffff:a.b.c.d）
+    /// 视为与其对应的纯 IPv4 地址相等。
+    func matches(_ other: ParsedIPAddress) -> Bool {
+        switch (self, other) {
+        case let (.v4(a), .v4(b)):
+            return a == b
+        case let (.v6(a), .v6(b)):
+            return a == b
+        default:
+            break
+        }
+        if let lhs = asIPv4Equivalent, let rhs = other.asIPv4Equivalent {
+            return lhs == rhs
+        }
+        return false
+    }
+
+    /// 若此地址是纯 IPv4，或是 IPv4-mapped IPv6（::ffff:a.b.c.d），
+    /// 返回其对应的 IPv4 数值；否则返回 nil。
+    var asIPv4Equivalent: UInt32? {
+        switch self {
+        case .v4(let value):
+            return value
+        case .v6(let bytes):
+            guard bytes.count == 16,
+                  bytes[0..<10].allSatisfy({ $0 == 0 }),
+                  bytes[10] == 0xFF, bytes[11] == 0xFF else {
+                return nil
+            }
+            return (UInt32(bytes[12]) << 24) | (UInt32(bytes[13]) << 16) | (UInt32(bytes[14]) << 8) | UInt32(bytes[15])
+        }
+    }
 }
 
 private struct ParsedCIDR {
@@ -862,30 +901,47 @@ private struct ParsedCIDR {
     func contains(_ candidate: ParsedIPAddress) -> Bool {
         switch (network, candidate) {
         case let (.v4(networkV4), .v4(candidateV4)):
-            if prefix == 0 { return true }
-            let shift = UInt32(32 - prefix)
-            let mask = ~UInt32(0) << shift
-            return (networkV4 & mask) == (candidateV4 & mask)
+            return Self.v4Contains(networkV4, candidateV4, prefix: prefix)
 
         case let (.v6(networkV6), .v6(candidateV6)):
-            if prefix == 0 { return true }
-
-            let fullBytes = prefix / 8
-            let remBits = prefix % 8
-            if networkV6.prefix(fullBytes) != candidateV6.prefix(fullBytes) {
-                return false
-            }
-
-            if remBits == 0 {
-                return true
-            }
-
-            let mask = UInt8(0xFF) << UInt8(8 - remBits)
-            return (networkV6[fullBytes] & mask) == (candidateV6[fullBytes] & mask)
+            return Self.v6Contains(networkV6, candidateV6, prefix: prefix)
 
         default:
+            // 跨协议族：允许 IPv4-mapped IPv6 与其对应的纯 IPv4 CIDR 互相匹配。
+            if case .v4(let networkV4) = network, let candidateV4 = candidate.asIPv4Equivalent {
+                return Self.v4Contains(networkV4, candidateV4, prefix: prefix)
+            }
+            if case .v4(let candidateV4) = candidate, let networkV4 = network.asIPv4Equivalent {
+                let v4Prefix = prefix - 96
+                guard (0...32).contains(v4Prefix) else { return false }
+                return Self.v4Contains(networkV4, candidateV4, prefix: v4Prefix)
+            }
             return false
         }
+    }
+
+    private static func v4Contains(_ network: UInt32, _ candidate: UInt32, prefix: Int) -> Bool {
+        if prefix == 0 { return true }
+        let shift = UInt32(32 - prefix)
+        let mask = ~UInt32(0) << shift
+        return (network & mask) == (candidate & mask)
+    }
+
+    private static func v6Contains(_ network: [UInt8], _ candidate: [UInt8], prefix: Int) -> Bool {
+        if prefix == 0 { return true }
+
+        let fullBytes = prefix / 8
+        let remBits = prefix % 8
+        if network.prefix(fullBytes) != candidate.prefix(fullBytes) {
+            return false
+        }
+
+        if remBits == 0 {
+            return true
+        }
+
+        let mask = UInt8(0xFF) << UInt8(8 - remBits)
+        return (network[fullBytes] & mask) == (candidate[fullBytes] & mask)
     }
 }
 

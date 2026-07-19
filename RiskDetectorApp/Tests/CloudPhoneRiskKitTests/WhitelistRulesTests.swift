@@ -63,6 +63,34 @@ final class WhitelistRulesTests: XCTestCase {
         XCTAssertTrue(rules.contains(ip: "::1"))
     }
 
+    func testContainsIPMatchesDifferentIPv6TextualForms() {
+        // Whitelist entry is a plain (non-CIDR) IPv6 address in compressed form;
+        // candidate is the same address in a different textual form.
+        let rules = WhitelistRules(ipWhitelist: ["2001:db8::1"])
+        XCTAssertTrue(rules.contains(ip: "2001:0db8:0000:0000:0000:0000:0000:0001"))
+        XCTAssertFalse(rules.contains(ip: "2001:db8::2"))
+    }
+
+    // MARK: - IP Whitelist: IPv4-mapped IPv6
+
+    func testContainsIPMatchesIPv4MappedIPv6AgainstPlainIPv4Entry() {
+        let rules = WhitelistRules(ipWhitelist: ["10.0.0.7"])
+        XCTAssertTrue(rules.contains(ip: "::ffff:10.0.0.7"))
+        XCTAssertFalse(rules.contains(ip: "::ffff:10.0.0.8"))
+    }
+
+    func testContainsIPMatchesIPv4MappedIPv6AgainstIPv4CIDREntry() {
+        let rules = WhitelistRules(ipWhitelist: ["10.0.0.0/24"])
+        XCTAssertTrue(rules.contains(ip: "::ffff:10.0.0.42"))
+        XCTAssertFalse(rules.contains(ip: "::ffff:10.0.1.42"))
+    }
+
+    func testContainsIPMatchesPlainIPv4AgainstIPv4MappedIPv6CIDREntry() {
+        let rules = WhitelistRules(ipWhitelist: ["::ffff:10.0.0.0/120"])
+        XCTAssertTrue(rules.contains(ip: "10.0.0.42"))
+        XCTAssertFalse(rules.contains(ip: "10.0.1.42"))
+    }
+
     // MARK: - IP Whitelist: Invalid
 
     func testContainsIPWithInvalidCIDRDoesNotCrashOrMatch() {
