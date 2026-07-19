@@ -185,12 +185,12 @@ public final class DeviceHistory {
     private var isDirty = false
 
     private init() {
-        let storageDirectory = Self.resolveStorageDirectory(
-            applicationSupportDirectories: fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask),
-            cachesDirectories: fileManager.urls(for: .cachesDirectory, in: .userDomainMask),
-            temporaryDirectory: fileManager.temporaryDirectory
-        )
+        let storageDirectory = Self.resolveStorageDirectory(fileManager: fileManager)
+        do {
+            try fileManager.createDirectory(
                 at: storageDirectory,
+                withIntermediateDirectories: true,
+                attributes: [FileAttributeKey.protectionKey: FileProtectionType.complete]
             )
         } catch {
             Logger.log("DeviceHistory: failed to create storage directory - \(error.localizedDescription)")
@@ -212,22 +212,6 @@ public final class DeviceHistory {
         if let caches = cachesDirectories.first {
             Logger.log("DeviceHistory: applicationSupportDirectory unavailable, falling back to cachesDirectory")
             return caches.appendingPathComponent("CloudPhoneRiskKit", isDirectory: true)
-        }
-        Logger.log("DeviceHistory: applicationSupportDirectory unavailable, falling back to temporaryDirectory")
-        return temporaryDirectory.appendingPathComponent("CloudPhoneRiskKit", isDirectory: true)
-    }
-
-    static func resolveStorageDirectory(
-        applicationSupportDirectories: [URL],
-        cachesDirectories: [URL],
-        temporaryDirectory: URL
-    ) -> URL {
-        if let appSupportDirectory = applicationSupportDirectories.first {
-            return appSupportDirectory
-        }
-        if let cachesDirectory = cachesDirectories.first {
-            Logger.log("DeviceHistory: applicationSupportDirectory unavailable, falling back to cachesDirectory")
-            return cachesDirectory.appendingPathComponent("CloudPhoneRiskKit", isDirectory: true)
         }
         Logger.log("DeviceHistory: applicationSupportDirectory unavailable, falling back to temporaryDirectory")
         return temporaryDirectory.appendingPathComponent("CloudPhoneRiskKit", isDirectory: true)
