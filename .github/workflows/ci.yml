@@ -1,0 +1,40 @@
+name: CI
+
+# 回归护栏(架构重构蓝图 · 阶段 G / 技术债 D7)。
+# 在 macOS runner 上对 SPM 包做 swift test,为架构重构提供自动验证。
+# 说明:SDK 依赖 Apple 专有框架(Security/IOKit/CoreMotion),仅能在 macOS/iOS 构建,
+# 因此 CI 必须使用 macOS runner;Linux 无法编译本包。
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swift-test:
+    name: swift test (macOS)
+    runs-on: macos-14
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Toolchain versions
+        run: |
+          swift --version
+          xcodebuild -version
+
+      - name: Test cprisk-armor (壳工具链 / MachOKit / VMProtector)
+        working-directory: cprisk-armor
+        run: swift test --disable-sandbox
+
+      - name: Test CloudPhoneRiskKit (SDK 核心)
+        if: ${{ !cancelled() }}
+        working-directory: RiskDetectorApp
+        run: swift test --disable-sandbox
