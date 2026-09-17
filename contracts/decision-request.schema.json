@@ -8,7 +8,8 @@
     "contract_version",
     "request_id",
     "business_event_id",
-    "sdk_report_ids"
+    "sdk_report_ids",
+    "business_event"
   ],
   "properties": {
     "kind": {
@@ -19,17 +20,80 @@
     },
     "request_id": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "maxLength": 256
     },
     "business_event_id": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "maxLength": 256
     },
     "sdk_report_ids": {
       "type": "array",
+      "maxItems": 32,
       "items": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "maxLength": 256
+      }
+    },
+    "business_event": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "BusinessRiskEvent",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "contract_version",
+        "event_id",
+        "uid",
+        "type",
+        "occurred_at_ms"
+      ],
+      "properties": {
+        "kind": {
+          "const": "business_risk_event"
+        },
+        "contract_version": {
+          "const": 1
+        },
+        "event_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "login",
+            "coupon_claim",
+            "order"
+          ]
+        },
+        "occurred_at_ms": {
+          "type": "integer",
+          "minimum": 946684800000,
+          "exclusiveMaximum": 4102444800000
+        },
+        "amount": {
+          "type": "number",
+          "minimum": 0
+        },
+        "ip": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "device_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
       }
     }
   }
