@@ -75,13 +75,13 @@ final class GraphModuleTests: XCTestCase {
         )
 
         XCTAssertFalse(descriptor.hwProfileHash.isEmpty)
-        XCTAssertNotNil(descriptor.ipHash)
-        XCTAssertNotNil(descriptor.asnHash)
-        XCTAssertNotNil(descriptor.accountIdHash)
-        // SHA256 hex is 64 chars
-        XCTAssertEqual(descriptor.ipHash?.count, 64)
-        XCTAssertEqual(descriptor.asnHash?.count, 64)
-        XCTAssertEqual(descriptor.accountIdHash?.count, 64)
+        // Migration: low-entropy client digests must not leave this boundary.
+        XCTAssertNil(descriptor.ipHash)
+        XCTAssertNil(descriptor.asnHash)
+        XCTAssertNil(descriptor.accountIdHash)
+        XCTAssertNotNil(descriptor.installationKey)
+        XCTAssertNotNil(descriptor.hardwareAttributes)
+
     }
 
     func testCollectWithEmptyServerSignals() {
@@ -170,8 +170,8 @@ final class GraphModuleTests: XCTestCase {
         for i in 0..<LocalDeviceClusterDetector.clusterThreshold {
             if let signal = detector.recordAndDetect(hwProfileHash: "device_\(i)", key: "ip_test") {
                 triggered = true
-                XCTAssertEqual(signal.id, "local_device_cluster")
-                XCTAssertEqual(signal.category, "server")
+                XCTAssertEqual(signal.id, "local_identity_churn")
+                XCTAssertEqual(signal.category, "device")
                 XCTAssertGreaterThan(signal.score, 0)
             }
         }
