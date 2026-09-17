@@ -83,3 +83,9 @@ Native execution: `command -v swift` returned no executable on this host.
 `.github/workflows/fusion-contract.yml` supplies a macOS native gate; its result
 must be observed externally after push. Apple App Attest and armor correctness
 still require a real device. No statement that all native bugs are fixed.
+
+## Executed macOS acceptance (supersedes earlier unexecuted notes)
+
+Code SHA `5178552738b4bfa0ec8b7be8a17de3a7278f421b`, GitHub Actions run [35195407412](https://github.com/1494389516/cloudphone-risk-detector/actions/runs/35195407412), job 105117339133: SUCCESS. Actual package build 65.19s; selected FusionTransportTests/FusionGraphTests/GraphModuleTests 25 tests, zero failures; Python contract suite 14 PASS. Earlier runs 35194773165 and 35195077191 failed and were repaired without removing regressions. Real Apple hardware validation remains unexecuted; software CA/assertion vectors are not hardware proof.
+
+Agent companion PR: https://github.com/1494389516/fengkong-agent/pull/23.
