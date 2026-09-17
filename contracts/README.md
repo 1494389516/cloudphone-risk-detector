@@ -81,3 +81,25 @@ execution success is claimed. Real-device App Attest/armor checks still require
 physical Apple hardware and an authorized application environment. No Detector or
 threshold changes are included. Collector integration is implemented in the paired
 Agent PR rather than exposing its credentials to the SDK or Agent tools.
+
+## Collector App Attest enrollment and fresh assertion path
+
+Configure `AppAttestSigner.configureEnrollment(challenge:submit:)` with authenticated
+Collector callbacks. The challenge callback obtains an enrollment challenge and
+returns its ID plus decoded base64 bytes. The submit callback sends the exact
+`attestKey` object, key ID and challenge ID, and throws unless the Collector accepts
+it. Only then does SDK persist the new `server_enrolled.v2` Keychain entry. Old
+locally-attested-only keys cannot silently skip server enrollment.
+
+For a report, obtain a fresh assertion challenge and call
+`AppAttestSigner.createCollectorEnvelope(payloadData:reportId:sessionToken:signingKey:keyId:serverChallenge:)`.
+This explicit v3 path generates both App Attest assertions before the envelope MAC:
+primary proof signs SHA256(canonical report bytes), second proof signs SHA256(server
+challenge bytes). Send via the normal `toGrpcRequestBytes(context:)` transport.
+The Collector consumes challenge, increasing counter and evidence in one transaction.
+Do not use the armor-only v2a path against a static-key Collector acceptance policy.
+
+The server pins the operator-provided Apple App Attestation Root CA, validates the
+certificate chain, nonce extension, App ID, counter=0, key ID, environment and COSE
+key. Unhandled authenticator extensions fail closed. Synthetic CA tests prove the
+validation code path, not a genuine Apple device; real-device validation is required.

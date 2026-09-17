@@ -50,20 +50,63 @@ public enum AppAttestSigner {
         return (keyId, assertion)
     }
 
+    /// Configure authenticated Collector enrollment before generating assertions.
+    /// Submit must return only after the server validates Apple's attestation chain.
+    public struct EnrollmentChallenge: Sendable {
+        public let id: String
+        public let bytes: Data
+        public init(id: String, bytes: Data) { self.id = id; self.bytes = bytes }
+    }
+    public typealias ChallengeProvider = @Sendable () async throws -> EnrollmentChallenge
+    public typealias EnrollmentSubmitter = @Sendable (String, Data, String) async throws -> Void
+    private static var enrollment: (ChallengeProvider, EnrollmentSubmitter)?
+
+    public static func configureEnrollment(challenge: @escaping ChallengeProvider, submit: @escaping EnrollmentSubmitter) {
+        lock.withLock { enrollment = (challenge, submit) }
+    }
+
+    /// Explicit v3 Collector path; all proofs exist BEFORE the envelope is signed.
+    /// Challenge bytes come from POST /reports/challenge and are single-use.
+    public static func createCollectorEnvelope(
+        payloadData: Data, reportId: String, sessionToken: String, signingKey: String,
+        keyId: String, serverChallenge: Data
+    ) async throws -> ReportEnvelope {
+        guard serverChallenge.count >= 32 else { throw AppAttestError.invalidServerChallenge }
+        let attestationKeyId = try await resolveKeyId()
+        let config = ReportEnvelope.Config(signatureVersion: "v3", requireHardwareAttestation: true)
+        let draft = try ReportEnvelope.create(payloadData: payloadData, reportId: reportId,
+            sessionToken: sessionToken, signingKey: signingKey, keyId: keyId,
+            attestationKeyId: attestationKeyId, config: config)
+        let canonical = Data(try draft.canonicalPayloadString().utf8)
+        let (_, assertion) = try await generateAssertion(for: canonical)
+        let (_, freshAssertion) = try await generateAssertion(for: serverChallenge)
+        return try ReportEnvelope.create(payloadData: payloadData, reportId: reportId,
+            sessionToken: sessionToken, signingKey: signingKey, keyId: keyId,
+            attestationKeyId: attestationKeyId, attestationAssertion: assertion,
+            reAttestationAssertion: freshAssertion, trustLevel: .hardware, config: config)
+    }
+
     // MARK: - Key Management
 
     private static let keychainService = "CloudPhoneRiskKit.AppAttest"
-    private static let keychainAccount = "attestation_key_id"
-    private static let attestationChallenge = Data("CloudPhoneRiskKit.AppAttest.KeyAttest.v1".utf8)
+    private static let keychainAccount = "attestation_key_id.server_enrolled.v2"
     private static let lock = NSLock()  // NSLock: Keychain I/O inside lock
 
     private static func getOrCreateKeyId() async throws -> String {
         if let existing = loadKeyId() {
             return existing
         }
+        guard let handlers = lock.withLock({ enrollment }) else {
+            throw AppAttestError.enrollmentNotConfigured
+        }
+        let challenge = try await handlers.0()
+        guard !challenge.id.isEmpty, challenge.bytes.count >= 32 else {
+            throw AppAttestError.invalidServerChallenge
+        }
         let keyId = try await DCAppAttestService.shared.generateKey()
-        let clientDataHash = SHA256.hash(data: attestationChallenge)
-        _ = try await DCAppAttestService.shared.attestKey(keyId, clientDataHash: Data(clientDataHash))
+        let clientDataHash = SHA256.hash(data: challenge.bytes)
+        let attestation = try await DCAppAttestService.shared.attestKey(keyId, clientDataHash: Data(clientDataHash))
+        try await handlers.1(keyId, attestation, challenge.id)
         if let winner = saveKeyId(keyId) {
             return winner
         }
@@ -129,11 +172,15 @@ public enum AppAttestSigner {
     // MARK: - Error
 
     public enum AppAttestError: Error, LocalizedError {
+        case enrollmentNotConfigured
+        case invalidServerChallenge
         case hardwareTrustUnsupported
         case invalidPayloadHashSize(Int)
 
         public var errorDescription: String? {
             switch self {
+            case .enrollmentNotConfigured: return "Configure authenticated server enrollment first"
+            case .invalidServerChallenge: return "Server challenge must have an ID and at least 32 bytes"
             case .hardwareTrustUnsupported:
                 return "App Attest 不支持（模拟器/黑苹果/虚拟机或无效 App ID）"
             case .invalidPayloadHashSize(let count):

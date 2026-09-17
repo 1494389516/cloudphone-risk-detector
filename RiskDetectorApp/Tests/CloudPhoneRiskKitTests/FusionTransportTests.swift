@@ -107,3 +107,15 @@ extension FusionTransportTests {
         }
     }
 }
+
+extension FusionTransportTests {
+    @available(iOS 14.0, macOS 11.0, *)
+    func testCollectorProofPathRejectsMissingServerChallengeBeforeHardwareAccess() async throws {
+        do {
+            _ = try await AppAttestSigner.createCollectorEnvelope(payloadData: Data("{}".utf8), reportId: "r", sessionToken: "s", signingKey: "key", keyId: "k", serverChallenge: Data())
+            XCTFail("empty server challenge accepted")
+        } catch AppAttestSigner.AppAttestError.invalidServerChallenge {
+            // Expected; no DeviceCheck service is contacted for malformed input.
+        }
+    }
+}
