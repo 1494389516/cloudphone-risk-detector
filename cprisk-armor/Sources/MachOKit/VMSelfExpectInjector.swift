@@ -369,14 +369,11 @@ public enum VMSelfExpectInjector {
         guard offset >= 0, offset + 8 <= data.count else {
             throw MachOError.outOfBoundsRead(offset: offset, size: 8, dataSize: data.count)
         }
-        return UInt64(data[offset])
-            | (UInt64(data[offset + 1]) << 8)
-            | (UInt64(data[offset + 2]) << 16)
-            | (UInt64(data[offset + 3]) << 24)
-            | (UInt64(data[offset + 4]) << 32)
-            | (UInt64(data[offset + 5]) << 40)
-            | (UInt64(data[offset + 6]) << 48)
-            | (UInt64(data[offset + 7]) << 56)
+        // Keep type inference bounded on the supported macOS Swift compiler.
+        // Reuse the same little-endian byte decoder for each 32-bit half.
+        let low = UInt64(try readUInt32LE(data, at: offset))
+        let high = UInt64(try readUInt32LE(data, at: offset + 4))
+        return low | (high << 32)
     }
 }
 

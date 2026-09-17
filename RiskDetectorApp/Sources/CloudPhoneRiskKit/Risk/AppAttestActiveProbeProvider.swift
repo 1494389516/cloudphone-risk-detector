@@ -42,6 +42,7 @@ final class AppAttestActiveProbeProvider: RiskSignalProvider {
     private enum ProbeOutcome {
         case ok
         case failed(reason: String)
+        case unavailable(reason: String)
     }
 
     private let stateLock = UnfairLock()
@@ -91,6 +92,15 @@ final class AppAttestActiveProbeProvider: RiskSignalProvider {
         switch outcome {
         case .ok:
             return []
+        case .unavailable(let reason):
+            return [RiskSignal(
+                id: "app_attest_active_probe_unavailable",
+                category: "hardware_trust",
+                score: 0,
+                evidence: ["reason": reason, "measurement_status": "unavailable"],
+                state: .unavailable,
+                layer: 1
+            )]
         case .failed(let reason):
             return [
                 RiskSignal(
@@ -149,6 +159,10 @@ final class AppAttestActiveProbeProvider: RiskSignalProvider {
                 return .ok
             case .invalidPayloadHashSize:
                 return .failed(reason: "invalid_payload_hash_size")
+            case .enrollmentNotConfigured:
+                return .unavailable(reason: "server_enrollment_not_configured")
+            case .invalidServerChallenge:
+                return .unavailable(reason: "invalid_server_challenge")
             }
         } catch {
             #if canImport(DeviceCheck)

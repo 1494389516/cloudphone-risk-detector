@@ -47,3 +47,45 @@ PR draft until a supported Apple runner executes tests and reviews protocol roll
 - Native DTO is still handwritten. Reference accepts unknown trust-level strings,
   rejects timestamp seconds and typed SDK/business-event confusion. It rejects
   floating-point payloads explicitly pending a universal canonical format.
+
+## Follow-up completion (source 336cc689740c84a2d506d8b6dba50e3b484ad010)
+
+IDs: C01/C02/C03; C05/C06/G05 existing SDK semantics retained and paired with
+server-side identity resolution in the Agent change.
+
+Trigger / reproduction: producer-signed JSON containing `1e-7`, `-0.0`, Unicode
+and null was rejected by the Python verifier; `output_path_integrity: {"x":7}`
+passed structural validation despite the schema; no executable HKDF base-key
+verification existed. Initial `python -m unittest contracts.tests.test_wire_completion
+-v` returned **2 failures, 1 error** (the imported legacy suite also ran).
+
+Fixes:
+- `GrpcReportPayload.toGrpcCompatiblePayload`: transports the exact Foundation
+  canonical signed bytes and computes the digest over the same bytes. Integrity
+  telemetry also observes those bytes, preventing false mismatch diagnostics.
+- `report_contract.canonical_payload`: validate duplicate keys/JSON syntax, retain
+  exact UTF-8 spelling; do not reformat floats or Unicode.
+- `generate.py`: schema-generated active Swift wire serializer and Python shape
+  validator. Actual outgoing DTO and incoming verifier call generated functions.
+- `derive_request_key` / `verify_upload_with_base_key`: RFC 5869 HKDF with SDK
+  info-domain and BE32 flags; distinct v1/v2/v2h/v3 MAC domains, standard-HMAC HKDF
+  and historical custom-pad report MAC remain explicit separate operations.
+- Native tests: actual create -> network bytes -> recomputed MAC; CryptoKit HKDF
+  against the same wire fixtures used by Python. Existing proof and graph tests
+  remain present.
+
+After patch: `python -m unittest discover -s contracts/tests -v`: **14 tests pass**,
+including **20 original vectors + 8 additional raw-wire vectors**. This count does
+not represent full repository coverage. `python contracts/generate.py --check`
+and `git diff --check` pass.
+
+Native execution: `command -v swift` returned no executable on this host.
+`.github/workflows/fusion-contract.yml` supplies a macOS native gate; its result
+must be observed externally after push. Apple App Attest and armor correctness
+still require a real device. No statement that all native bugs are fixed.
+
+## Executed macOS acceptance (supersedes earlier unexecuted notes)
+
+Code SHA `5178552738b4bfa0ec8b7be8a17de3a7278f421b`, GitHub Actions run [35195407412](https://github.com/1494389516/cloudphone-risk-detector/actions/runs/35195407412), job 105117339133: SUCCESS. Actual package build 65.19s; selected FusionTransportTests/FusionGraphTests/GraphModuleTests 25 tests, zero failures; Python contract suite 14 PASS. Earlier runs 35194773165 and 35195077191 failed and were repaired without removing regressions. Real Apple hardware validation remains unexecuted; software CA/assertion vectors are not hardware proof.
+
+Agent companion PR: https://github.com/1494389516/fengkong-agent/pull/23.

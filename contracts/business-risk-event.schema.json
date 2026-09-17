@@ -7,8 +7,9 @@
     "kind",
     "contract_version",
     "event_id",
-    "occurred_at_ms",
-    "received_at_ms"
+    "uid",
+    "type",
+    "occurred_at_ms"
   ],
   "properties": {
     "kind": {
@@ -19,17 +20,40 @@
     },
     "event_id": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "uid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "login",
+        "coupon_claim",
+        "order"
+      ]
     },
     "occurred_at_ms": {
       "type": "integer",
       "minimum": 946684800000,
       "exclusiveMaximum": 4102444800000
     },
-    "received_at_ms": {
-      "type": "integer",
-      "minimum": 946684800000,
-      "exclusiveMaximum": 4102444800000
+    "amount": {
+      "type": "number",
+      "minimum": 0
+    },
+    "ip": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "device_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
     }
   }
 }

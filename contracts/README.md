@@ -24,12 +24,13 @@ swift test --filter 'FusionTransportTests|FusionGraphTests|GraphModuleTests'
 ```
 
 20 checked-in vectors cover v2/v2h/v2a/v2d/v3, proof absent/present and field
-mapping absent/present. Both Python and Swift consume those fixtures. The keys in
-them are test-only **effective request keys**: armor and HKDF derivation are not
-covered. Python execution passed; Swift execution is pending a supported Apple
-build host. The Python reference rejects floating-point JSON because Foundation
-number formatting has not been frozen cross-language. Do not deploy this helper
-as a production acceptance gate.
+mapping absent/present. Both Python and Swift consume those fixtures. The original keys are test-only effective request keys. Eight additional
+`wire_vectors.json` fixtures cover v1/v2/v2h/v3 with float, Unicode, null, bytes
+and unknown trust strings. HKDF is checked against RFC 5869 and native CryptoKit. Python execution passed; Swift execution is pending a supported Apple
+build host. The SDK now transmits its already-canonical signed bytes. Python validates JSON
+syntax and consumes those exact bytes, including floats, Unicode and null; it never
+tries to reproduce Foundation number formatting. This verifier is one component
+of the Collector acceptance gate, not an authentication or replay store.
 
 The SDK's historical MAC uses 0x6D/0xA3 pads, not standard HMAC. This patch preserves
 that existing signature protocol. A cryptographic migration needs its own version.
@@ -62,9 +63,43 @@ unchanged. Historical cluster signal remains understood; local churn does not se
 the compressed graph-cluster bit. Native regression assertions were migrated to
 this explicit semantic correction, not removed.
 
-## Remaining gates
+## Generated active transport
 
-Native Swift build/tests, create -> actual upload -> production collector validation,
-real-device App Attest/armor checks, universal floating canonicalization, generated
-DTO adoption, and production tenant identity resolver integration are **pending**.
-No claim of all native bugs fixed or full-repository tests passing is made.
+`report-upload.schema.json` is the source for Python structural validation and
+Swift `GeneratedReportWire.swift`, called by the actual GrpcReportPayload transport.
+Run `python contracts/generate.py --check` to reject stale generated boundaries.
+The historical protobuf documentation is not a second active transport.
+`verify_upload_with_base_key` derives v2h keys with RFC 5869, including the SDK's
+BE32 emulator flags (server requires zero). Armor mode must supply an authorized
+runtime-derived key through `verify_upload`, never a static-key fallback.
+
+## Remaining external gates
+
+`.github/workflows/fusion-contract.yml` runs both Python and native Swift transport,
+HKDF and graph tests on macOS. This Linux host has no Swift executable; no native
+execution success is claimed. Real-device App Attest/armor checks still require
+physical Apple hardware and an authorized application environment. No Detector or
+threshold changes are included. Collector integration is implemented in the paired
+Agent PR rather than exposing its credentials to the SDK or Agent tools.
+
+## Collector App Attest enrollment and fresh assertion path
+
+Configure `AppAttestSigner.configureEnrollment(challenge:submit:)` with authenticated
+Collector callbacks. The challenge callback obtains an enrollment challenge and
+returns its ID plus decoded base64 bytes. The submit callback sends the exact
+`attestKey` object, key ID and challenge ID, and throws unless the Collector accepts
+it. Only then does SDK persist the new `server_enrolled.v2` Keychain entry. Old
+locally-attested-only keys cannot silently skip server enrollment.
+
+For a report, obtain a fresh assertion challenge and call
+`AppAttestSigner.createCollectorEnvelope(payloadData:reportId:sessionToken:signingKey:keyId:serverChallenge:)`.
+This explicit v3 path generates both App Attest assertions before the envelope MAC:
+primary proof signs SHA256(canonical report bytes), second proof signs SHA256(server
+challenge bytes). Send via the normal `toGrpcRequestBytes(context:)` transport.
+The Collector consumes challenge, increasing counter and evidence in one transaction.
+Do not use the armor-only v2a path against a static-key Collector acceptance policy.
+
+The server pins the operator-provided Apple App Attestation Root CA, validates the
+certificate chain, nonce extension, App ID, counter=0, key ID, environment and COSE
+key. Unhandled authenticator extensions fail closed. Synthetic CA tests prove the
+validation code path, not a genuine Apple device; real-device validation is required.

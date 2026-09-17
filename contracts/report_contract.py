@@ -32,6 +32,9 @@ def validate_upload(value, *, require_hardware=False):
         raise ContractError('expected sdk_report contract version 1')
     if set(value) - UPLOAD_FIELDS:
         raise ContractError('unknown upload fields; server aggregation is not client input')
+    from .generated_contract import validate_shape
+    try: validate_shape(value)
+    except ValueError as exc: raise ContractError(str(exc)) from exc
     _ms(value.get('ts'))
     for field in ('app_id','sdk_version','report_id','nonce','session_token','sig_ver','key_id','device_id','scene','signature'):
         if not isinstance(value.get(field),str) or not value[field]:
@@ -77,9 +80,12 @@ def legacy_mac(key,message):
     return hashlib.sha256(bytes(x^0xA3 for x in key)+inner).hexdigest()
 
 def canonical_payload(raw):
-    # This reference deliberately rejects floating JSON numbers: Foundation vs
-    # Python float formatting is not a frozen universal canonicalization scheme.
-    def reject_number(_): raise ContractError('float canonicalization requires native collector implementation')
+    """Validate JSON but return exact producer-signed UTF-8; never recanonicalize.
+
+    The SDK serializes its canonical payload once into payload_json. Numbers,
+    Unicode escape spelling and null are therefore interoperable byte-for-byte.
+    """
+    def reject_constant(_): raise ContractError('non-finite JSON number')
     def object_pairs(pairs):
         result={}
         for k,v in pairs:
@@ -87,11 +93,41 @@ def canonical_payload(raw):
             result[k]=v
         return result
     try:
-        obj=json.loads(raw,parse_float=reject_number,parse_constant=reject_number,object_pairs_hook=object_pairs)
+        text=raw.decode('utf-8')
+        obj=json.loads(text,parse_constant=reject_constant,object_pairs_hook=object_pairs)
     except (UnicodeError, ValueError) as exc:
-        raise ContractError('invalid or unsupported canonical payload') from exc
+        raise ContractError('invalid JSON payload') from exc
     if not isinstance(obj,dict): raise ContractError('payload must be object')
-    return json.dumps(obj,ensure_ascii=False,sort_keys=True,separators=(',',':')).replace('/', '\\/')
+    return text
+
+
+def hkdf_sha256(ikm, salt, info, length=32):
+    """RFC 5869 (standard HMAC, distinct from the legacy message MAC)."""
+    if not 0 < length <= 255*32: raise ContractError('invalid HKDF length')
+    prk=hmac.new(salt,ikm,hashlib.sha256).digest()
+    out=b''; block=b''
+    for counter in range(1,(length+31)//32+1):
+        block=hmac.new(prk,block+info+bytes([counter]),hashlib.sha256).digest()
+        out+=block
+    return out[:length]
+
+
+def derive_request_key(base_key, nonce, ts, emulator_flags=0):
+    if type(emulator_flags) is not int or not 0 <= emulator_flags <= 0xffffffff:
+        raise ContractError('invalid emulator flags')
+    return hkdf_sha256(base_key,f'{nonce}|{ts}'.encode(),b'cprisk.report.hmac.v2h'+emulator_flags.to_bytes(4,'big'))
+
+
+def verify_upload_with_base_key(upload, base_key, *, require_hardware=False):
+    # Armor requires an independently authorized effective runtime key; callers
+    # cannot use a static base key for that mode.
+    try:
+        value=validate_upload(upload,require_hardware=require_hardware)
+        if value['sig_ver'] not in {'v1','v2','v2h','v3'}: return False
+        key=derive_request_key(base_key,value['nonce'],value['ts']) if value['sig_ver']=='v2h' else base_key
+        return verify_upload(value,key,require_hardware=require_hardware)
+    except ContractError:
+        return False
 
 def signature_input(upload):
     fields=[upload['sig_ver'],upload['nonce'],str(upload['ts']),upload['session_token'],upload['report_id'],upload['key_id'],upload.get('field_mapping_version',''),upload.get('attestation_key_id','')]
@@ -111,7 +147,7 @@ def verify_upload(upload,effective_key,*,require_hardware=False):
     """
     try:
         value=validate_upload(upload,require_hardware=require_hardware)
-        if value['sig_ver'] not in {'v2','v2h','v2a','v2d','v3'}:
+        if value['sig_ver'] not in {'v1','v2','v2h','v2a','v2d','v3'}:
             return False
         return hmac.compare_digest(legacy_mac(effective_key,signature_input(value)), value['signature'])
     except ContractError:

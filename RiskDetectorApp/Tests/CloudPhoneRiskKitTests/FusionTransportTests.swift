@@ -65,3 +65,57 @@ extension FusionTransportTests {
         }
     }
 }
+
+extension FusionTransportTests {
+    func testTransportSendsExactlySignedNumericUnicodeBytes() throws {
+        let input = Data("{ \"z\": -0.0, \"a\": 1e-7, \"u\": \"中😀\", \"n\": null }".utf8)
+        let envelope = try ReportEnvelope.create(payloadData: input, reportId: "r", sessionToken: "s", signingKey: "key", config: .init(signatureVersion: "v2"))
+        let wire = try XCTUnwrap(JSONSerialization.jsonObject(with: envelope.toGrpcRequestBytes()) as? [String: Any])
+        let transmitted = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(wire["payload_json"] as? String)))
+        XCTAssertEqual(transmitted, Data(try envelope.canonicalPayloadString().utf8))
+        let fields = [envelope.sigVer, envelope.nonce, String(envelope.ts), envelope.sessionToken, envelope.reportId, envelope.keyId, envelope.fieldMappingVersion ?? "", envelope.attestationKeyId ?? ""]
+        var signatureBytes = Data((fields.joined(separator: "|") + "|").utf8)
+        signatureBytes.append(transmitted)
+        XCTAssertEqual(CPRiskMessageAuth.authenticationCodeHex(for: signatureBytes, keyData: Data("key".utf8)), envelope.signature)
+    }
+
+    func testRawWireHKDFAndSignatureDomains() throws {
+        var root = URL(fileURLWithPath: #filePath)
+        for _ in 0..<4 { root.deleteLastPathComponent() }
+        let vectors = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("contracts/fixtures/wire_vectors.json"))) as? [[String: Any]])
+        func hexData(_ value: String) -> Data {
+            let chars = Array(value)
+            return Data(stride(from: 0, to: chars.count, by: 2).map { UInt8(String(chars[$0...$0+1]), radix: 16)! })
+        }
+        for vector in vectors {
+            let wire = try XCTUnwrap(vector["upload"] as? [String: Any])
+            let version = try XCTUnwrap(wire["sig_ver"] as? String)
+            let baseKey = hexData(try XCTUnwrap(vector["base_key_hex"] as? String))
+            var effectiveKey = baseKey
+            if version == "v2h" {
+                let derived = HKDF<SHA256>.deriveKey(inputKeyMaterial: SymmetricKey(data: baseKey), salt: Data("nonce|1790000000000".utf8), info: Data("cprisk.report.hmac.v2h".utf8) + Data([0, 0, 0, 0]), outputByteCount: 32)
+                effectiveKey = derived.withUnsafeBytes { Data($0) }
+            }
+            XCTAssertEqual(effectiveKey, hexData(try XCTUnwrap(vector["effective_key_hex"] as? String)))
+            let rawInput = Data(try XCTUnwrap(vector["signature_input"] as? String).utf8)
+            XCTAssertEqual(CPRiskMessageAuth.authenticationCodeHex(for: rawInput, keyData: effectiveKey), wire["signature"] as? String)
+            let payload = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(wire["payload_json"] as? String)))
+            XCTAssertTrue(rawInput.suffix(payload.count).elementsEqual(payload))
+            XCTAssertEqual(GrpcReportPayload.computePayloadSha256(nonce: "nonce", ts: 1790000000000, reportId: "report", payload: payload).base64EncodedString(), wire["payload_sha256"] as? String)
+            // Unknown trust strings are signed unchanged; they confer no trust.
+            if version == "v3" { XCTAssertTrue(String(decoding: rawInput, as: UTF8.self).contains("|future_unknown|")) }
+        }
+    }
+}
+
+extension FusionTransportTests {
+    @available(iOS 14.0, macOS 11.0, *)
+    func testCollectorProofPathRejectsMissingServerChallengeBeforeHardwareAccess() async throws {
+        do {
+            _ = try await AppAttestSigner.createCollectorEnvelope(payloadData: Data("{}".utf8), reportId: "r", sessionToken: "s", signingKey: "key", keyId: "k", serverChallenge: Data())
+            XCTFail("empty server challenge accepted")
+        } catch AppAttestSigner.AppAttestError.invalidServerChallenge {
+            // Expected; no DeviceCheck service is contacted for malformed input.
+        }
+    }
+}

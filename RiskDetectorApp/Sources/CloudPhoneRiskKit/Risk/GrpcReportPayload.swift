@@ -15,7 +15,7 @@ import Foundation
 /// 1. 校验 `ts` 是否在允许时间窗内
 /// 2. 校验 `nonce` 是否首次出现（防重放）
 /// 3. 校验 `session_token` 是否有效
-/// 4. 重建 canonical payload JSON
+/// 4. 校验 payload_json 是合法 JSON；保留原始签名字节，不重新编码
 /// 5. 校验 `signature`
 /// 6. 校验顶层 `device_id` / `scene` 与 payload 内部字段是否一致
 /// 7. 最后才进入风险数据入库、聚合和策略处理
@@ -98,36 +98,7 @@ public struct GrpcReportPayload: Sendable {
     /// 转为HTTP JSON v1 字典（snake_case；并非 ProtoJSON），用于 HTTP/2 或 gRPC 客户端发送。
     /// `payload_json` 与 `payload_sha256` 以 base64 字符串形式输出。
     public func toJSONDictionary() -> [String: Any] {
-        var dict: [String: Any] = [
-            "kind": "sdk_report",
-            "contract_version": 1,
-            "app_id": appId,
-            "sdk_version": sdkVersion,
-            "report_id": reportId,
-            "ts": ts,
-            "nonce": nonce,
-            "session_token": sessionToken,
-            "sig_ver": sigVer,
-            "key_id": keyId,
-            "device_id": deviceId,
-            "scene": scene,
-            "payload_json": payloadJson.base64EncodedString(),
-            "signature": signature,
-            "payload_sha256": payloadSha256.base64EncodedString(),
-        ]
-        if let attestationKeyId { dict["attestation_key_id"] = attestationKeyId }
-        if let attestationAssertion { dict["attestation_assertion"] = attestationAssertion.base64EncodedString() }
-        if let trustLevel { dict["trust_level"] = trustLevel.rawValue }
-        if let reAttestationAssertion { dict["re_attestation_assertion"] = reAttestationAssertion.base64EncodedString() }
-        if let bindingMode { dict["binding_mode"] = bindingMode }
-        if let bindingDigest { dict["binding_digest"] = bindingDigest }
-        if let fmv = fieldMappingVersion, !fmv.isEmpty {
-            dict["field_mapping_version"] = fmv
-        }
-        if let outputPathIntegrity, !outputPathIntegrity.isEmpty {
-            dict["output_path_integrity"] = outputPathIntegrity
-        }
-        return dict
+        generatedWireDictionary()
     }
 
     internal func validatedJSONDictionary() throws -> [String: Any] {
@@ -184,13 +155,14 @@ extension ReportEnvelope {
     /// - Returns: 与 proto 字段一一对应的 `GrpcReportPayload`
     public func toGrpcCompatiblePayload(context: GrpcReportContext? = nil) -> GrpcReportPayload {
         let ctx = context ?? GrpcReportContext()
+        let wirePayload = (try? canonicalPayloadString()).map { Data($0.utf8) } ?? payload
         let payloadSha256 = GrpcReportPayload.computePayloadSha256(
             nonce: nonce,
             ts: ts,
             reportId: reportId,
-            payload: payload
+            payload: wirePayload
         )
-        let outputPathIntegrity = buildOutputPathIntegritySignal(payloadSha256: payloadSha256)
+        let outputPathIntegrity = buildOutputPathIntegritySignal(payloadSha256: payloadSha256, wirePayload: wirePayload)
 
         return GrpcReportPayload(
             appId: ctx.appId,
@@ -204,7 +176,7 @@ extension ReportEnvelope {
             fieldMappingVersion: fieldMappingVersion,
             deviceId: ctx.deviceId,
             scene: ctx.scene,
-            payloadJson: payload,
+            payloadJson: wirePayload,
             signature: signature,
             payloadSha256: payloadSha256,
             outputPathIntegrity: outputPathIntegrity,
@@ -272,12 +244,12 @@ extension ReportEnvelope {
         return (raw, false)
     }
 
-    private func buildOutputPathIntegritySignal(payloadSha256: Data) -> [String: String] {
+    private func buildOutputPathIntegritySignal(payloadSha256: Data, wirePayload: Data) -> [String: String] {
         let recomputed = GrpcReportPayload.computePayloadSha256(
             nonce: nonce,
             ts: ts,
             reportId: reportId,
-            payload: payload
+            payload: wirePayload
         )
         let payloadShaMatches = (recomputed == payloadSha256)
         let bindingDiagnostics = bindingDiagnostics()

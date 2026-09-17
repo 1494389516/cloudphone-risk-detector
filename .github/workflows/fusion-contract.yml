@@ -1,0 +1,15 @@
+name: Fusion wire contract
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+jobs:
+  contract:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 contracts/generate.py --check
+      - run: python3 -m unittest discover -s contracts/tests -v
+      - name: Native transport, wire vectors, and local graph regressions
+        working-directory: RiskDetectorApp
+        run: swift test --filter 'FusionTransportTests|FusionGraphTests|GraphModuleTests'
