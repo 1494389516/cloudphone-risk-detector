@@ -22,6 +22,13 @@ import Foundation
 ///
 /// 签名语义：`sigVer|nonce|ts|sessionToken|reportId|keyId|fieldMappingVersion|attestationKeyId|canonicalPayloadJSON`
 public struct GrpcReportPayload: Sendable {
+    public let attestationKeyId: String?
+    public let attestationAssertion: Data?
+    public let trustLevel: TrustLevel?
+    public let reAttestationAssertion: Data?
+    public let bindingMode: String?
+    public let bindingDigest: String?
+    public let requireHardwareAttestation: Bool
     public let appId: String
     public let sdkVersion: String
     public let reportId: String
@@ -55,8 +62,22 @@ public struct GrpcReportPayload: Sendable {
         payloadJson: Data,
         signature: String,
         payloadSha256: Data,
-        outputPathIntegrity: [String: String]? = nil
+        outputPathIntegrity: [String: String]? = nil,
+        attestationKeyId: String? = nil,
+        attestationAssertion: Data? = nil,
+        trustLevel: TrustLevel? = nil,
+        reAttestationAssertion: Data? = nil,
+        bindingMode: String? = nil,
+        bindingDigest: String? = nil,
+        requireHardwareAttestation: Bool = false
     ) {
+        self.attestationKeyId = attestationKeyId
+        self.attestationAssertion = attestationAssertion
+        self.trustLevel = trustLevel
+        self.reAttestationAssertion = reAttestationAssertion
+        self.bindingMode = bindingMode
+        self.bindingDigest = bindingDigest
+        self.requireHardwareAttestation = requireHardwareAttestation
         self.appId = appId
         self.sdkVersion = sdkVersion
         self.reportId = reportId
@@ -74,10 +95,12 @@ public struct GrpcReportPayload: Sendable {
         self.outputPathIntegrity = outputPathIntegrity
     }
 
-    /// 转为与 proto 字段对应的 JSON 字典（snake_case），用于 HTTP/2 或 gRPC 客户端发送。
+    /// 转为HTTP JSON v1 字典（snake_case；并非 ProtoJSON），用于 HTTP/2 或 gRPC 客户端发送。
     /// `payload_json` 与 `payload_sha256` 以 base64 字符串形式输出。
     public func toJSONDictionary() -> [String: Any] {
         var dict: [String: Any] = [
+            "kind": "sdk_report",
+            "contract_version": 1,
             "app_id": appId,
             "sdk_version": sdkVersion,
             "report_id": reportId,
@@ -92,6 +115,12 @@ public struct GrpcReportPayload: Sendable {
             "signature": signature,
             "payload_sha256": payloadSha256.base64EncodedString(),
         ]
+        if let attestationKeyId { dict["attestation_key_id"] = attestationKeyId }
+        if let attestationAssertion { dict["attestation_assertion"] = attestationAssertion.base64EncodedString() }
+        if let trustLevel { dict["trust_level"] = trustLevel.rawValue }
+        if let reAttestationAssertion { dict["re_attestation_assertion"] = reAttestationAssertion.base64EncodedString() }
+        if let bindingMode { dict["binding_mode"] = bindingMode }
+        if let bindingDigest { dict["binding_digest"] = bindingDigest }
         if let fmv = fieldMappingVersion, !fmv.isEmpty {
             dict["field_mapping_version"] = fmv
         }
@@ -102,6 +131,9 @@ public struct GrpcReportPayload: Sendable {
     }
 
     internal func validatedJSONDictionary() throws -> [String: Any] {
+        if requireHardwareAttestation && (attestationKeyId?.isEmpty != false || attestationAssertion?.isEmpty != false) {
+            throw ReportEnvelope.ReportEnvelopeError.attestationIncomplete
+        }
         let recomputed = Self.computePayloadSha256(
             nonce: nonce,
             ts: ts,
@@ -175,11 +207,18 @@ extension ReportEnvelope {
             payloadJson: payload,
             signature: signature,
             payloadSha256: payloadSha256,
-            outputPathIntegrity: outputPathIntegrity
+            outputPathIntegrity: outputPathIntegrity,
+            attestationKeyId: attestationKeyId,
+            attestationAssertion: attestationAssertion,
+            trustLevel: trustLevel,
+            reAttestationAssertion: reAttestationAssertion,
+            bindingMode: bindingMode,
+            bindingDigest: bindingDigest,
+            requireHardwareAttestation: requireHardwareAttestation
         )
     }
 
-    /// 序列化为与 proto 结构匹配的 JSON 字符串，供 HTTP/2 或 gRPC 客户端发送。
+    /// 序列化为HTTP contract v1 JSON 字符串，供 HTTP/2 或 gRPC 客户端发送。
     /// - Parameters:
     ///   - context: 可选上下文
     ///   - prettyPrinted: 是否格式化输出（调试用；生产建议 false）
@@ -199,7 +238,7 @@ extension ReportEnvelope {
         return string
     }
 
-    /// 序列化为与 proto 结构匹配的 JSON Data（bytes），供 HTTP/2 或 gRPC 客户端发送。
+    /// 序列化为HTTP contract v1 JSON Data（bytes），供 HTTP/2 或 gRPC 客户端发送。
     /// - Parameter context: 可选上下文
     /// - Returns: JSON 编码后的 Data
     public func toGrpcRequestBytes(context: GrpcReportContext? = nil) throws -> Data {

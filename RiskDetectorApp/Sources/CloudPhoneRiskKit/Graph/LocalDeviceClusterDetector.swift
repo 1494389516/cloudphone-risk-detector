@@ -1,16 +1,8 @@
 import Foundation
 
-// MARK: - 端侧轻量关联检测
-///
-/// 本地维护最近 N 次评估的设备指纹摘要，若短时间内同一 IP/WiFi 下出现大量不同设备指纹，
-/// 产出 local_device_cluster 信号。使用简单内存缓存，不做完整图算法。
-///
-/// ## 隐私
-/// - 上报的图特征均为带盐单向哈希（由 GraphFeatureCollector 保证）。
-/// - distinct_devices 为聚合计数，不含任何个体标识，仅上报给自有风控服务端用于
-///   阈值判定（非对外发布统计）。该场景不适用差分隐私：聚合计数本身是检测目标，
-///   注入拉普拉斯噪声只会损害阈值判定精度而不带来实际隐私收益，故不实现，
-///   也不在文档/注释中作差分隐私承诺。
+// Compatibility type name; observes only this process's identity changes.
+/// A single installation changing fingerprints is NOT multiple devices.
+/// No network/account key is emitted in evidence; cross-device aggregation is server-only.
 public final class LocalDeviceClusterDetector: @unchecked Sendable {
 
     public static let shared = LocalDeviceClusterDetector()
@@ -35,7 +27,7 @@ public final class LocalDeviceClusterDetector: @unchecked Sendable {
 
     private init() {}
 
-    /// 记录一次评估，并检测是否触发 local_device_cluster
+    /// 记录一次评估，并检测是否触发 local_identity_churn
     /// - Parameters:
     ///   - hwProfileHash: 设备指纹哈希（GraphFeatureCollector 产出的 hwProfileHash）
     ///   - key: 关联键，优先使用 IP，否则 sessionId
@@ -73,12 +65,12 @@ public final class LocalDeviceClusterDetector: @unchecked Sendable {
             let distinctHashes = Set(entries.map(\.hwProfileHash))
             if distinctHashes.count >= Self.clusterThreshold {
                 return RiskSignal(
-                    id: "local_device_cluster",
-                    category: "server",
+                    id: "local_identity_churn",
+                    category: "device",
                     score: 12,
                     evidence: [
-                        "key": k,
-                        "distinct_devices": "\(distinctHashes.count)",
+                        "scope": "local_installation",
+                        "distinct_local_fingerprints": "\(distinctHashes.count)",
                         "window_seconds": "\(Int(Self.timeWindowSeconds))"
                     ],
                     state: .soft(confidence: min(1.0, Double(distinctHashes.count) / 10.0)),

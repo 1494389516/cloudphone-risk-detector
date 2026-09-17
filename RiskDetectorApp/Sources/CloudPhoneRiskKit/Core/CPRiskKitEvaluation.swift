@@ -81,7 +81,7 @@ extension CPRiskKit {
         var extraSignalsForGraph: [RiskSignal] = []
         if let localClusterSignal = LocalDeviceClusterDetector.shared.recordAndDetect(
             hwProfileHash: graphNodeDescriptor.hwProfileHash,
-            key: serverSignals?.publicIP ?? sessIdForGraph
+            key: graphNodeDescriptor.installationKey ?? sessIdForGraph
         ) {
             extraSignalsForGraph = [localClusterSignal]
         }
