@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BusinessRiskEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "contract_version",
+    "event_id",
+    "occurred_at_ms",
+    "received_at_ms"
+  ],
+  "properties": {
+    "kind": {
+      "const": "business_risk_event"
+    },
+    "contract_version": {
+      "const": 1
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "occurred_at_ms": {
+      "type": "integer",
+      "minimum": 946684800000,
+      "exclusiveMaximum": 4102444800000
+    },
+    "received_at_ms": {
+      "type": "integer",
+      "minimum": 946684800000,
+      "exclusiveMaximum": 4102444800000
+    }
+  }
+}

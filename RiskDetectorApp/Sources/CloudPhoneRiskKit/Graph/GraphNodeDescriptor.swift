@@ -2,19 +2,19 @@ import Foundation
 
 // MARK: - 图节点描述符
 ///
-/// 标准化为服务端可直接入图的格式，所有哈希为单向 SHA256，不可逆推原始值。
+/// 客户端声明的关联提示；SHA256 不是隐私保证，也不是可信设备实体。
 /// 用于图风控联动：端侧生产特征 → 服务端图计算 → 反哺决策。
 public struct GraphNodeDescriptor: Codable, Sendable {
-    /// 设备指纹哈希：SHA256(deviceID + hardwareMachine + model)
+    /// Legacy exact-match/churn hint; not hardware similarity or resolved device identity.
     public var hwProfileHash: String
 
-    /// IP 哈希（从 context 或 ServerSignals 获取）
+    /// Legacy IP hint, omitted by current collector. Never treat as tenant-isolated identity.
     public var ipHash: String?
 
-    /// ASN 哈希：SHA256(asn + salt)，与 IP/accountId 保持一致的隐私保护
+    /// Legacy ASN hint; current client collector omits it.
     public var asnHash: String?
 
-    /// 账号 ID 哈希（已有 bindAccount）
+    /// Legacy account hint; resolve authenticated account server-side instead.
     public var accountIdHash: String?
 
     /// WiFi BSSID 哈希（如可获取，否则省略；iOS 沙箱限制下通常不可用）
@@ -23,7 +23,13 @@ public struct GraphNodeDescriptor: Codable, Sendable {
     /// 应用安装列表哈希（如可获取，否则省略；iOS 隐私限制下通常不可用）
     public var appListHash: String?
 
+    /// Installation correlation hint, separate from non-unique similarity attributes.
+    public var installationKey: String?
+    public var hardwareAttributes: [String: String]?
+
     private enum CodingKeys: String, CodingKey {
+        case installationKey = "ik"
+        case hardwareAttributes = "ha"
         case hwProfileHash = "hp"
         case ipHash = "ih"
         case asnHash = "ah"
@@ -38,8 +44,12 @@ public struct GraphNodeDescriptor: Codable, Sendable {
         asnHash: String? = nil,
         accountIdHash: String? = nil,
         bssidHash: String? = nil,
-        appListHash: String? = nil
+        appListHash: String? = nil,
+        installationKey: String? = nil,
+        hardwareAttributes: [String: String]? = nil
     ) {
+        self.installationKey = installationKey
+        self.hardwareAttributes = hardwareAttributes
         self.hwProfileHash = hwProfileHash
         self.ipHash = ipHash
         self.asnHash = asnHash

@@ -1,3 +1,6 @@
+// LEGACY READ-ONLY REFERENCE: cprisk.v1 nested envelopes are not the active upload contract.
+// New HTTP uploads use contracts/report-upload.schema.json; protobuf uses RiskDetectorApp/Proto/risk_report.proto.
+// No implicit SDK-report -> business-event or challenge -> review conversion is permitted.
 syntax = "proto3";
 
 package cprisk.v1;

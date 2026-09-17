@@ -36,6 +36,12 @@ message UploadRiskReportRequest {
   // SDK 6.5+ 信号证据（结构化，替代 payload_json 中的扁平信号列表）
   repeated RiskSignalEntry signals = 19;
 
+  // Signature context retained by HTTP JSON v1 as well.
+  bytes re_attestation_assertion = 20;
+  string binding_mode = 21;
+  string binding_digest = 22;
+  map<string, string> output_path_integrity = 23;
+
   // 预留字段号 100-200 给未来的信号扩展
   reserved 100 to 200;
 }

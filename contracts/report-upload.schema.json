@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cprisk:report-upload:1",
+  "title": "ReportUpload HTTP JSON v1 (not ProtoJSON)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "contract_version",
+    "app_id",
+    "sdk_version",
+    "report_id",
+    "ts",
+    "nonce",
+    "session_token",
+    "sig_ver",
+    "key_id",
+    "device_id",
+    "scene",
+    "payload_json",
+    "signature",
+    "payload_sha256"
+  ],
+  "properties": {
+    "sig_ver": {
+      "type": "string",
+      "minLength": 1
+    },
+    "re_attestation_assertion": {
+      "type": "string"
+    },
+    "ts": {
+      "type": "integer",
+      "minimum": 946684800000,
+      "exclusiveMaximum": 4102444800000
+    },
+    "trust_level": {
+      "type": "string"
+    },
+    "binding_digest": {
+      "type": "string"
+    },
+    "attestation_key_id": {
+      "type": "string"
+    },
+    "output_path_integrity": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "nonce": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_token": {
+      "type": "string",
+      "minLength": 1
+    },
+    "device_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scene": {
+      "type": "string",
+      "minLength": 1
+    },
+    "payload_json": {
+      "type": "string",
+      "minLength": 1
+    },
+    "attestation_assertion": {
+      "type": "string"
+    },
+    "app_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sdk_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "binding_mode": {
+      "type": "string"
+    },
+    "kind": {
+      "const": "sdk_report"
+    },
+    "payload_sha256": {
+      "type": "string",
+      "minLength": 1
+    },
+    "report_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "contract_version": {
+      "const": 1
+    },
+    "key_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "signature": {
+      "type": "string",
+      "minLength": 1
+    },
+    "field_mapping_version": {
+      "type": "string"
+    }
+  }
+}

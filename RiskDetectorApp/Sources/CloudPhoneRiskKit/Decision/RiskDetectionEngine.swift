@@ -1947,7 +1947,8 @@ private extension RiskDetectionEngine {
         "graph_community_risk": 65,
         "graph_hw_profile_cluster": 70,
         "graph_dense_subgraph": 60,
-        "local_device_cluster": 55,
+        "local_device_cluster": 55, // historical reports only
+        "local_identity_churn": 55,
         "text_segment_tampered": 88,
         "text_segment_baseline_rejected_suspicious_env": 88,
         "text_segment_baseline_cleared_suspicious_env": 88,

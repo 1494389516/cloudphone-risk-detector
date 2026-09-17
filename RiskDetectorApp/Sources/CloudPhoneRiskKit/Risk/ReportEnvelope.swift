@@ -65,6 +65,9 @@ public struct ReportEnvelope: Codable, Sendable {
     /// 该值不是额外密钥材料，但可以帮助区分“签名不匹配”与“签名输入/绑定上下文漂移”。
     public let bindingDigest: String?
 
+    /// Local transport policy; the collector independently enforces its own policy.
+    public let requireHardwareAttestation: Bool
+
     /// 是否具备完整硬件信任根（attestationKeyId 与 attestationAssertion 均存在且非空）。
     /// 调用方可用此判断是否发生静默降级；若业务要求硬件信任根，应检查此属性为 true。
     public var hasHardwareAttestation: Bool {
@@ -188,6 +191,7 @@ public struct ReportEnvelope: Codable, Sendable {
         case reAttestationAssertion = "ra"
         case bindingMode = "bm"
         case bindingDigest = "bd"
+        case requireHardwareAttestation = "rh"
     }
 
     public init(
@@ -205,7 +209,8 @@ public struct ReportEnvelope: Codable, Sendable {
         trustLevel: TrustLevel? = nil,
         reAttestationAssertion: Data? = nil,
         bindingMode: String? = nil,
-        bindingDigest: String? = nil
+        bindingDigest: String? = nil,
+        requireHardwareAttestation: Bool = false
     ) {
         self.nonce = nonce
         self.ts = ts
@@ -222,6 +227,7 @@ public struct ReportEnvelope: Codable, Sendable {
         self.reAttestationAssertion = reAttestationAssertion
         self.bindingMode = bindingMode
         self.bindingDigest = bindingDigest
+        self.requireHardwareAttestation = requireHardwareAttestation
     }
 
     public init(from decoder: Decoder) throws {
@@ -241,6 +247,7 @@ public struct ReportEnvelope: Codable, Sendable {
         reAttestationAssertion = try container.decodeIfPresent(Data.self, forKey: .reAttestationAssertion)
         bindingMode = try container.decodeIfPresent(String.self, forKey: .bindingMode)
         bindingDigest = try container.decodeIfPresent(String.self, forKey: .bindingDigest)
+        requireHardwareAttestation = try container.decodeIfPresent(Bool.self, forKey: .requireHardwareAttestation) ?? false
     }
 
     // MARK: - Factory
@@ -401,7 +408,8 @@ public struct ReportEnvelope: Codable, Sendable {
             trustLevel: trustLevel,
             reAttestationAssertion: reAttestationAssertion,
             bindingMode: bindingMode ?? defaultBindingMode(signatureProviderPresent: signatureProvider != nil, sigVer: config.signatureVersion),
-            bindingDigest: bindingDigest
+            bindingDigest: bindingDigest,
+            requireHardwareAttestation: config.requireHardwareAttestation
         )
     }
 
@@ -435,7 +443,8 @@ public struct ReportEnvelope: Codable, Sendable {
             trustLevel: .hardware,
             reAttestationAssertion: reAttestationAssertion,
             bindingMode: bindingMode,
-            bindingDigest: bindingDigest
+            bindingDigest: bindingDigest,
+            requireHardwareAttestation: requireHardwareAttestation
         )
     }
 
@@ -462,7 +471,8 @@ public struct ReportEnvelope: Codable, Sendable {
             trustLevel: level,
             reAttestationAssertion: reAttestationAssertion,
             bindingMode: bindingMode,
-            bindingDigest: bindingDigest
+            bindingDigest: bindingDigest,
+            requireHardwareAttestation: requireHardwareAttestation
         )
     }
 
@@ -492,7 +502,8 @@ public struct ReportEnvelope: Codable, Sendable {
             trustLevel: trustLevel,
             reAttestationAssertion: assertion,
             bindingMode: bindingMode,
-            bindingDigest: bindingDigest
+            bindingDigest: bindingDigest,
+            requireHardwareAttestation: requireHardwareAttestation
         )
     }
 

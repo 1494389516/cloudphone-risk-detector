@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DecisionRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "contract_version",
+    "request_id",
+    "business_event_id",
+    "sdk_report_ids"
+  ],
+  "properties": {
+    "kind": {
+      "const": "decision_request"
+    },
+    "contract_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "business_event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sdk_report_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}
