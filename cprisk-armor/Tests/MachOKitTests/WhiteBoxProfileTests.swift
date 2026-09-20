@@ -3,6 +3,22 @@ import MachOKit
 import XCTest
 
 final class WhiteBoxProfileTests: XCTestCase {
+    func testBuildSaltCanonicalizesNumericSpellingAcrossProcesses() {
+        XCTAssertEqual(
+            ArmorWhiteBox.canonicalBuildSalt("255"),
+            ArmorWhiteBox.canonicalBuildSalt("0xFF")
+        )
+        XCTAssertEqual(
+            ArmorWhiteBox.canonicalBuildSalt("000255"),
+            ArmorWhiteBox.canonicalBuildSalt("255")
+        )
+        XCTAssertEqual(
+            ArmorWhiteBox.canonicalBuildSalt("0"),
+            ArmorWhiteBox.canonicalBuildSalt("1")
+        )
+        XCTAssertNil(ArmorWhiteBox.canonicalBuildSalt("not-a-seed"))
+    }
+
     func testWhiteBoxPRFIsDeterministicForSameRootDomainAndInput() {
         let rootKey = Data(repeating: 0x5A, count: ArmorABI.keySize)
         let input = Data((0..<ArmorABI.hashSize).map { UInt8($0) })

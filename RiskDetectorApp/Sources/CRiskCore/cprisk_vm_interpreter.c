@@ -2241,26 +2241,21 @@ static uint32_t cprisk_vm_m3_self_expect_hmac_resolve_i(const struct mach_header
 
 static void cprisk_vm_selfchk_hmac_key_i(const uint8_t runtime_mat[32], uint8_t key_out[32]) {
     /*
-     * KDF: SHA256( runtime_mat || decode(label) || session_bind_8 )
+     * KDF: SHA256( runtime_mat || decode(label) )
      * Label bytes are XOR-mixed at rest (no plaintext "CPRISK..." in .text/.rodata).
-     * session_bind_8 = first 8 bytes of session key when active, else zeros (matches
-     * link-time CPSH injection with zero session).
+     * The build-time CPSH expectation is immutable, so binding this KDF to a
+     * future session key made every active-session check fail by construction.
      */
     static const uint8_t cprisk_vm_selfchk_lbl_enc[18] = {
         0x19u, 0x0au, 0x08u, 0x13u, 0x09u, 0x11u, 0x05u, 0x0cu, 0x17u, 0x05u, 0x17u, 0x69u,
         0x05u, 0x12u, 0x17u, 0x1bu, 0x19u, 0x5au,
     };
-    uint8_t buf[64];
+    uint8_t buf[50];
     memset(buf, 0, sizeof(buf));
     memcpy(buf, runtime_mat, 32u);
     for (size_t i = 0; i < sizeof(cprisk_vm_selfchk_lbl_enc); i++)
         buf[32u + i] = cprisk_vm_selfchk_lbl_enc[i] ^ 0x5Au;
-    uint8_t sk[32];
-    memset(sk, 0, sizeof(sk));
-    if (cprisk_get_session_key(sk) == 0)
-        memcpy(buf + 50u, sk, 8u);
-    cprisk_secure_zero(sk, sizeof(sk));
-    cprisk_sha256(buf, 32u + 18u + 8u, key_out);
+    cprisk_sha256(buf, sizeof(buf), key_out);
     cprisk_secure_zero(buf, sizeof(buf));
 }
 

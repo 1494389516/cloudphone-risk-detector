@@ -46,10 +46,12 @@ public enum VMSelfExpectInjector {
         public var usedCPSVSpanMap: Bool { source == .cpsvSpanMap }
     }
 
-    /// Derives the 32-byte HMAC key the same way as `cprisk_vm_selfchk_hmac_key_i` (SHA-256 over material || XOR-mixed label || 8-byte session bind; bind is zero at link/inject time).
+    /// Derives the 32-byte HMAC key the same way as
+    /// `cprisk_vm_selfchk_hmac_key_i`: SHA-256(material || XOR-mixed label).
+    /// A post-link expectation cannot depend on a future runtime session key.
     public static func deriveSelfCheckHmacKey(runtimeMaterial32: Data) -> SymmetricKey {
         precondition(runtimeMaterial32.count == 32)
-        var payload = Data(count: 58)
+        var payload = Data(count: 50)
         payload.replaceSubrange(0..<32, with: runtimeMaterial32)
         let enc: [UInt8] = [
             0x19, 0x0a, 0x08, 0x13, 0x09, 0x11, 0x05, 0x0c, 0x17, 0x05, 0x17, 0x69,
@@ -59,7 +61,6 @@ public enum VMSelfExpectInjector {
         for i in 0..<18 {
             payload[32 + i] = enc[i] ^ 0x5A
         }
-        /* bytes 50...57 session bind — zero for injected CPSH unless matching live session material */
         let digest = SHA256.hash(data: payload)
         return SymmetricKey(data: Data(digest))
     }

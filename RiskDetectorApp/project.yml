@@ -162,6 +162,7 @@ targets:
           -Wl,-sectcreate,__DATA,__swift5_cgenc,$(ARMOR_PLACEHOLDER_DIR)/text_encrypt.bin
           -Wl,-sectcreate,__DATA,__swift5_mdvrt,$(ARMOR_PLACEHOLDER_DIR)/vmp_dispatch.bin
           -Wl,-sectcreate,__DATA,__swift5_mdirt,$(ARMOR_PLACEHOLDER_DIR)/vmp_bytecode.bin
+          -Wl,-sectcreate,__DATA,__swift5_mdvsk,$(ARMOR_PLACEHOLDER_DIR)/vmp_self_expect.bin
           -Wl,-sectcreate,__DATA,__sw5_builtin2,$(ARMOR_PLACEHOLDER_DIR)/sw5_builtin2.bin
           -Wl,-sectcreate,__DATA,__sw5_capture2,$(ARMOR_PLACEHOLDER_DIR)/sw5_capture2.bin
           -Wl,-sectcreate,__DATA,__sw5_typeref2,$(ARMOR_PLACEHOLDER_DIR)/sw5_typeref2.bin
@@ -189,104 +190,25 @@ targets:
       - name: Apply cprisk armor
         inputFiles:
           - $(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)
+          - $(SRCROOT)/Scripts/apply-cprisk-armor.sh
         outputFiles:
           - $(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)
           - $(DERIVED_FILE_DIR)/apply_cprisk_armor.stamp
+          - $(DERIVED_FILE_DIR)/cprisk_armor_build_seed
         script: |
-          set -e
-          unset SDKROOT
-          export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
-          TOOLROOT="${SRCROOT}/../cprisk-armor"
-          EXEC="${TARGET_BUILD_DIR}/${EXECUTABLE_PATH}"
-          STAMP_PATH="${SCRIPT_OUTPUT_FILE_1}"
-          mkdir -p "$(dirname "$STAMP_PATH")"
-
-          if [ "${CONFIGURATION}" != "Release" ]; then
-            echo "note: cprisk-armor skipped for ${CONFIGURATION} build"
-            /bin/date -u +"%Y-%m-%dT%H:%M:%SZ" > "$STAMP_PATH"
-            exit 0
-          fi
-
-          if [ ! -d "$TOOLROOT" ] || [ ! -f "$EXEC" ]; then
-            echo "warning: cprisk-armor skipped: missing toolroot or executable" >&2
-            /bin/date -u +"%Y-%m-%dT%H:%M:%SZ" > "$STAMP_PATH"
-            exit 0
-          fi
-
-          if [ -z "${CPRISK_ARMOR_KEY:-}" ]; then
-            echo "warning: cprisk-armor skipped: CPRISK_ARMOR_KEY is not set" >&2
-            /bin/date -u +"%Y-%m-%dT%H:%M:%SZ" > "$STAMP_PATH"
-            exit 0
-          fi
-
-          (cd "$TOOLROOT" && swift build --disable-sandbox -c release --product cprisk-armor >/dev/null)
-          BIN="$(cd "$TOOLROOT" && swift build --disable-sandbox -c release --show-bin-path)"
-          TOOL="${BIN}/cprisk-armor"
-          if [ ! -x "$TOOL" ]; then
-            echo "error: cprisk-armor tool not found at $TOOL" >&2
-            exit 1
-          fi
-
-          ARMOR_ARGS="--all"
-          if [ "${CPRISK_ARMOR_PROFILE:-}" = "appstore-safe" ]; then
-            ARMOR_ARGS="--pass3 --pass4 --pass5 --pass6 --pass7 --pass10 --pass11 --safety-profile appstore-safe"
-          fi
-
-          if [ -n "${CPRISK_ARMOR_ARGS:-}" ]; then
-            ARMOR_ARGS="${CPRISK_ARMOR_ARGS}"
-          fi
-
-          VERBOSE_ARG=""
-          if [ "${CPRISK_ARMOR_VERBOSE:-}" = "1" ]; then
-            VERBOSE_ARG="--verbose"
-          fi
-
-          echo "note: running cprisk-armor ${ARMOR_ARGS} on $EXEC"
-          "$TOOL" \
-            --input "$EXEC" \
-            --output "$EXEC" \
-            $ARMOR_ARGS \
-            $VERBOSE_ARG \
-            --key "$CPRISK_ARMOR_KEY"
-
-          /usr/bin/stat -f "%m %z" "$EXEC" > "$STAMP_PATH" || /bin/date -u +"%Y-%m-%dT%H:%M:%SZ" > "$STAMP_PATH"
+          /bin/bash "$SRCROOT/Scripts/apply-cprisk-armor.sh"
 
       - name: Inject VM self-expect (mdvsk)
         inputFiles:
           - $(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)
+          - $(SRCROOT)/Scripts/inject-vm-self-expect.sh
+          - $(DERIVED_FILE_DIR)/apply_cprisk_armor.stamp
+          - $(DERIVED_FILE_DIR)/cprisk_armor_build_seed
         outputFiles:
           - $(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)
           - $(DERIVED_FILE_DIR)/inject_vm_self_expect.stamp
         script: |
-          unset SDKROOT
-          export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
-          TOOLROOT="${SRCROOT}/../cprisk-armor"
-          EXEC="${TARGET_BUILD_DIR}/${EXECUTABLE_PATH}"
-          STAMP_PATH="${SCRIPT_OUTPUT_FILE_1}"
-          mkdir -p "$(dirname "$STAMP_PATH")"
-
-          if [ ! -d "$TOOLROOT" ] || [ ! -f "$EXEC" ]; then
-            /bin/date -u +"%Y-%m-%dT%H:%M:%SZ" > "$STAMP_PATH"
-            exit 0
-          fi
-
-          (cd "$TOOLROOT" && swift build --disable-sandbox -c release --product cprisk-vm-self-expect >/dev/null) || true
-          BIN="$(cd "$TOOLROOT" && swift build --disable-sandbox -c release --show-bin-path)"
-          TOOL="${BIN}/cprisk-vm-self-expect"
-          if [ -x "$TOOL" ]; then
-            TOOL_OUTPUT="$("$TOOL" --in "$EXEC" 2>&1)"
-            TOOL_RC=$?
-            if [ "$TOOL_RC" -ne 0 ]; then
-              if [ -n "$TOOL_OUTPUT" ]; then
-                printf '%s\n' "$TOOL_OUTPUT" | /usr/bin/sed 's/error:/note:/g' >&2
-              fi
-              echo "warning: cprisk-vm-self-expect: injection skipped for $EXEC" >&2
-            elif [ -n "$TOOL_OUTPUT" ]; then
-              printf '%s\n' "$TOOL_OUTPUT"
-            fi
-          fi
-
-          /usr/bin/stat -f "%m %z" "$EXEC" > "$STAMP_PATH" || /bin/date -u +"%Y-%m-%dT%H:%M:%SZ" > "$STAMP_PATH"
+          /bin/bash "$SRCROOT/Scripts/inject-vm-self-expect.sh"
 
   CloudPhoneRiskKitTests:
     type: bundle.unit-test

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+#### Armor / VMP 审计修复（原生验证待完成）
+- **行为变更**：当前 VM 不保留原函数 ABI / 完整指令语义，CLI 拒绝 Pass 13（含 `--all`）；库调用拒绝 full policy，partial 元数据不再视为有效代码保护。未自动降级标准 profile
+- 修复函数 ID 跳板 `BL; RET` 覆盖 LR 的返回死循环，改为保留调用方 LR 的尾跳转；此修复不代表任意 native 函数可被 VM 替换
+- 修正 13 Pass 拓扑：Pass 8/9/13 在完整性锚之前完成，Pass 4 先于 Pass 3/12，符号剥离后置，HeaderEncryptor 最后快照最终 load commands
+- 修正 producer/runtime loader key mini-VM XOR 不一致，并移除 VM self-check 对未来 session key 的不可满足绑定
+- 对齐 WhiteBox Domain 2/8/9 的 producer/runtime 输入；Import/Header 静态密文不再混入运行时环境绑定材料
+- `cprisk-armor` 对未知/缺值参数、零效果 Pass 8/9、VMP 元数据冒充代码保护改为 fail-closed
+- Xcode Release phase 共享 build seed；CPSH 自校验从 armored Mach-O + root key 验证并派生真实 runtime material，失败不再降级为 warning
+- 新增 `CPRISK_ARMOR_REQUIRED=1` 与 `CPRISK_HIKARI_REQUIRED=1`，供交付构建禁止静默回退
+
 #### 签名域闭合 (SHA-256("") trap 修复)
 - **新增 v3 签名版本**：将 `trustLevel`、`sha256(attestationAssertion)`、`sha256(reAttestationAssertion)` 纳入 HMAC 输入域。此前这三个客户端自报字段虽在 envelope 顶级字段，但**不在签名域内**，攻击者持有签名密钥时可在签名后任意篡改而 HMAC 仍然通过（SHA-256("") 类漏洞）
 - 签名域 v3 = `sigVer|nonce|ts|sessionToken|reportId|keyId|fmv|akId|trustLevel|sha256(attestationAssertion)|sha256(reAttestationAssertion)|canonicalPayload`

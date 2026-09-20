@@ -410,6 +410,17 @@ public final class CPRiskReport: NSObject {
         }
     }
 
+    /// Serialize the secure-upload view without mutating the reusable report.
+    /// Configuration controls the model field before CodingKeys encode it as
+    /// `cb`; callers never need to know or duplicate that wire key.
+    internal func secureUploadPayloadData(includeChallengeBinding: Bool) throws -> Data {
+        var uploadPayload = payload
+        if !includeChallengeBinding {
+            uploadPayload.challengeBinding = nil
+        }
+        return try JSON.encode(uploadPayload, prettyPrinted: false)
+    }
+
     @objc public func unencryptedPayloadString(prettyPrinted: Bool = false) -> String {
         String(data: unencryptedPayloadData(prettyPrinted: prettyPrinted), encoding: .utf8) ?? "{}"
     }

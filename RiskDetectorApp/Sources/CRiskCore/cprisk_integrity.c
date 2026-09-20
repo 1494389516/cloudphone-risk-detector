@@ -149,7 +149,11 @@ static void cprisk_mini_vm_exec_buf(uint8_t buf[32], const uint8_t *code, size_t
 
 /* Deterministic non-identity bootstrap: XOR_IMM then HALT (was pure HALT). */
 static void cprisk_mini_vm_bootstrap_material32(uint8_t buf[32]) {
-    const uint8_t prog[] = { CPRISK_MV_OP_XOR_IMM, 0xA5u, CPRISK_MV_OP_HALT };
+    const uint8_t prog[] = {
+        CPRISK_MV_OP_XOR_IMM,
+        CPRISK_MINI_VM_BOOTSTRAP_XOR,
+        CPRISK_MV_OP_HALT
+    };
     cprisk_mini_vm_exec_buf(buf, prog, sizeof(prog));
 }
 
@@ -2101,7 +2105,7 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
     }
 
     /* Initialize three-layer Hybrid KDF (device + session binding).
-     * This populates s_effective_root which white-box domains 6-9 consume.
+     * This populates s_effective_root which dynamic white-box domains 6-7 consume.
      * Called regardless of the whitebox/legacy init result so that the
      * new domains are available as soon as a valid root_key is provided. */
     (void)cprisk_init_hybrid_kdf(root_key);
@@ -2802,7 +2806,7 @@ int cprisk_init_hybrid_kdf(const uint8_t *root_key) {
     cprisk_secure_zero(session_key, sizeof(session_key));
     int has_session = (cprisk_get_session_key(session_key) == 0);
 
-    /* Compute effective root: the key used for white-box domains 6-9
+    /* Compute effective root: the key used for dynamic white-box domains 6-7
      * and any subsequent device/session-bound derivations.
      *
      * Note on replay: effective_root MUST stay byte-identical across

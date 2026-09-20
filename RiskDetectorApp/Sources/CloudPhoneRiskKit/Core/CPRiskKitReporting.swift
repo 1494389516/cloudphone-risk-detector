@@ -34,10 +34,9 @@ extension CPRiskKit {
             throw SecureUploadError.payloadFieldMappingRequired
         }
 
-        var payloadData = report.unencryptedPayloadData(prettyPrinted: false)
-        if !hardening.enableChallengeBinding {
-            payloadData = try removingPayloadKey("challengeBinding", from: payloadData)
-        }
+        let payloadData = try report.secureUploadPayloadData(
+            includeChallengeBinding: hardening.enableChallengeBinding
+        )
 
         let effectiveKeyId: String
         if keyId == "k1",

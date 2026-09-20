@@ -36,6 +36,24 @@ public final class HeaderEncryptorPass: ArmorPass {
             throw MachOError.invalidData("HeaderEncryptorPass requires an encryption key")
         }
 
+        // The backup must describe the header that will actually be written.
+        // Reserve the section header first and remove the now-invalid code
+        // signature command before taking the snapshot. Otherwise a binary
+        // without a prelinked placeholder records stale ncmds/sizeofcmds, and
+        // write(to:) can later remove LC_CODE_SIGNATURE behind its back.
+        let removedCodeSignatureBytes = try file.removeCodeSignatureCommands()
+        if try file.section(
+            segment: ArmorABI.dataSegmentName,
+            section: ArmorABI.Sections.headerBackup
+        ) == nil {
+            _ = try file.addOrUpdateSection(
+                segment: ArmorABI.dataSegmentName,
+                section: ArmorABI.Sections.headerBackup,
+                content: Data(count: Self.backupSectionSize),
+                align: 3
+            )
+        }
+
         // Build the WhiteBox bundle and derive the header encryption key.
         let whitebox = ArmorWhiteBox.build(rootKey: config.encryptionKey)
         let headerKey = deriveHeaderKey(whitebox: whitebox)
@@ -120,6 +138,7 @@ public final class HeaderEncryptorPass: ArmorPass {
             "Encrypted mach_header_64 fields into \(ArmorABI.dataSegmentName).\(ArmorABI.Sections.headerBackup) (64 bytes)",
             "Wrote camouflaged reserved=0x\(String(camouflagedReserved, radix: 16)) into header.reserved (legacy marker 0x\(String(Self.legacyHeaderMagic, radix: 16)) still supported at runtime)",
             "Header fields: magic=0x\(String(magic, radix: 16)), filetype=0x\(String(filetype, radix: 16)), ncmds=\(ncmds), sizeofcmds=\(sizeofcmds), flags=0x\(String(flags, radix: 16)), reserved=0x\(String(reserved, radix: 16))",
+            "Removed \(removedCodeSignatureBytes) bytes of stale LC_CODE_SIGNATURE commands before snapshot",
             "Derived header key from WhiteBox Domain 9 (headerEncryptionKey)"
         ]
 
@@ -133,16 +152,14 @@ public final class HeaderEncryptorPass: ArmorPass {
 
     // MARK: - Key Derivation
 
-    /// Derive the header encryption key from WhiteBox Domain 9.
-    /// Input now mixes a per-build seed and stable domain label to avoid
-    /// identical derivation across binaries sharing the same root key.
+    /// Derive the header encryption key from WhiteBox Domain 9. Per-build
+    /// diversity is already carried by the generated white-box tables; the
+    /// PRF input stays all-zero to match the early C header-restoration path.
     private func deriveHeaderKey(whitebox: ArmorWhiteBoxBundle) -> Data {
-        var seedMaterial = Data("cprisk.header.domain9.v2".utf8)
-        if let raw = ProcessInfo.processInfo.environment["CPRISK_ARMOR_BUILD_SEED"] {
-            seedMaterial.append(Data(raw.utf8))
-        }
-        let seed = Data(SHA256.hash(data: seedMaterial))
-        return whitebox.prf(domain: .headerEncryptionKey, input: seed)
+        whitebox.prf(
+            domain: .headerEncryptionKey,
+            input: Data(repeating: 0, count: ArmorABI.hashSize)
+        )
     }
 
     // MARK: - Helpers (mirrors DataSegmentEncryptor patterns)

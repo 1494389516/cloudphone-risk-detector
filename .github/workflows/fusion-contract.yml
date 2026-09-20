@@ -10,6 +10,43 @@ jobs:
       - uses: actions/checkout@v4
       - run: python3 contracts/generate.py --check
       - run: python3 -m unittest discover -s contracts/tests -v
-      - name: Native transport, wire vectors, and local graph regressions
+      - name: Armor producer/runtime contract tests
+        run: swift test --package-path cprisk-armor
+      - name: Armor CLI rejects fail-open invocations
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift build --package-path cprisk-armor --product cprisk-armor
+          swift build --package-path cprisk-armor --product cprisk-vm-self-expect
+          bin_dir="$(swift build --package-path cprisk-armor --show-bin-path)"
+          if "$bin_dir/cprisk-armor" --pass13-typo; then
+            echo "cprisk-armor accepted an unknown option" >&2
+            exit 1
+          fi
+          if "$bin_dir/cprisk-armor" --input; then
+            echo "cprisk-armor accepted a missing option value" >&2
+            exit 1
+          fi
+          fixture_dir="$(mktemp -d)"
+          trap 'rm -rf "$fixture_dir"' EXIT
+          printf 'original bytes' > "$fixture_dir/input"
+          cp "$fixture_dir/input" "$fixture_dir/expected"
+          for option in --pass13 --all; do
+            if diagnostic="$("$bin_dir/cprisk-armor" --input "$fixture_dir/input" --output "$fixture_dir/input" "$option" 2>&1)"; then
+              echo "unsafe VMP invocation succeeded" >&2
+              exit 1
+            fi
+            [[ "$diagnostic" == *"native replacement is disabled"* ]]
+            cmp "$fixture_dir/input" "$fixture_dir/expected"
+          done
+          if diagnostic="$("$bin_dir/cprisk-vm-self-expect" --in "$fixture_dir/input" --material-hex "$(printf '%064d' 0)" 2>&1)"; then
+            echo "zero-material injection succeeded" >&2
+            exit 1
+          fi
+          [[ "$diagnostic" == *"all-zero runtime material"* ]]
+          cmp "$fixture_dir/input" "$fixture_dir/expected"
+      - name: Checked-in Xcode project parses
+        run: xcodebuild -list -project RiskDetectorApp/RiskDetectorApp.xcodeproj >/dev/null
+      - name: Native transport, payload safety, and local graph regressions
         working-directory: RiskDetectorApp
-        run: swift test --filter 'FusionTransportTests|FusionGraphTests|GraphModuleTests'
+        run: swift test --filter 'FusionTransportTests|FusionGraphTests|GraphModuleTests|CryptoTests'

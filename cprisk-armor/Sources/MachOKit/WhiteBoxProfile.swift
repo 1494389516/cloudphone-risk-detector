@@ -279,6 +279,12 @@ package enum ArmorWhiteBox {
     private static func currentBuildSalt() -> Data {
         let env = ProcessInfo.processInfo.environment
         if let raw = env["CPRISK_ARMOR_BUILD_SEED"] ?? env["CPRISK_BUILD_SEED"] {
+            if let canonical = canonicalBuildSalt(raw) {
+                return canonical
+            }
+            // Direct library callers may bypass the CLI's validation. Keep a
+            // deterministic fallback for them while the CLI still rejects an
+            // invalid seed before executing any pass.
             return Data(raw.utf8)
         }
         // Fall back to a *process-stable* 32-byte salt rather than the literal
@@ -295,6 +301,22 @@ package enum ArmorWhiteBox {
         // CI/release builds should still set CPRISK_ARMOR_BUILD_SEED for
         // cross-process reproducibility.
         return cachedRandomBuildSalt
+    }
+
+    /// Canonical numeric build salt shared by separate producer processes.
+    /// Decimal/hex spelling and leading zeros must not produce different
+    /// white-box tables for the same numeric seed.
+    package static func canonicalBuildSalt(_ raw: String) -> Data? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parsed: UInt64?
+        if value.lowercased().hasPrefix("0x") {
+            parsed = UInt64(value.dropFirst(2), radix: 16)
+        } else {
+            parsed = UInt64(value, radix: 10)
+        }
+        guard let parsed else { return nil }
+        var littleEndian = (parsed == 0 ? UInt64(1) : parsed).littleEndian
+        return Swift.withUnsafeBytes(of: &littleEndian) { Data($0) }
     }
 
     /// Lazily-initialized, process-stable random salt used when no build-seed

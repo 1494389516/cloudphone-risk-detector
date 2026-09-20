@@ -419,17 +419,9 @@ final class StringEncryptorTests: XCTestCase {
 
     private static func deriveStringKey(rootKey: Data) -> Data {
         // Must mirror StringEncryptor.swift `deriveStringKey(rootKey:)` 1:1.
-        // The PRF input is SHA256 over the domain-separated seed material
-        // ("cprisk.string.domain1.v2" [|| CPRISK_ARMOR_BUILD_SEED]), NOT a
-        // zero block — using a zero block here derives a different stringKey
-        // and every per-string keystream diverges, decoding to garbage.
-        var seedMaterial = Data("cprisk.string.domain1.v2".utf8)
-        if let raw = ProcessInfo.processInfo.environment["CPRISK_ARMOR_BUILD_SEED"] {
-            seedMaterial.append(Data(raw.utf8))
-        }
         return ArmorWhiteBox.build(rootKey: rootKey).prf(
             domain: .pass1StringKey,
-            input: Data(SHA256.hash(data: seedMaterial))
+            input: Data(repeating: 0, count: ArmorABI.hashSize)
         )
     }
 

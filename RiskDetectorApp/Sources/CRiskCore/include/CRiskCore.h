@@ -803,11 +803,13 @@ int cprisk_whitebox_available(void);
 /// slide; runtime decodes using \c aslr_table_anchor_slide before PRF evaluation.
 /// Disable at runtime: \c CPRISK_WB_ASLR_TABLE_DISABLE=1. Strip decode path at compile
 /// time: \c CPRISK_DISABLE_WHITEBOX_ASLR_TABLE.
-/// Domains 6-9: when \c cprisk_get_effective_root() succeeds (after hybrid KDF), the PRF
+/// Dynamic domains 6-7: when \c cprisk_get_effective_root() succeeds (after hybrid KDF), the PRF
 /// input is SHA256(label||domain_id_le||le32(signal_probe_bits)||le32(wb_pressure_mask)||
 /// le8(min(vm_mprotect_crosscheck_mismatch_count,255))||le8(min(vm_mprotect_mach_trap_mismatch_count,255))||
 /// input||effective_root) (probe bits, wb_pressure, and VM count bytes omitted for injected
 /// white-box test bundles); if not, input is identity (early boot before KDF).
+/// Static import/header domains 8-9 always use the supplied input unchanged so
+/// build-time ciphertext remains reproducible at runtime.
 int cprisk_whitebox_evaluate_domain(
     uint32_t domain_id,
     const uint8_t input[32],
@@ -912,7 +914,7 @@ int cprisk_verify_with_derived_key_and_request_binding_digest(
 /* Initialize the three-layer Hybrid KDF from the root key.
  * Layer 2: deviceKey     = HMAC(rootKey, deviceSalt)
  * Layer 3: effectiveRoot  = HMAC(deviceKey, sessionToken)
- * Populates internal state consumed by white-box domains 6-9.
+ * Populates internal state consumed by dynamic white-box domains 6-7.
  * Call after cprisk_init_protection() or as part of its flow.
  * Returns 0 on success, -1 on invalid input. */
 int cprisk_init_hybrid_kdf(const uint8_t *root_key);
@@ -929,7 +931,7 @@ int cprisk_derive_device_key(const uint8_t *root_key,
 int cprisk_get_device_key(uint8_t out_key[CPRISK_ARMOR_KEY_SIZE]);
 
 /* Retrieve the effective root key (Layer-3 effectiveRoot).
- * This is the key used for white-box domains 6-9 derivations.
+ * This is the key used for dynamic white-box domains 6-7 derivations.
  * Returns 0 on success (key copied to out_key), -1 if not ready. */
 int cprisk_get_effective_root(uint8_t out_key[CPRISK_ARMOR_KEY_SIZE]);
 

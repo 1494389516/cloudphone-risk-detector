@@ -73,6 +73,9 @@ uint32_t cprisk_abi_version(void) {
 /** Optional self-check span map for producer-side expect injection (header + LE records of vmaddr/length/kind). */
 #define CPRISK_ARMOR_SECTION_VMP_SELF_SPANS "__swift5_mdvsi"
 
+/** Mini-VM bootstrap XOR applied to loader/runtime material by both producer and runtime. */
+#define CPRISK_MINI_VM_BOOTSTRAP_XOR 0xA5u
+
 #define CPRISK_VMP_SELF_SPAN_MAGIC 0x56535043u /* "CPSV" little-endian */
 #define CPRISK_VMP_SELF_SPAN_VERSION 1u
 #define CPRISK_VMP_SELF_SPAN_KIND_EXEC 1u
@@ -391,7 +394,7 @@ int cprisk_hmac_verify(const uint8_t *expected, const uint8_t *actual, size_t le
 /* Magic values */
 #define CPRISK_ARMOR_CHAIN_MAGIC_PREFIX 0x43504348  /* "CPCH" */
 
-/* ── Hybrid KDF Domain Constants (White-Box Domains 6-9) ─────────────── */
+/* Domains 6-7 are runtime-bound; static import/header domains 8-9 are build-stable. */
 
 #define CPRISK_WHITEBOX_DOMAIN_DEVICE_BOUND 6
 #define CPRISK_WHITEBOX_DOMAIN_SESSION_BOUND 7

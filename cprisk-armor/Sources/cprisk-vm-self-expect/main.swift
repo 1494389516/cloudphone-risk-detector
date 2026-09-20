@@ -8,7 +8,7 @@ private enum InjectMode {
 
 private func usage() -> Never {
     FileHandle.standardError.write(Data("""
-        usage: cprisk-vm-self-expect --in <mach-o-path> [--hmac | --fnv] [--material-hex <64-hex-chars>] [--allow-zero-material]
+        usage: cprisk-vm-self-expect --in <mach-o-path> [--hmac | --fnv] [--root-key-hex <64-hex-chars> | --material-hex <64-hex-chars>] [--allow-zero-material]
 
         Post-link: writes __DATA,__swift5_mdvsk (LE u32 magic + LE u32 FNV-1a or CPSH tag). The hashed
         TEXT windows are taken from __DATA,__swift5_mdvsi (CPSV) when present; otherwise from symtab
@@ -20,6 +20,9 @@ private func usage() -> Never {
                          windows can recompute the expected value. Compatibility / no-key use only.
           --material-hex 32-byte runtime material as 64 hex digits (HMAC key derivation). REQUIRED for
                          --hmac in production: must match runtime cprisk_get_runtime_material.
+          --root-key-hex 32-byte armor root key. Derives runtime material from the armored Mach-O and
+                         verifies that the key/build seed match its anchor and white-box sections.
+                         When omitted, CPRISK_ARMOR_KEY is used as the root-key fallback.
           --allow-zero-material
                          Permit --hmac with all-zero material (CI / fixtures only). Without it, --hmac
                          refuses to run when --material-hex is absent — a zero key lets an attacker
@@ -59,6 +62,7 @@ struct CLI {
         // expected value carries no secret and is trivially recomputable after a TEXT patch.
         var mode: InjectMode = .hmac
         var materialHex: String?
+        var rootKeyHex: String?
         var allowZeroMaterial = false
         var i = args.startIndex
         while i < args.endIndex {
@@ -79,6 +83,11 @@ struct CLI {
                 let n = args.index(after: i)
                 guard n < args.endIndex else { usage() }
                 materialHex = args[n]
+                i = args.index(after: n)
+            case "--root-key-hex":
+                let n = args.index(after: i)
+                guard n < args.endIndex else { usage() }
+                rootKeyHex = args[n]
                 i = args.index(after: n)
             case "--allow-zero-material":
                 allowZeroMaterial = true
@@ -106,8 +115,19 @@ struct CLI {
                 )
             case .hmac:
                 let mat: Data?
-                if let h = materialHex {
+                if materialHex != nil && rootKeyHex != nil {
+                    throw MachOError.invalidData("use only one of --root-key-hex and --material-hex")
+                } else if let h = rootKeyHex {
+                    let rootKey = try parseMaterialHex(h)
+                    let file = try MachOFile(url: url)
+                    mat = try ArmorRuntimeMaterialDeriver.derive(from: file, rootKey: rootKey)
+                } else if let h = materialHex {
                     mat = try parseMaterialHex(h)
+                } else if let h = ProcessInfo.processInfo.environment["CPRISK_ARMOR_KEY"],
+                          !h.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let rootKey = try parseMaterialHex(h)
+                    let file = try MachOFile(url: url)
+                    mat = try ArmorRuntimeMaterialDeriver.derive(from: file, rootKey: rootKey)
                 } else if allowZeroMaterial {
                     // injectHmac defaults to 32 zero bytes when mat == nil.
                     mat = nil
@@ -116,9 +136,12 @@ struct CLI {
                     ))
                 } else {
                     FileHandle.standardError.write(Data(
-                        "cprisk-vm-self-expect: error: --hmac requires --material-hex (or --allow-zero-material for CI). Refusing to write a zero-key self-check that an attacker could forge.\n".utf8
+                        "cprisk-vm-self-expect: error: --hmac requires --root-key-hex, --material-hex, or CPRISK_ARMOR_KEY (or --allow-zero-material for CI). Refusing to write a zero-key self-check that an attacker could forge.\n".utf8
                     ))
                     exit(2)
+                }
+                if let mat, mat.allSatisfy({ $0 == 0 }), !allowZeroMaterial {
+                    throw MachOError.invalidData("all-zero runtime material requires --allow-zero-material (fixtures only)")
                 }
                 let r = try VMSelfExpectInjector.injectHmac(into: url, runtimeMaterial32: mat)
                 let tagHex = String(format: "%08x", r.fnvExpect)

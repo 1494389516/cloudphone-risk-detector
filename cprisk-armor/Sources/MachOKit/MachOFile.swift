@@ -221,12 +221,22 @@ public struct PassResult {
     public let itemsProcessed: Int
     public let bytesModified: Int
     public let details: [String]
+    /// Machine-readable pass coverage. Security-sensitive callers must not
+    /// infer success from a log line or from section creation alone.
+    public let metrics: [String: Int]
 
-    public init(passName: String, itemsProcessed: Int, bytesModified: Int, details: [String]) {
+    public init(
+        passName: String,
+        itemsProcessed: Int,
+        bytesModified: Int,
+        details: [String],
+        metrics: [String: Int] = [:]
+    ) {
         self.passName = passName
         self.itemsProcessed = itemsProcessed
         self.bytesModified = bytesModified
         self.details = details
+        self.metrics = metrics
     }
 }
 

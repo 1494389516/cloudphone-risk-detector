@@ -812,14 +812,4 @@ extension CPRiskKit {
         return selected
     }
 
-    internal func removingPayloadKey(_ key: String, from payloadData: Data) throws -> Data {
-        guard var object = try JSONSerialization.jsonObject(with: payloadData, options: []) as? [String: Any] else {
-            throw SecureUploadError.invalidPayloadShape
-        }
-        object.removeValue(forKey: key)
-        guard JSONSerialization.isValidJSONObject(object) else {
-            throw SecureUploadError.invalidPayloadShape
-        }
-        return try JSONSerialization.data(withJSONObject: object, options: [])
-    }
 }

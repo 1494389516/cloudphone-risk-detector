@@ -1041,10 +1041,11 @@ static uint32_t cprisk_wb_u32_min_i(uint32_t a, uint32_t b) {
     return a < b ? a : b;
 }
 
-/* Domains 6-9: when hybrid KDF has produced effectiveRoot, PRF input is
- * SHA256(label || domain_id || input || er); otherwise identity (domains 1-5
- * unchanged). Identity-before-hybrid preserves early constructors (e.g. header
- * restore before cprisk_init_protection) and injected test fixtures. */
+/* Domains 6-7: when hybrid KDF has produced effectiveRoot, PRF input is
+ * SHA256(label || domain_id || input || er); otherwise identity. Domains 8-9
+ * encrypt static import/header payloads at build time and therefore must remain
+ * build-stable: runtime-only environment material cannot be reproduced by the
+ * producer and previously made those payloads undecryptable after init. */
 static int cprisk_whitebox_prepare_prf_input_i(
     uint32_t domain_id,
     const uint8_t *input_opt,
@@ -1053,7 +1054,7 @@ static int cprisk_whitebox_prepare_prf_input_i(
     const uint8_t *src = input_opt ? input_opt : s_zero_state_i;
 
     if (domain_id < CPRISK_WHITEBOX_DOMAIN_DEVICE_BOUND ||
-        domain_id > CPRISK_WHITEBOX_DOMAIN_HEADER_ENCRYPTION) {
+        domain_id > CPRISK_WHITEBOX_DOMAIN_SESSION_BOUND) {
         memcpy(out, src, CPRISK_WHITEBOX_STATE_SIZE);
         return 0;
     }
@@ -1074,7 +1075,7 @@ static int cprisk_whitebox_prepare_prf_input_i(
     cprisk_sha256_init(&ctx);
     cprisk_sha256_update(&ctx, k_bind_label, sizeof(k_bind_label) - 1u);
     cprisk_sha256_update(&ctx, domain_le, sizeof(domain_le));
-    /* Fold passive/cached environment binding into domains 6-9 PRF input, avoid active probe sweep in hot path. */
+    /* Fold passive/cached environment binding into dynamic domains 6-7 only. */
     if (!s_test_bundle_i.active) {
         uint32_t pb = cprisk_collect_passive_signal_binding_bits();
         uint8_t pb_le[4];

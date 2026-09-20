@@ -65,6 +65,13 @@ public enum ArmorABI {
     public static let hashSize = 32
     public static let nonceSize = 16
     public static let dataSegmentName = "__DATA"
+    /// Producer/runtime mini-VM bootstrap transform. CRiskCore applies this to
+    /// loader and runtime material before use, so producers must mirror it.
+    public static let miniVMBootstrapXor: UInt8 = 0xA5
+
+    public static func miniVMBootstrap(_ material: Data) -> Data {
+        Data(material.map { $0 ^ miniVMBootstrapXor })
+    }
 
     public enum Sections {
         public static let stringTable = "__swift5_types2"

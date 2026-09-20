@@ -70,8 +70,11 @@ public struct PayloadFieldMapping: Codable, Sendable {
 public enum PayloadFieldObfuscator {
     /// 使用映射将语义字段混淆为上报字段
     public static func obfuscate(jsonData: Data, mapping: PayloadFieldMapping) throws -> Data {
+        guard mapping.validate() else {
+            throw ReportEnvelope.ReportEnvelopeError.invalidPayload
+        }
         let object = try JSONSerialization.jsonObject(with: jsonData, options: [.fragmentsAllowed])
-        let obfuscated = transform(object, with: mapping.mappings, scope: mapping.depthScope)
+        let obfuscated = try transform(object, with: mapping.mappings, scope: mapping.depthScope)
 
         guard JSONSerialization.isValidJSONObject(obfuscated) else {
             throw ReportEnvelope.ReportEnvelopeError.invalidPayload
@@ -81,6 +84,9 @@ public enum PayloadFieldObfuscator {
 
     /// 将混淆字段反向恢复为语义字段（用于调试/服务端回溯）
     public static func deobfuscate(jsonData: Data, mapping: PayloadFieldMapping) throws -> Data {
+        guard mapping.validate() else {
+            throw ReportEnvelope.ReportEnvelopeError.invalidPayload
+        }
         let pairs = mapping.mappings.map { ($1, $0) }
         let grouped = Dictionary(grouping: pairs, by: { $0.0 })
         if grouped.contains(where: { $0.value.count > 1 }) {
@@ -88,7 +94,7 @@ public enum PayloadFieldObfuscator {
         }
         let reverse = Dictionary(pairs, uniquingKeysWith: { first, _ in first })
         let object = try JSONSerialization.jsonObject(with: jsonData, options: [.fragmentsAllowed])
-        let restored = transform(object, with: reverse, scope: mapping.depthScope)
+        let restored = try transform(object, with: reverse, scope: mapping.depthScope)
 
         guard JSONSerialization.isValidJSONObject(restored) else {
             throw ReportEnvelope.ReportEnvelopeError.invalidPayload
@@ -101,7 +107,7 @@ public enum PayloadFieldObfuscator {
         with mapping: [String: String],
         scope: PayloadFieldMapping.DepthScope,
         depth: Int = 0
-    ) -> Any {
+    ) throws -> Any {
         if let dictionary = value as? [String: Any] {
             var transformed: [String: Any] = [:]
             transformed.reserveCapacity(dictionary.count)
@@ -119,13 +125,27 @@ public enum PayloadFieldObfuscator {
                     shouldRename = (depth == 0)
                 }
                 let targetKey = shouldRename ? (mapping[key] ?? key) : key
-                transformed[targetKey] = transform(nestedValue, with: mapping, scope: scope, depth: depth + 1)
+                // A mapped key may collide with an unmapped key in the actual
+                // payload (for example a->b while b already exists). Reject the
+                // whole payload instead of silently keeping an iteration-order
+                // dependent winner.
+                guard transformed[targetKey] == nil else {
+                    throw ReportEnvelope.ReportEnvelopeError.invalidPayload
+                }
+                transformed[targetKey] = try transform(
+                    nestedValue,
+                    with: mapping,
+                    scope: scope,
+                    depth: depth + 1
+                )
             }
             return transformed
         }
 
         if let array = value as? [Any] {
-            return array.map { transform($0, with: mapping, scope: scope, depth: depth + 1) }
+            return try array.map {
+                try transform($0, with: mapping, scope: scope, depth: depth + 1)
+            }
         }
 
         return value
