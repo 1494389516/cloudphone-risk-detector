@@ -17,20 +17,20 @@ into an LLM. Challenge is a distinct action; no review translation is defined.
 
 ## Verification
 
-```
-python -m unittest discover -s contracts/tests -v
-cd RiskDetectorApp
-swift test --filter 'FusionTransportTests|FusionGraphTests|GraphModuleTests'
+Test suites and dedicated fixtures were removed at the maintainer's request.
+The remaining CI checks generated contract consistency and builds the SDK/armor tools:
+
+```sh
+python3 contracts/generate.py --check
+swift build --package-path RiskDetectorApp
+swift build --package-path cprisk-armor
 ```
 
-20 checked-in vectors cover v2/v2h/v2a/v2d/v3, proof absent/present and field
-mapping absent/present. Both Python and Swift consume those fixtures. The original keys are test-only effective request keys. Eight additional
-`wire_vectors.json` fixtures cover v1/v2/v2h/v3 with float, Unicode, null, bytes
-and unknown trust strings. HKDF is checked against RFC 5869 and native CryptoKit. Python execution passed; Swift execution is pending a supported Apple
-build host. The SDK now transmits its already-canonical signed bytes. Python validates JSON
-syntax and consumes those exact bytes, including floats, Unicode and null; it never
-tries to reproduce Foundation number formatting. This verifier is one component
-of the Collector acceptance gate, not an authentication or replay store.
+These are build checks, not transport, cryptographic or behavioral regression tests.
+The SDK transmits its already-canonical signed bytes. Python validates JSON syntax
+and consumes those exact bytes; it does not reproduce Foundation number formatting.
+The verifier remains one component of the Collector acceptance gate, not an
+authentication or replay store.
 
 The SDK's historical MAC uses 0x6D/0xA3 pads, not standard HMAC. This patch preserves
 that existing signature protocol. A cryptographic migration needs its own version.
@@ -60,8 +60,8 @@ The compatibility type `LocalDeviceClusterDetector` now emits
 `local_identity_churn`, local-installation scope, and distinct local fingerprints.
 It emits no IP/account key or distinct-device count. Its score and threshold are
 unchanged. Historical cluster signal remains understood; local churn does not set
-the compressed graph-cluster bit. Native regression assertions were migrated to
-this explicit semantic correction, not removed.
+the compressed graph-cluster bit. Historical regression assertions covered this semantic correction; the test
+files have since been removed at the maintainer's request.
 
 ## Generated active transport
 
@@ -75,9 +75,9 @@ runtime-derived key through `verify_upload`, never a static-key fallback.
 
 ## Remaining external gates
 
-`.github/workflows/fusion-contract.yml` runs both Python and native Swift transport,
-HKDF and graph tests on macOS. This Linux host has no Swift executable; no native
-execution success is claimed. Real-device App Attest/armor checks still require
+`.github/workflows/fusion-contract.yml` checks generated contracts, compiles the
+SDK and armor tools, and parses the Xcode project. It does not run test suites.
+Real-device App Attest/armor checks still require
 physical Apple hardware and an authorized application environment. No Detector or
 threshold changes are included. Collector integration is implemented in the paired
 Agent PR rather than exposing its credentials to the SDK or Agent tools.

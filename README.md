@@ -27,8 +27,7 @@
   - `RiskDetectorApp/Sources/CloudPhoneRiskKit/`：SDK 主体（检测、决策、存储、上报、安全加固）。
   - `RiskDetectorApp/Sources/CloudPhoneRiskAppCore/`：应用层编排（配置加载、检测流程、报告摘要）。
   - `RiskDetectorApp/App/`：SwiftUI 示例 App（Dashboard、配置、结果展示、历史页）。
-  - `RiskDetectorApp/Tests/CloudPhoneRiskKitTests/`：核心单元测试（决策树、策略、评分、信号模型）。
-- **本地运行（SPM）**：在仓库根目录执行 `cd RiskDetectorApp && swift test` 可先验证核心逻辑测试；如需隔离构建目录（例如 CI 或并发测试），可追加 `--scratch-path "${TMPDIR:-/tmp}/cloudphone-risk-detector-riskdetector-tests"`。
+- **本地构建（SPM）**：在仓库根目录执行 `swift build --package-path RiskDetectorApp`。
 
 ## 开源发布入口
 
@@ -36,7 +35,7 @@
 
 | 你想确认什么 | 入口 |
 |--------------|------|
-| 三分钟跑起来 | `cd RiskDetectorApp && swift test --disable-sandbox` |
+| 三分钟跑起来 | `cd RiskDetectorApp && swift build --disable-sandbox` |
 | 最小接入代码 | [集成方式](#集成方式) 与 `CloudPhoneRiskKit_文档/INTEGRATION_GUIDE.md` |
 | 能力边界和安全模式 | `CloudPhoneRiskKit_文档/OPEN_SOURCE_READINESS.md` |
 | 性能目标和基准方法 | `CloudPhoneRiskKit_文档/PERFORMANCE_BENCHMARK.md` |
@@ -314,7 +313,7 @@ SDK 提供标准化的服务端对接规范：
 
 ```
 .
-├── cprisk-armor/                              # 编译后壳工具链 (SPM CLI · 46 源文件 · 19 测试)
+├── cprisk-armor/                              # 编译后壳工具链 (SPM CLI · 源代码)
 │   ├── Sources/
 │   │   ├── cprisk-armor/                       # CLI 入口 (13 Pass 编排)
 │   │   ├── MachOKit/                           # Mach-O 读写 + ABI + WhiteBox
@@ -331,7 +330,6 @@ SDK 提供标准化的服务端对接规范：
 │   │   ├── HeaderEncryptor/                    # Pass 11
 │   │   ├── TextSegmentEncryptor/               # Pass 12
 │   │   └── VMProtector/                        # Pass 13
-│   └── Tests/MachOKitTests/                    # E2E + KDF + WhiteBox + VMP 测试
 │
 ├── RiskDetectorApp/
 │   ├── App/                                    # SwiftUI 示例应用
@@ -363,7 +361,6 @@ SDK 提供标准化的服务端对接规范：
 │   │       ├── Storage/                         # AES-GCM 加密存储
 │   │       ├── TrustChain/                      # 端侧信任根链
 │   │       └── Util/                            # SVC 直调 / 混淆 / 加密
-│   └── Tests/ (67 files)                        # 单元测试
 │
 ├── CloudPhoneRiskKit_文档/                      # 统一文档中心 (17 文件)
 │   ├── CloudPhoneRiskKit_使用说明.md
@@ -443,20 +440,9 @@ cd RiskDetectorApp && xcodebuild \
   -sdk iphoneos build CODE_SIGNING_ALLOWED=NO
 ```
 
-## 测试
+## 验证范围
 
-```bash
-cd RiskDetectorApp && swift test
-```
-
-隔离构建目录（CI 推荐）：
-
-```bash
-cd RiskDetectorApp && swift test \
-  --scratch-path "${TMPDIR:-/tmp}/cprisk-tests"
-```
-
-当前测试规模：**72 个测试文件**，覆盖密码学链路、决策树边界、合规降级、反篡改、CFF 链完整性、armor 集成、跨语言 ABI 一致性、检测链证明、性能基准。
+本仓库已按维护者要求移除全部测试文件、专用样例与测试 target。CI 仅执行 SDK／加固工具编译、Xcode 工程解析及生成契约一致性检查，不再执行自动化回归测试。历史版本中的测试统计不代表当前覆盖范围。
 
 ---
 
@@ -489,4 +475,4 @@ cd RiskDetectorApp && swift test \
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 7.4 · 207 Swift · 54 C · 72 Tests · 13 Pass · 80+ Detectors · 17 Docs · ABI v3</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 7.4 · 207 Swift · 54 C · 13 Pass · 80+ Detectors · 17 Docs · ABI v3</sub></p>

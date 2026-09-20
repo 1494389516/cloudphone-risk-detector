@@ -5,7 +5,6 @@
 included:
   - Sources
   - App
-  - Tests
 
 excluded:
   - .build
