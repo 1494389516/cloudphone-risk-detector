@@ -334,5 +334,7 @@ private func deriveLoaderKey(
     digest.append(integrityHash)
     ArmorWhiteBox.appendLittleEndian(anchorAccumulator, to: &digest)
     let loaderDigest = sha256(digest)
-    return whitebox.prf(domain: .loaderKey, input: loaderDigest)
+    return ArmorABI.miniVMBootstrap(
+        whitebox.prf(domain: .loaderKey, input: loaderDigest)
+    )
 }

@@ -6,23 +6,24 @@ public enum VMPatchRewriterError: Error, CustomStringConvertible {
 
     public var description: String {
         switch self {
-        case .blOffsetNotAligned(let o): return "BL offset not 4-byte aligned (\(o))"
-        case .blOutOfRange(let imm): return "BL out of ±128MB range (imm26=\(imm))"
+        case .blOffsetNotAligned(let o): return "Branch offset not 4-byte aligned (\(o))"
+        case .blOutOfRange(let imm): return "Branch out of ±128MB range (imm26=\(imm))"
         }
     }
 }
 
-/// Polymorphic AArch64 trampoline shapes (all `trampolineByteLength`; ABI: `x0 = functionId`, then `bl` → VM entry).
+/// Function-ID ABI only; not a bridge for arbitrary native function arguments.
+/// Tail branches preserve the caller's LR (a BL followed by RET would loop).
 public enum VMTrampolineTemplate: UInt32, CaseIterable, Sendable, Equatable {
-    /// `MOVZ/MOVK*3` on `x0`, `BL`, `RET`, `NOP`.
+    /// `MOVZ/MOVK*3` on `x0`, `B`, padding.
     case movkClassic = 0
-    /// Same immediates on `x1`, `MOV X0,X1`, `BL`, `RET`, `NOP`.
+    /// Same immediates on `x1`, `MOV X0,X1`, `B`, padding.
     case movkViaX1 = 1
-    /// `LDR X0` of an embedded `.quad`, `BL`, `RET`, `NOP`, literal, trailing `NOP`.
+    /// `LDR X0` of an embedded `.quad`, `B`, padding, literal, trailing padding.
     case pcRelativeLiteral = 2
 }
 
-/// Builds AArch64 trampoline: load `functionId` into `x0`, then `bl` to `_cprisk_vm_entry`.
+/// Builds a function-ID trampoline, tail-branching to `_cprisk_vm_entry`.
 public enum VMPatchRewriter {
     public static let trampolineByteLength = 28
 
@@ -33,7 +34,7 @@ public enum VMPatchRewriter {
         return VMTrampolineTemplate(rawValue: UInt32(idx)) ?? .movkClassic
     }
 
-    /// Which Mach-O VM entry symbol the trampoline should `bl` (distinct from template shape; spreads hook surface).
+    /// Which Mach-O VM entry symbol the trampoline should tail-branch to.
     public static func selectVmEntrySymbolName(functionId: UInt64, buildSeed: UInt64) -> String {
         var g = VMProtectorSplitMix64(seed: functionId ^ buildSeed ^ 0x564D454E54525900) // "VMENTY\0"
         switch g.next() % 3 {
@@ -61,7 +62,7 @@ public enum VMPatchRewriter {
     }
 
     /// - Parameters:
-    ///   - template: Machine shape; all variants preserve `x0` / `BL` ABI to `_cprisk_vm_entry`.
+    ///   - template: Machine shape; passes the ID in `x0`, preserving the caller's LR.
     public static func buildTrampoline(
         functionId: UInt64,
         functionEntryVMA: UInt64,
@@ -97,7 +98,7 @@ public enum VMPatchRewriter {
 
         let blPC = functionEntryVMA + 16
         let blOffset = Int64(vmEntryVMA) - Int64(blPC)
-        words.append(try encodeBL(offsetBytes: blOffset))
+        words.append(try encodeB(offsetBytes: blOffset))
         words.append(0xD65F_03C0) // ret
         words.append(0xD503_201F) // nop padding
 
@@ -122,7 +123,7 @@ public enum VMPatchRewriter {
         words.append(0xAA01_03E0) // mov x0, x1
         let blPC = functionEntryVMA + 20
         let blOffset = Int64(vmEntryVMA) - Int64(blPC)
-        words.append(try encodeBL(offsetBytes: blOffset))
+        words.append(try encodeB(offsetBytes: blOffset))
         words.append(0xD65F_03C0) // ret
         // Exactly 7 words (28 B): no trailing NOP — padding slot is folded into fixed patch size.
 
@@ -139,7 +140,7 @@ public enum VMPatchRewriter {
         words.append(encodeLDRXLiteral(rt: 0, imm19: 4))
         let blPC = functionEntryVMA + 4
         let blOffset = Int64(vmEntryVMA) - Int64(blPC)
-        words.append(try encodeBL(offsetBytes: blOffset))
+        words.append(try encodeB(offsetBytes: blOffset))
         words.append(0xD65F_03C0) // ret
         words.append(0xD503_201F) // nop
         words.append(UInt32(truncatingIfNeeded: functionId))
@@ -169,7 +170,7 @@ public enum VMPatchRewriter {
         0xF280_0000 | ((hw & 3) << 21) | (UInt32(imm16) << 5) | (rd & 31)
     }
 
-    private static func encodeBL(offsetBytes: Int64) throws -> UInt32 {
+    private static func encodeB(offsetBytes: Int64) throws -> UInt32 {
         guard offsetBytes % 4 == 0 else {
             throw VMPatchRewriterError.blOffsetNotAligned(offsetBytes)
         }
@@ -180,7 +181,7 @@ public enum VMPatchRewriter {
             throw VMPatchRewriterError.blOutOfRange(imm)
         }
         let encoded = UInt32(bitPattern: Int32(imm))
-        return 0x9400_0000 | (encoded & 0x03FF_FFFF)
+        return 0x1400_0000 | (encoded & 0x03FF_FFFF)
     }
 
     /// `LDR Xt, label` PC-relative (64-bit). `imm19` is signed offset in instructions from the LDR PC to the literal.

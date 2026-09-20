@@ -55,6 +55,38 @@ final class KDFChainTests: XCTestCase {
         }
     }
 
+    func testPostLinkRuntimeMaterialMatchesWhiteBoxInitialization() throws {
+        let url = try Self.writeFixture(named: "wb_runtime_material")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let file = try MachOFile(url: url)
+        _ = try IntegrityAnchorPass().execute(
+            on: file,
+            config: PassConfig(encryptionKey: Self.testRootKey)
+        )
+
+        let anchor = try Self.readFullAnchorHash(from: file)
+        let integrity = Self.sha256(anchor + anchor + anchor)
+        var input = anchor + integrity
+        ArmorWhiteBox.appendLittleEndian(0, to: &input)
+        ArmorWhiteBox.appendLittleEndian(0, to: &input)
+        let bundle = ArmorWhiteBox.build(rootKey: Self.testRootKey)
+        let expected = ArmorABI.miniVMBootstrap(
+            bundle.prf(domain: .runtimeMaterial, input: Self.sha256(input))
+        )
+
+        XCTAssertEqual(
+            try ArmorRuntimeMaterialDeriver.derive(from: file, rootKey: Self.testRootKey),
+            expected
+        )
+        XCTAssertThrowsError(
+            try ArmorRuntimeMaterialDeriver.derive(
+                from: file,
+                rootKey: Data(repeating: 0xCD, count: ArmorABI.keySize)
+            )
+        )
+    }
+
     func testPass1StringKeyComesFromWhiteBoxDomain2() throws {
         let url = try Self.writeFixture(named: "wb_pass1")
         defer { try? FileManager.default.removeItem(at: url) }
@@ -62,15 +94,11 @@ final class KDFChainTests: XCTestCase {
         let file = try MachOFile(url: url)
         let config = PassConfig(encryptionKey: Self.testRootKey)
         let bundle = ArmorWhiteBox.build(rootKey: Self.testRootKey)
-        // Must mirror StringEncryptor.deriveStringKey(rootKey:): the PRF input
-        // is SHA256 over the domain-separated seed material, not a zero block.
-        var stringSeed = Data("cprisk.string.domain1.v2".utf8)
-        if let raw = ProcessInfo.processInfo.environment["CPRISK_ARMOR_BUILD_SEED"] {
-            stringSeed.append(Data(raw.utf8))
-        }
+        // Static producer/runtime contract: Domain 2 uses an all-zero input.
+        // Per-build diversity already comes from the generated white-box tables.
         let expectedStringKey = bundle.prf(
             domain: .pass1StringKey,
-            input: Self.sha256(stringSeed)
+            input: Data(repeating: 0, count: ArmorABI.hashSize)
         )
 
         _ = try StringEncryptorPass().execute(on: file, config: config)
@@ -135,9 +163,11 @@ final class KDFChainTests: XCTestCase {
         loaderMaterial.append(fullAnchorHash)
         loaderMaterial.append(integrityHash)
         ArmorWhiteBox.appendLittleEndian(expectedAccumulator, to: &loaderMaterial)
-        let expectedLoaderKey = bundle.prf(
-            domain: .loaderKey,
-            input: Self.sha256(loaderMaterial)
+        let expectedLoaderKey = ArmorABI.miniVMBootstrap(
+            bundle.prf(
+                domain: .loaderKey,
+                input: Self.sha256(loaderMaterial)
+            )
         )
 
         let actualLoaderKey = deriveLoaderKey(

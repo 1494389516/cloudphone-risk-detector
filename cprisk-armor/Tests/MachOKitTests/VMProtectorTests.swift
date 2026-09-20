@@ -2,6 +2,13 @@ import XCTest
 @testable import VMProtector
 
 final class VMProtectorTests: XCTestCase {
+    func testFullReplacementRejectedUntilNativeSemanticsExist() throws {
+        let policy = VMPolicyConfig(version: 1, full: ["_foo"], partial: [], never: [])
+        XCTAssertThrowsError(try policy.validateNativeReplacementSupport())
+        let excluded = VMPolicyConfig(version: 1, full: ["_foo"], partial: [], never: ["_foo"])
+        XCTAssertNoThrow(try excluded.validateNativeReplacementSupport())
+    }
+
     func testVMFunctionIdMixedDependsOnBuildSeed() {
         let sym = "RiskDetectionEngine.collectAndAugmentSignals"
         let a = VMFunctionId.mixed(symbol: sym, buildSeed: 0x1111)
@@ -575,6 +582,20 @@ final class VMProtectorTests: XCTestCase {
                 template: tpl
             )
             XCTAssertEqual(stub.count, VMPatchRewriter.trampolineByteLength, "template \(tpl)")
+            let branchOffset: Int
+            switch tpl {
+            case .movkClassic: branchOffset = 16
+            case .movkViaX1: branchOffset = 20
+            case .pcRelativeLiteral: branchOffset = 4
+            }
+            let word = (0..<4).reduce(UInt32(0)) {
+                $0 | (UInt32(stub[branchOffset + $1]) << ($1 * 8))
+            }
+            // B, not BL: bit 31 must be clear so LR still points to the caller.
+            XCTAssertEqual(word & 0xFC00_0000, 0x1400_0000)
+            let signedImm = Int32(bitPattern: word << 6) >> 6
+            let target = Int64(entry) + Int64(branchOffset) + Int64(signedImm) * 4
+            XCTAssertEqual(target, Int64(vm))
         }
     }
 

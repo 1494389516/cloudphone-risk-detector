@@ -156,16 +156,13 @@ static void cprisk_runtime_timing_hook_i(uint32_t stage) {
     (void)sink;
 }
 
-/* Derive the header encryption key by evaluating WhiteBox Domain 9
- * with an all-zero input.  This matches the Swift producer's key
- * derivation (ArmorWhiteBox PRF with domain=9, seed=all-zeros). */
+/* Derive the header encryption key by evaluating build-stable WhiteBox
+ * Domain 9 with an all-zero input, matching HeaderEncryptor.swift. */
 static int cprisk_derive_header_key(uint8_t out_key[CPRISK_ARMOR_KEY_SIZE]) {
     if (!out_key)
         return -1;
 
-    /* Use an all-zero seed for Domain 9, matching the Swift side:
-     * let seed = Data(repeating: 0, count: 32)
-     * return whitebox.prf(domain: .headerEncryptionKey, input: seed) */
+    /* Static header ciphertext cannot depend on runtime-only binding data. */
     uint8_t zero_seed[CPRISK_ARMOR_KEY_SIZE];
     memset(zero_seed, 0, CPRISK_ARMOR_KEY_SIZE);
 

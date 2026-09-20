@@ -1839,6 +1839,9 @@
 			);
 			inputPaths = (
 				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)",
+				"$(SRCROOT)/Scripts/inject-vm-self-expect.sh",
+				"$(DERIVED_FILE_DIR)/apply_cprisk_armor.stamp",
+				"$(DERIVED_FILE_DIR)/cprisk_armor_build_seed",
 			);
 			name = "Inject VM self-expect (mdvsk)";
 			outputFileListPaths = (
@@ -1849,7 +1852,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "unset SDKROOT\nexport SDKROOT=\"$(xcrun --sdk macosx --show-sdk-path)\"\nTOOLROOT=\"${SRCROOT}/../cprisk-armor\"\nEXEC=\"${TARGET_BUILD_DIR}/${EXECUTABLE_PATH}\"\nSTAMP_PATH=\"${SCRIPT_OUTPUT_FILE_1}\"\nmkdir -p \"$(dirname \"$STAMP_PATH\")\"\n\nif [ ! -d \"$TOOLROOT\" ] || [ ! -f \"$EXEC\" ]; then\n  /bin/date -u +\"%Y-%m-%dT%H:%M:%SZ\" > \"$STAMP_PATH\"\n  exit 0\nfi\n\n(cd \"$TOOLROOT\" && swift build --disable-sandbox -c release --product cprisk-vm-self-expect >/dev/null) || true\nBIN=\"$(cd \"$TOOLROOT\" && swift build --disable-sandbox -c release --show-bin-path)\"\nTOOL=\"${BIN}/cprisk-vm-self-expect\"\nif [ -x \"$TOOL\" ]; then\n  TOOL_OUTPUT=\"$(\"$TOOL\" --in \"$EXEC\" 2>&1)\"\n  TOOL_RC=$?\n  if [ \"$TOOL_RC\" -ne 0 ]; then\n    if [ -n \"$TOOL_OUTPUT\" ]; then\n      printf '%s\\n' \"$TOOL_OUTPUT\" | /usr/bin/sed 's/error:/note:/g' >&2\n    fi\n    echo \"warning: cprisk-vm-self-expect: injection skipped for $EXEC\" >&2\n  elif [ -n \"$TOOL_OUTPUT\" ]; then\n    printf '%s\\n' \"$TOOL_OUTPUT\"\n  fi\nfi\n\n/usr/bin/stat -f \"%m %z\" \"$EXEC\" > \"$STAMP_PATH\" || /bin/date -u +\"%Y-%m-%dT%H:%M:%SZ\" > \"$STAMP_PATH\"\n";
+			shellScript = "/bin/bash \"$SRCROOT/Scripts/inject-vm-self-expect.sh\"\n";
 		};
 		87CECE010BF76DDBA24FC263 /* Apply cprisk armor */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -1860,6 +1863,7 @@
 			);
 			inputPaths = (
 				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)",
+				"$(SRCROOT)/Scripts/apply-cprisk-armor.sh",
 			);
 			name = "Apply cprisk armor";
 			outputFileListPaths = (
@@ -1867,10 +1871,11 @@
 			outputPaths = (
 				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)",
 				"$(DERIVED_FILE_DIR)/apply_cprisk_armor.stamp",
+				"$(DERIVED_FILE_DIR)/cprisk_armor_build_seed",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\nunset SDKROOT\nexport SDKROOT=\"$(xcrun --sdk macosx --show-sdk-path)\"\nTOOLROOT=\"${SRCROOT}/../cprisk-armor\"\nEXEC=\"${TARGET_BUILD_DIR}/${EXECUTABLE_PATH}\"\nSTAMP_PATH=\"${SCRIPT_OUTPUT_FILE_1}\"\nmkdir -p \"$(dirname \"$STAMP_PATH\")\"\n\nif [ \"${CONFIGURATION}\" != \"Release\" ]; then\n  echo \"note: cprisk-armor skipped for ${CONFIGURATION} build\"\n  /bin/date -u +\"%Y-%m-%dT%H:%M:%SZ\" > \"$STAMP_PATH\"\n  exit 0\nfi\n\nif [ ! -d \"$TOOLROOT\" ] || [ ! -f \"$EXEC\" ]; then\n  echo \"warning: cprisk-armor skipped: missing toolroot or executable\" >&2\n  /bin/date -u +\"%Y-%m-%dT%H:%M:%SZ\" > \"$STAMP_PATH\"\n  exit 0\nfi\n\nif [ -z \"${CPRISK_ARMOR_KEY:-}\" ]; then\n  echo \"warning: cprisk-armor skipped: CPRISK_ARMOR_KEY is not set\" >&2\n  /bin/date -u +\"%Y-%m-%dT%H:%M:%SZ\" > \"$STAMP_PATH\"\n  exit 0\nfi\n\n(cd \"$TOOLROOT\" && swift build --disable-sandbox -c release --product cprisk-armor >/dev/null)\nBIN=\"$(cd \"$TOOLROOT\" && swift build --disable-sandbox -c release --show-bin-path)\"\nTOOL=\"${BIN}/cprisk-armor\"\nif [ ! -x \"$TOOL\" ]; then\n  echo \"error: cprisk-armor tool not found at $TOOL\" >&2\n  exit 1\nfi\n\nARMOR_ARGS=\"--all\"\nif [ \"${CPRISK_ARMOR_PROFILE:-}\" = \"appstore-safe\" ]; then\n  ARMOR_ARGS=\"--pass3 --pass4 --pass5 --pass6 --pass7 --pass10 --pass11 --safety-profile appstore-safe\"\nfi\n\nif [ -n \"${CPRISK_ARMOR_ARGS:-}\" ]; then\n  ARMOR_ARGS=\"${CPRISK_ARMOR_ARGS}\"\nfi\n\nVERBOSE_ARG=\"\"\nif [ \"${CPRISK_ARMOR_VERBOSE:-}\" = \"1\" ]; then\n  VERBOSE_ARG=\"--verbose\"\nfi\n\necho \"note: running cprisk-armor ${ARMOR_ARGS} on $EXEC\"\n\"$TOOL\" \\\n  --input \"$EXEC\" \\\n  --output \"$EXEC\" \\\n  $ARMOR_ARGS \\\n  $VERBOSE_ARG \\\n  --key \"$CPRISK_ARMOR_KEY\"\n\n/usr/bin/stat -f \"%m %z\" \"$EXEC\" > \"$STAMP_PATH\" || /bin/date -u +\"%Y-%m-%dT%H:%M:%SZ\" > \"$STAMP_PATH\"\n";
+			shellScript = "/bin/bash \"$SRCROOT/Scripts/apply-cprisk-armor.sh\"\n";
 		};
 		AE2D7E34A967E5D6028ED537 /* Copy Swift Objective-C Interface Header */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -2361,6 +2366,7 @@
 				OTHER_LDFLAGS = (
 					"$(inherited) -lCRiskCore -Wl,-headerpad,0x4000 -Wl,-u,_cprisk_vm_entry -Wl,-u,_cprisk_vm_entry_alt1 -Wl,-u,_cprisk_vm_entry_alt2 -Wl,-sectcreate,__DATA,__swift5_types2,$(ARMOR_PLACEHOLDER_DIR)/string_table.bin -Wl,-sectcreate,__DATA,__swift5_proto2,$(ARMOR_PLACEHOLDER_DIR)/loader.bin -Wl,-sectcreate,__DATA,__swift5_mpenum,$(ARMOR_PLACEHOLDER_DIR)/protected_blob.bin -Wl,-sectcreate,__DATA,__swift5_aa,$(ARMOR_PLACEHOLDER_DIR)/anchor_a.bin -Wl,-sectcreate,__DATA,__swift5_ab,$(ARMOR_PLACEHOLDER_DIR)/anchor_b.bin -Wl,-sectcreate,__DATA,__swift5_ac,$(ARMOR_PLACEHOLDER_DIR)/anchor_c.bin -Wl,-sectcreate,__DATA,__swift5_ad,$(ARMOR_PLACEHOLDER_DIR)/anchor_d.bin -Wl,-sectcreate,__DATA,__swift5_acfun,$(ARMOR_PLACEHOLDER_DIR)/full_anchor.bin -Wl,-sectcreate,__DATA,__swift5_mdext,$(ARMOR_PLACEHOLDER_DIR)/whitebox_meta.bin -Wl,-sectcreate,__DATA,__swift5_mdbdy,$(ARMOR_PLACEHOLDER_DIR)/whitebox_code.bin -Wl,-sectcreate,__DATA,__swift5_mddsc,$(ARMOR_PLACEHOLDER_DIR)/whitebox_data.bin -Wl,-sectcreate,__DATA,__swift5_mdchk,$(ARMOR_PLACEHOLDER_DIR)/whitebox_tag.bin -Wl,-sectcreate,__DATA,__swift5_dyrel,$(ARMOR_PLACEHOLDER_DIR)/import_table.bin -Wl,-sectcreate,__DATA,__swift5_mhsav,$(ARMOR_PLACEHOLDER_DIR)/header_backup.bin -Wl,-sectcreate,__DATA,__swift5_ptmap,$(ARMOR_PLACEHOLDER_DIR)/chain_meta.bin -Wl,-sectcreate,__DATA,__swift5_cgenc,$(ARMOR_PLACEHOLDER_DIR)/text_encrypt.bin -Wl,-sectcreate,__DATA,__swift5_mdvrt,$(ARMOR_PLACEHOLDER_DIR)/vmp_dispatch.bin -Wl,-sectcreate,__DATA,__swift5_mdirt,$(ARMOR_PLACEHOLDER_DIR)/vmp_bytecode.bin -Wl,-sectcreate,__DATA,__sw5_builtin2,$(ARMOR_PLACEHOLDER_DIR)/sw5_builtin2.bin -Wl,-sectcreate,__DATA,__sw5_capture2,$(ARMOR_PLACEHOLDER_DIR)/sw5_capture2.bin -Wl,-sectcreate,__DATA,__sw5_typeref2,$(ARMOR_PLACEHOLDER_DIR)/sw5_typeref2.bin\n-Wl,-sectcreate,__DATA,__la_resolver2,$(ARMOR_PLACEHOLDER_DIR)/la_resolver2.bin -Wl,-sectcreate,__DATA,__stub_helper2,$(ARMOR_PLACEHOLDER_DIR)/stub_helper2.bin -Wl,-sectcreate,__DATA,__auth_got2,$(ARMOR_PLACEHOLDER_DIR)/auth_got2.bin -Wl,-sectcreate,__DATA,__nl_catlist,$(ARMOR_PLACEHOLDER_DIR)/nl_catlist.bin",
 					"-ObjC",
+					"-Wl,-sectcreate,__DATA,__swift5_mdvsk,$(ARMOR_PLACEHOLDER_DIR)/vmp_self_expect.bin",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.cloudphonerisk.riskdetector;
 				SDKROOT = iphoneos;
@@ -2559,6 +2565,7 @@
 				OTHER_LDFLAGS = (
 					"$(inherited) -lCRiskCore -Wl,-headerpad,0x4000 -Wl,-u,_cprisk_vm_entry -Wl,-u,_cprisk_vm_entry_alt1 -Wl,-u,_cprisk_vm_entry_alt2 -Wl,-sectcreate,__DATA,__swift5_types2,$(ARMOR_PLACEHOLDER_DIR)/string_table.bin -Wl,-sectcreate,__DATA,__swift5_proto2,$(ARMOR_PLACEHOLDER_DIR)/loader.bin -Wl,-sectcreate,__DATA,__swift5_mpenum,$(ARMOR_PLACEHOLDER_DIR)/protected_blob.bin -Wl,-sectcreate,__DATA,__swift5_aa,$(ARMOR_PLACEHOLDER_DIR)/anchor_a.bin -Wl,-sectcreate,__DATA,__swift5_ab,$(ARMOR_PLACEHOLDER_DIR)/anchor_b.bin -Wl,-sectcreate,__DATA,__swift5_ac,$(ARMOR_PLACEHOLDER_DIR)/anchor_c.bin -Wl,-sectcreate,__DATA,__swift5_ad,$(ARMOR_PLACEHOLDER_DIR)/anchor_d.bin -Wl,-sectcreate,__DATA,__swift5_acfun,$(ARMOR_PLACEHOLDER_DIR)/full_anchor.bin -Wl,-sectcreate,__DATA,__swift5_mdext,$(ARMOR_PLACEHOLDER_DIR)/whitebox_meta.bin -Wl,-sectcreate,__DATA,__swift5_mdbdy,$(ARMOR_PLACEHOLDER_DIR)/whitebox_code.bin -Wl,-sectcreate,__DATA,__swift5_mddsc,$(ARMOR_PLACEHOLDER_DIR)/whitebox_data.bin -Wl,-sectcreate,__DATA,__swift5_mdchk,$(ARMOR_PLACEHOLDER_DIR)/whitebox_tag.bin -Wl,-sectcreate,__DATA,__swift5_dyrel,$(ARMOR_PLACEHOLDER_DIR)/import_table.bin -Wl,-sectcreate,__DATA,__swift5_mhsav,$(ARMOR_PLACEHOLDER_DIR)/header_backup.bin -Wl,-sectcreate,__DATA,__swift5_ptmap,$(ARMOR_PLACEHOLDER_DIR)/chain_meta.bin -Wl,-sectcreate,__DATA,__swift5_cgenc,$(ARMOR_PLACEHOLDER_DIR)/text_encrypt.bin -Wl,-sectcreate,__DATA,__swift5_mdvrt,$(ARMOR_PLACEHOLDER_DIR)/vmp_dispatch.bin -Wl,-sectcreate,__DATA,__swift5_mdirt,$(ARMOR_PLACEHOLDER_DIR)/vmp_bytecode.bin -Wl,-sectcreate,__DATA,__sw5_builtin2,$(ARMOR_PLACEHOLDER_DIR)/sw5_builtin2.bin -Wl,-sectcreate,__DATA,__sw5_capture2,$(ARMOR_PLACEHOLDER_DIR)/sw5_capture2.bin -Wl,-sectcreate,__DATA,__sw5_typeref2,$(ARMOR_PLACEHOLDER_DIR)/sw5_typeref2.bin\n-Wl,-sectcreate,__DATA,__la_resolver2,$(ARMOR_PLACEHOLDER_DIR)/la_resolver2.bin -Wl,-sectcreate,__DATA,__stub_helper2,$(ARMOR_PLACEHOLDER_DIR)/stub_helper2.bin -Wl,-sectcreate,__DATA,__auth_got2,$(ARMOR_PLACEHOLDER_DIR)/auth_got2.bin -Wl,-sectcreate,__DATA,__nl_catlist,$(ARMOR_PLACEHOLDER_DIR)/nl_catlist.bin",
 					"-ObjC",
+					"-Wl,-sectcreate,__DATA,__swift5_mdvsk,$(ARMOR_PLACEHOLDER_DIR)/vmp_self_expect.bin",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.cloudphonerisk.riskdetector;
 				SDKROOT = iphoneos;

@@ -148,6 +148,17 @@ public struct VMPolicyConfig: Equatable, Sendable {
         return nil
     }
 
+    /// The current VM consumes a function ID and returns a folded accumulator;
+    /// it does not implement the original ARM64/Swift calling convention.
+    /// Reject native replacement before changing the input Mach-O.
+    public func validateNativeReplacementSupport() throws {
+        if full.contains(where: { tier(for: $0) == .full }) {
+            throw MachOError.invalidData(
+                "VMP full-tier replacement is disabled: native arguments, return values and complete instruction semantics are not preserved. Partial emits metadata only."
+            )
+        }
+    }
+
     /// Parses the supported `vmp_policy.yaml` subset (same grammar as CFF policy lists).
     public static func parse(_ yaml: String) -> VMPolicyConfig {
         VMPolicyParser.parse(yaml)
@@ -392,6 +403,7 @@ public final class VMProtectorPass: ArmorPass {
 
         let policyText = try String(contentsOf: policyURL, encoding: .utf8)
         let policy = VMPolicyConfig.parse(policyText)
+        try policy.validateNativeReplacementSupport()
 
         guard let textSection = try file.section(segment: "__TEXT", section: "__text") else {
             return PassResult(passName: name, itemsProcessed: 0, bytesModified: 0, details: ["Skipped: __TEXT.__text missing"])
@@ -410,7 +422,14 @@ public final class VMProtectorPass: ArmorPass {
                 passName: name,
                 itemsProcessed: 0,
                 bytesModified: 0,
-                details: ["policy: \(policyURL.path)", "no symbols listed under full/partial"]
+                details: ["policy: \(policyURL.path)", "no symbols listed under full/partial"],
+                metrics: [
+                    "vmp.full_targets": 0,
+                    "vmp.full_matched": 0,
+                    "vmp.full_patched": 0,
+                    "vmp.partial_emitted": 0,
+                    "vmp.unresolved": 0,
+                ]
             )
         }
 
@@ -463,6 +482,10 @@ public final class VMProtectorPass: ArmorPass {
         var programs: [(functionId: UInt64, entryVMA: UInt64, tier: VMBytecodeFormat.TierCode, instructions: [VMInstruction])] = []
         var bytesModified = 0
         var items = 0
+        var fullMatched = 0
+        var fullPatched = 0
+        var partialEmitted = 0
+        var unresolved = 0
         var details: [String] = [
             "policy: \(policyURL.path)",
             "version: \(policy.version)",
@@ -494,12 +517,15 @@ public final class VMProtectorPass: ArmorPass {
             guard let tier = policy.tier(for: symbolName) else { continue }
             guard let candidate = Self.findCandidateSymbol(named: symbolName, in: symbols) else {
                 details.append("[skip] \(symbolName): not in symbol table")
+                unresolved += 1
                 continue
             }
+            if tier == .full { fullMatched += 1 }
 
             let entryVMA = candidate.nlist.n_value
             guard entryVMA >= textVMStart, entryVMA < textVMEnd else {
                 details.append("[skip] \(symbolName): not in __TEXT.__text")
+                unresolved += 1
                 continue
             }
 
@@ -507,14 +533,20 @@ public final class VMProtectorPass: ArmorPass {
             let functionSize = Int(nextVMA - entryVMA)
             guard functionSize > 0 else {
                 details.append("[skip] \(symbolName): invalid size")
+                unresolved += 1
                 continue
             }
 
-            guard let entryFileOffU = try file.fileOffset(forVMAddress: entryVMA) else { continue }
+            guard let entryFileOffU = try file.fileOffset(forVMAddress: entryVMA) else {
+                details.append("[skip] \(symbolName): entry has no file offset")
+                unresolved += 1
+                continue
+            }
             let entryFileOff = Int(entryFileOffU)
             let readLen = min(functionSize, 256)
             guard entryFileOff + readLen <= file.data.count else {
                 details.append("[skip] \(symbolName): read out of bounds")
+                unresolved += 1
                 continue
             }
 
@@ -529,8 +561,6 @@ public final class VMProtectorPass: ArmorPass {
                 tier: tierCode,
                 hardening: policy.hardening
             )
-            programs.append((functionId: fnId, entryVMA: entryVMA, tier: tierCode, instructions: hardened.instructions))
-            items += 1
             if hardened.syntheticBranchIndInserted > 0 {
                 let budgetSource = hardened.autoBudgetApplied ? "auto_floor" : "policy_budget"
                 details.append(
@@ -551,14 +581,17 @@ public final class VMProtectorPass: ArmorPass {
                     details.append("[full][vm entry fallback] \(symbolName): \(wantEntry) missing → _cprisk_vm_entry")
                 } else {
                     details.append("[full][no patch] \(symbolName): VM entry symbols not linked")
+                    unresolved += 1
                     continue
                 }
                 guard vmAddr != 0 else {
                     details.append("[full][no patch] \(symbolName): VM entry VMA is zero")
+                    unresolved += 1
                     continue
                 }
                 guard functionSize >= VMPatchRewriter.trampolineByteLength else {
                     details.append("[full][no patch] \(symbolName): function too small (\(functionSize) bytes)")
+                    unresolved += 1
                     continue
                 }
                 do {
@@ -570,22 +603,48 @@ public final class VMProtectorPass: ArmorPass {
                         template: tpl
                     )
                     try file.replaceBytes(at: UInt64(entryFileOff), with: stub)
+                    programs.append((
+                        functionId: fnId,
+                        entryVMA: entryVMA,
+                        tier: tierCode,
+                        instructions: hardened.instructions
+                    ))
+                    items += 1
+                    fullPatched += 1
                     bytesModified += stub.count
                     details.append("[full][patched] \(symbolName) id=0x\(String(fnId, radix: 16)) vm_entry=\(resolvedEntry) __text+0x\(String(entryFileOff - textStart, radix: 16))")
                 } catch {
                     details.append("[full][no patch] \(symbolName): \(error.localizedDescription)")
+                    unresolved += 1
                 }
             } else {
+                programs.append((
+                    functionId: fnId,
+                    entryVMA: entryVMA,
+                    tier: tierCode,
+                    instructions: hardened.instructions
+                ))
+                items += 1
+                partialEmitted += 1
                 details.append("[partial] \(symbolName): bytecode only (no entry patch)")
             }
         }
+
+        let coverageMetrics = [
+            "vmp.full_targets": policy.full.count,
+            "vmp.full_matched": fullMatched,
+            "vmp.full_patched": fullPatched,
+            "vmp.partial_emitted": partialEmitted,
+            "vmp.unresolved": unresolved,
+        ]
 
         guard !programs.isEmpty else {
             return PassResult(
                 passName: name,
                 itemsProcessed: 0,
                 bytesModified: 0,
-                details: details + ["no matching symbols"]
+                details: details + ["no VM programs emitted"],
+                metrics: coverageMetrics
             )
         }
 
@@ -620,7 +679,8 @@ public final class VMProtectorPass: ArmorPass {
             passName: name,
             itemsProcessed: items,
             bytesModified: bytesModified + payloads.dispatch.count + payloads.bytecode.count,
-            details: details
+            details: details,
+            metrics: coverageMetrics
         )
     }
 

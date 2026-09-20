@@ -78,12 +78,9 @@ public final class ImportEncryptorPass: ArmorPass {
         let importKey: Data
         if let rootKey = config.encryptionKey {
             let whitebox = ArmorWhiteBox.build(rootKey: rootKey)
-            var seedMaterial = Data("cprisk.import.domain8.v2".utf8)
-            var build = config.buildSeed.littleEndian
-            Swift.withUnsafeBytes(of: &build) { seedMaterial.append(contentsOf: $0) }
             importKey = whitebox.prf(
                 domain: .importEncryptionKey,
-                input: Data(SHA256.hash(data: seedMaterial))
+                input: Data(repeating: 0, count: ArmorABI.hashSize)
             )
         } else {
             // Fallback: use zero key (for non-production builds)

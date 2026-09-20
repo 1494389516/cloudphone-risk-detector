@@ -1,8 +1,28 @@
+import CryptoKit
 import Foundation
 import MachOKit
 import XCTest
 
 final class VMSelfExpectInjectorIntegrationTests: XCTestCase {
+    func testSelfCheckHmacKDFUsesOnlyBuildStableMaterial() {
+        let material = Data((0..<32).map(UInt8.init))
+        var payload = Data(count: 50)
+        payload.replaceSubrange(0..<32, with: material)
+        let encodedLabel: [UInt8] = [
+            0x19, 0x0a, 0x08, 0x13, 0x09, 0x11, 0x05, 0x0c, 0x17,
+            0x05, 0x17, 0x69, 0x05, 0x12, 0x17, 0x1b, 0x19, 0x5a,
+        ]
+        for index in encodedLabel.indices {
+            payload[32 + index] = encodedLabel[index] ^ 0x5A
+        }
+
+        let expected = Data(SHA256.hash(data: payload))
+        let actual = VMSelfExpectInjector
+            .deriveSelfCheckHmacKey(runtimeMaterial32: material)
+            .withUnsafeBytes { Data($0) }
+        XCTAssertEqual(actual, expected)
+    }
+
     func testInjectorWritesMdvskPayloadFromSpanMapEvenWhenSymbolsAreUnhelpful() throws {
         let fixture = Self.makeFixture(
             textSize: 0x600,

@@ -72,6 +72,7 @@ final class ArmorFixtureTests: XCTestCase {
 
         let file = try MachOFile(url: fixtureURL)
         let originalReserved = try file.readUInt32(at: 28)
+        let originalSizeOfCommands = try file.readUInt32(at: 20)
 
         let config = PassConfig(encryptionKey: Data("header-camo-key".utf8))
         let result = try HeaderEncryptorPass().execute(on: file, config: config)
@@ -89,6 +90,13 @@ final class ArmorFixtureTests: XCTestCase {
         XCTAssertEqual(backupPayload.count, HeaderEncryptorPass.backupSectionSize)
         XCTAssertEqual(result.bytesModified, HeaderEncryptorPass.backupSectionSize + 4)
         XCTAssertTrue(result.details.contains { $0.contains("camouflaged reserved") })
+
+        let finalSizeOfCommands = try file.readUInt32(at: 20)
+        XCTAssertGreaterThan(finalSizeOfCommands, originalSizeOfCommands)
+        XCTAssertTrue(
+            result.details.contains { $0.contains("sizeofcmds=\(finalSizeOfCommands)") },
+            "the encrypted snapshot must capture the final load-command layout"
+        )
 
         XCTAssertNoThrow(try file.validateStructure())
     }

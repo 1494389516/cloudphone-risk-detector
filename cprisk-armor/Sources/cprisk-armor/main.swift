@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import MachOKit
 import StringEncryptor
 import MetadataScrubber
@@ -45,33 +46,50 @@ struct CLIOptions {
     var verifyHoneypotBytes: Bool = false
 }
 
-func parseArguments() -> CLIOptions {
+enum CLIArgumentError: LocalizedError {
+    case missingValue(String)
+    case unknownOption(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingValue(let option):
+            return "\(option) requires a value"
+        case .unknownOption(let option):
+            return "unknown option: \(option)"
+        }
+    }
+}
+
+func parseArguments() throws -> CLIOptions {
     var options = CLIOptions()
     let args = CommandLine.arguments
     var i = 1
+
+    func value(after option: String, index: inout Int) throws -> String {
+        let next = index + 1
+        guard next < args.count, !args[next].hasPrefix("--") else {
+            throw CLIArgumentError.missingValue(option)
+        }
+        index = next
+        return args[next]
+    }
+
     while i < args.count {
         switch args[i] {
         case "--input":
-            i += 1
-            if i < args.count { options.inputPath = args[i] }
+            options.inputPath = try value(after: args[i], index: &i)
         case "--output":
-            i += 1
-            if i < args.count { options.outputPath = args[i] }
+            options.outputPath = try value(after: args[i], index: &i)
         case "--key":
-            i += 1
-            if i < args.count { options.keyHex = args[i] }
+            options.keyHex = try value(after: args[i], index: &i)
         case "--key-file":
-            i += 1
-            if i < args.count { options.keyFile = args[i] }
+            options.keyFile = try value(after: args[i], index: &i)
         case "--cff-policy":
-            i += 1
-            if i < args.count { options.cffPolicyPath = args[i] }
+            options.cffPolicyPath = try value(after: args[i], index: &i)
         case "--vmp-policy":
-            i += 1
-            if i < args.count { options.vmpPolicyPath = args[i] }
+            options.vmpPolicyPath = try value(after: args[i], index: &i)
         case "--build-seed":
-            i += 1
-            if i < args.count { options.buildSeedRaw = args[i] }
+            options.buildSeedRaw = try value(after: args[i], index: &i)
         case "--pass1": options.passes.insert(1)
         case "--pass2": options.passes.insert(2)
         case "--pass3": options.passes.insert(3)
@@ -88,8 +106,7 @@ func parseArguments() -> CLIOptions {
         case "--all":   options.allPasses = true
         case "--verbose": options.verbose = true
         case "--metadata-scrub-level":
-            i += 1
-            if i < args.count { options.metadataScrubLevelRaw = args[i] }
+            options.metadataScrubLevelRaw = try value(after: args[i], index: &i)
         case "--swift-semantic-report":
             options.swiftSemanticReport = true
         case "--swift-semantic-scrub-cstring":
@@ -97,15 +114,14 @@ func parseArguments() -> CLIOptions {
         case "--swift-semantic-decoys":
             options.swiftSemanticDecoys = true
         case "--safety-profile":
-            i += 1
-            if i < args.count { options.safetyProfileRaw = args[i] }
+            options.safetyProfileRaw = try value(after: args[i], index: &i)
         case "--verify-honeypot":
             options.verifyHoneypotBytes = true
         case "--help":
             printUsage()
             exit(0)
         default:
-            fputs("Unknown option: \(args[i])\n", stderr)
+            throw CLIArgumentError.unknownOption(args[i])
         }
         i += 1
     }
@@ -317,7 +333,14 @@ private func resolveBuildSeed(from options: CLIOptions) throws -> BuildSeedResol
 
 // MARK: - Main
 
-let options = parseArguments()
+let options: CLIOptions
+do {
+    options = try parseArguments()
+} catch {
+    fputs("Error: \(error.localizedDescription)\n", stderr)
+    printUsage()
+    exit(2)
+}
 
 guard let inputPath = options.inputPath else {
     fputs("Error: --input is required\n", stderr)
@@ -330,10 +353,17 @@ let verbose = options.verbose
 let enabledPasses: Set<Int> = options.allPasses ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] : options.passes
 
 if enabledPasses.isEmpty {
-    fputs("Warning: No passes enabled. Use --all or --passN flags.\n", stderr)
+    fputs("Error: no passes enabled. Use --all or --passN flags.\n", stderr)
+    exit(2)
 }
 
-// Pass 4 (Integrity Anchor) consumes pass-3 outputs; run pass-3 before pass-4.
+// Do not silently drop Pass 13 from --all, or label metadata-only output as VMP.
+if enabledPasses.contains(13) {
+    fputs("Error: Pass 13 native replacement is disabled pending an ABI-preserving lifter/runtime. --all therefore cannot produce a release artifact; explicitly select reviewed non-VMP passes.\n", stderr)
+    exit(1)
+}
+
+// Pass 3 consumes the split lanes emitted by Pass 4.
 if enabledPasses.contains(3) && !enabledPasses.contains(4) {
     fputs("Error: --pass3 (Data Segment Encryption) requires --pass4 (Integrity Anchor).\n", stderr)
     fputs("Enable both with --pass3 --pass4 or use --all.\n", stderr)
@@ -366,6 +396,16 @@ do {
     buildSeed = try resolveBuildSeed(from: options)
 } catch {
     fputs("Error: \(error.localizedDescription)\n", stderr)
+    exit(1)
+}
+
+// ArmorWhiteBox is shared by multiple passes and reads its build salt from
+// the environment. Publish the resolved CLI/random seed before any pass builds
+// a bundle so every producer path — and the post-link self-expect tool — can
+// reproduce exactly the same white-box tables.
+let buildSeedEnvironmentValue = String(buildSeed.seed)
+guard setenv("CPRISK_ARMOR_BUILD_SEED", buildSeedEnvironmentValue, 1) == 0 else {
+    fputs("Error: failed to publish CPRISK_ARMOR_BUILD_SEED\n", stderr)
     exit(1)
 }
 
@@ -437,6 +477,7 @@ do {
     }
 
     var allResults = [PassResult]()
+    var resultsByPass = [Int: [PassResult]]()
     let registeredPasses: [(Int, ArmorPass)] = [
         (1, StringEncryptorPass()),
         (2, MetadataScrubberPass()),
@@ -453,18 +494,24 @@ do {
         (6, SymbolStripperPass()),
         (6, ExportTrieScrubberPass()),
     ]
-    let passes = try resolvePassOrder(registeredPasses)
+    let passes = try resolveArmorPassOrder(registeredPasses)
 
     for (index, pass) in passes {
         guard enabledPasses.contains(index) else { continue }
         if verbose { print("[*] Running Pass \(index): \(pass.name)") }
         let result = try pass.execute(on: machoFile, config: config)
         allResults.append(result)
+        resultsByPass[index, default: []].append(result)
         if verbose {
             print("    Items: \(result.itemsProcessed) | Bytes: \(result.bytesModified)")
             for detail in result.details { print("    - \(detail)") }
         }
     }
+
+    try validateEffectiveArmorPasses(
+        enabledPasses: enabledPasses,
+        resultsByPass: resultsByPass
+    )
 
     // Always attempt __objc_data2 scrub after selected passes.
     // This keeps metadata clean even when users skip Pass 7 but input binary already contains the section.

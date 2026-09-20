@@ -1,5 +1,7 @@
 # CloudPhoneRiskKit 7.3 使用与构建说明
 
+> **当前审计限制**：Pass 13 的 full replacement 尚不保留 ARM64/Swift ABI 和完整指令语义，已禁止产出。`--pass13`、`--all` 和默认 `standard` profile 会明确失败；本文历史全量加固流程不能用于当前交付。需要单独选择并验证非 VMP Pass，或显式使用已有 `appstore-safe` profile（名称不代表通过 App Store 审核）。本轮没有完成 macOS/iOS 原生构建与真机验证，详见 [加固审计与验证记录](./Armor-Hardening-Audit.md)。
+
 iOS 端「云手机 / 远程控制 / 越狱」风险本地采集与评分 SDK，输出结构化 JSON 报告，支持场景化决策、App Attest 硬件信任根、可插拔 Provider 扩展。**7.3** 为当前对外版本号（与 `Version.current` / 上报字段 `sdkVersion` 一致）。自研壳 **cprisk-armor** 已演进为 **13 Pass / ABI v2**（字符串与数据段加密、元数据抹除、完整性锚点、结构混淆、符号表混淆、反调试注入计划、ARM64 指令替换、CFF 编排、导入表与 Mach-O header 保护、`__TEXT` 页级加密、VMProtector 等），运行时由 **CRiskCore** 完成解密、白盒/legacy 双路径与完整性校验。各版本里程碑的摘要见仓库根目录 `README.md`「版本演进」表；本文聚焦接入、构建与壳工具使用。
 
 ---
@@ -57,6 +59,13 @@ swift build -c release
 # 或使用密钥文件 / 环境变量
 .build/release/cprisk-armor --input ... --output ... --all --key-file /path/to/key.bin
 export CPRISK_ARMOR_KEY=<hex>; .build/release/cprisk-armor --input ... --output ... --all
+
+# Full Armor 的 VM HMAC 自校验必须复用同一 build seed / root key
+export CPRISK_ARMOR_BUILD_SEED=<u64>
+.build/release/cprisk-armor --input ... --output ... --all \
+  --build-seed "$CPRISK_ARMOR_BUILD_SEED" --key "$CPRISK_ARMOR_KEY"
+.build/release/cprisk-vm-self-expect --in ... --hmac \
+  --root-key-hex "$CPRISK_ARMOR_KEY"
 ```
 
 > **6.2 Breaking Change**：启用加密 Pass（1/3/4）时必须提供密钥，否则 CLI 拒绝执行。密钥优先级：`--key` > `--key-file` > `CPRISK_ARMOR_KEY` 环境变量。全零密钥会被拒绝。
@@ -68,13 +77,14 @@ export CPRISK_ARMOR_KEY=<hex>; .build/release/cprisk-armor --input ... --output 
 1. `Apply cprisk armor`：对最终 App 可执行文件执行 `cprisk-armor --all`。
 2. `Inject VM self-expect`：执行 `cprisk-vm-self-expect`，写入 VM 自校验期望值。
 
-脚本只在 `Release` 构建下启用；未设置 `CPRISK_ARMOR_KEY` 时会跳过加固并输出 warning。Xcode Run Script 内部构建 SwiftPM 工具时必须使用 `swift build --disable-sandbox`，否则在部分 Xcode sandbox 环境中会报 `sandbox-exec: sandbox_apply: Operation not permitted`。
+脚本只在 `Release` 构建下启用；完全未配置时，未设置 `CPRISK_ARMOR_KEY` 会跳过加固并输出 warning。一旦设置了 key、profile、自定义参数或 `CPRISK_ARMOR_REQUIRED=1`，工具缺失、参数错误、Pass 8/9 零命中、自校验注入失败都会直接使构建失败；Pass 13 当前始终拒绝，包含它的默认 `standard` profile 也会失败。脚本会生成并在两个进程间传递同一 `CPRISK_ARMOR_BUILD_SEED`，供 white-box 表与 HMAC self-expect 使用。Xcode Run Script 内部构建 SwiftPM 工具时必须使用 `swift build --disable-sandbox`，否则在部分 Xcode sandbox 环境中会报 `sandbox-exec: sandbox_apply: Operation not permitted`。
 
 **配置步骤**：
 
 1. 在 Xcode Scheme、CI Secrets 或命令行环境中设置 `CPRISK_ARMOR_KEY`。推荐使用 64 字符十六进制 root key；如使用口令，需要先在外部固定派生为 SHA-256 hex，避免不同环境派生不一致。
 2. 若 `project.yml`、源文件列表或 Build Phase 有变化，先执行 `cd RiskDetectorApp && xcodegen generate` 同步 `RiskDetectorApp.xcodeproj`。
 3. 运行时需同时配置 `CPRISKKIT_ARMOR_ROOT_KEY_HEX`（与 `CPRISK_ARMOR_KEY` 相同密钥），供 CRiskCore 解密消费。
+4. 强制交付加固产物时设置 `CPRISK_ARMOR_REQUIRED=1`；这样 Release 不会因 key/tool 缺失而静默退化成未加固产物。
 
 ### 2.4.1.1 固定构建、strip 与 IDA 验证流程（推荐）
 
@@ -178,8 +188,10 @@ xcrun strip -x /Users/mac/Desktop/RiskDetectorApp
   - 边界：可能影响 `Mirror` 或依赖字段名反射的代码
 
 - `CPRISK_ENABLE_HIKARI=1`
-  - 若同时提供 `HIKARI_SWIFTC` / `HIKARI_CLANG`，Release 编译会切到自定义 `swiftc` / `clang` wrapper
-  - 若未提供或路径不可执行，只打印 warning 并自动回退到系统编译器，不阻断构建
+  - SwiftPM 实际消费的是 `SWIFT_EXEC` / `CC`；`HIKARI_SWIFTC` / `HIKARI_CLANG` 只用于给出配置提示，不会自动替换编译器
+  - 默认缺失时打印 warning 并回退系统编译器；交付构建同时设置 `CPRISK_HIKARI_REQUIRED=1` 后，wrapper 缺失或绝对路径不可执行会直接阻断构建
+
+本仓库没有直接集成上游 OLLVM。Pass 8（等长指令替换）和 Pass 9（自研 CFF）提供 OLLVM-like 的静态变换，但刻意不复用经典 OLLVM 模板；不要把“启用 Pass 8/9”描述成“使用了 OLLVM”。
 
 详细变量与 SwiftPM 接入方式见：
 

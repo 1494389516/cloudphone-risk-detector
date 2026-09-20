@@ -13,6 +13,15 @@ import XCTest
 /// reaches a live binary.
 final class ABIConsistencyTests: XCTestCase {
 
+    func testMiniVMBootstrapTransformMatchesRuntimeABI() {
+        let input = Data(repeating: 0, count: ArmorABI.keySize)
+        XCTAssertEqual(ArmorABI.miniVMBootstrapXor, 0xA5)
+        XCTAssertEqual(
+            ArmorABI.miniVMBootstrap(input),
+            Data(repeating: 0xA5, count: ArmorABI.keySize)
+        )
+    }
+
     // MARK: - String keystream key derivation (WB#4 lockstep)
 
     /// cprisk_derive_per_string_key() in C computes:
@@ -207,7 +216,7 @@ final class ABIConsistencyTests: XCTestCase {
         let whitebox = ArmorWhiteBox.build(rootKey: rootKey)
         let stringKey = whitebox.prf(
             domain: .pass1StringKey,
-            input: Data(SHA256.hash(data: Data("cprisk.string.domain1.v2".utf8)))
+            input: Data(repeating: 0, count: ArmorABI.hashSize)
         )
 
         // Step 2: derive perStringKey (matches cprisk_derive_per_string_key in C)

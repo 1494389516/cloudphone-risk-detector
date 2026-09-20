@@ -23,6 +23,28 @@ func emitPackageWarning(_ message: String) {
     FileHandle.standardError.write(Data("warning: \(message)\n".utf8))
 }
 
+func configuredTool(_ key: String) -> Bool {
+    guard let value = packageEnvironment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !value.isEmpty else {
+        return false
+    }
+    if value.contains("/") {
+        let path = value.hasPrefix("/") ? value : URL(
+            fileURLWithPath: FileManager.default.currentDirectoryPath,
+            isDirectory: true
+        ).appendingPathComponent(value).path
+        return FileManager.default.isExecutableFile(atPath: path)
+    }
+    return (packageEnvironment["PATH"] ?? "").split(
+        separator: ":", omittingEmptySubsequences: false
+    ).contains { entry in
+        let directory = entry.isEmpty ? "." : String(entry)
+        let path = URL(fileURLWithPath: directory, isDirectory: true)
+            .appendingPathComponent(value).path
+        return FileManager.default.isExecutableFile(atPath: path)
+    }
+}
+
 let protectedReleaseSwiftSettings: [SwiftSetting] = packageEnvEnabled("CPRISK_ENABLE_SWIFT_METADATA_CONVERGENCE") ? [
     .unsafeFlags([
         "-Xfrontend", "-disable-reflection-metadata",
@@ -33,8 +55,13 @@ let protectedReleaseSwiftSettings: [SwiftSetting] = packageEnvEnabled("CPRISK_EN
     .define("CPRISK_MTE_COMPILE_SUPPORT", .when(configuration: .release)),
 ]
 
-if packageEnvEnabled("CPRISK_ENABLE_HIKARI") {
-    if packageEnvironment["SWIFT_EXEC"] == nil {
+if packageEnvEnabled("CPRISK_ENABLE_HIKARI") || packageEnvEnabled("CPRISK_HIKARI_REQUIRED") {
+    let hikariRequired = packageEnvEnabled("CPRISK_HIKARI_REQUIRED")
+
+    if !configuredTool("SWIFT_EXEC") {
+        if hikariRequired {
+            fatalError("CPRISK_HIKARI_REQUIRED=1 but SWIFT_EXEC is missing or not executable")
+        }
         if let hikariSwiftc = packageEnvironment["HIKARI_SWIFTC"], !hikariSwiftc.isEmpty {
             emitPackageWarning("CPRISK_ENABLE_HIKARI=1: SwiftPM does not auto-consume HIKARI_SWIFTC, export SWIFT_EXEC=\"\(hikariSwiftc)\" to enable a custom Swift compiler wrapper")
         } else {
@@ -42,7 +69,10 @@ if packageEnvEnabled("CPRISK_ENABLE_HIKARI") {
         }
     }
 
-    if packageEnvironment["CC"] == nil {
+    if !configuredTool("CC") {
+        if hikariRequired {
+            fatalError("CPRISK_HIKARI_REQUIRED=1 but CC is missing or not executable")
+        }
         if let hikariClang = packageEnvironment["HIKARI_CLANG"], !hikariClang.isEmpty {
             emitPackageWarning("CPRISK_ENABLE_HIKARI=1: SwiftPM does not auto-consume HIKARI_CLANG, export CC=\"\(hikariClang)\" to compile CRiskCore with a custom Clang wrapper")
         } else {
