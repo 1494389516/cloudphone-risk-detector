@@ -415,14 +415,11 @@ final class TextSegmentEncryptorTests: XCTestCase {
 
     private static func readLE64(_ data: Data, at offset: Int) -> UInt64 {
         precondition(offset >= 0 && offset + 8 <= data.count)
-        return UInt64(data[offset])
-            | (UInt64(data[offset + 1]) << 8)
-            | (UInt64(data[offset + 2]) << 16)
-            | (UInt64(data[offset + 3]) << 24)
-            | (UInt64(data[offset + 4]) << 32)
-            | (UInt64(data[offset + 5]) << 40)
-            | (UInt64(data[offset + 6]) << 48)
-            | (UInt64(data[offset + 7]) << 56)
+        var value: UInt64 = 0
+        for byteIndex in 0..<8 {
+            value |= UInt64(data[offset + byteIndex]) << (byteIndex * 8)
+        }
+        return value
     }
 }
 
