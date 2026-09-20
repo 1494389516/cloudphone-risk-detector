@@ -129,6 +129,62 @@ final class CryptoTests: XCTestCase {
         XCTAssertTrue(good.validate())
     }
 
+    func testObfuscateRejectsDuplicateAndPayloadKeyCollisions() throws {
+        let payload = try JSONSerialization.data(withJSONObject: [
+            "a": 1,
+            "b": 2,
+            "nested": ["a": 3, "b": 4],
+        ])
+
+        let duplicateTarget = PayloadFieldMapping(
+            version: "duplicate",
+            mappings: ["a": "x", "b": "x"],
+            depthScope: .all
+        )
+        XCTAssertThrowsError(
+            try PayloadFieldObfuscator.obfuscate(jsonData: payload, mapping: duplicateTarget)
+        )
+
+        let collidesWithUnmappedKey = PayloadFieldMapping(
+            version: "payload-collision",
+            mappings: ["a": "b"],
+            depthScope: .all
+        )
+        XCTAssertThrowsError(
+            try PayloadFieldObfuscator.obfuscate(jsonData: payload, mapping: collidesWithUnmappedKey)
+        )
+    }
+
+    func testSecureUploadPayloadRemovesChallengeBindingWithoutMutatingReport() throws {
+        let context = TestFixtures.makeRiskContext()
+        let scored = RiskScorer.score(context: context, config: TestFixtures.defaultRiskConfig)
+        let report = CPRiskReport(context: context, report: scored)
+        report.setChallengeBinding(ChallengeBindingPayload(
+            challengeId: "challenge-1",
+            seed: "seed",
+            probeIds: ["probe-1"],
+            executedProbeIds: ["probe-1"],
+            expiresAt: 2_000,
+            timestamp: 1_000,
+            capabilityAnomalyCount: 0,
+            qualitySuspicion: 0,
+            totalProbes: 1,
+            tamperedCount: 0,
+            probeRiskContribution: 0
+        ))
+
+        let included = try JSONSerialization.jsonObject(
+            with: report.secureUploadPayloadData(includeChallengeBinding: true)
+        ) as? [String: Any]
+        let excluded = try JSONSerialization.jsonObject(
+            with: report.secureUploadPayloadData(includeChallengeBinding: false)
+        ) as? [String: Any]
+
+        XCTAssertNotNil(included?["cb"])
+        XCTAssertNil(excluded?["cb"])
+        XCTAssertNotNil(report.challengeBinding(), "upload serialization must not mutate the report")
+    }
+
     // MARK: - PayloadFieldObfuscator Tests
 
     func testObfuscateAndDeobfuscateRoundtrip() throws {
