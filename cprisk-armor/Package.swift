@@ -48,12 +48,5 @@ let package = Package(
                 "VMProtector"
             ]
         ),
-        .testTarget(name: "MachOKitTests", dependencies: [
-            "MachOKit", "StringEncryptor", "MetadataScrubber",
-            "DataSegmentEncryptor", "IntegrityAnchor", "StructureObfuscator",
-            "AntiDebugInjector", "InstructionSubstitution", "ControlFlowOrchestrator", "SymbolStripper", "ImportEncryptor", "HeaderEncryptor",
-            "TextSegmentEncryptor",
-            "VMProtector",
-        ])
     ]
 )

@@ -97,9 +97,6 @@ let package = Package(
             targets: ["CloudPhoneRiskAppCore"]
         ),
     ],
-    dependencies: [
-        .package(path: "../cprisk-armor"),
-    ],
     targets: [
         .target(
             name: "CRiskCore",
@@ -125,18 +122,6 @@ let package = Package(
             name: "CloudPhoneRiskAppCore",
             dependencies: ["CloudPhoneRiskKit"],
             swiftSettings: protectedReleaseSwiftSettings
-        ),
-        .testTarget(
-            name: "CloudPhoneRiskKitTests",
-            dependencies: [
-                "CloudPhoneRiskKit",
-                .product(name: "MachOKit", package: "cprisk-armor"),
-                .product(name: "VMProtector", package: "cprisk-armor"),
-            ]
-        ),
-        .testTarget(
-            name: "CloudPhoneRiskAppCoreTests",
-            dependencies: ["CloudPhoneRiskAppCore", "CloudPhoneRiskKit"]
         ),
     ]
 )

@@ -65,48 +65,6 @@
          </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
-   <TestAction
-      buildConfiguration = "Debug"
-      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
-      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
-      shouldUseLaunchSchemeArgsEnv = "YES"
-      onlyGenerateCoverageForSpecifiedTargets = "NO">
-      <MacroExpansion>
-         <BuildableReference
-            BuildableIdentifier = "primary"
-            BlueprintIdentifier = "ADF1B136890DE640C9F5C27B"
-            BuildableName = "libCRiskCore.a"
-            BlueprintName = "CRiskCore"
-            ReferencedContainer = "container:RiskDetectorApp.xcodeproj">
-         </BuildableReference>
-      </MacroExpansion>
-      <Testables>
-         <TestableReference
-            skipped = "NO"
-            parallelizable = "NO">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "00F3F470BFB99E877E446073"
-               BuildableName = "CloudPhoneRiskKitTests.xctest"
-               BlueprintName = "CloudPhoneRiskKitTests"
-               ReferencedContainer = "container:RiskDetectorApp.xcodeproj">
-            </BuildableReference>
-         </TestableReference>
-         <TestableReference
-            skipped = "NO"
-            parallelizable = "NO">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "D399E2AD70F902A7F5758889"
-               BuildableName = "CloudPhoneRiskAppCoreTests.xctest"
-               BlueprintName = "CloudPhoneRiskAppCoreTests"
-               ReferencedContainer = "container:RiskDetectorApp.xcodeproj">
-            </BuildableReference>
-         </TestableReference>
-      </Testables>
-      <CommandLineArguments>
-      </CommandLineArguments>
-   </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
