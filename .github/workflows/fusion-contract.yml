@@ -16,3 +16,5 @@ jobs:
         run: xcodebuild -list -project RiskDetectorApp/RiskDetectorApp.xcodeproj >/dev/null
       - name: Build SDK libraries
         run: swift build --package-path RiskDetectorApp
+      - name: Architecture invariant checks
+        run: python3 contracts/architecture_invariants.py

@@ -504,6 +504,9 @@ public final class CPRiskReport: NSObject {
     public func challengeBinding() -> ChallengeBindingPayload? {
         payload.challengeBinding
     }
+
+    /// Server-facing scene bound into the report payload. Empty means the caller did not set one.
+    public var sceneTag: String? { payload.sceneTag }
 }
 
 private struct Payload: Codable {
