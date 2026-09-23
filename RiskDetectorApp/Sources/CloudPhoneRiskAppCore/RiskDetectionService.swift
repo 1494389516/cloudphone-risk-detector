@@ -139,6 +139,39 @@ public final class RiskDetectionService {
         )
     }
 
+    /// 通过配对 Collector 完成 App Attest enrollment/challenge/v3 report/ACK 全链路。
+    /// Collector URL 必须为 HTTPS；Bearer credential 由服务端绑定 tenant/app/device/session。
+    @available(iOS 14.0, macOS 11.0, *)
+    public func submitToCollector(
+        report: CPRiskReport,
+        collectorURL: URL,
+        bearerToken: String,
+        appId: String,
+        sessionToken: String,
+        signingKey: String,
+        keyId: String = "k1",
+        scene: String? = nil
+    ) async throws -> CollectorClient.Receipt {
+        let context = GrpcReportContext(
+            appId: appId,
+            deviceId: report.deviceID,
+            scene: scene ?? report.sceneTag ?? "default"
+        )
+        let client = try CollectorClient(configuration: .init(
+            baseURL: collectorURL,
+            bearerToken: bearerToken,
+            context: context
+        ))
+        await client.configureAppAttestEnrollment()
+        return try await client.submit(
+            payloadData: report.unencryptedPayloadData(prettyPrinted: false),
+            reportID: report.reportID,
+            sessionToken: sessionToken,
+            signingKey: signingKey,
+            keyID: keyId
+        )
+    }
+
     /// 本地校验安全信封（用于 SDK 联调与回归验证）。
     /// 默认校验 attestation 一致性：attestationKeyId 存在但 attestationAssertion 为空时视为异常。
     public func validateSecureReportEnvelope(
