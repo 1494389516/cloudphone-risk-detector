@@ -91,8 +91,15 @@ returns its ID plus decoded base64 bytes. The submit callback sends the exact
 it. Only then does SDK persist the new `server_enrolled.v2` Keychain entry. Old
 locally-attested-only keys cannot silently skip server enrollment.
 
-For a report, obtain a fresh assertion challenge and call
-`AppAttestSigner.createCollectorEnvelope(payloadData:reportId:sessionToken:signingKey:keyId:serverChallenge:)`.
+For a report, call
+`AppAttestSigner.submitCollectorReport(payloadData:reportId:sessionToken:signingKey:keyId:challenge:submit:)`.
+Its challenge callback obtains the assertion challenge; its submit callback sends
+the envelope and waits for the Collector acknowledgement. Calls are serialized
+through that acknowledgement. The old envelope-only API is deprecated: callers
+using it must serialize the entire transaction themselves. The Collector rejects
+a second live challenge instead of invalidating the first. On ambiguous network
+failure, retry the identical serialized upload, never create a replacement proof.
+After an abandoned transaction, wait for challenge expiry before starting again.
 This explicit v3 path generates both App Attest assertions before the envelope MAC:
 primary proof signs SHA256(canonical report bytes), second proof signs SHA256(server
 challenge bytes). Send via the normal `toGrpcRequestBytes(context:)` transport.
@@ -103,3 +110,16 @@ The server pins the operator-provided Apple App Attestation Root CA, validates t
 certificate chain, nonce extension, App ID, counter=0, key ID, environment and COSE
 key. Unhandled authenticator extensions fail closed. Synthetic CA tests prove the
 validation code path, not a genuine Apple device; real-device validation is required.
+
+
+## Field mapping depth
+
+The MAC-covered `field_mapping_version` selects an immutable server-owned inverse
+mapping and depth. Configure `field_mapping_scopes[version]` as `all` for SDK `.all`
+(including dictionaries inside arrays), or `topLevel` for `.topLevel`. Existing
+versions default to `topLevel`; allocate a NEW version when changing depth.
+The Collector rejects collisions at every decoded dictionary and enforces depth
+16 and payload size 1 MiB. Do not reuse a top-level version for recursive mapping.
+
+Keychain reads/writes fail closed with OSStatus; a report fixes one enrolled key
+for both assertions. This change does not restore the removed SDK test targets.
