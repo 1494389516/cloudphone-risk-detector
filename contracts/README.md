@@ -123,3 +123,9 @@ The Collector rejects collisions at every decoded dictionary and enforces depth
 
 Keychain reads/writes fail closed with OSStatus; a report fixes one enrolled key
 for both assertions. This change does not restore the removed SDK test targets.
+
+`CollectorClient` is now the application transport boundary: it configures authenticated
+App Attest enrollment, requests assertion challenges, sends the exact v3 HTTP contract
+bytes to `/reports`, and waits for a Collector receipt before the serialized transaction
+is released. `contracts/architecture_invariants.py` is a permanent minimum CI gate even
+when larger native test suites are maintained separately.
