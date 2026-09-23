@@ -159,6 +159,8 @@ final class AppAttestActiveProbeProvider: RiskSignalProvider {
                 return .ok
             case .invalidPayloadHashSize:
                 return .failed(reason: "invalid_payload_hash_size")
+            case .keychainFailure:
+                return .unavailable(reason: "keychain_unavailable")
             case .enrollmentNotConfigured:
                 return .unavailable(reason: "server_enrollment_not_configured")
             case .invalidServerChallenge:
