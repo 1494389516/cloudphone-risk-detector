@@ -5,10 +5,10 @@ import Foundation
 /// 适配器层，将 RiskDetectionEngine 实现适配到 DecisionEngine 协议
 /// 由于已统一命名，适配层主要处理协议实现和远程配置
 
-/// 决策引擎适配器
+/// 本地评估适配器；输出建议动作，不授予服务端业务权限。
 ///
 /// 实现 DecisionEngine 协议，内部委托给 RiskDetectionEngine
-public final class DecisionEngineAdapter: DecisionEngine {
+public final class LocalAssessmentAdapter: DecisionEngine {
 
     // MARK: - 属性
 
@@ -31,10 +31,10 @@ public final class DecisionEngineAdapter: DecisionEngine {
     // MARK: - DecisionEngine 协议实现
 
     /// 基于信号快照进行决策
-    public func decide(
+    public func assess(
         snapshot: RiskSnapshot,
-        config: DecisionConfig
-    ) async -> ProtocolRiskVerdict {
+        config: LocalAssessmentConfig
+    ) async -> LocalAssessment {
         // 转换 RiskSnapshot 到 RiskContext
         let context = convertSnapshotToContext(snapshot)
 
@@ -62,6 +62,14 @@ public final class DecisionEngineAdapter: DecisionEngine {
         return internalVerdict
     }
 
+    /// Legacy entry point; preserves existing callers and forwards to local assessment.
+    public func decide(
+        snapshot: RiskSnapshot,
+        config: DecisionConfig
+    ) async -> RiskVerdict {
+        await assess(snapshot: snapshot, config: config)
+    }
+
     /// 获取支持的特征列表
     public var supportedFeatures: [String] {
         [
@@ -80,7 +88,7 @@ public final class DecisionEngineAdapter: DecisionEngine {
     /// 重置引擎状态
     public func reset() async {
         // 当前实现无状态，但为未来扩展预留
-        Logger.log("[DecisionEngineAdapter] Engine reset")
+        Logger.log("[LocalAssessmentAdapter] Engine reset")
     }
 
     // MARK: - 私有辅助方法
@@ -98,7 +106,7 @@ public final class DecisionEngineAdapter: DecisionEngine {
             // 转换远程配置为 EnginePolicy
             return convertRemoteConfig(remoteConfig)
         } catch {
-            Logger.log("[DecisionEngineAdapter] Failed to fetch remote config: \(error)")
+            Logger.log("[LocalAssessmentAdapter] Failed to fetch remote config: \(error)")
             return engine.policy
         }
     }
@@ -330,26 +338,26 @@ public struct AdapterDetectorConfig: Sendable, Codable {
 }
 
 // MARK: - 工厂方法
-extension DecisionEngineAdapter {
+extension LocalAssessmentAdapter {
     /// 创建默认适配器
-    public static func `default`() -> DecisionEngineAdapter {
-        DecisionEngineAdapter(
+    public static func `default`() -> LocalAssessmentAdapter {
+        LocalAssessmentAdapter(
             engine: RiskDetectionEngine(policy: .default),
             configManager: nil
         )
     }
 
     /// 创建严格策略适配器
-    public static func strict() -> DecisionEngineAdapter {
-        DecisionEngineAdapter(
+    public static func strict() -> LocalAssessmentAdapter {
+        LocalAssessmentAdapter(
             engine: RiskDetectionEngine(policy: .strict),
             configManager: nil
         )
     }
 
     /// 创建金融级适配器
-    public static func financial() -> DecisionEngineAdapter {
-        DecisionEngineAdapter(
+    public static func financial() -> LocalAssessmentAdapter {
+        LocalAssessmentAdapter(
             engine: RiskDetectionEngine(policy: .financial),
             configManager: nil
         )
@@ -357,7 +365,7 @@ extension DecisionEngineAdapter {
 }
 
 // MARK: - 同步版本（兼容旧 API）
-extension DecisionEngineAdapter {
+extension LocalAssessmentAdapter {
     /// 同步版本的决策方法（不使用 async/await）
     public func decideSync(
         snapshot: RiskSnapshot,
@@ -376,3 +384,6 @@ extension DecisionEngineAdapter {
         return verdict
     }
 }
+
+/// Legacy source-compatible adapter name.
+public typealias DecisionEngineAdapter = LocalAssessmentAdapter

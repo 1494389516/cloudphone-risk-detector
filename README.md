@@ -354,7 +354,7 @@ SDK 提供标准化的服务端对接规范：
 │   │       │   └── Adapter/                     # 检测器注册 & 适配
 │   │       ├── Jailbreak/Detectors/ (11)        # 越狱检测器
 │   │       ├── Providers/ (19)                  # 信号 Provider
-│   │       ├── Decision/                        # 决策引擎 + 场景策略
+│   │       ├── LocalAssessment/                 # 端侧评估 + 场景策略（服务端负责业务决策）
 │   │       ├── Risk/                            # 报告封装 + v2a 签名
 │   │       ├── Internal/CFF/                    # 源码级控制流平坦化
 │   │       ├── ObjCBridge/                      # Objective-C 桥接层

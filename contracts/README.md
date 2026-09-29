@@ -137,3 +137,23 @@ preserves their declarations, access levels, Codable keys, and state handling;
 The architecture gate rejects duplicate definitions and verifies the vocabulary
 file's Xcode file reference, Risk group membership, and SDK compile-source entry.
 SwiftPM discovers this source through the existing SDK target directory.
+
+### SDK local assessment boundary
+
+`CloudPhoneRiskKit/LocalAssessment/` contains the on-device evaluation engine and
+policies. `LocalAssessment` is its result type; `LocalAssessmentEngine.assess`
+and `LocalAssessmentAdapter` are the preferred protocol and adapter. Actions are
+local recommendations, not server authorization. Existing local enforcement is
+unchanged; the server Decision Service remains responsible for business decisions.
+
+`RiskVerdict` and `DecisionEngineAdapter` remain source-compatible aliases.
+Existing `DecisionEngine` conformers implementing `decide` gain `assess` through
+a default bridge. `LocalAssessmentConfig` preserves the existing `DecisionConfig`
+representation. This is source compatibility for rebuilt clients, not a promise
+of binary ABI compatibility with precompiled Swift clients after nominal type renames.
+
+`python3 contracts/check_local_assessment.py` builds a separate SwiftPM consumer
+on macOS, checks old/new protocol conformance and adapter aliases at compile time,
+then round-trips frozen legacy JSON for all five signal states. It verifies compact
+keys, state tags, action mappings, timestamps, request IDs, and metadata. It does
+not run device probes or claim real-device or server authorization validation.
