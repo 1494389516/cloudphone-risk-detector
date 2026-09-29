@@ -274,6 +274,7 @@
 		D63C2201724E846A0F11A4AA /* SystemLibrarySegmentLayoutDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F22F1BCFF84D579DA6B860BB /* SystemLibrarySegmentLayoutDetector.swift */; };
 		D6843C9AEE0894EC0638C482 /* DeviceFingerprint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 757E6358BEF786A86421F4D5 /* DeviceFingerprint.swift */; };
 		D68CD74446BABDE00D9A8DC9 /* RiskReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F054166973FF8107B4CDEE8 /* RiskReport.swift */; };
+		D54C0E56D2E9B685EBEBCF29 /* RiskSignalVocabulary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D72A00999D5E71E03C81966 /* RiskSignalVocabulary.swift */; };
 		D7228CC0DE75741D553BA165 /* cprisk_emulator_detect.c in Sources */ = {isa = PBXBuildFile; fileRef = 4DD53EE9AFBCE91EED3CC365 /* cprisk_emulator_detect.c */; };
 		D7DBB7692B01E44C8F88C07D /* EnvironmentConsistencyProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD1759C6E1C612F7FEF1C0E1 /* EnvironmentConsistencyProvider.swift */; };
 		D9AE745AC4C6B1CFA05ADE99 /* FridaThreadDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4983507C632F30D10765168 /* FridaThreadDetector.swift */; };
@@ -476,6 +477,7 @@
 		4DEDEAB05F3FB2C5212C8EDB /* DetectorRegistryProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetectorRegistryProtocol.swift; sourceTree = "<group>"; };
 		4E891F1FF246E32A306061D1 /* RuntimeIntegrityValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeIntegrityValidator.swift; sourceTree = "<group>"; };
 		4F054166973FF8107B4CDEE8 /* RiskReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskReport.swift; sourceTree = "<group>"; };
+		8D72A00999D5E71E03C81966 /* RiskSignalVocabulary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskSignalVocabulary.swift; sourceTree = "<group>"; };
 		4F27C4760D7BF4C3D312C059 /* cprisk_vm_hardening.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_vm_hardening.c; sourceTree = "<group>"; };
 		5009140E10C8B61201EC8887 /* DecoyProviders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecoyProviders.swift; sourceTree = "<group>"; };
 		5032B938125B2F81288B00B4 /* RiskHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskHistoryStore.swift; sourceTree = "<group>"; };
@@ -805,6 +807,7 @@
 				A7E6D55A68269BCE4E5446E6 /* RiskConclusionSigner.swift */,
 				664B42BC3133E4502F179B91 /* RiskConfig.swift */,
 				4F054166973FF8107B4CDEE8 /* RiskReport.swift */,
+				8D72A00999D5E71E03C81966 /* RiskSignalVocabulary.swift */,
 				7BF48DC524C5A7052AD731BC /* RiskScorer.swift */,
 				3BA95BB56D482BFDD40167DF /* RiskSignalProvider.swift */,
 				A795412F4B429E96455B7CF3 /* RiskSnapshot.swift */,
@@ -1730,6 +1733,7 @@
 				3428C9F26856F5E0219924BE /* RiskHistoryActor.swift in Sources */,
 				BA53B922532358A3B6F87A42 /* RiskHistoryStore.swift in Sources */,
 				D68CD74446BABDE00D9A8DC9 /* RiskReport.swift in Sources */,
+				D54C0E56D2E9B685EBEBCF29 /* RiskSignalVocabulary.swift in Sources */,
 				5EF348B7A094C20979E5DA36 /* RiskScorer.swift in Sources */,
 				869AC1CE34B5B76932955BBA /* RiskSignalProvider.swift in Sources */,
 				8D13217A82484899E0814E4E /* RiskSnapshot.swift in Sources */,

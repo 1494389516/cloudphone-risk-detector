@@ -129,3 +129,11 @@ App Attest enrollment, requests assertion challenges, sends the exact v3 HTTP co
 bytes to `/reports`, and waits for a Collector receipt before the serialized transaction
 is released. `contracts/architecture_invariants.py` is a permanent minimum CI gate even
 when larger native test suites are maintained separately.
+
+`RiskSignalVocabulary.swift` owns `SignalID`, `SignalCategory`, `RiskSignalState`,
+and `RiskSignal` inside the existing `CloudPhoneRiskKit` module. The extraction
+preserves their declarations, access levels, Codable keys, and state handling;
+`RiskReport.swift` retains report construction and Objective-C wrappers.
+The architecture gate rejects duplicate definitions and verifies the vocabulary
+file's Xcode file reference, Risk group membership, and SDK compile-source entry.
+SwiftPM discovers this source through the existing SDK target directory.
