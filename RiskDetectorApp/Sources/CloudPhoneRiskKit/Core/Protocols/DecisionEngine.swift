@@ -1,11 +1,23 @@
 import Foundation
 
-// MARK: - Decision Engine Protocol
+// MARK: - Local Assessment Boundary
 
-public protocol DecisionEngine: Sendable {
-    func decide(snapshot: RiskSnapshot, config: DecisionConfig) async -> RiskVerdict
+/// Evaluates device evidence locally. Suggested actions do not authorize server operations.
+public protocol LocalAssessmentEngine: Sendable {
+    func assess(snapshot: RiskSnapshot, config: LocalAssessmentConfig) async -> LocalAssessment
     var supportedFeatures: [String] { get }
     func reset() async
+}
+
+/// Legacy protocol. Existing conformers only implementing `decide` remain valid.
+public protocol DecisionEngine: LocalAssessmentEngine {
+    func decide(snapshot: RiskSnapshot, config: DecisionConfig) async -> RiskVerdict
+}
+
+extension DecisionEngine {
+    public func assess(snapshot: RiskSnapshot, config: LocalAssessmentConfig) async -> LocalAssessment {
+        await decide(snapshot: snapshot, config: config)
+    }
 }
 
 public protocol DecisionModel: Sendable {
@@ -98,6 +110,8 @@ public struct ModelResult: Sendable, Codable {
 
 // MARK: - Compatibility Aliases
 
+/// Local configuration retains the legacy Codable representation and initializer.
+public typealias LocalAssessmentConfig = DecisionConfig
 public typealias ProtocolRiskScenario = RiskScenario
 public typealias ProtocolRiskLevel = PublicRiskLevel
 public typealias ProtocolRiskAction = PublicRiskAction

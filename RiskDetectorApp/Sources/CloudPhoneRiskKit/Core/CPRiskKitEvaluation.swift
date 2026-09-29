@@ -152,8 +152,8 @@ extension CPRiskKit {
         if policy.killSwitchEnabled {
             Logger.log("⚠️ killSwitch is ACTIVE — evaluation will force low-risk/allow verdict")
         }
-        let decisionEngine = RiskDetectionEngine(policy: policy, enableLogging: Logger.isEnabled)
-        let verdict = decisionEngine.evaluate(
+        let assessmentEngine = RiskDetectionEngine(policy: policy, enableLogging: Logger.isEnabled)
+        let verdict: LocalAssessment = assessmentEngine.evaluate(
             context: context,
             scenario: scenario,
             extraSignals: extraSignals

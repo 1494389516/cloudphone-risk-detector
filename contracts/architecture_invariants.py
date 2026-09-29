@@ -58,6 +58,21 @@ def check_signal_vocabulary():
 
 check_signal_vocabulary()
 
+
+def check_local_assessment():
+    sources = ROOT / "RiskDetectorApp/Sources/CloudPhoneRiskKit"
+    if (sources / "Decision").exists():
+        raise SystemExit("SDK local assessment implementations must not live in Decision/")
+    result = (sources / "LocalAssessment/LocalAssessment.swift").read_text()
+    if "public struct LocalAssessment:" not in result or "public typealias RiskVerdict = LocalAssessment" not in result:
+        raise SystemExit("LocalAssessment must own the result and preserve the legacy alias")
+    project = (ROOT / "RiskDetectorApp/RiskDetectorApp.xcodeproj/project.pbxproj").read_text()
+    if "path = Decision;" in project or "path = LocalAssessment;" not in project:
+        raise SystemExit("Xcode project must use the LocalAssessment source directory")
+
+
+check_local_assessment()
+
 def require(path, *needles):
     text = (ROOT / path).read_text(encoding="utf-8")
     missing = [item for item in needles if item not in text]

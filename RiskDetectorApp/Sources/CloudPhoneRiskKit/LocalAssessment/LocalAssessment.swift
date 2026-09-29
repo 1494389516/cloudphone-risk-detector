@@ -1,9 +1,9 @@
 import Foundation
 
 // MARK: - Risk Verdict
-/// 风险判决结果
-/// 风控决策引擎的最终输出，包含综合评估结果和建议动作
-public struct RiskVerdict: Codable, Sendable {
+/// 端侧风险评估结果，包含本地信号、分数和建议动作。
+/// 此结果不是服务端业务授权；最终处置由服务端 Decision Service 决定。
+public struct LocalAssessment: Codable, Sendable {
 
     public let score: Double
     public let internalLevel: InternalRiskLevel
@@ -190,7 +190,7 @@ public struct RiskVerdict: Codable, Sendable {
     /// 调试信息
     public var debugDescription: String {
         """
-        RiskVerdict {
+        LocalAssessment {
           score: \(score)
           internalLevel: \(internalLevel.rawValue)
           level: \(level.displayName)
@@ -208,18 +208,18 @@ public struct RiskVerdict: Codable, Sendable {
 
 // MARK: - 兼容性扩展
 /// 与现有 RiskScorer 的兼容桥接
-extension RiskVerdict {
-    /// 从 RiskScoreReport 创建 RiskVerdict（向后兼容）
+extension LocalAssessment {
+    /// 从 RiskScoreReport 创建 LocalAssessment（向后兼容）
     public static func from(
         report: RiskScoreReport,
         context: RiskContext,
         scenario: RiskScenario = .default
-    ) -> RiskVerdict {
+    ) -> LocalAssessment {
         let policy = ScenarioPolicy.policy(for: scenario)
         let level = policy.level(for: report.score)
         let action = policy.action(for: level)
 
-        return RiskVerdict(
+        return LocalAssessment(
             score: report.score,
             internalLevel: level,
             internalAction: action,
@@ -270,8 +270,8 @@ extension RiskVerdict {
 }
 
 // MARK: - Protocol-Compatible Factory
-extension RiskVerdict {
-    /// 创建符合协议定义的 RiskVerdict
+extension LocalAssessment {
+    /// 创建符合协议定义的 LocalAssessment
     public static func protocolCompatible(
         score: Double,
         level: PublicRiskLevel,
@@ -281,7 +281,7 @@ extension RiskVerdict {
         scenario: RiskScenario = .default,
         action: PublicRiskAction = .allow,
         extras: [String: String] = [:]
-    ) -> RiskVerdict {
+    ) -> LocalAssessment {
         // 映射到内部等级
         let internalLevel: InternalRiskLevel
         switch level {
@@ -298,7 +298,7 @@ extension RiskVerdict {
         case .block: internalAction = .block
         }
 
-        return RiskVerdict(
+        return LocalAssessment(
             score: score,
             internalLevel: internalLevel,
             internalAction: internalAction,
@@ -309,3 +309,6 @@ extension RiskVerdict {
         )
     }
 }
+
+/// Legacy source compatibility. This value remains a local assessment, not server authorization.
+public typealias RiskVerdict = LocalAssessment

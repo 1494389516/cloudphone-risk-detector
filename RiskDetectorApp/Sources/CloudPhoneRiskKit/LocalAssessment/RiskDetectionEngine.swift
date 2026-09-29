@@ -1,7 +1,8 @@
 import Foundation
 
 // MARK: - 风险检测引擎
-/// 智能风控决策引擎，支持场景化检测、动态权重和组合规则
+/// 端侧风险评估引擎，支持场景化检测、动态权重和组合规则。
+/// 输出本地建议；服务端业务决策由 Decision Service 负责。
 ///
 /// ## 核心设计原则
 /// 1. **场景化**: 不同业务场景使用不同的风险阈值和权重
@@ -14,11 +15,11 @@ import Foundation
 /// let engine = RiskDetectionEngine(policy: .payment)
 /// let verdict = engine.evaluate(context: riskContext, scenario: .payment)
 ///
-/// switch verdict.action {
-/// case .allow: print("允许交易")
+/// switch verdict.internalAction {
+/// case .allow: print("本地建议允许")
 /// case .challenge: print("需要验证码")
 /// case .stepUpAuth: print("需要短信验证")
-/// case .block: print("拒绝交易")
+/// case .block: print("本地建议拒绝")
 /// }
 /// ```
 public struct RiskDetectionEngine: Sendable {
@@ -62,7 +63,7 @@ public struct RiskDetectionEngine: Sendable {
         context: RiskContext,
         scenario: RiskScenario = .default,
         extraSignals: [RiskSignal] = []
-    ) -> RiskVerdict {
+    ) -> LocalAssessment {
         log("=== RiskDetectionEngine evaluation started ===")
         log("Scenario: \(scenario.rawValue)")
         log("Policy: \(policy.name)")
@@ -75,7 +76,7 @@ public struct RiskDetectionEngine: Sendable {
                 "policy": policy.name,
                 "timestamp": ISO8601DateFormatter().string(from: Date()),
             ])
-            return RiskVerdict(
+            return LocalAssessment(
                 score: 0,
                 internalLevel: .low,
                 internalAction: .allow,
@@ -177,7 +178,7 @@ public struct RiskDetectionEngine: Sendable {
         var allSignals: [RiskSignal] = []
         var callStackExtraSignals: [RiskSignal] = []
         var compressResult = SignalCompressor.compress(signals: [])
-        var preflightVerdict: RiskVerdict?
+        var preflightVerdict: LocalAssessment?
         var sink: CollectedSignalContext?
         var state = encodeRegionState(0x11, key: regionKey, salt: regionSalt)
         var budget = 0
@@ -190,7 +191,7 @@ public struct RiskDetectionEngine: Sendable {
                 if isCallStackMalicious, let signalId = callStackSignalId {
                     if signalId == CallStackUnwinder.dladdrHookSignalId {
                         let hookSignal = makeCallStackSignal(id: signalId)
-                        preflightVerdict = RiskVerdict(
+                        preflightVerdict = LocalAssessment(
                             score: 100,
                             internalLevel: .critical,
                             internalAction: .block,
@@ -297,7 +298,7 @@ public struct RiskDetectionEngine: Sendable {
         var sink: FastDigestDecision?
         var done = false
         var state = encodeRegionState(0x21, key: regionKey, salt: regionSalt)
-        var candidateVerdict: RiskVerdict?
+        var candidateVerdict: LocalAssessment?
         var budget = 0
         var poison = collected.antiTamperingDigest ^ regionSalt
 
@@ -545,7 +546,7 @@ public struct RiskDetectionEngine: Sendable {
                     signals: collected.allSignals,
                     context: context
                 )
-                sink = RiskVerdict(
+                sink = LocalAssessment(
                     score: intermediate.adjustedScore,
                     internalLevel: collected.scenarioPolicy.level(for: intermediate.adjustedScore),
                     internalAction: reconciliation.action,
@@ -702,7 +703,7 @@ public struct RiskDetectionEngine: Sendable {
         scenario: RiskScenario,
         phase: String,
         poison: UInt64
-    ) -> RiskVerdict {
+    ) -> LocalAssessment {
         let poisonSignal = RiskSignal(
             id: "engine_region_poison",
             category: ObfuscatedConstants.categoryAntiTamper,
@@ -715,7 +716,7 @@ public struct RiskDetectionEngine: Sendable {
             layer: 2,
             weightHint: 100
         )
-        return RiskVerdict(
+        return LocalAssessment(
             score: 100,
             internalLevel: .critical,
             internalAction: .block,
@@ -1125,7 +1126,7 @@ public struct RiskDetectionEngine: Sendable {
         scenarioPolicy: ScenarioPolicy,
         signals: [RiskSignal],
         scenario: RiskScenario
-    ) -> RiskVerdict? {
+    ) -> LocalAssessment? {
         let rules = scenarioPolicy.compressedVerdictRules
         guard !rules.isEmpty else { return nil }
 
@@ -1143,7 +1144,7 @@ public struct RiskDetectionEngine: Sendable {
         }
         let score = minScore(for: strictestRule.action, scenarioPolicy: scenarioPolicy)
 
-        return RiskVerdict(
+        return LocalAssessment(
             score: score,
             internalLevel: scenarioPolicy.level(for: score),
             internalAction: strictestRule.action,
@@ -1478,11 +1479,11 @@ public struct RiskDetectionEngine: Sendable {
     }
 
     private func reconcileShortCircuitVerdict(
-        baseVerdict: RiskVerdict,
+        baseVerdict: LocalAssessment,
         context: RiskContext,
         scenario: RiskScenario,
         collected: CollectedSignalContext
-    ) -> RiskVerdict {
+    ) -> LocalAssessment {
         let intermediate = scoreAndForceDecision(
             context: context,
             scenario: scenario,
@@ -1512,7 +1513,7 @@ public struct RiskDetectionEngine: Sendable {
             mergedDecisionMetadata(baseVerdict.decisionMetadata, effectiveIntermediate.decisionHints),
             reconciliation.metadata
         )
-        return RiskVerdict(
+        return LocalAssessment(
             score: effectiveScore,
             internalLevel: collected.scenarioPolicy.level(for: effectiveScore),
             internalAction: reconciliation.action,
@@ -1880,20 +1881,20 @@ private struct ScoreComponents: Sendable {
     let tamperedCount: Int
 }
 
-private typealias RiskConclusion = RiskVerdict
+private typealias RiskConclusion = LocalAssessment
 
 private struct CollectedSignalContext: Sendable {
     let planner: MutationPlanner
     let scenarioPolicy: ScenarioPolicy
     let allSignals: [RiskSignal]
     let compressResult: SignalCompressor.CompressResult
-    let preflightVerdict: RiskVerdict?
+    let preflightVerdict: LocalAssessment?
     let challengeOffsetHint: Double
     let antiTamperingDigest: UInt64
 }
 
 private struct FastDigestDecision: Sendable {
-    let verdict: RiskVerdict
+    let verdict: LocalAssessment
 }
 
 private struct IntermediateDecision: Sendable {
@@ -2305,7 +2306,7 @@ extension RiskDetectionEngine {
     }
 }
 
-extension RiskVerdict {
+extension LocalAssessment {
     /// 旧版兼容字段
     public var legacySummary: String {
         if action == .block {
