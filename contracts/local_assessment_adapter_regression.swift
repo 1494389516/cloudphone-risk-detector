@@ -41,6 +41,12 @@ private struct AdapterRegression {
                             evidence: ["device": context.deviceID])]
             }
         ])
+        let replacementPolicy = EnginePolicy(name: "replacement", version: "fixture-2")
+        let replacement = engine.replacingPolicy(replacementPolicy)
+        precondition(!replacement.enableLogging, "Policy refresh re-enabled logging")
+        precondition(replacement.policy.name == "replacement" && replacement.policy.version == "fixture-2")
+        precondition(engine.policy.name == "default", "Policy refresh mutated the source engine")
+        precondition(RiskDetectionEngine(enableLogging: true).replacingPolicy(replacementPolicy).enableLogging)
         func verify(_ result: LocalAssessment, _ label: String) {
             let matches = result.signals.filter { $0.id == marker }
             guard matches.count == 1, matches[0].evidence["device"] == snapshot.deviceID else {
@@ -49,6 +55,8 @@ private struct AdapterRegression {
             }
         }
         let local = LocalAssessmentAdapter(engine: engine)
+        let replaced = LocalAssessmentAdapter(engine: replacement)
+        verify(replaced.decideSync(snapshot: snapshot), "policy copy control")
         verify(local.decideSync(snapshot: snapshot), "sync control")
         let disabled = await local.assess(snapshot: snapshot, config: .init(useRemoteConfig: false))
         verify(disabled, "remote disabled")

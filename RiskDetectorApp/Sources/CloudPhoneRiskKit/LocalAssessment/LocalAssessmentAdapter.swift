@@ -44,12 +44,8 @@ public final class LocalAssessmentAdapter: DecisionEngine {
         // 应用远程配置（如果启用）
         let policy = await applyRemoteConfigIfNeeded(config)
 
-        // 使用指定策略创建引擎
-        let engineWithPolicy = RiskDetectionEngine(
-            policy: policy,
-            enableLogging: true,
-            customProviders: [:]
-        )
+        // Only replace the policy; preserve registered providers and logging settings.
+        let engineWithPolicy = engine.replacingPolicy(policy)
 
         // 执行评估
         let internalVerdict = engineWithPolicy.evaluate(
