@@ -51,6 +51,16 @@ public struct RiskDetectionEngine: Sendable {
         self.customProviders = customProviders
     }
 
+    /// Apply a policy without discarding caller-owned providers or logging settings.
+    /// Keep this copy operation here so the adapter cannot reconstruct a partial engine.
+    func replacingPolicy(_ policy: EnginePolicy) -> RiskDetectionEngine {
+        RiskDetectionEngine(
+            policy: policy,
+            enableLogging: enableLogging,
+            customProviders: customProviders
+        )
+    }
+
     // MARK: - 核心评估方法
 
     /// 评估风险并返回判决结果

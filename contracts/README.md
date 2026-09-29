@@ -157,3 +157,12 @@ on macOS, checks old/new protocol conformance and adapter aliases at compile tim
 then round-trips frozen legacy JSON for all five signal states. It verifies compact
 keys, state tags, action mappings, timestamps, request IDs, and metadata. It does
 not run device probes or claim real-device or server authorization validation.
+
+The same runner also executes `local_assessment_adapter_regression.swift` with
+synthetic device/network/behavior inputs. It verifies that registered custom
+provider signals survive synchronous assessment and every async configuration
+path: remote disabled, manager absent, remote failure, remote success, and the
+legacy `decide` bridge. A policy refresh preserves the engine's providers and
+logging flag; the original engine remains unchanged. This regression uses the
+macOS host evaluation path and is not iOS hardware validation. It does not address
+other adapter gaps such as `customThreshold`, `enabledDetectors`, or `extras`.

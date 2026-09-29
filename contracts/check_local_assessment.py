@@ -19,6 +19,9 @@ let package = Package(
     targets: [.executableTarget(
         name: "CompatibilityCheck",
         dependencies: [.product(name: "CloudPhoneRiskKit", package: "RiskDetectorApp")]
+    ), .executableTarget(
+        name: "AdapterRegression",
+        dependencies: [.product(name: "CloudPhoneRiskKit", package: "RiskDetectorApp")]
     )]
 )
 ''')
@@ -27,4 +30,10 @@ let package = Package(
     (source / "CompatibilityCheck.swift").write_text(
         (ROOT / "contracts/local_assessment_compatibility.swift").read_text()
     )
+    source = package / "Sources/AdapterRegression"
+    source.mkdir(parents=True)
+    (source / "AdapterRegression.swift").write_text(
+        (ROOT / "contracts/local_assessment_adapter_regression.swift").read_text()
+    )
     subprocess.run(["swift", "run", "--package-path", str(package), "CompatibilityCheck"], check=True)
+    subprocess.run(["swift", "run", "--package-path", str(package), "AdapterRegression"], check=True)
