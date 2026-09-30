@@ -35,27 +35,8 @@ public final class LocalAssessmentAdapter: DecisionEngine {
         snapshot: RiskSnapshot,
         config: LocalAssessmentConfig
     ) async -> LocalAssessment {
-        // 转换 RiskSnapshot 到 RiskContext
-        let context = convertSnapshotToContext(snapshot)
-
-        // 场景已统一，直接使用
-        let scenario = config.scenario
-
-        // 应用远程配置（如果启用）
         let policy = await applyRemoteConfigIfNeeded(config)
-
-        // Only replace the policy; preserve registered providers and logging settings.
-        let engineWithPolicy = engine.replacingPolicy(policy)
-
-        // 执行评估
-        let internalVerdict = engineWithPolicy.evaluate(
-            context: context,
-            scenario: scenario,
-            extraSignals: []
-        )
-
-        // 内部 RiskVerdict 已实现协议兼容的属性
-        return internalVerdict
+        return assessLocally(snapshot: snapshot, config: config, policy: policy)
     }
 
     /// Legacy entry point; preserves existing callers and forwards to local assessment.
@@ -88,6 +69,54 @@ public final class LocalAssessmentAdapter: DecisionEngine {
     }
 
     // MARK: - 私有辅助方法
+
+    /// Shared by sync, async and legacy entry points. Sync never fetches remote config.
+    private func assessLocally(
+        snapshot: RiskSnapshot,
+        config: LocalAssessmentConfig,
+        policy: EnginePolicy
+    ) -> LocalAssessment {
+        let effectivePolicy = Self.applyingLocalOverrides(config, to: policy)
+        let configuredEngine = engine.replacingPolicy(effectivePolicy)
+            .selectingDetectorFamilies(config.enabledDetectors)
+        return configuredEngine.evaluate(
+            context: convertSnapshotToContext(snapshot),
+            scenario: config.scenario
+        ).retainingLocalExtras(config.extras)
+    }
+
+    /// Replace only the requested high threshold; all other policy fields survive.
+    static func applyingLocalOverrides(_ config: LocalAssessmentConfig, to policy: EnginePolicy) -> EnginePolicy {
+        let base = policy.scenarioPolicy(for: config.scenario)
+        guard let high = config.customThreshold, high.isFinite,
+              base.mediumThreshold < high, high < base.criticalThreshold else { return policy }
+        var scenarios = policy.scenarioPolicies
+        scenarios[config.scenario] = ScenarioPolicy(
+            mediumThreshold: base.mediumThreshold,
+            highThreshold: high,
+            criticalThreshold: base.criticalThreshold,
+            actionMapping: base.actionMapping,
+            signalWeights: base.signalWeights,
+            comboRules: base.comboRules,
+            enableForceRules: base.enableForceRules,
+            compressedVerdictRules: base.compressedVerdictRules
+        )
+        return EnginePolicy(
+            name: policy.name,
+            version: policy.version,
+            killSwitchEnabled: policy.killSwitchEnabled,
+            enableNetworkSignals: policy.enableNetworkSignals,
+            enableBehaviorDetection: policy.enableBehaviorDetection,
+            enableDeviceFingerprint: policy.enableDeviceFingerprint,
+            forceActionOnJailbreak: policy.forceActionOnJailbreak,
+            signalWeightOverrides: policy.signalWeightOverrides,
+            mutationStrategy: policy.mutationStrategy,
+            blindChallengePolicy: policy.blindChallengePolicy,
+            serverBlocklist: policy.serverBlocklist,
+            blocklistAction: policy.blocklistAction,
+            scenarioPolicies: scenarios
+        )
+    }
 
     /// 应用远程配置
     private func applyRemoteConfigIfNeeded(_ config: DecisionConfig) async -> EnginePolicy {
@@ -362,22 +391,12 @@ extension LocalAssessmentAdapter {
 
 // MARK: - 同步版本（兼容旧 API）
 extension LocalAssessmentAdapter {
-    /// 同步版本的决策方法（不使用 async/await）
+    /// Synchronous local assessment; applies local overrides but never fetches remote config.
     public func decideSync(
         snapshot: RiskSnapshot,
         config: DecisionConfig = DecisionConfig()
     ) -> ProtocolRiskVerdict {
-        // 创建简单的 RiskContext
-        let context = RiskContext(
-            device: snapshot.device,
-            deviceID: snapshot.deviceID,
-            network: snapshot.network,
-            behavior: snapshot.behavior,
-            jailbreak: snapshot.jailbreak
-        )
-
-        let verdict = engine.evaluate(context: context, scenario: config.scenario)
-        return verdict
+        assessLocally(snapshot: snapshot, config: config, policy: engine.policy)
     }
 }
 

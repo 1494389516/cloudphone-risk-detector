@@ -34,6 +34,10 @@ public struct LocalAssessment: Codable, Sendable {
     public let timestamp: Date
     public let requestId: String
 
+    // Deliberately omitted from CodingKeys and report/decisionMetadata transport.
+    private var localConfigurationExtras: [String: String] = [:]
+
+    /// Generated metadata plus namespaced, transient caller metadata (not serialized).
     public var extras: [String: String] {
         var base = [
             "requestId": requestId,
@@ -44,7 +48,17 @@ public struct LocalAssessment: Codable, Sendable {
                 base["dm.\(k)"] = v
             }
         }
+        for (key, value) in localConfigurationExtras {
+            base["config.\(key)"] = value
+        }
         return base
+    }
+
+    /// A value copy preserves request identity, time, evidence and engine metadata.
+    func retainingLocalExtras(_ extras: [String: String]) -> LocalAssessment {
+        var result = self
+        result.localConfigurationExtras = extras
+        return result
     }
 
     private enum CodingKeys: String, CodingKey {

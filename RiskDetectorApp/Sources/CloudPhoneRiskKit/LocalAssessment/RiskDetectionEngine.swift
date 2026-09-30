@@ -39,6 +39,9 @@ public struct RiskDetectionEngine: Sendable {
     /// 自定义信号提供者
     private let customProviders: [String: @Sendable (RiskContext) -> [RiskSignal]]
 
+    // nil keeps direct engine callers unchanged; adapter selection is evaluation-local.
+    private var enabledDetectorFamilies: Set<String>?
+
     // MARK: - 初始化
 
     public init(
@@ -54,11 +57,31 @@ public struct RiskDetectionEngine: Sendable {
     /// Apply a policy without discarding caller-owned providers or logging settings.
     /// Keep this copy operation here so the adapter cannot reconstruct a partial engine.
     func replacingPolicy(_ policy: EnginePolicy) -> RiskDetectionEngine {
-        RiskDetectionEngine(
+        var result = RiskDetectionEngine(
             policy: policy,
             enableLogging: enableLogging,
             customProviders: customProviders
         )
+        result.enabledDetectorFamilies = enabledDetectorFamilies
+        return result
+    }
+
+    func selectingDetectorFamilies(_ families: Set<String>) -> RiskDetectionEngine {
+        var result = self
+        result.enabledDetectorFamilies = families.isEmpty ? DecisionConfig.defaultDetectors : families
+        return result
+    }
+
+    private func detectorEnabled(_ category: String) -> Bool {
+        guard let families = enabledDetectorFamilies else { return true }
+        // Unknown categories belong to caller-owned providers, not the built-in allow-list.
+        guard DecisionConfig.defaultDetectors.contains(category) else { return true }
+        return families.contains(category)
+    }
+
+    private func includeSelectedSignal(_ signal: RiskSignal) -> Bool {
+        // Explicit integrity failures cannot be hidden by optional detector selection.
+        signal.state == .tampered || detectorEnabled(signal.category)
     }
 
     // MARK: - 核心评估方法
@@ -535,6 +558,10 @@ public struct RiskDetectionEngine: Sendable {
                         "antiTamper": String(collected.antiTamperingDigest, radix: 16)
                     ]
                 )
+                if enabledDetectorFamilies != nil {
+                    evaluationContext.jailbreakEnabled = detectorEnabled(ObfuscatedConstants.signalJailbreak)
+                    evaluationContext.networkEnabled = detectorEnabled("network")
+                }
                 state = encodeRegionState(0x42, key: regionKey, salt: regionSalt)
             case 0x42:
                 let decisionTree = DecisionTree.tree(for: scenario)
@@ -749,7 +776,7 @@ public struct RiskDetectionEngine: Sendable {
         var signals: [RiskSignal] = []
 
         // 1. 越狱信号
-        if context.jailbreak.confidence > 0 {
+        if detectorEnabled(ObfuscatedConstants.signalJailbreak), context.jailbreak.confidence > 0 {
             let jbScore = context.jailbreak.confidence * 100
             signals.append(
                 RiskSignal(
@@ -766,7 +793,7 @@ public struct RiskDetectionEngine: Sendable {
         }
 
         // 2. 网络信号
-        if policy.enableNetworkSignals {
+        if policy.enableNetworkSignals && detectorEnabled("network") {
             if context.network.isVPNActive {
                 signals.append(
                     RiskSignal(
@@ -790,23 +817,25 @@ public struct RiskDetectionEngine: Sendable {
         }
 
         // 3. 行为信号
-        if policy.enableBehaviorDetection {
+        if policy.enableBehaviorDetection && detectorEnabled("behavior") {
             let behaviorSignals = extractBehaviorSignals(behavior: context.behavior)
             signals.append(contentsOf: behaviorSignals)
         }
 
         // 4. 设备信号
-        let deviceSignals = extractDeviceSignals(
-            device: context.device,
-            jailbreak: context.jailbreak
-        )
-        signals.append(contentsOf: deviceSignals)
+        if detectorEnabled("device") {
+            let deviceSignals = extractDeviceSignals(
+                device: context.device,
+                jailbreak: context.jailbreak
+            )
+            signals.append(contentsOf: deviceSignals)
+        }
 
         // 5. 自定义提供者信号
         let providerKeys = planner.maybeShuffle(customProviders.keys.sorted(), salt: "custom_provider_order")
         for key in providerKeys {
             guard let provider = customProviders[key] else { continue }
-            signals.append(contentsOf: provider(context))
+            signals.append(contentsOf: provider(context).filter(includeSelectedSignal))
         }
 
         // 6. 额外信号
@@ -987,7 +1016,7 @@ public struct RiskDetectionEngine: Sendable {
         }
 
         // 越狱设备加分
-        if jailbreak.isJailbroken {
+        if detectorEnabled(ObfuscatedConstants.signalJailbreak), jailbreak.isJailbroken {
             signals.append(
                 RiskSignal(
                     id: "jailbreak_device",
@@ -1212,7 +1241,7 @@ public struct RiskDetectionEngine: Sendable {
         }
 
         // 越狱设备强制规则
-        if context.jailbreak.isJailbroken {
+        if detectorEnabled(ObfuscatedConstants.signalJailbreak), context.jailbreak.isJailbroken {
             if let jailbreakAction = policy.forceActionOnJailbreak {
                 forcedAction = strictestAction(forcedAction, jailbreakAction)
                 adjustedScore = max(adjustedScore, minScore(for: jailbreakAction, scenarioPolicy: scenarioPolicy))
@@ -1422,7 +1451,7 @@ public struct RiskDetectionEngine: Sendable {
     /// 粗粒度「风险家族」计数：同一类单点被绕过时不应清零其它家族的贡献。
     private func countRiskFamilies(signals: [RiskSignal], context: RiskContext) -> Int {
         var families = Set<String>()
-        if context.jailbreak.isJailbroken { families.insert("jailbreak_ctx") }
+        if detectorEnabled(ObfuscatedConstants.signalJailbreak), context.jailbreak.isJailbroken { families.insert("jailbreak_ctx") }
         if signals.contains(where: { $0.id == ObfuscatedConstants.signalJailbreak }) {
             families.insert("jailbreak_sig")
         }
@@ -1603,12 +1632,12 @@ public struct RiskDetectionEngine: Sendable {
         confidence += min(Double(highScoreSignals) * 0.1, 0.2)
 
         // 越狱检测命中显著提高置信度
-        if context.jailbreak.isJailbroken {
+        if detectorEnabled(ObfuscatedConstants.signalJailbreak), context.jailbreak.isJailbroken {
             confidence += 0.2
         }
 
         // 行为数据充足提高置信度
-        if context.behavior.actionCount >= 10 {
+        if detectorEnabled("behavior"), context.behavior.actionCount >= 10 {
             confidence += 0.1
         }
 

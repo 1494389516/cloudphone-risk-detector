@@ -164,5 +164,52 @@ provider signals survive synchronous assessment and every async configuration
 path: remote disabled, manager absent, remote failure, remote success, and the
 legacy `decide` bridge. A policy refresh preserves the engine's providers and
 logging flag; the original engine remains unchanged. This regression uses the
-macOS host evaluation path and is not iOS hardware validation. It does not address
-other adapter gaps such as `customThreshold`, `enabledDetectors`, or `extras`.
+macOS host evaluation path and is not iOS hardware validation. It also checks the adapter configuration contract below, including sync/async parity,
+remote/fallback paths, threshold validation, policy preservation, category filtering
+before combo/compressed rules, default-provider compatibility, and local-only metadata.
+
+### Adapter configuration contract
+
+All adapter entry points apply local configuration through one path. Async `assess`
+and legacy `decide` resolve remote policy first (or use the original policy when
+remote configuration is disabled, absent, or fails), then apply local overrides.
+`decideSync` never fetches remote configuration and uses the original engine policy.
+The caller's engine, custom providers and logging setting are preserved.
+
+- `customThreshold` replaces only the selected scenario's `highThreshold`. It must
+  be finite and strictly between that policy's medium and critical thresholds;
+  otherwise the complete policy is retained. Other scenarios, medium/critical
+  thresholds, action mappings, weights, force/combo/compressed rules, kill switch,
+  mutation strategy and all other engine policy fields remain unchanged. Existing
+  mutation jitter can still adjust the threshold during evaluation. This is the
+  scenario high-risk level/score-floor threshold, not a universal action cutoff;
+  existing decision-tree conditions and stronger integrity actions still apply.
+- `enabledDetectors` selects exact, case-sensitive built-in signal categories:
+  `jailbreak`, `anti_tamper`, `behavior`, `network`, `device`, `environment`.
+  Empty sets use all six defaults, whether initialized, mutated, or decoded.
+  Categories absent from a nonempty selection are excluded before scoring, combos
+  and compression. Jailbreak/network tree conditions and context-derived jailbreak
+  forces/family/confidence contributions obey selection too. This config selects
+  evidence for assessment; it does not stop already-completed snapshot collection
+  or invocation of custom providers. Provider registration names are not categories.
+  Unknown categories and caller-owned providers remain supported; unrecognized
+  names do not enable a built-in category. Existing built-in network/behavior
+  policy switches keep their previous meaning, without newly filtering providers
+  or activating previously unused policy flags. `environment`/`anti_tamper`
+  select supplied category evidence, not new collectors. Mandatory call-stack
+  checks, engine fail-closed paths and explicit `.tampered` evidence cannot be
+  disabled by this selection.
+- `extras` is caller metadata only. The result's `extras` view exposes it under
+  `config.<key>`; generated `requestId`, `timestamp`, and `dm.*` engine metadata
+  cannot be overwritten. Attaching extras preserves result identity, timestamp,
+  score, action, signals and digest. Caller extras are deliberately absent from
+  result Codable and `decisionMetadata`, so they are not automatically forwarded
+  through report transport and are not restored after result serialization.
+  `DecisionConfig` itself retains its existing Codable representation, including
+  `ex`; serializing that configuration explicitly is separate from result transport.
+
+The portable command `python3 contracts/check_adapter_configuration_source.py`
+checks wiring and complete immutable policy-copy fields. `--ref <commit>` checks
+an older source version with the same assertions. It does not compile Swift or
+replace the native behavior/compatibility executables. Run
+`python3 contracts/check_local_assessment.py` on macOS with Swift for those tests.
