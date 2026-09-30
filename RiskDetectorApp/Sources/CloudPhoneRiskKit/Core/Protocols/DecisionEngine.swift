@@ -34,8 +34,15 @@ public protocol DecisionModel: Sendable {
 public struct DecisionConfig: Sendable, Codable {
     public var scenario: RiskScenario
     public var useRemoteConfig: Bool
+    /// Overrides only the selected scenario's high threshold, after remote policy resolution.
+    /// Non-finite values or values outside (mediumThreshold, criticalThreshold) are ignored.
     public var customThreshold: Double?
+    /// Selects the six built-in signal categories, not custom-provider registration names.
+    /// Empty means defaults, including after mutation/decoding. Unknown categories survive.
+    /// Selection applies before fusion; mandatory integrity checks/tamper evidence remain active.
     public var enabledDetectors: Set<String>
+    /// Local-only metadata exposed as `config.<key>` in the assessment's extras view.
+    /// Never scored or included in assessment Codable/report transport.
     public var extras: [String: String]
 
     private enum CodingKeys: String, CodingKey {
@@ -60,7 +67,7 @@ public struct DecisionConfig: Sendable, Codable {
         self.extras = extras
     }
 
-    private static var defaultDetectors: Set<String> { [
+    static var defaultDetectors: Set<String> { [
         ObfuscatedConstants.signalJailbreak,
         ObfuscatedConstants.categoryAntiTamper,
         "behavior",

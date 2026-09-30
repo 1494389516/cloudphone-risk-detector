@@ -12,6 +12,13 @@ public struct EvaluationContext: Sendable {
     public let policy: ScenarioPolicy
     public var metadata: [String: String]
 
+    // Adapter-only gates. Keep original context available to providers and direct callers.
+    var jailbreakEnabled = true
+    var networkEnabled = true
+    var isJailbroken: Bool { jailbreakEnabled && riskContext.jailbreak.isJailbroken }
+    var isVPNActive: Bool { networkEnabled && riskContext.network.isVPNActive }
+    var proxyEnabled: Bool { networkEnabled && riskContext.network.proxyEnabled }
+
     public init(
         score: Double,
         signals: [RiskSignal],
@@ -76,9 +83,9 @@ private enum DecisionTreeCFF {
                 context.metadata["trust_level"] ?? "",
             ],
             flags: [
-                context.riskContext.jailbreak.isJailbroken,
-                context.riskContext.network.isVPNActive,
-                context.riskContext.network.proxyEnabled,
+                context.isJailbroken,
+                context.isVPNActive,
+                context.proxyEnabled,
             ]
         )
     }
@@ -156,11 +163,11 @@ public enum ConditionExpression: Codable, Sendable {
                 } else if decodedState == categoryScoreState, case let .categoryScore(category, gt) = self {
                     sink.store(context.categoryScore(category) > gt)
                 } else if decodedState == jailbrokenState {
-                    sink.store(context.riskContext.jailbreak.isJailbroken)
+                    sink.store(context.isJailbroken)
                 } else if decodedState == vpnState {
-                    sink.store(context.riskContext.network.isVPNActive)
+                    sink.store(context.isVPNActive)
                 } else if decodedState == proxyState {
-                    sink.store(context.riskContext.network.proxyEnabled)
+                    sink.store(context.proxyEnabled)
                 } else if decodedState == customState, case let .custom(id) = self {
                     sink.store(ConditionExpression.customEvaluatorRegistry.evaluate(id: id, context: context))
                 } else {
@@ -218,11 +225,11 @@ public enum ConditionExpression: Codable, Sendable {
                         sink.store(context.categoryScore(category) > gt)
                     }
                 case jailbrokenState where self.isJailbrokenExpression:
-                    sink.store(context.riskContext.jailbreak.isJailbroken)
+                    sink.store(context.isJailbroken)
                 case vpnState where self.isVPNExpression:
-                    sink.store(context.riskContext.network.isVPNActive)
+                    sink.store(context.isVPNActive)
                 case proxyState where self.isProxyExpression:
-                    sink.store(context.riskContext.network.proxyEnabled)
+                    sink.store(context.proxyEnabled)
                 case customState where self.isCustom:
                     if case let .custom(id) = self {
                         sink.store(ConditionExpression.customEvaluatorRegistry.evaluate(id: id, context: context))

@@ -18,5 +18,7 @@ jobs:
         run: swift build --package-path RiskDetectorApp
       - name: Local assessment source and wire compatibility
         run: python3 contracts/check_local_assessment.py
+      - name: Adapter configuration source gates
+        run: python3 contracts/check_adapter_configuration_source.py
       - name: Architecture invariant checks
         run: python3 contracts/architecture_invariants.py
