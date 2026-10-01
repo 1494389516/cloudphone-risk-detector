@@ -1,0 +1,222 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-01",
+  "scope": "Final integration rerun: macOS stack/GF2 execution and unsigned iPhoneOS Release build only",
+  "plugin_sha256": "a07f243b2a1fe20f0f8fcc2a1606f9d4357420611337032552cc02b4281dd3fe",
+  "iphone_release_verified": false,
+  "device_executed": false,
+  "checks": {
+    "stack": {
+      "raw_report_path": "/private/tmp/cprisk-final-integration-stack/report.json",
+      "raw_report_sha256": "357b153bfc8ecc42775177bafaf47f4bb7a07fd2210bbe629567318049ae0a69",
+      "status": "HOST_VMP_PASS",
+      "vmp_verified": true,
+      "preprocessing": "LLVM lower-constant-intrinsics; not VM objectsize support",
+      "differential_output": "PASS cases=4155 seed=783cb86db73074ac\n",
+      "pass_evidence": {
+        "targets": [
+          "protected_vm_stack_crypto_init",
+          "protected_vm_stack_encrypt_push",
+          "protected_vm_stack_push_encrypted"
+        ],
+        "all_vm_passes_ran_and_changed": true
+      },
+      "ir_evidence": {
+        "protected_vm_stack_crypto_init": {
+          "bytecode_bytes": 714,
+          "before_sha256": "9e06af08feddd467cc4f189059ac8e9383676b808d4a8aeed8fca8cbce65b3f0",
+          "after_sha256": "75b6e16adf2f2c1bc2ea807f578a97a06b9172491ba488f2cc63c9b3ea77d1e7"
+        },
+        "protected_vm_stack_encrypt_push": {
+          "bytecode_bytes": 188,
+          "before_sha256": "5e4664a15c500cb11dad87bdc8df7ca0f42ae40b7a70475c2f4b32a4e2aeb67f",
+          "after_sha256": "635072277bc2da8d61db6c36345ddb86207bfb128cc5264d171b89ecf91bb9a5"
+        },
+        "protected_vm_stack_push_encrypted": {
+          "bytecode_bytes": 231,
+          "before_sha256": "2f138cb0d6560cd7b91b594059e78be9679bd27064bea7a34e6c93c0f9b60ce6",
+          "after_sha256": "db0142d3b21cf1e8ef586204c6ed2095869ea8449af7035ce0a94fec1bab3346"
+        }
+      },
+      "optimized_ir_evidence": {
+        "protected_vm_stack_crypto_init": {
+          "bytecode_bytes": 714,
+          "before_sha256": "9e06af08feddd467cc4f189059ac8e9383676b808d4a8aeed8fca8cbce65b3f0",
+          "after_sha256": "9d22386dd589ba31c26ff4e7cf390bd5403f26fec27a7803458b5d9cf44d6016"
+        },
+        "protected_vm_stack_encrypt_push": {
+          "bytecode_bytes": 188,
+          "before_sha256": "5e4664a15c500cb11dad87bdc8df7ca0f42ae40b7a70475c2f4b32a4e2aeb67f",
+          "after_sha256": "042bd3a37324e7a14113a5343fd8b752c39d433a5d8ce2fbeb7fc5cf7127dafa"
+        },
+        "protected_vm_stack_push_encrypted": {
+          "bytecode_bytes": 231,
+          "before_sha256": "2f138cb0d6560cd7b91b594059e78be9679bd27064bea7a34e6c93c0f9b60ce6",
+          "after_sha256": "c2c2c4ad8ae76e15e58faa58baa57c2fb34de8a3e77d2ab73b4158a797051015"
+        }
+      },
+      "elapsed_seconds": 1.892591,
+      "hashes": {
+        "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/candidates.c": "6b9b5ac3e98678f725977530a13626141807e14cfb0957e5844aa5f1823f2f4d",
+        "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/differential.c": "fcd8a26948c09af892bd558e57571fefbd3784df0e0748130ca901a606834bd5",
+        "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/candidates.h": "0791468dee8065613cfab2d57ef1a76b07093fdf890f1aee807b348abcf2f371",
+        "/Users/mac/Desktop/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore/vm_stack_crypto.c": "acb783fa80a97dfd8d2b103bd1c3bb9bb6c0b5b433f2ca3508b5b1cc9021ff0b",
+        "/Users/mac/Desktop/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore/vm_stack_crypto.h": "f66a88761f323047deb9f0a11128a8dee4ff43eba27b313106929c6e9aa8f3e1",
+        "/Users/mac/Desktop/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore/include/cprisk_secure_zero.h": "eb6553327690c8451d1a16a42b9962d0c21df141ac08a08d7f8c05b36e1410de",
+        "/private/tmp/cprisk-final-integration-stack/build-2ffnargi/emitted.ll": "6eb47862cfb785c2c4afe11b70f949b49758d5e181f1b86833956b18cfc9a6a6",
+        "/private/tmp/cprisk-final-integration-stack/build-2ffnargi/before.ll": "b3030cd3732f4261ad80cb502a4f1c1ca364430c705670ac41228c4de7d41b1e",
+        "/private/tmp/cprisk-final-integration-stack/build-2ffnargi/after.ll": "35e4572fadb7d5986982f46f859bb461a482dcc04effa3270a607948fb92c749",
+        "/private/tmp/cprisk-final-integration-stack/build-2ffnargi/optimized.ll": "e0700a5bc949080bdd2213f78d378bcfd5e5b315f1d1d79d8f4e16440d51b700",
+        "/private/tmp/cprisk-final-integration-stack/build-2ffnargi/differential": "2cbaf65000263ba4d8d42ae1525ee7ed3f7fd9f3cc888b3daf2c27f488b28b05"
+      }
+    },
+    "gf2": {
+      "raw_report_path": "/private/tmp/cprisk-final-integration-gf2/report.json",
+      "raw_report_sha256": "48c76fc09a3a45bb26575c5b040fbf93fda7ec235d3648058ffd47a5e0067789",
+      "status": "HOST_VMP_PASS",
+      "vmp_verified": true,
+      "differential_output": "PASS cases=4096 seed=783cb86db73074ac\n",
+      "pass_evidence": {
+        "targets": [
+          "protected_cprisk_gf2_xorshift64",
+          "protected_cprisk_gf2_fnv1a"
+        ],
+        "all_vm_passes_ran_and_changed": true
+      },
+      "ir_evidence": {
+        "protected_cprisk_gf2_xorshift64": {
+          "bytecode_bytes": 65,
+          "before_sha256": "dbeb7ad6ac62fbe9d7fdcf49b8600fea60490b70526981e10a7b477a3813bce1",
+          "after_sha256": "60fb6deecd02eb1705e3f35d3c8787510e1c8ddb423069f736887ce5fdc2c8c4"
+        },
+        "protected_cprisk_gf2_fnv1a": {
+          "bytecode_bytes": 105,
+          "before_sha256": "940a06869bc05f1bf97d1bd5258db237ce776e5f726660c06cc93ca80155fd90",
+          "after_sha256": "756252a42b9e94b62ad57ae66489b4594c401284801b0d5ba2054efaa4a85d72"
+        }
+      },
+      "optimized_ir_evidence": {
+        "protected_cprisk_gf2_xorshift64": {
+          "bytecode_bytes": 65,
+          "before_sha256": "dbeb7ad6ac62fbe9d7fdcf49b8600fea60490b70526981e10a7b477a3813bce1",
+          "after_sha256": "f4e6a1e1ab7de75eaa9e1e72dbf914b1243b14f7015843ce29070c7deb6e7c4c"
+        },
+        "protected_cprisk_gf2_fnv1a": {
+          "bytecode_bytes": 105,
+          "before_sha256": "940a06869bc05f1bf97d1bd5258db237ce776e5f726660c06cc93ca80155fd90",
+          "after_sha256": "e60ed163907620d6a0a93d0a208dc45c6161db5193532ad88deb9ed35b79f4c2"
+        }
+      },
+      "elapsed_seconds": 1.523264,
+      "hashes": {
+        "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/gf2_candidates.c": "fcd3eab20000849dc4ca16c6d5e14bf158e245221bdccaa10f78aa42d5e96d47",
+        "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/gf2_differential.c": "9dd10d266de9da3cd06e6a3706be8fcf190f71664cc165caa60f670fab85125f",
+        "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/gf2_candidates.inc": "e517ce1c4be48f6ee8146fdbc34a6969dcaa1c4f68b0f669e6c0ff64b84ac481",
+        "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/sources.json": "5f7dd0e436ec8f272561fddb08ea499dd134366535012b7fb23c507db76038bb",
+        "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/verify_sources.py": "f053ae0cf0a61fd9d3e2c05e39bc293d5c0f3286ea671efa141193009c6ffdef",
+        "/private/tmp/cprisk-final-integration-gf2/build-isflapkp/before.ll": "39d16a85873b2c3569562ffaacf0c1ead8b69a2f418f5700434c6594f3b3fd4e",
+        "/private/tmp/cprisk-final-integration-gf2/build-isflapkp/after.ll": "9c2dd1e53f9b38b9c0b4923bb9eda3f7c8fcd65afb92d2316645d1b1243f19aa",
+        "/private/tmp/cprisk-final-integration-gf2/build-isflapkp/optimized.ll": "da60433113adb28afd7b2ed9119f6eeb04842ebb6ed28c4097fa0a6fb420b199",
+        "/private/tmp/cprisk-final-integration-gf2/build-isflapkp/differential": "15deaa087c5b37f0a0dc1127a0b32e6a9c4dc9e55ec2b95ac9a057685b5a3700"
+      }
+    },
+    "ios": {
+      "raw_report_path": "/private/tmp/cprisk-final-integration-ios/report.json",
+      "raw_report_sha256": "2b8a907ab80d26951876da52f3dab1278124fdbba683579d3b1741a8b1413477",
+      "status": "IOS_RELEASE_APP_BUILD_PASS",
+      "build_verified": true,
+      "iphone_release_verified": false,
+      "device_executed": false,
+      "run_id": "69d81e86-548d-4445-9c2b-e88c12814adc",
+      "target": "arm64-apple-ios15.0",
+      "configuration": "Release",
+      "pass_evidence": {
+        "targets": [
+          "protected_cprisk_gf2_xorshift64",
+          "protected_cprisk_gf2_fnv1a"
+        ],
+        "all_vm_passes_ran_and_changed": true
+      },
+      "ir_evidence": {
+        "protected_cprisk_gf2_xorshift64": {
+          "bytecode_bytes": 65,
+          "before_sha256": "dbeb7ad6ac62fbe9d7fdcf49b8600fea60490b70526981e10a7b477a3813bce1",
+          "after_sha256": "60fb6deecd02eb1705e3f35d3c8787510e1c8ddb423069f736887ce5fdc2c8c4"
+        },
+        "protected_cprisk_gf2_fnv1a": {
+          "bytecode_bytes": 105,
+          "before_sha256": "940a06869bc05f1bf97d1bd5258db237ce776e5f726660c06cc93ca80155fd90",
+          "after_sha256": "756252a42b9e94b62ad57ae66489b4594c401284801b0d5ba2054efaa4a85d72"
+        }
+      },
+      "optimized_ir_evidence": {
+        "protected_cprisk_gf2_xorshift64": {
+          "bytecode_bytes": 65,
+          "before_sha256": "dbeb7ad6ac62fbe9d7fdcf49b8600fea60490b70526981e10a7b477a3813bce1",
+          "after_sha256": "f4e6a1e1ab7de75eaa9e1e72dbf914b1243b14f7015843ce29070c7deb6e7c4c"
+        },
+        "protected_cprisk_gf2_fnv1a": {
+          "bytecode_bytes": 105,
+          "before_sha256": "940a06869bc05f1bf97d1bd5258db237ce776e5f726660c06cc93ca80155fd90",
+          "after_sha256": "e60ed163907620d6a0a93d0a208dc45c6161db5193532ad88deb9ed35b79f4c2"
+        }
+      },
+      "machine_code_evidence": {
+        "protected_cprisk_gf2_xorshift64": {
+          "direct_vm_engine_call": true
+        },
+        "protected_cprisk_gf2_fnv1a": {
+          "direct_vm_engine_call": true
+        }
+      },
+      "unsigned_binary_bytes": 188408,
+      "elapsed_seconds": 1.445156,
+      "hashes": {
+        "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/ios/run.py": "07aad620836456e411df260525af9dd882c66c1247f32c8ccd0b5495b9b2c02b",
+        "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/ios/main.m": "950f6260efad147430f5d8f5098f60bef0fae3da039e50f3bcf7e1cb47409a82",
+        "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/ios/differential.c": "3e3369f9d07d696bf5f734b46880bb95a5c0e8465e3519d36a2f22aac6bed615",
+        "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/ios/differential.h": "84ee26761703aba2957e049f09e9b99019a3333ef8b72b17940eb2982eaa7be6",
+        "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/run.py": "eda6eb0276acc040e98ebc618855c88bbdb4882ab30b832eb276a1498ae736e5",
+        "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/gf2_candidates.c": "fcd3eab20000849dc4ca16c6d5e14bf158e245221bdccaa10f78aa42d5e96d47",
+        "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/gf2_candidates.inc": "e517ce1c4be48f6ee8146fdbc34a6969dcaa1c4f68b0f669e6c0ff64b84ac481",
+        "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/sources.json": "5f7dd0e436ec8f272561fddb08ea499dd134366535012b7fb23c507db76038bb",
+        "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/verify_sources.py": "f053ae0cf0a61fd9d3e2c05e39bc293d5c0f3286ea671efa141193009c6ffdef",
+        "/private/tmp/cprisk-final-integration-ios/build-_htk_yk5/before.ll": "dba3136fb40c7bcdd9fa1835363cb0a2bc26980a25dba4fe62cdd89ec6c9ed4c",
+        "/private/tmp/cprisk-final-integration-ios/build-_htk_yk5/after.ll": "984cf75560913f6261f72b83af56b4b17db4f3b2146e424780db537eedf09715",
+        "/private/tmp/cprisk-final-integration-ios/build-_htk_yk5/optimized.ll": "cb7d49bd9764f46c07b917a5bfa9ba0a6717ff3eb79c1ab89664b4e1c528534d",
+        "/private/tmp/cprisk-final-integration-ios/build-_htk_yk5/protected.o": "1fa201bcdfbfad2971b4950b95b6ae873b94182480d1479287a999bf35d80ff3",
+        "/private/tmp/cprisk-final-integration-ios/build-_htk_yk5/plain.o": "533d1148ada6abde6a1d9f9dee960261ab160a393d40a9b0f8beb7aa0a7f6aab",
+        "/private/tmp/cprisk-final-integration-ios/build-_htk_yk5/IRVMPRelease.app/IRVMPRelease": "bd4cf5016268d86099c7a6ea7996a31e6e980c4aab0eb52b4fcc27fb960af9f7",
+        "/private/tmp/cprisk-final-integration-ios/build-_htk_yk5/IRVMPRelease.app/Info.plist": "ddd23490a20829b27456789e32a5ee10224acb0b8785515ae1471f0096433512"
+      }
+    },
+    "source_extraction": "PASS: verify_sources.py",
+    "policy_values": "PASS: noncomment YAML lines identical to HEAD",
+    "syntax_and_format": "PASS: Python AST, JSON parsing, patch manifest SHA-256, git diff --check"
+  },
+  "sources": {
+    "experiments/ir-vmp/build_plugin.py": "8ffb59e737ccaa2394b4dbf8b7a3cda83e2b0d0b600379565f21d5e9b5715e3e",
+    "experiments/ir-vmp/candidates.c": "6b9b5ac3e98678f725977530a13626141807e14cfb0957e5844aa5f1823f2f4d",
+    "experiments/ir-vmp/candidates.h": "0791468dee8065613cfab2d57ef1a76b07093fdf890f1aee807b348abcf2f371",
+    "experiments/ir-vmp/differential.c": "fcd8a26948c09af892bd558e57571fefbd3784df0e0748130ca901a606834bd5",
+    "experiments/ir-vmp/gf2_candidates.c": "fcd3eab20000849dc4ca16c6d5e14bf158e245221bdccaa10f78aa42d5e96d47",
+    "experiments/ir-vmp/gf2_candidates.inc": "e517ce1c4be48f6ee8146fdbc34a6969dcaa1c4f68b0f669e6c0ff64b84ac481",
+    "experiments/ir-vmp/gf2_differential.c": "9dd10d266de9da3cd06e6a3706be8fcf190f71664cc165caa60f670fab85125f",
+    "experiments/ir-vmp/ios/differential.c": "3e3369f9d07d696bf5f734b46880bb95a5c0e8465e3519d36a2f22aac6bed615",
+    "experiments/ir-vmp/ios/differential.h": "84ee26761703aba2957e049f09e9b99019a3333ef8b72b17940eb2982eaa7be6",
+    "experiments/ir-vmp/ios/main.m": "950f6260efad147430f5d8f5098f60bef0fae3da039e50f3bcf7e1cb47409a82",
+    "experiments/ir-vmp/ios/run.py": "07aad620836456e411df260525af9dd882c66c1247f32c8ccd0b5495b9b2c02b",
+    "experiments/ir-vmp/patches/pointer-eq-ne-v1.patch": "e2cb624a5cea10bde73073bdc9271beb55494762437422cc7fc2e02cd1582f20",
+    "experiments/ir-vmp/patches/pointer-gep-v2.patch": "3bf254367cf27116d9c495da21d79d5d47bd38036ee757c158968962a414b5a6",
+    "experiments/ir-vmp/run.py": "eda6eb0276acc040e98ebc618855c88bbdb4882ab30b832eb276a1498ae736e5",
+    "experiments/ir-vmp/validation/gep_probe.py": "24c24f4f773d02662cbc7d2eb4a7eb8d5358d3fb44c1c2221fb04d70327fa57a",
+    "experiments/ir-vmp/validation/pointer_probe.py": "54e21eea9ef53da5123291710c00cb1b944ac47b1e7ca5d4b27a0a3583d3d5de",
+    "experiments/ir-vmp/verify_sources.py": "f053ae0cf0a61fd9d3e2c05e39bc293d5c0f3286ea671efa141193009c6ffdef"
+  },
+  "limitations": [
+    "Host checks reuse the already-built v2 plugin; no claim of a new plugin build",
+    "Pointer/GEP probes and iOS negative controls are recorded in their independent reports, not rerun here",
+    "Raw /tmp artifacts may expire; source and artifact hashes plus selected report evidence are preserved",
+    "No physical-device execution, signing, production integration or resistance/performance conclusion"
+  ]
+}

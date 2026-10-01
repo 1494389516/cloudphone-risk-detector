@@ -1,12 +1,15 @@
 # Pass 13 — VMProtector policy (cprisk-armor)
-# full: entry patched to call _cprisk_vm_entry with fn id in x0 + bytecode emitted
-# partial: bytecode only (no __text patch)
+# full: requested native replacement; currently rejected before Mach-O mutation
+#       because native arguments, returns and complete instruction semantics are not preserved.
+# partial: bytecode/metadata only (no __text patch); original native code still executes.
 # never: excluded (wins over full/partial if duplicated)
+# These lists express policy intent, not measured production protection status.
+# LLVM IR-VMP is a separate isolated experiment; see experiments/ir-vmp/PROTECTION_SCOPE.md.
 #
 # ABI v3 注意事项（v7.4 起）：
 #   - per-string KDF domain label、Path-A counter、configDigest 格式为 breaking changes；
 #     构建时须同时更新 Swift producer（StringEncryptor/WhiteBoxProfile）与 C consumer（cprisk_string_decrypt/cprisk_whitebox）。
-#   - 跨语言 ABI 一致性由 ABIConsistencyTests.swift（5 tests）在 CI 覆盖。
+#   - 跨语言 ABI 一致性须核查 producer/consumer 与实际构建产物；已删除测试不能作为当前证据。
 #   - VM S-box 已升级为 8-bit（Feistel-SPN 扩散增强），旧 4-bit 字节码不可兼容。
 
 version: 1
@@ -14,7 +17,7 @@ anti_analysis:
   handler_duplication: true
 opaque_vpc_encoding:
   enabled: true
-# M3: optional build-time hardening (all off by default; safe rollback)
+# M3: explicit build-time requests below; enabled flags alone do not prove runtime effect or resistance.
 hardening:
   protect_vm_interpreter_with_cff: true
   enable_dead_handler_injection: true
@@ -51,9 +54,8 @@ functions:
     - cprisk_whitebox_evaluate_domain
     - cprisk_vm_dead_touch_i
     # v7.7 — 完整性主链 + 蜜罐期望值 XOR 重组
-    # computeSeal: 拉链路 GF(2)+SE+keychain；攻击者拿到此函数等于拿到伪造完整性的 blueprint。
-    # expectedVendorB: 10 字节 XOR 编码字节 + key=0x42 重组。VM 化后 trace-based attacker
-    #   要还原 XOR 密钥成本极高（VPC 把 XOR 拆成不连续 handler 调用）。
+    # computeSeal 串接 GF(2)、SE 与 Keychain；expectedVendorB 重组 XOR 编码字节。
+    # full 请求目前被整体阻断；没有这两个函数的实际 VM 执行或抗逆向强度证据。
     - IntegrityChainSealProvider.computeSeal
     - HoneypotConflictFieldProvider.expectedVendorB
   partial:
@@ -75,8 +77,8 @@ functions:
     - JailbreakSignalProvider.signals
     - DeviceFingerprintProvider.signals
     # v7.7 — 4 个 article-inspired Provider 主入口 + SE 签名 + GF(2) seal + keychain 持久化
-    # signals() 是攻击者识别 Provider 责任的 entry；partial VM 化已足够推高 hook+trace 的成本，
-    # 同时避免 full VM 化带来的 detector 调用频次开销（这些每次 evaluate 都跑）。
+    # partial 仅记录候选字节码/元数据，不替换 signals() 的原生执行路径。
+    # 未测量这些入口的 hook/trace 成本、解释执行开销或符号解析覆盖率。
     - IntegrityChainSealProvider.signals
     - HoneypotConflictFieldProvider.signals
     - AppAttestActiveProbeProvider.signals
@@ -89,19 +91,17 @@ functions:
     - IntegritySealComputer.sealFromDigestPrefix
     - LongitudinalStateStore.save
     - LongitudinalStateStore.load
-    # v7.7 audit-fix F1: GF(2) 种子 + FNV 常量 immediate 加载点 — 之前 commit message 错误
-    # 假设"matrix 在 BSS = 无 dump 目标"。实际种子 0xCAFEBABEDEADBEEFULL 在 init_real 的
-    # .rodata、FNV basis 0xCBF29CE484222325 + prime 0x100000001B3 在 compute_full_checksum
-    # 的 .rodata；攻击者 strings/搜常量 30s 即可还原矩阵。VMP partial 把这两个 immediate
-    # 走 VPC，让常量搜不到。
+    # GF(2) 默认种子与 FNV 常量可由公开生产源码获得；BSS 不代表参数保密。
+    # partial 不删除原生实现或常量，不会让常量搜索自动失效。
+    # 独立 IR-VMP 的 xorshift/FNV 样本通过主机差分，不等于下列两个入口已转换。
     - cprisk_gf2_init_real
     - cprisk_gf2_compute_full_checksum
-    # v7.7 audit-fix F7: delete 是"清掉 drift 基线让下次不报"的攻击原语 — 必须 VMP 化
-    # saveString: write 包装；hook 它能绕过已 VMP 化的 save
+    # delete/saveString 属于 drift 基线读写边界；partial 不提供入口替换。
+    # 还须审查调用者和结果消费，不能把策略名单当作已完成保护。
     - LongitudinalStateStore.delete
     - LongitudinalStateStore.saveString
-    # v7.7 audit-fix F9: publicKeyX962 是未来 server-verify 的公钥导出点 — 攻击者替换返回
-    # 值即可注册自己的密钥。partial 化让 hook 落点变难。
+    # publicKeyX962 是公钥导出边界；服务端注册/验签与客户端结果消费须分别验证。
+    # partial 不隐藏可调用入口，也不证明密钥替换攻击已被阻止。
     - SecureEnclaveSigner.publicKeyX962
   never:
     - direct_syscall.cprisk_direct_syscall0
@@ -109,7 +109,7 @@ functions:
     - cprisk_vm_entry
     - cprisk_vm_entry_alt1
     - cprisk_vm_entry_alt2
-    # v7.7 — C 层 GF(2) 仿射核心：CFF heavy 已覆盖；VM 化每次调用都进解释器会让 seal 计算
-    # 成本从 microseconds 级跳到 milliseconds 级；GF(2) 已有 self_check + 矩阵在 BSS 运行时
-    # 生成（无静态 dump 目标），CFF heavy 是更合适的保护层。
+    # GF(2) 仿射核心继续排除在 Mach-O Pass 13 之外；此处不改变原保护意图。
+    # self_check 和运行时矩阵生成是现有机制；不据此宣称矩阵不可恢复或已有实测 CFF 覆盖。
+    # 尚无该函数的 IR-VMP 性能/体积/抗逆向测量，不能推断微秒到毫秒的开销变化。
     - cprisk_gf2_affine_transform_16
