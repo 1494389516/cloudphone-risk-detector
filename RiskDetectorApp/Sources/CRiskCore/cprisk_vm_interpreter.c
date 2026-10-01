@@ -1402,7 +1402,7 @@ static int cprisk_vm_branch_cond_base_i(uint32_t insn,
         return 1;
     }
 
-    if ((insn & 0x7F000000u) == 0x34000000u) { /* CBZ/CBNZ */
+    if ((insn & 0x7E000000u) == 0x34000000u) { /* CBZ/CBNZ */
         uint32_t imm19 = (insn >> 5u) & 0x7FFFFu;
         int32_t simm19 = ((int32_t)(imm19 << 13u)) >> 13u;
         *out_delta_bytes = (int64_t)simm19 * (int64_t)CPRISK_VM_INSN_WIDTH;
@@ -1433,7 +1433,7 @@ int cprisk_vm_branch_cond_mixed_eval_i(uint32_t insn,
     );
     uint32_t g0 = guard_mix & 1u;
     uint32_t g1 = (guard_mix >> 5u) & 1u;
-    int decision = base;
+    int decision;
     switch (mixed_profile & 3u) {
     case 0u:
         decision = base;
@@ -1442,7 +1442,7 @@ int cprisk_vm_branch_cond_mixed_eval_i(uint32_t insn,
         decision = (base && (int)g0) || (base && !(int)g0); /* ≡ base */
         break;
     case 2u:
-        decision = (((base ? 1 : 0) ^ (int)g0) == (int)g0); /* ≡ base */
+        decision = (((base ? 1 : 0) ^ (int)g0) != (int)g0); /* ≡ base */
         break;
     default:
         decision = (base || (int)g1) && (base || !(int)g1); /* ≡ base */
@@ -1828,7 +1828,7 @@ __attribute__((noinline)) static void cprisk_vm_m3_dead_bait_xor_i(uint8_t acc[3
 
 __attribute__((noinline)) static void cprisk_vm_m3_dead_bait_add_i(uint8_t acc[32], uint32_t seed, uint32_t lane) {
     uint32_t x = seed + lane * 0x27d4eb2du;
-    uint8_t scratch[16];
+    uint8_t scratch[16] = {0};
     for (unsigned i = 0; i < 32u; i++) {
         x = cprisk_vmp_avalanche32_i(x + i * 0x9E3779B9u);
         scratch[i & 15u] ^= (uint8_t)(x >> ((i & 3u) * 8u));
