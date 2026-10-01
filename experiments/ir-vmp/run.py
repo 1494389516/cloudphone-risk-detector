@@ -54,8 +54,8 @@ def function_body(ir, name):
 
 def inspect_ir(before, after, targets=GF2_TARGETS, require_entry=True):
     """Require exact per-target raw xollvm IR evidence before optimization."""
-    engine = function_body(after, "__vm_engine")
-    if "indirectbr" not in engine:
+    engine = re.sub(r";[^\n]*", "", function_body(after, "__vm_engine"))
+    if not re.search(r"^\s*indirectbr\b", engine, re.M):
         raise GateError("VM engine has no indirect dispatch")
     evidence = {}
     for name in targets:
@@ -64,7 +64,8 @@ def inspect_ir(before, after, targets=GF2_TARGETS, require_entry=True):
             raise GateError("Target silently unchanged: " + name)
         bytecode = re.search(r"^@" + re.escape(name) + r"\.vm\.bytecode\s*=.*?private (?:unnamed_addr )?constant \[([1-9][0-9]*) x i8\]", after, re.M)
         handlers = re.search(r"^@" + re.escape(name) + r"\.vm\.ophandlers\s*=", after, re.M)
-        if not bytecode or not handlers or (require_entry and "vm.entry" not in new) or "@" + name + ".vm.bytecode" not in new or "@" + name + ".vm.ophandlers" not in new:
+        instructions = re.sub(r";[^\n]*", "", new)
+        if not bytecode or not handlers or (require_entry and "vm.entry" not in instructions) or "@" + name + ".vm.bytecode" not in instructions or "@" + name + ".vm.ophandlers" not in instructions or not re.search(r"\bcall\b", instructions):
             raise GateError("Incomplete VM execution evidence in target: " + name)
         evidence[name] = {"bytecode_bytes": int(bytecode.group(1)),
                           "before_sha256": hashlib.sha256(old.encode()).hexdigest(),
@@ -149,7 +150,7 @@ def execute(args):
         else:
             sources += [HERE / "candidates.h"]
             sources += [HERE.parents[1] / "RiskDetectorApp/Sources/CRiskCore" / name
-                        for name in ("vm_stack_crypto.c", "vm_stack_crypto.h")]
+                        for name in ("vm_stack_crypto.c", "vm_stack_crypto.h", "include/cprisk_secure_zero.h")]
         for source in sources:
             if not source.is_file():
                 raise GateError("Missing source: " + str(source))

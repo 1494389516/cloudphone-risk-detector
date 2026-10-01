@@ -31,12 +31,17 @@ class RunnerGates(unittest.TestCase):
         after = ("@target.vm.bytecode = private unnamed_addr constant [4 x i8] zeroinitializer\n"
                  "@target.vm.ophandlers = private constant [1 x ptr] zeroinitializer\n"
                  "define i64 @target(i64 %x) {\nvm.entry:\n"
-                 " ; @target.vm.bytecode @target.vm.ophandlers\n ret i64 %x\n}\n"
+                 " %bc = getelementptr i8, ptr @target.vm.bytecode, i64 0\n"
+                 " %ht = getelementptr ptr, ptr @target.vm.ophandlers, i64 0\n"
+                 " %r = call i64 %engine(ptr %bc, ptr %ht)\n ret i64 %r\n}\n"
                  "define void @__vm_engine() {\n indirectbr ptr null, []\n}\n")
         self.assertEqual(run.inspect_ir(before, after, ("target",))["target"]["bytecode_bytes"], 4)
-        for token in ("indirectbr", "@target.vm.bytecode", "@target.vm.ophandlers", "vm.entry"):
+        for token in ("indirectbr", "@target.vm.bytecode", "@target.vm.ophandlers", "vm.entry", "call"):
             with self.subTest(token=token), self.assertRaises(run.GateError):
                 run.inspect_ir(before, after.replace(token, "missing"), ("target",))
+        commented = after.replace(" %bc =", " ; %bc =").replace(" %ht =", " ; %ht =")
+        with self.assertRaises(run.GateError):
+            run.inspect_ir(before, commented, ("target",))
 
     def test_report_requires_exact_ran_changed_and_no_duplicates(self):
         with tempfile.TemporaryDirectory() as directory:
