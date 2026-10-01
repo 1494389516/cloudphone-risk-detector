@@ -3,7 +3,6 @@
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
 import shutil
@@ -11,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from build_plugin import patch_manifest
 
 HERE = Path(__file__).resolve().parent
@@ -160,8 +160,20 @@ def execute(args):
     output.mkdir(parents=True, exist_ok=True)
     report = {"schema_version": 1, "mode": args.mode, "suite": args.suite, "status": "RUNNING",
               "vmp_verified": False, "scope": "host experiment only; no iOS/device validation",
+              "run_id": str(uuid.uuid4()),
               "commands": [], "tools": {}, "hashes": {}}
     started = time.monotonic()
+
+    def write_report():
+        report_path = output / "report.json"
+        temporary = output / (".report-" + report["run_id"] + ".json")
+        temporary.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+        temporary.replace(report_path)
+        return report_path
+
+    # Invalidate the previous pass before source checks or external tools. An
+    # interruption leaves this run's unverified RUNNING record, never an old PASS.
+    write_report()
 
     def run(command):
         entry = {"argv": [str(x) for x in command]}
@@ -263,16 +275,14 @@ def execute(args):
         report["status"] = "BASELINE_ONLY_PASS" if args.mode == "baseline-only" else "HOST_VMP_PASS"
         report["vmp_verified"] = args.mode == "xollvm"
         return_code = 0
-    except (GateError, OSError, ValueError) as exc:
+    except Exception as exc:
         report["status"] = "BLOCKED_OR_FAILED"
         report["error"] = str(exc)
+        report["error_type"] = type(exc).__name__
+        report["vmp_verified"] = False
         return_code = 1
     report["elapsed_seconds"] = round(time.monotonic() - started, 6)
-    report_path = output / "report.json"
-    # Replace the previous report atomically even on failure.
-    temporary = output / (".report-" + str(os.getpid()) + ".json")
-    temporary.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
-    temporary.replace(report_path)
+    report_path = write_report()
     print(json.dumps({"status": report["status"], "vmp_verified": report["vmp_verified"],
                       "report": str(report_path)}))
     return return_code
