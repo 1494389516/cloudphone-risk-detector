@@ -112,16 +112,19 @@ public class HistoryViewModel: ObservableObject {
     /// 删除单个记录
     public func delete(_ item: HistoryItem) {
         #if canImport(CloudPhoneRiskAppCore)
-        _ = RiskReportStorage.delete(atPath: item.id)
+        guard RiskReportStorage.delete(atPath: item.id) else { return }
         #endif
         items.removeAll { $0.id == item.id }
     }
 
     /// 删除（配合 List 的 onDelete）
     public func delete(atOffsets offsets: IndexSet) {
-        for idx in offsets {
-            guard idx >= 0, idx < items.count else { continue }
-            delete(items[idx])
+        // Resolve the selection before deleting, since each deletion changes indices.
+        let selectedItems = offsets.compactMap { index in
+            items.indices.contains(index) ? items[index] : nil
+        }
+        for item in selectedItems {
+            delete(item)
         }
     }
 
@@ -129,8 +132,10 @@ public class HistoryViewModel: ObservableObject {
     public func deleteAll() {
         #if canImport(CloudPhoneRiskAppCore)
         RiskReportStorage.deleteAll()
-        #endif
+        reload()
+        #else
         items.removeAll()
+        #endif
     }
 
     /// 关闭详情
