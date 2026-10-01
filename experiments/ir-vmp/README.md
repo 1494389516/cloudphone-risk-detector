@@ -2,7 +2,7 @@
 
 本目录验证 **SDK 中少量 C 函数是否能被 xollvm 等价虚拟化**。不接入 SDK 默认构建，不解除 `VMProtectorPass.validateNativeReplacementSupport()` 的 `full` 阻断，不把 `partial` 元数据当作函数保护。
 
-当前交付是候选函数、差分基线、固定版本构建入口和失败关闭的验收流程。**没有 iPhone Release 验证，也没有已通过的 LLVM VM 执行结果。** CI 的绿色 baseline 只证明未保护版本和测试设施可运行。
+当前交付是候选函数、差分基线、固定版本构建入口和失败关闭的验收流程。**GF2 已在 macOS arm64 / LLVM 22.1.8 上通过真实 xollvm 差分，并完成 iOS arm64 独立产物的编译和链接；尚无 iPhone Release 执行验证。** stack 的三个目标因上游不支持指针比较而被拒绝。详见 [验证记录](VALIDATION.md)。CI 的绿色 baseline 仍只证明未保护版本和测试设施可运行。
 
 ## 固定输入
 
@@ -27,7 +27,6 @@ stack 套件包含上游暂不支持的指针比较，以及可能无法降低�
 从仓库根目录运行，需要 Python 3 和 C 编译器：
 
 ```bash
-python3 -m unittest discover -s experiments/ir-vmp -p 'test_*.py' -v
 python3 experiments/ir-vmp/run.py --mode baseline-only --cc cc --output /tmp/ir-vmp-gf2
 python3 experiments/ir-vmp/run.py --mode baseline-only --suite stack --cc cc --output /tmp/ir-vmp-stack
 ```
@@ -65,14 +64,14 @@ python3 experiments/ir-vmp/run.py --mode xollvm --suite gf2 \
 
 实验 annotation 为 `obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0)`：先隔离正确性；未打开字节码加密，不作抗逆向强度结论。README 中旧式 `useAES` 参数不能代替此版本实际读取的 `encBytecode`。
 
-runner 使用新建构建目录，检查每个目标的上游报告、字节码、handler 表与执行器结构，并进行 IR verifier、优化后检查和差分执行。任一目标静默 skip、缺产物或结果不一致均失败。缺工具时写失败报告并返回非零，不复用旧的成功状态。
+runner 使用新建构建目录，检查每个目标的上游报告、字节码、handler 表与执行器结构，并进行 IR verifier、优化后检查和差分执行。调用检查要求目标字节码和 handler 表传入真实 VM 引擎；间接调用还检查加载的表槽是否指向引擎，不接受无关函数调用。该检查仅支持固定上游版本已核查的 wrapper 形态，不是通用 LLVM 数据流证明。任一目标静默 skip、缺产物或结果不一致均失败。缺工具时写失败报告并返回非零，不复用旧的成功状态。
 
 即使得到 `HOST_VMP_PASS`，也只表示该主机、该工具链、这些输入及结构检查通过。它不是形式化等价证明、完整反虚拟化评估或 iOS 发布认证。
 
 ## 接入 iOS 前的剩余门槛
 
-1. 在真实 macOS 工具链完成上述 VM 差分；审阅每目标产物与最终机器码，排除原始实现残留/原生回退。
-2. 用相同 iOS target/sysroot 生成 IR 和 Mach-O object，交 Xcode 链接。不要向不匹配的 Apple clang 加载此 LLVM 插件。
+1. 当前 GF2 固定配置已完成 macOS VM 差分、目标 IR 与最终机器码核查；其他候选、配置和工具链仍须分别验收。
+2. GF2 已用 iOS target/sysroot 生成 IR 和 Mach-O object，并用 Xcode 工具链链接独立差分可执行文件；仍需集成实际 App/SDK 构建验证。不要向不匹配的 Apple clang 加载此 LLVM 插件。
 3. 对 iPhone Release 执行相同已知答案与差分用例，验证链接/签名、调用约定、并发、异常退出、启动时间、延迟和体积。
 4. 只有这些证据齐备后才单独讨论生产构建接入。当前 Mach-O Pass 13 的语义缺口不因本实验而消失。
 

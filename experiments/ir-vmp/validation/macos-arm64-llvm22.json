@@ -1,0 +1,256 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-01",
+  "base_commit": "cc18cbe",
+  "environment": {
+    "os": "macOS 26.2 (25C56)",
+    "architecture": "arm64",
+    "llvm": "22.1.8",
+    "xcode": "26.0 (17A324)",
+    "ios_sdk": "26.0",
+    "ios_target": "arm64-apple-ios15.0"
+  },
+  "checks": {
+    "baseline_gf2": {
+      "status": "BASELINE_ONLY_PASS",
+      "raw_report_path": "/tmp/ir-vmp-mac-gf2/report.json",
+      "raw_report_sha256": "10519541f164b84625fa0f74b2a27a08924d21a7b91a7f830b20dfdd47525db4",
+      "vmp_verified": false,
+      "differential_output": "PASS cases=4096 seed=783cb86db73074ac\n"
+    },
+    "baseline_stack": {
+      "status": "BASELINE_ONLY_PASS",
+      "raw_report_path": "/tmp/ir-vmp-mac-stack/report.json",
+      "raw_report_sha256": "df320d58028d0069c849c408a6d4ca97296cac87efa5476cbb5fd9067aa2c2c9",
+      "vmp_verified": false,
+      "differential_output": "PASS cases=4155 seed=783cb86db73074ac\n"
+    },
+    "host_vmp_gf2": {
+      "status": "HOST_VMP_PASS",
+      "raw_report_path": "/tmp/ir-vmp-mac-verified-gf2/report.json",
+      "raw_report_sha256": "7033f27e3ebabde3f003c9088e93bb3fe1c649f8bf511cf33719284dcd83de4f",
+      "vmp_verified": true,
+      "differential_output": "PASS cases=4096 seed=783cb86db73074ac\n",
+      "ir_evidence": {
+        "protected_cprisk_gf2_xorshift64": {
+          "bytecode_bytes": 65,
+          "before_sha256": "dbeb7ad6ac62fbe9d7fdcf49b8600fea60490b70526981e10a7b477a3813bce1",
+          "after_sha256": "b7691b8f29e6142d0454ba7b4ba1285b592401dc36175a87ac6b1a55bd7f94b7"
+        },
+        "protected_cprisk_gf2_fnv1a": {
+          "bytecode_bytes": 105,
+          "before_sha256": "940a06869bc05f1bf97d1bd5258db237ce776e5f726660c06cc93ca80155fd90",
+          "after_sha256": "a45a788acb3bcae8b402a63d2c7c3bfd77069968b7cab394a306650aef056cb7"
+        }
+      },
+      "optimized_ir_evidence": {
+        "protected_cprisk_gf2_xorshift64": {
+          "bytecode_bytes": 65,
+          "before_sha256": "dbeb7ad6ac62fbe9d7fdcf49b8600fea60490b70526981e10a7b477a3813bce1",
+          "after_sha256": "f4e6a1e1ab7de75eaa9e1e72dbf914b1243b14f7015843ce29070c7deb6e7c4c"
+        },
+        "protected_cprisk_gf2_fnv1a": {
+          "bytecode_bytes": 105,
+          "before_sha256": "940a06869bc05f1bf97d1bd5258db237ce776e5f726660c06cc93ca80155fd90",
+          "after_sha256": "e60ed163907620d6a0a93d0a208dc45c6161db5193532ad88deb9ed35b79f4c2"
+        }
+      }
+    },
+    "host_vmp_stack": {
+      "status": "BLOCKED_OR_FAILED",
+      "raw_report_path": "/tmp/ir-vmp-mac-verified-stack/report.json",
+      "raw_report_sha256": "8eea91aea3bc15d985acfdf080bdd231a1728d7ee3f04819d365f58153616c8f",
+      "vmp_verified": false,
+      "error": "VM pass did not run and change target: protected_vm_stack_crypto_init"
+    },
+    "ios_arm64_gf2": {
+      "status": "IOS_ARM64_COMPILE_LINK_PASS",
+      "raw_report_path": "/tmp/ir-vmp-ios-arm64-20dmouon/report.json",
+      "raw_report_sha256": "7b4c2ec98aa22411eeff753a5fecfe6f845ffca259c660b5a35f30ffc506d10d",
+      "device_executed": false,
+      "optimized_ir_evidence": {
+        "protected_cprisk_gf2_xorshift64": {
+          "bytecode_bytes": 65,
+          "before_sha256": "dbeb7ad6ac62fbe9d7fdcf49b8600fea60490b70526981e10a7b477a3813bce1",
+          "after_sha256": "f4e6a1e1ab7de75eaa9e1e72dbf914b1243b14f7015843ce29070c7deb6e7c4c"
+        },
+        "protected_cprisk_gf2_fnv1a": {
+          "bytecode_bytes": 105,
+          "before_sha256": "940a06869bc05f1bf97d1bd5258db237ce776e5f726660c06cc93ca80155fd90",
+          "after_sha256": "e60ed163907620d6a0a93d0a208dc45c6161db5193532ad88deb9ed35b79f4c2"
+        }
+      },
+      "artifact_hashes": {
+        "protected.asm": "fe7000f930e0451b2c448e52e7c2fefaa79c23f60569c9a1047c63e6a94a75b0",
+        "differential": "26ca3df846e4ee2e57c10d674fc1fa2fa54de46bb42cc97288f8d9efbcdd65c6",
+        "after.ll": "2cca5eec196a15c79dd9051c4b758c44a34e65264ab04d8a68b682055e42066c",
+        "plain.o": "533d1148ada6abde6a1d9f9dee960261ab160a393d40a9b0f8beb7aa0a7f6aab",
+        "before.ll": "dba3136fb40c7bcdd9fa1835363cb0a2bc26980a25dba4fe62cdd89ec6c9ed4c",
+        "protected.o": "22adfefbcd82e1db5f12663df341b724b3507e2d83770891ef34a07aa0478860",
+        "optimized.ll": "da19a677c7263798979234de2f517c3910fba6b921623ab09a95dd77baaa0dce"
+      },
+      "commands": [
+        [
+          "/opt/homebrew/opt/llvm@22/bin/clang",
+          "-target",
+          "arm64-apple-ios15.0",
+          "-isysroot",
+          "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk",
+          "-O0",
+          "-Xclang",
+          "-disable-O0-optnone",
+          "-DCPRISK_VMP_PREFIX=protected_",
+          "-DCPRISK_VMP_PROTECTED=1",
+          "-S",
+          "-emit-llvm",
+          "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/gf2_candidates.c",
+          "-o",
+          "/tmp/ir-vmp-ios-arm64-20dmouon/before.ll"
+        ],
+        [
+          "/opt/homebrew/opt/llvm@22/bin/opt",
+          "-load-pass-plugin=/tmp/cprisk-xollvm-validation-build/Obfuscator.dylib",
+          "-passes=obfuscation",
+          "-obf-seed=1",
+          "-obf-deterministic",
+          "-obf-verify",
+          "-obf-report-dir=/tmp/ir-vmp-ios-arm64-20dmouon/pass-reports",
+          "-S",
+          "/tmp/ir-vmp-ios-arm64-20dmouon/before.ll",
+          "-o",
+          "/tmp/ir-vmp-ios-arm64-20dmouon/after.ll"
+        ],
+        [
+          "/opt/homebrew/opt/llvm@22/bin/opt",
+          "-passes=verify",
+          "-disable-output",
+          "/tmp/ir-vmp-ios-arm64-20dmouon/after.ll"
+        ],
+        [
+          "/opt/homebrew/opt/llvm@22/bin/opt",
+          "-passes=default<O2>",
+          "-S",
+          "/tmp/ir-vmp-ios-arm64-20dmouon/after.ll",
+          "-o",
+          "/tmp/ir-vmp-ios-arm64-20dmouon/optimized.ll"
+        ],
+        [
+          "/opt/homebrew/opt/llvm@22/bin/opt",
+          "-passes=verify",
+          "-disable-output",
+          "/tmp/ir-vmp-ios-arm64-20dmouon/optimized.ll"
+        ],
+        [
+          "/opt/homebrew/opt/llvm@22/bin/clang",
+          "-target",
+          "arm64-apple-ios15.0",
+          "-isysroot",
+          "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk",
+          "-O0",
+          "-c",
+          "/tmp/ir-vmp-ios-arm64-20dmouon/optimized.ll",
+          "-o",
+          "/tmp/ir-vmp-ios-arm64-20dmouon/protected.o"
+        ],
+        [
+          "xcrun",
+          "--sdk",
+          "iphoneos",
+          "clang",
+          "-target",
+          "arm64-apple-ios15.0",
+          "-isysroot",
+          "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk",
+          "-O2",
+          "-DCPRISK_VMP_PREFIX=plain_",
+          "-c",
+          "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/gf2_candidates.c",
+          "-o",
+          "/tmp/ir-vmp-ios-arm64-20dmouon/plain.o"
+        ],
+        [
+          "xcrun",
+          "--sdk",
+          "iphoneos",
+          "clang",
+          "-target",
+          "arm64-apple-ios15.0",
+          "-isysroot",
+          "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk",
+          "-O2",
+          "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/gf2_differential.c",
+          "/tmp/ir-vmp-ios-arm64-20dmouon/plain.o",
+          "/tmp/ir-vmp-ios-arm64-20dmouon/protected.o",
+          "-Wl,-no_adhoc_codesign",
+          "-o",
+          "/tmp/ir-vmp-ios-arm64-20dmouon/differential"
+        ],
+        [
+          "/opt/homebrew/opt/llvm@22/bin/llvm-objdump",
+          "--disassemble",
+          "--no-show-raw-insn",
+          "/tmp/ir-vmp-ios-arm64-20dmouon/protected.o"
+        ]
+      ]
+    },
+    "sanitizers": {
+      "scope": "native/native baselines only",
+      "flags": [
+        "-fsanitize=address,undefined",
+        "-fno-sanitize-recover=all"
+      ],
+      "gf2_cases": 4096,
+      "stack_cases": 4155,
+      "status": "PASS",
+      "logs": [
+        "/tmp/ir-vmp-sanitize-gf2-egitkgtz/result.txt",
+        "/tmp/ir-vmp-sanitize-stack-goonmj0g/result.txt"
+      ]
+    },
+    "gates": {
+      "tests_passed": 7,
+      "disconnected_engine_rejected": true,
+      "wrong_handler_slot_rejected": true,
+      "scope": "Historical result before the unit test suite was removed at user request"
+    },
+    "negative_vm_result": {
+      "returncode": 1,
+      "stdout": "",
+      "stderr": "FAIL line=15 case=0\n"
+    },
+    "machine_code": {
+      "macos_arm64": "Both protected wrappers call ___vm_engine in the final linked executable",
+      "ios_arm64": "Both protected wrappers call ___vm_engine in the final linked executable",
+      "scope": "Manual inspection of two fixed GF2 wrappers; not a general fallback or equivalence proof"
+    }
+  },
+  "plugin": {
+    "xollvm_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+    "plugin_sha256": "fbe46e386b25172f20e3836d130d4f486f9d0af8dbc87091c2a4d2d7b5403231",
+    "llvm_version": "22.1.8",
+    "license": "Apache-2.0 WITH LLVM-exception"
+  },
+  "limitations": [
+    "No physical iPhone execution or signing validation",
+    "No production App/SDK integration",
+    "Stack candidates remain unsupported by upstream pointer icmp lowering",
+    "Fixed seed=1 and GF2 input set only",
+    "Bytecode encryption and extra hardening disabled",
+    "No performance or reverse-engineering resistance conclusion",
+    "Raw report paths refer to this local validation session"
+  ],
+  "includes_local_gate_and_ci_fixes": true,
+  "validation_run_source_sha256": {
+    "experiments/ir-vmp/run.py": "5bf78fa7b854ba2e68b802fda688669c9f10f6d533833708031a7d3dd222b013",
+    "experiments/ir-vmp/test_runner.py": "716f8b536d07ed2d0eb4f9cd32fb32e9714ad56b7692d9afea677c6a090d1fcb",
+    ".github/workflows/ir-vmp-experiment.yml": "91cb3f7a23d43fe013ce12cf164c812e964ffb68e5710a81ad8659a2caa5ba08"
+  },
+  "removed_after_validation": [
+    "experiments/ir-vmp/test_runner.py",
+    "CI unittest invocation"
+  ],
+  "current_source_sha256": {
+    "experiments/ir-vmp/run.py": "5bf78fa7b854ba2e68b802fda688669c9f10f6d533833708031a7d3dd222b013",
+    ".github/workflows/ir-vmp-experiment.yml": "c851fbb56cf8bd1e0a02be5cf4c66b51df1c187b6027e36ce98c36ec7124e06f"
+  }
+}
