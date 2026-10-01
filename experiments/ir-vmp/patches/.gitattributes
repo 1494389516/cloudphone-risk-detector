@@ -1,0 +1,2 @@
+# Preserve upstream context whitespace in hash-pinned unified patches.
+*.patch -whitespace

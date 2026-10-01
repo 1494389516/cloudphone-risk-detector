@@ -1,0 +1,223 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-01",
+  "scope": "iOS flow review; fresh pointer-gep-v2 plugin build; macOS execution only",
+  "iphone_release_verified": false,
+  "device_executed": false,
+  "previous_validation_preserved": {
+    "path": "validation.json",
+    "sha256": "654f2e6a52b9b08057a98e19afdfd2fbec79fef97c15b8d5bd39986afd520295"
+  },
+  "fixes": [
+    "App and host share the serial/four-worker C suite; all workers reach a mutex/condition start gate before release",
+    "Failed pthread_create releases and joins existing workers then fails the suite; synchronization or join failure aborts before reading unsynchronized state",
+    "Device payload shape, integers, all five seeds/counts/statuses, startup readiness and positive finite elapsed time are checked explicitly",
+    "devicectl official JSON must show success; launch must show exitCode=0, no signal, no core dump; absent termination evidence blocks",
+    "Current RUNNING report atomically replaces old PASS before tools; unexpected exceptions become BLOCKED_OR_FAILED; external interruption leaves current RUNNING with verification=false"
+  ],
+  "ios_release_build": {
+    "status": "IOS_RELEASE_APP_BUILD_PASS",
+    "iphone_release_verified": false,
+    "device_executed": false,
+    "build_directory": "/private/tmp/cprisk-ios-review-v2-final/build-60fzj2u2",
+    "app_path": "/private/tmp/cprisk-ios-review-v2-final/build-60fzj2u2/IRVMPRelease.app",
+    "unsigned_binary_bytes": 188408,
+    "machine_code_evidence": {
+      "protected_cprisk_gf2_xorshift64": {
+        "direct_vm_engine_call": true
+      },
+      "protected_cprisk_gf2_fnv1a": {
+        "direct_vm_engine_call": true
+      }
+    },
+    "ir_evidence": {
+      "protected_cprisk_gf2_xorshift64": {
+        "bytecode_bytes": 65,
+        "before_sha256": "dbeb7ad6ac62fbe9d7fdcf49b8600fea60490b70526981e10a7b477a3813bce1",
+        "after_sha256": "60fb6deecd02eb1705e3f35d3c8787510e1c8ddb423069f736887ce5fdc2c8c4"
+      },
+      "protected_cprisk_gf2_fnv1a": {
+        "bytecode_bytes": 105,
+        "before_sha256": "940a06869bc05f1bf97d1bd5258db237ce776e5f726660c06cc93ca80155fd90",
+        "after_sha256": "756252a42b9e94b62ad57ae66489b4594c401284801b0d5ba2054efaa4a85d72"
+      }
+    },
+    "optimized_ir_evidence": {
+      "protected_cprisk_gf2_xorshift64": {
+        "bytecode_bytes": 65,
+        "before_sha256": "dbeb7ad6ac62fbe9d7fdcf49b8600fea60490b70526981e10a7b477a3813bce1",
+        "after_sha256": "f4e6a1e1ab7de75eaa9e1e72dbf914b1243b14f7015843ce29070c7deb6e7c4c"
+      },
+      "protected_cprisk_gf2_fnv1a": {
+        "bytecode_bytes": 105,
+        "before_sha256": "940a06869bc05f1bf97d1bd5258db237ce776e5f726660c06cc93ca80155fd90",
+        "after_sha256": "e60ed163907620d6a0a93d0a208dc45c6161db5193532ad88deb9ed35b79f4c2"
+      }
+    },
+    "hashes": {
+      "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/ios/run.py": "07aad620836456e411df260525af9dd882c66c1247f32c8ccd0b5495b9b2c02b",
+      "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/ios/main.m": "950f6260efad147430f5d8f5098f60bef0fae3da039e50f3bcf7e1cb47409a82",
+      "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/ios/differential.c": "3e3369f9d07d696bf5f734b46880bb95a5c0e8465e3519d36a2f22aac6bed615",
+      "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/ios/differential.h": "84ee26761703aba2957e049f09e9b99019a3333ef8b72b17940eb2982eaa7be6",
+      "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/run.py": "eda6eb0276acc040e98ebc618855c88bbdb4882ab30b832eb276a1498ae736e5",
+      "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/gf2_candidates.c": "fcd3eab20000849dc4ca16c6d5e14bf158e245221bdccaa10f78aa42d5e96d47",
+      "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/gf2_candidates.inc": "e517ce1c4be48f6ee8146fdbc34a6969dcaa1c4f68b0f669e6c0ff64b84ac481",
+      "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/sources.json": "5f7dd0e436ec8f272561fddb08ea499dd134366535012b7fb23c507db76038bb",
+      "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/verify_sources.py": "f053ae0cf0a61fd9d3e2c05e39bc293d5c0f3286ea671efa141193009c6ffdef",
+      "/private/tmp/cprisk-ios-review-v2-final/build-60fzj2u2/before.ll": "dba3136fb40c7bcdd9fa1835363cb0a2bc26980a25dba4fe62cdd89ec6c9ed4c",
+      "/private/tmp/cprisk-ios-review-v2-final/build-60fzj2u2/after.ll": "307c1a2caead2d34b1800dfdb79e391fb2004ec61b20bdc441e3ea548ea5a7a2",
+      "/private/tmp/cprisk-ios-review-v2-final/build-60fzj2u2/optimized.ll": "c8ffc7bbe79ec38362d32792956d0be4fe3cd7b269297a456f09f36b654298df",
+      "/private/tmp/cprisk-ios-review-v2-final/build-60fzj2u2/protected.o": "1fa201bcdfbfad2971b4950b95b6ae873b94182480d1479287a999bf35d80ff3",
+      "/private/tmp/cprisk-ios-review-v2-final/build-60fzj2u2/plain.o": "533d1148ada6abde6a1d9f9dee960261ab160a393d40a9b0f8beb7aa0a7f6aab",
+      "/private/tmp/cprisk-ios-review-v2-final/build-60fzj2u2/IRVMPRelease.app/IRVMPRelease": "bd4cf5016268d86099c7a6ea7996a31e6e980c4aab0eb52b4fcc27fb960af9f7",
+      "/private/tmp/cprisk-ios-review-v2-final/build-60fzj2u2/IRVMPRelease.app/Info.plist": "9337bbcc4f28a71f692735768ecb760ff0998091d6a01f7973928f92e9e32e5e"
+    }
+  },
+  "build_report": {
+    "path": "/tmp/cprisk-ios-review-v2-final/report.json",
+    "sha256": "d171aac900e676f624ea89fea4d6b2ddb5cca5dce5dbf768e680fd41331740c4"
+  },
+  "plugin": {
+    "path": "/private/tmp/cprisk-xollvm-gep-v2-build/cmake/Obfuscator.dylib",
+    "sha256": "a07f243b2a1fe20f0f8fcc2a1606f9d4357420611337032552cc02b4281dd3fe",
+    "patch_id": "pointer-gep-v2",
+    "patch_sha256": "3bf254367cf27116d9c495da21d79d5d47bd38036ee757c158968962a414b5a6"
+  },
+  "host_shared_suite": {
+    "positive": {
+      "compile_argv": [
+        "xcrun",
+        "clang",
+        "-std=c11",
+        "-O2",
+        "-DNDEBUG",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-pthread",
+        "-I",
+        "experiments/ir-vmp/ios",
+        "/tmp/cprisk-ios-review-smoke.c",
+        "experiments/ir-vmp/ios/differential.c",
+        "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/plain.o",
+        "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/protected.o",
+        "-o",
+        "/tmp/cprisk-ios-review-positive"
+      ],
+      "returncode": 0,
+      "output": {
+        "host_only": true,
+        "suite_returncode": 0,
+        "cases": 20480,
+        "known_answer_checks": 40,
+        "failed": 0,
+        "workers_ready": 4,
+        "thread_error": 0
+      }
+    },
+    "negative": {
+      "compile_argv": [
+        "xcrun",
+        "clang",
+        "-std=c11",
+        "-O2",
+        "-DNDEBUG",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-pthread",
+        "-I",
+        "experiments/ir-vmp/ios",
+        "/tmp/cprisk-ios-review-smoke.c",
+        "experiments/ir-vmp/ios/differential.c",
+        "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/plain.o",
+        "/tmp/cprisk-ios-review-corrupted.c",
+        "-o",
+        "/tmp/cprisk-ios-review-negative"
+      ],
+      "returncode": 1,
+      "output": {
+        "host_only": true,
+        "suite_returncode": 1,
+        "cases": 0,
+        "known_answer_checks": 15,
+        "failed": 5,
+        "workers_ready": 4,
+        "thread_error": 0
+      }
+    },
+    "create_failure": {
+      "compile_argv": [
+        "xcrun",
+        "clang",
+        "-std=c11",
+        "-O2",
+        "-DNDEBUG",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-pthread",
+        "-I",
+        "experiments/ir-vmp/ios",
+        "-DFAIL_CREATE",
+        "-Dpthread_create=cprisk_fail_create",
+        "/tmp/cprisk-ios-review-smoke.c",
+        "experiments/ir-vmp/ios/differential.c",
+        "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/plain.o",
+        "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/protected.o",
+        "-o",
+        "/tmp/cprisk-ios-review-create_failure"
+      ],
+      "returncode": 1,
+      "output": {
+        "host_only": true,
+        "suite_returncode": 1,
+        "cases": 12288,
+        "known_answer_checks": 24,
+        "failed": 0,
+        "workers_ready": 2,
+        "thread_error": 35
+      }
+    },
+    "objects_sha256": {
+      "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/plain.o": "63bdd53a47e8eebf0ab4d82fab6ead6e77a033ecbcdc17ca3b98715978d446cf",
+      "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/protected.o": "b918b15a6576347adb08b89416f0daa8f3906091d50f42d92783f323899b7c74"
+    }
+  },
+  "synthetic_gate_validation": {
+    "scope": "Synthetic payload and fault-injection checks only; not actual devicectl/device execution",
+    "device_payload_rejections": 26,
+    "devicectl_payload_rejections": 8,
+    "unexpected_exception_clears_prior_success": true,
+    "interrupt_clears_prior_success": true,
+    "artifact_directory": "/var/folders/cg/h1lhlbrj2yq3b7y9d0s8rsph0000gn/T/cprisk-ios-result-gate-ah7wkfcj"
+  },
+  "devicectl_schema_static_evidence": {
+    "devicectl_version": "477.30",
+    "framework_path": "/Library/Developer/PrivateFrameworks/CoreDevice.framework/Versions/A/Frameworks/CoreDeviceClientJSONSupport.framework/Versions/A/CoreDeviceClientJSONSupport",
+    "framework_sha256": "0711d37b7cff9422ddb77513a235484cad8d5e86d6d16aa3c2933a61e53998e0",
+    "source": "Local binary exported Swift symbols and Codable field names inspected with nm and strings; not actual device output",
+    "launch_field": "DeviceProcessLaunchResult.terminationResult: ProcessTerminationStatus?",
+    "termination_fields": {
+      "exitCode": "Int32?",
+      "terminatingSignal": "Int32?",
+      "wasCoreDumpCreated": "Bool"
+    },
+    "help": "xcrun devicectl device process launch --help states --console waits for app exit",
+    "end_to_end_schema_confirmed": false
+  },
+  "source_hashes": {
+    "run.py": "07aad620836456e411df260525af9dd882c66c1247f32c8ccd0b5495b9b2c02b",
+    "main.m": "950f6260efad147430f5d8f5098f60bef0fae3da039e50f3bcf7e1cb47409a82",
+    "differential.c": "3e3369f9d07d696bf5f734b46880bb95a5c0e8465e3519d36a2f22aac6bed615",
+    "differential.h": "84ee26761703aba2957e049f09e9b99019a3333ef8b72b17940eb2982eaa7be6"
+  },
+  "limitations": [
+    "No connected device or valid signing identity from the earlier inventory; no repeated inventory and no physical execution",
+    "Profile/sign/install/launch/copy remains unexecuted end-to-end; static schema and synthetic payloads cannot establish actual device JSON shape",
+    "Shared start gate proves all workers ready, not simultaneous CPU scheduling",
+    "Fixed seed=1, hardened=0 antiDebug=0 encBytecode=0, isolated GF2 only; no Pass 13 full/production change",
+    "No cold start, latency percentile or reverse-engineering resistance benchmark",
+    "Raw /tmp evidence paths may expire"
+  ]
+}

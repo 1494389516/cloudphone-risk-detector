@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-01",
+  "scope": "isolated GF2 iPhoneOS Release App; no physical iPhone execution",
+  "iphone_release_verified": false,
+  "device_executed": false,
+  "environment": {
+    "xcode_version": "Xcode 26.0\nBuild version 17A324\n",
+    "apple_clang_version": "Apple clang version 17.0.0 (clang-1700.3.19.1)\nTarget: arm64-apple-darwin25.2.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin\n",
+    "llvm_version": "22.1.8",
+    "sdk": "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk",
+    "target": "arm64-apple-ios15.0",
+    "device_inventory": {
+      "devices": []
+    },
+    "device_inventory_sha256": "bf8802a6fed88a04068a2cc2319363f06f6f52b989c967c63f51287c4b7ac624",
+    "codesigning_identities_output": "     0 valid identities found\n"
+  },
+  "build": {
+    "status": "IOS_RELEASE_APP_BUILD_PASS",
+    "report_path": "/tmp/ir-vmp-iphone-release-build/report.json",
+    "report_sha256": "0e69c074227e130b36422e91f6e173ec6006108179adc6e41fcb43c57733111b",
+    "app_path": "/private/tmp/ir-vmp-iphone-release-build/build-ircqsn1u/IRVMPRelease.app",
+    "unsigned_binary_bytes": 187672,
+    "machine_code_evidence": {
+      "protected_cprisk_gf2_xorshift64": {
+        "direct_vm_engine_call": true
+      },
+      "protected_cprisk_gf2_fnv1a": {
+        "direct_vm_engine_call": true
+      }
+    },
+    "ir_evidence": {
+      "protected_cprisk_gf2_xorshift64": {
+        "bytecode_bytes": 65,
+        "before_sha256": "dbeb7ad6ac62fbe9d7fdcf49b8600fea60490b70526981e10a7b477a3813bce1",
+        "after_sha256": "b7691b8f29e6142d0454ba7b4ba1285b592401dc36175a87ac6b1a55bd7f94b7"
+      },
+      "protected_cprisk_gf2_fnv1a": {
+        "bytecode_bytes": 105,
+        "before_sha256": "940a06869bc05f1bf97d1bd5258db237ce776e5f726660c06cc93ca80155fd90",
+        "after_sha256": "a45a788acb3bcae8b402a63d2c7c3bfd77069968b7cab394a306650aef056cb7"
+      }
+    },
+    "plugin_sha256": "fbe46e386b25172f20e3836d130d4f486f9d0af8dbc87091c2a4d2d7b5403231",
+    "artifact_hashes": {
+      "/private/tmp/ir-vmp-iphone-release-build/build-ircqsn1u/before.ll": "dba3136fb40c7bcdd9fa1835363cb0a2bc26980a25dba4fe62cdd89ec6c9ed4c",
+      "/private/tmp/ir-vmp-iphone-release-build/build-ircqsn1u/after.ll": "90cab9d9e4d6bb7ad0422075969c7d532e389ff53ec2f16813c26daa7620d815",
+      "/private/tmp/ir-vmp-iphone-release-build/build-ircqsn1u/optimized.ll": "7eba2e9b4a62d5bff2f96ca00fc6af186846270f03a5a260f7763e7d1bab4cf5",
+      "/private/tmp/ir-vmp-iphone-release-build/build-ircqsn1u/protected.o": "22adfefbcd82e1db5f12663df341b724b3507e2d83770891ef34a07aa0478860",
+      "/private/tmp/ir-vmp-iphone-release-build/build-ircqsn1u/plain.o": "533d1148ada6abde6a1d9f9dee960261ab160a393d40a9b0f8beb7aa0a7f6aab",
+      "/private/tmp/ir-vmp-iphone-release-build/build-ircqsn1u/IRVMPRelease.app/IRVMPRelease": "584e71c73d2acf2187ac2a04a6c2f46f65b820ff62354856255da5cb042ea50e",
+      "/private/tmp/ir-vmp-iphone-release-build/build-ircqsn1u/IRVMPRelease.app/Info.plist": "c1dfed0b8b359ae0fc0f0274bcbec9d6aabc74e779fa01822dfd75e845d4b5f6"
+    }
+  },
+  "device_mode_without_signing_arguments": {
+    "status": "BLOCKED_OR_FAILED",
+    "error": "Device execution requires --device, --identity and --profile; unsigned build is not a device pass",
+    "report_path": "/tmp/ir-vmp-iphone-release-device/report.json",
+    "report_sha256": "f483191adc724019b16df01060cb66c2e429471ae5024ae00269f24e8d367884",
+    "returncode": 1
+  },
+  "host_concurrent_harness": {
+    "scope": "New C harness with reused previously verified macOS VM objects; not iPhone execution",
+    "returncode": 0,
+    "output": {
+      "host_only": true,
+      "cases": 20480,
+      "known_answer_checks": 40,
+      "failed": 0
+    },
+    "negative_returncode": 1,
+    "negative_output": {
+      "host_only": true,
+      "cases": 0,
+      "known_answer_checks": 5,
+      "failed": 1
+    },
+    "objects_sha256": {
+      "/tmp/ir-vmp-mac-verified-gf2/build-65jxfdwo/plain.o": "63bdd53a47e8eebf0ab4d82fab6ead6e77a033ecbcdc17ca3b98715978d446cf",
+      "/tmp/ir-vmp-mac-verified-gf2/build-65jxfdwo/protected.o": "3949ef9dcecdc9a11dc97c0012e59c31af6a3d47742f894883ba59f1c1025d95",
+      "/tmp/ir-vmp-mac-verified-gf2/build-65jxfdwo/negative.o": "bec2f7ed769d8c1a6b54549b9bf7c12af1e173f1517716f2c14911c241432eaa"
+    },
+    "temporary_smoke_source": "/tmp/ir-vmp-ios-host-smoke.c",
+    "temporary_smoke_source_sha256": "e2f4b41266c5aa1f1e8e2c6bd7d0f4ab69f485e7304c603e0c157d8818baaca9",
+    "compile_argv": [
+      "xcrun",
+      "clang",
+      "-O2",
+      "-DNDEBUG",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-pthread",
+      "-I",
+      "experiments/ir-vmp/ios",
+      "/tmp/ir-vmp-ios-host-smoke.c",
+      "experiments/ir-vmp/ios/differential.c",
+      "/tmp/ir-vmp-mac-verified-gf2/build-65jxfdwo/plain.o",
+      "/tmp/ir-vmp-mac-verified-gf2/build-65jxfdwo/protected.o",
+      "-o",
+      "/tmp/ir-vmp-ios-host-smoke"
+    ]
+  },
+  "source_hashes": {
+    "differential.h": "85126e7fd3bd6954f033f7db612a4ffc0ce05d5d423e5aecb5586fabb155f124",
+    "run.py": "47949835cdae744372b962a9ed1f9d3a53e0ebb59cfd4b186db62aae53ef07ad",
+    "differential.c": "2a1bab37a67bf49725c794cd98d05ba217e3502fb67b57cdea45b9fc54576278",
+    "main.m": "224e38d230ca19b8323d1c6cc142e17b7422d52ab8444c0dee51a532491d44e6"
+  },
+  "limitations": [
+    "No connected devices found; no valid signing identities found",
+    "Provisioning/sign/install/launch/copy path implemented but not executed end-to-end",
+    "Host concurrent harness uses historical VM objects, not a new host plugin invocation",
+    "No cold-start, function latency percentile, release distribution or production SDK integration validation",
+    "Fixed unhardened GF2 seed=1 only; Pass 13 full replacement remains blocked",
+    "Raw /tmp evidence paths are local and may expire"
+  ]
+}
