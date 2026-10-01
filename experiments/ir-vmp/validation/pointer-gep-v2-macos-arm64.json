@@ -1,0 +1,1465 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-01",
+  "scope": "macOS arm64 host validation; no production or physical-device claim",
+  "status": "HOST_STACK_GF2_POINTER_PASS",
+  "base_repository_commit": "8787f600a5b85bcb792644c87e0ef83c83a4fe3e",
+  "plugin_provenance": {
+    "schema_version": 2,
+    "status": "built",
+    "xollvm_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+    "plugin_path": "/private/tmp/cprisk-xollvm-gep-v2-build/cmake/Obfuscator.dylib",
+    "plugin_sha256": "a07f243b2a1fe20f0f8fcc2a1606f9d4357420611337032552cc02b4281dd3fe",
+    "llvm_version": "22.1.8",
+    "tool_versions": {
+      "clang": "Homebrew clang version 22.1.8\nTarget: arm64-apple-darwin25.2.0\nThread model: posix\nInstalledDir: /opt/homebrew/Cellar/llvm@22/22.1.8/bin\nConfiguration file: /opt/homebrew/Cellar/llvm@22/22.1.8/etc/clang/arm64-apple-darwin25.cfg",
+      "clang++": "Homebrew clang version 22.1.8\nTarget: arm64-apple-darwin25.2.0\nThread model: posix\nInstalledDir: /opt/homebrew/Cellar/llvm@22/22.1.8/bin\nConfiguration file: /opt/homebrew/Cellar/llvm@22/22.1.8/etc/clang/arm64-apple-darwin25.cfg",
+      "opt": "Homebrew LLVM version 22.1.8\n  Optimized build.\n  Default target: arm64-apple-darwin25.2.0\n  Host CPU: apple-m4",
+      "llvm-config": "22.1.8"
+    },
+    "commands": [
+      [
+        "cmake",
+        "-S",
+        "/private/tmp/cprisk-xollvm-gep-v2-build/patched-source",
+        "-B",
+        "/private/tmp/cprisk-xollvm-gep-v2-build/cmake",
+        "-DLLVM_DIR=/opt/homebrew/Cellar/llvm@22/22.1.8/lib/cmake/llvm",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_C_COMPILER=/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang",
+        "-DCMAKE_CXX_COMPILER=/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang++"
+      ],
+      [
+        "cmake",
+        "--build",
+        "/private/tmp/cprisk-xollvm-gep-v2-build/cmake",
+        "--target",
+        "Obfuscator",
+        "--parallel",
+        "3"
+      ]
+    ],
+    "license": "Apache-2.0 WITH LLVM-exception",
+    "limitations": [
+      "Local provenance only; not a signed attestation",
+      "Build success does not validate virtualization or iOS compatibility"
+    ],
+    "local_patch_set": {
+      "schema_version": 1,
+      "id": "pointer-gep-v2",
+      "xollvm_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+      "patch_file": "pointer-gep-v2.patch",
+      "patch_sha256": "3bf254367cf27116d9c495da21d79d5d47bd38036ee757c158968962a414b5a6",
+      "files": {
+        "VMPass_Emitter.cpp": {
+          "before_sha256": "70c1d037b134753fcdf3ba9e77d5843c61e6aa8534be0b11a126fa3d8fcaa9e8",
+          "after_sha256": "206af82042872e7680bdc3d6e9e1f256d8c60d69407e1b42f6e6189c6d387f76"
+        },
+        "VMPass_Handlers.cpp": {
+          "before_sha256": "f6de216ec9095661d163650a590c684cca73c13114c1f481f502f9038bd9f9cc",
+          "after_sha256": "aa9990110e44db4275c626385c3ada87ef65cb1d21ccf15344553acd59501b5c"
+        },
+        "VMPass_Verifier.cpp": {
+          "before_sha256": "1e1920edfa187ddc58580ec50370fd4edce8e5635c5306bcd9f91491a7da4044",
+          "after_sha256": "28771c76da9f6e16594037f3c30d2bce3172bc455ffd1b3f441dcc09726373f0"
+        },
+        "include/llvm/Transforms/Obfuscator/VMPass_ISA.h": {
+          "before_sha256": "c9fc636187a5c970ea2ebf49c28ecdb3f716a20073d7b5be09a237f11538c37b",
+          "after_sha256": "43f00303b225bac53e772a9ef71c4997283e32b784a33b7f55a64310e3b88b46"
+        }
+      },
+      "capabilities": {
+        "pointer_comparison": {
+          "predicates": [
+            "eq",
+            "ne"
+          ],
+          "address_spaces": [
+            0
+          ],
+          "null_supported": true,
+          "operand_storage": "native pointer registers",
+          "encoding": "OP_ICMP_PTR=0x38; kind byte 0=eq, 1=ne; not a RandISA predicate byte"
+        },
+        "validation_scope": "local host experiments; hardened=0 antiDebug=0 encBytecode=0",
+        "unsupported": [
+          "ordered pointer predicates",
+          "nonzero pointer address spaces",
+          "production integration and device execution not validated"
+        ],
+        "isa_compatibility": "OP_COUNT increases from 0x38 to 0x39 and decoy base moves; patched and upstream plugin/bytecode must not be mixed",
+        "gep": {
+          "constant_indices": "target DataLayout byte offset, including struct padding and nested aggregates",
+          "dynamic_indices": "one i32/i64 index, or array [0,index], using allocation size",
+          "address_spaces": [
+            0
+          ],
+          "pointer_and_index_bits": 64,
+          "max_dynamic_stride": 65535,
+          "oversized_dynamic_stride": "rejected; never saturated",
+          "unsupported": [
+            "dynamic multi-index GEP except array [0,index]",
+            "scalable types",
+            "nonzero address spaces",
+            "non-64-bit pointer/index layouts"
+          ]
+        }
+      }
+    },
+    "patched_source": "/private/tmp/cprisk-xollvm-gep-v2-build/patched-source",
+    "patched_source_tree_sha256": "441d48c11eca97c3fde786374f9084a466924a226167538c9a7adf56dfc514b1"
+  },
+  "reports": {
+    "stack": {
+      "original_path": "/tmp/cprisk-gep-v2-stack/report.json",
+      "sha256": "45904ff4f1fe3f2b74b1a6a27031e92744ad50e1cb648e1c67a352249a71921a",
+      "data": {
+        "schema_version": 1,
+        "mode": "xollvm",
+        "suite": "stack",
+        "status": "HOST_VMP_PASS",
+        "vmp_verified": true,
+        "scope": "host experiment only; no iOS/device validation",
+        "commands": [
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang-22",
+              "--version"
+            ],
+            "returncode": 0,
+            "stdout": "Homebrew clang version 22.1.8\nTarget: arm64-apple-darwin25.2.0\nThread model: posix\nInstalledDir: /opt/homebrew/Cellar/llvm@22/22.1.8/bin\nConfiguration file: /opt/homebrew/Cellar/llvm@22/22.1.8/etc/clang/arm64-apple-darwin25.cfg\n",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/opt",
+              "--version"
+            ],
+            "returncode": 0,
+            "stdout": "Homebrew LLVM version 22.1.8\n  Optimized build.\n  Default target: arm64-apple-darwin25.2.0\n  Host CPU: apple-m4\n",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang-22",
+              "-std=c11",
+              "-O2",
+              "-Wall",
+              "-Wextra",
+              "-Werror",
+              "-DCPRISK_VMP_PREFIX=plain_",
+              "-c",
+              "candidates.c",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/plain.o"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang-22",
+              "-std=c11",
+              "-O0",
+              "-Xclang",
+              "-disable-O0-optnone",
+              "-Wall",
+              "-Wextra",
+              "-Werror",
+              "-DCPRISK_VMP_PREFIX=protected_",
+              "-DCPRISK_VMP_PROTECTED=1",
+              "-S",
+              "-emit-llvm",
+              "candidates.c",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/emitted.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/opt",
+              "-passes=lower-constant-intrinsics",
+              "-S",
+              "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/emitted.ll",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/before.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/opt",
+              "-passes=verify",
+              "-disable-output",
+              "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/before.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/opt",
+              "-load-pass-plugin=/private/tmp/cprisk-xollvm-gep-v2-build/cmake/Obfuscator.dylib",
+              "-passes=obfuscation",
+              "-obf-seed=1",
+              "-obf-deterministic",
+              "-obf-verify",
+              "-obf-verbose",
+              "-obf-report-dir=/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/pass-reports",
+              "-S",
+              "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/before.ll",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/after.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": "Found 1 annotation(s) for function protected_vm_stack_crypto_init\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0)'\n  Total passes enabled: 1\n    - vm(encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_vm_stack_encrypt_push\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0)'\n  Total passes enabled: 1\n    - vm(encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_vm_stack_push_encrypted\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0)'\n  Total passes enabled: 1\n    - vm(encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\n[budget] protected_vm_stack_crypto_init: initial=178  limit=8900  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] variant-diversify: 5328 MBA rewrites, 0 icmp flips (3 variants)\n[vm] vm_engine populated: 9 handlers\n[vm] virtualised 'protected_vm_stack_crypto_init' [714B bytecode | 54vregs+47vregs64+48pregs |obf-idx]\n[budget] vm: 178 -> 467 (+289)  [5% of budget]\n[budget] protected_vm_stack_crypto_init: initial=178  limit=8900  final=467  growth=289  util=5.2%\n  vm: 178 -> 467 (+289)  [5% of budget]\n[budget] protected_vm_stack_encrypt_push: initial=50  limit=2500  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] extended CALL handlers: +1 FunctionTypes\n[vm] virtualised 'protected_vm_stack_encrypt_push' [188B bytecode | 5vregs+22vregs64+19pregs |obf-idx]\n[budget] vm: 50 -> 185 (+135)  [7% of budget]\n[budget] protected_vm_stack_encrypt_push: initial=50  limit=2500  final=185  growth=135  util=7.4%\n  vm: 50 -> 185 (+135)  [7% of budget]\n[budget] protected_vm_stack_push_encrypted: initial=61  limit=3050  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] extended CALL handlers: +1 FunctionTypes\n[vm] virtualised 'protected_vm_stack_push_encrypted' [231B bytecode | 21vregs+7vregs64+24pregs |obf-idx]\n[budget] vm: 61 -> 204 (+143)  [7% of budget]\n[budget] protected_vm_stack_push_encrypted: initial=61  limit=3050  final=204  growth=143  util=6.7%\n  vm: 61 -> 204 (+143)  [7% of budget]\n"
+          },
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/opt",
+              "-passes=verify",
+              "-disable-output",
+              "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/after.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/opt",
+              "-passes=default<O2>",
+              "-S",
+              "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/after.ll",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/optimized.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/opt",
+              "-passes=verify",
+              "-disable-output",
+              "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/optimized.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang-22",
+              "-O0",
+              "-c",
+              "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/optimized.ll",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/protected.o"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang-22",
+              "-std=c11",
+              "-O2",
+              "-Wall",
+              "-Wextra",
+              "-Werror",
+              "differential.c",
+              "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/plain.o",
+              "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/protected.o",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/differential"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/differential"
+            ],
+            "returncode": 0,
+            "stdout": "PASS cases=4155 seed=783cb86db73074ac\n",
+            "stderr": ""
+          }
+        ],
+        "tools": {
+          "clang": {
+            "path": "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang-22",
+            "version": "Homebrew clang version 22.1.8\nTarget: arm64-apple-darwin25.2.0\nThread model: posix\nInstalledDir: /opt/homebrew/Cellar/llvm@22/22.1.8/bin\nConfiguration file: /opt/homebrew/Cellar/llvm@22/22.1.8/etc/clang/arm64-apple-darwin25.cfg\n",
+            "sha256": "012b35304481c5d5db6b57f20e144fb78f198ca9db14aa0b8db72cd2e493e12d"
+          },
+          "opt": {
+            "path": "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/opt",
+            "version": "Homebrew LLVM version 22.1.8\n  Optimized build.\n  Default target: arm64-apple-darwin25.2.0\n  Host CPU: apple-m4\n",
+            "sha256": "bad940da11676c7d8c0c329faeaf4a1538728d6d06ec1a6a67042c0475154ab1"
+          },
+          "plugin": {
+            "path": "/private/tmp/cprisk-xollvm-gep-v2-build/cmake/Obfuscator.dylib",
+            "sha256": "a07f243b2a1fe20f0f8fcc2a1606f9d4357420611337032552cc02b4281dd3fe"
+          }
+        },
+        "hashes": {
+          "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/candidates.c": "6b9b5ac3e98678f725977530a13626141807e14cfb0957e5844aa5f1823f2f4d",
+          "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/differential.c": "fcd8a26948c09af892bd558e57571fefbd3784df0e0748130ca901a606834bd5",
+          "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/candidates.h": "0791468dee8065613cfab2d57ef1a76b07093fdf890f1aee807b348abcf2f371",
+          "/Users/mac/Desktop/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore/vm_stack_crypto.c": "acb783fa80a97dfd8d2b103bd1c3bb9bb6c0b5b433f2ca3508b5b1cc9021ff0b",
+          "/Users/mac/Desktop/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore/vm_stack_crypto.h": "f66a88761f323047deb9f0a11128a8dee4ff43eba27b313106929c6e9aa8f3e1",
+          "/Users/mac/Desktop/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore/include/cprisk_secure_zero.h": "eb6553327690c8451d1a16a42b9962d0c21df141ac08a08d7f8c05b36e1410de",
+          "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/emitted.ll": "6eb47862cfb785c2c4afe11b70f949b49758d5e181f1b86833956b18cfc9a6a6",
+          "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/before.ll": "228ba62684de222acb07e93063c73406093b330ec34029616d4b43854dcfb991",
+          "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/after.ll": "980c1453bcd2a6df89ca53f390d33d74cf16caec4fd4be8db8368818a576da3f",
+          "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/optimized.ll": "a72f1bc4fa136bd6c55da9a8ae676a398daa10aa08c8564ba195cd2210cc7a9f",
+          "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/differential": "2cbaf65000263ba4d8d42ae1525ee7ed3f7fd9f3cc888b3daf2c27f488b28b05"
+        },
+        "plugin_provenance": {
+          "schema_version": 2,
+          "status": "built",
+          "xollvm_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+          "plugin_path": "/private/tmp/cprisk-xollvm-gep-v2-build/cmake/Obfuscator.dylib",
+          "plugin_sha256": "a07f243b2a1fe20f0f8fcc2a1606f9d4357420611337032552cc02b4281dd3fe",
+          "llvm_version": "22.1.8",
+          "tool_versions": {
+            "clang": "Homebrew clang version 22.1.8\nTarget: arm64-apple-darwin25.2.0\nThread model: posix\nInstalledDir: /opt/homebrew/Cellar/llvm@22/22.1.8/bin\nConfiguration file: /opt/homebrew/Cellar/llvm@22/22.1.8/etc/clang/arm64-apple-darwin25.cfg",
+            "clang++": "Homebrew clang version 22.1.8\nTarget: arm64-apple-darwin25.2.0\nThread model: posix\nInstalledDir: /opt/homebrew/Cellar/llvm@22/22.1.8/bin\nConfiguration file: /opt/homebrew/Cellar/llvm@22/22.1.8/etc/clang/arm64-apple-darwin25.cfg",
+            "opt": "Homebrew LLVM version 22.1.8\n  Optimized build.\n  Default target: arm64-apple-darwin25.2.0\n  Host CPU: apple-m4",
+            "llvm-config": "22.1.8"
+          },
+          "commands": [
+            [
+              "cmake",
+              "-S",
+              "/private/tmp/cprisk-xollvm-gep-v2-build/patched-source",
+              "-B",
+              "/private/tmp/cprisk-xollvm-gep-v2-build/cmake",
+              "-DLLVM_DIR=/opt/homebrew/Cellar/llvm@22/22.1.8/lib/cmake/llvm",
+              "-DCMAKE_BUILD_TYPE=Release",
+              "-DCMAKE_C_COMPILER=/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang",
+              "-DCMAKE_CXX_COMPILER=/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang++"
+            ],
+            [
+              "cmake",
+              "--build",
+              "/private/tmp/cprisk-xollvm-gep-v2-build/cmake",
+              "--target",
+              "Obfuscator",
+              "--parallel",
+              "3"
+            ]
+          ],
+          "license": "Apache-2.0 WITH LLVM-exception",
+          "limitations": [
+            "Local provenance only; not a signed attestation",
+            "Build success does not validate virtualization or iOS compatibility"
+          ],
+          "local_patch_set": {
+            "schema_version": 1,
+            "id": "pointer-gep-v2",
+            "xollvm_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+            "patch_file": "pointer-gep-v2.patch",
+            "patch_sha256": "3bf254367cf27116d9c495da21d79d5d47bd38036ee757c158968962a414b5a6",
+            "files": {
+              "VMPass_Emitter.cpp": {
+                "before_sha256": "70c1d037b134753fcdf3ba9e77d5843c61e6aa8534be0b11a126fa3d8fcaa9e8",
+                "after_sha256": "206af82042872e7680bdc3d6e9e1f256d8c60d69407e1b42f6e6189c6d387f76"
+              },
+              "VMPass_Handlers.cpp": {
+                "before_sha256": "f6de216ec9095661d163650a590c684cca73c13114c1f481f502f9038bd9f9cc",
+                "after_sha256": "aa9990110e44db4275c626385c3ada87ef65cb1d21ccf15344553acd59501b5c"
+              },
+              "VMPass_Verifier.cpp": {
+                "before_sha256": "1e1920edfa187ddc58580ec50370fd4edce8e5635c5306bcd9f91491a7da4044",
+                "after_sha256": "28771c76da9f6e16594037f3c30d2bce3172bc455ffd1b3f441dcc09726373f0"
+              },
+              "include/llvm/Transforms/Obfuscator/VMPass_ISA.h": {
+                "before_sha256": "c9fc636187a5c970ea2ebf49c28ecdb3f716a20073d7b5be09a237f11538c37b",
+                "after_sha256": "43f00303b225bac53e772a9ef71c4997283e32b784a33b7f55a64310e3b88b46"
+              }
+            },
+            "capabilities": {
+              "pointer_comparison": {
+                "predicates": [
+                  "eq",
+                  "ne"
+                ],
+                "address_spaces": [
+                  0
+                ],
+                "null_supported": true,
+                "operand_storage": "native pointer registers",
+                "encoding": "OP_ICMP_PTR=0x38; kind byte 0=eq, 1=ne; not a RandISA predicate byte"
+              },
+              "validation_scope": "local host experiments; hardened=0 antiDebug=0 encBytecode=0",
+              "unsupported": [
+                "ordered pointer predicates",
+                "nonzero pointer address spaces",
+                "production integration and device execution not validated"
+              ],
+              "isa_compatibility": "OP_COUNT increases from 0x38 to 0x39 and decoy base moves; patched and upstream plugin/bytecode must not be mixed",
+              "gep": {
+                "constant_indices": "target DataLayout byte offset, including struct padding and nested aggregates",
+                "dynamic_indices": "one i32/i64 index, or array [0,index], using allocation size",
+                "address_spaces": [
+                  0
+                ],
+                "pointer_and_index_bits": 64,
+                "max_dynamic_stride": 65535,
+                "oversized_dynamic_stride": "rejected; never saturated",
+                "unsupported": [
+                  "dynamic multi-index GEP except array [0,index]",
+                  "scalable types",
+                  "nonzero address spaces",
+                  "non-64-bit pointer/index layouts"
+                ]
+              }
+            }
+          },
+          "patched_source": "/private/tmp/cprisk-xollvm-gep-v2-build/patched-source",
+          "patched_source_tree_sha256": "441d48c11eca97c3fde786374f9084a466924a226167538c9a7adf56dfc514b1"
+        },
+        "build_directory": "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j",
+        "preprocessing": "LLVM lower-constant-intrinsics; not VM objectsize support",
+        "pass_evidence": {
+          "targets": [
+            "protected_vm_stack_crypto_init",
+            "protected_vm_stack_encrypt_push",
+            "protected_vm_stack_push_encrypted"
+          ],
+          "all_vm_passes_ran_and_changed": true
+        },
+        "ir_evidence": {
+          "protected_vm_stack_crypto_init": {
+            "bytecode_bytes": 714,
+            "before_sha256": "9e06af08feddd467cc4f189059ac8e9383676b808d4a8aeed8fca8cbce65b3f0",
+            "after_sha256": "75b6e16adf2f2c1bc2ea807f578a97a06b9172491ba488f2cc63c9b3ea77d1e7"
+          },
+          "protected_vm_stack_encrypt_push": {
+            "bytecode_bytes": 188,
+            "before_sha256": "5e4664a15c500cb11dad87bdc8df7ca0f42ae40b7a70475c2f4b32a4e2aeb67f",
+            "after_sha256": "635072277bc2da8d61db6c36345ddb86207bfb128cc5264d171b89ecf91bb9a5"
+          },
+          "protected_vm_stack_push_encrypted": {
+            "bytecode_bytes": 231,
+            "before_sha256": "2f138cb0d6560cd7b91b594059e78be9679bd27064bea7a34e6c93c0f9b60ce6",
+            "after_sha256": "db0142d3b21cf1e8ef586204c6ed2095869ea8449af7035ce0a94fec1bab3346"
+          }
+        },
+        "optimized_ir_evidence": {
+          "protected_vm_stack_crypto_init": {
+            "bytecode_bytes": 714,
+            "before_sha256": "9e06af08feddd467cc4f189059ac8e9383676b808d4a8aeed8fca8cbce65b3f0",
+            "after_sha256": "9d22386dd589ba31c26ff4e7cf390bd5403f26fec27a7803458b5d9cf44d6016"
+          },
+          "protected_vm_stack_encrypt_push": {
+            "bytecode_bytes": 188,
+            "before_sha256": "5e4664a15c500cb11dad87bdc8df7ca0f42ae40b7a70475c2f4b32a4e2aeb67f",
+            "after_sha256": "042bd3a37324e7a14113a5343fd8b752c39d433a5d8ce2fbeb7fc5cf7127dafa"
+          },
+          "protected_vm_stack_push_encrypted": {
+            "bytecode_bytes": 231,
+            "before_sha256": "2f138cb0d6560cd7b91b594059e78be9679bd27064bea7a34e6c93c0f9b60ce6",
+            "after_sha256": "c2c2c4ad8ae76e15e58faa58baa57c2fb34de8a3e77d2ab73b4158a797051015"
+          }
+        },
+        "differential_output": "PASS cases=4155 seed=783cb86db73074ac\n",
+        "elapsed_seconds": 2.73258
+      }
+    },
+    "gf2": {
+      "original_path": "/tmp/cprisk-gep-v2-gf2/report.json",
+      "sha256": "29d73592f04bbb27b5930cd8775e9e4ba75fbe4ec300b555a169df68a17fca33",
+      "data": {
+        "schema_version": 1,
+        "mode": "xollvm",
+        "suite": "gf2",
+        "status": "HOST_VMP_PASS",
+        "vmp_verified": true,
+        "scope": "host experiment only; no iOS/device validation",
+        "commands": [
+          {
+            "argv": [
+              "/opt/homebrew/opt/python@3.14/bin/python3.14",
+              "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/verify_sources.py"
+            ],
+            "returncode": 0,
+            "stdout": "{\"commit\": \"53a6b1c9c555ba35423b2557caee450b2f234181\", \"extracted_sha256\": \"e517ce1c4be48f6ee8146fdbc34a6969dcaa1c4f68b0f669e6c0ff64b84ac481\", \"functions\": [\"cprisk_gf2_xorshift64\", \"cprisk_gf2_fnv1a\"], \"source\": \"RiskDetectorApp/Sources/CRiskCore/cprisk_gf2_affine.c\", \"source_git_blob\": \"8008ae4241418c1fd5862661234489f014b4aadd\", \"source_sha256\": \"1b91b0bcf58d0916bb42aa01ad46391f52a927bb0875e6b2590a8aad306a403d\"}\n",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang-22",
+              "--version"
+            ],
+            "returncode": 0,
+            "stdout": "Homebrew clang version 22.1.8\nTarget: arm64-apple-darwin25.2.0\nThread model: posix\nInstalledDir: /opt/homebrew/Cellar/llvm@22/22.1.8/bin\nConfiguration file: /opt/homebrew/Cellar/llvm@22/22.1.8/etc/clang/arm64-apple-darwin25.cfg\n",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/opt",
+              "--version"
+            ],
+            "returncode": 0,
+            "stdout": "Homebrew LLVM version 22.1.8\n  Optimized build.\n  Default target: arm64-apple-darwin25.2.0\n  Host CPU: apple-m4\n",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang-22",
+              "-std=c11",
+              "-O2",
+              "-Wall",
+              "-Wextra",
+              "-Werror",
+              "-DCPRISK_VMP_PREFIX=plain_",
+              "-c",
+              "gf2_candidates.c",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/plain.o"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang-22",
+              "-std=c11",
+              "-O0",
+              "-Xclang",
+              "-disable-O0-optnone",
+              "-Wall",
+              "-Wextra",
+              "-Werror",
+              "-DCPRISK_VMP_PREFIX=protected_",
+              "-DCPRISK_VMP_PROTECTED=1",
+              "-S",
+              "-emit-llvm",
+              "gf2_candidates.c",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/before.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/opt",
+              "-load-pass-plugin=/private/tmp/cprisk-xollvm-gep-v2-build/cmake/Obfuscator.dylib",
+              "-passes=obfuscation",
+              "-obf-seed=1",
+              "-obf-deterministic",
+              "-obf-verify",
+              "-obf-verbose",
+              "-obf-report-dir=/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/pass-reports",
+              "-S",
+              "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/before.ll",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/after.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": "Found 1 annotation(s) for function protected_cprisk_gf2_xorshift64\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0)'\n  Total passes enabled: 1\n    - vm(encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_cprisk_gf2_fnv1a\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0)'\n  Total passes enabled: 1\n    - vm(encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\n[budget] protected_cprisk_gf2_xorshift64: initial=19  limit=950  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] variant-diversify: 5328 MBA rewrites, 0 icmp flips (3 variants)\n[vm] vm_engine populated: 9 handlers\n[vm] virtualised 'protected_cprisk_gf2_xorshift64' [65B bytecode | 0vregs+17vregs64+1pregs |obf-idx]\n[budget] vm: 19 -> 90 (+71)  [9% of budget]\n[budget] protected_cprisk_gf2_xorshift64: initial=19  limit=950  final=90  growth=71  util=9.5%\n  vm: 19 -> 90 (+71)  [9% of budget]\n[budget] protected_cprisk_gf2_fnv1a: initial=31  limit=1550  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_cprisk_gf2_fnv1a' [105B bytecode | 2vregs+16vregs64+7pregs |obf-idx]\n[budget] vm: 31 -> 87 (+56)  [6% of budget]\n[budget] protected_cprisk_gf2_fnv1a: initial=31  limit=1550  final=87  growth=56  util=5.6%\n  vm: 31 -> 87 (+56)  [6% of budget]\n"
+          },
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/opt",
+              "-passes=verify",
+              "-disable-output",
+              "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/after.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/opt",
+              "-passes=default<O2>",
+              "-S",
+              "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/after.ll",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/optimized.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/opt",
+              "-passes=verify",
+              "-disable-output",
+              "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/optimized.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang-22",
+              "-O0",
+              "-c",
+              "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/optimized.ll",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/protected.o"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang-22",
+              "-std=c11",
+              "-O2",
+              "-Wall",
+              "-Wextra",
+              "-Werror",
+              "gf2_differential.c",
+              "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/plain.o",
+              "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/protected.o",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/differential"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/differential"
+            ],
+            "returncode": 0,
+            "stdout": "PASS cases=4096 seed=783cb86db73074ac\n",
+            "stderr": ""
+          }
+        ],
+        "tools": {
+          "clang": {
+            "path": "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang-22",
+            "version": "Homebrew clang version 22.1.8\nTarget: arm64-apple-darwin25.2.0\nThread model: posix\nInstalledDir: /opt/homebrew/Cellar/llvm@22/22.1.8/bin\nConfiguration file: /opt/homebrew/Cellar/llvm@22/22.1.8/etc/clang/arm64-apple-darwin25.cfg\n",
+            "sha256": "012b35304481c5d5db6b57f20e144fb78f198ca9db14aa0b8db72cd2e493e12d"
+          },
+          "opt": {
+            "path": "/opt/homebrew/Cellar/llvm@22/22.1.8/bin/opt",
+            "version": "Homebrew LLVM version 22.1.8\n  Optimized build.\n  Default target: arm64-apple-darwin25.2.0\n  Host CPU: apple-m4\n",
+            "sha256": "bad940da11676c7d8c0c329faeaf4a1538728d6d06ec1a6a67042c0475154ab1"
+          },
+          "plugin": {
+            "path": "/private/tmp/cprisk-xollvm-gep-v2-build/cmake/Obfuscator.dylib",
+            "sha256": "a07f243b2a1fe20f0f8fcc2a1606f9d4357420611337032552cc02b4281dd3fe"
+          }
+        },
+        "hashes": {
+          "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/gf2_candidates.c": "fcd3eab20000849dc4ca16c6d5e14bf158e245221bdccaa10f78aa42d5e96d47",
+          "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/gf2_differential.c": "9dd10d266de9da3cd06e6a3706be8fcf190f71664cc165caa60f670fab85125f",
+          "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/gf2_candidates.inc": "e517ce1c4be48f6ee8146fdbc34a6969dcaa1c4f68b0f669e6c0ff64b84ac481",
+          "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/sources.json": "5f7dd0e436ec8f272561fddb08ea499dd134366535012b7fb23c507db76038bb",
+          "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/verify_sources.py": "f053ae0cf0a61fd9d3e2c05e39bc293d5c0f3286ea671efa141193009c6ffdef",
+          "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/before.ll": "39d16a85873b2c3569562ffaacf0c1ead8b69a2f418f5700434c6594f3b3fd4e",
+          "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/after.ll": "1853c914e7fb5b1c35894e6ea35e1661f24aaa20d98b5886ff3de65c18b1b1f8",
+          "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/optimized.ll": "9c48d78c14b4747e9f294fe533ba4a28d73e6270632944e87f9ff211c5e524b7",
+          "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709/differential": "15deaa087c5b37f0a0dc1127a0b32e6a9c4dc9e55ec2b95ac9a057685b5a3700"
+        },
+        "plugin_provenance": {
+          "schema_version": 2,
+          "status": "built",
+          "xollvm_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+          "plugin_path": "/private/tmp/cprisk-xollvm-gep-v2-build/cmake/Obfuscator.dylib",
+          "plugin_sha256": "a07f243b2a1fe20f0f8fcc2a1606f9d4357420611337032552cc02b4281dd3fe",
+          "llvm_version": "22.1.8",
+          "tool_versions": {
+            "clang": "Homebrew clang version 22.1.8\nTarget: arm64-apple-darwin25.2.0\nThread model: posix\nInstalledDir: /opt/homebrew/Cellar/llvm@22/22.1.8/bin\nConfiguration file: /opt/homebrew/Cellar/llvm@22/22.1.8/etc/clang/arm64-apple-darwin25.cfg",
+            "clang++": "Homebrew clang version 22.1.8\nTarget: arm64-apple-darwin25.2.0\nThread model: posix\nInstalledDir: /opt/homebrew/Cellar/llvm@22/22.1.8/bin\nConfiguration file: /opt/homebrew/Cellar/llvm@22/22.1.8/etc/clang/arm64-apple-darwin25.cfg",
+            "opt": "Homebrew LLVM version 22.1.8\n  Optimized build.\n  Default target: arm64-apple-darwin25.2.0\n  Host CPU: apple-m4",
+            "llvm-config": "22.1.8"
+          },
+          "commands": [
+            [
+              "cmake",
+              "-S",
+              "/private/tmp/cprisk-xollvm-gep-v2-build/patched-source",
+              "-B",
+              "/private/tmp/cprisk-xollvm-gep-v2-build/cmake",
+              "-DLLVM_DIR=/opt/homebrew/Cellar/llvm@22/22.1.8/lib/cmake/llvm",
+              "-DCMAKE_BUILD_TYPE=Release",
+              "-DCMAKE_C_COMPILER=/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang",
+              "-DCMAKE_CXX_COMPILER=/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang++"
+            ],
+            [
+              "cmake",
+              "--build",
+              "/private/tmp/cprisk-xollvm-gep-v2-build/cmake",
+              "--target",
+              "Obfuscator",
+              "--parallel",
+              "3"
+            ]
+          ],
+          "license": "Apache-2.0 WITH LLVM-exception",
+          "limitations": [
+            "Local provenance only; not a signed attestation",
+            "Build success does not validate virtualization or iOS compatibility"
+          ],
+          "local_patch_set": {
+            "schema_version": 1,
+            "id": "pointer-gep-v2",
+            "xollvm_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+            "patch_file": "pointer-gep-v2.patch",
+            "patch_sha256": "3bf254367cf27116d9c495da21d79d5d47bd38036ee757c158968962a414b5a6",
+            "files": {
+              "VMPass_Emitter.cpp": {
+                "before_sha256": "70c1d037b134753fcdf3ba9e77d5843c61e6aa8534be0b11a126fa3d8fcaa9e8",
+                "after_sha256": "206af82042872e7680bdc3d6e9e1f256d8c60d69407e1b42f6e6189c6d387f76"
+              },
+              "VMPass_Handlers.cpp": {
+                "before_sha256": "f6de216ec9095661d163650a590c684cca73c13114c1f481f502f9038bd9f9cc",
+                "after_sha256": "aa9990110e44db4275c626385c3ada87ef65cb1d21ccf15344553acd59501b5c"
+              },
+              "VMPass_Verifier.cpp": {
+                "before_sha256": "1e1920edfa187ddc58580ec50370fd4edce8e5635c5306bcd9f91491a7da4044",
+                "after_sha256": "28771c76da9f6e16594037f3c30d2bce3172bc455ffd1b3f441dcc09726373f0"
+              },
+              "include/llvm/Transforms/Obfuscator/VMPass_ISA.h": {
+                "before_sha256": "c9fc636187a5c970ea2ebf49c28ecdb3f716a20073d7b5be09a237f11538c37b",
+                "after_sha256": "43f00303b225bac53e772a9ef71c4997283e32b784a33b7f55a64310e3b88b46"
+              }
+            },
+            "capabilities": {
+              "pointer_comparison": {
+                "predicates": [
+                  "eq",
+                  "ne"
+                ],
+                "address_spaces": [
+                  0
+                ],
+                "null_supported": true,
+                "operand_storage": "native pointer registers",
+                "encoding": "OP_ICMP_PTR=0x38; kind byte 0=eq, 1=ne; not a RandISA predicate byte"
+              },
+              "validation_scope": "local host experiments; hardened=0 antiDebug=0 encBytecode=0",
+              "unsupported": [
+                "ordered pointer predicates",
+                "nonzero pointer address spaces",
+                "production integration and device execution not validated"
+              ],
+              "isa_compatibility": "OP_COUNT increases from 0x38 to 0x39 and decoy base moves; patched and upstream plugin/bytecode must not be mixed",
+              "gep": {
+                "constant_indices": "target DataLayout byte offset, including struct padding and nested aggregates",
+                "dynamic_indices": "one i32/i64 index, or array [0,index], using allocation size",
+                "address_spaces": [
+                  0
+                ],
+                "pointer_and_index_bits": 64,
+                "max_dynamic_stride": 65535,
+                "oversized_dynamic_stride": "rejected; never saturated",
+                "unsupported": [
+                  "dynamic multi-index GEP except array [0,index]",
+                  "scalable types",
+                  "nonzero address spaces",
+                  "non-64-bit pointer/index layouts"
+                ]
+              }
+            }
+          },
+          "patched_source": "/private/tmp/cprisk-xollvm-gep-v2-build/patched-source",
+          "patched_source_tree_sha256": "441d48c11eca97c3fde786374f9084a466924a226167538c9a7adf56dfc514b1"
+        },
+        "build_directory": "/private/tmp/cprisk-gep-v2-gf2/build-mbkb5709",
+        "pass_evidence": {
+          "targets": [
+            "protected_cprisk_gf2_xorshift64",
+            "protected_cprisk_gf2_fnv1a"
+          ],
+          "all_vm_passes_ran_and_changed": true
+        },
+        "ir_evidence": {
+          "protected_cprisk_gf2_xorshift64": {
+            "bytecode_bytes": 65,
+            "before_sha256": "dbeb7ad6ac62fbe9d7fdcf49b8600fea60490b70526981e10a7b477a3813bce1",
+            "after_sha256": "60fb6deecd02eb1705e3f35d3c8787510e1c8ddb423069f736887ce5fdc2c8c4"
+          },
+          "protected_cprisk_gf2_fnv1a": {
+            "bytecode_bytes": 105,
+            "before_sha256": "940a06869bc05f1bf97d1bd5258db237ce776e5f726660c06cc93ca80155fd90",
+            "after_sha256": "756252a42b9e94b62ad57ae66489b4594c401284801b0d5ba2054efaa4a85d72"
+          }
+        },
+        "optimized_ir_evidence": {
+          "protected_cprisk_gf2_xorshift64": {
+            "bytecode_bytes": 65,
+            "before_sha256": "dbeb7ad6ac62fbe9d7fdcf49b8600fea60490b70526981e10a7b477a3813bce1",
+            "after_sha256": "f4e6a1e1ab7de75eaa9e1e72dbf914b1243b14f7015843ce29070c7deb6e7c4c"
+          },
+          "protected_cprisk_gf2_fnv1a": {
+            "bytecode_bytes": 105,
+            "before_sha256": "940a06869bc05f1bf97d1bd5258db237ce776e5f726660c06cc93ca80155fd90",
+            "after_sha256": "e60ed163907620d6a0a93d0a208dc45c6161db5193532ad88deb9ed35b79f4c2"
+          }
+        },
+        "differential_output": "PASS cases=4096 seed=783cb86db73074ac\n",
+        "elapsed_seconds": 2.038444
+      }
+    },
+    "pointer": {
+      "original_path": "/tmp/cprisk-gep-v2-pointer/report.json",
+      "sha256": "c11ed503b2a05b4267e1aa5a7871016a95684406bd3b2756e948b5780cf0624f",
+      "data": {
+        "schema_version": 1,
+        "status": "HOST_POINTER_VMP_PASS",
+        "vmp_verified": true,
+        "scope": "macOS host pointer equality only; no device or stack correctness conclusion",
+        "source": "#include <stdint.h>\n#ifndef PREFIX\n#error PREFIX required\n#endif\n#define JOIN2(a,b) a##b\n#define JOIN(a,b) JOIN2(a,b)\n#ifdef PROTECTED\n#define TARGET __attribute__((noinline, annotate(ANNOTATION)))\n#else\n#define TARGET __attribute__((noinline))\n#endif\nTARGET uint32_t JOIN(PREFIX, pointer_eq)(const void *a, const void *b) { return a == b; }\nTARGET uint32_t JOIN(PREFIX, pointer_ne)(const void *a, const void *b) { return a != b; }\nTARGET uint32_t JOIN(PREFIX, pointer_eqnull)(const void *a, const void *b) { (void)b; return a == 0; }\nTARGET uint32_t JOIN(PREFIX, pointer_nenull)(const void *a, const void *b) { (void)b; return a != 0; }\n",
+        "harness": "#include <stdint.h>\n#include <stdio.h>\n#define DECL(n) uint32_t plain_##n(const void*,const void*); uint32_t protected_##n(const void*,const void*);\nDECL(pointer_eq) DECL(pointer_ne) DECL(pointer_eqnull) DECL(pointer_nenull)\nstatic unsigned char global_a[8], global_b[8];\n#define CHECK(n, expected) do { uint32_t a=plain_##n(p[i],p[j]), b=protected_##n(p[i],p[j]); if(a!=b || b!=(uint32_t)(expected)){ fprintf(stderr,\"FAIL %s i=%u j=%u native=%u vm=%u\\n\",#n,i,j,a,b);return 1;}++cases;}while(0)\nint main(void) {\n unsigned char a[8],b[8]; unsigned cases=0;\n const void *p[]={0,a,a,a+1,a+8,b,b+1,global_a,global_a+1,global_b};\n for(unsigned i=0;i<10;++i)for(unsigned j=0;j<10;++j) {\n CHECK(pointer_eq,p[i]==p[j]);CHECK(pointer_ne,p[i]!=p[j]);\n CHECK(pointer_eqnull,p[i]==0);CHECK(pointer_nenull,p[i]!=0);\n }\n printf(\"PASS cases=%u pointer_eq_ne_null\\n\",cases);return 0;\n}\n",
+        "probe_sha256": "54e21eea9ef53da5123291710c00cb1b944ac47b1e7ca5d4b27a0a3583d3d5de",
+        "commands": [
+          {
+            "argv": [
+              "/opt/homebrew/opt/llvm@22/bin/clang",
+              "--version"
+            ],
+            "returncode": 0,
+            "stdout": "Homebrew clang version 22.1.8\nTarget: arm64-apple-darwin25.2.0\nThread model: posix\nInstalledDir: /opt/homebrew/Cellar/llvm@22/22.1.8/bin\nConfiguration file: /opt/homebrew/Cellar/llvm@22/22.1.8/etc/clang/arm64-apple-darwin25.cfg\n",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/opt/llvm@22/bin/opt",
+              "--version"
+            ],
+            "returncode": 0,
+            "stdout": "Homebrew LLVM version 22.1.8\n  Optimized build.\n  Default target: arm64-apple-darwin25.2.0\n  Host CPU: apple-m4\n",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/opt/llvm@22/bin/clang",
+              "-std=c11",
+              "-Wall",
+              "-Wextra",
+              "-Werror",
+              "-O2",
+              "-DPREFIX=plain_",
+              "-c",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/probe.c",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/plain.o"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/opt/llvm@22/bin/clang",
+              "-std=c11",
+              "-Wall",
+              "-Wextra",
+              "-Werror",
+              "-O0",
+              "-Xclang",
+              "-disable-O0-optnone",
+              "-DPREFIX=protected_",
+              "-DPROTECTED=1",
+              "-DANNOTATION=\"obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=0)\"",
+              "-S",
+              "-emit-llvm",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/probe.c",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/before.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/opt/llvm@22/bin/opt",
+              "-load-pass-plugin=/tmp/cprisk-xollvm-gep-v2-build/cmake/Obfuscator.dylib",
+              "-passes=obfuscation",
+              "-obf-seed=1",
+              "-obf-deterministic",
+              "-obf-verify",
+              "-obf-verbose",
+              "-obf-report-dir=/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/pass-reports",
+              "-S",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/before.ll",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/after.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": "Found 1 annotation(s) for function protected_pointer_eq\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=0)'\n  Total passes enabled: 1\n    - vm(randISA=0,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_pointer_ne\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=0)'\n  Total passes enabled: 1\n    - vm(randISA=0,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_pointer_eqnull\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=0)'\n  Total passes enabled: 1\n    - vm(randISA=0,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_pointer_nenull\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=0)'\n  Total passes enabled: 1\n    - vm(randISA=0,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\n[budget] protected_pointer_eq: initial=9  limit=450  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] variant-diversify: 5328 MBA rewrites, 0 icmp flips (3 variants)\n[vm] vm_engine populated: 9 handlers\n[vm] virtualised 'protected_pointer_eq' [23B bytecode | 2vregs+0vregs64+6pregs |obf-idx]\n[budget] vm: 9 -> 43 (+34)  [10% of budget]\n[budget] protected_pointer_eq: initial=9  limit=450  final=43  growth=34  util=9.6%\n  vm: 9 -> 43 (+34)  [10% of budget]\n[budget] protected_pointer_ne: initial=9  limit=450  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_pointer_ne' [23B bytecode | 2vregs+0vregs64+6pregs |obf-idx]\n[budget] vm: 9 -> 43 (+34)  [10% of budget]\n[budget] protected_pointer_ne: initial=9  limit=450  final=43  growth=34  util=9.6%\n  vm: 9 -> 43 (+34)  [10% of budget]\n[budget] protected_pointer_eqnull: initial=9  limit=450  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_pointer_eqnull' [23B bytecode | 2vregs+0vregs64+7pregs |obf-idx]\n[budget] vm: 9 -> 45 (+36)  [10% of budget]\n[budget] protected_pointer_eqnull: initial=9  limit=450  final=45  growth=36  util=10.0%\n  vm: 9 -> 45 (+36)  [10% of budget]\n[budget] protected_pointer_nenull: initial=9  limit=450  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_pointer_nenull' [23B bytecode | 2vregs+0vregs64+7pregs |obf-idx]\n[budget] vm: 9 -> 45 (+36)  [10% of budget]\n[budget] protected_pointer_nenull: initial=9  limit=450  final=45  growth=36  util=10.0%\n  vm: 9 -> 45 (+36)  [10% of budget]\n"
+          },
+          {
+            "argv": [
+              "/opt/homebrew/opt/llvm@22/bin/opt",
+              "-passes=verify",
+              "-disable-output",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/after.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/opt/llvm@22/bin/opt",
+              "-passes=default<O2>",
+              "-S",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/after.ll",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/optimized.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/opt/llvm@22/bin/opt",
+              "-passes=verify",
+              "-disable-output",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/optimized.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/opt/llvm@22/bin/clang",
+              "-O0",
+              "-c",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/optimized.ll",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/protected.o"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/opt/llvm@22/bin/clang",
+              "-std=c11",
+              "-Wall",
+              "-Wextra",
+              "-Werror",
+              "-O2",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/differential.c",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/plain.o",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/protected.o",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/differential"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/differential"
+            ],
+            "returncode": 0,
+            "stdout": "PASS cases=400 pointer_eq_ne_null\n",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/opt/llvm@22/bin/clang",
+              "-std=c11",
+              "-Wall",
+              "-Wextra",
+              "-Werror",
+              "-O2",
+              "-DPREFIX=plain_",
+              "-c",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/probe.c",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/plain.o"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/opt/llvm@22/bin/clang",
+              "-std=c11",
+              "-Wall",
+              "-Wextra",
+              "-Werror",
+              "-O0",
+              "-Xclang",
+              "-disable-O0-optnone",
+              "-DPREFIX=protected_",
+              "-DPROTECTED=1",
+              "-DANNOTATION=\"obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=1)\"",
+              "-S",
+              "-emit-llvm",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/probe.c",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/before.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/opt/llvm@22/bin/opt",
+              "-load-pass-plugin=/tmp/cprisk-xollvm-gep-v2-build/cmake/Obfuscator.dylib",
+              "-passes=obfuscation",
+              "-obf-seed=1",
+              "-obf-deterministic",
+              "-obf-verify",
+              "-obf-verbose",
+              "-obf-report-dir=/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/pass-reports",
+              "-S",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/before.ll",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/after.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": "Found 1 annotation(s) for function protected_pointer_eq\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=1)'\n  Total passes enabled: 1\n    - vm(randISA=1,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_pointer_ne\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=1)'\n  Total passes enabled: 1\n    - vm(randISA=1,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_pointer_eqnull\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=1)'\n  Total passes enabled: 1\n    - vm(randISA=1,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_pointer_nenull\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=1)'\n  Total passes enabled: 1\n    - vm(randISA=1,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\n[budget] protected_pointer_eq: initial=9  limit=450  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] variant-diversify: 5328 MBA rewrites, 0 icmp flips (3 variants)\n[vm] vm_engine populated: 9 handlers\n[vm] virtualised 'protected_pointer_eq' [23B bytecode | 2vregs+0vregs64+6pregs |obf-idx]\n[budget] vm: 9 -> 43 (+34)  [10% of budget]\n[budget] protected_pointer_eq: initial=9  limit=450  final=43  growth=34  util=9.6%\n  vm: 9 -> 43 (+34)  [10% of budget]\n[budget] protected_pointer_ne: initial=9  limit=450  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_pointer_ne' [23B bytecode | 2vregs+0vregs64+6pregs |obf-idx]\n[budget] vm: 9 -> 43 (+34)  [10% of budget]\n[budget] protected_pointer_ne: initial=9  limit=450  final=43  growth=34  util=9.6%\n  vm: 9 -> 43 (+34)  [10% of budget]\n[budget] protected_pointer_eqnull: initial=9  limit=450  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_pointer_eqnull' [23B bytecode | 2vregs+0vregs64+7pregs |obf-idx]\n[budget] vm: 9 -> 45 (+36)  [10% of budget]\n[budget] protected_pointer_eqnull: initial=9  limit=450  final=45  growth=36  util=10.0%\n  vm: 9 -> 45 (+36)  [10% of budget]\n[budget] protected_pointer_nenull: initial=9  limit=450  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_pointer_nenull' [23B bytecode | 2vregs+0vregs64+7pregs |obf-idx]\n[budget] vm: 9 -> 45 (+36)  [10% of budget]\n[budget] protected_pointer_nenull: initial=9  limit=450  final=45  growth=36  util=10.0%\n  vm: 9 -> 45 (+36)  [10% of budget]\n"
+          },
+          {
+            "argv": [
+              "/opt/homebrew/opt/llvm@22/bin/opt",
+              "-passes=verify",
+              "-disable-output",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/after.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/opt/llvm@22/bin/opt",
+              "-passes=default<O2>",
+              "-S",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/after.ll",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/optimized.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/opt/llvm@22/bin/opt",
+              "-passes=verify",
+              "-disable-output",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/optimized.ll"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/opt/llvm@22/bin/clang",
+              "-O0",
+              "-c",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/optimized.ll",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/protected.o"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/opt/homebrew/opt/llvm@22/bin/clang",
+              "-std=c11",
+              "-Wall",
+              "-Wextra",
+              "-Werror",
+              "-O2",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/differential.c",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/plain.o",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/protected.o",
+              "-o",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/differential"
+            ],
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          {
+            "argv": [
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/differential"
+            ],
+            "returncode": 0,
+            "stdout": "PASS cases=400 pointer_eq_ne_null\n",
+            "stderr": ""
+          }
+        ],
+        "configurations": [
+          {
+            "randISA": 0,
+            "build_directory": "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm",
+            "pass_evidence": {
+              "targets": [
+                "protected_pointer_eq",
+                "protected_pointer_ne",
+                "protected_pointer_eqnull",
+                "protected_pointer_nenull"
+              ],
+              "all_vm_passes_ran_and_changed": true
+            },
+            "ir_evidence": {
+              "protected_pointer_eq": {
+                "bytecode_bytes": 23,
+                "before_sha256": "0ba225177e1dfb7f6085aefd60ba52fc90180cf1cffc18585e15de73573636cd",
+                "after_sha256": "1efa4e55ba4b049c4e0ca076c685d767291cf550c3e580cf7281bd779ffdf45c"
+              },
+              "protected_pointer_ne": {
+                "bytecode_bytes": 23,
+                "before_sha256": "b01c764a87901ef0786685976ff581bbf386180dc8ac8ea18d3c57cfb0f70cf6",
+                "after_sha256": "573115500775e3fd84581d4eb5d7153c07847ed95791f37d89ba59aa8cd43467"
+              },
+              "protected_pointer_eqnull": {
+                "bytecode_bytes": 23,
+                "before_sha256": "a87068927f9364e4e29eb8e260d741513bd4c4946c67041893b8ce1ac1cf34e2",
+                "after_sha256": "c791a6a37cd8922855fc827f0b3865c152c8b685ef8662ef48a26739f4e2dda4"
+              },
+              "protected_pointer_nenull": {
+                "bytecode_bytes": 23,
+                "before_sha256": "34e44c16995b30ed91bee885aaebc5900a78d783cbd295fa83c22aed5d953204",
+                "after_sha256": "23169873987c585f01afbab3c46319d39d4c77a54f0241936c432c4a0d6515a2"
+              }
+            },
+            "optimized_ir_evidence": {
+              "protected_pointer_eq": {
+                "bytecode_bytes": 23,
+                "before_sha256": "0ba225177e1dfb7f6085aefd60ba52fc90180cf1cffc18585e15de73573636cd",
+                "after_sha256": "18ab1c3fe8844c6de663aef42a95425cb4677307c360bdd9d7bf79eb65a92cd4"
+              },
+              "protected_pointer_ne": {
+                "bytecode_bytes": 23,
+                "before_sha256": "b01c764a87901ef0786685976ff581bbf386180dc8ac8ea18d3c57cfb0f70cf6",
+                "after_sha256": "6aa74602173684ed506b76a1d0913e1b10c24fc0dbef9dd70d73fa074431b04d"
+              },
+              "protected_pointer_eqnull": {
+                "bytecode_bytes": 23,
+                "before_sha256": "a87068927f9364e4e29eb8e260d741513bd4c4946c67041893b8ce1ac1cf34e2",
+                "after_sha256": "fa5d41188e2427dce9da61a0fe366b1253a0b9a6ef50be75eb1b57e9d718309d"
+              },
+              "protected_pointer_nenull": {
+                "bytecode_bytes": 23,
+                "before_sha256": "34e44c16995b30ed91bee885aaebc5900a78d783cbd295fa83c22aed5d953204",
+                "after_sha256": "56d9f3ac057cb26f8c9b0970a8bda0b80dc73971e11aabeda220b1370d8b2bd6"
+              }
+            },
+            "output": "PASS cases=400 pointer_eq_ne_null\n",
+            "hashes": {
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/probe.c": "93cf388378cf71cc0fbd3a11a0910c53d6e556e4394bd9a4af4acc5a27d8328a",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/differential.c": "89592977335154e210cf6e2e56dea52a14f4d9495a9e58e41a3a6e12f2b0f458",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/before.ll": "a612fc556d56ec216d990982a9f5c03988016689a2616868998a2130a5f97aed",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/after.ll": "e3db25333e8662c834e027ec7c0d16d439a346c0ba1e44a52b2922aae88ce1a6",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/optimized.ll": "29b92e72d928df1f46cfb4018032bfc0aaeef2687dc6d7bfa7f04112d4439de0",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-0-hzx_x9rm/differential": "1e35c2ebe7c713d591e0077dd9bcdabdb686ce95f0e25b6b95eb84f1bf87795a"
+            }
+          },
+          {
+            "randISA": 1,
+            "build_directory": "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue",
+            "pass_evidence": {
+              "targets": [
+                "protected_pointer_eq",
+                "protected_pointer_ne",
+                "protected_pointer_eqnull",
+                "protected_pointer_nenull"
+              ],
+              "all_vm_passes_ran_and_changed": true
+            },
+            "ir_evidence": {
+              "protected_pointer_eq": {
+                "bytecode_bytes": 23,
+                "before_sha256": "0ba225177e1dfb7f6085aefd60ba52fc90180cf1cffc18585e15de73573636cd",
+                "after_sha256": "1efa4e55ba4b049c4e0ca076c685d767291cf550c3e580cf7281bd779ffdf45c"
+              },
+              "protected_pointer_ne": {
+                "bytecode_bytes": 23,
+                "before_sha256": "b01c764a87901ef0786685976ff581bbf386180dc8ac8ea18d3c57cfb0f70cf6",
+                "after_sha256": "573115500775e3fd84581d4eb5d7153c07847ed95791f37d89ba59aa8cd43467"
+              },
+              "protected_pointer_eqnull": {
+                "bytecode_bytes": 23,
+                "before_sha256": "a87068927f9364e4e29eb8e260d741513bd4c4946c67041893b8ce1ac1cf34e2",
+                "after_sha256": "c791a6a37cd8922855fc827f0b3865c152c8b685ef8662ef48a26739f4e2dda4"
+              },
+              "protected_pointer_nenull": {
+                "bytecode_bytes": 23,
+                "before_sha256": "34e44c16995b30ed91bee885aaebc5900a78d783cbd295fa83c22aed5d953204",
+                "after_sha256": "23169873987c585f01afbab3c46319d39d4c77a54f0241936c432c4a0d6515a2"
+              }
+            },
+            "optimized_ir_evidence": {
+              "protected_pointer_eq": {
+                "bytecode_bytes": 23,
+                "before_sha256": "0ba225177e1dfb7f6085aefd60ba52fc90180cf1cffc18585e15de73573636cd",
+                "after_sha256": "18ab1c3fe8844c6de663aef42a95425cb4677307c360bdd9d7bf79eb65a92cd4"
+              },
+              "protected_pointer_ne": {
+                "bytecode_bytes": 23,
+                "before_sha256": "b01c764a87901ef0786685976ff581bbf386180dc8ac8ea18d3c57cfb0f70cf6",
+                "after_sha256": "6aa74602173684ed506b76a1d0913e1b10c24fc0dbef9dd70d73fa074431b04d"
+              },
+              "protected_pointer_eqnull": {
+                "bytecode_bytes": 23,
+                "before_sha256": "a87068927f9364e4e29eb8e260d741513bd4c4946c67041893b8ce1ac1cf34e2",
+                "after_sha256": "fa5d41188e2427dce9da61a0fe366b1253a0b9a6ef50be75eb1b57e9d718309d"
+              },
+              "protected_pointer_nenull": {
+                "bytecode_bytes": 23,
+                "before_sha256": "34e44c16995b30ed91bee885aaebc5900a78d783cbd295fa83c22aed5d953204",
+                "after_sha256": "56d9f3ac057cb26f8c9b0970a8bda0b80dc73971e11aabeda220b1370d8b2bd6"
+              }
+            },
+            "output": "PASS cases=400 pointer_eq_ne_null\n",
+            "hashes": {
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/probe.c": "93cf388378cf71cc0fbd3a11a0910c53d6e556e4394bd9a4af4acc5a27d8328a",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/differential.c": "89592977335154e210cf6e2e56dea52a14f4d9495a9e58e41a3a6e12f2b0f458",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/before.ll": "852208f11bf0e73be3a2cfa6adfa1275a6508d09a1c49ab76b85749d1a6febe9",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/after.ll": "1b43f2592381e061205a2bb5bbadfec50d95e162f96e32eeb87a5e18fc35d1f1",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/optimized.ll": "fd45834bf47932967fcf31890b45727a212941f8ca9c4949dfc28352d8cbec89",
+              "/private/tmp/cprisk-gep-v2-pointer/randisa-1-80mc0yue/differential": "7732b64193fb7dd11b683fe5565465ea3f247ab1068ba0611a9b2872c059df7c"
+            }
+          }
+        ],
+        "plugin_provenance": {
+          "schema_version": 2,
+          "status": "built",
+          "xollvm_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+          "plugin_path": "/private/tmp/cprisk-xollvm-gep-v2-build/cmake/Obfuscator.dylib",
+          "plugin_sha256": "a07f243b2a1fe20f0f8fcc2a1606f9d4357420611337032552cc02b4281dd3fe",
+          "llvm_version": "22.1.8",
+          "tool_versions": {
+            "clang": "Homebrew clang version 22.1.8\nTarget: arm64-apple-darwin25.2.0\nThread model: posix\nInstalledDir: /opt/homebrew/Cellar/llvm@22/22.1.8/bin\nConfiguration file: /opt/homebrew/Cellar/llvm@22/22.1.8/etc/clang/arm64-apple-darwin25.cfg",
+            "clang++": "Homebrew clang version 22.1.8\nTarget: arm64-apple-darwin25.2.0\nThread model: posix\nInstalledDir: /opt/homebrew/Cellar/llvm@22/22.1.8/bin\nConfiguration file: /opt/homebrew/Cellar/llvm@22/22.1.8/etc/clang/arm64-apple-darwin25.cfg",
+            "opt": "Homebrew LLVM version 22.1.8\n  Optimized build.\n  Default target: arm64-apple-darwin25.2.0\n  Host CPU: apple-m4",
+            "llvm-config": "22.1.8"
+          },
+          "commands": [
+            [
+              "cmake",
+              "-S",
+              "/private/tmp/cprisk-xollvm-gep-v2-build/patched-source",
+              "-B",
+              "/private/tmp/cprisk-xollvm-gep-v2-build/cmake",
+              "-DLLVM_DIR=/opt/homebrew/Cellar/llvm@22/22.1.8/lib/cmake/llvm",
+              "-DCMAKE_BUILD_TYPE=Release",
+              "-DCMAKE_C_COMPILER=/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang",
+              "-DCMAKE_CXX_COMPILER=/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang++"
+            ],
+            [
+              "cmake",
+              "--build",
+              "/private/tmp/cprisk-xollvm-gep-v2-build/cmake",
+              "--target",
+              "Obfuscator",
+              "--parallel",
+              "3"
+            ]
+          ],
+          "license": "Apache-2.0 WITH LLVM-exception",
+          "limitations": [
+            "Local provenance only; not a signed attestation",
+            "Build success does not validate virtualization or iOS compatibility"
+          ],
+          "local_patch_set": {
+            "schema_version": 1,
+            "id": "pointer-gep-v2",
+            "xollvm_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+            "patch_file": "pointer-gep-v2.patch",
+            "patch_sha256": "3bf254367cf27116d9c495da21d79d5d47bd38036ee757c158968962a414b5a6",
+            "files": {
+              "VMPass_Emitter.cpp": {
+                "before_sha256": "70c1d037b134753fcdf3ba9e77d5843c61e6aa8534be0b11a126fa3d8fcaa9e8",
+                "after_sha256": "206af82042872e7680bdc3d6e9e1f256d8c60d69407e1b42f6e6189c6d387f76"
+              },
+              "VMPass_Handlers.cpp": {
+                "before_sha256": "f6de216ec9095661d163650a590c684cca73c13114c1f481f502f9038bd9f9cc",
+                "after_sha256": "aa9990110e44db4275c626385c3ada87ef65cb1d21ccf15344553acd59501b5c"
+              },
+              "VMPass_Verifier.cpp": {
+                "before_sha256": "1e1920edfa187ddc58580ec50370fd4edce8e5635c5306bcd9f91491a7da4044",
+                "after_sha256": "28771c76da9f6e16594037f3c30d2bce3172bc455ffd1b3f441dcc09726373f0"
+              },
+              "include/llvm/Transforms/Obfuscator/VMPass_ISA.h": {
+                "before_sha256": "c9fc636187a5c970ea2ebf49c28ecdb3f716a20073d7b5be09a237f11538c37b",
+                "after_sha256": "43f00303b225bac53e772a9ef71c4997283e32b784a33b7f55a64310e3b88b46"
+              }
+            },
+            "capabilities": {
+              "pointer_comparison": {
+                "predicates": [
+                  "eq",
+                  "ne"
+                ],
+                "address_spaces": [
+                  0
+                ],
+                "null_supported": true,
+                "operand_storage": "native pointer registers",
+                "encoding": "OP_ICMP_PTR=0x38; kind byte 0=eq, 1=ne; not a RandISA predicate byte"
+              },
+              "validation_scope": "local host experiments; hardened=0 antiDebug=0 encBytecode=0",
+              "unsupported": [
+                "ordered pointer predicates",
+                "nonzero pointer address spaces",
+                "production integration and device execution not validated"
+              ],
+              "isa_compatibility": "OP_COUNT increases from 0x38 to 0x39 and decoy base moves; patched and upstream plugin/bytecode must not be mixed",
+              "gep": {
+                "constant_indices": "target DataLayout byte offset, including struct padding and nested aggregates",
+                "dynamic_indices": "one i32/i64 index, or array [0,index], using allocation size",
+                "address_spaces": [
+                  0
+                ],
+                "pointer_and_index_bits": 64,
+                "max_dynamic_stride": 65535,
+                "oversized_dynamic_stride": "rejected; never saturated",
+                "unsupported": [
+                  "dynamic multi-index GEP except array [0,index]",
+                  "scalable types",
+                  "nonzero address spaces",
+                  "non-64-bit pointer/index layouts"
+                ]
+              }
+            }
+          },
+          "patched_source": "/private/tmp/cprisk-xollvm-gep-v2-build/patched-source",
+          "patched_source_tree_sha256": "441d48c11eca97c3fde786374f9084a466924a226167538c9a7adf56dfc514b1"
+        }
+      }
+    }
+  },
+  "stack_artifacts": {
+    "commands": [
+      {
+        "argv": [
+          "/opt/homebrew/opt/llvm@22/bin/llvm-objdump",
+          "--disassemble",
+          "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/differential"
+        ],
+        "returncode": 0,
+        "stdout": "(saved separately)",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "/opt/homebrew/opt/llvm@22/bin/opt",
+          "-passes=verify",
+          "-disable-output",
+          "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/negative.ll"
+        ],
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "/opt/homebrew/opt/llvm@22/bin/clang",
+          "-O0",
+          "-c",
+          "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/negative.ll",
+          "-o",
+          "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/negative.o"
+        ],
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "/opt/homebrew/opt/llvm@22/bin/clang",
+          "-O2",
+          "/Users/mac/Desktop/cloudphone-risk-detector/experiments/ir-vmp/differential.c",
+          "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/plain.o",
+          "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/negative.o",
+          "-o",
+          "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/negative"
+        ],
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/negative"
+        ],
+        "returncode": 1,
+        "stdout": "",
+        "stderr": "FAIL line=27 case=0: ra==rb && ra==VM_STACK_OK\n"
+      }
+    ],
+    "scope": "macOS arm64 stack final machine code and corrupted-result rejection",
+    "machine_code": {
+      "wrapper_engine_calls": {
+        "protected_vm_stack_crypto_init": [
+          "100001cac: 940002b8    \tbl\t0x10000278c <___vm_engine>"
+        ],
+        "protected_vm_stack_encrypt_push": [
+          "100001e4c: 94000250    \tbl\t0x10000278c <___vm_engine>"
+        ],
+        "protected_vm_stack_push_encrypted": [
+          "100002100: 940001a3    \tbl\t0x10000278c <___vm_engine>"
+        ]
+      },
+      "assembly_path": "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/final.asm",
+      "assembly_sha256": "f2a982cd3dc797e249bf5c6b4596dcc500271f10c736735c1c978f23ce3e9288",
+      "executable_sha256": "2cbaf65000263ba4d8d42ae1525ee7ed3f7fd9f3cc888b3daf2c27f488b28b05"
+    },
+    "negative_control": {
+      "mutation": "XOR final i32 return of protected_vm_stack_crypto_init with 1",
+      "mutated_returns": 1,
+      "negative_ir_sha256": "3a5fee3dd79d7bc092df5aafc0a0dd99bef3692bc8ac83d0fc606de5cfb7f8ca",
+      "rejected": true,
+      "result": {
+        "argv": [
+          "/private/tmp/cprisk-gep-v2-stack/build-ew4yon9j/negative"
+        ],
+        "returncode": 1,
+        "stdout": "",
+        "stderr": "FAIL line=27 case=0: ra==rb && ra==VM_STACK_OK\n"
+      }
+    }
+  },
+  "artifact_validation_script": {
+    "sha256": "3297d7ffecc1f02104653ac1125073505f0335ce208e2289b0e8e426131f8efa",
+    "source": "import json,re,subprocess,hashlib\nfrom pathlib import Path\nroot=Path('/Users/mac/Desktop/cloudphone-risk-detector')\nreport=json.loads(Path('/tmp/cprisk-gep-v2-stack/report.json').read_text());build=Path(report['build_directory'])\nllvm=Path('/opt/homebrew/opt/llvm@22/bin')\nout={'commands':[], 'scope':'macOS arm64 stack final machine code and corrupted-result rejection'}\ndef run(args):\n p=subprocess.run([str(a) for a in args],capture_output=True,text=True,timeout=120)\n out['commands'].append({'argv':[str(a) for a in args],'returncode':p.returncode,'stdout':p.stdout if len(p.stdout)<5000 else '(saved separately)','stderr':p.stderr})\n return p\ndef sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()\np=run([llvm/'llvm-objdump','--disassemble',build/'differential']);assert p.returncode==0\n(build/'final.asm').write_text(p.stdout)\nchecks={}\nfor name in ('vm_stack_crypto_init','vm_stack_encrypt_push','vm_stack_push_encrypted'):\n symbol='protected_'+name\n m=re.search(r'^[0-9a-f]+ <_'+symbol+r'>:\\n(.*?)(?=^[0-9a-f]+ <|\\Z)',p.stdout,re.M|re.S);assert m,symbol\n calls=[l.strip() for l in m.group(1).splitlines() if re.search(r'\\bbl\\b.*<___vm_engine>',l)]\n assert calls,symbol\n checks[symbol]=calls\nout['machine_code']={'wrapper_engine_calls':checks,'assembly_path':str(build/'final.asm'),'assembly_sha256':sha(build/'final.asm'),'executable_sha256':sha(build/'differential')}\nir=(build/'optimized.ll').read_text()\npat=r'(^define[^\\n]*@protected_vm_stack_crypto_init\\([^\\n]*\\)[^\\n]*\\{\\n)(.*?)(^\\})'\nm=re.search(pat,ir,re.M|re.S);assert m\nbody,count=re.subn(r'^(\\s*)ret i32 ([%\\w.]+)$',r'\\1%cprisk_negative = xor i32 \\2, 1\\n\\1ret i32 %cprisk_negative',m.group(2),flags=re.M);assert count==1,count\nnegative=ir[:m.start(2)]+body+ir[m.end(2):]\n(build/'negative.ll').write_text(negative)\nassert run([llvm/'opt','-passes=verify','-disable-output',build/'negative.ll']).returncode==0\nassert run([llvm/'clang','-O0','-c',build/'negative.ll','-o',build/'negative.o']).returncode==0\nassert run([llvm/'clang','-O2',root/'experiments/ir-vmp/differential.c',build/'plain.o',build/'negative.o','-o',build/'negative']).returncode==0\np=run([build/'negative']);assert p.returncode!=0 and 'FAIL' in p.stderr\nout['negative_control']={'mutation':'XOR final i32 return of protected_vm_stack_crypto_init with 1','mutated_returns':count,'negative_ir_sha256':sha(build/'negative.ll'),'rejected':True,'result':out['commands'][-1]}\nPath('/tmp/cprisk-gep-v2-stack-artifacts.json').write_text(json.dumps(out,indent=2)+'\\n')\nprint(json.dumps({'machine_wrappers_checked':len(checks),'corrupted_result_rejected':True,'failure':p.stderr.strip()}))\n"
+  },
+  "limitations": [
+    "Stack requires explicit lower-constant-intrinsics for Darwin objectsize before VM conversion",
+    "Native helpers/external calls remain outside VM; not all transitive functions are protected",
+    "Only fixed configuration and obfuscation seed=1 validated",
+    "Pass 13 full remains blocked; no production source or integration changes",
+    "Pointer-v1 historical stack failure is retained; this cumulative v2 patch corrects GEP layout"
+  ]
+}

@@ -1,0 +1,965 @@
+{
+  "schema_version": 1,
+  "status": "HOST_GEP_VMP_PASS",
+  "vmp_verified": true,
+  "scope": "macOS arm64 host GEP only; no device, hardening, memory-load or stack correctness conclusion",
+  "probe_sha256": "24c24f4f773d02662cbc7d2eb4a7eb8d5358d3fb44c1c2221fb04d70327fa57a",
+  "harness": "#include <stddef.h>\n#include <stdint.h>\n#include <stdio.h>\nstruct Pad { uint8_t a; uint64_t b; uint16_t c; };\nstruct __attribute__((packed)) Packed { uint8_t a; uint64_t b; uint16_t c; };\nstruct Nested { uint16_t head; struct Pad items[3]; uint8_t tail; };\n_Static_assert(sizeof(struct Pad)==24 && offsetof(struct Pad,b)==8 && offsetof(struct Pad,c)==16,\"padded ABI\");\n_Static_assert(sizeof(struct Packed)==11 && offsetof(struct Packed,b)==1 && offsetof(struct Packed,c)==9,\"packed ABI\");\n_Static_assert(sizeof(struct Nested)==88 && offsetof(struct Nested,items)==8,\"nested ABI\");\n#define DECL(n) void *plain_##n(void*); void *protected_##n(void*);\nDECL(pad0) DECL(pad1) DECL(pad2) DECL(packed1) DECL(packed2) DECL(nested)\n#define DECLIDX(n,t) void *plain_##n(void*,t); void *protected_##n(void*,t);\nDECLIDX(pad_i32,int32_t) DECLIDX(pad_i64,int64_t)\nDECLIDX(packed_i32,int32_t) DECLIDX(packed_i64,int64_t)\nDECLIDX(array_i32,int32_t) DECLIDX(array_i64,int64_t)\n#define CHECK(n,expected,...) do { void *a=plain_##n(__VA_ARGS__); void *b=protected_##n(__VA_ARGS__); void *e=(void*)(expected); if(a!=b || b!=e){fprintf(stderr,\"FAIL %s case=%u native=%p vm=%p expected=%p\\n\",#n,cases,a,b,e);return 1;}++cases;}while(0)\nint main(void) {\n struct Pad pads[17]; struct Packed packed[17]; struct Nested nested[17]; uint64_t words[17];\n unsigned cases=0;\n for(unsigned j=0;j<17;++j) {\n  CHECK(pad0,(unsigned char*)&pads[j]+0,&pads[j]);\n  CHECK(pad1,(unsigned char*)&pads[j]+8,&pads[j]);\n  CHECK(pad2,(unsigned char*)&pads[j]+16,&pads[j]);\n  CHECK(packed1,(unsigned char*)&packed[j]+1,&packed[j]);\n  CHECK(packed2,(unsigned char*)&packed[j]+9,&packed[j]);\n  CHECK(nested,(unsigned char*)&nested[j]+64,&nested[j]);\n }\n /* Every negative index stays within the owning 17-element allocation. The\n    array [0,index] IR deliberately has no inbounds promise on its source type. */\n for(int i=-8;i<=8;++i) {\n  CHECK(pad_i32,&pads[8+i],&pads[8],(int32_t)i);\n  CHECK(pad_i64,&pads[8+i],&pads[8],(int64_t)i);\n  CHECK(packed_i32,&packed[8+i],&packed[8],(int32_t)i);\n  CHECK(packed_i64,&packed[8+i],&packed[8],(int64_t)i);\n  CHECK(array_i32,&words[8+i],&words[8],(int32_t)i);\n  CHECK(array_i64,&words[8+i],&words[8],(int64_t)i);\n }\n printf(\"PASS cases=%u gep_constant_dynamic_known_offsets\\n\",cases);return 0;\n}\n",
+  "gep_specs": [
+    [
+      "pad0",
+      "",
+      "%Pad, ptr %p, i64 0, i32 0"
+    ],
+    [
+      "pad1",
+      "",
+      "%Pad, ptr %p, i64 0, i32 1"
+    ],
+    [
+      "pad2",
+      "",
+      "%Pad, ptr %p, i64 0, i32 2"
+    ],
+    [
+      "packed1",
+      "",
+      "%Packed, ptr %p, i64 0, i32 1"
+    ],
+    [
+      "packed2",
+      "",
+      "%Packed, ptr %p, i64 0, i32 2"
+    ],
+    [
+      "nested",
+      "",
+      "%Nested, ptr %p, i64 0, i32 1, i64 2, i32 1"
+    ],
+    [
+      "pad_i32",
+      ", i32 %i",
+      "%Pad, ptr %p, i32 %i"
+    ],
+    [
+      "pad_i64",
+      ", i64 %i",
+      "%Pad, ptr %p, i64 %i"
+    ],
+    [
+      "packed_i32",
+      ", i32 %i",
+      "%Packed, ptr %p, i32 %i"
+    ],
+    [
+      "packed_i64",
+      ", i64 %i",
+      "%Packed, ptr %p, i64 %i"
+    ],
+    [
+      "array_i32",
+      ", i32 %i",
+      "[17 x i64], ptr %p, i64 0, i32 %i"
+    ],
+    [
+      "array_i64",
+      ", i64 %i",
+      "[17 x i64], ptr %p, i64 0, i64 %i"
+    ]
+  ],
+  "known_offsets": {
+    "pad": [
+      0,
+      8,
+      16
+    ],
+    "packed": [
+      0,
+      1,
+      9
+    ],
+    "nested": 64
+  },
+  "dynamic_strides": {
+    "pad": 24,
+    "packed": 11,
+    "array": 8
+  },
+  "commands": [
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/clang",
+        "--version"
+      ],
+      "returncode": 0,
+      "stdout": "Homebrew clang version 22.1.8\nTarget: arm64-apple-darwin25.2.0\nThread model: posix\nInstalledDir: /opt/homebrew/Cellar/llvm@22/22.1.8/bin\nConfiguration file: /opt/homebrew/Cellar/llvm@22/22.1.8/etc/clang/arm64-apple-darwin25.cfg\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/opt",
+        "--version"
+      ],
+      "returncode": 0,
+      "stdout": "Homebrew LLVM version 22.1.8\n  Optimized build.\n  Default target: arm64-apple-darwin25.2.0\n  Host CPU: apple-m4\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/clang",
+        "-S",
+        "-emit-llvm",
+        "/private/tmp/cprisk-gep-v2-probe/layout-45x5gv4v/layout.c",
+        "-o",
+        "/private/tmp/cprisk-gep-v2-probe/layout-45x5gv4v/layout.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/opt",
+        "-passes=verify",
+        "-disable-output",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/before.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/clang",
+        "-O2",
+        "-c",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/plain.ll",
+        "-o",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/plain.o"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/opt",
+        "-load-pass-plugin=/tmp/cprisk-xollvm-gep-v2-build/cmake/Obfuscator.dylib",
+        "-passes=obfuscation",
+        "-obf-seed=1",
+        "-obf-deterministic",
+        "-obf-verify",
+        "-obf-verbose",
+        "-obf-report-dir=/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/pass-reports",
+        "-S",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/before.ll",
+        "-o",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/after.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "Found 1 annotation(s) for function protected_pad0\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=0)'\n  Total passes enabled: 1\n    - vm(randISA=0,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_pad1\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=0)'\n  Total passes enabled: 1\n    - vm(randISA=0,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_pad2\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=0)'\n  Total passes enabled: 1\n    - vm(randISA=0,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_packed1\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=0)'\n  Total passes enabled: 1\n    - vm(randISA=0,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_packed2\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=0)'\n  Total passes enabled: 1\n    - vm(randISA=0,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_nested\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=0)'\n  Total passes enabled: 1\n    - vm(randISA=0,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_pad_i32\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=0)'\n  Total passes enabled: 1\n    - vm(randISA=0,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_pad_i64\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=0)'\n  Total passes enabled: 1\n    - vm(randISA=0,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_packed_i32\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=0)'\n  Total passes enabled: 1\n    - vm(randISA=0,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_packed_i64\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=0)'\n  Total passes enabled: 1\n    - vm(randISA=0,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_array_i32\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=0)'\n  Total passes enabled: 1\n    - vm(randISA=0,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_array_i64\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=0)'\n  Total passes enabled: 1\n    - vm(randISA=0,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\n[budget] protected_pad0: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] variant-diversify: 5328 MBA rewrites, 0 icmp flips (3 variants)\n[vm] vm_engine populated: 9 handlers\n[vm] virtualised 'protected_pad0' [8B bytecode | 0vregs+1vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_pad0: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_pad1: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_pad1' [8B bytecode | 0vregs+1vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_pad1: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_pad2: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_pad2' [8B bytecode | 0vregs+1vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_pad2: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_packed1: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_packed1' [8B bytecode | 0vregs+1vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_packed1: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_packed2: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_packed2' [8B bytecode | 0vregs+1vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_packed2: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_nested: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_nested' [8B bytecode | 0vregs+1vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_nested: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_pad_i32: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_pad_i32' [8B bytecode | 1vregs+0vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_pad_i32: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_pad_i64: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_pad_i64' [8B bytecode | 0vregs+1vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_pad_i64: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_packed_i32: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_packed_i32' [8B bytecode | 1vregs+0vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_packed_i32: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_packed_i64: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_packed_i64' [8B bytecode | 0vregs+1vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_packed_i64: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_array_i32: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_array_i32' [8B bytecode | 1vregs+0vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_array_i32: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_array_i64: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_array_i64' [8B bytecode | 0vregs+1vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_array_i64: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n"
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/opt",
+        "-passes=verify",
+        "-disable-output",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/after.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/opt",
+        "-passes=default<O2>",
+        "-S",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/after.ll",
+        "-o",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/optimized.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/opt",
+        "-passes=verify",
+        "-disable-output",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/optimized.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/clang",
+        "-O0",
+        "-c",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/optimized.ll",
+        "-o",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/protected.o"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/clang",
+        "-std=c11",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-O2",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/differential.c",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/plain.o",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/protected.o",
+        "-o",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/differential"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/differential"
+      ],
+      "returncode": 0,
+      "stdout": "PASS cases=204 gep_constant_dynamic_known_offsets\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/opt",
+        "-load-pass-plugin=/tmp/cprisk-xollvm-gep-v2-build/cmake/Obfuscator.dylib",
+        "-passes=obfuscation",
+        "-obf-seed=1",
+        "-obf-deterministic",
+        "-obf-verify",
+        "-obf-verbose",
+        "-obf-report-dir=/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/reject-reports",
+        "-S",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/reject-before.ll",
+        "-o",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/reject-after.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "Found 1 annotation(s) for function protected_large_stride\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=0)'\n  Total passes enabled: 1\n    - vm(randISA=0,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\n[budget] protected_large_stride: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] fail 'protected_large_stride': unsupported instruction:   %q = getelementptr [65536 x i8], ptr %p, i64 %i\n[skip] protected_large_stride: vm: unsupported instruction:   %q = getelementptr [65536 x i8], ptr %p, i64 %i\n[budget] vm: 2 -> 2  [1% of budget]\n[budget] protected_large_stride: initial=2  limit=256  final=2  growth=0  util=0.8%\n  vm: SKIP (unsupported instruction:   %q = getelementptr [65536 x i8], ptr %p, i64 %i)  @2\n"
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/opt",
+        "-passes=verify",
+        "-disable-output",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/reject-after.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/opt",
+        "-passes=verify",
+        "-disable-output",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/before.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/clang",
+        "-O2",
+        "-c",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/plain.ll",
+        "-o",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/plain.o"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/opt",
+        "-load-pass-plugin=/tmp/cprisk-xollvm-gep-v2-build/cmake/Obfuscator.dylib",
+        "-passes=obfuscation",
+        "-obf-seed=1",
+        "-obf-deterministic",
+        "-obf-verify",
+        "-obf-verbose",
+        "-obf-report-dir=/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/pass-reports",
+        "-S",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/before.ll",
+        "-o",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/after.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "Found 1 annotation(s) for function protected_pad0\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=1)'\n  Total passes enabled: 1\n    - vm(randISA=1,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_pad1\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=1)'\n  Total passes enabled: 1\n    - vm(randISA=1,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_pad2\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=1)'\n  Total passes enabled: 1\n    - vm(randISA=1,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_packed1\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=1)'\n  Total passes enabled: 1\n    - vm(randISA=1,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_packed2\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=1)'\n  Total passes enabled: 1\n    - vm(randISA=1,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_nested\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=1)'\n  Total passes enabled: 1\n    - vm(randISA=1,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_pad_i32\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=1)'\n  Total passes enabled: 1\n    - vm(randISA=1,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_pad_i64\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=1)'\n  Total passes enabled: 1\n    - vm(randISA=1,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_packed_i32\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=1)'\n  Total passes enabled: 1\n    - vm(randISA=1,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_packed_i64\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=1)'\n  Total passes enabled: 1\n    - vm(randISA=1,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_array_i32\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=1)'\n  Total passes enabled: 1\n    - vm(randISA=1,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\nFound 1 annotation(s) for function protected_array_i64\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=1)'\n  Total passes enabled: 1\n    - vm(randISA=1,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\n[budget] protected_pad0: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] variant-diversify: 5328 MBA rewrites, 0 icmp flips (3 variants)\n[vm] vm_engine populated: 9 handlers\n[vm] virtualised 'protected_pad0' [8B bytecode | 0vregs+1vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_pad0: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_pad1: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_pad1' [8B bytecode | 0vregs+1vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_pad1: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_pad2: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_pad2' [8B bytecode | 0vregs+1vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_pad2: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_packed1: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_packed1' [8B bytecode | 0vregs+1vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_packed1: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_packed2: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_packed2' [8B bytecode | 0vregs+1vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_packed2: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_nested: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_nested' [8B bytecode | 0vregs+1vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_nested: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_pad_i32: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_pad_i32' [8B bytecode | 1vregs+0vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_pad_i32: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_pad_i64: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_pad_i64' [8B bytecode | 0vregs+1vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_pad_i64: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_packed_i32: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_packed_i32' [8B bytecode | 1vregs+0vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_packed_i32: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_packed_i64: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_packed_i64' [8B bytecode | 0vregs+1vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_packed_i64: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_array_i32: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_array_i32' [8B bytecode | 1vregs+0vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_array_i32: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_array_i64: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_array_i64' [8B bytecode | 0vregs+1vregs64+2pregs |obf-idx]\n[budget] vm: 2 -> 23 (+21)  [9% of budget]\n[budget] protected_array_i64: initial=2  limit=256  final=23  growth=21  util=9.0%\n  vm: 2 -> 23 (+21)  [9% of budget]\n"
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/opt",
+        "-passes=verify",
+        "-disable-output",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/after.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/opt",
+        "-passes=default<O2>",
+        "-S",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/after.ll",
+        "-o",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/optimized.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/opt",
+        "-passes=verify",
+        "-disable-output",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/optimized.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/clang",
+        "-O0",
+        "-c",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/optimized.ll",
+        "-o",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/protected.o"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/clang",
+        "-std=c11",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-O2",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/differential.c",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/plain.o",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/protected.o",
+        "-o",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/differential"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/differential"
+      ],
+      "returncode": 0,
+      "stdout": "PASS cases=204 gep_constant_dynamic_known_offsets\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/opt",
+        "-load-pass-plugin=/tmp/cprisk-xollvm-gep-v2-build/cmake/Obfuscator.dylib",
+        "-passes=obfuscation",
+        "-obf-seed=1",
+        "-obf-deterministic",
+        "-obf-verify",
+        "-obf-verbose",
+        "-obf-report-dir=/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/reject-reports",
+        "-S",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/reject-before.ll",
+        "-o",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/reject-after.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "Found 1 annotation(s) for function protected_large_stride\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0,randISA=1)'\n  Total passes enabled: 1\n    - vm(randISA=1,encBytecode=0,hardened=0,antiDebug=0,minBlocks=1)\n[budget] protected_large_stride: initial=2  limit=256  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] fail 'protected_large_stride': unsupported instruction:   %q = getelementptr [65536 x i8], ptr %p, i64 %i\n[skip] protected_large_stride: vm: unsupported instruction:   %q = getelementptr [65536 x i8], ptr %p, i64 %i\n[budget] vm: 2 -> 2  [1% of budget]\n[budget] protected_large_stride: initial=2  limit=256  final=2  growth=0  util=0.8%\n  vm: SKIP (unsupported instruction:   %q = getelementptr [65536 x i8], ptr %p, i64 %i)  @2\n"
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/llvm@22/bin/opt",
+        "-passes=verify",
+        "-disable-output",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/reject-after.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "configurations": [
+    {
+      "randISA": 0,
+      "build_directory": "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw",
+      "pass_evidence": {
+        "targets": [
+          "protected_pad0",
+          "protected_pad1",
+          "protected_pad2",
+          "protected_packed1",
+          "protected_packed2",
+          "protected_nested",
+          "protected_pad_i32",
+          "protected_pad_i64",
+          "protected_packed_i32",
+          "protected_packed_i64",
+          "protected_array_i32",
+          "protected_array_i64"
+        ],
+        "all_vm_passes_ran_and_changed": true
+      },
+      "ir_evidence": {
+        "protected_pad0": {
+          "bytecode_bytes": 8,
+          "before_sha256": "c0db04427f7b547541860ea18c11423903d0ea3245735b8d95878f4021600437",
+          "after_sha256": "3c9fbc82138ccd7b5a7cf76af01f41faa3e4b530e60137f58929acd505e3b0dc"
+        },
+        "protected_pad1": {
+          "bytecode_bytes": 8,
+          "before_sha256": "45ef12322fc5b59ba5d06f8ae17368c123fe20311dfb75aee28f7859057e223e",
+          "after_sha256": "3ddccf8a41523e5084a9a8853ed0175de5261db3572979ecd0b385096c2fd645"
+        },
+        "protected_pad2": {
+          "bytecode_bytes": 8,
+          "before_sha256": "2b2338b424e06ac34057180f830a2d9c80690d7a7baa18b91f51ff24c58ed234",
+          "after_sha256": "52ea391fc2fad0d1fa2ff4da53b3a92071b8b22c023c90ea47e04da9b900c829"
+        },
+        "protected_packed1": {
+          "bytecode_bytes": 8,
+          "before_sha256": "85118080ae57d701a6e269e11d770ba292a29a6fe1cf6ad3aaebdeeb22a6ce53",
+          "after_sha256": "a76ce5ceb2185c9472867f71d3a613aa0305817791ea8db9701fd841115498f2"
+        },
+        "protected_packed2": {
+          "bytecode_bytes": 8,
+          "before_sha256": "01b9cc7269cad7d69908aad5ad3407b623bb35311b24bb0e92a7fc62cea2dec7",
+          "after_sha256": "c2ad8f41665a12891ecba995bc100fbd34b46326665050c85c0398bdc23f3012"
+        },
+        "protected_nested": {
+          "bytecode_bytes": 8,
+          "before_sha256": "b268c751a9b07a98a5d59d9c3e8a7ec7b28f04f1916fbd309ae855338fe1ba8d",
+          "after_sha256": "67c954d0fab3c9ce10f7df14430dcf773fd72149f34214bbcebdb06aba8e5841"
+        },
+        "protected_pad_i32": {
+          "bytecode_bytes": 8,
+          "before_sha256": "44ac34f0af74a2b82f993847160c17b410c8d537769d75ada65e0e8b91efee0e",
+          "after_sha256": "637cd8142e27afc6d37cb9858d56af959c3f4dd533c9e8ddc2de6482994e1f12"
+        },
+        "protected_pad_i64": {
+          "bytecode_bytes": 8,
+          "before_sha256": "7b86109e047634b9fd4a4d5829ec0a78e94c99816b3a9958b515c4777bc4399c",
+          "after_sha256": "55138b2ec1318b24af55592f98b1695176e99ddbb4ff06e901abdf57f2095f7b"
+        },
+        "protected_packed_i32": {
+          "bytecode_bytes": 8,
+          "before_sha256": "155115be29dffb9b0103a62b9e4d2f1c4457e54a619c2b83e83b4f69bc24e440",
+          "after_sha256": "58c1e2a6221df7489be5c867c8904e93c3dac286f080457e0bebc1f0e45cf477"
+        },
+        "protected_packed_i64": {
+          "bytecode_bytes": 8,
+          "before_sha256": "508a63d8f595c46d414edc39472f10c6795cb0cb8036d9bd5195466eb4d7a0a6",
+          "after_sha256": "50f0211d3090ab48582e707dc906540fa44f0efdb5a490bde19cdc35d19fd2f0"
+        },
+        "protected_array_i32": {
+          "bytecode_bytes": 8,
+          "before_sha256": "28f74937dd09163d23f152ca25f6418d02f59be252e3df01599718809f1d4778",
+          "after_sha256": "665ad31927f47a3659fd68859b497f0b586ec3f65a6b82770771a20a6af20ad7"
+        },
+        "protected_array_i64": {
+          "bytecode_bytes": 8,
+          "before_sha256": "21609becf341d6805d0a18b08cdd9b0eead70c8f1efdfc068065516edc6be243",
+          "after_sha256": "c69851919a131a6e8d03f8b77e320c1d82b35cbabaa37609793c8fd8d2e5afd4"
+        }
+      },
+      "optimized_ir_evidence": {
+        "protected_pad0": {
+          "bytecode_bytes": 8,
+          "before_sha256": "c0db04427f7b547541860ea18c11423903d0ea3245735b8d95878f4021600437",
+          "after_sha256": "ec3c410c4a14297d54303039466f7e9023e137aa909fc1b9443e2fd169706fb1"
+        },
+        "protected_pad1": {
+          "bytecode_bytes": 8,
+          "before_sha256": "45ef12322fc5b59ba5d06f8ae17368c123fe20311dfb75aee28f7859057e223e",
+          "after_sha256": "86cfed55f609b51e2fce1ddc2b11f9f32a5b59afec5a7c78e927bcf028df0828"
+        },
+        "protected_pad2": {
+          "bytecode_bytes": 8,
+          "before_sha256": "2b2338b424e06ac34057180f830a2d9c80690d7a7baa18b91f51ff24c58ed234",
+          "after_sha256": "26cc6f4a673920a2dc03053c2a6ac11a14107c48728ca80426a70819dac61d5a"
+        },
+        "protected_packed1": {
+          "bytecode_bytes": 8,
+          "before_sha256": "85118080ae57d701a6e269e11d770ba292a29a6fe1cf6ad3aaebdeeb22a6ce53",
+          "after_sha256": "0c959879d022f7fd9c6dfcf6039d4847add35029b6a06e686b7f99fbfcd5fd39"
+        },
+        "protected_packed2": {
+          "bytecode_bytes": 8,
+          "before_sha256": "01b9cc7269cad7d69908aad5ad3407b623bb35311b24bb0e92a7fc62cea2dec7",
+          "after_sha256": "ff9b9c327ba5c3b888f96857c08d22fd5595451af2d061c3e6b5b308f37da12d"
+        },
+        "protected_nested": {
+          "bytecode_bytes": 8,
+          "before_sha256": "b268c751a9b07a98a5d59d9c3e8a7ec7b28f04f1916fbd309ae855338fe1ba8d",
+          "after_sha256": "49936a5d71d540b36871828c44b2bd0c3ac7beb87fda8466ed50d9c94e71b76f"
+        },
+        "protected_pad_i32": {
+          "bytecode_bytes": 8,
+          "before_sha256": "44ac34f0af74a2b82f993847160c17b410c8d537769d75ada65e0e8b91efee0e",
+          "after_sha256": "eede239f5cbf0abb0c573a0b42a0fb37f0cae07f816fb06def3a04970aeb9f1a"
+        },
+        "protected_pad_i64": {
+          "bytecode_bytes": 8,
+          "before_sha256": "7b86109e047634b9fd4a4d5829ec0a78e94c99816b3a9958b515c4777bc4399c",
+          "after_sha256": "aab0070e853b0dfd1ebe4be833a5a1ca2ecdbe7bb15f5d2f3d3f3c14486db781"
+        },
+        "protected_packed_i32": {
+          "bytecode_bytes": 8,
+          "before_sha256": "155115be29dffb9b0103a62b9e4d2f1c4457e54a619c2b83e83b4f69bc24e440",
+          "after_sha256": "081db94b789ec6559234fa19441d6d38bb15231249cdda891e85d5453f8cd72a"
+        },
+        "protected_packed_i64": {
+          "bytecode_bytes": 8,
+          "before_sha256": "508a63d8f595c46d414edc39472f10c6795cb0cb8036d9bd5195466eb4d7a0a6",
+          "after_sha256": "19a661b8502c82552bd192959f231e75c9bc3e07478505a223168a18607df5bd"
+        },
+        "protected_array_i32": {
+          "bytecode_bytes": 8,
+          "before_sha256": "28f74937dd09163d23f152ca25f6418d02f59be252e3df01599718809f1d4778",
+          "after_sha256": "daa8bedc1bccb654d424b7cacf3a8d0246b8b429dd86404049d8a07d3d8a7a94"
+        },
+        "protected_array_i64": {
+          "bytecode_bytes": 8,
+          "before_sha256": "21609becf341d6805d0a18b08cdd9b0eead70c8f1efdfc068065516edc6be243",
+          "after_sha256": "32c731300f21fa5842b571b3c3217a58dc9ed503305cad77bc7e85482738e52c"
+        }
+      },
+      "output": "PASS cases=204 gep_constant_dynamic_known_offsets\n",
+      "oversized_dynamic_stride": {
+        "target": "protected_large_stride",
+        "stride": 65536,
+        "unchanged": true,
+        "vm_artifacts_absent": true,
+        "pass_report": {
+          "artifacts": {
+            "cfg": {
+              "after_dot": "cfg/protected_large_stride/after.dot",
+              "before_dot": "cfg/protected_large_stride/before.dot",
+              "per_pass": [
+                {
+                  "after_dot": "cfg/protected_large_stride/pass_0_vm.dot",
+                  "diff_dot": "cfg/protected_large_stride/pass_0_vm.dot",
+                  "pass": "vm"
+                }
+              ]
+            }
+          },
+          "budget": {
+            "enabled": true,
+            "limit": 256,
+            "remaining": 254,
+            "utilization": 0.0078125
+          },
+          "declaration": false,
+          "difficulty": {
+            "callbrs": 0,
+            "cyclomatic_after": 1,
+            "cyclomatic_before": 1,
+            "cyclomatic_delta": 0,
+            "indirect_branches": 0,
+            "indirect_calls": 0,
+            "mba_avg_depth": 0,
+            "mba_max_depth": 0,
+            "mba_nodes": 0,
+            "opaque_per_100_insts": 0,
+            "opaque_predicates": 0,
+            "score": 0
+          },
+          "insts": {
+            "after": 2,
+            "before": 2
+          },
+          "name": "protected_large_stride",
+          "passes": [
+            {
+              "budget_util_after": 0.0078125,
+              "delta_insts": 0,
+              "id": "vm",
+              "insts_after": 2,
+              "insts_before": 2,
+              "seed": 0,
+              "skip_reason": "unsupported instruction:   %q = getelementptr [65536 x i8], ptr %p, i64 %i",
+              "status": "skipped"
+            }
+          ],
+          "seed": {
+            "base": 1,
+            "function": 2312097412283217591,
+            "module": 1
+          },
+          "skipped": false
+        }
+      },
+      "hashes": {
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/plain.ll": "3d8993c657b003fb1d9cc08765bf6ca1a5bd21c168d2e7c1a3d90a0388fc9997",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/differential.c": "a9e7ab0d7f5dab927c37b988423a39597d25b052e7e94e167389008134a5f929",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/before.ll": "f26ec2405e6bfdc73b26d4bba3e954fa4c8b9a8aa00a4dc50e02caff27f7d0d1",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/after.ll": "25607e09d67c0daf8771a51de75423f78b1b753dc44942790492bf759f8b046f",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/optimized.ll": "4748da7df3f54a40d6a045b7b9ae60de5b8c4a2e506d56facbe5af95ee8c1dc5",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/reject-before.ll": "4f75db4e928f3effdcfdefd1542bf85170954ba1e476c2f9493bd744a44cc37b",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/reject-after.ll": "a14ccaffae765e94d7e6b5a099aab65be46e08a83552e4cc41bccf0feb5dee83",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-0-k5oumwmw/differential": "30d6e9ff587a78c899383e9b3889fa3cce2813080171d069a77382df4b246760"
+      }
+    },
+    {
+      "randISA": 1,
+      "build_directory": "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv",
+      "pass_evidence": {
+        "targets": [
+          "protected_pad0",
+          "protected_pad1",
+          "protected_pad2",
+          "protected_packed1",
+          "protected_packed2",
+          "protected_nested",
+          "protected_pad_i32",
+          "protected_pad_i64",
+          "protected_packed_i32",
+          "protected_packed_i64",
+          "protected_array_i32",
+          "protected_array_i64"
+        ],
+        "all_vm_passes_ran_and_changed": true
+      },
+      "ir_evidence": {
+        "protected_pad0": {
+          "bytecode_bytes": 8,
+          "before_sha256": "c0db04427f7b547541860ea18c11423903d0ea3245735b8d95878f4021600437",
+          "after_sha256": "3c9fbc82138ccd7b5a7cf76af01f41faa3e4b530e60137f58929acd505e3b0dc"
+        },
+        "protected_pad1": {
+          "bytecode_bytes": 8,
+          "before_sha256": "45ef12322fc5b59ba5d06f8ae17368c123fe20311dfb75aee28f7859057e223e",
+          "after_sha256": "3ddccf8a41523e5084a9a8853ed0175de5261db3572979ecd0b385096c2fd645"
+        },
+        "protected_pad2": {
+          "bytecode_bytes": 8,
+          "before_sha256": "2b2338b424e06ac34057180f830a2d9c80690d7a7baa18b91f51ff24c58ed234",
+          "after_sha256": "52ea391fc2fad0d1fa2ff4da53b3a92071b8b22c023c90ea47e04da9b900c829"
+        },
+        "protected_packed1": {
+          "bytecode_bytes": 8,
+          "before_sha256": "85118080ae57d701a6e269e11d770ba292a29a6fe1cf6ad3aaebdeeb22a6ce53",
+          "after_sha256": "a76ce5ceb2185c9472867f71d3a613aa0305817791ea8db9701fd841115498f2"
+        },
+        "protected_packed2": {
+          "bytecode_bytes": 8,
+          "before_sha256": "01b9cc7269cad7d69908aad5ad3407b623bb35311b24bb0e92a7fc62cea2dec7",
+          "after_sha256": "c2ad8f41665a12891ecba995bc100fbd34b46326665050c85c0398bdc23f3012"
+        },
+        "protected_nested": {
+          "bytecode_bytes": 8,
+          "before_sha256": "b268c751a9b07a98a5d59d9c3e8a7ec7b28f04f1916fbd309ae855338fe1ba8d",
+          "after_sha256": "67c954d0fab3c9ce10f7df14430dcf773fd72149f34214bbcebdb06aba8e5841"
+        },
+        "protected_pad_i32": {
+          "bytecode_bytes": 8,
+          "before_sha256": "44ac34f0af74a2b82f993847160c17b410c8d537769d75ada65e0e8b91efee0e",
+          "after_sha256": "637cd8142e27afc6d37cb9858d56af959c3f4dd533c9e8ddc2de6482994e1f12"
+        },
+        "protected_pad_i64": {
+          "bytecode_bytes": 8,
+          "before_sha256": "7b86109e047634b9fd4a4d5829ec0a78e94c99816b3a9958b515c4777bc4399c",
+          "after_sha256": "55138b2ec1318b24af55592f98b1695176e99ddbb4ff06e901abdf57f2095f7b"
+        },
+        "protected_packed_i32": {
+          "bytecode_bytes": 8,
+          "before_sha256": "155115be29dffb9b0103a62b9e4d2f1c4457e54a619c2b83e83b4f69bc24e440",
+          "after_sha256": "58c1e2a6221df7489be5c867c8904e93c3dac286f080457e0bebc1f0e45cf477"
+        },
+        "protected_packed_i64": {
+          "bytecode_bytes": 8,
+          "before_sha256": "508a63d8f595c46d414edc39472f10c6795cb0cb8036d9bd5195466eb4d7a0a6",
+          "after_sha256": "50f0211d3090ab48582e707dc906540fa44f0efdb5a490bde19cdc35d19fd2f0"
+        },
+        "protected_array_i32": {
+          "bytecode_bytes": 8,
+          "before_sha256": "28f74937dd09163d23f152ca25f6418d02f59be252e3df01599718809f1d4778",
+          "after_sha256": "665ad31927f47a3659fd68859b497f0b586ec3f65a6b82770771a20a6af20ad7"
+        },
+        "protected_array_i64": {
+          "bytecode_bytes": 8,
+          "before_sha256": "21609becf341d6805d0a18b08cdd9b0eead70c8f1efdfc068065516edc6be243",
+          "after_sha256": "c69851919a131a6e8d03f8b77e320c1d82b35cbabaa37609793c8fd8d2e5afd4"
+        }
+      },
+      "optimized_ir_evidence": {
+        "protected_pad0": {
+          "bytecode_bytes": 8,
+          "before_sha256": "c0db04427f7b547541860ea18c11423903d0ea3245735b8d95878f4021600437",
+          "after_sha256": "ec3c410c4a14297d54303039466f7e9023e137aa909fc1b9443e2fd169706fb1"
+        },
+        "protected_pad1": {
+          "bytecode_bytes": 8,
+          "before_sha256": "45ef12322fc5b59ba5d06f8ae17368c123fe20311dfb75aee28f7859057e223e",
+          "after_sha256": "86cfed55f609b51e2fce1ddc2b11f9f32a5b59afec5a7c78e927bcf028df0828"
+        },
+        "protected_pad2": {
+          "bytecode_bytes": 8,
+          "before_sha256": "2b2338b424e06ac34057180f830a2d9c80690d7a7baa18b91f51ff24c58ed234",
+          "after_sha256": "26cc6f4a673920a2dc03053c2a6ac11a14107c48728ca80426a70819dac61d5a"
+        },
+        "protected_packed1": {
+          "bytecode_bytes": 8,
+          "before_sha256": "85118080ae57d701a6e269e11d770ba292a29a6fe1cf6ad3aaebdeeb22a6ce53",
+          "after_sha256": "0c959879d022f7fd9c6dfcf6039d4847add35029b6a06e686b7f99fbfcd5fd39"
+        },
+        "protected_packed2": {
+          "bytecode_bytes": 8,
+          "before_sha256": "01b9cc7269cad7d69908aad5ad3407b623bb35311b24bb0e92a7fc62cea2dec7",
+          "after_sha256": "ff9b9c327ba5c3b888f96857c08d22fd5595451af2d061c3e6b5b308f37da12d"
+        },
+        "protected_nested": {
+          "bytecode_bytes": 8,
+          "before_sha256": "b268c751a9b07a98a5d59d9c3e8a7ec7b28f04f1916fbd309ae855338fe1ba8d",
+          "after_sha256": "49936a5d71d540b36871828c44b2bd0c3ac7beb87fda8466ed50d9c94e71b76f"
+        },
+        "protected_pad_i32": {
+          "bytecode_bytes": 8,
+          "before_sha256": "44ac34f0af74a2b82f993847160c17b410c8d537769d75ada65e0e8b91efee0e",
+          "after_sha256": "eede239f5cbf0abb0c573a0b42a0fb37f0cae07f816fb06def3a04970aeb9f1a"
+        },
+        "protected_pad_i64": {
+          "bytecode_bytes": 8,
+          "before_sha256": "7b86109e047634b9fd4a4d5829ec0a78e94c99816b3a9958b515c4777bc4399c",
+          "after_sha256": "aab0070e853b0dfd1ebe4be833a5a1ca2ecdbe7bb15f5d2f3d3f3c14486db781"
+        },
+        "protected_packed_i32": {
+          "bytecode_bytes": 8,
+          "before_sha256": "155115be29dffb9b0103a62b9e4d2f1c4457e54a619c2b83e83b4f69bc24e440",
+          "after_sha256": "081db94b789ec6559234fa19441d6d38bb15231249cdda891e85d5453f8cd72a"
+        },
+        "protected_packed_i64": {
+          "bytecode_bytes": 8,
+          "before_sha256": "508a63d8f595c46d414edc39472f10c6795cb0cb8036d9bd5195466eb4d7a0a6",
+          "after_sha256": "19a661b8502c82552bd192959f231e75c9bc3e07478505a223168a18607df5bd"
+        },
+        "protected_array_i32": {
+          "bytecode_bytes": 8,
+          "before_sha256": "28f74937dd09163d23f152ca25f6418d02f59be252e3df01599718809f1d4778",
+          "after_sha256": "daa8bedc1bccb654d424b7cacf3a8d0246b8b429dd86404049d8a07d3d8a7a94"
+        },
+        "protected_array_i64": {
+          "bytecode_bytes": 8,
+          "before_sha256": "21609becf341d6805d0a18b08cdd9b0eead70c8f1efdfc068065516edc6be243",
+          "after_sha256": "32c731300f21fa5842b571b3c3217a58dc9ed503305cad77bc7e85482738e52c"
+        }
+      },
+      "output": "PASS cases=204 gep_constant_dynamic_known_offsets\n",
+      "oversized_dynamic_stride": {
+        "target": "protected_large_stride",
+        "stride": 65536,
+        "unchanged": true,
+        "vm_artifacts_absent": true,
+        "pass_report": {
+          "artifacts": {
+            "cfg": {
+              "after_dot": "cfg/protected_large_stride/after.dot",
+              "before_dot": "cfg/protected_large_stride/before.dot",
+              "per_pass": [
+                {
+                  "after_dot": "cfg/protected_large_stride/pass_0_vm.dot",
+                  "diff_dot": "cfg/protected_large_stride/pass_0_vm.dot",
+                  "pass": "vm"
+                }
+              ]
+            }
+          },
+          "budget": {
+            "enabled": true,
+            "limit": 256,
+            "remaining": 254,
+            "utilization": 0.0078125
+          },
+          "declaration": false,
+          "difficulty": {
+            "callbrs": 0,
+            "cyclomatic_after": 1,
+            "cyclomatic_before": 1,
+            "cyclomatic_delta": 0,
+            "indirect_branches": 0,
+            "indirect_calls": 0,
+            "mba_avg_depth": 0,
+            "mba_max_depth": 0,
+            "mba_nodes": 0,
+            "opaque_per_100_insts": 0,
+            "opaque_predicates": 0,
+            "score": 0
+          },
+          "insts": {
+            "after": 2,
+            "before": 2
+          },
+          "name": "protected_large_stride",
+          "passes": [
+            {
+              "budget_util_after": 0.0078125,
+              "delta_insts": 0,
+              "id": "vm",
+              "insts_after": 2,
+              "insts_before": 2,
+              "seed": 0,
+              "skip_reason": "unsupported instruction:   %q = getelementptr [65536 x i8], ptr %p, i64 %i",
+              "status": "skipped"
+            }
+          ],
+          "seed": {
+            "base": 1,
+            "function": 2312097412283217591,
+            "module": 1
+          },
+          "skipped": false
+        }
+      },
+      "hashes": {
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/plain.ll": "3d8993c657b003fb1d9cc08765bf6ca1a5bd21c168d2e7c1a3d90a0388fc9997",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/differential.c": "a9e7ab0d7f5dab927c37b988423a39597d25b052e7e94e167389008134a5f929",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/before.ll": "85486e9015f1c3497bacd20a1850fa98fd457b5fb079cfb86bc90b6dc1f4cb6a",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/after.ll": "4d700cebc4c2e029996f3d0ae968e90305d7b23ecc7148ad8e042aacb7030126",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/optimized.ll": "24ac456e19aab61434f6a6cbeb86ff41015b5f6304d0e121c567c02b1839e8fe",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/reject-before.ll": "372c89af5327a4f6246173226983305f93f9289c92fb37859db9519e70ded66a",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/reject-after.ll": "4544dc90a5f831c880f73d6c3171aa67a8b6ec2012c62ceb8ce51720dce7bf1c",
+        "/private/tmp/cprisk-gep-v2-probe/randisa-1-hw10iewv/differential": "4d383168ae7b0edd1a5cfc0ff2202f6a0e4445493538629f10dc2744b35d7cb7"
+      }
+    }
+  ],
+  "plugin_provenance": {
+    "schema_version": 2,
+    "status": "built",
+    "xollvm_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+    "plugin_path": "/private/tmp/cprisk-xollvm-gep-v2-build/cmake/Obfuscator.dylib",
+    "plugin_sha256": "a07f243b2a1fe20f0f8fcc2a1606f9d4357420611337032552cc02b4281dd3fe",
+    "llvm_version": "22.1.8",
+    "tool_versions": {
+      "clang": "Homebrew clang version 22.1.8\nTarget: arm64-apple-darwin25.2.0\nThread model: posix\nInstalledDir: /opt/homebrew/Cellar/llvm@22/22.1.8/bin\nConfiguration file: /opt/homebrew/Cellar/llvm@22/22.1.8/etc/clang/arm64-apple-darwin25.cfg",
+      "clang++": "Homebrew clang version 22.1.8\nTarget: arm64-apple-darwin25.2.0\nThread model: posix\nInstalledDir: /opt/homebrew/Cellar/llvm@22/22.1.8/bin\nConfiguration file: /opt/homebrew/Cellar/llvm@22/22.1.8/etc/clang/arm64-apple-darwin25.cfg",
+      "opt": "Homebrew LLVM version 22.1.8\n  Optimized build.\n  Default target: arm64-apple-darwin25.2.0\n  Host CPU: apple-m4",
+      "llvm-config": "22.1.8"
+    },
+    "commands": [
+      [
+        "cmake",
+        "-S",
+        "/private/tmp/cprisk-xollvm-gep-v2-build/patched-source",
+        "-B",
+        "/private/tmp/cprisk-xollvm-gep-v2-build/cmake",
+        "-DLLVM_DIR=/opt/homebrew/Cellar/llvm@22/22.1.8/lib/cmake/llvm",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_C_COMPILER=/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang",
+        "-DCMAKE_CXX_COMPILER=/opt/homebrew/Cellar/llvm@22/22.1.8/bin/clang++"
+      ],
+      [
+        "cmake",
+        "--build",
+        "/private/tmp/cprisk-xollvm-gep-v2-build/cmake",
+        "--target",
+        "Obfuscator",
+        "--parallel",
+        "3"
+      ]
+    ],
+    "license": "Apache-2.0 WITH LLVM-exception",
+    "limitations": [
+      "Local provenance only; not a signed attestation",
+      "Build success does not validate virtualization or iOS compatibility"
+    ],
+    "local_patch_set": {
+      "schema_version": 1,
+      "id": "pointer-gep-v2",
+      "xollvm_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+      "patch_file": "pointer-gep-v2.patch",
+      "patch_sha256": "3bf254367cf27116d9c495da21d79d5d47bd38036ee757c158968962a414b5a6",
+      "files": {
+        "VMPass_Emitter.cpp": {
+          "before_sha256": "70c1d037b134753fcdf3ba9e77d5843c61e6aa8534be0b11a126fa3d8fcaa9e8",
+          "after_sha256": "206af82042872e7680bdc3d6e9e1f256d8c60d69407e1b42f6e6189c6d387f76"
+        },
+        "VMPass_Handlers.cpp": {
+          "before_sha256": "f6de216ec9095661d163650a590c684cca73c13114c1f481f502f9038bd9f9cc",
+          "after_sha256": "aa9990110e44db4275c626385c3ada87ef65cb1d21ccf15344553acd59501b5c"
+        },
+        "VMPass_Verifier.cpp": {
+          "before_sha256": "1e1920edfa187ddc58580ec50370fd4edce8e5635c5306bcd9f91491a7da4044",
+          "after_sha256": "28771c76da9f6e16594037f3c30d2bce3172bc455ffd1b3f441dcc09726373f0"
+        },
+        "include/llvm/Transforms/Obfuscator/VMPass_ISA.h": {
+          "before_sha256": "c9fc636187a5c970ea2ebf49c28ecdb3f716a20073d7b5be09a237f11538c37b",
+          "after_sha256": "43f00303b225bac53e772a9ef71c4997283e32b784a33b7f55a64310e3b88b46"
+        }
+      },
+      "capabilities": {
+        "pointer_comparison": {
+          "predicates": [
+            "eq",
+            "ne"
+          ],
+          "address_spaces": [
+            0
+          ],
+          "null_supported": true,
+          "operand_storage": "native pointer registers",
+          "encoding": "OP_ICMP_PTR=0x38; kind byte 0=eq, 1=ne; not a RandISA predicate byte"
+        },
+        "validation_scope": "local host experiments; hardened=0 antiDebug=0 encBytecode=0",
+        "unsupported": [
+          "ordered pointer predicates",
+          "nonzero pointer address spaces",
+          "production integration and device execution not validated"
+        ],
+        "isa_compatibility": "OP_COUNT increases from 0x38 to 0x39 and decoy base moves; patched and upstream plugin/bytecode must not be mixed",
+        "gep": {
+          "constant_indices": "target DataLayout byte offset, including struct padding and nested aggregates",
+          "dynamic_indices": "one i32/i64 index, or array [0,index], using allocation size",
+          "address_spaces": [
+            0
+          ],
+          "pointer_and_index_bits": 64,
+          "max_dynamic_stride": 65535,
+          "oversized_dynamic_stride": "rejected; never saturated",
+          "unsupported": [
+            "dynamic multi-index GEP except array [0,index]",
+            "scalable types",
+            "nonzero address spaces",
+            "non-64-bit pointer/index layouts"
+          ]
+        }
+      }
+    },
+    "patched_source": "/private/tmp/cprisk-xollvm-gep-v2-build/patched-source",
+    "patched_source_tree_sha256": "441d48c11eca97c3fde786374f9084a466924a226167538c9a7adf56dfc514b1"
+  },
+  "target_header": "target datalayout = \"e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32\"\ntarget triple = \"arm64-apple-macosx26.0.0\""
+}

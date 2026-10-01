@@ -1,0 +1,99 @@
+--- a/VMPass_Emitter.cpp
++++ b/VMPass_Emitter.cpp
+@@ -97,6 +97,12 @@
+ 		Type* T1 = CI->getOperand(1)->getType();
+ 		if (T0->isIntegerTy(32) && T1->isIntegerTy(32)) return 5;
+ 		if (T0->isIntegerTy(64) && T1->isIntegerTy(64)) return 5;
++		// CPRisk local patch: pointer equality stays in the pointer register file.
++		// Other address spaces and ordered pointer predicates remain unsupported.
++		if (T0 == T1 && T0->isPointerTy() &&
++			cast<PointerType>(T0)->getAddressSpace() == 0 &&
++			(CI->getPredicate() == CmpInst::ICMP_EQ ||
++			 CI->getPredicate() == CmpInst::ICMP_NE)) return 5;
+ 		markUnsupported(I); return 0;
+ 	}
+ 
+@@ -621,6 +627,18 @@
+ 		Type* T0 = CI->getOperand(0)->getType();
+ 		Type* T1 = CI->getOperand(1)->getType();
+ 
++		if (T0 == T1 && T0->isPointerTy() &&
++			cast<PointerType>(T0)->getAddressSpace() == 0 &&
++			(CI->getPredicate() == CmpInst::ICMP_EQ ||
++			 CI->getPredicate() == CmpInst::ICMP_NE)) {
++			bop(OP_ICMP_PTR);
++			b8(xorSalt(newVR(I)));
++			b8(xorSalt(pr(CI->getOperand(0))));
++			b8(xorSalt(pr(CI->getOperand(1))));
++			// Dedicated kind byte (0=eq, 1=ne), not the RandISA predicate domain.
++			b8(CI->getPredicate() == CmpInst::ICMP_NE ? 1 : 0);
++			return;
++		}
+ 		if (T0->isIntegerTy(32) && T1->isIntegerTy(32)) {
+ 			bop(OP_ICMP);
+ 			b8(xorSalt(newVR(I)));
+--- a/VMPass_Handlers.cpp
++++ b/VMPass_Handlers.cpp
+@@ -341,6 +341,21 @@
+ 
+ 
+ 
++	// OP_ICMP_PTR -- [dst:u8 ap:u8 bp:u8 kind:u8], AS0 native equality.
++	// kind is independent of RandISA's integer predicate permutation.
++	{
++		auto B = mkOpc(OP_ICMP_PTR, "icmp_ptr");
++		Value* IP = advIP(B, 4);
++		Value* Dst = rdVR(B, IP, 0, "vm.icp.d");
++		Value* AV = ldPR(B, rdPR(B, IP, 1, "vm.icp.a"));
++		Value* BV = ldPR(B, rdPR(B, IP, 2, "vm.icp.b"));
++		Value* Kind = rdByte(B, IP, 3, "vm.icp.k");
++		Value* R = B.CreateSelect(B.CreateICmpEQ(Kind, B.getInt32(1)),
++			B.CreateICmpNE(AV, BV), B.CreateICmpEQ(AV, BV), "vm.icp.c");
++		stVR(B, Dst, B.CreateZExt(R, I32Ty, "vm.icp.r"));
++		nextInsn(B);
++	}
++
+ 	//  OP_ICMP64 -- [dst:u8 a:u8 b:u8 pred:u8] 
+ 	{
+ 		auto B = mkOpc(OP_ICMP64, "icmp64");
+--- a/VMPass_Verifier.cpp
++++ b/VMPass_Verifier.cpp
+@@ -209,6 +209,14 @@
+ 				if (!chk(IP, "vreg", decIdx(BC[IP + 3]), E.NVR)) return false;
+ 				IP += 5; break;
+ 			}
++			case OP_ICMP_PTR: {
++				if (IP + 5 > BC.size()) return fail(IP, "OP_ICMP_PTR truncated");
++				if (!chk(IP, "vreg", decIdx(BC[IP + 1]), E.NVR)) return false;
++				if (!chk(IP, "preg", decIdx(BC[IP + 2]), E.NPR)) return false;
++				if (!chk(IP, "preg", decIdx(BC[IP + 3]), E.NPR)) return false;
++				if (BC[IP + 4] > 1) return fail(IP, "OP_ICMP_PTR invalid kind");
++				IP += 5; break;
++			}
+ 			case OP_ICMP64: {
+ 				if (IP + 5 > BC.size()) return fail(IP, "OP_ICMP64 truncated");
+ 				if (!chk(IP, "vreg", decIdx(BC[IP + 1]), E.NVR)) return false;
+--- a/include/llvm/Transforms/Obfuscator/VMPass_ISA.h
++++ b/include/llvm/Transforms/Obfuscator/VMPass_ISA.h
+@@ -128,7 +128,9 @@
+ 		// a lone `and` nor the bit-test compare. pred byte is EQ or NE only.
+ 		OP_ANDCMPZ = 0x37,  // dst:u8 a:u8 b:u8 pred:u8  (5 bytes) -- dst = ((a&b) <eq|ne> 0) (i32 0/1)
+ 
+-		OP_COUNT = 0x38
++		// CPRisk pointer equality: native ptr comparison, AS0 only.
++		OP_ICMP_PTR = 0x38, // dst:u8 ap:u8 bp:u8 kind:u8 (0=eq, 1=ne)
++		OP_COUNT = 0x39
+ 	};
+ 
+ 	// Max handler-body variants per opcode in the shared __vm_engine.
+@@ -143,8 +145,8 @@
+ 	// M4 hooks them behind opaque-false guards). Count driven by
+ 	// VMPassConfig.handlerDecoys (0 = off = zero decoys registered).
+ 	static constexpr unsigned kMaxDecoys      = 32;
+-	static constexpr uint8_t  OP_DECOY_BASE   = 0x38;  // == OP_COUNT
+-	static constexpr unsigned OP_COUNT_TOTAL  = (unsigned)OP_DECOY_BASE + kMaxDecoys;  // 0x58
++	static constexpr uint8_t  OP_DECOY_BASE   = 0x39;  // == OP_COUNT
++	static constexpr unsigned OP_COUNT_TOTAL  = (unsigned)OP_DECOY_BASE + kMaxDecoys;  // 0x59
+ 	static_assert((unsigned)OP_DECOY_BASE == (unsigned)OP_COUNT, "OP_DECOY_BASE must sit immediately after real opcodes");
+ 
+ 	// ============================================================================

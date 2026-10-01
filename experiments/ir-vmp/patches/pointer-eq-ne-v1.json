@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "id": "pointer-eq-ne-v1",
+  "xollvm_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+  "patch_file": "pointer-eq-ne-v1.patch",
+  "patch_sha256": "e2cb624a5cea10bde73073bdc9271beb55494762437422cc7fc2e02cd1582f20",
+  "files": {
+    "VMPass_Emitter.cpp": {
+      "before_sha256": "70c1d037b134753fcdf3ba9e77d5843c61e6aa8534be0b11a126fa3d8fcaa9e8",
+      "after_sha256": "7f7e4afb31281e50acbf48912b9cd0a5de96ebab22c4927782eb870191382f2e"
+    },
+    "VMPass_Handlers.cpp": {
+      "before_sha256": "f6de216ec9095661d163650a590c684cca73c13114c1f481f502f9038bd9f9cc",
+      "after_sha256": "aa9990110e44db4275c626385c3ada87ef65cb1d21ccf15344553acd59501b5c"
+    },
+    "VMPass_Verifier.cpp": {
+      "before_sha256": "1e1920edfa187ddc58580ec50370fd4edce8e5635c5306bcd9f91491a7da4044",
+      "after_sha256": "28771c76da9f6e16594037f3c30d2bce3172bc455ffd1b3f441dcc09726373f0"
+    },
+    "include/llvm/Transforms/Obfuscator/VMPass_ISA.h": {
+      "before_sha256": "c9fc636187a5c970ea2ebf49c28ecdb3f716a20073d7b5be09a237f11538c37b",
+      "after_sha256": "43f00303b225bac53e772a9ef71c4997283e32b784a33b7f55a64310e3b88b46"
+    }
+  },
+  "capabilities": {
+    "pointer_comparison": {
+      "predicates": [
+        "eq",
+        "ne"
+      ],
+      "address_spaces": [
+        0
+      ],
+      "null_supported": true,
+      "operand_storage": "native pointer registers",
+      "encoding": "OP_ICMP_PTR=0x38; kind byte 0=eq, 1=ne; not a RandISA predicate byte"
+    },
+    "validation_scope": "local host experiments; hardened=0 antiDebug=0 encBytecode=0",
+    "unsupported": [
+      "ordered pointer predicates",
+      "nonzero pointer address spaces",
+      "production integration and device execution not validated"
+    ],
+    "isa_compatibility": "OP_COUNT increases from 0x38 to 0x39 and decoy base moves; patched and upstream plugin/bytecode must not be mixed"
+  }
+}

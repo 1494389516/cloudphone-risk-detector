@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from build_plugin import patch_manifest
 
 HERE = Path(__file__).resolve().parent
 STACK_TARGETS = tuple("protected_" + s for s in (
@@ -141,6 +142,16 @@ def check_provenance(path, plugin, version):
     if (data.get("xollvm_commit") != PINNED_COMMIT or data.get("plugin_sha256") != sha256(plugin)
             or data.get("llvm_version") != version or data.get("status") != "built"):
         raise GateError("Plugin provenance commit/hash mismatch")
+    patch = data.get("local_patch_set")
+    if patch is not None:
+        tree_hash = data.get("patched_source_tree_sha256")
+        if (not isinstance(patch, dict) or data.get("schema_version") != 2
+                or not isinstance(tree_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", tree_hash)):
+            raise GateError("Invalid local patch provenance")
+        if patch != patch_manifest(patch.get("id")):
+            raise GateError("Local patch provenance does not match reviewed manifest")
+    elif data.get("schema_version") != 1:
+        raise GateError("Unsupported unpatched provenance schema")
     return data
 
 
@@ -215,25 +226,31 @@ def execute(args):
             run(common + ["-DCPRISK_VMP_PREFIX=protected_", "-c", candidate, "-o", protected])
         else:
             before, after = build / "before.ll", build / "after.ll"
+            emitted = build / "emitted.ll" if args.lower_constant_intrinsics else before
             run([cc, "-std=c11", "-O0", "-Xclang", "-disable-O0-optnone", "-Wall", "-Wextra", "-Werror",
                           "-DCPRISK_VMP_PREFIX=protected_", "-DCPRISK_VMP_PROTECTED=1",
-                          "-S", "-emit-llvm", candidate, "-o", before])
+                          "-S", "-emit-llvm", candidate, "-o", emitted])
+            report["hashes"][str(emitted)] = sha256(emitted)
+            if args.lower_constant_intrinsics:
+                run([opt, "-passes=lower-constant-intrinsics", "-S", emitted, "-o", before])
+                run([opt, "-passes=verify", "-disable-output", before])
+                report["preprocessing"] = "LLVM lower-constant-intrinsics; not VM objectsize support"
+            report["hashes"][str(before)] = sha256(before)
             pass_reports = build / "pass-reports"
             pass_reports.mkdir()
             run([opt, "-load-pass-plugin=" + plugin, "-passes=obfuscation",
                  "-obf-seed=1", "-obf-deterministic", "-obf-verify", "-obf-verbose",
                  "-obf-report-dir=" + str(pass_reports), "-S", before, "-o", after])
+            report["hashes"][str(after)] = sha256(after)
             run([opt, "-passes=verify", "-disable-output", after])
             report["pass_evidence"] = inspect_pass_reports(pass_reports, targets)
             report["ir_evidence"] = inspect_ir(before.read_text(), after.read_text(), targets)
-            report["hashes"][str(before)] = sha256(before)
-            report["hashes"][str(after)] = sha256(after)
             optimized = build / "optimized.ll"
             run([opt, "-passes=default<O2>", "-S", after, "-o", optimized])
+            report["hashes"][str(optimized)] = sha256(optimized)
             run([opt, "-passes=verify", "-disable-output", optimized])
             report["optimized_ir_evidence"] = inspect_ir(
                 before.read_text(), optimized.read_text(), targets, require_entry=False)
-            report["hashes"][str(optimized)] = sha256(optimized)
             # Do not run another optimizer after examining the final IR.
             run([cc, "-O0", "-c", optimized, "-o", protected])
         executable = build / "differential"
@@ -272,6 +289,8 @@ def main():
     parser.add_argument("--plugin-provenance")
     parser.add_argument("--suite", choices=("gf2", "stack"), default="gf2")
     parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--lower-constant-intrinsics", action="store_true",
+                        help="explicit LLVM lowering before VM (e.g. Darwin objectsize intrinsic)")
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
