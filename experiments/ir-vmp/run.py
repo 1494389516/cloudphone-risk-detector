@@ -52,6 +52,43 @@ def function_body(ir, name):
     return match.group(1)
 
 
+def inspect_engine_call(instructions, handlers, name):
+    """Check the pinned, unhardened wrapper's actual engine call and inputs.
+
+    This deliberately accepts only the observed raw indirect call or optimized
+    direct call. New upstream wrapper shapes need review, not a loose fallback.
+    It is a structural gate, not a general LLVM data-flow/equivalence proof.
+    """
+    bytecode_ref = "@" + re.escape(name) + r"\.vm\.bytecode(?=[\s,)]|$)"
+    handlers_ref = "@" + re.escape(name) + r"\.vm\.ophandlers(?=[\s,)]|$)"
+    if not re.search(r"ptr @__vm_engine(?=[\s,\]])", handlers):
+        raise GateError("Handler table does not reference VM engine: " + name)
+    calls = re.findall(r"^\s*(?:tail )?call void ([%@][\w.]+)\(([^\n]*)\)",
+                       instructions, re.M)
+    for callee, arguments in calls:
+        if not re.search(bytecode_ref, arguments) or not re.search(handlers_ref, arguments):
+            continue
+        if callee == "@__vm_engine":
+            return
+        if callee.startswith("%"):
+            # The fixed upstream wrapper loads the engine from its own table.
+            load = re.search(r"^\s*" + re.escape(callee)
+                             + r" = load ptr, ptr getelementptr \(ptr, ptr "
+                             + handlers_ref + r", i32 ([0-9]+)\),", instructions, re.M)
+            if load:
+                slots = re.search(r"constant \[([0-9]+) x ptr\] \[(.*)\]", handlers)
+                if slots:
+                    index = int(load.group(1))
+                    # Handler blockaddress expressions themselves contain commas.
+                    # The pinned emitter uses ptr entries, with scalar constants
+                    # after the engine slot as well as blockaddresses before it.
+                    entries = re.split(r",\s*(?=ptr\b)", slots.group(2))
+                    if (len(entries) == int(slots.group(1)) and index < len(entries)
+                            and entries[index].strip() == "ptr @__vm_engine"):
+                        return
+    raise GateError("No connected VM engine call with target bytecode and handlers: " + name)
+
+
 def inspect_ir(before, after, targets=GF2_TARGETS, require_entry=True):
     """Require exact per-target raw xollvm IR evidence before optimization."""
     engine = re.sub(r";[^\n]*", "", function_body(after, "__vm_engine"))
@@ -63,10 +100,11 @@ def inspect_ir(before, after, targets=GF2_TARGETS, require_entry=True):
         if old == new:
             raise GateError("Target silently unchanged: " + name)
         bytecode = re.search(r"^@" + re.escape(name) + r"\.vm\.bytecode\s*=.*?private (?:unnamed_addr )?constant \[([1-9][0-9]*) x i8\]", after, re.M)
-        handlers = re.search(r"^@" + re.escape(name) + r"\.vm\.ophandlers\s*=", after, re.M)
+        handlers = re.search(r"^@" + re.escape(name) + r"\.vm\.ophandlers\s*=[^\n]*", after, re.M)
         instructions = re.sub(r";[^\n]*", "", new)
         if not bytecode or not handlers or (require_entry and "vm.entry" not in instructions) or "@" + name + ".vm.bytecode" not in instructions or "@" + name + ".vm.ophandlers" not in instructions or not re.search(r"\bcall\b", instructions):
             raise GateError("Incomplete VM execution evidence in target: " + name)
+        inspect_engine_call(instructions, re.sub(r";[^\n]*", "", handlers.group(0)), name)
         evidence[name] = {"bytecode_bytes": int(bytecode.group(1)),
                           "before_sha256": hashlib.sha256(old.encode()).hexdigest(),
                           "after_sha256": hashlib.sha256(new.encode()).hexdigest()}
