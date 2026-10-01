@@ -1,0 +1,11 @@
+{
+  "commit": "53a6b1c9c555ba35423b2557caee450b2f234181",
+  "source": "RiskDetectorApp/Sources/CRiskCore/cprisk_gf2_affine.c",
+  "source_sha256": "1b91b0bcf58d0916bb42aa01ad46391f52a927bb0875e6b2590a8aad306a403d",
+  "extracted_sha256": "e517ce1c4be48f6ee8146fdbc34a6969dcaa1c4f68b0f669e6c0ff64b84ac481",
+  "functions": [
+    "cprisk_gf2_xorshift64",
+    "cprisk_gf2_fnv1a"
+  ],
+  "source_git_blob": "8008ae4241418c1fd5862661234489f014b4aadd"
+}

@@ -1,0 +1,34 @@
+name: IR VMP experiment baseline (not VMP validation)
+
+on:
+  pull_request:
+    paths:
+      - 'experiments/ir-vmp/**'
+      - 'RiskDetectorApp/Sources/CRiskCore/cprisk_gf2_affine.c'
+      - 'RiskDetectorApp/Sources/CRiskCore/vm_stack_crypto.*'
+      - 'RiskDetectorApp/Sources/CRiskCore/include/cprisk_secure_zero.h'
+      - '.github/workflows/ir-vmp-experiment.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+        suite: [gf2, stack]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run unprotected differential baseline
+        run: python3 experiments/ir-vmp/run.py --mode baseline-only --suite ${{ matrix.suite }} --cc cc --output /tmp/ir-vmp-baseline
+      - name: Upload baseline evidence (does not validate VMP)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ir-vmp-baseline-${{ matrix.os }}-${{ matrix.suite }}
+          path: /tmp/ir-vmp-baseline/report.json
+          if-no-files-found: warn
