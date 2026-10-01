@@ -75,15 +75,16 @@
       debugDocumentVersioning = "YES"
       debugServiceExtension = "internal"
       allowLocationSimulation = "YES">
-      <MacroExpansion>
+      <BuildableProductRunnable
+         runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "ADF1B136890DE640C9F5C27B"
-            BuildableName = "libCRiskCore.a"
-            BlueprintName = "CRiskCore"
+            BlueprintIdentifier = "0A929522C0809190966ED02B"
+            BuildableName = "RiskDetectorApp.app"
+            BlueprintName = "RiskDetectorApp"
             ReferencedContainer = "container:RiskDetectorApp.xcodeproj">
          </BuildableReference>
-      </MacroExpansion>
+      </BuildableProductRunnable>
       <CommandLineArguments>
       </CommandLineArguments>
    </LaunchAction>
@@ -93,17 +94,18 @@
       savedToolIdentifier = ""
       useCustomWorkingDirectory = "NO"
       debugDocumentVersioning = "YES">
-      <CommandLineArguments>
-      </CommandLineArguments>
-      <MacroExpansion>
+      <BuildableProductRunnable
+         runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "ADF1B136890DE640C9F5C27B"
-            BuildableName = "libCRiskCore.a"
-            BlueprintName = "CRiskCore"
+            BlueprintIdentifier = "0A929522C0809190966ED02B"
+            BuildableName = "RiskDetectorApp.app"
+            BlueprintName = "RiskDetectorApp"
             ReferencedContainer = "container:RiskDetectorApp.xcodeproj">
          </BuildableReference>
-      </MacroExpansion>
+      </BuildableProductRunnable>
+      <CommandLineArguments>
+      </CommandLineArguments>
    </ProfileAction>
    <AnalyzeAction
       buildConfiguration = "Debug">

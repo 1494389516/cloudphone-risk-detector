@@ -12,8 +12,12 @@ jobs:
         run: python3 contracts/generate.py --check
       - name: Build armor tools
         run: swift build --package-path cprisk-armor
-      - name: Checked-in Xcode project parses
-        run: xcodebuild -list -project RiskDetectorApp/RiskDetectorApp.xcodeproj >/dev/null
+      - name: Build checked-in Xcode app for iOS Simulator
+        run: >-
+          xcodebuild -project RiskDetectorApp/RiskDetectorApp.xcodeproj
+          -scheme RiskDetectorApp -configuration Debug
+          -destination 'generic/platform=iOS Simulator'
+          build CODE_SIGNING_ALLOWED=NO
       - name: Build SDK libraries
         run: swift build --package-path RiskDetectorApp
       - name: Local assessment source and wire compatibility

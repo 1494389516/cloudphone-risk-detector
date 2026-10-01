@@ -237,7 +237,7 @@ static kern_return_t cprisk_vm_region_recurse_i(
     vm_region_recurse_info_t info,
     mach_msg_type_number_t *info_count
 ) {
-    return vm_region_recurse(target_task, address, size, nesting_depth, info, info_count);
+    return vm_region_recurse_64(target_task, address, size, nesting_depth, info, info_count);
 }
 #else
 typedef mach_vm_address_t cprisk_vm_region_address_t;

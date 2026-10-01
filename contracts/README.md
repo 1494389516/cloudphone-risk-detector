@@ -76,7 +76,7 @@ runtime-derived key through `verify_upload`, never a static-key fallback.
 ## Remaining external gates
 
 `.github/workflows/fusion-contract.yml` checks generated contracts, compiles the
-SDK and armor tools, and parses the Xcode project. It does not run test suites.
+SDK and armor tools, and builds the Xcode app for iOS Simulator. It does not run test suites.
 Real-device App Attest/armor checks still require
 physical Apple hardware and an authorized application environment. No Detector or
 threshold changes are included. Collector integration is implemented in the paired

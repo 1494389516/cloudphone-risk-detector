@@ -220,8 +220,10 @@ schemes:
         RiskDetectorApp: all
     run:
       config: Debug
+      executable: RiskDetectorApp
     profile:
       config: Release
+      executable: RiskDetectorApp
     analyze:
       config: Debug
     archive:

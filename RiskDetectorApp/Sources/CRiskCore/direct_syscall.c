@@ -1,4 +1,5 @@
 #include "include/CRiskCore.h"
+#include "include/cprisk_instruction_cache.h"
 
 /*
  * Direct SVC stubs are arm64-device only. Every libc / arc4random substitute records

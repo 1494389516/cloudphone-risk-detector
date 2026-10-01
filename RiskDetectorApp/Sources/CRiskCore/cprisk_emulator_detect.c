@@ -15,8 +15,8 @@
 
 #if defined(__APPLE__)
 #  include <TargetConditionals.h>
-#  if !TARGET_OS_SIMULATOR && __has_include(<mach/mach_vm.h>)
-#    include <mach/mach_vm.h>
+#  if !TARGET_OS_SIMULATOR
+#    include <mach/vm_map.h>
 #    define CPRISK_EMU_HAVE_MACH_VM_REGION 1
 #  endif
 #endif
@@ -110,19 +110,24 @@ static int probe_dyld_cache(void) {
  */
 #ifdef CPRISK_EMU_HAVE_MACH_VM_REGION
 static int probe_vm_region_count(void) {
-    mach_vm_address_t addr = 0;
-    mach_vm_size_t    size = 0;
+    vm_address_t addr = 0;
+    vm_size_t    size = 0;
     natural_t         depth = 0;
     vm_region_submap_info_data_64_t info;
-    mach_msg_type_number_t count = VM_REGION_SUBMAP_INFO_COUNT_64;
     int regions = 0;
 
-    while (regions < 200) { /* cap to avoid hanging on pathological mappings */
-        kern_return_t kr = mach_vm_region_recurse(
+    for (unsigned scans = 0; scans < 200; scans++) {
+        mach_msg_type_number_t count = VM_REGION_SUBMAP_INFO_COUNT_64;
+        kern_return_t kr = vm_region_recurse_64(
             mach_task_self(), &addr, &size, &depth,
             (vm_region_recurse_info_t)&info, &count);
         if (kr != KERN_SUCCESS) break;
+        if (info.is_submap) {
+            depth++;
+            continue;
+        }
         regions++;
+        if (size == 0 || addr > UINTPTR_MAX - size) break;
         addr += size;
     }
     /* < 40 is anomalous */
@@ -148,7 +153,7 @@ static int probe_stack_address(void) {
     volatile uint8_t local;
     sp = (uintptr_t)&local;
 #endif
-    return (sp > (uintptr_t)0x0001000000000000ULL) ? 1 : 0;
+    return (sp > (uintptr_t)0x0000000100000000ULL) ? 1 : 0;
 }
 
 /*
