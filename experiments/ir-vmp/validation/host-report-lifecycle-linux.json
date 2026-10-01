@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-01",
+  "reviewed_base": "aa9aba7d17f3efa00b04f63793d1cd9bfca7719b",
+  "scope": "Host report lifecycle fault injection and native baselines on Linux; no LLVM plugin execution",
+  "before_fix": {
+    "KeyboardInterrupt": "Existing HOST_VMP_PASS with vmp_verified=true survives",
+    "RuntimeError": "Existing HOST_VMP_PASS with vmp_verified=true survives"
+  },
+  "after_fix": {
+    "KeyboardInterrupt": "Current UUID, RUNNING, vmp_verified=false; interruption propagates",
+    "SystemExit": "Current UUID, RUNNING, vmp_verified=false; termination propagates",
+    "RuntimeError": "Current UUID, BLOCKED_OR_FAILED, vmp_verified=false, returncode=1",
+    "TypeError": "Current UUID, BLOCKED_OR_FAILED, vmp_verified=false, returncode=1"
+  },
+  "fault_method": "Seed report.json with old HOST_VMP_PASS; import actual host runner; replace subprocess.run with each injected exception at the first GF2 source verification command; invoke execute and assert report status, false verification and replacement run UUID. No compiler or plugin success is mocked.",
+  "native_baselines": {
+    "compiler": "GCC 13.3.0",
+    "gf2": {"status": "BASELINE_ONLY_PASS", "cases": 4096, "vmp_verified": false},
+    "stack": {"status": "BASELINE_ONLY_PASS", "cases": 4155, "vmp_verified": false}
+  },
+  "xollvm_attempt": {"status": "BLOCKED_OR_FAILED", "reason": "Required tool unavailable: clang", "vmp_verified": false},
+  "limitations": [
+    "Previously recorded macOS VM passes remain historical evidence; they were not rerun here",
+    "No iPhone signing or execution was performed",
+    "No production VMP policy or protection boundary changed",
+    "No deleted unit test suite was restored"
+  ]
+}
