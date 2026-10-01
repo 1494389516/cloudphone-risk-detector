@@ -170,6 +170,8 @@ final class AppAttestActiveProbeProvider: RiskSignalProvider {
             #if canImport(DeviceCheck)
             if let dcErr = error as? DCError {
                 switch dcErr.code {
+                case .unknownSystemFailure:
+                    return .unavailable(reason: "dc_unknown_system_failure")
                 case .featureUnsupported:
                     return .failed(reason: "dc_feature_unsupported")
                 case .invalidKey:
