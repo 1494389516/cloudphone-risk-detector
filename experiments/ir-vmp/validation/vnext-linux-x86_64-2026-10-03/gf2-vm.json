@@ -1,0 +1,367 @@
+{
+  "schema_version": 1,
+  "mode": "xollvm",
+  "suite": "gf2",
+  "status": "HOST_VMP_PASS",
+  "vmp_verified": true,
+  "scope": "host experiment only; no iOS/device validation",
+  "commands": [
+    {
+      "argv": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/verify_sources.py"
+      ],
+      "returncode": 0,
+      "stdout": "{\"commit\": \"53a6b1c9c555ba35423b2557caee450b2f234181\", \"extracted_sha256\": \"e517ce1c4be48f6ee8146fdbc34a6969dcaa1c4f68b0f669e6c0ff64b84ac481\", \"functions\": [\"cprisk_gf2_xorshift64\", \"cprisk_gf2_fnv1a\"], \"source\": \"RiskDetectorApp/Sources/CRiskCore/cprisk_gf2_affine.c\", \"source_git_blob\": \"8008ae4241418c1fd5862661234489f014b4aadd\", \"source_sha256\": \"1b91b0bcf58d0916bb42aa01ad46391f52a927bb0875e6b2590a8aad306a403d\"}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/clang-22",
+        "--version"
+      ],
+      "returncode": 0,
+      "stdout": "clang version 22.1.8 (https://github.com/llvm/llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1)\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /tmp/ir-vmp-llvm/bin\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/opt",
+        "--version"
+      ],
+      "returncode": 0,
+      "stdout": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.\n  Default target: x86_64-unknown-linux-gnu\n  Host CPU: emeraldrapids\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/clang-22",
+        "-std=c11",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-DCPRISK_TEST_SEED=1",
+        "-DCPRISK_RANDOM_CASES=10000",
+        "-DCPRISK_VMP_PREFIX=plain_",
+        "-c",
+        "gf2_candidates.c",
+        "-o",
+        "/tmp/ir-vmp-gf2-real-regression/build-3t9ldg42/plain.o"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/clang-22",
+        "-std=c11",
+        "-O0",
+        "-Xclang",
+        "-disable-O0-optnone",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-fno-vectorize",
+        "-fno-slp-vectorize",
+        "-DCPRISK_VMP_PREFIX=protected_",
+        "-DCPRISK_VMP_PROTECTED=1",
+        "-S",
+        "-emit-llvm",
+        "gf2_candidates.c",
+        "-o",
+        "/tmp/ir-vmp-gf2-real-regression/build-3t9ldg42/before.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/opt",
+        "-load-pass-plugin=/tmp/ir-vmp-plugin-rtti/cmake/Obfuscator.so",
+        "-passes=obfuscation",
+        "-obf-seed=1",
+        "-obf-deterministic",
+        "-obf-verify",
+        "-obf-verbose",
+        "-obf-report-dir=/tmp/ir-vmp-gf2-real-regression/build-3t9ldg42/pass-reports",
+        "-S",
+        "/tmp/ir-vmp-gf2-real-regression/build-3t9ldg42/before.ll",
+        "-o",
+        "/tmp/ir-vmp-gf2-real-regression/build-3t9ldg42/after.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "Found 1 annotation(s) for function protected_cprisk_gf2_xorshift64\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0)'\n  Total passes enabled: 1\n    - vm(encBytecode=0,antiDebug=0,hardened=0,minBlocks=1)\nFound 1 annotation(s) for function protected_cprisk_gf2_fnv1a\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0)'\n  Total passes enabled: 1\n    - vm(encBytecode=0,antiDebug=0,hardened=0,minBlocks=1)\n[budget] protected_cprisk_gf2_xorshift64: initial=19  limit=950  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] variant-diversify: 5328 MBA rewrites, 0 icmp flips (3 variants)\n[vm] vm_engine populated: 9 handlers\n[vm] virtualised 'protected_cprisk_gf2_xorshift64' [65B bytecode | 0vregs+17vregs64+1pregs |obf-idx]\n[budget] vm: 19 -> 90 (+71)  [9% of budget]\n[budget] protected_cprisk_gf2_xorshift64: initial=19  limit=950  final=90  growth=71  util=9.5%\n  vm: 19 -> 90 (+71)  [9% of budget]\n[budget] protected_cprisk_gf2_fnv1a: initial=31  limit=1550  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] virtualised 'protected_cprisk_gf2_fnv1a' [105B bytecode | 2vregs+16vregs64+7pregs |obf-idx]\n[budget] vm: 31 -> 87 (+56)  [6% of budget]\n[budget] protected_cprisk_gf2_fnv1a: initial=31  limit=1550  final=87  growth=56  util=5.6%\n  vm: 31 -> 87 (+56)  [6% of budget]\n"
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/opt",
+        "-passes=verify",
+        "-disable-output",
+        "/tmp/ir-vmp-gf2-real-regression/build-3t9ldg42/after.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/opt",
+        "-passes=default<O2>",
+        "-S",
+        "/tmp/ir-vmp-gf2-real-regression/build-3t9ldg42/after.ll",
+        "-o",
+        "/tmp/ir-vmp-gf2-real-regression/build-3t9ldg42/optimized.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/opt",
+        "-passes=verify",
+        "-disable-output",
+        "/tmp/ir-vmp-gf2-real-regression/build-3t9ldg42/optimized.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/clang-22",
+        "-O0",
+        "-c",
+        "/tmp/ir-vmp-gf2-real-regression/build-3t9ldg42/optimized.ll",
+        "-o",
+        "/tmp/ir-vmp-gf2-real-regression/build-3t9ldg42/protected.o"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/clang-22",
+        "-std=c11",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-DCPRISK_TEST_SEED=1",
+        "-DCPRISK_RANDOM_CASES=10000",
+        "gf2_differential.c",
+        "/tmp/ir-vmp-gf2-real-regression/build-3t9ldg42/plain.o",
+        "/tmp/ir-vmp-gf2-real-regression/build-3t9ldg42/protected.o",
+        "-lm",
+        "-o",
+        "/tmp/ir-vmp-gf2-real-regression/build-3t9ldg42/differential"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-gf2-real-regression/build-3t9ldg42/differential"
+      ],
+      "returncode": 0,
+      "stdout": "PASS cases=4096 seed=783cb86db73074ac\n",
+      "stderr": ""
+    }
+  ],
+  "tools": {
+    "clang": {
+      "path": "/tmp/ir-vmp-llvm/bin/clang-22",
+      "version": "clang version 22.1.8 (https://github.com/llvm/llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1)\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /tmp/ir-vmp-llvm/bin\n",
+      "sha256": "31a40dc31f3c15a47aa119aa148f339bf363d8f61202ddbdacbd3f24b71ba113"
+    },
+    "opt": {
+      "path": "/tmp/ir-vmp-llvm/bin/opt",
+      "version": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.\n  Default target: x86_64-unknown-linux-gnu\n  Host CPU: emeraldrapids\n",
+      "sha256": "fc19bcd0ab81c35746c93aad355e8bb81f34ab070e98014cf06ce8433e91d4b1"
+    },
+    "plugin": {
+      "path": "/tmp/ir-vmp-plugin-rtti/cmake/Obfuscator.so",
+      "sha256": "57467fdbd1d4fcf4c305fd7c37acd4b9550d9e1cf5e4b4255da7880d570049db"
+    }
+  },
+  "hashes": {
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/gf2_candidates.c": "fcd3eab20000849dc4ca16c6d5e14bf158e245221bdccaa10f78aa42d5e96d47",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/gf2_differential.c": "9dd10d266de9da3cd06e6a3706be8fcf190f71664cc165caa60f670fab85125f",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/gf2_candidates.inc": "e517ce1c4be48f6ee8146fdbc34a6969dcaa1c4f68b0f669e6c0ff64b84ac481",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/sources.json": "5f7dd0e436ec8f272561fddb08ea499dd134366535012b7fb23c507db76038bb",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/verify_sources.py": "f155612b606558c9f2e039ef021862fca11b378d7ca1c206a58233fd84a12efd",
+    "/tmp/ir-vmp-gf2-real-regression/build-3t9ldg42/before.ll": "54e4ff6c15b24b7931b80dbe46f13786cba3bbe8042b653c5b69d16c6a231c32",
+    "/tmp/ir-vmp-gf2-real-regression/build-3t9ldg42/after.ll": "98a43cda588ea7d9945e7e278b04e92c60894a09d1e68530eb4d050774cbe43d",
+    "/tmp/ir-vmp-gf2-real-regression/build-3t9ldg42/optimized.ll": "2bf8556493b5796303433983eda3bc37b99de6f1677c4ea033a69e013f1887b4",
+    "/tmp/ir-vmp-gf2-real-regression/build-3t9ldg42/differential": "068d4ffd84c2f23b5982d83a760b153919f4025736e9ea87bc577060c24dd92b"
+  },
+  "run_id": "46ebb298-2b75-4ed0-b249-99bcb9db7fa2",
+  "created_at": "2026-10-03T10:50:12.297262+00:00",
+  "seed": 1,
+  "random_cases_requested": 10000,
+  "sanitizers": false,
+  "sanitizer_environment": {},
+  "plugin_provenance": {
+    "schema_version": 2,
+    "status": "built",
+    "xollvm_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+    "plugin_path": "/tmp/ir-vmp-plugin-rtti/cmake/Obfuscator.so",
+    "plugin_sha256": "57467fdbd1d4fcf4c305fd7c37acd4b9550d9e1cf5e4b4255da7880d570049db",
+    "llvm_version": "22.1.8",
+    "tool_versions": {
+      "clang": "clang version 22.1.8 (https://github.com/llvm/llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1)\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /tmp/ir-vmp-llvm/bin",
+      "clang++": "clang version 22.1.8 (https://github.com/llvm/llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1)\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /tmp/ir-vmp-llvm/bin",
+      "opt": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.\n  Default target: x86_64-unknown-linux-gnu\n  Host CPU: emeraldrapids",
+      "llvm-config": "22.1.8"
+    },
+    "commands": [
+      [
+        "cmake",
+        "-S",
+        "/tmp/ir-vmp-plugin-rtti/patched-source",
+        "-B",
+        "/tmp/ir-vmp-plugin-rtti/cmake",
+        "-DLLVM_DIR=/tmp/ir-vmp-llvm/lib/cmake/llvm",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_C_COMPILER=/tmp/ir-vmp-llvm/bin/clang",
+        "-DCMAKE_CXX_COMPILER=/tmp/ir-vmp-llvm/bin/clang++",
+        "-DCMAKE_CXX_FLAGS=-fno-rtti"
+      ],
+      [
+        "cmake",
+        "--build",
+        "/tmp/ir-vmp-plugin-rtti/cmake",
+        "--target",
+        "Obfuscator",
+        "--parallel",
+        "2"
+      ],
+      [
+        "/tmp/ir-vmp-llvm/bin/opt",
+        "-load-pass-plugin=/tmp/ir-vmp-plugin-rtti/cmake/Obfuscator.so",
+        "-passes=verify",
+        "-disable-output",
+        "/tmp/ir-vmp-plugin-rtti/plugin-load-smoke.ll"
+      ]
+    ],
+    "llvm_rtti": "NO",
+    "plugin_load_smoke": {
+      "status": "pass",
+      "output": ""
+    },
+    "license": "Apache-2.0 WITH LLVM-exception",
+    "limitations": [
+      "Local provenance only; not a signed attestation",
+      "Build success does not validate virtualization or iOS compatibility"
+    ],
+    "local_patch_set": {
+      "schema_version": 1,
+      "id": "pointer-gep-v2",
+      "xollvm_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+      "patch_file": "pointer-gep-v2.patch",
+      "patch_sha256": "3bf254367cf27116d9c495da21d79d5d47bd38036ee757c158968962a414b5a6",
+      "files": {
+        "VMPass_Emitter.cpp": {
+          "before_sha256": "70c1d037b134753fcdf3ba9e77d5843c61e6aa8534be0b11a126fa3d8fcaa9e8",
+          "after_sha256": "206af82042872e7680bdc3d6e9e1f256d8c60d69407e1b42f6e6189c6d387f76"
+        },
+        "VMPass_Handlers.cpp": {
+          "before_sha256": "f6de216ec9095661d163650a590c684cca73c13114c1f481f502f9038bd9f9cc",
+          "after_sha256": "aa9990110e44db4275c626385c3ada87ef65cb1d21ccf15344553acd59501b5c"
+        },
+        "VMPass_Verifier.cpp": {
+          "before_sha256": "1e1920edfa187ddc58580ec50370fd4edce8e5635c5306bcd9f91491a7da4044",
+          "after_sha256": "28771c76da9f6e16594037f3c30d2bce3172bc455ffd1b3f441dcc09726373f0"
+        },
+        "include/llvm/Transforms/Obfuscator/VMPass_ISA.h": {
+          "before_sha256": "c9fc636187a5c970ea2ebf49c28ecdb3f716a20073d7b5be09a237f11538c37b",
+          "after_sha256": "43f00303b225bac53e772a9ef71c4997283e32b784a33b7f55a64310e3b88b46"
+        }
+      },
+      "capabilities": {
+        "pointer_comparison": {
+          "predicates": [
+            "eq",
+            "ne"
+          ],
+          "address_spaces": [
+            0
+          ],
+          "null_supported": true,
+          "operand_storage": "native pointer registers",
+          "encoding": "OP_ICMP_PTR=0x38; kind byte 0=eq, 1=ne; not a RandISA predicate byte"
+        },
+        "validation_scope": "local host experiments; hardened=0 antiDebug=0 encBytecode=0",
+        "unsupported": [
+          "ordered pointer predicates",
+          "nonzero pointer address spaces",
+          "production integration and device execution not validated"
+        ],
+        "isa_compatibility": "OP_COUNT increases from 0x38 to 0x39 and decoy base moves; patched and upstream plugin/bytecode must not be mixed",
+        "gep": {
+          "constant_indices": "target DataLayout byte offset, including struct padding and nested aggregates",
+          "dynamic_indices": "one i32/i64 index, or array [0,index], using allocation size",
+          "address_spaces": [
+            0
+          ],
+          "pointer_and_index_bits": 64,
+          "max_dynamic_stride": 65535,
+          "oversized_dynamic_stride": "rejected; never saturated",
+          "unsupported": [
+            "dynamic multi-index GEP except array [0,index]",
+            "scalable types",
+            "nonzero address spaces",
+            "non-64-bit pointer/index layouts"
+          ]
+        }
+      }
+    },
+    "patched_source": "/tmp/ir-vmp-plugin-rtti/patched-source",
+    "patched_source_tree_sha256": "441d48c11eca97c3fde786374f9084a466924a226167538c9a7adf56dfc514b1"
+  },
+  "build_directory": "/tmp/ir-vmp-gf2-real-regression/build-3t9ldg42",
+  "pass_evidence": {
+    "targets": [
+      "protected_cprisk_gf2_xorshift64",
+      "protected_cprisk_gf2_fnv1a"
+    ],
+    "all_vm_passes_ran_and_changed": true
+  },
+  "ir_evidence": {
+    "protected_cprisk_gf2_xorshift64": {
+      "bytecode_bytes": 65,
+      "before_sha256": "dbeb7ad6ac62fbe9d7fdcf49b8600fea60490b70526981e10a7b477a3813bce1",
+      "after_sha256": "60fb6deecd02eb1705e3f35d3c8787510e1c8ddb423069f736887ce5fdc2c8c4"
+    },
+    "protected_cprisk_gf2_fnv1a": {
+      "bytecode_bytes": 105,
+      "before_sha256": "940a06869bc05f1bf97d1bd5258db237ce776e5f726660c06cc93ca80155fd90",
+      "after_sha256": "756252a42b9e94b62ad57ae66489b4594c401284801b0d5ba2054efaa4a85d72"
+    }
+  },
+  "optimized_ir_evidence": {
+    "protected_cprisk_gf2_xorshift64": {
+      "bytecode_bytes": 65,
+      "before_sha256": "dbeb7ad6ac62fbe9d7fdcf49b8600fea60490b70526981e10a7b477a3813bce1",
+      "after_sha256": "eff2f9526307a872bfd6f3dc23994599ea9e600e04566f1f912d78e52b787248"
+    },
+    "protected_cprisk_gf2_fnv1a": {
+      "bytecode_bytes": 105,
+      "before_sha256": "940a06869bc05f1bf97d1bd5258db237ce776e5f726660c06cc93ca80155fd90",
+      "after_sha256": "53f71bd399aae7d9a5895aa1391bf6b73ccf04b1ac9f54dfbc11497e665182aa"
+    }
+  },
+  "differential_output": "PASS cases=4096 seed=783cb86db73074ac\n",
+  "completed_cases": 4096,
+  "object_sha256": {
+    "plain": "95fad09e161ad80afab1b21700fdd8053a883fe26d729d492ac19f03b403d277",
+    "protected": "6ca3a3e7d4c52b91f39966105950881f2233da4141ad0111f98bf99a06f92213"
+  },
+  "elapsed_seconds": 1.9749
+}

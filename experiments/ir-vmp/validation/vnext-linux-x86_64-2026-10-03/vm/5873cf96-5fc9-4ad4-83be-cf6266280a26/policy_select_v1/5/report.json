@@ -1,0 +1,474 @@
+{
+  "schema_version": 1,
+  "mode": "xollvm",
+  "suite": "policy_selection",
+  "status": "HOST_VMP_PASS",
+  "vmp_verified": true,
+  "scope": "host experiment only; no iOS/device validation",
+  "commands": [
+    {
+      "argv": [
+        "/tmp/ir-vmp-tools/bin/python",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/verify_sources.py",
+        "--suite",
+        "policy_selection"
+      ],
+      "returncode": 0,
+      "stdout": "{\"body_sha256\": \"2bc190a9a460a6afb6b213b8593ee5f9e2a994c2a5ec09044ec234f993c6d1d8\", \"constants_sha256\": \"8b04234b9f49bfdb6c644f96733f38d2b36634696294d01afc1b5dc18a571c16\", \"dependencies\": [{\"path\": \"RiskDetectorApp/Sources/CRiskCore/include/cprisk_armor_abi.h\", \"sha256\": \"9102a97b4bf7ccc5a3faad632f5db09a1a292026cf5eb2bae713701df4b288d9\"}], \"function\": \"cprisk_antidebug_select_policy_bits_i\", \"return_type\": \"uint32_t\", \"schema_version\": 1, \"segments\": [{\"end\": \"static cprisk_adbg_runtime_plan_t\", \"file\": \"types.inc\", \"sha256\": \"793a87531abfe028a5975712bc0073a956107f617634d1c5f240f6dd5736b176\", \"source\": \"RiskDetectorApp/Sources/CRiskCore/cprisk_integrity.c\", \"start\": \"typedef struct cprisk_adbg_runtime_plan_i\"}], \"source\": \"RiskDetectorApp/Sources/CRiskCore/cprisk_integrity.c\", \"source_revision\": \"aa9aba7d17f3efa00b04f63793d1cd9bfca7719b\", \"source_sha256\": \"fc875ab835a95d3b077e4b3246335f0757b26543d2adc0587e0cf2e704aac58d\"}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/clang-22",
+        "--version"
+      ],
+      "returncode": 0,
+      "stdout": "clang version 22.1.8 (https://github.com/llvm/llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1)\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /tmp/ir-vmp-llvm/bin\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/opt",
+        "--version"
+      ],
+      "returncode": 0,
+      "stdout": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.\n  Default target: x86_64-unknown-linux-gnu\n  Host CPU: emeraldrapids\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/clang-22",
+        "-std=c11",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-DCPRISK_TEST_SEED=5",
+        "-DCPRISK_RANDOM_CASES=10000",
+        "-fno-vectorize",
+        "-fno-slp-vectorize",
+        "-DCPRISK_VMP_PREFIX=plain_",
+        "-c",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/policy_selection/candidates.c",
+        "-o",
+        "/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y/plain.o"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/clang-22",
+        "-std=c11",
+        "-O0",
+        "-Xclang",
+        "-disable-O0-optnone",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-fno-vectorize",
+        "-fno-slp-vectorize",
+        "-DCPRISK_VMP_PREFIX=protected_",
+        "-DCPRISK_VMP_PROTECTED=1",
+        "-S",
+        "-emit-llvm",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/policy_selection/candidates.c",
+        "-o",
+        "/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y/before.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-preflight-3/preflight",
+        "/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y/before.ll",
+        "protected_cprisk_antidebug_select_policy_bits_i"
+      ],
+      "returncode": 0,
+      "stdout": "{\"data_layout\":\"e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128\",\"llvm_version\":\"22.1.8\",\"schema_version\":1,\"status\":\"pass\",\"target_triple\":\"x86_64-unknown-linux-gnu\",\"targets\":[{\"native_helpers\":[],\"opcodes\":{\"add\":2,\"alloca\":14,\"and\":3,\"br\":27,\"getelementptr\":8,\"icmp\":14,\"load\":47,\"or\":1,\"phi\":2,\"ret\":1,\"shl\":4,\"store\":24,\"xor\":8,\"zext\":8},\"reasons\":[],\"status\":\"pass\",\"target\":\"protected_cprisk_antidebug_select_policy_bits_i\"}]}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/opt",
+        "-load-pass-plugin=/tmp/ir-vmp-plugin-rtti/cmake/Obfuscator.so",
+        "-passes=obfuscation",
+        "-obf-seed=5",
+        "-obf-deterministic",
+        "-obf-verify",
+        "-obf-verbose",
+        "-obf-report-dir=/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y/pass-reports",
+        "-S",
+        "/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y/before.ll",
+        "-o",
+        "/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y/after.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "Found 1 annotation(s) for function protected_cprisk_antidebug_select_policy_bits_i\n  Parsing: 'obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0)'\n  Total passes enabled: 1\n    - vm(encBytecode=0,antiDebug=0,hardened=0,minBlocks=1)\n[budget] protected_cprisk_antidebug_select_policy_bits_i: initial=163  limit=8150  multiplier=50\nBuilding obfuscation pipeline: vm \n[vm] variant-diversify: 5328 MBA rewrites, 0 icmp flips (3 variants)\n[vm] vm_engine populated: 9 handlers\n[vm] virtualised 'protected_cprisk_antidebug_select_policy_bits_i' [663B bytecode | 50vregs+38vregs64+47pregs |obf-idx]\n[budget] vm: 163 -> 487 (+324)  [6% of budget]\n[budget] protected_cprisk_antidebug_select_policy_bits_i: initial=163  limit=8150  final=487  growth=324  util=6.0%\n  vm: 163 -> 487 (+324)  [6% of budget]\n"
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/opt",
+        "-passes=verify",
+        "-disable-output",
+        "/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y/after.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/opt",
+        "-passes=default<O2>",
+        "-S",
+        "/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y/after.ll",
+        "-o",
+        "/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y/optimized.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/opt",
+        "-passes=verify",
+        "-disable-output",
+        "/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y/optimized.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/clang-22",
+        "-O0",
+        "-c",
+        "/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y/optimized.ll",
+        "-o",
+        "/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y/protected.o"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/clang-22",
+        "-std=c11",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-DCPRISK_TEST_SEED=5",
+        "-DCPRISK_RANDOM_CASES=10000",
+        "-fno-vectorize",
+        "-fno-slp-vectorize",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/policy_selection/differential.c",
+        "/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y/plain.o",
+        "/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y/protected.o",
+        "-lm",
+        "-o",
+        "/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y/differential"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y/differential"
+      ],
+      "returncode": 0,
+      "stdout": "PASS cases=10504 random_cases=10000 seed=5\n",
+      "stderr": ""
+    }
+  ],
+  "tools": {
+    "clang": {
+      "path": "/tmp/ir-vmp-llvm/bin/clang-22",
+      "version": "clang version 22.1.8 (https://github.com/llvm/llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1)\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /tmp/ir-vmp-llvm/bin\n",
+      "sha256": "31a40dc31f3c15a47aa119aa148f339bf363d8f61202ddbdacbd3f24b71ba113"
+    },
+    "opt": {
+      "path": "/tmp/ir-vmp-llvm/bin/opt",
+      "version": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.\n  Default target: x86_64-unknown-linux-gnu\n  Host CPU: emeraldrapids\n",
+      "sha256": "fc19bcd0ab81c35746c93aad355e8bb81f34ab070e98014cf06ce8433e91d4b1"
+    },
+    "plugin": {
+      "path": "/tmp/ir-vmp-plugin-rtti/cmake/Obfuscator.so",
+      "sha256": "57467fdbd1d4fcf4c305fd7c37acd4b9550d9e1cf5e4b4255da7880d570049db"
+    }
+  },
+  "hashes": {
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/policy_selection/body.inc": "2bc190a9a460a6afb6b213b8593ee5f9e2a994c2a5ec09044ec234f993c6d1d8",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/policy_selection/candidates.c": "9526db4d9cc8054064f20f0c5cd5e2cd4e1625bd0088b5e6e7a7899b91e98d31",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/policy_selection/constants.inc": "8b04234b9f49bfdb6c644f96733f38d2b36634696294d01afc1b5dc18a571c16",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/policy_selection/differential.c": "5d464a5c839fabba3746f03b62a0d2c3d667b99d2b842c0c33160cd543d97400",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/policy_selection/sources.json": "9cb4cd8f1879051440f50cb9b52b96f03c7bc2554c9435d4718c970c1d069e17",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/policy_selection/types.inc": "793a87531abfe028a5975712bc0073a956107f617634d1c5f240f6dd5736b176",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/verify_sources.py": "f155612b606558c9f2e039ef021862fca11b378d7ca1c206a58233fd84a12efd",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/run.py": "e5eb0dc541082303a125dfaea63203ac5c624aee25bdeb4f2e2384810ed4af4c",
+    "/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y/before.ll": "7e60fedcfca948742c74f93fab3a6d8ad5ceb92fa63756470da6940bdfd2e6d3",
+    "/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y/after.ll": "f1e20f7c14fbb83fe7e28fcfec22cbe36c816d9d62d5ec3099d5679a5f29dd68",
+    "/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y/optimized.ll": "c7e15ac7055d81184fb0a4e93b6d534432a1dc3ec768438fdbfcba1bf85b192c",
+    "/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y/differential": "d99a80c35bb535c55e46d646b05d0d0e9b2c77dab20e0a546296ff93a1c9628b"
+  },
+  "run_id": "40ece127-e329-4665-a16f-b32ea927b790",
+  "created_at": "2026-10-03T10:54:49.066637+00:00",
+  "seed": 5,
+  "random_cases_requested": 10000,
+  "sanitizers": false,
+  "sanitizer_environment": {},
+  "plugin_provenance": {
+    "schema_version": 2,
+    "status": "built",
+    "xollvm_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+    "plugin_path": "/tmp/ir-vmp-plugin-rtti/cmake/Obfuscator.so",
+    "plugin_sha256": "57467fdbd1d4fcf4c305fd7c37acd4b9550d9e1cf5e4b4255da7880d570049db",
+    "llvm_version": "22.1.8",
+    "tool_versions": {
+      "clang": "clang version 22.1.8 (https://github.com/llvm/llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1)\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /tmp/ir-vmp-llvm/bin",
+      "clang++": "clang version 22.1.8 (https://github.com/llvm/llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1)\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /tmp/ir-vmp-llvm/bin",
+      "opt": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.\n  Default target: x86_64-unknown-linux-gnu\n  Host CPU: emeraldrapids",
+      "llvm-config": "22.1.8"
+    },
+    "commands": [
+      [
+        "cmake",
+        "-S",
+        "/tmp/ir-vmp-plugin-rtti/patched-source",
+        "-B",
+        "/tmp/ir-vmp-plugin-rtti/cmake",
+        "-DLLVM_DIR=/tmp/ir-vmp-llvm/lib/cmake/llvm",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_C_COMPILER=/tmp/ir-vmp-llvm/bin/clang",
+        "-DCMAKE_CXX_COMPILER=/tmp/ir-vmp-llvm/bin/clang++",
+        "-DCMAKE_CXX_FLAGS=-fno-rtti"
+      ],
+      [
+        "cmake",
+        "--build",
+        "/tmp/ir-vmp-plugin-rtti/cmake",
+        "--target",
+        "Obfuscator",
+        "--parallel",
+        "2"
+      ],
+      [
+        "/tmp/ir-vmp-llvm/bin/opt",
+        "-load-pass-plugin=/tmp/ir-vmp-plugin-rtti/cmake/Obfuscator.so",
+        "-passes=verify",
+        "-disable-output",
+        "/tmp/ir-vmp-plugin-rtti/plugin-load-smoke.ll"
+      ]
+    ],
+    "llvm_rtti": "NO",
+    "plugin_load_smoke": {
+      "status": "pass",
+      "output": ""
+    },
+    "license": "Apache-2.0 WITH LLVM-exception",
+    "limitations": [
+      "Local provenance only; not a signed attestation",
+      "Build success does not validate virtualization or iOS compatibility"
+    ],
+    "local_patch_set": {
+      "schema_version": 1,
+      "id": "pointer-gep-v2",
+      "xollvm_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+      "patch_file": "pointer-gep-v2.patch",
+      "patch_sha256": "3bf254367cf27116d9c495da21d79d5d47bd38036ee757c158968962a414b5a6",
+      "files": {
+        "VMPass_Emitter.cpp": {
+          "before_sha256": "70c1d037b134753fcdf3ba9e77d5843c61e6aa8534be0b11a126fa3d8fcaa9e8",
+          "after_sha256": "206af82042872e7680bdc3d6e9e1f256d8c60d69407e1b42f6e6189c6d387f76"
+        },
+        "VMPass_Handlers.cpp": {
+          "before_sha256": "f6de216ec9095661d163650a590c684cca73c13114c1f481f502f9038bd9f9cc",
+          "after_sha256": "aa9990110e44db4275c626385c3ada87ef65cb1d21ccf15344553acd59501b5c"
+        },
+        "VMPass_Verifier.cpp": {
+          "before_sha256": "1e1920edfa187ddc58580ec50370fd4edce8e5635c5306bcd9f91491a7da4044",
+          "after_sha256": "28771c76da9f6e16594037f3c30d2bce3172bc455ffd1b3f441dcc09726373f0"
+        },
+        "include/llvm/Transforms/Obfuscator/VMPass_ISA.h": {
+          "before_sha256": "c9fc636187a5c970ea2ebf49c28ecdb3f716a20073d7b5be09a237f11538c37b",
+          "after_sha256": "43f00303b225bac53e772a9ef71c4997283e32b784a33b7f55a64310e3b88b46"
+        }
+      },
+      "capabilities": {
+        "pointer_comparison": {
+          "predicates": [
+            "eq",
+            "ne"
+          ],
+          "address_spaces": [
+            0
+          ],
+          "null_supported": true,
+          "operand_storage": "native pointer registers",
+          "encoding": "OP_ICMP_PTR=0x38; kind byte 0=eq, 1=ne; not a RandISA predicate byte"
+        },
+        "validation_scope": "local host experiments; hardened=0 antiDebug=0 encBytecode=0",
+        "unsupported": [
+          "ordered pointer predicates",
+          "nonzero pointer address spaces",
+          "production integration and device execution not validated"
+        ],
+        "isa_compatibility": "OP_COUNT increases from 0x38 to 0x39 and decoy base moves; patched and upstream plugin/bytecode must not be mixed",
+        "gep": {
+          "constant_indices": "target DataLayout byte offset, including struct padding and nested aggregates",
+          "dynamic_indices": "one i32/i64 index, or array [0,index], using allocation size",
+          "address_spaces": [
+            0
+          ],
+          "pointer_and_index_bits": 64,
+          "max_dynamic_stride": 65535,
+          "oversized_dynamic_stride": "rejected; never saturated",
+          "unsupported": [
+            "dynamic multi-index GEP except array [0,index]",
+            "scalable types",
+            "nonzero address spaces",
+            "non-64-bit pointer/index layouts"
+          ]
+        }
+      }
+    },
+    "patched_source": "/tmp/ir-vmp-plugin-rtti/patched-source",
+    "patched_source_tree_sha256": "441d48c11eca97c3fde786374f9084a466924a226167538c9a7adf56dfc514b1"
+  },
+  "preflight_provenance": {
+    "schema_version": 1,
+    "llvm_version": "22.1.8",
+    "source_sha256": "f03e30dcc01e470e51eb3b7b8cdc14aebee64af45c8c8fdac51919f01a9ee4be",
+    "command": [
+      "/tmp/ir-vmp-llvm/bin/clang++",
+      "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/preflight.cpp",
+      "-o",
+      "/tmp/ir-vmp-preflight-3/preflight",
+      "-I/tmp/ir-vmp-llvm/include",
+      "-std=c++17",
+      "-D_GNU_SOURCE",
+      "-D_GLIBCXX_USE_CXX11_ABI=1",
+      "-D__STDC_CONSTANT_MACROS",
+      "-D__STDC_FORMAT_MACROS",
+      "-D__STDC_LIMIT_MACROS",
+      "-fno-exceptions",
+      "-fno-rtti",
+      "-L/tmp/ir-vmp-llvm/lib",
+      "-lLLVMAnalysis",
+      "-lLLVMProfileData",
+      "-lLLVMSymbolize",
+      "-lLLVMDebugInfoBTF",
+      "-lLLVMDebugInfoPDB",
+      "-lLLVMDebugInfoMSF",
+      "-lLLVMDebugInfoCodeView",
+      "-lLLVMDebugInfoGSYM",
+      "-lLLVMDebugInfoDWARF",
+      "-lLLVMObject",
+      "-lLLVMTextAPI",
+      "-lLLVMMCParser",
+      "-lLLVMMC",
+      "-lLLVMDebugInfoDWARFLowLevel",
+      "-lLLVMFrontendHLSL",
+      "-lLLVMIRReader",
+      "-lLLVMBitReader",
+      "-lLLVMAsmParser",
+      "-lLLVMCore",
+      "-lLLVMRemarks",
+      "-lLLVMBitstreamReader",
+      "-lLLVMBinaryFormat",
+      "-lLLVMTargetParser",
+      "-lLLVMSupport",
+      "-lLLVMDemangle",
+      "-lrt",
+      "-ldl",
+      "-lm",
+      "-lz",
+      "/usr/lib/x86_64-linux-gnu/libzstd.so.1.5.5",
+      "/usr/lib/x86_64-linux-gnu/libxml2.so.2.9.14"
+    ],
+    "returncode": 0,
+    "stdout": "",
+    "stderr": "",
+    "status": "built",
+    "compiler_sha256": "31a40dc31f3c15a47aa119aa148f339bf363d8f61202ddbdacbd3f24b71ba113",
+    "executable_sha256": "9b545a3a39d9c70b87a786e64fef84e15f30f7c109bc611e00c53664bce3fde8",
+    "system_library_overrides": {
+      "zstd": {
+        "path": "/usr/lib/x86_64-linux-gnu/libzstd.so.1.5.5",
+        "sha256": "0a2128bc10841fb29e76d08d945864dfb0b6a66da5df6df5d8299197439e54bb"
+      },
+      "xml2": {
+        "path": "/usr/lib/x86_64-linux-gnu/libxml2.so.2.9.14",
+        "sha256": "3061d35b168d1eb472bba5d2c52931e408364770ec9b00ae1100aacd0c35c7da"
+      }
+    }
+  },
+  "build_directory": "/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y",
+  "preflight": {
+    "data_layout": "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
+    "llvm_version": "22.1.8",
+    "schema_version": 1,
+    "status": "pass",
+    "target_triple": "x86_64-unknown-linux-gnu",
+    "targets": [
+      {
+        "native_helpers": [],
+        "opcodes": {
+          "add": 2,
+          "alloca": 14,
+          "and": 3,
+          "br": 27,
+          "getelementptr": 8,
+          "icmp": 14,
+          "load": 47,
+          "or": 1,
+          "phi": 2,
+          "ret": 1,
+          "shl": 4,
+          "store": 24,
+          "xor": 8,
+          "zext": 8
+        },
+        "reasons": [],
+        "status": "pass",
+        "target": "protected_cprisk_antidebug_select_policy_bits_i"
+      }
+    ]
+  },
+  "pass_evidence": {
+    "targets": [
+      "protected_cprisk_antidebug_select_policy_bits_i"
+    ],
+    "all_vm_passes_ran_and_changed": true
+  },
+  "ir_evidence": {
+    "protected_cprisk_antidebug_select_policy_bits_i": {
+      "bytecode_bytes": 663,
+      "before_sha256": "5892288aaa7abc15ffb3dab00dd31d3b64a423022e6e941cf080e17c25f607d6",
+      "after_sha256": "e2787ab440c317086b6ac535ec01a44ce182e50b0b2f01e48444b6676d5f48ce"
+    }
+  },
+  "optimized_ir_evidence": {
+    "protected_cprisk_antidebug_select_policy_bits_i": {
+      "bytecode_bytes": 663,
+      "before_sha256": "5892288aaa7abc15ffb3dab00dd31d3b64a423022e6e941cf080e17c25f607d6",
+      "after_sha256": "81dab16998356a71798f2543f1268a56262861ce9dede9575cd9bb6b3ebf14b2"
+    }
+  },
+  "differential_output": "PASS cases=10504 random_cases=10000 seed=5\n",
+  "completed_cases": 10504,
+  "object_sha256": {
+    "plain": "f4175be6d4846d1ae9ee1f98edb6dba7f180b183866380df8708a8f1c4f60a03",
+    "protected": "b12482d4f444b5f09cd243e61920648df3ee808e44f44db7b40f721ad839e3e5"
+  },
+  "elapsed_seconds": 1.928308
+}

@@ -1,5 +1,10 @@
 # IR-VMP 隔离验证
 
+2026-10-03 vNext 增量：新增严格配置、两个真实业务候选的原样套件与 LLVM API
+preflight。Linux LLVM 22.1.8 / pointer-gep-v2 下两个候选的 5 seed 共 106,380
+例主机 VM 差分通过；仍未接入生产 SDK。[实施范围与复现](VNEXT_IMPLEMENTATION.md)
+明确区分已完成的软件、缺失的生产接入和发布门槛。
+
 本目录验证 **SDK 中少量 C 函数是否能被 xollvm 等价虚拟化**。不接入 SDK 默认构建，不解除 `VMPolicyConfig.validateNativeReplacementSupport()` 的 `full` 阻断，不把 `partial` 元数据当作函数保护。
 
 当前交付是候选函数、差分基线、固定版本构建入口和失败关闭的验收流程。**累积本地补丁 `pointer-gep-v2` 在 macOS arm64 / LLVM 22.1.8 上通过 stack 4,155 例、GF2 4,096 例，以及指针 eq/ne/null 探针 800 例真实 VM 差分。** stack 必须显式启用 LLVM `lower-constant-intrinsics`；v2 修复 v1 暴露的结构体字段偏移问题，v1 失败证据保留为历史记录。通过范围是这些隔离函数及配置，原生 helper/外部调用仍在 VM 之外。

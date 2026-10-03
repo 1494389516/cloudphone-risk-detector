@@ -112,6 +112,9 @@ def main():
         if not match or match.group(1) != ver.split("-")[0].split("+")[0]:
             raise ValueError(f"{name} does not match llvm-config {ver}")
     cmake_dir = capture([str(llvm / "bin/llvm-config"), "--cmakedir"])
+    rtti = capture([str(llvm / "bin/llvm-config"), "--has-rtti"])
+    if rtti not in ("YES", "NO"):
+        raise ValueError("cannot establish LLVM RTTI ABI")
     env = dict(os.environ)
     env["PATH"] = str(llvm / "bin") + os.pathsep + env.get("PATH", "")
     build.mkdir(parents=True, exist_ok=True)
@@ -123,7 +126,8 @@ def main():
         ["cmake", "-S", str(compile_source), "-B", str(cmake_build),
          f"-DLLVM_DIR={cmake_dir}", "-DCMAKE_BUILD_TYPE=Release",
          f"-DCMAKE_C_COMPILER={llvm / 'bin/clang'}",
-         f"-DCMAKE_CXX_COMPILER={llvm / 'bin/clang++'}"],
+         f"-DCMAKE_CXX_COMPILER={llvm / 'bin/clang++'}",
+         "-DCMAKE_CXX_FLAGS=" + ("-frtti" if rtti == "YES" else "-fno-rtti")],
         ["cmake", "--build", str(cmake_build), "--target", "Obfuscator",
          "--parallel", str(args.jobs)],
     ]
@@ -134,6 +138,15 @@ def main():
     if len(plugins) != 1:
         raise ValueError(f"expected one built plugin, found {len(plugins)}")
     plugin = plugins[0].resolve()
+    # A shared library can link successfully but fail to load into opt (e.g.
+    # unresolved LLVM RTTI with an official no-RTTI toolchain). Do not issue a
+    # successful provenance record until the matching host actually loads it.
+    smoke = build / "plugin-load-smoke.ll"
+    smoke.write_text("define i32 @plugin_load_smoke() { ret i32 0 }\n")
+    smoke_command = [str(llvm / "bin/opt"), "-load-pass-plugin=" + str(plugin),
+                     "-passes=verify", "-disable-output", str(smoke)]
+    smoke_output = capture(smoke_command)
+    commands.append(smoke_command)
     # Recheck source state after build; provenance is a local record, not an attestation.
     if capture(["git", "-C", str(source), "rev-parse", "HEAD"]) != head or capture(
         ["git", "-C", str(source), "status", "--porcelain", "--untracked-files=all"]
@@ -149,6 +162,7 @@ def main():
               "plugin_path": str(plugin),
               "plugin_sha256": hashlib.sha256(plugin.read_bytes()).hexdigest(),
               "llvm_version": ver, "tool_versions": versions, "commands": commands,
+              "llvm_rtti": rtti, "plugin_load_smoke": {"status": "pass", "output": smoke_output},
               "license": "Apache-2.0 WITH LLVM-exception",
               "limitations": ["Local provenance only; not a signed attestation",
                               "Build success does not validate virtualization or iOS compatibility"]}

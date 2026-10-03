@@ -1,0 +1,189 @@
+{
+  "functions": [
+    {
+      "artifacts": {
+        "cfg": {
+          "after_dot": "cfg/protected_vm_stack_crypto_init/after.dot",
+          "before_dot": "cfg/protected_vm_stack_crypto_init/before.dot",
+          "per_pass": [
+            {
+              "after_dot": "cfg/protected_vm_stack_crypto_init/pass_0_vm.dot",
+              "diff_dot": "cfg/protected_vm_stack_crypto_init/pass_0_vm.dot",
+              "pass": "vm"
+            }
+          ]
+        }
+      },
+      "budget": {
+        "enabled": true,
+        "limit": 8850,
+        "remaining": 8673,
+        "utilization": 0.02
+      },
+      "declaration": false,
+      "difficulty": {
+        "callbrs": 0,
+        "cyclomatic_after": 8,
+        "cyclomatic_before": 8,
+        "cyclomatic_delta": 0,
+        "indirect_branches": 0,
+        "indirect_calls": 0,
+        "mba_avg_depth": 0,
+        "mba_max_depth": 0,
+        "mba_nodes": 0,
+        "opaque_per_100_insts": 0,
+        "opaque_predicates": 0,
+        "score": 0
+      },
+      "insts": {
+        "after": 177,
+        "before": 177
+      },
+      "name": "protected_vm_stack_crypto_init",
+      "passes": [
+        {
+          "budget_util_after": 0.02,
+          "delta_insts": 0,
+          "id": "vm",
+          "insts_after": 177,
+          "insts_before": 177,
+          "seed": 0,
+          "skip_reason": "unsupported instruction:   call void @llvm.memset.p0.i64(ptr align 8 %21, i8 0, i64 40, i1 false)",
+          "status": "skipped"
+        }
+      ],
+      "seed": {
+        "base": 1,
+        "function": -8564540179548234900,
+        "module": 1
+      },
+      "skipped": false
+    },
+    {
+      "artifacts": {
+        "cfg": {
+          "after_dot": "cfg/protected_vm_stack_encrypt_push/after.dot",
+          "before_dot": "cfg/protected_vm_stack_encrypt_push/before.dot",
+          "per_pass": [
+            {
+              "after_dot": "cfg/protected_vm_stack_encrypt_push/pass_0_vm.dot",
+              "diff_dot": "cfg/protected_vm_stack_encrypt_push/pass_0_vm.dot",
+              "pass": "vm"
+            }
+          ]
+        }
+      },
+      "budget": {
+        "enabled": true,
+        "limit": 2500,
+        "remaining": 2315,
+        "utilization": 0.073999999999999996
+      },
+      "declaration": false,
+      "difficulty": {
+        "callbrs": 0,
+        "cyclomatic_after": 1,
+        "cyclomatic_before": 3,
+        "cyclomatic_delta": -2,
+        "indirect_branches": 0,
+        "indirect_calls": 1,
+        "mba_avg_depth": 0,
+        "mba_max_depth": 0,
+        "mba_nodes": 0,
+        "opaque_per_100_insts": 0,
+        "opaque_predicates": 0,
+        "score": 0
+      },
+      "insts": {
+        "after": 185,
+        "before": 50
+      },
+      "name": "protected_vm_stack_encrypt_push",
+      "passes": [
+        {
+          "budget_util_after": 0.073999999999999996,
+          "changed": true,
+          "delta_insts": 135,
+          "id": "vm",
+          "insts_after": 185,
+          "insts_before": 50,
+          "seed": 0,
+          "status": "ran"
+        }
+      ],
+      "seed": {
+        "base": 1,
+        "function": -8034858114251755237,
+        "module": 1
+      },
+      "skipped": false
+    },
+    {
+      "artifacts": {
+        "cfg": {
+          "after_dot": "cfg/protected_vm_stack_push_encrypted/after.dot",
+          "before_dot": "cfg/protected_vm_stack_push_encrypted/before.dot",
+          "per_pass": [
+            {
+              "after_dot": "cfg/protected_vm_stack_push_encrypted/pass_0_vm.dot",
+              "diff_dot": "cfg/protected_vm_stack_push_encrypted/pass_0_vm.dot",
+              "pass": "vm"
+            }
+          ]
+        }
+      },
+      "budget": {
+        "enabled": true,
+        "limit": 3050,
+        "remaining": 2846,
+        "utilization": 0.066885245901639342
+      },
+      "declaration": false,
+      "difficulty": {
+        "callbrs": 0,
+        "cyclomatic_after": 1,
+        "cyclomatic_before": 6,
+        "cyclomatic_delta": -5,
+        "indirect_branches": 0,
+        "indirect_calls": 1,
+        "mba_avg_depth": 0,
+        "mba_max_depth": 0,
+        "mba_nodes": 0,
+        "opaque_per_100_insts": 0,
+        "opaque_predicates": 0,
+        "score": 0
+      },
+      "insts": {
+        "after": 204,
+        "before": 61
+      },
+      "name": "protected_vm_stack_push_encrypted",
+      "passes": [
+        {
+          "budget_util_after": 0.066885245901639342,
+          "changed": true,
+          "delta_insts": 143,
+          "id": "vm",
+          "insts_after": 204,
+          "insts_before": 61,
+          "seed": 0,
+          "status": "ran"
+        }
+      ],
+      "seed": {
+        "base": 1,
+        "function": -8611161609856994383,
+        "module": 1
+      },
+      "skipped": false
+    }
+  ],
+  "module": {
+    "data_layout": "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
+    "identifier": "/tmp/ir-vmp-stack-real-regression/build-_ckag5cn/before.ll",
+    "source_file": "candidates.c",
+    "target_triple": "x86_64-unknown-linux-gnu"
+  },
+  "schema": "llvm_obfuscator.obf_map",
+  "schema_version": 1
+}

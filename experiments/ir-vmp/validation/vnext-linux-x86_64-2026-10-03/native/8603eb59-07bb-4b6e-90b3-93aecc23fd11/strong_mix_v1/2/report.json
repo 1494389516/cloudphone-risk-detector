@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "mode": "baseline-only",
+  "suite": "strong_mix",
+  "status": "BASELINE_ONLY_PASS",
+  "vmp_verified": false,
+  "scope": "host experiment only; no iOS/device validation",
+  "commands": [
+    {
+      "argv": [
+        "/tmp/ir-vmp-tools/bin/python",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/verify_sources.py",
+        "--suite",
+        "strong_mix"
+      ],
+      "returncode": 0,
+      "stdout": "{\"body_sha256\": \"8c52f0b55f0b5a14aa871e47dba58094faf33f138e26d4b300b93ce0b5c2b535\", \"constants_sha256\": \"1a821f50828e183a1e4d63eba313964540d4f0c10519d32ef043006363ef3a70\", \"dependencies\": [], \"function\": \"cprisk_whitebox_strong_mix_layer_i\", \"return_type\": \"void\", \"schema_version\": 1, \"segments\": [{\"file\": \"helper.inc\", \"function\": \"cprisk_rotl8_i\", \"return_type\": \"uint8_t\", \"sha256\": \"d740190598dec340dac7a38a0ddbb40cdca716996c7501f4705edca4ff1a6280\", \"source\": \"RiskDetectorApp/Sources/CRiskCore/cprisk_whitebox.c\"}], \"source\": \"RiskDetectorApp/Sources/CRiskCore/cprisk_whitebox.c\", \"source_revision\": \"aa9aba7d17f3efa00b04f63793d1cd9bfca7719b\", \"source_sha256\": \"7fad7c54a459d4350d45e3d8fb8820c1274a4c8736c27436f676ac6eb2168942\"}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/usr/bin/x86_64-linux-gnu-gcc-13",
+        "--version"
+      ],
+      "returncode": 0,
+      "stdout": "x86_64-linux-gnu-gcc-13 (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0\nCopyright (C) 2023 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/usr/bin/x86_64-linux-gnu-gcc-13",
+        "-std=c11",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-DCPRISK_TEST_SEED=2",
+        "-DCPRISK_RANDOM_CASES=10000",
+        "-fno-tree-vectorize",
+        "-DCPRISK_VMP_PREFIX=plain_",
+        "-c",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/strong_mix/candidates.c",
+        "-o",
+        "/tmp/ir-vmp-final-native/8603eb59-07bb-4b6e-90b3-93aecc23fd11/strong_mix_v1/2/build-nf9m9ub9/plain.o"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/usr/bin/x86_64-linux-gnu-gcc-13",
+        "-std=c11",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-DCPRISK_TEST_SEED=2",
+        "-DCPRISK_RANDOM_CASES=10000",
+        "-fno-tree-vectorize",
+        "-DCPRISK_VMP_PREFIX=protected_",
+        "-c",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/strong_mix/candidates.c",
+        "-o",
+        "/tmp/ir-vmp-final-native/8603eb59-07bb-4b6e-90b3-93aecc23fd11/strong_mix_v1/2/build-nf9m9ub9/protected.o"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/usr/bin/x86_64-linux-gnu-gcc-13",
+        "-std=c11",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-DCPRISK_TEST_SEED=2",
+        "-DCPRISK_RANDOM_CASES=10000",
+        "-fno-tree-vectorize",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/strong_mix/differential.c",
+        "/tmp/ir-vmp-final-native/8603eb59-07bb-4b6e-90b3-93aecc23fd11/strong_mix_v1/2/build-nf9m9ub9/plain.o",
+        "/tmp/ir-vmp-final-native/8603eb59-07bb-4b6e-90b3-93aecc23fd11/strong_mix_v1/2/build-nf9m9ub9/protected.o",
+        "-o",
+        "/tmp/ir-vmp-final-native/8603eb59-07bb-4b6e-90b3-93aecc23fd11/strong_mix_v1/2/build-nf9m9ub9/differential"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-final-native/8603eb59-07bb-4b6e-90b3-93aecc23fd11/strong_mix_v1/2/build-nf9m9ub9/differential"
+      ],
+      "returncode": 0,
+      "stdout": "PASS cases=10772 random_cases=10000 seed=2\n",
+      "stderr": ""
+    }
+  ],
+  "tools": {
+    "cc": {
+      "path": "/usr/bin/x86_64-linux-gnu-gcc-13",
+      "version": "x86_64-linux-gnu-gcc-13 (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0\nCopyright (C) 2023 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+      "sha256": "6117c52522997d2aaccb2b52b3c6bf42c0a6c5edb1d718431fed6b2fc5fec234"
+    }
+  },
+  "hashes": {
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/strong_mix/body.inc": "8c52f0b55f0b5a14aa871e47dba58094faf33f138e26d4b300b93ce0b5c2b535",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/strong_mix/candidates.c": "e8601291a7279b30845fb34e2d71173f53cb72e669d49f47116a1bd4c4142f5d",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/strong_mix/constants.inc": "1a821f50828e183a1e4d63eba313964540d4f0c10519d32ef043006363ef3a70",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/strong_mix/differential.c": "dc46c57054c4f55ee1044a8ef2bce01cf8fb4442272ee98334410c114f5b2c86",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/strong_mix/helper.inc": "d740190598dec340dac7a38a0ddbb40cdca716996c7501f4705edca4ff1a6280",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/strong_mix/sources.json": "23e9e426a73645a45fb043da00a6e53c5dd828ed9c44ca0c0dcf1be1b8ce0c44",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/verify_sources.py": "f155612b606558c9f2e039ef021862fca11b378d7ca1c206a58233fd84a12efd",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/run.py": "e5eb0dc541082303a125dfaea63203ac5c624aee25bdeb4f2e2384810ed4af4c",
+    "/tmp/ir-vmp-final-native/8603eb59-07bb-4b6e-90b3-93aecc23fd11/strong_mix_v1/2/build-nf9m9ub9/differential": "5d3520214064f1fc66d45747336869eaf61f022e6751a5d43a4be95954ef239b"
+  },
+  "run_id": "078c7ccf-f7bd-4064-8a14-6d695b21ee6c",
+  "created_at": "2026-10-03T10:51:45.633659+00:00",
+  "seed": 2,
+  "random_cases_requested": 10000,
+  "sanitizers": false,
+  "sanitizer_environment": {},
+  "build_directory": "/tmp/ir-vmp-final-native/8603eb59-07bb-4b6e-90b3-93aecc23fd11/strong_mix_v1/2/build-nf9m9ub9",
+  "differential_output": "PASS cases=10772 random_cases=10000 seed=2\n",
+  "completed_cases": 10772,
+  "object_sha256": {
+    "plain": "49328ad42acdfafbb1f74ace21eef3ea13abe78acdb49f24beaaeb172c610a91",
+    "protected": "f85bf0f6115626b3c6ad1a982fd29741784f9ffbad90f17d982b2f9d0c38db60"
+  },
+  "elapsed_seconds": 0.166455
+}

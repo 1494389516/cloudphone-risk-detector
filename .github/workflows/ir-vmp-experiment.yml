@@ -7,6 +7,12 @@ on:
       - 'RiskDetectorApp/Sources/CRiskCore/cprisk_gf2_affine.c'
       - 'RiskDetectorApp/Sources/CRiskCore/vm_stack_crypto.*'
       - 'RiskDetectorApp/Sources/CRiskCore/include/cprisk_secure_zero.h'
+      - 'RiskDetectorApp/Sources/CRiskCore/cprisk_integrity.c'
+      - 'RiskDetectorApp/Sources/CRiskCore/cprisk_whitebox.c'
+      - 'RiskDetectorApp/Sources/CRiskCore/include/cprisk_armor_abi.h'
+      - 'cprisk-armor/Sources/VMProtector/**'
+      - 'cprisk-armor/Tests/VMProtectorTests/**'
+      - 'cprisk-armor/Package.swift'
       - '.github/workflows/ir-vmp-experiment.yml'
   workflow_dispatch:
 
@@ -32,3 +38,44 @@ jobs:
           name: ir-vmp-baseline-${{ matrix.os }}-${{ matrix.suite }}
           path: /tmp/ir-vmp-baseline/report.json
           if-no-files-found: warn
+
+  business-baseline:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r experiments/ir-vmp/requirements.txt
+      - name: Strict configuration, source and failure-injection gates
+        run: python -m unittest discover -s experiments/ir-vmp/tests -v
+      - name: Five seeds per real business candidate (native only)
+        run: python experiments/ir-vmp/vnext.py run --output /tmp/ir-vmp-business
+      - name: ASan and UBSan native baseline
+        run: python experiments/ir-vmp/vnext.py run --sanitize --output /tmp/ir-vmp-business-sanitized
+      - name: Release gate must reject baseline evidence
+        run: |
+          if python experiments/ir-vmp/vnext.py verify-release --evidence /tmp/ir-vmp-business/release-evidence.json; then
+            echo 'error: native baseline was accepted as release evidence' >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ir-vmp-business-${{ matrix.os }}
+          path: |
+            /tmp/ir-vmp-business/**/*.json
+            /tmp/ir-vmp-business-sanitized/**/*.json
+
+  strict-legacy-policy:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate shipped YAML, negative configurations and full guard
+        working-directory: cprisk-armor
+        run: swift test --filter VMPolicyStrictTests

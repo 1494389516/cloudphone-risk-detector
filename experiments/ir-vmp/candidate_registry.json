@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "candidates": [
+    {
+      "candidate_id": "policy_select_v1",
+      "suite": "policy_selection",
+      "symbol": "cprisk_antidebug_select_policy_bits_i",
+      "source": "RiskDetectorApp/Sources/CRiskCore/cprisk_integrity.c",
+      "source_sha256": "fc875ab835a95d3b077e4b3246335f0757b26543d2adc0587e0cf2e704aac58d",
+      "body_sha256": "2bc190a9a460a6afb6b213b8593ee5f9e2a994c2a5ec09044ec234f993c6d1d8",
+      "status": "planned",
+      "production_enabled": false,
+      "valid_domain": "initialized globals; 0..64 entries; nullable independent outputs",
+      "blockers": [
+        "global_state_synchronization_contract_unresolved",
+        "native_to_vm_not_executed",
+        "sdk_callpath_not_integrated"
+      ]
+    },
+    {
+      "candidate_id": "strong_mix_v1",
+      "suite": "strong_mix",
+      "symbol": "cprisk_whitebox_strong_mix_layer_i",
+      "source": "RiskDetectorApp/Sources/CRiskCore/cprisk_whitebox.c",
+      "source_sha256": "7fad7c54a459d4350d45e3d8fb8820c1274a4c8736c27436f676ac6eb2168942",
+      "body_sha256": "8c52f0b55f0b5a14aa871e47dba58094faf33f138e26d4b300b93ce0b5c2b535",
+      "status": "planned",
+      "production_enabled": false,
+      "valid_domain": "three valid disjoint 32-byte buffers",
+      "blockers": [
+        "i8_ir_semantics_not_verified",
+        "domain_suite_not_integrated",
+        "native_to_vm_not_executed"
+      ]
+    }
+  ]
+}

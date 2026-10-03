@@ -163,6 +163,13 @@ public struct VMPolicyConfig: Equatable, Sendable {
     public static func parse(_ yaml: String) -> VMPolicyConfig {
         VMPolicyParser.parse(yaml)
     }
+
+    /// Release/CLI entry: reject ambiguous or unsupported input before defaults
+    /// in the compatibility parser can discard it. Does not enable full tier.
+    public static func parseStrict(_ yaml: String) throws -> VMPolicyConfig {
+        try VMPolicyStrictValidator.validate(yaml)
+        return VMPolicyParser.parse(yaml)
+    }
 }
 
 enum VMPolicyParser {
@@ -392,7 +399,13 @@ public final class VMProtectorPass: ArmorPass {
     }
 
     public func execute(on file: MachOFile, config: PassConfig) throws -> PassResult {
+        if let explicit = policyFilePath, explicit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw MachOError.invalidData("Explicit VMP policy path is empty")
+        }
         guard let policyURL = Self.resolvePolicyURL(explicitPath: policyFilePath) else {
+            if policyFilePath != nil {
+                throw MachOError.invalidData("Explicit VMP policy is missing or empty")
+            }
             return PassResult(
                 passName: name,
                 itemsProcessed: 0,
@@ -402,7 +415,7 @@ public final class VMProtectorPass: ArmorPass {
         }
 
         let policyText = try String(contentsOf: policyURL, encoding: .utf8)
-        let policy = VMPolicyConfig.parse(policyText)
+        let policy = try VMPolicyConfig.parseStrict(policyText)
         try policy.validateNativeReplacementSupport()
 
         guard let textSection = try file.section(segment: "__TEXT", section: "__text") else {

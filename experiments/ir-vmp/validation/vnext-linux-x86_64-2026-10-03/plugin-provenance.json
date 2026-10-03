@@ -1,0 +1,118 @@
+{
+  "schema_version": 2,
+  "status": "built",
+  "xollvm_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+  "plugin_path": "/tmp/ir-vmp-plugin-rtti/cmake/Obfuscator.so",
+  "plugin_sha256": "57467fdbd1d4fcf4c305fd7c37acd4b9550d9e1cf5e4b4255da7880d570049db",
+  "llvm_version": "22.1.8",
+  "tool_versions": {
+    "clang": "clang version 22.1.8 (https://github.com/llvm/llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1)\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /tmp/ir-vmp-llvm/bin",
+    "clang++": "clang version 22.1.8 (https://github.com/llvm/llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1)\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /tmp/ir-vmp-llvm/bin",
+    "opt": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.\n  Default target: x86_64-unknown-linux-gnu\n  Host CPU: emeraldrapids",
+    "llvm-config": "22.1.8"
+  },
+  "commands": [
+    [
+      "cmake",
+      "-S",
+      "/tmp/ir-vmp-plugin-rtti/patched-source",
+      "-B",
+      "/tmp/ir-vmp-plugin-rtti/cmake",
+      "-DLLVM_DIR=/tmp/ir-vmp-llvm/lib/cmake/llvm",
+      "-DCMAKE_BUILD_TYPE=Release",
+      "-DCMAKE_C_COMPILER=/tmp/ir-vmp-llvm/bin/clang",
+      "-DCMAKE_CXX_COMPILER=/tmp/ir-vmp-llvm/bin/clang++",
+      "-DCMAKE_CXX_FLAGS=-fno-rtti"
+    ],
+    [
+      "cmake",
+      "--build",
+      "/tmp/ir-vmp-plugin-rtti/cmake",
+      "--target",
+      "Obfuscator",
+      "--parallel",
+      "2"
+    ],
+    [
+      "/tmp/ir-vmp-llvm/bin/opt",
+      "-load-pass-plugin=/tmp/ir-vmp-plugin-rtti/cmake/Obfuscator.so",
+      "-passes=verify",
+      "-disable-output",
+      "/tmp/ir-vmp-plugin-rtti/plugin-load-smoke.ll"
+    ]
+  ],
+  "llvm_rtti": "NO",
+  "plugin_load_smoke": {
+    "status": "pass",
+    "output": ""
+  },
+  "license": "Apache-2.0 WITH LLVM-exception",
+  "limitations": [
+    "Local provenance only; not a signed attestation",
+    "Build success does not validate virtualization or iOS compatibility"
+  ],
+  "local_patch_set": {
+    "schema_version": 1,
+    "id": "pointer-gep-v2",
+    "xollvm_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+    "patch_file": "pointer-gep-v2.patch",
+    "patch_sha256": "3bf254367cf27116d9c495da21d79d5d47bd38036ee757c158968962a414b5a6",
+    "files": {
+      "VMPass_Emitter.cpp": {
+        "before_sha256": "70c1d037b134753fcdf3ba9e77d5843c61e6aa8534be0b11a126fa3d8fcaa9e8",
+        "after_sha256": "206af82042872e7680bdc3d6e9e1f256d8c60d69407e1b42f6e6189c6d387f76"
+      },
+      "VMPass_Handlers.cpp": {
+        "before_sha256": "f6de216ec9095661d163650a590c684cca73c13114c1f481f502f9038bd9f9cc",
+        "after_sha256": "aa9990110e44db4275c626385c3ada87ef65cb1d21ccf15344553acd59501b5c"
+      },
+      "VMPass_Verifier.cpp": {
+        "before_sha256": "1e1920edfa187ddc58580ec50370fd4edce8e5635c5306bcd9f91491a7da4044",
+        "after_sha256": "28771c76da9f6e16594037f3c30d2bce3172bc455ffd1b3f441dcc09726373f0"
+      },
+      "include/llvm/Transforms/Obfuscator/VMPass_ISA.h": {
+        "before_sha256": "c9fc636187a5c970ea2ebf49c28ecdb3f716a20073d7b5be09a237f11538c37b",
+        "after_sha256": "43f00303b225bac53e772a9ef71c4997283e32b784a33b7f55a64310e3b88b46"
+      }
+    },
+    "capabilities": {
+      "pointer_comparison": {
+        "predicates": [
+          "eq",
+          "ne"
+        ],
+        "address_spaces": [
+          0
+        ],
+        "null_supported": true,
+        "operand_storage": "native pointer registers",
+        "encoding": "OP_ICMP_PTR=0x38; kind byte 0=eq, 1=ne; not a RandISA predicate byte"
+      },
+      "validation_scope": "local host experiments; hardened=0 antiDebug=0 encBytecode=0",
+      "unsupported": [
+        "ordered pointer predicates",
+        "nonzero pointer address spaces",
+        "production integration and device execution not validated"
+      ],
+      "isa_compatibility": "OP_COUNT increases from 0x38 to 0x39 and decoy base moves; patched and upstream plugin/bytecode must not be mixed",
+      "gep": {
+        "constant_indices": "target DataLayout byte offset, including struct padding and nested aggregates",
+        "dynamic_indices": "one i32/i64 index, or array [0,index], using allocation size",
+        "address_spaces": [
+          0
+        ],
+        "pointer_and_index_bits": 64,
+        "max_dynamic_stride": 65535,
+        "oversized_dynamic_stride": "rejected; never saturated",
+        "unsupported": [
+          "dynamic multi-index GEP except array [0,index]",
+          "scalable types",
+          "nonzero address spaces",
+          "non-64-bit pointer/index layouts"
+        ]
+      }
+    }
+  },
+  "patched_source": "/tmp/ir-vmp-plugin-rtti/patched-source",
+  "patched_source_tree_sha256": "441d48c11eca97c3fde786374f9084a466924a226167538c9a7adf56dfc514b1"
+}

@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "backend_id": "xollvm",
+  "upstream_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+  "patch_set": "pointer-gep-v2",
+  "deployment_target": "14.0",
+  "optimization_pipeline": [
+    "default<O2>",
+    "verify"
+  ],
+  "allowed_ir_features": [
+    "scalar-integer",
+    "as0-pointer-eq-ne-null",
+    "bounded-gep-v2",
+    "branch-phi-return",
+    "nonvolatile-load-store"
+  ],
+  "requirements": [
+    "conversion",
+    "host_semantics",
+    "production_callpath",
+    "device_semantics",
+    "performance",
+    "resilience"
+  ],
+  "profile": "semantic-lab",
+  "target_triple": "host",
+  "required": true,
+  "candidates": [
+    {
+      "candidate_id": "policy_select_v1",
+      "source_sha256": "fc875ab835a95d3b077e4b3246335f0757b26543d2adc0587e0cf2e704aac58d",
+      "body_sha256": "2bc190a9a460a6afb6b213b8593ee5f9e2a994c2a5ec09044ec234f993c6d1d8",
+      "annotation": {
+        "minBlocks": 1,
+        "hardened": 0,
+        "antiDebug": 0,
+        "encBytecode": 0
+      },
+      "dependencies_sha256": "85c7bdfd1f77fb6022d4edd2299ee21a5e04e189271bb696a917faa238500e2e"
+    },
+    {
+      "candidate_id": "strong_mix_v1",
+      "source_sha256": "7fad7c54a459d4350d45e3d8fb8820c1274a4c8736c27436f676ac6eb2168942",
+      "body_sha256": "8c52f0b55f0b5a14aa871e47dba58094faf33f138e26d4b300b93ce0b5c2b535",
+      "annotation": {
+        "minBlocks": 1,
+        "hardened": 0,
+        "antiDebug": 0,
+        "encBytecode": 0
+      },
+      "dependencies_sha256": "f348e8641955aebef4ed74f4d561d58dc22081fdbca8d47c9c9d862f66533398"
+    }
+  ],
+  "seeds": [
+    1,
+    2,
+    3,
+    5,
+    8
+  ]
+}

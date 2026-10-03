@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "mode": "baseline-only",
+  "suite": "gf2",
+  "status": "BASELINE_ONLY_PASS",
+  "vmp_verified": false,
+  "scope": "host experiment only; no iOS/device validation",
+  "commands": [
+    {
+      "argv": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/verify_sources.py"
+      ],
+      "returncode": 0,
+      "stdout": "{\"commit\": \"53a6b1c9c555ba35423b2557caee450b2f234181\", \"extracted_sha256\": \"e517ce1c4be48f6ee8146fdbc34a6969dcaa1c4f68b0f669e6c0ff64b84ac481\", \"functions\": [\"cprisk_gf2_xorshift64\", \"cprisk_gf2_fnv1a\"], \"source\": \"RiskDetectorApp/Sources/CRiskCore/cprisk_gf2_affine.c\", \"source_git_blob\": \"8008ae4241418c1fd5862661234489f014b4aadd\", \"source_sha256\": \"1b91b0bcf58d0916bb42aa01ad46391f52a927bb0875e6b2590a8aad306a403d\"}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/usr/bin/x86_64-linux-gnu-gcc-13",
+        "--version"
+      ],
+      "returncode": 0,
+      "stdout": "x86_64-linux-gnu-gcc-13 (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0\nCopyright (C) 2023 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/usr/bin/x86_64-linux-gnu-gcc-13",
+        "-std=c11",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-DCPRISK_TEST_SEED=1",
+        "-DCPRISK_RANDOM_CASES=10000",
+        "-DCPRISK_VMP_PREFIX=plain_",
+        "-c",
+        "gf2_candidates.c",
+        "-o",
+        "/tmp/ir-vmp-gf2-regression/build-iuuwlx2d/plain.o"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/usr/bin/x86_64-linux-gnu-gcc-13",
+        "-std=c11",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-DCPRISK_TEST_SEED=1",
+        "-DCPRISK_RANDOM_CASES=10000",
+        "-DCPRISK_VMP_PREFIX=protected_",
+        "-c",
+        "gf2_candidates.c",
+        "-o",
+        "/tmp/ir-vmp-gf2-regression/build-iuuwlx2d/protected.o"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/usr/bin/x86_64-linux-gnu-gcc-13",
+        "-std=c11",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-DCPRISK_TEST_SEED=1",
+        "-DCPRISK_RANDOM_CASES=10000",
+        "gf2_differential.c",
+        "/tmp/ir-vmp-gf2-regression/build-iuuwlx2d/plain.o",
+        "/tmp/ir-vmp-gf2-regression/build-iuuwlx2d/protected.o",
+        "-o",
+        "/tmp/ir-vmp-gf2-regression/build-iuuwlx2d/differential"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-gf2-regression/build-iuuwlx2d/differential"
+      ],
+      "returncode": 0,
+      "stdout": "PASS cases=4096 seed=783cb86db73074ac\n",
+      "stderr": ""
+    }
+  ],
+  "tools": {
+    "cc": {
+      "path": "/usr/bin/x86_64-linux-gnu-gcc-13",
+      "version": "x86_64-linux-gnu-gcc-13 (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0\nCopyright (C) 2023 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+      "sha256": "6117c52522997d2aaccb2b52b3c6bf42c0a6c5edb1d718431fed6b2fc5fec234"
+    }
+  },
+  "hashes": {
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/gf2_candidates.c": "fcd3eab20000849dc4ca16c6d5e14bf158e245221bdccaa10f78aa42d5e96d47",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/gf2_differential.c": "9dd10d266de9da3cd06e6a3706be8fcf190f71664cc165caa60f670fab85125f",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/gf2_candidates.inc": "e517ce1c4be48f6ee8146fdbc34a6969dcaa1c4f68b0f669e6c0ff64b84ac481",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/sources.json": "5f7dd0e436ec8f272561fddb08ea499dd134366535012b7fb23c507db76038bb",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/verify_sources.py": "f155612b606558c9f2e039ef021862fca11b378d7ca1c206a58233fd84a12efd",
+    "/tmp/ir-vmp-gf2-regression/build-iuuwlx2d/differential": "78aa04170d18cac463d74d1fe7059e1e4c451c734ca212e9d6b9a1f1218c0cf0"
+  },
+  "run_id": "50a6a606-c808-42ae-bbc0-64cb6c51512a",
+  "created_at": "2026-10-03T10:33:08.607052+00:00",
+  "seed": 1,
+  "random_cases_requested": 10000,
+  "sanitizers": false,
+  "sanitizer_environment": {},
+  "build_directory": "/tmp/ir-vmp-gf2-regression/build-iuuwlx2d",
+  "differential_output": "PASS cases=4096 seed=783cb86db73074ac\n",
+  "completed_cases": 4096,
+  "object_sha256": {
+    "plain": "461799d6d5f7e8b858593a3afa033234337b388a17bbdd8d70934994e5ea1d0d",
+    "protected": "9782b90f312881646be0f77a1bc5b29e29a98302370a489678b35c84f1d12ac9"
+  },
+  "elapsed_seconds": 0.197337
+}

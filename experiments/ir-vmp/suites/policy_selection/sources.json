@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "source_revision": "aa9aba7d17f3efa00b04f63793d1cd9bfca7719b",
+  "source": "RiskDetectorApp/Sources/CRiskCore/cprisk_integrity.c",
+  "source_sha256": "fc875ab835a95d3b077e4b3246335f0757b26543d2adc0587e0cf2e704aac58d",
+  "function": "cprisk_antidebug_select_policy_bits_i",
+  "return_type": "uint32_t",
+  "body_sha256": "2bc190a9a460a6afb6b213b8593ee5f9e2a994c2a5ec09044ec234f993c6d1d8",
+  "segments": [
+    {
+      "source": "RiskDetectorApp/Sources/CRiskCore/cprisk_integrity.c",
+      "start": "typedef struct cprisk_adbg_runtime_plan_i",
+      "end": "static cprisk_adbg_runtime_plan_t",
+      "file": "types.inc",
+      "sha256": "793a87531abfe028a5975712bc0073a956107f617634d1c5f240f6dd5736b176"
+    }
+  ],
+  "dependencies": [
+    {
+      "path": "RiskDetectorApp/Sources/CRiskCore/include/cprisk_armor_abi.h",
+      "sha256": "9102a97b4bf7ccc5a3faad632f5db09a1a292026cf5eb2bae713701df4b288d9"
+    }
+  ],
+  "constants_sha256": "8b04234b9f49bfdb6c644f96733f38d2b36634696294d01afc1b5dc18a571c16"
+}
