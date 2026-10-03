@@ -1,0 +1,155 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "backend_id",
+    "upstream_commit",
+    "patch_set",
+    "profile",
+    "target_triple",
+    "deployment_target",
+    "required",
+    "candidates",
+    "optimization_pipeline",
+    "allowed_ir_features",
+    "seeds",
+    "requirements"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "backend_id": {
+      "const": "xollvm"
+    },
+    "upstream_commit": {
+      "const": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e"
+    },
+    "patch_set": {
+      "const": "pointer-gep-v2"
+    },
+    "profile": {
+      "enum": [
+        "off",
+        "semantic-lab",
+        "ir-vmp-canary",
+        "ir-vmp-release"
+      ]
+    },
+    "target_triple": {
+      "enum": [
+        "host",
+        "arm64-apple-ios14.0"
+      ]
+    },
+    "deployment_target": {
+      "const": "14.0"
+    },
+    "required": {
+      "type": "boolean"
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "candidate_id",
+          "source_sha256",
+          "body_sha256",
+          "annotation",
+          "dependencies_sha256"
+        ],
+        "properties": {
+          "candidate_id": {
+            "enum": [
+              "policy_select_v1",
+              "strong_mix_v1"
+            ]
+          },
+          "source_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "body_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "annotation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "minBlocks",
+              "hardened",
+              "antiDebug",
+              "encBytecode"
+            ],
+            "properties": {
+              "minBlocks": {
+                "type": "integer",
+                "const": 1
+              },
+              "hardened": {
+                "type": "integer",
+                "const": 0
+              },
+              "antiDebug": {
+                "type": "integer",
+                "const": 0
+              },
+              "encBytecode": {
+                "type": "integer",
+                "const": 0
+              }
+            }
+          },
+          "dependencies_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      },
+      "minItems": 1,
+      "maxItems": 2
+    },
+    "optimization_pipeline": {
+      "const": [
+        "default<O2>",
+        "verify"
+      ]
+    },
+    "allowed_ir_features": {
+      "const": [
+        "scalar-integer",
+        "as0-pointer-eq-ne-null",
+        "bounded-gep-v2",
+        "branch-phi-return",
+        "nonvolatile-load-store"
+      ]
+    },
+    "seeds": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 2147483647
+      },
+      "minItems": 1,
+      "maxItems": 50,
+      "uniqueItems": true
+    },
+    "requirements": {
+      "const": [
+        "conversion",
+        "host_semantics",
+        "production_callpath",
+        "device_semantics",
+        "performance",
+        "resilience"
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,102 @@
+{
+  "report_kind": "cprisk.ir-vmp.release-evidence",
+  "schema_version": 1,
+  "run_id": "5873cf96-5fc9-4ad4-83be-cf6266280a26",
+  "created_at": "2026-10-03T10:54:42.595177+00:00",
+  "profile": "semantic-lab",
+  "config_sha256": "f5f61f0549e59169096ae73a580785d0c861e98f86894a51dd1fb4dfbb6e0931",
+  "artifact_id": "e960fa8e3795d8c0286c796a5e37de8b9484d8a7976c933a8de6533a33efa295",
+  "artifact_manifest": "artifact-manifest.json",
+  "targets": [
+    {
+      "candidate_id": "policy_select_v1",
+      "requested": true,
+      "conversion": {
+        "status": "pass",
+        "reason": "all_requested_host_seeds_passed",
+        "evidence": [
+          {
+            "path": "policy_select_v1-conversion.json",
+            "sha256": "052301e829eb6e6f0f43fc36b1fb49b4ec1c58780bc3a20a3f52ddea54d5a198"
+          }
+        ]
+      },
+      "host_semantics": {
+        "status": "pass",
+        "reason": "all_requested_host_seeds_passed",
+        "evidence": [
+          {
+            "path": "policy_select_v1-host_semantics.json",
+            "sha256": "434c6d6bd051f5fa29f4748ef903369186d8a864c677d27b95b63e88b3761ebc"
+          }
+        ]
+      },
+      "production_callpath": {
+        "status": "not_run",
+        "reason": "not_executed",
+        "evidence": []
+      },
+      "device_semantics": {
+        "status": "blocked",
+        "reason": "physical_sdk_execution_not_available",
+        "evidence": []
+      },
+      "performance": {
+        "status": "not_run",
+        "reason": "not_executed",
+        "evidence": []
+      },
+      "resilience": {
+        "status": "not_run",
+        "reason": "not_executed",
+        "evidence": []
+      },
+      "release_eligible": false
+    },
+    {
+      "candidate_id": "strong_mix_v1",
+      "requested": true,
+      "conversion": {
+        "status": "pass",
+        "reason": "all_requested_host_seeds_passed",
+        "evidence": [
+          {
+            "path": "strong_mix_v1-conversion.json",
+            "sha256": "a9603b163780e71d393b6cdaf6f9d3d32a1bfee07bb94962282b2c004279abb7"
+          }
+        ]
+      },
+      "host_semantics": {
+        "status": "pass",
+        "reason": "all_requested_host_seeds_passed",
+        "evidence": [
+          {
+            "path": "strong_mix_v1-host_semantics.json",
+            "sha256": "3fecd6f2cfd98ad8904241f6535f549e5ddf5fa58d3cdfcbd8e1a5095f02d13c"
+          }
+        ]
+      },
+      "production_callpath": {
+        "status": "not_run",
+        "reason": "not_executed",
+        "evidence": []
+      },
+      "device_semantics": {
+        "status": "blocked",
+        "reason": "physical_sdk_execution_not_available",
+        "evidence": []
+      },
+      "performance": {
+        "status": "not_run",
+        "reason": "not_executed",
+        "evidence": []
+      },
+      "resilience": {
+        "status": "not_run",
+        "reason": "not_executed",
+        "evidence": []
+      },
+      "release_eligible": false
+    }
+  ]
+}

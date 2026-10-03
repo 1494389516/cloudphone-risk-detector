@@ -1,0 +1,82 @@
+{
+  "report_kind": "cprisk.ir-vmp.release-evidence",
+  "schema_version": 1,
+  "run_id": "8603eb59-07bb-4b6e-90b3-93aecc23fd11",
+  "created_at": "2026-10-03T10:51:43.915150+00:00",
+  "profile": "semantic-lab",
+  "config_sha256": "f5f61f0549e59169096ae73a580785d0c861e98f86894a51dd1fb4dfbb6e0931",
+  "artifact_id": null,
+  "artifact_manifest": null,
+  "targets": [
+    {
+      "candidate_id": "policy_select_v1",
+      "requested": true,
+      "conversion": {
+        "status": "not_run",
+        "reason": "not_executed",
+        "evidence": []
+      },
+      "host_semantics": {
+        "status": "not_run",
+        "reason": "native_baseline_only; VM semantics not executed",
+        "evidence": []
+      },
+      "production_callpath": {
+        "status": "not_run",
+        "reason": "not_executed",
+        "evidence": []
+      },
+      "device_semantics": {
+        "status": "blocked",
+        "reason": "physical_sdk_execution_not_available",
+        "evidence": []
+      },
+      "performance": {
+        "status": "not_run",
+        "reason": "not_executed",
+        "evidence": []
+      },
+      "resilience": {
+        "status": "not_run",
+        "reason": "not_executed",
+        "evidence": []
+      },
+      "release_eligible": false
+    },
+    {
+      "candidate_id": "strong_mix_v1",
+      "requested": true,
+      "conversion": {
+        "status": "not_run",
+        "reason": "not_executed",
+        "evidence": []
+      },
+      "host_semantics": {
+        "status": "not_run",
+        "reason": "native_baseline_only; VM semantics not executed",
+        "evidence": []
+      },
+      "production_callpath": {
+        "status": "not_run",
+        "reason": "not_executed",
+        "evidence": []
+      },
+      "device_semantics": {
+        "status": "blocked",
+        "reason": "physical_sdk_execution_not_available",
+        "evidence": []
+      },
+      "performance": {
+        "status": "not_run",
+        "reason": "not_executed",
+        "evidence": []
+      },
+      "resilience": {
+        "status": "not_run",
+        "reason": "not_executed",
+        "evidence": []
+      },
+      "release_eligible": false
+    }
+  ]
+}

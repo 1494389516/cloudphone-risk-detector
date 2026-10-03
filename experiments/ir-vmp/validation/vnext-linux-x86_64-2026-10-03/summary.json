@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "source_baseline": "aa9aba7d17f3efa00b04f63793d1cd9bfca7719b",
+  "date": "2026-10-03",
+  "scope": "isolated original business functions on Linux x86_64; SDK unchanged",
+  "results": {
+    "business_native": {
+      "status": "BASELINE_ONLY_PASS",
+      "cases": 106380
+    },
+    "business_native_asan_ubsan": {
+      "status": "BASELINE_ONLY_PASS",
+      "cases": 106380,
+      "ASAN_OPTIONS": "detect_leaks=0",
+      "limitation": "LeakSanitizer blocked by ptrace sandbox; same corpus, not additional independent coverage"
+    },
+    "business_vm": {
+      "status": "HOST_VMP_PASS",
+      "cases": 106380,
+      "seeds": [
+        1,
+        2,
+        3,
+        5,
+        8
+      ],
+      "policy_cases_per_seed": 10504,
+      "strong_mix_cases_per_seed": 10772
+    },
+    "python_and_llvm_boundary_tests": {
+      "passed": 30,
+      "skipped": 0
+    },
+    "gf2_native": {
+      "status": "BASELINE_ONLY_PASS",
+      "cases": 4096
+    },
+    "stack_native": {
+      "status": "BASELINE_ONLY_PASS",
+      "cases": 4155
+    },
+    "gf2_vm": {
+      "status": "HOST_VMP_PASS",
+      "cases": 4096
+    },
+    "stack_linux_vm": {
+      "status": "blocked",
+      "reason": "llvm.memset.p0.i64 rejected by pinned backend"
+    },
+    "swift_tests": {
+      "status": "not_run",
+      "reason": "Swift/Xcode unavailable locally; macOS CI added"
+    },
+    "sdk_device": {
+      "status": "blocked",
+      "reason": "no SDK object integration, signing or physical iPhone run"
+    },
+    "performance": {
+      "status": "not_run"
+    },
+    "resilience": {
+      "status": "not_run"
+    }
+  },
+  "release_eligible": false,
+  "compiler_sha256": "31a40dc31f3c15a47aa119aa148f339bf363d8f61202ddbdacbd3f24b71ba113",
+  "plugin_sha256": "57467fdbd1d4fcf4c305fd7c37acd4b9550d9e1cf5e4b4255da7880d570049db",
+  "files": {
+    "gf2-native.json": "dde74ca3024cbc062e36171cd057938632246e2bcc77539ec4fd7eb4b328acb2",
+    "gf2-vm.json": "67a2b2964f5456d1b76c433e82cea25b44ce823114449eb6ff89daa403ab8603",
+    "historical-plugin-load-failure.json": "18028d2d1d1db492884a820fab6b835ed13b268963bba23ae66521a0eb42c0b0",
+    "native/8603eb59-07bb-4b6e-90b3-93aecc23fd11/policy_select_v1/1/report.json": "cd2ed6572788e73c5f08ceb9da583dcab25145f0734487fc12688a00bd7378d1",
+    "native/8603eb59-07bb-4b6e-90b3-93aecc23fd11/policy_select_v1/2/report.json": "72e171ab7f6f408d0e93db542892fea3d374389084b3cc67543ab5becb3384c6",
+    "native/8603eb59-07bb-4b6e-90b3-93aecc23fd11/policy_select_v1/3/report.json": "740e80639f528ee62292e30612fab10f82f7c717673c8ef78675426dae990d84",
+    "native/8603eb59-07bb-4b6e-90b3-93aecc23fd11/policy_select_v1/5/report.json": "0ca7919048a3ad3d5be9a715cb14dbcc377ee00c917e111c1011e8cddb0f416c",
+    "native/8603eb59-07bb-4b6e-90b3-93aecc23fd11/policy_select_v1/8/report.json": "ffb0b1dda2d4e183f7c8bbd2443c45bbe832a085338ed297f31473f1183cd8f0",
+    "native/8603eb59-07bb-4b6e-90b3-93aecc23fd11/strong_mix_v1/1/report.json": "584b82413ca62785b7b13b64af442ee930b41667459d65d4ba2cba5c21c6f11e",
+    "native/8603eb59-07bb-4b6e-90b3-93aecc23fd11/strong_mix_v1/2/report.json": "a21462be932babcc3be247a7d2083efb5ba0bedba4250c583b49e2fd7c3ce225",
+    "native/8603eb59-07bb-4b6e-90b3-93aecc23fd11/strong_mix_v1/3/report.json": "38fb6f92bbc5063b82ff77d98d15713e2360e8d0d3b2ced53bd321b9f8b9f545",
+    "native/8603eb59-07bb-4b6e-90b3-93aecc23fd11/strong_mix_v1/5/report.json": "cad293da068176ec0ee2fd7e3462ae9a3c86795d2bcb6e07ab743bfca8c15a5a",
+    "native/8603eb59-07bb-4b6e-90b3-93aecc23fd11/strong_mix_v1/8/report.json": "f3bc563822c17c0a9361174e205f50a8bd14cff037b6238f71c48c6fa2f6dcb4",
+    "native/baseline-runs.json": "aee8d6e9c1b8ab7e8b2030b1a926f63f93c019078e85594251405b5fa5e57786",
+    "native/release-evidence.json": "3052af402bbdcfd297e6d1d2310412c9dc98e8be1eda24ae510013f1a9203c91",
+    "native/status.json": "3b526d4684173edb70233c52273c265725f31f748f583b9178c25e194671f064",
+    "plugin-provenance.json": "def1254f97e8571f0423f131c77e59dfdb7450232627bee01ecebe546307508e",
+    "preflight-provenance.json": "5a76853b99a43e953dee5cc2c789aff76121fc33f5c0d09dd99ed9869eef45ba",
+    "release-signature.txt": "0c67bce39be21bdbe10153ad49928de4620f2262001626242405d22efbc076ad",
+    "sanitized/56d9fe21-a12a-4d3d-a1e3-51c07fda48e3/policy_select_v1/1/report.json": "f3dc607118398f42617053b8ac122c2dd033e279f117aa91a0cd903dcda23ca5",
+    "sanitized/56d9fe21-a12a-4d3d-a1e3-51c07fda48e3/policy_select_v1/2/report.json": "fe7f97561f1495ed93eb24e07d511ea50bbaa4a21d40ac112e33316eae6424d6",
+    "sanitized/56d9fe21-a12a-4d3d-a1e3-51c07fda48e3/policy_select_v1/3/report.json": "8cb9b9504242abce745d6be8c63beff7ced4fe31b81e6661f6c4161a5ddf129c",
+    "sanitized/56d9fe21-a12a-4d3d-a1e3-51c07fda48e3/policy_select_v1/5/report.json": "b3e3f68dd22b9bda14f409ee87fa74a7f677c8f335c4c87f907b0860c22d40ca",
+    "sanitized/56d9fe21-a12a-4d3d-a1e3-51c07fda48e3/policy_select_v1/8/report.json": "2fccf9a4d2f5f8ea5a18ceea2d51fbb55f9fa8679b2c1c691b1375f40a67b739",
+    "sanitized/56d9fe21-a12a-4d3d-a1e3-51c07fda48e3/strong_mix_v1/1/report.json": "53d226ee3375f0ae781e1490b07a87fb9acebd15b3dfa0e8dd09eafdd177f81b",
+    "sanitized/56d9fe21-a12a-4d3d-a1e3-51c07fda48e3/strong_mix_v1/2/report.json": "857eb52456a2ccb18d8aa1e39b4a52686c17ef26c3ac1a55e78279bbce985d45",
+    "sanitized/56d9fe21-a12a-4d3d-a1e3-51c07fda48e3/strong_mix_v1/3/report.json": "2c9e974347c85342f1b119434f793861c7b21575fd5aa290e82ea4302e6dc6ff",
+    "sanitized/56d9fe21-a12a-4d3d-a1e3-51c07fda48e3/strong_mix_v1/5/report.json": "a0b121bd0027b1098e729ac8e2ea1a2ce56e27cd660293498fc4a63a0bf70814",
+    "sanitized/56d9fe21-a12a-4d3d-a1e3-51c07fda48e3/strong_mix_v1/8/report.json": "0747bb1277147ea706b74215df7cc343f6fb15b6ff180ad43f47c61a67be18fc",
+    "sanitized/baseline-runs.json": "8a36f46b74bf0212a0dcb1c969bd28d970db61c261ae88f074fda0f8cd3250b0",
+    "sanitized/release-evidence.json": "59ac2ce5c784b7ce9074c0cfcfe6997f5452159919077a0b3e8d67e6f6e0a014",
+    "sanitized/status.json": "8a75cedb7733e6544d9f97103af17d1e9c82fc65362171f2d0d640c350506216",
+    "stack-native.json": "b24eb5498d7feec3e0b9f1bc89511a3bb918568123d88ce1d6ab0c95ee61cc54",
+    "stack-vm-blocked.json": "9a835ae47a9b413e7df642f1ee9c6f763174ef1e32b5965ac1aa0b851706ed7f",
+    "stack-vm-skip-reason.json": "d1c289d0b9dc3380957a7b80bca3e72e04fa7f51b74c65a5e4ad7d2147611770",
+    "tests.txt": "3082fcfc3c04574dac5d4b429eb64ee094b9fd8d0f5690e8dd8f4128635ea503",
+    "toolchain-download.json": "a80dc94d436ec1e974dcfdd9d500af2c2a3b2bed7f2a00f105f91870b00bc301",
+    "vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/1/build-cjs78id5/pass-reports/obf_report.json": "23ac7c4654af94d2ceadfb1db92c8e5ffb5941e5305e0ee365cfe17f2bc52702",
+    "vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/1/report.json": "76993352628f19504ead83e081787a0e2e8cabc06c4bd7b37b856201ea7da7ed",
+    "vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/2/build-opldkskw/pass-reports/obf_report.json": "7aadd5d0750a7894ee525d2e40557249d4a84bf47c075f721ee344139bc969d9",
+    "vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/2/report.json": "df0c5a99eb0de15d99862460de6a0c9b5940760203fb31d35b3201ce0a125f8f",
+    "vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/3/build-5hhhtnpz/pass-reports/obf_report.json": "9fd7f08c6236cb7b0ac4a63eb32acea2470db340eb9eea1d5ec06bf7f5426c7e",
+    "vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/3/report.json": "1aad72b551bae5233a7c31b9f441278f490b385f1fcdb447a8dc3986aaaabb0f",
+    "vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/build-l08ztt5y/pass-reports/obf_report.json": "c19e7a312856bc5321472349d41e47ad36211fe50ab7b4adfb347612dc6142ea",
+    "vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/5/report.json": "585e708e1b5cc59ecc4d4d1e9f3c9477c1d523756d24833857e9225561ee4a22",
+    "vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/8/build-u_blcg3l/pass-reports/obf_report.json": "4af13aaf434ecf3bfef7c9ce67bd04fa398bc9a53ea495337cc59da2ab5e32ba",
+    "vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/8/report.json": "d71b87e5b89fbff6d56c7063a050face0163a56e473c366e964348a0862e6873",
+    "vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/strong_mix_v1/1/build-q0gr46ps/pass-reports/obf_report.json": "bb695b4d32483568f047b7c7275bb82ebf54368f058c244088770951f9750f68",
+    "vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/strong_mix_v1/1/report.json": "8ea8e4b3304ffdca461dccf032516babe582aeb79c767afe02075953a754adf2",
+    "vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/strong_mix_v1/2/build-uvdwpial/pass-reports/obf_report.json": "6672910fd9ae56b88a4a561b4392577482f800aaa6d99271f97c95bb19257842",
+    "vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/strong_mix_v1/2/report.json": "997dc7583e900d3ec0e9b4fd84f5d26b2f93713604003245f07014616b165c89",
+    "vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/strong_mix_v1/3/build-gx6k9drn/pass-reports/obf_report.json": "cbbfe087f419586d9d56735e1e9346b07b0ad6f73571c076f9c8486c73d8c56a",
+    "vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/strong_mix_v1/3/report.json": "57fe37a1b31202eca83d0c95d6b2302634a5bf6768930591b501304cf6e5aea8",
+    "vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/strong_mix_v1/5/build-svj_pe9q/pass-reports/obf_report.json": "0efa3e12f5635462ab33afdac4863ce3d871a11c0585389d10ccb051d95e6d26",
+    "vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/strong_mix_v1/5/report.json": "9dd229c17ecebc9a775496339a2a2448e5a986fd0e29ae578da40542758075cc",
+    "vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/strong_mix_v1/8/build-ad8zvisy/pass-reports/obf_report.json": "1e31f80c7ddf5bf2734cdc891ba882d75c4cadd27a4da4dafa7ec4e2d7c11b69",
+    "vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/strong_mix_v1/8/report.json": "27eccce8e5dbc50e5e77c2ea741b578dc5cdb390b11923df4f873580a2a7bbce",
+    "vm/artifact-manifest.json": "e960fa8e3795d8c0286c796a5e37de8b9484d8a7976c933a8de6533a33efa295",
+    "vm/baseline-runs.json": "1696524e15bd32f1d32003c55f992decdd9be4da9418df512873aededd803c40",
+    "vm/policy_select_v1-conversion.json": "052301e829eb6e6f0f43fc36b1fb49b4ec1c58780bc3a20a3f52ddea54d5a198",
+    "vm/policy_select_v1-host_semantics.json": "434c6d6bd051f5fa29f4748ef903369186d8a864c677d27b95b63e88b3761ebc",
+    "vm/release-evidence.json": "ab9ee96c8d349191c03d74bb17bcb6dba1c414ebf77a09509b82f728864c2784",
+    "vm/status.json": "c1ba4070d6fc80b5dd3c67bd78a72025a73d8cb45372b7513f77469966b6d598",
+    "vm/strong_mix_v1-conversion.json": "a9603b163780e71d393b6cdaf6f9d3d32a1bfee07bb94962282b2c004279abb7",
+    "vm/strong_mix_v1-host_semantics.json": "3fecd6f2cfd98ad8904241f6535f549e5ddf5fa58d3cdfcbd8e1a5095f02d13c"
+  }
+}

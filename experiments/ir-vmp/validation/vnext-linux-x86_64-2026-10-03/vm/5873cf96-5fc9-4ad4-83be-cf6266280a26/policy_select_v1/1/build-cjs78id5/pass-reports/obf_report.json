@@ -1,0 +1,71 @@
+{
+  "functions": [
+    {
+      "artifacts": {
+        "cfg": {
+          "after_dot": "cfg/protected_cprisk_antidebug_select_policy_bits_i/after.dot",
+          "before_dot": "cfg/protected_cprisk_antidebug_select_policy_bits_i/before.dot",
+          "per_pass": [
+            {
+              "after_dot": "cfg/protected_cprisk_antidebug_select_policy_bits_i/pass_0_vm.dot",
+              "diff_dot": "cfg/protected_cprisk_antidebug_select_policy_bits_i/pass_0_vm.dot",
+              "pass": "vm"
+            }
+          ]
+        }
+      },
+      "budget": {
+        "enabled": true,
+        "limit": 8150,
+        "remaining": 7663,
+        "utilization": 0.059754601226993866
+      },
+      "declaration": false,
+      "difficulty": {
+        "callbrs": 0,
+        "cyclomatic_after": 1,
+        "cyclomatic_before": 12,
+        "cyclomatic_delta": -11,
+        "indirect_branches": 0,
+        "indirect_calls": 1,
+        "mba_avg_depth": 0,
+        "mba_max_depth": 0,
+        "mba_nodes": 0,
+        "opaque_per_100_insts": 0,
+        "opaque_predicates": 0,
+        "score": 0
+      },
+      "insts": {
+        "after": 487,
+        "before": 163
+      },
+      "name": "protected_cprisk_antidebug_select_policy_bits_i",
+      "passes": [
+        {
+          "budget_util_after": 0.059754601226993866,
+          "changed": true,
+          "delta_insts": 324,
+          "id": "vm",
+          "insts_after": 487,
+          "insts_before": 163,
+          "seed": 0,
+          "status": "ran"
+        }
+      ],
+      "seed": {
+        "base": 1,
+        "function": 5204038719873316763,
+        "module": 1
+      },
+      "skipped": false
+    }
+  ],
+  "module": {
+    "data_layout": "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
+    "identifier": "/tmp/ir-vmp-final-vm/5873cf96-5fc9-4ad4-83be-cf6266280a26/policy_select_v1/1/build-cjs78id5/before.ll",
+    "source_file": "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/policy_selection/candidates.c",
+    "target_triple": "x86_64-unknown-linux-gnu"
+  },
+  "schema": "llvm_obfuscator.obf_map",
+  "schema_version": 1
+}

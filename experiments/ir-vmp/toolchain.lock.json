@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "backend_id": "xollvm",
+  "upstream_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+  "llvm_version": "22.1.8",
+  "patch_set": "pointer-gep-v2",
+  "patch_manifest_sha256": "8eb7fe387fbea48f9339170826e6fe8cd1218afea54338ae7e90eea1e9db056f",
+  "patch_sha256": "3bf254367cf27116d9c495da21d79d5d47bd38036ee757c158968962a414b5a6",
+  "engine_bytecode_identity": "xollvm-81808e1-pointer-gep-v2",
+  "annotation": "obf: vm(minBlocks=1,hardened=0,antiDebug=0,encBytecode=0)"
+}

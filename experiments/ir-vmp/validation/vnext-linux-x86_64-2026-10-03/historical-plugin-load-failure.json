@@ -1,0 +1,245 @@
+{
+  "schema_version": 1,
+  "mode": "xollvm",
+  "suite": "policy_selection",
+  "status": "BLOCKED_OR_FAILED",
+  "vmp_verified": false,
+  "scope": "host experiment only; no iOS/device validation",
+  "commands": [
+    {
+      "argv": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/verify_sources.py",
+        "--suite",
+        "policy_selection"
+      ],
+      "returncode": 0,
+      "stdout": "{\"body_sha256\": \"2bc190a9a460a6afb6b213b8593ee5f9e2a994c2a5ec09044ec234f993c6d1d8\", \"constants_sha256\": \"8b04234b9f49bfdb6c644f96733f38d2b36634696294d01afc1b5dc18a571c16\", \"dependencies\": [{\"path\": \"RiskDetectorApp/Sources/CRiskCore/include/cprisk_armor_abi.h\", \"sha256\": \"9102a97b4bf7ccc5a3faad632f5db09a1a292026cf5eb2bae713701df4b288d9\"}], \"function\": \"cprisk_antidebug_select_policy_bits_i\", \"return_type\": \"uint32_t\", \"schema_version\": 1, \"segments\": [{\"end\": \"static cprisk_adbg_runtime_plan_t\", \"file\": \"types.inc\", \"sha256\": \"793a87531abfe028a5975712bc0073a956107f617634d1c5f240f6dd5736b176\", \"source\": \"RiskDetectorApp/Sources/CRiskCore/cprisk_integrity.c\", \"start\": \"typedef struct cprisk_adbg_runtime_plan_i\"}], \"source\": \"RiskDetectorApp/Sources/CRiskCore/cprisk_integrity.c\", \"source_revision\": \"aa9aba7d17f3efa00b04f63793d1cd9bfca7719b\", \"source_sha256\": \"fc875ab835a95d3b077e4b3246335f0757b26543d2adc0587e0cf2e704aac58d\"}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/clang-22",
+        "--version"
+      ],
+      "returncode": 0,
+      "stdout": "clang version 22.1.8 (https://github.com/llvm/llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1)\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /tmp/ir-vmp-llvm/bin\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/opt",
+        "--version"
+      ],
+      "returncode": 0,
+      "stdout": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.\n  Default target: x86_64-unknown-linux-gnu\n  Host CPU: emeraldrapids\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/clang-22",
+        "-std=c11",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-DCPRISK_TEST_SEED=1",
+        "-DCPRISK_RANDOM_CASES=10000",
+        "-fno-vectorize",
+        "-fno-slp-vectorize",
+        "-DCPRISK_VMP_PREFIX=plain_",
+        "-c",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/policy_selection/candidates.c",
+        "-o",
+        "/tmp/ir-vmp-real-policy/build-138huoou/plain.o"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/clang-22",
+        "-std=c11",
+        "-O0",
+        "-Xclang",
+        "-disable-O0-optnone",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-fno-vectorize",
+        "-fno-slp-vectorize",
+        "-DCPRISK_VMP_PREFIX=protected_",
+        "-DCPRISK_VMP_PROTECTED=1",
+        "-S",
+        "-emit-llvm",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/policy_selection/candidates.c",
+        "-o",
+        "/tmp/ir-vmp-real-policy/build-138huoou/before.ll"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-llvm/bin/opt",
+        "-load-pass-plugin=/tmp/ir-vmp-plugin/cmake/Obfuscator.so",
+        "-passes=obfuscation",
+        "-obf-seed=1",
+        "-obf-deterministic",
+        "-obf-verify",
+        "-obf-verbose",
+        "-obf-report-dir=/tmp/ir-vmp-real-policy/build-138huoou/pass-reports",
+        "-S",
+        "/tmp/ir-vmp-real-policy/build-138huoou/before.ll",
+        "-o",
+        "/tmp/ir-vmp-real-policy/build-138huoou/after.ll"
+      ],
+      "returncode": 1,
+      "stdout": "",
+      "stderr": "LLVM ERROR: Could not load library '/tmp/ir-vmp-plugin/cmake/Obfuscator.so': /tmp/ir-vmp-plugin/cmake/Obfuscator.so: undefined symbol: _ZTIN4llvm2cl18GenericOptionValueE\n\n"
+    }
+  ],
+  "tools": {
+    "clang": {
+      "path": "/tmp/ir-vmp-llvm/bin/clang-22",
+      "version": "clang version 22.1.8 (https://github.com/llvm/llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1)\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /tmp/ir-vmp-llvm/bin\n",
+      "sha256": "31a40dc31f3c15a47aa119aa148f339bf363d8f61202ddbdacbd3f24b71ba113"
+    },
+    "opt": {
+      "path": "/tmp/ir-vmp-llvm/bin/opt",
+      "version": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.\n  Default target: x86_64-unknown-linux-gnu\n  Host CPU: emeraldrapids\n",
+      "sha256": "fc19bcd0ab81c35746c93aad355e8bb81f34ab070e98014cf06ce8433e91d4b1"
+    },
+    "plugin": {
+      "path": "/tmp/ir-vmp-plugin/cmake/Obfuscator.so",
+      "sha256": "3edba703674f26ecedac470de4bef386f73b80dd9c32e69f6b1195cd07862b23"
+    }
+  },
+  "hashes": {
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/policy_selection/body.inc": "2bc190a9a460a6afb6b213b8593ee5f9e2a994c2a5ec09044ec234f993c6d1d8",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/policy_selection/candidates.c": "9526db4d9cc8054064f20f0c5cd5e2cd4e1625bd0088b5e6e7a7899b91e98d31",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/policy_selection/constants.inc": "8b04234b9f49bfdb6c644f96733f38d2b36634696294d01afc1b5dc18a571c16",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/policy_selection/differential.c": "5d464a5c839fabba3746f03b62a0d2c3d667b99d2b842c0c33160cd543d97400",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/policy_selection/sources.json": "9cb4cd8f1879051440f50cb9b52b96f03c7bc2554c9435d4718c970c1d069e17",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/suites/policy_selection/types.inc": "793a87531abfe028a5975712bc0073a956107f617634d1c5f240f6dd5736b176",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/verify_sources.py": "f155612b606558c9f2e039ef021862fca11b378d7ca1c206a58233fd84a12efd",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/run.py": "36b4a6d8fa18a0d7669ba8fe4c0ef755e895d9131a5d14e46769567d8f523f9e",
+    "/tmp/ir-vmp-real-policy/build-138huoou/before.ll": "7e60fedcfca948742c74f93fab3a6d8ad5ceb92fa63756470da6940bdfd2e6d3"
+  },
+  "run_id": "2c1c7c78-8537-44d7-930a-ef879af60d80",
+  "created_at": "2026-10-03T10:42:09.231899+00:00",
+  "seed": 1,
+  "random_cases_requested": 10000,
+  "sanitizers": false,
+  "sanitizer_environment": {},
+  "plugin_provenance": {
+    "schema_version": 2,
+    "status": "built",
+    "xollvm_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+    "plugin_path": "/tmp/ir-vmp-plugin/cmake/Obfuscator.so",
+    "plugin_sha256": "3edba703674f26ecedac470de4bef386f73b80dd9c32e69f6b1195cd07862b23",
+    "llvm_version": "22.1.8",
+    "tool_versions": {
+      "clang": "clang version 22.1.8 (https://github.com/llvm/llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1)\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /tmp/ir-vmp-llvm/bin",
+      "clang++": "clang version 22.1.8 (https://github.com/llvm/llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1)\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /tmp/ir-vmp-llvm/bin",
+      "opt": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.\n  Default target: x86_64-unknown-linux-gnu\n  Host CPU: emeraldrapids",
+      "llvm-config": "22.1.8"
+    },
+    "commands": [
+      [
+        "cmake",
+        "-S",
+        "/tmp/ir-vmp-plugin/patched-source",
+        "-B",
+        "/tmp/ir-vmp-plugin/cmake",
+        "-DLLVM_DIR=/tmp/ir-vmp-llvm/lib/cmake/llvm",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_C_COMPILER=/tmp/ir-vmp-llvm/bin/clang",
+        "-DCMAKE_CXX_COMPILER=/tmp/ir-vmp-llvm/bin/clang++"
+      ],
+      [
+        "cmake",
+        "--build",
+        "/tmp/ir-vmp-plugin/cmake",
+        "--target",
+        "Obfuscator",
+        "--parallel",
+        "2"
+      ]
+    ],
+    "license": "Apache-2.0 WITH LLVM-exception",
+    "limitations": [
+      "Local provenance only; not a signed attestation",
+      "Build success does not validate virtualization or iOS compatibility"
+    ],
+    "local_patch_set": {
+      "schema_version": 1,
+      "id": "pointer-gep-v2",
+      "xollvm_commit": "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e",
+      "patch_file": "pointer-gep-v2.patch",
+      "patch_sha256": "3bf254367cf27116d9c495da21d79d5d47bd38036ee757c158968962a414b5a6",
+      "files": {
+        "VMPass_Emitter.cpp": {
+          "before_sha256": "70c1d037b134753fcdf3ba9e77d5843c61e6aa8534be0b11a126fa3d8fcaa9e8",
+          "after_sha256": "206af82042872e7680bdc3d6e9e1f256d8c60d69407e1b42f6e6189c6d387f76"
+        },
+        "VMPass_Handlers.cpp": {
+          "before_sha256": "f6de216ec9095661d163650a590c684cca73c13114c1f481f502f9038bd9f9cc",
+          "after_sha256": "aa9990110e44db4275c626385c3ada87ef65cb1d21ccf15344553acd59501b5c"
+        },
+        "VMPass_Verifier.cpp": {
+          "before_sha256": "1e1920edfa187ddc58580ec50370fd4edce8e5635c5306bcd9f91491a7da4044",
+          "after_sha256": "28771c76da9f6e16594037f3c30d2bce3172bc455ffd1b3f441dcc09726373f0"
+        },
+        "include/llvm/Transforms/Obfuscator/VMPass_ISA.h": {
+          "before_sha256": "c9fc636187a5c970ea2ebf49c28ecdb3f716a20073d7b5be09a237f11538c37b",
+          "after_sha256": "43f00303b225bac53e772a9ef71c4997283e32b784a33b7f55a64310e3b88b46"
+        }
+      },
+      "capabilities": {
+        "pointer_comparison": {
+          "predicates": [
+            "eq",
+            "ne"
+          ],
+          "address_spaces": [
+            0
+          ],
+          "null_supported": true,
+          "operand_storage": "native pointer registers",
+          "encoding": "OP_ICMP_PTR=0x38; kind byte 0=eq, 1=ne; not a RandISA predicate byte"
+        },
+        "validation_scope": "local host experiments; hardened=0 antiDebug=0 encBytecode=0",
+        "unsupported": [
+          "ordered pointer predicates",
+          "nonzero pointer address spaces",
+          "production integration and device execution not validated"
+        ],
+        "isa_compatibility": "OP_COUNT increases from 0x38 to 0x39 and decoy base moves; patched and upstream plugin/bytecode must not be mixed",
+        "gep": {
+          "constant_indices": "target DataLayout byte offset, including struct padding and nested aggregates",
+          "dynamic_indices": "one i32/i64 index, or array [0,index], using allocation size",
+          "address_spaces": [
+            0
+          ],
+          "pointer_and_index_bits": 64,
+          "max_dynamic_stride": 65535,
+          "oversized_dynamic_stride": "rejected; never saturated",
+          "unsupported": [
+            "dynamic multi-index GEP except array [0,index]",
+            "scalable types",
+            "nonzero address spaces",
+            "non-64-bit pointer/index layouts"
+          ]
+        }
+      }
+    },
+    "patched_source": "/tmp/ir-vmp-plugin/patched-source",
+    "patched_source_tree_sha256": "441d48c11eca97c3fde786374f9084a466924a226167538c9a7adf56dfc514b1"
+  },
+  "build_directory": "/tmp/ir-vmp-real-policy/build-138huoou",
+  "error": "Command failed: /tmp/ir-vmp-llvm/bin/opt -load-pass-plugin=/tmp/ir-vmp-plugin/cmake/Obfuscator.so -passes=obfuscation -obf-seed=1 -obf-deterministic -obf-verify -obf-verbose -obf-report-dir=/tmp/ir-vmp-real-policy/build-138huoou/pass-reports -S /tmp/ir-vmp-real-policy/build-138huoou/before.ll -o /tmp/ir-vmp-real-policy/build-138huoou/after.ll",
+  "elapsed_seconds": 0.77372
+}

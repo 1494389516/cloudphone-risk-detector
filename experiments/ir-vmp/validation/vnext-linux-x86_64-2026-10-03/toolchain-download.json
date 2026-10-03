@@ -1,0 +1,6 @@
+{
+  "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-Linux-X64.tar.xz",
+  "sha256": "df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384",
+  "bytes": 1938859476,
+  "published_digest": "sha256:df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384"
+}

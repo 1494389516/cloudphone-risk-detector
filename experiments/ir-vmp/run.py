@@ -11,6 +11,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
+import datetime
 from build_plugin import patch_manifest
 
 HERE = Path(__file__).resolve().parent
@@ -19,6 +21,10 @@ STACK_TARGETS = tuple("protected_" + s for s in (
 
 PINNED_COMMIT = "81808e195c9a40a01c36b1016ed7e6fbd96a4a3e"
 GF2_TARGETS = ("protected_cprisk_gf2_xorshift64", "protected_cprisk_gf2_fnv1a")
+BUSINESS_TARGETS = {
+    "policy_selection": ("protected_cprisk_antidebug_select_policy_bits_i",),
+    "strong_mix": ("protected_cprisk_whitebox_strong_mix_layer_i",),
+}
 
 
 class GateError(RuntimeError):
@@ -120,6 +126,14 @@ def inspect_pass_reports(directory, targets):
             if any(not isinstance(item, dict) for item in data["functions"]):
                 raise GateError("Malformed function report: " + str(path))
             records.extend(data["functions"])
+    for record in records:
+        raw_passes = record.get("passes", [])
+        if not isinstance(raw_passes, list) or any(not isinstance(p, dict) for p in raw_passes):
+            raise GateError("Malformed pass report: " + str(record.get("name")))
+        for item in raw_passes:
+            if isinstance(item, dict) and item.get("id") == "vm" and item.get("status") == "ran" and item.get("changed") is True:
+                if record.get("name") not in targets:
+                    raise GateError("Unrequested VM target: " + str(record.get("name")))
     for name in targets:
         found = [r for r in records if r.get("name") == name]
         if len(found) != 1 or found[0].get("skipped") is not False:
@@ -161,6 +175,16 @@ def execute(args):
     report = {"schema_version": 1, "mode": args.mode, "suite": args.suite, "status": "RUNNING",
               "vmp_verified": False, "scope": "host experiment only; no iOS/device validation",
               "commands": [], "tools": {}, "hashes": {}}
+    report.update(run_id=str(uuid.uuid4()), created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                  seed=args.seed, random_cases_requested=args.random_cases,
+                  sanitizers=args.sanitize)
+    report["sanitizer_environment"] = {k: os.environ[k] for k in ("ASAN_OPTIONS", "UBSAN_OPTIONS", "LSAN_OPTIONS") if k in os.environ}
+    def write_report():
+        temporary = output / (".report-" + report["run_id"] + ".json")
+        temporary.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+        temporary.replace(output / "report.json")
+    # Invalidate stale success before running any external program (including a hang).
+    write_report()
     started = time.monotonic()
 
     def run(command):
@@ -193,7 +217,13 @@ def execute(args):
         harness = stem + "differential.c"
         targets = GF2_TARGETS if args.suite == "gf2" else STACK_TARGETS
         sources = [HERE / candidate, HERE / harness]
-        if args.suite == "gf2":
+        if args.suite in BUSINESS_TARGETS:
+            directory = HERE / "suites" / args.suite
+            candidate, harness = directory / "candidates.c", directory / "differential.c"
+            targets = BUSINESS_TARGETS[args.suite]
+            sources = sorted(p for p in directory.iterdir() if p.is_file()) + [HERE / "verify_sources.py", HERE / "run.py"]
+            run([sys.executable, HERE / "verify_sources.py", "--suite", args.suite])
+        elif args.suite == "gf2":
             sources += [HERE / "gf2_candidates.inc", HERE / "sources.json", HERE / "verify_sources.py"]
             run([sys.executable, HERE / "verify_sources.py"])
         else:
@@ -215,10 +245,26 @@ def execute(args):
             plugin = str(Path(args.plugin).resolve())
             report["tools"]["plugin"] = {"path": plugin, "sha256": sha256(plugin)}
             report["plugin_provenance"] = check_provenance(args.plugin_provenance, plugin, version)
+            if args.suite in BUSINESS_TARGETS:
+                if not args.preflight or not Path(args.preflight).is_file():
+                    raise GateError("Business VM suites require --preflight built by build_preflight.py")
+                preflight = Path(args.preflight).resolve()
+                provenance = json.loads((preflight.parent / "preflight-provenance.json").read_text())
+                if (not isinstance(provenance, dict) or provenance.get("status") != "built" or provenance.get("llvm_version") != version
+                        or provenance.get("source_sha256") != sha256(HERE / "preflight.cpp")
+                        or provenance.get("executable_sha256") != sha256(preflight)):
+                    raise GateError("Preflight checker identity mismatch")
+                report["preflight_provenance"] = provenance
         # Every invocation gets a fresh build directory: stale objects cannot pass gates.
         build = Path(tempfile.mkdtemp(prefix="build-", dir=output))
         report["build_directory"] = str(build)
         common = [cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror"]
+        if args.sanitize:
+            common += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-fno-omit-frame-pointer"]
+        common += ["-DCPRISK_TEST_SEED=" + str(args.seed), "-DCPRISK_RANDOM_CASES=" + str(args.random_cases)]
+        if args.suite in BUSINESS_TARGETS:
+            # Compilers can otherwise introduce vector operations outside the reviewed VM domain.
+            common += ["-fno-vectorize", "-fno-slp-vectorize"] if "clang" in report["tools"].get("clang", report["tools"].get("cc", {})).get("version", "").lower() else ["-fno-tree-vectorize"]
         plain = build / "plain.o"
         protected = build / "protected.o"
         run(common + ["-DCPRISK_VMP_PREFIX=plain_", "-c", candidate, "-o", plain])
@@ -228,6 +274,7 @@ def execute(args):
             before, after = build / "before.ll", build / "after.ll"
             emitted = build / "emitted.ll" if args.lower_constant_intrinsics else before
             run([cc, "-std=c11", "-O0", "-Xclang", "-disable-O0-optnone", "-Wall", "-Wextra", "-Werror",
+                          "-fno-vectorize", "-fno-slp-vectorize",
                           "-DCPRISK_VMP_PREFIX=protected_", "-DCPRISK_VMP_PROTECTED=1",
                           "-S", "-emit-llvm", candidate, "-o", emitted])
             report["hashes"][str(emitted)] = sha256(emitted)
@@ -236,10 +283,19 @@ def execute(args):
                 run([opt, "-passes=verify", "-disable-output", before])
                 report["preprocessing"] = "LLVM lower-constant-intrinsics; not VM objectsize support"
             report["hashes"][str(before)] = sha256(before)
+            if args.suite in BUSINESS_TARGETS:
+                checked = json.loads(run([preflight, before, *targets]))
+                if (not isinstance(checked, dict) or checked.get("status") != "pass" or checked.get("llvm_version") != version
+                        or not isinstance(checked.get("targets"), list)
+                        or any(not isinstance(t, dict) for t in checked["targets"])
+                        or [t.get("target") for t in checked.get("targets", [])] != list(targets)
+                        or any(t.get("status") != "pass" for t in checked["targets"])):
+                    raise GateError("Incomplete preflight target evidence")
+                report["preflight"] = checked
             pass_reports = build / "pass-reports"
             pass_reports.mkdir()
             run([opt, "-load-pass-plugin=" + plugin, "-passes=obfuscation",
-                 "-obf-seed=1", "-obf-deterministic", "-obf-verify", "-obf-verbose",
+                 "-obf-seed=" + str(args.seed), "-obf-deterministic", "-obf-verify", "-obf-verbose",
                  "-obf-report-dir=" + str(pass_reports), "-S", before, "-o", after])
             report["hashes"][str(after)] = sha256(after)
             run([opt, "-passes=verify", "-disable-output", after])
@@ -252,14 +308,20 @@ def execute(args):
             report["optimized_ir_evidence"] = inspect_ir(
                 before.read_text(), optimized.read_text(), targets, require_entry=False)
             # Do not run another optimizer after examining the final IR.
-            run([cc, "-O0", "-c", optimized, "-o", protected])
+            run([cc, "-O0"] + (["-fsanitize=address,undefined", "-fno-sanitize-recover=all"] if args.sanitize else []) + ["-c", optimized, "-o", protected])
         executable = build / "differential"
-        run(common + [harness, plain, protected, "-o", executable])
+        # The fixed engine includes floating-op handlers even for integer-only
+        # targets. Linux resolves their fmod dependency through libm; this does
+        # not expand the target preflight's accepted IR types.
+        libraries = ["-lm"] if args.mode == "xollvm" and sys.platform.startswith("linux") else []
+        run(common + [harness, plain, protected, *libraries, "-o", executable])
         report["hashes"][str(executable)] = sha256(executable)
         result = run([executable])
         if not re.search(r"\bPASS cases=[1-9][0-9]*\b", result):
             raise GateError("Differential harness did not report a nonzero passing case count")
         report["differential_output"] = result
+        report["completed_cases"] = int(re.search(r"\bPASS cases=([1-9][0-9]*)\b", result).group(1))
+        report["object_sha256"] = {"plain": sha256(plain), "protected": sha256(protected)}
         report["status"] = "BASELINE_ONLY_PASS" if args.mode == "baseline-only" else "HOST_VMP_PASS"
         report["vmp_verified"] = args.mode == "xollvm"
         return_code = 0
@@ -270,9 +332,7 @@ def execute(args):
     report["elapsed_seconds"] = round(time.monotonic() - started, 6)
     report_path = output / "report.json"
     # Replace the previous report atomically even on failure.
-    temporary = output / (".report-" + str(os.getpid()) + ".json")
-    temporary.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
-    temporary.replace(report_path)
+    write_report()
     print(json.dumps({"status": report["status"], "vmp_verified": report["vmp_verified"],
                       "report": str(report_path)}))
     return return_code
@@ -287,13 +347,19 @@ def main():
     parser.add_argument("--opt", default="opt")
     parser.add_argument("--plugin")
     parser.add_argument("--plugin-provenance")
-    parser.add_argument("--suite", choices=("gf2", "stack"), default="gf2")
+    parser.add_argument("--preflight", help="restricted LLVM API checker (mandatory for business VM suites)")
+    parser.add_argument("--suite", choices=("gf2", "stack", "policy_selection", "strong_mix"), default="gf2")
+    parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--random-cases", type=int, default=10000)
+    parser.add_argument("--sanitize", action="store_true")
     parser.add_argument("--timeout", type=int, default=120)
     parser.add_argument("--lower-constant-intrinsics", action="store_true",
                         help="explicit LLVM lowering before VM (e.g. Darwin objectsize intrinsic)")
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
+    if not 1 <= args.seed <= 2147483647 or not 1 <= args.random_cases <= 10000000:
+        parser.error("seed must be 1..2147483647; random-cases must be 1..10000000")
     return execute(args)
 
 

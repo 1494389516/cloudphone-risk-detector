@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "mode": "baseline-only",
+  "suite": "stack",
+  "status": "BASELINE_ONLY_PASS",
+  "vmp_verified": false,
+  "scope": "host experiment only; no iOS/device validation",
+  "commands": [
+    {
+      "argv": [
+        "/usr/bin/x86_64-linux-gnu-gcc-13",
+        "--version"
+      ],
+      "returncode": 0,
+      "stdout": "x86_64-linux-gnu-gcc-13 (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0\nCopyright (C) 2023 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/usr/bin/x86_64-linux-gnu-gcc-13",
+        "-std=c11",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-DCPRISK_TEST_SEED=1",
+        "-DCPRISK_RANDOM_CASES=10000",
+        "-DCPRISK_VMP_PREFIX=plain_",
+        "-c",
+        "candidates.c",
+        "-o",
+        "/tmp/ir-vmp-stack-regression/build-8v1sqomo/plain.o"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/usr/bin/x86_64-linux-gnu-gcc-13",
+        "-std=c11",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-DCPRISK_TEST_SEED=1",
+        "-DCPRISK_RANDOM_CASES=10000",
+        "-DCPRISK_VMP_PREFIX=protected_",
+        "-c",
+        "candidates.c",
+        "-o",
+        "/tmp/ir-vmp-stack-regression/build-8v1sqomo/protected.o"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/usr/bin/x86_64-linux-gnu-gcc-13",
+        "-std=c11",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-DCPRISK_TEST_SEED=1",
+        "-DCPRISK_RANDOM_CASES=10000",
+        "differential.c",
+        "/tmp/ir-vmp-stack-regression/build-8v1sqomo/plain.o",
+        "/tmp/ir-vmp-stack-regression/build-8v1sqomo/protected.o",
+        "-o",
+        "/tmp/ir-vmp-stack-regression/build-8v1sqomo/differential"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/tmp/ir-vmp-stack-regression/build-8v1sqomo/differential"
+      ],
+      "returncode": 0,
+      "stdout": "PASS cases=4155 seed=783cb86db73074ac\n",
+      "stderr": ""
+    }
+  ],
+  "tools": {
+    "cc": {
+      "path": "/usr/bin/x86_64-linux-gnu-gcc-13",
+      "version": "x86_64-linux-gnu-gcc-13 (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0\nCopyright (C) 2023 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+      "sha256": "6117c52522997d2aaccb2b52b3c6bf42c0a6c5edb1d718431fed6b2fc5fec234"
+    }
+  },
+  "hashes": {
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/candidates.c": "6b9b5ac3e98678f725977530a13626141807e14cfb0957e5844aa5f1823f2f4d",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/differential.c": "fcd8a26948c09af892bd558e57571fefbd3784df0e0748130ca901a606834bd5",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/ir-vmp/candidates.h": "0791468dee8065613cfab2d57ef1a76b07093fdf890f1aee807b348abcf2f371",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore/vm_stack_crypto.c": "acb783fa80a97dfd8d2b103bd1c3bb9bb6c0b5b433f2ca3508b5b1cc9021ff0b",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore/vm_stack_crypto.h": "f66a88761f323047deb9f0a11128a8dee4ff43eba27b313106929c6e9aa8f3e1",
+    "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore/include/cprisk_secure_zero.h": "eb6553327690c8451d1a16a42b9962d0c21df141ac08a08d7f8c05b36e1410de",
+    "/tmp/ir-vmp-stack-regression/build-8v1sqomo/differential": "a8b296a6dd73ba70b194ec73a0e0f74db6bb8eeda2c72b0aac0b35722a5d2c1f"
+  },
+  "run_id": "43ad6143-67d0-4ab6-9730-dff6b121f39e",
+  "created_at": "2026-10-03T10:33:08.861606+00:00",
+  "seed": 1,
+  "random_cases_requested": 10000,
+  "sanitizers": false,
+  "sanitizer_environment": {},
+  "build_directory": "/tmp/ir-vmp-stack-regression/build-8v1sqomo",
+  "differential_output": "PASS cases=4155 seed=783cb86db73074ac\n",
+  "completed_cases": 4155,
+  "object_sha256": {
+    "plain": "29ce32d87129731e0a5ccbb67a5cc3b502afe2c30b2eab06a4ecfa4729c447cc",
+    "protected": "5f289dfa6560da305b7d98f3432146d5251f03af16e709929f76af0b00aae44a"
+  },
+  "elapsed_seconds": 0.291714
+}

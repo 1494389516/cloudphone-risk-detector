@@ -1,0 +1,366 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "report_kind",
+    "schema_version",
+    "run_id",
+    "created_at",
+    "profile",
+    "config_sha256",
+    "artifact_id",
+    "targets",
+    "artifact_manifest"
+  ],
+  "properties": {
+    "report_kind": {
+      "const": "cprisk.ir-vmp.release-evidence"
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "profile": {
+      "enum": [
+        "off",
+        "semantic-lab",
+        "ir-vmp-canary",
+        "ir-vmp-release"
+      ]
+    },
+    "config_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "artifact_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "candidate_id",
+          "requested",
+          "conversion",
+          "host_semantics",
+          "production_callpath",
+          "device_semantics",
+          "performance",
+          "resilience",
+          "release_eligible"
+        ],
+        "properties": {
+          "candidate_id": {
+            "enum": [
+              "policy_select_v1",
+              "strong_mix_v1"
+            ]
+          },
+          "requested": {
+            "const": true
+          },
+          "conversion": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "reason",
+              "evidence"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "not_run",
+                  "blocked",
+                  "fail",
+                  "pass"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "path",
+                    "sha256"
+                  ],
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  }
+                },
+                "uniqueItems": true
+              }
+            }
+          },
+          "host_semantics": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "reason",
+              "evidence"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "not_run",
+                  "blocked",
+                  "fail",
+                  "pass"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "path",
+                    "sha256"
+                  ],
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  }
+                },
+                "uniqueItems": true
+              }
+            }
+          },
+          "production_callpath": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "reason",
+              "evidence"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "not_run",
+                  "blocked",
+                  "fail",
+                  "pass"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "path",
+                    "sha256"
+                  ],
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  }
+                },
+                "uniqueItems": true
+              }
+            }
+          },
+          "device_semantics": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "reason",
+              "evidence"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "not_run",
+                  "blocked",
+                  "fail",
+                  "pass"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "path",
+                    "sha256"
+                  ],
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  }
+                },
+                "uniqueItems": true
+              }
+            }
+          },
+          "performance": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "reason",
+              "evidence"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "not_run",
+                  "blocked",
+                  "fail",
+                  "pass"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "path",
+                    "sha256"
+                  ],
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  }
+                },
+                "uniqueItems": true
+              }
+            }
+          },
+          "resilience": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "reason",
+              "evidence"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "not_run",
+                  "blocked",
+                  "fail",
+                  "pass"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "path",
+                    "sha256"
+                  ],
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  }
+                },
+                "uniqueItems": true
+              }
+            }
+          },
+          "release_eligible": {
+            "type": "boolean"
+          }
+        }
+      },
+      "minItems": 1,
+      "maxItems": 2
+    },
+    "artifact_manifest": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

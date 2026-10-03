@@ -1,0 +1,35 @@
+test_dynamic_gep_boundary (test_preflight.PreflightTests.test_dynamic_gep_boundary) ... ok
+test_float_vector_atomic_volatile (test_preflight.PreflightTests.test_float_vector_atomic_volatile) ... ok
+test_narrow_arithmetic (test_preflight.PreflightTests.test_narrow_arithmetic) ... ok
+test_narrow_memory_allowed (test_preflight.PreflightTests.test_narrow_memory_allowed) ... ok
+test_nonzero_address_space_and_non64_layout (test_preflight.PreflightTests.test_nonzero_address_space_and_non64_layout) ... ok
+test_pointer_eq_and_ordered_rejection (test_preflight.PreflightTests.test_pointer_eq_and_ordered_rejection) ... ok
+test_poison_and_freeze (test_preflight.PreflightTests.test_poison_and_freeze) ... ok
+test_scalar_loop_and_phi (test_preflight.PreflightTests.test_scalar_loop_and_phi) ... ok
+test_unknown_calls_and_recursion (test_preflight.PreflightTests.test_unknown_calls_and_recursion) ... ok
+test_unknown_target (test_preflight.PreflightTests.test_unknown_target) ... ok
+test_checked_in_policy_and_schemas (test_vnext.PolicyTests.test_checked_in_policy_and_schemas) ... ok
+test_duplicate_and_nonfinite_json (test_vnext.PolicyTests.test_duplicate_and_nonfinite_json) ... ok
+test_duplicate_empty_unknown_candidates (test_vnext.PolicyTests.test_duplicate_empty_unknown_candidates) ... ok
+test_duplicate_seed (test_vnext.PolicyTests.test_duplicate_seed) ... ok
+test_evidence_is_ineligible (test_vnext.PolicyTests.test_evidence_is_ineligible) ... ok
+test_forged_eligibility_and_missing_target (test_vnext.PolicyTests.test_forged_eligibility_and_missing_target) ... ok
+test_hashes_and_annotation_cannot_be_reused (test_vnext.PolicyTests.test_hashes_and_annotation_cannot_be_reused) ... ok
+test_missing_required_key (test_vnext.PolicyTests.test_missing_required_key) ... ok
+test_mode_conflicts (test_vnext.PolicyTests.test_mode_conflicts) ... ok
+test_paths (test_vnext.PolicyTests.test_paths) ... ok
+test_reused_or_damaged_evidence (test_vnext.PolicyTests.test_reused_or_damaged_evidence) ... ok
+test_unknown_root_and_nested_keys (test_vnext.PolicyTests.test_unknown_root_and_nested_keys) ... ok
+test_version_and_types (test_vnext.PolicyTests.test_version_and_types) ... ok
+test_exact_source_extraction (test_vnext.RunnerTests.test_exact_source_extraction) ... ok
+test_harness_rejects_corrupted_business_results (test_vnext.RunnerTests.test_harness_rejects_corrupted_business_results) ... ok
+test_llvm_version_mismatch (test_vnext.RunnerTests.test_llvm_version_mismatch) ... ok
+test_missing_tools_overwrite_stale_success (test_vnext.RunnerTests.test_missing_tools_overwrite_stale_success) ... ok
+test_pass_report_requires_exact_targets (test_vnext.RunnerTests.test_pass_report_requires_exact_targets) ... ok
+test_plugin_and_patch_mismatch (test_vnext.RunnerTests.test_plugin_and_patch_mismatch) ... ok
+test_unrelated_engine_does_not_prove_connection (test_vnext.RunnerTests.test_unrelated_engine_does_not_prove_connection) ... ok
+
+----------------------------------------------------------------------
+Ran 30 tests in 1.453s
+
+OK

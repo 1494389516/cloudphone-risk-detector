@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "source_revision": "aa9aba7d17f3efa00b04f63793d1cd9bfca7719b",
+  "source": "RiskDetectorApp/Sources/CRiskCore/cprisk_whitebox.c",
+  "source_sha256": "7fad7c54a459d4350d45e3d8fb8820c1274a4c8736c27436f676ac6eb2168942",
+  "function": "cprisk_whitebox_strong_mix_layer_i",
+  "return_type": "void",
+  "body_sha256": "8c52f0b55f0b5a14aa871e47dba58094faf33f138e26d4b300b93ce0b5c2b535",
+  "segments": [
+    {
+      "source": "RiskDetectorApp/Sources/CRiskCore/cprisk_whitebox.c",
+      "function": "cprisk_rotl8_i",
+      "return_type": "uint8_t",
+      "file": "helper.inc",
+      "sha256": "d740190598dec340dac7a38a0ddbb40cdca716996c7501f4705edca4ff1a6280"
+    }
+  ],
+  "dependencies": [],
+  "constants_sha256": "1a821f50828e183a1e4d63eba313964540d4f0c10519d32ef043006363ef3a70"
+}
