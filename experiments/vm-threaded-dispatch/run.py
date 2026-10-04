@@ -18,15 +18,19 @@ BASE = '8e8d40350271f531e5881c445b383d44757131d9'
 REL = 'RiskDetectorApp/Sources/CRiskCore/cprisk_vm_interpreter.c'
 
 
-def run(cc, output, opt='-O2'):
+def run(cc, output, opt='-O2', integrated=False):
     output.mkdir(parents=True, exist_ok=True)
     source = (ROOT / REL).read_text()
     baseline = subprocess.check_output(['git', 'show', f'{BASE}:{REL}'], cwd=ROOT).decode()
-    if source != baseline:
-        raise RuntimeError('Interpreter drift: review/rebase generator and frozen comparison before running')
+    current = source
+    source = baseline  # Historical candidate remains pinned; --integrated tests current runtime.
     refs = sorted(set(re.findall(r'\(const void \*\)&(\w+)', source)))
     addresses = {n: 0x100000 + i * 0x100 for i, n in enumerate(refs)}
-    source = re.sub(r'\(const void \*\)&(\w+)', lambda m: f'(const void *)(uintptr_t)0x{addresses[m[1]]:x}u', source)
+    def normalize(text):
+        return re.sub(r'\(const void \*\)&(\w+)',
+                      lambda m: f'(const void *)(uintptr_t)0x{addresses[m[1]]:x}u' if m[1] in addresses else m[0], text)
+    source = normalize(source)
+    current = normalize(current)
     harness = (HERE.parent / 'vm-post-handler-2a/harness.c').read_text()
     # A standalone stress mode uses the same real BRANCH_REL semantics as the corpus.
     harness = harness.replace('int main(void){', 'int corpus_main(void){')
@@ -52,7 +56,7 @@ int main(int argc, char **argv) {
     report = {'base': BASE, 'compiler': subprocess.check_output([cc, '--version']).decode(),
               'opt': opt, 'platform': platform.platform(), 'address_map': addresses,
               'scope': 'host semantic comparison; platform substitutes; no SDK production routing or CPSV change',
-              'release_eligible': False}
+              'release_eligible': False, 'integrated': integrated}
     # On Darwin intentionally use the same non-Apple shim, not an Apple runtime claim.
     flags = [opt, '-U__APPLE__', '-ffunction-sections', '-fdata-sections', '-I', str(CORE),
              '-include', str(HERE.parent / 'vm-post-handler-2a/host_shim.h')]
@@ -60,10 +64,12 @@ int main(int argc, char **argv) {
         flags += ['-isysroot', subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-path']).decode().strip()]
     link = ['-Wl,-dead_strip'] if platform.system() == 'Darwin' else ['-Wl,--gc-sections']
     modules = sorted(CORE.glob('cprisk_vm_oph_*.c')) + [CORE / 'cprisk_vm_hardening.c', CORE / 'vm_cff_fusion.c', CORE / 'cprisk_vm_sync_barrier.c']
-    for phase in ['legacy', 'threaded']:
+    for phase in (['legacy', 'current-legacy', 'threaded'] if integrated else ['legacy', 'threaded']):
         build = output / phase
         build.mkdir(exist_ok=True)
-        (build / 'interpreter-under-test.c').write_text(source)
+        (build / 'interpreter-under-test.c').write_text(
+            ('#define CPRISK_VM_THREADED_DISPATCH 1\n' if phase == 'threaded' else '') + current
+            if integrated and phase != 'legacy' else source)
         body = harness
         if phase == 'threaded':
             (build / 'threaded.inc').write_text(generate(source))
@@ -76,7 +82,11 @@ int main(int argc, char **argv) {
     if(p<probe_low) probe_low=p; if(p>probe_high) probe_high=p; \\
     probe_hits[LANE_##lane][OP_##name]++; \\
 } while (0)''', '#include "threaded.inc"']
-            body = body.replace('#include "interpreter-under-test.c"', '#include "interpreter-under-test.c"\n' + '\n'.join(probe))
+            if integrated:
+                body = body.replace('#include "interpreter-under-test.c"',
+                    '#include <stdint.h>\n' + '\n'.join(probe[:-1]) + '\n#include "interpreter-under-test.c"')
+            else:
+                body = body.replace('#include "interpreter-under-test.c"', '#include "interpreter-under-test.c"\n' + '\n'.join(probe))
             body = body.replace('if(lane==0)cprisk_vm_interp_loop_a(&f);else cprisk_vm_interp_loop_b(&f);',
                                 'if(lane==0)cprisk_thread_run_a_i(&f);else cprisk_thread_run_b_i(&f);')
         (build / 'harness.c').write_text(body)
@@ -110,7 +120,8 @@ int main(int argc, char **argv) {
         zero = zero.replace('"../vm-post-handler-2a/harness.c"',
                             '"' + str(HERE.parent / 'vm-post-handler-2a/harness.c') + '"')
         if phase == 'threaded':
-            zero = zero.replace('#undef main', '#undef main\n#include "threaded.inc"')
+            if not integrated:
+                zero = zero.replace('#undef main', '#undef main\n#include "threaded.inc"')
             zero = zero.replace('if(lane==0)cprisk_vm_interp_loop_a(&f);else cprisk_vm_interp_loop_b(&f);',
                                 'if(lane==0)cprisk_thread_run_a_i(&f);else cprisk_thread_run_b_i(&f);')
         zero_source = build / 'zero.c'; zero_source.write_text(zero)
@@ -125,6 +136,9 @@ int main(int argc, char **argv) {
     for mode in ['corpus', 'stress']:
         assert (output / f'legacy/{mode}.txt').read_bytes() == (output / f'threaded/{mode}.txt').read_bytes(), mode + ' mismatch'
     assert (output / 'legacy/nonzero.bin').read_bytes() == (output / 'threaded/nonzero.bin').read_bytes()
+    if integrated:
+        for mode in ['corpus', 'stress']:
+            assert (output / f'legacy/{mode}.txt').read_bytes() == (output / f'current-legacy/{mode}.txt').read_bytes()
     report['status'] = 'HOST_THREADED_DIFFERENTIAL_PASS'
     (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({k: v for k, v in report.items() if k in ['status', 'opt', 'release_eligible']}, indent=2))
@@ -136,5 +150,6 @@ if __name__ == '__main__':
     p.add_argument('--cc', default='clang')
     p.add_argument('--output', type=pathlib.Path, required=True)
     p.add_argument('--opt', choices=['O0', 'O2', 'Os'], default='O2')
+    p.add_argument('--integrated', action='store_true')
     a = p.parse_args()
-    run(a.cc, a.output.resolve(), '-' + a.opt)
+    run(a.cc, a.output.resolve(), '-' + a.opt, a.integrated)
