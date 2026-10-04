@@ -7,8 +7,7 @@ The map is trusted build input, not an authenticated runtime artifact.
 """
 import argparse, hashlib, json, pathlib, re, sys
 ROOT=pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0,str(ROOT/'experiments/vm-threaded-dispatch'))
-from apple_release import text_bytes
+from macho_ranges import text_bytes
 
 def build_layout(image, linkmap):
     image=image.resolve();text=linkmap.read_text();live=text.split('# Dead Stripped Symbols:')[0]

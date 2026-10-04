@@ -25,7 +25,6 @@ let package = Package(
         .target(name: "HeaderEncryptor", dependencies: ["MachOKit"]),
         .target(name: "TextSegmentEncryptor", dependencies: ["MachOKit"]),
         .target(name: "VMProtector", dependencies: ["MachOKit"]),
-        .testTarget(name: "VMProtectorTests", dependencies: ["VMProtector"]),
         .executableTarget(
             name: "cprisk-vm-self-expect",
             dependencies: ["MachOKit"]

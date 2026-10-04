@@ -11,7 +11,6 @@ import json
 import math
 import os
 from pathlib import Path
-import subprocess
 import sys
 import uuid
 
@@ -228,95 +227,11 @@ def verify_release_evidence(path, policy_path):
     return eligible
 
 
-def run_lab(args):
-    output = args.output.resolve()
-    output.mkdir(parents=True, exist_ok=True)
-    # Invalidate any earlier status even if policy parsing fails.
-    atomic_json(output / "status.json", {"status": "RUNNING", "release_eligible": False})
-    atomic_json(output / "release-evidence.json", {"status": "INVALIDATED", "release_eligible": False})
-    policy = validate_policy(args.policy)
-    report = new_evidence(policy, sha256(args.policy))
-    atomic_json(output / "release-evidence.json", report)
-    if policy["profile"] == "off":
-        atomic_json(output / "status.json", {"status": "UNPROTECTED", "release_eligible": False})
-        return 0
-    if policy["profile"] != "semantic-lab" or policy["target_triple"] != "host":
-        for target in report["targets"]:
-            target["production_callpath"].update(status="blocked", reason="sdk_object_integration_not_implemented")
-        atomic_json(output / "release-evidence.json", report)
-        raise ValidationError("production_integration_blocked: no SDK protected build is implemented")
-    registry = {t["candidate_id"]: t for t in load(HERE / "candidate_registry.json")["candidates"]}
-    runs = []
-    for target in report["targets"]:
-        cid = target["candidate_id"]
-        for seed in policy["seeds"]:
-            destination = output / report["run_id"] / cid / str(seed)
-            command = [sys.executable, str(HERE / "run.py"), "--mode", args.mode,
-                       "--suite", registry[cid]["suite"], "--seed", str(seed),
-                       "--random-cases", "10000", "--cc", args.cc, "--output", str(destination)]
-            if args.mode == "xollvm":
-                command += ["--clang", args.clang, "--opt", args.opt]
-                for flag in ("plugin", "plugin_provenance", "preflight"):
-                    if getattr(args, flag): command += ["--" + flag.replace("_", "-"), str(getattr(args, flag))]
-            if args.sanitize:
-                command += ["--sanitize"]
-            result = subprocess.run(command, capture_output=True, text=True, timeout=600)
-            child = load(destination / "report.json")
-            runs.append({"candidate_id": cid, "seed": seed, "report": str((destination / "report.json").relative_to(output)),
-                         "sha256": sha256(destination / "report.json"), "completed_cases": child.get("completed_cases", 0),
-                         "command": command, "returncode": result.returncode})
-            atomic_json(output / "baseline-runs.json", {"run_id": report["run_id"], "runs": runs})
-            expected_status = "BASELINE_ONLY_PASS" if args.mode == "baseline-only" else "HOST_VMP_PASS"
-            if result.returncode or child["status"] != expected_status or child["vmp_verified"] is not (args.mode == "xollvm"):
-                dimension = "conversion" if "pass_evidence" not in child else "host_semantics"
-                target[dimension].update(status="blocked" if "unavailable" in child.get("error", "") else "fail",
-                                         reason=child.get("error", "child_failed"))
-                atomic_json(output / "release-evidence.json", report)
-                raise ValidationError("experiment_failed: " + cid + ": " + child.get("error", result.stderr))
-        target["host_semantics"]["reason"] = "native_baseline_only; VM semantics not executed" if args.mode == "baseline-only" else "host_VM_diff_completed"
-        target["device_semantics"].update(status="blocked", reason="physical_sdk_execution_not_available")
-    if args.mode == "xollvm":
-        lock = load(HERE / "toolchain.lock.json")
-        for item in runs:
-            child = load(output / item["report"])
-            if (child["plugin_provenance"]["llvm_version"] != lock["llvm_version"] or
-                    child["plugin_provenance"].get("local_patch_set", {}).get("id") != lock["patch_set"]):
-                raise ValidationError("vnext_requires_exact_locked_toolchain_and_patch")
-        manifest = {"run_id": report["run_id"], "config_sha256": report["config_sha256"],
-                    "artifact_kind": "host_experiment_bundle_not_sdk", "runs": runs}
-        atomic_json(output / "artifact-manifest.json", manifest)
-        report["artifact_manifest"] = "artifact-manifest.json"
-        report["artifact_id"] = sha256(output / "artifact-manifest.json")
-        for target in report["targets"]:
-            for dimension in ("conversion", "host_semantics"):
-                record = {"candidate_id": target["candidate_id"], "dimension": dimension,
-                          "run_id": report["run_id"], "config_sha256": report["config_sha256"],
-                          "artifact_id": report["artifact_id"],
-                          "runs": [r for r in runs if r["candidate_id"] == target["candidate_id"]]}
-                filename = target["candidate_id"] + "-" + dimension + ".json"
-                atomic_json(output / filename, record)
-                target[dimension].update(status="pass", reason="all_requested_host_seeds_passed",
-                                         evidence=[{"path": filename, "sha256": sha256(output / filename)}])
-    atomic_json(output / "release-evidence.json", report)
-    atomic_json(output / "status.json", {"status": "BASELINE_ONLY_PASS" if args.mode == "baseline-only" else "HOST_VMP_PASS", "release_eligible": False,
-                                        "run_id": report["run_id"], "completed_cases": sum(r["completed_cases"] for r in runs)})
-    return 0
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("validate", "run", "verify-release"))
+    parser.add_argument("command", choices=("validate", "verify-release"))
     parser.add_argument("--policy", type=Path, default=HERE / "policy.semantic-lab.json")
-    parser.add_argument("--output", type=Path, default=HERE / "out-vnext")
     parser.add_argument("--evidence", type=Path)
-    parser.add_argument("--mode", choices=("baseline-only", "xollvm"), default="baseline-only")
-    parser.add_argument("--cc", default="cc")
-    parser.add_argument("--sanitize", action="store_true")
-    parser.add_argument("--clang", default="clang")
-    parser.add_argument("--opt", default="opt")
-    parser.add_argument("--plugin", type=Path)
-    parser.add_argument("--plugin-provenance", type=Path)
-    parser.add_argument("--preflight", type=Path)
     args = parser.parse_args()
     try:
         if args.command == "validate":
@@ -329,10 +244,7 @@ def main():
             if not verify_release_evidence(args.evidence, args.policy):
                 raise ValidationError("release_ineligible: required SDK/device/performance/resilience evidence unavailable")
             return 0
-        return run_lab(args)
-    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
-        if args.command == "run":
-            atomic_json(args.output / "status.json", {"status": "BLOCKED_OR_FAILED", "reason": str(exc), "release_eligible": False})
+    except (OSError, ValueError, KeyError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
 

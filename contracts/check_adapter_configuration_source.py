@@ -2,7 +2,7 @@
 """Portable wiring/policy-copy gates. These do NOT compile or execute Swift.
 
 Use --ref <commit> to check a historical source tree with the same assertions.
-The native behavior suite remains check_local_assessment.py on macOS.
+Native behavior tests were removed at the maintainer's request; this checks source only.
 """
 import argparse
 from pathlib import Path

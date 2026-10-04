@@ -1,3 +1,5 @@
+> 2026-10-04：按维护者要求移除仓库中的单元测试、差分/回归测试源码、测试运行脚本及对应测试 CI。下文测试命令和结果作为历史记录保留；需要复现时请使用删除前的提交 `16543b971eaeb247e8720f8aa927d45fe97e90c0`。代码生成、CPSV 布局生成和发布证据校验工具仍保留。
+
 # CPSV v2 and integrated context-threaded runtime
 
 This implements the contract proposed in PR #98. Shipping defaults remain legacy
