@@ -3847,6 +3847,11 @@ static int cprisk_vm_bc_seg_hash_should_check_i(const cprisk_vm_interp_frame_t *
     return 1;
 }
 
+/* Shared post-handler boundary. Keep the existing callers and operation order:
+ * bytecode check, auxiliary step, then optional white-box side effects.
+ * noinline preserves an out-of-line code region; it does not fix its byte size
+ * across toolchains or optimization levels. This is not yet a CPSV span. */
+__attribute__((noinline))
 cprisk_vm_flow_t cprisk_vm_oph_post_handler_i(cprisk_vm_interp_frame_t *fr,
                                               uint8_t logical,
                                               uint64_t imm,

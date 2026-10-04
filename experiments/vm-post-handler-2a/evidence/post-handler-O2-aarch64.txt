@@ -1,0 +1,2365 @@
+0000000000003c20 <cprisk_vm_oph_post_handler_i>:
+    3c20: b40118e0     	cbz	x0, 0x5f3c <cprisk_vm_oph_post_handler_i+0x231c>
+    3c24: f9403c08     	ldr	x8, [x0, #0x78]
+    3c28: b40118a8     	cbz	x8, 0x5f3c <cprisk_vm_oph_post_handler_i+0x231c>
+    3c2c: a9ba7bfd     	stp	x29, x30, [sp, #-0x60]!
+    3c30: a9016ffc     	stp	x28, x27, [sp, #0x10]
+    3c34: 910003fd     	mov	x29, sp
+    3c38: a90267fa     	stp	x26, x25, [sp, #0x20]
+    3c3c: a9035ff8     	stp	x24, x23, [sp, #0x30]
+    3c40: a90457f6     	stp	x22, x21, [sp, #0x40]
+    3c44: a9054ff4     	stp	x20, x19, [sp, #0x50]
+    3c48: d10a03ff     	sub	sp, sp, #0x280
+    3c4c: b94ec008     	ldr	w8, [x0, #0xec0]
+    3c50: 913b2012     	add	x18, x0, #0xec8
+    3c54: 290f93e5     	stp	w5, w4, [sp, #0x7c]
+    3c58: b90087e3     	str	w3, [sp, #0x84]
+    3c5c: 3400df08     	cbz	w8, 0x583c <cprisk_vm_oph_post_handler_i+0x1c1c>
+    3c60: f947c808     	ldr	x8, [x0, #0xf90]
+    3c64: b400dec8     	cbz	x8, 0x583c <cprisk_vm_oph_post_handler_i+0x1c1c>
+    3c68: f100051f     	cmp	x8, #0x1
+    3c6c: 54000140     	b.eq	0x3c94 <cprisk_vm_oph_post_handler_i+0x74>
+    3c70: 12001c29     	and	w9, w1, #0xff
+    3c74: 71005d3f     	cmp	w9, #0x17
+    3c78: 54011668     	b.hi	0x5f44 <cprisk_vm_oph_post_handler_i+0x2324>
+    3c7c: 5280002a     	mov	w10, #0x1               // =1
+    3c80: 1ac92149     	lsl	w9, w10, w9
+    3c84: 5280014a     	mov	w10, #0xa               // =10
+    3c88: 72a0102a     	movk	w10, #0x81, lsl #16
+    3c8c: 6a0a013f     	tst	w9, w10
+    3c90: 540115a0     	b.eq	0x5f44 <cprisk_vm_oph_post_handler_i+0x2324>
+    3c94: f9405014     	ldr	x20, [x0, #0xa0]
+    3c98: 913b2008     	add	x8, x0, #0xec8
+    3c9c: b9001fe1     	str	w1, [sp, #0x1c]
+    3ca0: a9008be8     	stp	x8, x2, [sp, #0x8]
+    3ca4: f90013e0     	str	x0, [sp, #0x20]
+    3ca8: b40003d4     	cbz	x20, 0x3d20 <cprisk_vm_oph_post_handler_i+0x100>
+    3cac: b940a815     	ldr	w21, [x0, #0xa8]
+    3cb0: 34000395     	cbz	w21, 0x3d20 <cprisk_vm_oph_post_handler_i+0x100>
+    3cb4: 94000000     	bl	0x3cb4 <cprisk_vm_oph_post_handler_i+0x94>
+		0000000000003cb4:  R_AARCH64_CALL26	cprisk_crypto_trace_primitive_enter_i
+    3cb8: 90000008     	adrp	x8, 0x3000 <cprisk_vm_branch_cond_mixed_eval_i+0xec>
+		0000000000003cb8:  R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16+0x120
+    3cbc: 90000009     	adrp	x9, 0x3000 <cprisk_vm_branch_cond_mixed_eval_i+0xec>
+		0000000000003cbc:  R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16+0x130
+    3cc0: 2a1f03e1     	mov	w1, wzr
+    3cc4: 3dc00100     	ldr	q0, [x8]
+		0000000000003cc4:  R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16+0x120
+    3cc8: 3dc00121     	ldr	q1, [x9]
+		0000000000003cc8:  R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16+0x130
+    3ccc: 910403e8     	add	x8, sp, #0x100
+    3cd0: 9100a100     	add	x0, x8, #0x28
+    3cd4: 52800802     	mov	w2, #0x40               // =64
+    3cd8: f90093ff     	str	xzr, [sp, #0x120]
+    3cdc: ad0807e0     	stp	q0, q1, [sp, #0x100]
+    3ce0: f90003e0     	str	x0, [sp]
+    3ce4: 94000000     	bl	0x3ce4 <cprisk_vm_oph_post_handler_i+0xc4>
+		0000000000003ce4:  R_AARCH64_CALL26	memset
+    3ce8: f94093e9     	ldr	x9, [sp, #0x120]
+    3cec: 90000003     	adrp	x3, 0x3000 <cprisk_vm_branch_cond_mixed_eval_i+0xec>
+		0000000000003cec:  R_AARCH64_ADR_PREL_PG_HI21	.rodata+0x1c8
+    3cf0: 91000063     	add	x3, x3, #0x0
+		0000000000003cf0:  R_AARCH64_ADD_ABS_LO12_NC	.rodata+0x1c8
+    3cf4: f2401528     	ands	x8, x9, #0x3f
+    3cf8: 8b150129     	add	x9, x9, x21
+    3cfc: f90093e9     	str	x9, [sp, #0x120]
+    3d00: 540031a0     	b.eq	0x4334 <cprisk_vm_oph_post_handler_i+0x714>
+    3d04: 52800809     	mov	w9, #0x40               // =64
+    3d08: cb080122     	sub	x2, x9, x8
+    3d0c: eb0202a9     	subs	x9, x21, x2
+    3d10: 54000122     	b.hs	0x3d34 <cprisk_vm_oph_post_handler_i+0x114>
+    3d14: f94003f3     	ldr	x19, [sp]
+    3d18: 8b080260     	add	x0, x19, x8
+    3d1c: 1400031a     	b	0x4984 <cprisk_vm_oph_post_handler_i+0xd64>
+    3d20: 910383e0     	add	x0, sp, #0xe0
+    3d24: 2a1f03e1     	mov	w1, wzr
+    3d28: 52800402     	mov	w2, #0x20               // =32
+    3d2c: 94000000     	bl	0x3d2c <cprisk_vm_oph_post_handler_i+0x10c>
+		0000000000003d2c:  R_AARCH64_CALL26	memset
+    3d30: 1400065a     	b	0x5698 <cprisk_vm_oph_post_handler_i+0x1a78>
+    3d34: f94003f3     	ldr	x19, [sp]
+    3d38: aa1403e1     	mov	x1, x20
+    3d3c: a908d3e9     	stp	x9, x20, [sp, #0x88]
+    3d40: f90033e2     	str	x2, [sp, #0x60]
+    3d44: 8b080260     	add	x0, x19, x8
+    3d48: 94000000     	bl	0x3d48 <cprisk_vm_oph_post_handler_i+0x128>
+		0000000000003d48:  R_AARCH64_CALL26	memcpy
+    3d4c: 4c400260     	ld4	{ v0.16b, v1.16b, v2.16b, v3.16b }, [x19]
+    3d50: aa1f03e8     	mov	x8, xzr
+    3d54: 9105c3e9     	add	x9, sp, #0x170
+    3d58: 6f08a424     	ushll2	v4.8h, v1.16b, #0x0
+    3d5c: 6f08a445     	ushll2	v5.8h, v2.16b, #0x0
+    3d60: 2f08a406     	ushll	v6.8h, v0.8b, #0x0
+    3d64: 6f08a407     	ushll2	v7.8h, v0.16b, #0x0
+    3d68: 2f08a430     	ushll	v16.8h, v1.8b, #0x0
+    3d6c: 2f08a451     	ushll	v17.8h, v2.8b, #0x0
+    3d70: 6f08a472     	ushll2	v18.8h, v3.16b, #0x0
+    3d74: 2f08a460     	ushll	v0.8h, v3.8b, #0x0
+    3d78: 6e613893     	shll2	v19.4s, v4.8h, #16
+    3d7c: 6f18a4b4     	ushll2	v20.4s, v5.8h, #0x8
+    3d80: 2f10a4d5     	ushll	v21.4s, v6.4h, #0x0
+    3d84: 6f10a4c6     	ushll2	v6.4s, v6.8h, #0x0
+    3d88: 6f10a4f6     	ushll2	v22.4s, v7.8h, #0x0
+    3d8c: 2f10a4e7     	ushll	v7.4s, v7.4h, #0x0
+    3d90: 2e613884     	shll	v4.4s, v4.4h, #16
+    3d94: 2f18a4a5     	ushll	v5.4s, v5.4h, #0x8
+    3d98: 6e613a17     	shll2	v23.4s, v16.8h, #16
+    3d9c: 4eb41e73     	orr	v19.16b, v19.16b, v20.16b
+    3da0: 6f18a634     	ushll2	v20.4s, v17.8h, #0x8
+    3da4: 2e613a10     	shll	v16.4s, v16.4h, #16
+    3da8: 2f18a631     	ushll	v17.4s, v17.4h, #0x8
+    3dac: 4f3856d6     	shl	v22.4s, v22.4s, #0x18
+    3db0: 4f3854e1     	shl	v1.4s, v7.4s, #0x18
+    3db4: 4ea51c82     	orr	v2.16b, v4.16b, v5.16b
+    3db8: 4f3854c4     	shl	v4.4s, v6.4s, #0x18
+    3dbc: 4f3856a6     	shl	v6.4s, v21.4s, #0x18
+    3dc0: 4eb41ee5     	orr	v5.16b, v23.16b, v20.16b
+    3dc4: 6f10a643     	ushll2	v3.4s, v18.8h, #0x0
+    3dc8: 4eb11e07     	orr	v7.16b, v16.16b, v17.16b
+    3dcc: 4eb61e70     	orr	v16.16b, v19.16b, v22.16b
+    3dd0: 2f10a651     	ushll	v17.4s, v18.4h, #0x0
+    3dd4: 4ea11c41     	orr	v1.16b, v2.16b, v1.16b
+    3dd8: 6f10a402     	ushll2	v2.4s, v0.8h, #0x0
+    3ddc: 2f10a400     	ushll	v0.4s, v0.4h, #0x0
+    3de0: 4ea41ca4     	orr	v4.16b, v5.16b, v4.16b
+    3de4: 4ea61ce5     	orr	v5.16b, v7.16b, v6.16b
+    3de8: 4ea31e03     	orr	v3.16b, v16.16b, v3.16b
+    3dec: 4eb11c21     	orr	v1.16b, v1.16b, v17.16b
+    3df0: 4ea21c82     	orr	v2.16b, v4.16b, v2.16b
+    3df4: 4ea01ca0     	orr	v0.16b, v5.16b, v0.16b
+    3df8: ad0c8fe1     	stp	q1, q3, [sp, #0x190]
+    3dfc: ad0b8be0     	stp	q0, q2, [sp, #0x170]
+    3e00: 8b08012a     	add	x10, x9, x8
+    3e04: 91001108     	add	x8, x8, #0x4
+    3e08: b940394b     	ldr	w11, [x10, #0x38]
+    3e0c: b9402550     	ldr	w16, [x10, #0x24]
+    3e10: f103011f     	cmp	x8, #0xc0
+    3e14: 2940314e     	ldp	w14, w12, [x10]
+    3e18: 138b456d     	ror	w13, w11, #0x11
+    3e1c: 138c1d8f     	ror	w15, w12, #0x7
+    3e20: 4acb4dad     	eor	w13, w13, w11, ror #19
+    3e24: 4acc49ef     	eor	w15, w15, w12, ror #18
+    3e28: 4a4b29ab     	eor	w11, w13, w11, lsr #10
+    3e2c: 0b0e020d     	add	w13, w16, w14
+    3e30: 4a4c0dec     	eor	w12, w15, w12, lsr #3
+    3e34: 0b0d016b     	add	w11, w11, w13
+    3e38: 0b0c016b     	add	w11, w11, w12
+    3e3c: b900414b     	str	w11, [x10, #0x40]
+    3e40: 54fffe01     	b.ne	0x3e00 <cprisk_vm_oph_post_handler_i+0x1e0>
+    3e44: b94173e8     	ldr	w8, [sp, #0x170]
+    3e48: b94103fb     	ldr	w27, [sp, #0x100]
+    3e4c: 5283e4ea     	mov	w10, #0x1f27            // =7975
+    3e50: b94107f2     	ldr	w18, [sp, #0x104]
+    3e54: b9410bf7     	ldr	w23, [sp, #0x108]
+    3e58: 72b4b86a     	movk	w10, #0xa5c3, lsl #16
+    3e5c: b9410fe5     	ldr	w5, [sp, #0x10c]
+    3e60: b94113fc     	ldr	w28, [sp, #0x110]
+    3e64: 4a080369     	eor	w9, w27, w8
+    3e68: b94117ec     	ldr	w12, [sp, #0x114]
+    3e6c: b9411beb     	ldr	w11, [sp, #0x118]
+    3e70: 528f3727     	mov	w7, #0x79b9             // =31161
+    3e74: b9411fe8     	ldr	w8, [sp, #0x11c]
+    3e78: 528f82b3     	mov	w19, #0x7c15            // =31765
+    3e7c: 528379b4     	mov	w20, #0x1bcd            // =7117
+    3e80: 529d65f5     	mov	w21, #0xeb2f            // =60207
+    3e84: 2a1f03f6     	mov	w22, wzr
+    3e88: 2a1f03e1     	mov	w1, wzr
+    3e8c: aa1f03ed     	mov	x13, xzr
+    3e90: aa1f03fa     	mov	x26, xzr
+    3e94: aa1f03e0     	mov	x0, xzr
+    3e98: 4a0a0129     	eor	w9, w9, w10
+    3e9c: 528003e2     	mov	w2, #0x1f               // =31
+    3ea0: 52800264     	mov	w4, #0x13               // =19
+    3ea4: 528000ee     	mov	w14, #0x7               // =7
+    3ea8: 9105c3e6     	add	x6, sp, #0x170
+    3eac: 72b3c6e7     	movk	w7, #0x9e37, lsl #16
+    3eb0: 72afe953     	movk	w19, #0x7f4a, lsl #16
+    3eb4: 72a7b9b4     	movk	w20, #0x3dcd, lsl #16
+    3eb8: 72a4fa95     	movk	w21, #0x27d4, lsl #16
+    3ebc: 90000003     	adrp	x3, 0x3000 <cprisk_vm_branch_cond_mixed_eval_i+0xec>
+		0000000000003ebc:  R_AARCH64_ADR_PREL_PG_HI21	.rodata+0x1c8
+    3ec0: 91000063     	add	x3, x3, #0x0
+		0000000000003ec0:  R_AARCH64_ADD_ABS_LO12_NC	.rodata+0x1c8
+    3ec4: b9016fe9     	str	w9, [sp, #0x16c]
+    3ec8: 14000037     	b	0x3fa4 <cprisk_vm_oph_post_handler_i+0x384>
+    3ecc: 2a1803f4     	mov	w20, w24
+    3ed0: 2a1703f8     	mov	w24, w23
+    3ed4: 2a0103f7     	mov	w23, w1
+    3ed8: 2a1203f5     	mov	w21, w18
+    3edc: 2a1c03f3     	mov	w19, w28
+    3ee0: 2a1903fc     	mov	w28, w25
+    3ee4: 2a1b03f9     	mov	w25, w27
+    3ee8: 2a0503fb     	mov	w27, w5
+    3eec: 2a1103f6     	mov	w22, w17
+    3ef0: 94000000     	bl	0x3ef0 <cprisk_vm_oph_post_handler_i+0x2d0>
+		0000000000003ef0:  R_AARCH64_CALL26	cprisk_crypto_trace_now_i
+    3ef4: 2a1603f1     	mov	w17, w22
+    3ef8: 9105c3e6     	add	x6, sp, #0x170
+    3efc: 2a1b03e5     	mov	w5, w27
+    3f00: 2a1903fb     	mov	w27, w25
+    3f04: 2a1c03f9     	mov	w25, w28
+    3f08: 2a1303fc     	mov	w28, w19
+    3f0c: 2a1503f2     	mov	w18, w21
+    3f10: 2a1703e1     	mov	w1, w23
+    3f14: 2a1803f7     	mov	w23, w24
+    3f18: 2a1403f8     	mov	w24, w20
+    3f1c: 90000003     	adrp	x3, 0x3000 <cprisk_vm_branch_cond_mixed_eval_i+0xec>
+		0000000000003f1c:  R_AARCH64_ADR_PREL_PG_HI21	.rodata+0x1c8
+    3f20: 91000063     	add	x3, x3, #0x0
+		0000000000003f20:  R_AARCH64_ADD_ABS_LO12_NC	.rodata+0x1c8
+    3f24: 528f3729     	mov	w9, #0x79b9             // =31161
+    3f28: a94a13e2     	ldp	x2, x4, [sp, #0xa0]
+    3f2c: 72b3c6e9     	movk	w9, #0x9e37, lsl #16
+    3f30: a94d37ee     	ldp	x14, x13, [sp, #0xd0]
+    3f34: 0b010128     	add	w8, w9, w1
+    3f38: b940cbf3     	ldr	w19, [sp, #0xc8]
+    3f3c: 9100075a     	add	x26, x26, #0x1
+    3f40: 29569ff6     	ldp	w22, w7, [sp, #0xb4]
+    3f44: 51002101     	sub	w1, w8, #0x8
+    3f48: 5294b4a8     	mov	w8, #0xa5a5             // =42405
+    3f4c: 9100d442     	add	x2, x2, #0x35
+    3f50: 72b4b4a8     	movk	w8, #0xa5a5, lsl #16
+    3f54: 91009484     	add	x4, x4, #0x25
+    3f58: 910075ce     	add	x14, x14, #0x1d
+    3f5c: 2957d3f5     	ldp	w21, w20, [sp, #0xbc]
+    3f60: 0b0802d6     	add	w22, w22, w8
+    3f64: 529d65e8     	mov	w8, #0xeb2f             // =60207
+    3f68: 910035ad     	add	x13, x13, #0xd
+    3f6c: 72a4fa88     	movk	w8, #0x27d4, lsl #16
+    3f70: 0b0900e7     	add	w7, w7, w9
+    3f74: f101035f     	cmp	x26, #0x40
+    3f78: 0b0802b5     	add	w21, w21, w8
+    3f7c: 52994d68     	mov	w8, #0xca6b             // =51819
+    3f80: 2a1803eb     	mov	w11, w24
+    3f84: 72b0bd68     	movk	w8, #0x85eb, lsl #16
+    3f88: 2a1903ec     	mov	w12, w25
+    3f8c: 0b080294     	add	w20, w20, w8
+    3f90: 528f82a8     	mov	w8, #0x7c15             // =31765
+    3f94: 72afe948     	movk	w8, #0x7f4a, lsl #16
+    3f98: 0b080273     	add	w19, w19, w8
+    3f9c: 2a1103e8     	mov	w8, w17
+    3fa0: 54001340     	b.eq	0x4208 <cprisk_vm_oph_post_handler_i+0x5e8>
+    3fa4: a90d37ee     	stp	x14, x13, [sp, #0xd0]
+    3fa8: 924015aa     	and	x10, x13, #0x3f
+    3fac: 924015ce     	and	x14, x14, #0x3f
+    3fb0: b9416fed     	ldr	w13, [sp, #0x16c]
+    3fb4: 386a686a     	ldrb	w10, [x3, x10]
+    3fb8: 12000b4f     	and	w15, w26, #0x7
+    3fbc: 386e686e     	ldrb	w14, [x3, x14]
+    3fc0: 11002751     	add	w17, w26, #0x9
+    3fc4: 2a0503e9     	mov	w9, w5
+    3fc8: 53081d50     	lsl	w16, w10, #24
+    3fcc: 110005ea     	add	w10, w15, #0x1
+    3fd0: 2a1703e5     	mov	w5, w23
+    3fd4: 2a1203f7     	mov	w23, w18
+    3fd8: 92401492     	and	x18, x4, #0x3f
+    3fdc: 9240162f     	and	x15, x17, #0x3f
+    3fe0: 2a0e420e     	orr	w14, w16, w14, lsl #16
+    3fe4: 1aca2f90     	ror	w16, w28, w10
+    3fe8: b86f78cf     	ldr	w15, [x6, x15, lsl #2]
+    3fec: 4a0d02cd     	eor	w13, w22, w13
+    3ff0: 38726871     	ldrb	w17, [x3, x18]
+    3ff4: 2a1c03f9     	mov	w25, w28
+    3ff8: 4a0d020d     	eor	w13, w16, w13
+    3ffc: 92401450     	and	x16, x2, #0x3f
+    4000: 4a1b01ef     	eor	w15, w15, w27
+    4004: 2a1121ce     	orr	w14, w14, w17, lsl #8
+    4008: 38706870     	ldrb	w16, [x3, x16]
+    400c: 4a0f01ad     	eor	w13, w13, w15
+    4010: 4a0d00ef     	eor	w15, w7, w13
+    4014: 2a1b03f2     	mov	w18, w27
+    4018: 2a0c03f8     	mov	w24, w12
+    401c: 2a1001ce     	orr	w14, w14, w16
+    4020: 53010f50     	ubfx	w16, w26, #1, #3
+    4024: 2a0b03f1     	mov	w17, w11
+    4028: 4a0e01ee     	eor	w14, w15, w14
+    402c: 529cccef     	mov	w15, #0xe667            // =58983
+    4030: 72ad412f     	movk	w15, #0x6a09, lsl #16
+    4034: 1aca2dce     	ror	w14, w14, w10
+    4038: 0b0f01ad     	add	w13, w13, w15
+    403c: 1100060f     	add	w15, w16, #0x1
+    4040: 5283e4f0     	mov	w16, #0x1f27            // =7975
+    4044: 72b4b870     	movk	w16, #0xa5c3, lsl #16
+    4048: 1acf2daf     	ror	w15, w13, w15
+    404c: 9000000d     	adrp	x13, 0x4000 <cprisk_vm_oph_post_handler_i+0x3e0>
+		000000000000404c:  R_AARCH64_ADR_PREL_PG_HI21	.rodata+0x208
+    4050: 910001ad     	add	x13, x13, #0x0
+		0000000000004050:  R_AARCH64_ADD_ABS_LO12_NC	.rodata+0x208
+    4054: 4a100270     	eor	w16, w19, w16
+    4058: 0b1001ce     	add	w14, w14, w16
+    405c: b87a79ad     	ldr	w13, [x13, x26, lsl #2]
+    4060: 6b0f01df     	cmp	w14, w15
+    4064: 4a0f01cc     	eor	w12, w14, w15
+    4068: 54000140     	b.eq	0x4090 <cprisk_vm_oph_post_handler_i+0x470>
+    406c: 6b0d019f     	cmp	w12, w13
+    4070: 54000061     	b.ne	0x407c <cprisk_vm_oph_post_handler_i+0x45c>
+    4074: 2a0c03ed     	mov	w13, w12
+    4078: 14000006     	b	0x4090 <cprisk_vm_oph_post_handler_i+0x470>
+    407c: 9000000b     	adrp	x11, 0x4000 <cprisk_vm_oph_post_handler_i+0x3e0>
+		000000000000407c:  R_AARCH64_ADR_PREL_PG_HI21	.rodata+0x308
+    4080: 9100016b     	add	x11, x11, #0x0
+		0000000000004080:  R_AARCH64_ADD_ABS_LO12_NC	.rodata+0x308
+    4084: b87a796e     	ldr	w14, [x11, x26, lsl #2]
+    4088: 2b0e019f     	cmn	w12, w14
+    408c: 54000121     	b.ne	0x40b0 <cprisk_vm_oph_post_handler_i+0x490>
+    4090: 4a14018b     	eor	w11, w12, w20
+    4094: 5297d22c     	mov	w12, #0xbe91            // =48785
+    4098: 9000000e     	adrp	x14, 0x4000 <cprisk_vm_oph_post_handler_i+0x3e0>
+		0000000000004098:  R_AARCH64_ADR_PREL_PG_HI21	.rodata+0x308
+    409c: 910001ce     	add	x14, x14, #0x0
+		000000000000409c:  R_AARCH64_ADD_ABS_LO12_NC	.rodata+0x308
+    40a0: 72b89a4c     	movk	w12, #0xc4d2, lsl #16
+    40a4: 4a0c02ac     	eor	w12, w21, w12
+    40a8: b87a79ce     	ldr	w14, [x14, x26, lsl #2]
+    40ac: 0b0c016c     	add	w12, w11, w12
+    40b0: 13991b2b     	ror	w11, w25, #0x6
+    40b4: 2917d3f5     	stp	w21, w20, [sp, #0xbc]
+    40b8: 7200075f     	tst	w26, #0x3
+    40bc: b900cbf3     	str	w19, [sp, #0xc8]
+    40c0: 4ad92d6b     	eor	w11, w11, w25, ror #11
+    40c4: 4ad9656f     	eor	w15, w11, w25, ror #25
+    40c8: b87a78cb     	ldr	w11, [x6, x26, lsl #2]
+    40cc: 0b0f0108     	add	w8, w8, w15
+    40d0: 0a39022f     	bic	w15, w17, w25
+    40d4: b81f43a8     	stur	w8, [x29, #-0xc]
+    40d8: 0a190308     	and	w8, w24, w25
+    40dc: b81f03ab     	stur	w11, [x29, #-0x10]
+    40e0: 2a0801e8     	orr	w8, w15, w8
+    40e4: 0a0502ef     	and	w15, w23, w5
+    40e8: b85f43b0     	ldur	w16, [x29, #-0xc]
+    40ec: 0b100108     	add	w8, w8, w16
+    40f0: b81f43a8     	stur	w8, [x29, #-0xc]
+    40f4: b85f43a8     	ldur	w8, [x29, #-0xc]
+    40f8: 0b0801c8     	add	w8, w14, w8
+    40fc: 4a0502ee     	eor	w14, w23, w5
+    4100: 0b0c0108     	add	w8, w8, w12
+    4104: 4b0c01ac     	sub	w12, w13, w12
+    4108: 0a0e024e     	and	w14, w18, w14
+    410c: b81f43a8     	stur	w8, [x29, #-0xc]
+    4110: b85f03a8     	ldur	w8, [x29, #-0x10]
+    4114: 0b080188     	add	w8, w12, w8
+    4118: 13920a4c     	ror	w12, w18, #0x2
+    411c: b81f03a8     	stur	w8, [x29, #-0x10]
+    4120: b85f43a8     	ldur	w8, [x29, #-0xc]
+    4124: b85f03ad     	ldur	w13, [x29, #-0x10]
+    4128: 4ad2358c     	eor	w12, w12, w18, ror #13
+    412c: 0b0801a8     	add	w8, w13, w8
+    4130: 4ad2598c     	eor	w12, w12, w18, ror #22
+    4134: 4a0f01cd     	eor	w13, w14, w15
+    4138: 0b0801ad     	add	w13, w13, w8
+    413c: 0b09011c     	add	w28, w8, w9
+    4140: 0b0d019b     	add	w27, w12, w13
+    4144: 54000361     	b.ne	0x41b0 <cprisk_vm_oph_post_handler_i+0x590>
+    4148: 13970ae8     	ror	w8, w23, #0x2
+    414c: 13981b09     	ror	w9, w24, #0x6
+    4150: 11002f4c     	add	w12, w26, #0xb
+    4154: 9240158c     	and	x12, x12, #0x3f
+    4158: 1aca2f8d     	ror	w13, w28, w10
+    415c: 4ad73508     	eor	w8, w8, w23, ror #13
+    4160: 4ad82d29     	eor	w9, w9, w24, ror #11
+    4164: b86c78cc     	ldr	w12, [x6, x12, lsl #2]
+    4168: 4ad75908     	eor	w8, w8, w23, ror #22
+    416c: 4ad86529     	eor	w9, w9, w24, ror #25
+    4170: 4a0c0108     	eor	w8, w8, w12
+    4174: 4a1b01ac     	eor	w12, w13, w27
+    4178: 0b090029     	add	w9, w1, w9
+    417c: 0b0c0108     	add	w8, w8, w12
+    4180: 4a090108     	eor	w8, w8, w9
+    4184: 0b0b0349     	add	w9, w26, w11
+    4188: 0b080129     	add	w9, w9, w8
+    418c: 92401529     	and	x9, x9, #0x3f
+    4190: 38696869     	ldrb	w9, [x3, x9]
+    4194: b9416feb     	ldr	w11, [sp, #0x16c]
+    4198: 4a080168     	eor	w8, w11, w8
+    419c: 4a090108     	eor	w8, w8, w9
+    41a0: b9016fe8     	str	w8, [sp, #0x16c]
+    41a4: b9416fe8     	ldr	w8, [sp, #0x16c]
+    41a8: 1aca2d08     	ror	w8, w8, w10
+    41ac: b9016fe8     	str	w8, [sp, #0x16c]
+    41b0: f1003f5f     	cmp	x26, #0xf
+    41b4: 29169ff6     	stp	w22, w7, [sp, #0xb4]
+    41b8: a90a13e2     	stp	x2, x4, [sp, #0xa0]
+    41bc: 54ffe880     	b.eq	0x3ecc <cprisk_vm_oph_post_handler_i+0x2ac>
+    41c0: f100bf5f     	cmp	x26, #0x2f
+    41c4: 54ffeb01     	b.ne	0x3f24 <cprisk_vm_oph_post_handler_i+0x304>
+    41c8: b4ffeae0     	cbz	x0, 0x3f24 <cprisk_vm_oph_post_handler_i+0x304>
+    41cc: 291307f8     	stp	w24, w1, [sp, #0x98]
+    41d0: aa0003f4     	mov	x20, x0
+    41d4: 2a1203f8     	mov	w24, w18
+    41d8: 2a0503f5     	mov	w21, w5
+    41dc: 2a1103f6     	mov	w22, w17
+    41e0: 94000000     	bl	0x41e0 <cprisk_vm_oph_post_handler_i+0x5c0>
+		00000000000041e0:  R_AARCH64_CALL26	cprisk_crypto_trace_now_i
+    41e4: cb140000     	sub	x0, x0, x20
+    41e8: 94000000     	bl	0x41e8 <cprisk_vm_oph_post_handler_i+0x5c8>
+		00000000000041e8:  R_AARCH64_CALL26	cprisk_crypto_trace_record_span_ticks_i
+    41ec: 2a1803f2     	mov	w18, w24
+    41f0: 2a1603f1     	mov	w17, w22
+    41f4: 9105c3e6     	add	x6, sp, #0x170
+    41f8: 295307f8     	ldp	w24, w1, [sp, #0x98]
+    41fc: 2a1503e5     	mov	w5, w21
+    4200: aa1403e0     	mov	x0, x20
+    4204: 17ffff46     	b	0x3f1c <cprisk_vm_oph_post_handler_i+0x2fc>
+    4208: 1e270360     	fmov	s0, w27
+    420c: 1e270381     	fmov	s1, w28
+    4210: 9105c3eb     	add	x11, sp, #0x170
+    4214: ad480fe2     	ldp	q2, q3, [sp, #0x100]
+    4218: 5284e162     	mov	w2, #0x270b             // =9995
+    421c: f9404bf4     	ldr	x20, [sp, #0x90]
+    4220: 2a1f03e8     	mov	w8, wzr
+    4224: aa1f03e9     	mov	x9, xzr
+    4228: 4e0c1e40     	mov	v0.s[1], w18
+    422c: 4e0c1f21     	mov	v1.s[1], w25
+    4230: aa1f03ea     	mov	x10, xzr
+    4234: 9101316c     	add	x12, x11, #0x4c
+    4238: 910403ed     	add	x13, sp, #0x100
+    423c: 72aa3da2     	movk	w2, #0x51ed, lsl #16
+    4240: 4e141ee0     	mov	v0.s[2], w23
+    4244: 4e141f01     	mov	v1.s[2], w24
+    4248: 4e1c1ca0     	mov	v0.s[3], w5
+    424c: 4e1c1e21     	mov	v1.s[3], w17
+    4250: 4ea08440     	add	v0.4s, v2.4s, v0.4s
+    4254: 4ea18461     	add	v1.4s, v3.4s, v1.4s
+    4258: ad0807e0     	stp	q0, q1, [sp, #0x100]
+    425c: 14000006     	b	0x4274 <cprisk_vm_oph_post_handler_i+0x654>
+    4260: 9100054a     	add	x10, x10, #0x1
+    4264: 91001d29     	add	x9, x9, #0x7
+    4268: 0b020108     	add	w8, w8, w2
+    426c: f100615f     	cmp	x10, #0x18
+    4270: 540005a0     	b.eq	0x4324 <cprisk_vm_oph_post_handler_i+0x704>
+    4274: 9240094e     	and	x14, x10, #0x7
+    4278: 9240152f     	and	x15, x9, #0x3f
+    427c: 11001541     	add	w1, w10, #0x5
+    4280: b86e79ae     	ldr	w14, [x13, x14, lsl #2]
+    4284: b86f796f     	ldr	w15, [x11, x15, lsl #2]
+    4288: b9416ff0     	ldr	w16, [sp, #0x16c]
+    428c: b86a7991     	ldr	w17, [x12, x10, lsl #2]
+    4290: 4a0e01ee     	eor	w14, w15, w14
+    4294: 4a1001ce     	eor	w14, w14, w16
+    4298: 11000d50     	add	w16, w10, #0x3
+    429c: 13911e20     	ror	w0, w17, #0x7
+    42a0: 138e09cf     	ror	w15, w14, #0x2
+    42a4: 92400a10     	and	x16, x16, #0x7
+    42a8: b87079b0     	ldr	w16, [x13, x16, lsl #2]
+    42ac: 4ad14800     	eor	w0, w0, w17, ror #18
+    42b0: 4ace35ef     	eor	w15, w15, w14, ror #13
+    42b4: 13901a12     	ror	w18, w16, #0x6
+    42b8: 4a510c11     	eor	w17, w0, w17, lsr #3
+    42bc: 4ace59ef     	eor	w15, w15, w14, ror #22
+    42c0: 4a0801ce     	eor	w14, w14, w8
+    42c4: 4ad02e52     	eor	w18, w18, w16, ror #11
+    42c8: 4ace4def     	eor	w15, w15, w14, ror #19
+    42cc: 4ad06650     	eor	w16, w18, w16, ror #25
+    42d0: 92400832     	and	x18, x1, #0x7
+    42d4: 4ace45ef     	eor	w15, w15, w14, ror #17
+    42d8: 0b100230     	add	w16, w17, w16
+    42dc: 4a4e29ee     	eor	w14, w15, w14, lsr #10
+    42e0: b87279af     	ldr	w15, [x13, x18, lsl #2]
+    42e4: 4a1001ce     	eor	w14, w14, w16
+    42e8: 0b0f014f     	add	w15, w10, w15
+    42ec: 0b0e01ef     	add	w15, w15, w14
+    42f0: 924015ef     	and	x15, x15, #0x3f
+    42f4: 386f686f     	ldrb	w15, [x3, x15]
+    42f8: b9416ff0     	ldr	w16, [sp, #0x16c]
+    42fc: 4a0e020e     	eor	w14, w16, w14
+    4300: 4a0f01ce     	eor	w14, w14, w15
+    4304: b9016fee     	str	w14, [sp, #0x16c]
+    4308: 3607faca     	tbz	w10, #0x0, 0x4260 <cprisk_vm_oph_post_handler_i+0x640>
+    430c: 1200094e     	and	w14, w10, #0x7
+    4310: b9416fef     	ldr	w15, [sp, #0x16c]
+    4314: 110005ce     	add	w14, w14, #0x1
+    4318: 1ace2dee     	ror	w14, w15, w14
+    431c: b9016fee     	str	w14, [sp, #0x16c]
+    4320: 17ffffd0     	b	0x4260 <cprisk_vm_oph_post_handler_i+0x640>
+    4324: b9416fe8     	ldr	w8, [sp, #0x16c]
+    4328: f94047f5     	ldr	x21, [sp, #0x88]
+    432c: f94033e8     	ldr	x8, [sp, #0x60]
+    4330: 8b080294     	add	x20, x20, x8
+    4334: f10102bf     	cmp	x21, #0x40
+    4338: 54003203     	b.lo	0x4978 <cprisk_vm_oph_post_handler_i+0xd58>
+    433c: 90000008     	adrp	x8, 0x4000 <cprisk_vm_oph_post_handler_i+0x3e0>
+		000000000000433c:  R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16+0x140
+    4340: 90000009     	adrp	x9, 0x4000 <cprisk_vm_oph_post_handler_i+0x3e0>
+		0000000000004340:  R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16+0x150
+    4344: 9000000a     	adrp	x10, 0x4000 <cprisk_vm_oph_post_handler_i+0x3e0>
+		0000000000004344:  R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16+0x160
+    4348: 3dc00100     	ldr	q0, [x8]
+		0000000000004348:  R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16+0x140
+    434c: 9000000b     	adrp	x11, 0x4000 <cprisk_vm_oph_post_handler_i+0x3e0>
+		000000000000434c:  R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16+0x170
+    4350: 9105c3fa     	add	x26, sp, #0x170
+    4354: 91013341     	add	x1, x26, #0x4c
+    4358: 3d801be0     	str	q0, [sp, #0x60]
+    435c: 3dc00120     	ldr	q0, [x9]
+		000000000000435c:  R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16+0x150
+    4360: f90017e1     	str	x1, [sp, #0x28]
+    4364: 3d8017e0     	str	q0, [sp, #0x50]
+    4368: 3dc00140     	ldr	q0, [x10]
+		0000000000004368:  R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16+0x160
+    436c: 3d8013e0     	str	q0, [sp, #0x40]
+    4370: 3dc00160     	ldr	q0, [x11]
+		0000000000004370:  R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16+0x170
+    4374: 3d800fe0     	str	q0, [sp, #0x30]
+    4378: 14000006     	b	0x4390 <cprisk_vm_oph_post_handler_i+0x770>
+    437c: d10102b5     	sub	x21, x21, #0x40
+    4380: b9416fe8     	ldr	w8, [sp, #0x16c]
+    4384: 91010294     	add	x20, x20, #0x40
+    4388: f100febf     	cmp	x21, #0x3f
+    438c: 54002f69     	b.ls	0x4978 <cprisk_vm_oph_post_handler_i+0xd58>
+    4390: 4c400280     	ld4	{ v0.16b, v1.16b, v2.16b, v3.16b }, [x20]
+    4394: aa1f03e8     	mov	x8, xzr
+    4398: a908d3f5     	stp	x21, x20, [sp, #0x88]
+    439c: ad41e7f8     	ldp	q24, q25, [sp, #0x30]
+    43a0: ad42effa     	ldp	q26, q27, [sp, #0x50]
+    43a4: 4e180004     	tbl	v4.16b, { v0.16b }, v24.16b
+    43a8: 4e180025     	tbl	v5.16b, { v1.16b }, v24.16b
+    43ac: 4e1b0006     	tbl	v6.16b, { v0.16b }, v27.16b
+    43b0: 4e1a0007     	tbl	v7.16b, { v0.16b }, v26.16b
+    43b4: 4e190010     	tbl	v16.16b, { v0.16b }, v25.16b
+    43b8: 4e1b0031     	tbl	v17.16b, { v1.16b }, v27.16b
+    43bc: 4e1a0032     	tbl	v18.16b, { v1.16b }, v26.16b
+    43c0: 4e190033     	tbl	v19.16b, { v1.16b }, v25.16b
+    43c4: 4e180054     	tbl	v20.16b, { v2.16b }, v24.16b
+    43c8: 4e190055     	tbl	v21.16b, { v2.16b }, v25.16b
+    43cc: 4e1a0056     	tbl	v22.16b, { v2.16b }, v26.16b
+    43d0: 4e1b0057     	tbl	v23.16b, { v2.16b }, v27.16b
+    43d4: 4f385484     	shl	v4.4s, v4.4s, #0x18
+    43d8: 4f3054a5     	shl	v5.4s, v5.4s, #0x10
+    43dc: 4e180078     	tbl	v24.16b, { v3.16b }, v24.16b
+    43e0: 4e190079     	tbl	v25.16b, { v3.16b }, v25.16b
+    43e4: 4e1a007a     	tbl	v26.16b, { v3.16b }, v26.16b
+    43e8: 4e1b0060     	tbl	v0.16b, { v3.16b }, v27.16b
+    43ec: 4f385602     	shl	v2.4s, v16.4s, #0x18
+    43f0: 4f285683     	shl	v3.4s, v20.4s, #0x8
+    43f4: 4f3854c6     	shl	v6.4s, v6.4s, #0x18
+    43f8: 4ea41ca1     	orr	v1.16b, v5.16b, v4.16b
+    43fc: 4f3854e4     	shl	v4.4s, v7.4s, #0x18
+    4400: 4f305665     	shl	v5.4s, v19.4s, #0x10
+    4404: 4f2856a7     	shl	v7.4s, v21.4s, #0x8
+    4408: 4f305650     	shl	v16.4s, v18.4s, #0x10
+    440c: 4f2856d2     	shl	v18.4s, v22.4s, #0x8
+    4410: 4f305631     	shl	v17.4s, v17.4s, #0x10
+    4414: 4f2856f3     	shl	v19.4s, v23.4s, #0x8
+    4418: 4eb81c63     	orr	v3.16b, v3.16b, v24.16b
+    441c: 4ea21ca2     	orr	v2.16b, v5.16b, v2.16b
+    4420: 4eb91ce5     	orr	v5.16b, v7.16b, v25.16b
+    4424: 4ea41e04     	orr	v4.16b, v16.16b, v4.16b
+    4428: 4eba1e47     	orr	v7.16b, v18.16b, v26.16b
+    442c: 4ea61e26     	orr	v6.16b, v17.16b, v6.16b
+    4430: 4ea01e60     	orr	v0.16b, v19.16b, v0.16b
+    4434: 4ea31c21     	orr	v1.16b, v1.16b, v3.16b
+    4438: 4ea51c42     	orr	v2.16b, v2.16b, v5.16b
+    443c: 4ea71c83     	orr	v3.16b, v4.16b, v7.16b
+    4440: 4ea01cc0     	orr	v0.16b, v6.16b, v0.16b
+    4444: ad0c87e2     	stp	q2, q1, [sp, #0x190]
+    4448: ad0b8fe0     	stp	q0, q3, [sp, #0x170]
+    444c: 8b080349     	add	x9, x26, x8
+    4450: 91001108     	add	x8, x8, #0x4
+    4454: b940392a     	ldr	w10, [x9, #0x38]
+    4458: b940252f     	ldr	w15, [x9, #0x24]
+    445c: f103011f     	cmp	x8, #0xc0
+    4460: 29402d2d     	ldp	w13, w11, [x9]
+    4464: 138a454c     	ror	w12, w10, #0x11
+    4468: 138b1d6e     	ror	w14, w11, #0x7
+    446c: 4aca4d8c     	eor	w12, w12, w10, ror #19
+    4470: 4acb49ce     	eor	w14, w14, w11, ror #18
+    4474: 4a4a298a     	eor	w10, w12, w10, lsr #10
+    4478: 0b0d01ec     	add	w12, w15, w13
+    447c: 4a4b0dcb     	eor	w11, w14, w11, lsr #3
+    4480: 0b0c014a     	add	w10, w10, w12
+    4484: 0b0b014a     	add	w10, w10, w11
+    4488: b900412a     	str	w10, [x9, #0x40]
+    448c: 54fffe01     	b.ne	0x444c <cprisk_vm_oph_post_handler_i+0x82c>
+    4490: b94173e8     	ldr	w8, [sp, #0x170]
+    4494: b94103fe     	ldr	w30, [sp, #0x100]
+    4498: 5283e4e9     	mov	w9, #0x1f27             // =7975
+    449c: 72b4b869     	movk	w9, #0xa5c3, lsl #16
+    44a0: b94107f2     	ldr	w18, [sp, #0x104]
+    44a4: b9410bf9     	ldr	w25, [sp, #0x108]
+    44a8: 4a0803c8     	eor	w8, w30, w8
+    44ac: b9410fe4     	ldr	w4, [sp, #0x10c]
+    44b0: b94113f3     	ldr	w19, [sp, #0x110]
+    44b4: b94117ec     	ldr	w12, [sp, #0x114]
+    44b8: 4a090108     	eor	w8, w8, w9
+    44bc: b9411beb     	ldr	w11, [sp, #0x118]
+    44c0: b9411fe9     	ldr	w9, [sp, #0x11c]
+    44c4: 528f3725     	mov	w5, #0x79b9             // =31161
+    44c8: 528f82a6     	mov	w6, #0x7c15             // =31765
+    44cc: 528379a7     	mov	w7, #0x1bcd             // =7117
+    44d0: 529d65f4     	mov	w20, #0xeb2f            // =60207
+    44d4: 2a1f03e1     	mov	w1, wzr
+    44d8: 2a1f03e2     	mov	w2, wzr
+    44dc: aa1f03ea     	mov	x10, xzr
+    44e0: aa1f03f7     	mov	x23, xzr
+    44e4: aa1f03e0     	mov	x0, xzr
+    44e8: 72b3c6e5     	movk	w5, #0x9e37, lsl #16
+    44ec: 72afe946     	movk	w6, #0x7f4a, lsl #16
+    44f0: 72a7b9a7     	movk	w7, #0x3dcd, lsl #16
+    44f4: 72a4fa94     	movk	w20, #0x27d4, lsl #16
+    44f8: 528000ee     	mov	w14, #0x7               // =7
+    44fc: 52800276     	mov	w22, #0x13              // =19
+    4500: 528003fb     	mov	w27, #0x1f              // =31
+    4504: b9016fe8     	str	w8, [sp, #0x16c]
+    4508: 14000037     	b	0x45e4 <cprisk_vm_oph_post_handler_i+0x9c4>
+    450c: 2a1903fb     	mov	w27, w25
+    4510: 2a0203f9     	mov	w25, w2
+    4514: 2a1203f6     	mov	w22, w18
+    4518: 2a1c03f4     	mov	w20, w28
+    451c: 2a0403fc     	mov	w28, w4
+    4520: 2a1103fa     	mov	w26, w17
+    4524: 2a1803f5     	mov	w21, w24
+    4528: 2a1e03f8     	mov	w24, w30
+    452c: 94000000     	bl	0x452c <cprisk_vm_oph_post_handler_i+0x90c>
+		000000000000452c:  R_AARCH64_CALL26	cprisk_crypto_trace_now_i
+    4530: 2a1803fe     	mov	w30, w24
+    4534: 2a1503f8     	mov	w24, w21
+    4538: 2a1a03f1     	mov	w17, w26
+    453c: 2a1c03e4     	mov	w4, w28
+    4540: 2a1403fc     	mov	w28, w20
+    4544: 2a1603f2     	mov	w18, w22
+    4548: 2a1903e2     	mov	w2, w25
+    454c: 2a1b03f9     	mov	w25, w27
+    4550: 90000003     	adrp	x3, 0x4000 <cprisk_vm_oph_post_handler_i+0x3e0>
+		0000000000004550:  R_AARCH64_ADR_PREL_PG_HI21	.rodata+0x1c8
+    4554: 91000063     	add	x3, x3, #0x0
+		0000000000004554:  R_AARCH64_ADD_ABS_LO12_NC	.rodata+0x1c8
+    4558: 9105c3fa     	add	x26, sp, #0x170
+    455c: 528f3729     	mov	w9, #0x79b9             // =31161
+    4560: b940cbf4     	ldr	w20, [sp, #0xc8]
+    4564: b940d3e7     	ldr	w7, [sp, #0xd0]
+    4568: 72b3c6e9     	movk	w9, #0x9e37, lsl #16
+    456c: a94a5bfb     	ldp	x27, x22, [sp, #0xa0]
+    4570: 0b020128     	add	w8, w9, w2
+    4574: f94063ee     	ldr	x14, [sp, #0xc0]
+    4578: f9406fea     	ldr	x10, [sp, #0xd8]
+    457c: 29569be1     	ldp	w1, w6, [sp, #0xb4]
+    4580: 51002102     	sub	w2, w8, #0x8
+    4584: 5294b4a8     	mov	w8, #0xa5a5             // =42405
+    4588: b940bfe5     	ldr	w5, [sp, #0xbc]
+    458c: 72b4b4a8     	movk	w8, #0xa5a5, lsl #16
+    4590: 910006f7     	add	x23, x23, #0x1
+    4594: 9100d77b     	add	x27, x27, #0x35
+    4598: 0b080021     	add	w1, w1, w8
+    459c: 529d65e8     	mov	w8, #0xeb2f             // =60207
+    45a0: 910096d6     	add	x22, x22, #0x25
+    45a4: 72a4fa88     	movk	w8, #0x27d4, lsl #16
+    45a8: 910075ce     	add	x14, x14, #0x1d
+    45ac: 9100354a     	add	x10, x10, #0xd
+    45b0: 0b080294     	add	w20, w20, w8
+    45b4: 52994d68     	mov	w8, #0xca6b             // =51819
+    45b8: 0b0900a5     	add	w5, w5, w9
+    45bc: 72b0bd68     	movk	w8, #0x85eb, lsl #16
+    45c0: f10102ff     	cmp	x23, #0x40
+    45c4: 2a1103e9     	mov	w9, w17
+    45c8: 0b0800e7     	add	w7, w7, w8
+    45cc: 528f82a8     	mov	w8, #0x7c15             // =31765
+    45d0: 2a1c03eb     	mov	w11, w28
+    45d4: 72afe948     	movk	w8, #0x7f4a, lsl #16
+    45d8: 2a1803ec     	mov	w12, w24
+    45dc: 0b0800c6     	add	w6, w6, w8
+    45e0: 54001400     	b.eq	0x4860 <cprisk_vm_oph_post_handler_i+0xc40>
+    45e4: f9006fea     	str	x10, [sp, #0xd8]
+    45e8: 9240154a     	and	x10, x10, #0x3f
+    45ec: 12000aef     	and	w15, w23, #0x7
+    45f0: b9416fed     	ldr	w13, [sp, #0x16c]
+    45f4: 386a686a     	ldrb	w10, [x3, x10]
+    45f8: f90063ee     	str	x14, [sp, #0xc0]
+    45fc: 924015ce     	and	x14, x14, #0x3f
+    4600: 110026f1     	add	w17, w23, #0x9
+    4604: 2a0403e8     	mov	w8, w4
+    4608: 386e686e     	ldrb	w14, [x3, x14]
+    460c: 53081d50     	lsl	w16, w10, #24
+    4610: 110005ea     	add	w10, w15, #0x1
+    4614: 2a1903e4     	mov	w4, w25
+    4618: 2a1203f9     	mov	w25, w18
+    461c: 924016d2     	and	x18, x22, #0x3f
+    4620: 9240162f     	and	x15, x17, #0x3f
+    4624: 2a0e420e     	orr	w14, w16, w14, lsl #16
+    4628: 1aca2e70     	ror	w16, w19, w10
+    462c: b86f7b4f     	ldr	w15, [x26, x15, lsl #2]
+    4630: 4a0d002d     	eor	w13, w1, w13
+    4634: 38726871     	ldrb	w17, [x3, x18]
+    4638: 4a0d020d     	eor	w13, w16, w13
+    463c: 92401770     	and	x16, x27, #0x3f
+    4640: 2a1303f8     	mov	w24, w19
+    4644: 4a1e01ef     	eor	w15, w15, w30
+    4648: 2a1121ce     	orr	w14, w14, w17, lsl #8
+    464c: 38706870     	ldrb	w16, [x3, x16]
+    4650: 4a0f01ad     	eor	w13, w13, w15
+    4654: 2a1e03f2     	mov	w18, w30
+    4658: 2a0c03fc     	mov	w28, w12
+    465c: 2a1001ce     	orr	w14, w14, w16
+    4660: 4a0d00af     	eor	w15, w5, w13
+    4664: 53010ef0     	ubfx	w16, w23, #1, #3
+    4668: 4a0e01ee     	eor	w14, w15, w14
+    466c: 529cccef     	mov	w15, #0xe667            // =58983
+    4670: 2a0b03f1     	mov	w17, w11
+    4674: 72ad412f     	movk	w15, #0x6a09, lsl #16
+    4678: 1aca2dce     	ror	w14, w14, w10
+    467c: 0b0f01ad     	add	w13, w13, w15
+    4680: 1100060f     	add	w15, w16, #0x1
+    4684: 5283e4f0     	mov	w16, #0x1f27            // =7975
+    4688: 72b4b870     	movk	w16, #0xa5c3, lsl #16
+    468c: 1acf2daf     	ror	w15, w13, w15
+    4690: b8777b4d     	ldr	w13, [x26, x23, lsl #2]
+    4694: 4a1000d0     	eor	w16, w6, w16
+    4698: 0b1001d0     	add	w16, w14, w16
+    469c: 9000000e     	adrp	x14, 0x4000 <cprisk_vm_oph_post_handler_i+0x3e0>
+		000000000000469c:  R_AARCH64_ADR_PREL_PG_HI21	.rodata+0x208
+    46a0: 910001ce     	add	x14, x14, #0x0
+		00000000000046a0:  R_AARCH64_ADD_ABS_LO12_NC	.rodata+0x208
+    46a4: b87779ce     	ldr	w14, [x14, x23, lsl #2]
+    46a8: 6b0f021f     	cmp	w16, w15
+    46ac: 4a0f020b     	eor	w11, w16, w15
+    46b0: 54000140     	b.eq	0x46d8 <cprisk_vm_oph_post_handler_i+0xab8>
+    46b4: 6b0e017f     	cmp	w11, w14
+    46b8: 54000061     	b.ne	0x46c4 <cprisk_vm_oph_post_handler_i+0xaa4>
+    46bc: 2a0b03ee     	mov	w14, w11
+    46c0: 14000006     	b	0x46d8 <cprisk_vm_oph_post_handler_i+0xab8>
+    46c4: 9000000c     	adrp	x12, 0x4000 <cprisk_vm_oph_post_handler_i+0x3e0>
+		00000000000046c4:  R_AARCH64_ADR_PREL_PG_HI21	.rodata+0x308
+    46c8: 9100018c     	add	x12, x12, #0x0
+		00000000000046c8:  R_AARCH64_ADD_ABS_LO12_NC	.rodata+0x308
+    46cc: b877798c     	ldr	w12, [x12, x23, lsl #2]
+    46d0: 2b0c017f     	cmn	w11, w12
+    46d4: 54000121     	b.ne	0x46f8 <cprisk_vm_oph_post_handler_i+0xad8>
+    46d8: 5297d22c     	mov	w12, #0xbe91            // =48785
+    46dc: 4a07016b     	eor	w11, w11, w7
+    46e0: 72b89a4c     	movk	w12, #0xc4d2, lsl #16
+    46e4: 4a0c028f     	eor	w15, w20, w12
+    46e8: 9000000c     	adrp	x12, 0x4000 <cprisk_vm_oph_post_handler_i+0x3e0>
+		00000000000046e8:  R_AARCH64_ADR_PREL_PG_HI21	.rodata+0x308
+    46ec: 9100018c     	add	x12, x12, #0x0
+		00000000000046ec:  R_AARCH64_ADD_ABS_LO12_NC	.rodata+0x308
+    46f0: b877798c     	ldr	w12, [x12, x23, lsl #2]
+    46f4: 0b0f016b     	add	w11, w11, w15
+    46f8: 13981b0f     	ror	w15, w24, #0x6
+    46fc: b900cbf4     	str	w20, [sp, #0xc8]
+    4700: 720006ff     	tst	w23, #0x3
+    4704: b900d3e7     	str	w7, [sp, #0xd0]
+    4708: 4ad82def     	eor	w15, w15, w24, ror #11
+    470c: 4ad865ef     	eor	w15, w15, w24, ror #25
+    4710: 0b0f0129     	add	w9, w9, w15
+    4714: 0a38022f     	bic	w15, w17, w24
+    4718: b81f43a9     	stur	w9, [x29, #-0xc]
+    471c: 0a180389     	and	w9, w28, w24
+    4720: b81f03ad     	stur	w13, [x29, #-0x10]
+    4724: 2a0901e9     	orr	w9, w15, w9
+    4728: 0a04032f     	and	w15, w25, w4
+    472c: b85f43b0     	ldur	w16, [x29, #-0xc]
+    4730: 0b100129     	add	w9, w9, w16
+    4734: b81f43a9     	stur	w9, [x29, #-0xc]
+    4738: b85f43a9     	ldur	w9, [x29, #-0xc]
+    473c: 0b090189     	add	w9, w12, w9
+    4740: 0b0b0129     	add	w9, w9, w11
+    4744: 4b0b01cb     	sub	w11, w14, w11
+    4748: 4a04032e     	eor	w14, w25, w4
+    474c: b81f43a9     	stur	w9, [x29, #-0xc]
+    4750: 0a0e024e     	and	w14, w18, w14
+    4754: b85f03a9     	ldur	w9, [x29, #-0x10]
+    4758: 0b090169     	add	w9, w11, w9
+    475c: 13920a4b     	ror	w11, w18, #0x2
+    4760: b81f03a9     	stur	w9, [x29, #-0x10]
+    4764: b85f43a9     	ldur	w9, [x29, #-0xc]
+    4768: b85f03ac     	ldur	w12, [x29, #-0x10]
+    476c: 4ad2356b     	eor	w11, w11, w18, ror #13
+    4770: 0b090189     	add	w9, w12, w9
+    4774: 4ad2596b     	eor	w11, w11, w18, ror #22
+    4778: 4a0f01cc     	eor	w12, w14, w15
+    477c: 0b09018c     	add	w12, w12, w9
+    4780: 0b080133     	add	w19, w9, w8
+    4784: 0b0c017e     	add	w30, w11, w12
+    4788: 54000361     	b.ne	0x47f4 <cprisk_vm_oph_post_handler_i+0xbd4>
+    478c: 13990b28     	ror	w8, w25, #0x2
+    4790: 139c1b89     	ror	w9, w28, #0x6
+    4794: 11002eeb     	add	w11, w23, #0xb
+    4798: 9240156b     	and	x11, x11, #0x3f
+    479c: 1aca2e6c     	ror	w12, w19, w10
+    47a0: 4ad93508     	eor	w8, w8, w25, ror #13
+    47a4: 4adc2d29     	eor	w9, w9, w28, ror #11
+    47a8: b86b7b4b     	ldr	w11, [x26, x11, lsl #2]
+    47ac: 4ad95908     	eor	w8, w8, w25, ror #22
+    47b0: 4adc6529     	eor	w9, w9, w28, ror #25
+    47b4: 4a0b0108     	eor	w8, w8, w11
+    47b8: 4a1e018b     	eor	w11, w12, w30
+    47bc: 0b090049     	add	w9, w2, w9
+    47c0: 0b0b0108     	add	w8, w8, w11
+    47c4: 4a090108     	eor	w8, w8, w9
+    47c8: 0b0d02e9     	add	w9, w23, w13
+    47cc: 0b080129     	add	w9, w9, w8
+    47d0: 92401529     	and	x9, x9, #0x3f
+    47d4: 38696869     	ldrb	w9, [x3, x9]
+    47d8: b9416feb     	ldr	w11, [sp, #0x16c]
+    47dc: 4a080168     	eor	w8, w11, w8
+    47e0: 4a090108     	eor	w8, w8, w9
+    47e4: b9016fe8     	str	w8, [sp, #0x16c]
+    47e8: b9416fe8     	ldr	w8, [sp, #0x16c]
+    47ec: 1aca2d08     	ror	w8, w8, w10
+    47f0: b9016fe8     	str	w8, [sp, #0x16c]
+    47f4: f1003eff     	cmp	x23, #0xf
+    47f8: a90a5bfb     	stp	x27, x22, [sp, #0xa0]
+    47fc: 291717e6     	stp	w6, w5, [sp, #0xb8]
+    4800: b900b7e1     	str	w1, [sp, #0xb4]
+    4804: 54ffe840     	b.eq	0x450c <cprisk_vm_oph_post_handler_i+0x8ec>
+    4808: f100beff     	cmp	x23, #0x2f
+    480c: 54ffea81     	b.ne	0x455c <cprisk_vm_oph_post_handler_i+0x93c>
+    4810: b4ffea60     	cbz	x0, 0x455c <cprisk_vm_oph_post_handler_i+0x93c>
+    4814: 29130bf2     	stp	w18, w2, [sp, #0x98]
+    4818: 2a0403f6     	mov	w22, w4
+    481c: aa0003f4     	mov	x20, x0
+    4820: 2a1c03fa     	mov	w26, w28
+    4824: 2a1103fc     	mov	w28, w17
+    4828: 2a1e03fb     	mov	w27, w30
+    482c: 94000000     	bl	0x482c <cprisk_vm_oph_post_handler_i+0xc0c>
+		000000000000482c:  R_AARCH64_CALL26	cprisk_crypto_trace_now_i
+    4830: cb140000     	sub	x0, x0, x20
+    4834: 94000000     	bl	0x4834 <cprisk_vm_oph_post_handler_i+0xc14>
+		0000000000004834:  R_AARCH64_CALL26	cprisk_crypto_trace_record_span_ticks_i
+    4838: 29530bf2     	ldp	w18, w2, [sp, #0x98]
+    483c: 2a1b03fe     	mov	w30, w27
+    4840: 2a1c03f1     	mov	w17, w28
+    4844: 2a1a03fc     	mov	w28, w26
+    4848: aa1403e0     	mov	x0, x20
+    484c: 2a1603e4     	mov	w4, w22
+    4850: 9105c3fa     	add	x26, sp, #0x170
+    4854: 90000003     	adrp	x3, 0x4000 <cprisk_vm_oph_post_handler_i+0x3e0>
+		0000000000004854:  R_AARCH64_ADR_PREL_PG_HI21	.rodata+0x1c8
+    4858: 91000063     	add	x3, x3, #0x0
+		0000000000004858:  R_AARCH64_ADD_ABS_LO12_NC	.rodata+0x1c8
+    485c: 17ffff40     	b	0x455c <cprisk_vm_oph_post_handler_i+0x93c>
+    4860: 1e2703c0     	fmov	s0, w30
+    4864: 1e270261     	fmov	s1, w19
+    4868: f94017e1     	ldr	x1, [sp, #0x28]
+    486c: ad480fe2     	ldp	q2, q3, [sp, #0x100]
+    4870: 2a1f03e8     	mov	w8, wzr
+    4874: a948d3f5     	ldp	x21, x20, [sp, #0x88]
+    4878: aa1f03e9     	mov	x9, xzr
+    487c: 4e0c1e40     	mov	v0.s[1], w18
+    4880: 4e0c1f01     	mov	v1.s[1], w24
+    4884: 5284e172     	mov	w18, #0x270b            // =9995
+    4888: aa1f03ea     	mov	x10, xzr
+    488c: 72aa3db2     	movk	w18, #0x51ed, lsl #16
+    4890: 910403e2     	add	x2, sp, #0x100
+    4894: 4e141f20     	mov	v0.s[2], w25
+    4898: 4e141f81     	mov	v1.s[2], w28
+    489c: 4e1c1c80     	mov	v0.s[3], w4
+    48a0: 4e1c1e21     	mov	v1.s[3], w17
+    48a4: 4ea08440     	add	v0.4s, v2.4s, v0.4s
+    48a8: 4ea18461     	add	v1.4s, v3.4s, v1.4s
+    48ac: ad0807e0     	stp	q0, q1, [sp, #0x100]
+    48b0: 14000006     	b	0x48c8 <cprisk_vm_oph_post_handler_i+0xca8>
+    48b4: 9100054a     	add	x10, x10, #0x1
+    48b8: 91001d29     	add	x9, x9, #0x7
+    48bc: 0b120108     	add	w8, w8, w18
+    48c0: f100615f     	cmp	x10, #0x18
+    48c4: 54ffd5c0     	b.eq	0x437c <cprisk_vm_oph_post_handler_i+0x75c>
+    48c8: 9240094b     	and	x11, x10, #0x7
+    48cc: 9240152c     	and	x12, x9, #0x3f
+    48d0: 11001551     	add	w17, w10, #0x5
+    48d4: b86b784b     	ldr	w11, [x2, x11, lsl #2]
+    48d8: b86c7b4c     	ldr	w12, [x26, x12, lsl #2]
+    48dc: b9416fed     	ldr	w13, [sp, #0x16c]
+    48e0: b86a782e     	ldr	w14, [x1, x10, lsl #2]
+    48e4: 4a0b018b     	eor	w11, w12, w11
+    48e8: 4a0d016b     	eor	w11, w11, w13
+    48ec: 11000d4d     	add	w13, w10, #0x3
+    48f0: 138e1dd0     	ror	w16, w14, #0x7
+    48f4: 138b096c     	ror	w12, w11, #0x2
+    48f8: 924009ad     	and	x13, x13, #0x7
+    48fc: b86d784d     	ldr	w13, [x2, x13, lsl #2]
+    4900: 4ace4a10     	eor	w16, w16, w14, ror #18
+    4904: 4acb358c     	eor	w12, w12, w11, ror #13
+    4908: 138d19af     	ror	w15, w13, #0x6
+    490c: 4a4e0e0e     	eor	w14, w16, w14, lsr #3
+    4910: 4acb598c     	eor	w12, w12, w11, ror #22
+    4914: 4a08016b     	eor	w11, w11, w8
+    4918: 4acd2def     	eor	w15, w15, w13, ror #11
+    491c: 4acb4d8c     	eor	w12, w12, w11, ror #19
+    4920: 4acd65ed     	eor	w13, w15, w13, ror #25
+    4924: 92400a2f     	and	x15, x17, #0x7
+    4928: 4acb458c     	eor	w12, w12, w11, ror #17
+    492c: 0b0d01cd     	add	w13, w14, w13
+    4930: 4a4b298b     	eor	w11, w12, w11, lsr #10
+    4934: b86f784c     	ldr	w12, [x2, x15, lsl #2]
+    4938: 4a0d016b     	eor	w11, w11, w13
+    493c: 0b0c014c     	add	w12, w10, w12
+    4940: 0b0b018c     	add	w12, w12, w11
+    4944: 9240158c     	and	x12, x12, #0x3f
+    4948: 386c686c     	ldrb	w12, [x3, x12]
+    494c: b9416fed     	ldr	w13, [sp, #0x16c]
+    4950: 4a0b01ab     	eor	w11, w13, w11
+    4954: 4a0c016b     	eor	w11, w11, w12
+    4958: b9016feb     	str	w11, [sp, #0x16c]
+    495c: 3607faca     	tbz	w10, #0x0, 0x48b4 <cprisk_vm_oph_post_handler_i+0xc94>
+    4960: 1200094b     	and	w11, w10, #0x7
+    4964: b9416fec     	ldr	w12, [sp, #0x16c]
+    4968: 1100056b     	add	w11, w11, #0x1
+    496c: 1acb2d8b     	ror	w11, w12, w11
+    4970: b9016feb     	str	w11, [sp, #0x16c]
+    4974: 17ffffd0     	b	0x48b4 <cprisk_vm_oph_post_handler_i+0xc94>
+    4978: f94003f3     	ldr	x19, [sp]
+    497c: b40000b5     	cbz	x21, 0x4990 <cprisk_vm_oph_post_handler_i+0xd70>
+    4980: aa1303e0     	mov	x0, x19
+    4984: aa1403e1     	mov	x1, x20
+    4988: aa1503e2     	mov	x2, x21
+    498c: 94000000     	bl	0x498c <cprisk_vm_oph_post_handler_i+0xd6c>
+		000000000000498c:  R_AARCH64_CALL26	memcpy
+    4990: f94093e9     	ldr	x9, [sp, #0x120]
+    4994: 5280100a     	mov	w10, #0x80              // =128
+    4998: 92401528     	and	x8, x9, #0x3f
+    499c: d37df134     	lsl	x20, x9, #3
+    49a0: f100e11f     	cmp	x8, #0x38
+    49a4: 91000509     	add	x9, x8, #0x1
+    49a8: 38286a6a     	strb	w10, [x19, x8]
+    49ac: 54003023     	b.lo	0x4fb0 <cprisk_vm_oph_post_handler_i+0x1390>
+    49b0: 8b090260     	add	x0, x19, x9
+    49b4: d2401502     	eor	x2, x8, #0x3f
+    49b8: 2a1f03e1     	mov	w1, wzr
+    49bc: f9004bf4     	str	x20, [sp, #0x90]
+    49c0: 94000000     	bl	0x49c0 <cprisk_vm_oph_post_handler_i+0xda0>
+		00000000000049c0:  R_AARCH64_CALL26	memset
+    49c4: 4c400260     	ld4	{ v0.16b, v1.16b, v2.16b, v3.16b }, [x19]
+    49c8: aa1f03e8     	mov	x8, xzr
+    49cc: 9105c3e9     	add	x9, sp, #0x170
+    49d0: 6f08a424     	ushll2	v4.8h, v1.16b, #0x0
+    49d4: 6f08a445     	ushll2	v5.8h, v2.16b, #0x0
+    49d8: 2f08a406     	ushll	v6.8h, v0.8b, #0x0
+    49dc: 6f08a407     	ushll2	v7.8h, v0.16b, #0x0
+    49e0: 2f08a430     	ushll	v16.8h, v1.8b, #0x0
+    49e4: 2f08a451     	ushll	v17.8h, v2.8b, #0x0
+    49e8: 6f08a472     	ushll2	v18.8h, v3.16b, #0x0
+    49ec: 2f08a460     	ushll	v0.8h, v3.8b, #0x0
+    49f0: 6e613893     	shll2	v19.4s, v4.8h, #16
+    49f4: 6f18a4b4     	ushll2	v20.4s, v5.8h, #0x8
+    49f8: 2f10a4d5     	ushll	v21.4s, v6.4h, #0x0
+    49fc: 6f10a4c6     	ushll2	v6.4s, v6.8h, #0x0
+    4a00: 6f10a4f6     	ushll2	v22.4s, v7.8h, #0x0
+    4a04: 2f10a4e7     	ushll	v7.4s, v7.4h, #0x0
+    4a08: 2e613884     	shll	v4.4s, v4.4h, #16
+    4a0c: 2f18a4a5     	ushll	v5.4s, v5.4h, #0x8
+    4a10: 6e613a17     	shll2	v23.4s, v16.8h, #16
+    4a14: 4eb41e73     	orr	v19.16b, v19.16b, v20.16b
+    4a18: 6f18a634     	ushll2	v20.4s, v17.8h, #0x8
+    4a1c: 2e613a10     	shll	v16.4s, v16.4h, #16
+    4a20: 2f18a631     	ushll	v17.4s, v17.4h, #0x8
+    4a24: 4f3856d6     	shl	v22.4s, v22.4s, #0x18
+    4a28: 4f3854e1     	shl	v1.4s, v7.4s, #0x18
+    4a2c: 4ea51c82     	orr	v2.16b, v4.16b, v5.16b
+    4a30: 4f3854c4     	shl	v4.4s, v6.4s, #0x18
+    4a34: 4f3856a6     	shl	v6.4s, v21.4s, #0x18
+    4a38: 4eb41ee5     	orr	v5.16b, v23.16b, v20.16b
+    4a3c: 6f10a643     	ushll2	v3.4s, v18.8h, #0x0
+    4a40: 4eb11e07     	orr	v7.16b, v16.16b, v17.16b
+    4a44: 4eb61e70     	orr	v16.16b, v19.16b, v22.16b
+    4a48: 2f10a651     	ushll	v17.4s, v18.4h, #0x0
+    4a4c: 4ea11c41     	orr	v1.16b, v2.16b, v1.16b
+    4a50: 6f10a402     	ushll2	v2.4s, v0.8h, #0x0
+    4a54: 2f10a400     	ushll	v0.4s, v0.4h, #0x0
+    4a58: 4ea41ca4     	orr	v4.16b, v5.16b, v4.16b
+    4a5c: 4ea61ce5     	orr	v5.16b, v7.16b, v6.16b
+    4a60: 4ea31e03     	orr	v3.16b, v16.16b, v3.16b
+    4a64: 4eb11c21     	orr	v1.16b, v1.16b, v17.16b
+    4a68: 4ea21c82     	orr	v2.16b, v4.16b, v2.16b
+    4a6c: 4ea01ca0     	orr	v0.16b, v5.16b, v0.16b
+    4a70: ad0c8fe1     	stp	q1, q3, [sp, #0x190]
+    4a74: ad0b8be0     	stp	q0, q2, [sp, #0x170]
+    4a78: 8b08012a     	add	x10, x9, x8
+    4a7c: 91001108     	add	x8, x8, #0x4
+    4a80: b940394b     	ldr	w11, [x10, #0x38]
+    4a84: b9402550     	ldr	w16, [x10, #0x24]
+    4a88: f103011f     	cmp	x8, #0xc0
+    4a8c: 2940314e     	ldp	w14, w12, [x10]
+    4a90: 138b456d     	ror	w13, w11, #0x11
+    4a94: 138c1d8f     	ror	w15, w12, #0x7
+    4a98: 4acb4dad     	eor	w13, w13, w11, ror #19
+    4a9c: 4acc49ef     	eor	w15, w15, w12, ror #18
+    4aa0: 4a4b29ab     	eor	w11, w13, w11, lsr #10
+    4aa4: 0b0e020d     	add	w13, w16, w14
+    4aa8: 4a4c0dec     	eor	w12, w15, w12, lsr #3
+    4aac: 0b0d016b     	add	w11, w11, w13
+    4ab0: 0b0c016b     	add	w11, w11, w12
+    4ab4: b900414b     	str	w11, [x10, #0x40]
+    4ab8: 54fffe01     	b.ne	0x4a78 <cprisk_vm_oph_post_handler_i+0xe58>
+    4abc: b94173e8     	ldr	w8, [sp, #0x170]
+    4ac0: b94103f9     	ldr	w25, [sp, #0x100]
+    4ac4: 5283e4ea     	mov	w10, #0x1f27            // =7975
+    4ac8: b94107fb     	ldr	w27, [sp, #0x104]
+    4acc: b9410bf7     	ldr	w23, [sp, #0x108]
+    4ad0: 72b4b86a     	movk	w10, #0xa5c3, lsl #16
+    4ad4: b9410fe5     	ldr	w5, [sp, #0x10c]
+    4ad8: b94113ef     	ldr	w15, [sp, #0x110]
+    4adc: 4a080329     	eor	w9, w25, w8
+    4ae0: b94117ec     	ldr	w12, [sp, #0x114]
+    4ae4: b9411beb     	ldr	w11, [sp, #0x118]
+    4ae8: 528f3727     	mov	w7, #0x79b9             // =31161
+    4aec: b9411fe8     	ldr	w8, [sp, #0x11c]
+    4af0: 528f82b3     	mov	w19, #0x7c15            // =31765
+    4af4: 528379b4     	mov	w20, #0x1bcd            // =7117
+    4af8: 529d65f5     	mov	w21, #0xeb2f            // =60207
+    4afc: 2a1f03f8     	mov	w24, wzr
+    4b00: 2a1f03e1     	mov	w1, wzr
+    4b04: aa1f03ed     	mov	x13, xzr
+    4b08: aa1f03fc     	mov	x28, xzr
+    4b0c: aa1f03e0     	mov	x0, xzr
+    4b10: 4a0a0129     	eor	w9, w9, w10
+    4b14: 528003e2     	mov	w2, #0x1f               // =31
+    4b18: 52800264     	mov	w4, #0x13               // =19
+    4b1c: 528000ee     	mov	w14, #0x7               // =7
+    4b20: 9105c3e6     	add	x6, sp, #0x170
+    4b24: 72b3c6e7     	movk	w7, #0x9e37, lsl #16
+    4b28: 72afe953     	movk	w19, #0x7f4a, lsl #16
+    4b2c: 72a7b9b4     	movk	w20, #0x3dcd, lsl #16
+    4b30: 72a4fa95     	movk	w21, #0x27d4, lsl #16
+    4b34: 90000003     	adrp	x3, 0x4000 <cprisk_vm_oph_post_handler_i+0x3e0>
+		0000000000004b34:  R_AARCH64_ADR_PREL_PG_HI21	.rodata+0x1c8
+    4b38: 91000063     	add	x3, x3, #0x0
+		0000000000004b38:  R_AARCH64_ADD_ABS_LO12_NC	.rodata+0x1c8
+    4b3c: b9016fe9     	str	w9, [sp, #0x16c]
+    4b40: 14000035     	b	0x4c14 <cprisk_vm_oph_post_handler_i+0xff4>
+    4b44: 2a1703f8     	mov	w24, w23
+    4b48: 2a0103f7     	mov	w23, w1
+    4b4c: 2a1603f4     	mov	w20, w22
+    4b50: 2a0503f6     	mov	w22, w5
+    4b54: 2a1a03f5     	mov	w21, w26
+    4b58: 2a1903fa     	mov	w26, w25
+    4b5c: 2a1103f9     	mov	w25, w17
+    4b60: 2a0f03f3     	mov	w19, w15
+    4b64: 94000000     	bl	0x4b64 <cprisk_vm_oph_post_handler_i+0xf44>
+		0000000000004b64:  R_AARCH64_CALL26	cprisk_crypto_trace_now_i
+    4b68: 2a1303ef     	mov	w15, w19
+    4b6c: 2a1903f1     	mov	w17, w25
+    4b70: 2a1a03f9     	mov	w25, w26
+    4b74: 2a1503fa     	mov	w26, w21
+    4b78: 9105c3e6     	add	x6, sp, #0x170
+    4b7c: 2a1603e5     	mov	w5, w22
+    4b80: 2a1403f6     	mov	w22, w20
+    4b84: 2a1703e1     	mov	w1, w23
+    4b88: 2a1803f7     	mov	w23, w24
+    4b8c: 90000003     	adrp	x3, 0x4000 <cprisk_vm_oph_post_handler_i+0x3e0>
+		0000000000004b8c:  R_AARCH64_ADR_PREL_PG_HI21	.rodata+0x1c8
+    4b90: 91000063     	add	x3, x3, #0x0
+		0000000000004b90:  R_AARCH64_ADD_ABS_LO12_NC	.rodata+0x1c8
+    4b94: 528f3729     	mov	w9, #0x79b9             // =31161
+    4b98: a94a13e2     	ldp	x2, x4, [sp, #0xa0]
+    4b9c: 72b3c6e9     	movk	w9, #0x9e37, lsl #16
+    4ba0: a94d37ee     	ldp	x14, x13, [sp, #0xd0]
+    4ba4: 0b010128     	add	w8, w9, w1
+    4ba8: b940cbf3     	ldr	w19, [sp, #0xc8]
+    4bac: 9100079c     	add	x28, x28, #0x1
+    4bb0: 29569ff8     	ldp	w24, w7, [sp, #0xb4]
+    4bb4: 51002101     	sub	w1, w8, #0x8
+    4bb8: 5294b4a8     	mov	w8, #0xa5a5             // =42405
+    4bbc: 9100d442     	add	x2, x2, #0x35
+    4bc0: 72b4b4a8     	movk	w8, #0xa5a5, lsl #16
+    4bc4: 91009484     	add	x4, x4, #0x25
+    4bc8: 910075ce     	add	x14, x14, #0x1d
+    4bcc: 2957d3f5     	ldp	w21, w20, [sp, #0xbc]
+    4bd0: 0b080318     	add	w24, w24, w8
+    4bd4: 529d65e8     	mov	w8, #0xeb2f             // =60207
+    4bd8: 910035ad     	add	x13, x13, #0xd
+    4bdc: 72a4fa88     	movk	w8, #0x27d4, lsl #16
+    4be0: 0b0900e7     	add	w7, w7, w9
+    4be4: f101039f     	cmp	x28, #0x40
+    4be8: 0b0802b5     	add	w21, w21, w8
+    4bec: 52994d68     	mov	w8, #0xca6b             // =51819
+    4bf0: 2a1603eb     	mov	w11, w22
+    4bf4: 72b0bd68     	movk	w8, #0x85eb, lsl #16
+    4bf8: 2a1a03ec     	mov	w12, w26
+    4bfc: 0b080294     	add	w20, w20, w8
+    4c00: 528f82a8     	mov	w8, #0x7c15             // =31765
+    4c04: 72afe948     	movk	w8, #0x7f4a, lsl #16
+    4c08: 0b080273     	add	w19, w19, w8
+    4c0c: 2a1103e8     	mov	w8, w17
+    4c10: 540013c0     	b.eq	0x4e88 <cprisk_vm_oph_post_handler_i+0x1268>
+    4c14: a90d37ee     	stp	x14, x13, [sp, #0xd0]
+    4c18: 924015aa     	and	x10, x13, #0x3f
+    4c1c: 924015ce     	and	x14, x14, #0x3f
+    4c20: b9416fed     	ldr	w13, [sp, #0x16c]
+    4c24: 386a686a     	ldrb	w10, [x3, x10]
+    4c28: 2a0f03fa     	mov	w26, w15
+    4c2c: 12000b8f     	and	w15, w28, #0x7
+    4c30: 386e686e     	ldrb	w14, [x3, x14]
+    4c34: 11002791     	add	w17, w28, #0x9
+    4c38: 53081d50     	lsl	w16, w10, #24
+    4c3c: 110005ea     	add	w10, w15, #0x1
+    4c40: 92401492     	and	x18, x4, #0x3f
+    4c44: 9240162f     	and	x15, x17, #0x3f
+    4c48: 4a0d030d     	eor	w13, w24, w13
+    4c4c: 38726871     	ldrb	w17, [x3, x18]
+    4c50: 2a0e420e     	orr	w14, w16, w14, lsl #16
+    4c54: 1aca2f50     	ror	w16, w26, w10
+    4c58: b86f78cf     	ldr	w15, [x6, x15, lsl #2]
+    4c5c: 2a0503e9     	mov	w9, w5
+    4c60: 2a1703e5     	mov	w5, w23
+    4c64: 2a1b03f7     	mov	w23, w27
+    4c68: 4a0d020d     	eor	w13, w16, w13
+    4c6c: 92401450     	and	x16, x2, #0x3f
+    4c70: 2a1121ce     	orr	w14, w14, w17, lsl #8
+    4c74: 4a1901ef     	eor	w15, w15, w25
+    4c78: 38706870     	ldrb	w16, [x3, x16]
+    4c7c: 2a1903fb     	mov	w27, w25
+    4c80: 4a0f01ad     	eor	w13, w13, w15
+    4c84: 2a0c03f6     	mov	w22, w12
+    4c88: 2a0b03f1     	mov	w17, w11
+    4c8c: 2a1001ce     	orr	w14, w14, w16
+    4c90: 4a0d00ef     	eor	w15, w7, w13
+    4c94: 53010f90     	ubfx	w16, w28, #1, #3
+    4c98: 4a0e01ee     	eor	w14, w15, w14
+    4c9c: 529cccef     	mov	w15, #0xe667            // =58983
+    4ca0: 72ad412f     	movk	w15, #0x6a09, lsl #16
+    4ca4: 1aca2dce     	ror	w14, w14, w10
+    4ca8: 0b0f01ad     	add	w13, w13, w15
+    4cac: 1100060f     	add	w15, w16, #0x1
+    4cb0: 5283e4f0     	mov	w16, #0x1f27            // =7975
+    4cb4: 72b4b870     	movk	w16, #0xa5c3, lsl #16
+    4cb8: 1acf2daf     	ror	w15, w13, w15
+    4cbc: 9000000d     	adrp	x13, 0x4000 <cprisk_vm_oph_post_handler_i+0x3e0>
+		0000000000004cbc:  R_AARCH64_ADR_PREL_PG_HI21	.rodata+0x208
+    4cc0: 910001ad     	add	x13, x13, #0x0
+		0000000000004cc0:  R_AARCH64_ADD_ABS_LO12_NC	.rodata+0x208
+    4cc4: 4a100270     	eor	w16, w19, w16
+    4cc8: 0b1001ce     	add	w14, w14, w16
+    4ccc: b87c79ad     	ldr	w13, [x13, x28, lsl #2]
+    4cd0: 6b0f01df     	cmp	w14, w15
+    4cd4: 4a0f01cc     	eor	w12, w14, w15
+    4cd8: 54000140     	b.eq	0x4d00 <cprisk_vm_oph_post_handler_i+0x10e0>
+    4cdc: 6b0d019f     	cmp	w12, w13
+    4ce0: 54000061     	b.ne	0x4cec <cprisk_vm_oph_post_handler_i+0x10cc>
+    4ce4: 2a0c03ed     	mov	w13, w12
+    4ce8: 14000006     	b	0x4d00 <cprisk_vm_oph_post_handler_i+0x10e0>
+    4cec: 9000000b     	adrp	x11, 0x4000 <cprisk_vm_oph_post_handler_i+0x3e0>
+		0000000000004cec:  R_AARCH64_ADR_PREL_PG_HI21	.rodata+0x308
+    4cf0: 9100016b     	add	x11, x11, #0x0
+		0000000000004cf0:  R_AARCH64_ADD_ABS_LO12_NC	.rodata+0x308
+    4cf4: b87c796e     	ldr	w14, [x11, x28, lsl #2]
+    4cf8: 2b0e019f     	cmn	w12, w14
+    4cfc: 54000121     	b.ne	0x4d20 <cprisk_vm_oph_post_handler_i+0x1100>
+    4d00: 4a14018b     	eor	w11, w12, w20
+    4d04: 5297d22c     	mov	w12, #0xbe91            // =48785
+    4d08: 9000000e     	adrp	x14, 0x4000 <cprisk_vm_oph_post_handler_i+0x3e0>
+		0000000000004d08:  R_AARCH64_ADR_PREL_PG_HI21	.rodata+0x308
+    4d0c: 910001ce     	add	x14, x14, #0x0
+		0000000000004d0c:  R_AARCH64_ADD_ABS_LO12_NC	.rodata+0x308
+    4d10: 72b89a4c     	movk	w12, #0xc4d2, lsl #16
+    4d14: 4a0c02ac     	eor	w12, w21, w12
+    4d18: b87c79ce     	ldr	w14, [x14, x28, lsl #2]
+    4d1c: 0b0c016c     	add	w12, w11, w12
+    4d20: 139a1b4b     	ror	w11, w26, #0x6
+    4d24: 2917d3f5     	stp	w21, w20, [sp, #0xbc]
+    4d28: 7200079f     	tst	w28, #0x3
+    4d2c: b900cbf3     	str	w19, [sp, #0xc8]
+    4d30: 4ada2d6b     	eor	w11, w11, w26, ror #11
+    4d34: 4ada656f     	eor	w15, w11, w26, ror #25
+    4d38: b87c78cb     	ldr	w11, [x6, x28, lsl #2]
+    4d3c: 0b0f0108     	add	w8, w8, w15
+    4d40: 0a3a022f     	bic	w15, w17, w26
+    4d44: b81f43a8     	stur	w8, [x29, #-0xc]
+    4d48: 0a1a02c8     	and	w8, w22, w26
+    4d4c: b81f03ab     	stur	w11, [x29, #-0x10]
+    4d50: 2a0801e8     	orr	w8, w15, w8
+    4d54: 0a0502ef     	and	w15, w23, w5
+    4d58: b85f43b0     	ldur	w16, [x29, #-0xc]
+    4d5c: 0b100108     	add	w8, w8, w16
+    4d60: b81f43a8     	stur	w8, [x29, #-0xc]
+    4d64: b85f43a8     	ldur	w8, [x29, #-0xc]
+    4d68: 0b0801c8     	add	w8, w14, w8
+    4d6c: 4a0502ee     	eor	w14, w23, w5
+    4d70: 0b0c0108     	add	w8, w8, w12
+    4d74: 4b0c01ac     	sub	w12, w13, w12
+    4d78: 0a0e036e     	and	w14, w27, w14
+    4d7c: b81f43a8     	stur	w8, [x29, #-0xc]
+    4d80: b85f03a8     	ldur	w8, [x29, #-0x10]
+    4d84: 0b080188     	add	w8, w12, w8
+    4d88: 139b0b6c     	ror	w12, w27, #0x2
+    4d8c: b81f03a8     	stur	w8, [x29, #-0x10]
+    4d90: b85f43a8     	ldur	w8, [x29, #-0xc]
+    4d94: b85f03ad     	ldur	w13, [x29, #-0x10]
+    4d98: 4adb358c     	eor	w12, w12, w27, ror #13
+    4d9c: 0b0801a8     	add	w8, w13, w8
+    4da0: 4adb598c     	eor	w12, w12, w27, ror #22
+    4da4: 4a0f01cd     	eor	w13, w14, w15
+    4da8: 0b0801ad     	add	w13, w13, w8
+    4dac: 0b09010f     	add	w15, w8, w9
+    4db0: 0b0d0199     	add	w25, w12, w13
+    4db4: 54000361     	b.ne	0x4e20 <cprisk_vm_oph_post_handler_i+0x1200>
+    4db8: 13970ae8     	ror	w8, w23, #0x2
+    4dbc: 13961ac9     	ror	w9, w22, #0x6
+    4dc0: 11002f8c     	add	w12, w28, #0xb
+    4dc4: 9240158c     	and	x12, x12, #0x3f
+    4dc8: 1aca2ded     	ror	w13, w15, w10
+    4dcc: 4ad73508     	eor	w8, w8, w23, ror #13
+    4dd0: 4ad62d29     	eor	w9, w9, w22, ror #11
+    4dd4: b86c78cc     	ldr	w12, [x6, x12, lsl #2]
+    4dd8: 4ad75908     	eor	w8, w8, w23, ror #22
+    4ddc: 4ad66529     	eor	w9, w9, w22, ror #25
+    4de0: 4a0c0108     	eor	w8, w8, w12
+    4de4: 4a1901ac     	eor	w12, w13, w25
+    4de8: 0b090029     	add	w9, w1, w9
+    4dec: 0b0c0108     	add	w8, w8, w12
+    4df0: 4a090108     	eor	w8, w8, w9
+    4df4: 0b0b0389     	add	w9, w28, w11
+    4df8: 0b080129     	add	w9, w9, w8
+    4dfc: 92401529     	and	x9, x9, #0x3f
+    4e00: 38696869     	ldrb	w9, [x3, x9]
+    4e04: b9416feb     	ldr	w11, [sp, #0x16c]
+    4e08: 4a080168     	eor	w8, w11, w8
+    4e0c: 4a090108     	eor	w8, w8, w9
+    4e10: b9016fe8     	str	w8, [sp, #0x16c]
+    4e14: b9416fe8     	ldr	w8, [sp, #0x16c]
+    4e18: 1aca2d08     	ror	w8, w8, w10
+    4e1c: b9016fe8     	str	w8, [sp, #0x16c]
+    4e20: f1003f9f     	cmp	x28, #0xf
+    4e24: 29169ff8     	stp	w24, w7, [sp, #0xb4]
+    4e28: a90a13e2     	stp	x2, x4, [sp, #0xa0]
+    4e2c: 54ffe8c0     	b.eq	0x4b44 <cprisk_vm_oph_post_handler_i+0xf24>
+    4e30: f100bf9f     	cmp	x28, #0x2f
+    4e34: 54ffeb01     	b.ne	0x4b94 <cprisk_vm_oph_post_handler_i+0xf74>
+    4e38: b4ffeae0     	cbz	x0, 0x4b94 <cprisk_vm_oph_post_handler_i+0xf74>
+    4e3c: 291307f9     	stp	w25, w1, [sp, #0x98]
+    4e40: aa0003f4     	mov	x20, x0
+    4e44: 2a1b03f8     	mov	w24, w27
+    4e48: 2a0503fb     	mov	w27, w5
+    4e4c: 2a1603f9     	mov	w25, w22
+    4e50: 2a1103f6     	mov	w22, w17
+    4e54: 2a0f03f5     	mov	w21, w15
+    4e58: 94000000     	bl	0x4e58 <cprisk_vm_oph_post_handler_i+0x1238>
+		0000000000004e58:  R_AARCH64_CALL26	cprisk_crypto_trace_now_i
+    4e5c: cb140000     	sub	x0, x0, x20
+    4e60: 94000000     	bl	0x4e60 <cprisk_vm_oph_post_handler_i+0x1240>
+		0000000000004e60:  R_AARCH64_CALL26	cprisk_crypto_trace_record_span_ticks_i
+    4e64: 2a1603f1     	mov	w17, w22
+    4e68: 2a1903f6     	mov	w22, w25
+    4e6c: 2a1503ef     	mov	w15, w21
+    4e70: 295307f9     	ldp	w25, w1, [sp, #0x98]
+    4e74: 9105c3e6     	add	x6, sp, #0x170
+    4e78: 2a1b03e5     	mov	w5, w27
+    4e7c: 2a1803fb     	mov	w27, w24
+    4e80: aa1403e0     	mov	x0, x20
+    4e84: 17ffff42     	b	0x4b8c <cprisk_vm_oph_post_handler_i+0xf6c>
+    4e88: 1e270320     	fmov	s0, w25
+    4e8c: 1e2701e1     	fmov	s1, w15
+    4e90: 9105c3eb     	add	x11, sp, #0x170
+    4e94: ad480fe2     	ldp	q2, q3, [sp, #0x100]
+    4e98: 5284e162     	mov	w2, #0x270b             // =9995
+    4e9c: f9404bf4     	ldr	x20, [sp, #0x90]
+    4ea0: 2a1f03e8     	mov	w8, wzr
+    4ea4: aa1f03e9     	mov	x9, xzr
+    4ea8: 4e0c1f60     	mov	v0.s[1], w27
+    4eac: 4e0c1f41     	mov	v1.s[1], w26
+    4eb0: aa1f03ea     	mov	x10, xzr
+    4eb4: 9101316c     	add	x12, x11, #0x4c
+    4eb8: 910403ed     	add	x13, sp, #0x100
+    4ebc: 72aa3da2     	movk	w2, #0x51ed, lsl #16
+    4ec0: 4e141ee0     	mov	v0.s[2], w23
+    4ec4: 4e141ec1     	mov	v1.s[2], w22
+    4ec8: 4e1c1ca0     	mov	v0.s[3], w5
+    4ecc: 4e1c1e21     	mov	v1.s[3], w17
+    4ed0: 4ea08440     	add	v0.4s, v2.4s, v0.4s
+    4ed4: 4ea18461     	add	v1.4s, v3.4s, v1.4s
+    4ed8: ad0807e0     	stp	q0, q1, [sp, #0x100]
+    4edc: 14000006     	b	0x4ef4 <cprisk_vm_oph_post_handler_i+0x12d4>
+    4ee0: 9100054a     	add	x10, x10, #0x1
+    4ee4: 91001d29     	add	x9, x9, #0x7
+    4ee8: 0b020108     	add	w8, w8, w2
+    4eec: f100615f     	cmp	x10, #0x18
+    4ef0: 540005a0     	b.eq	0x4fa4 <cprisk_vm_oph_post_handler_i+0x1384>
+    4ef4: 9240094e     	and	x14, x10, #0x7
+    4ef8: 9240152f     	and	x15, x9, #0x3f
+    4efc: 11001541     	add	w1, w10, #0x5
+    4f00: b86e79ae     	ldr	w14, [x13, x14, lsl #2]
+    4f04: b86f796f     	ldr	w15, [x11, x15, lsl #2]
+    4f08: b9416ff0     	ldr	w16, [sp, #0x16c]
+    4f0c: b86a7991     	ldr	w17, [x12, x10, lsl #2]
+    4f10: 4a0e01ee     	eor	w14, w15, w14
+    4f14: 4a1001ce     	eor	w14, w14, w16
+    4f18: 11000d50     	add	w16, w10, #0x3
+    4f1c: 13911e20     	ror	w0, w17, #0x7
+    4f20: 138e09cf     	ror	w15, w14, #0x2
+    4f24: 92400a10     	and	x16, x16, #0x7
+    4f28: b87079b0     	ldr	w16, [x13, x16, lsl #2]
+    4f2c: 4ad14800     	eor	w0, w0, w17, ror #18
+    4f30: 4ace35ef     	eor	w15, w15, w14, ror #13
+    4f34: 13901a12     	ror	w18, w16, #0x6
+    4f38: 4a510c11     	eor	w17, w0, w17, lsr #3
+    4f3c: 4ace59ef     	eor	w15, w15, w14, ror #22
+    4f40: 4a0801ce     	eor	w14, w14, w8
+    4f44: 4ad02e52     	eor	w18, w18, w16, ror #11
+    4f48: 4ace4def     	eor	w15, w15, w14, ror #19
+    4f4c: 4ad06650     	eor	w16, w18, w16, ror #25
+    4f50: 92400832     	and	x18, x1, #0x7
+    4f54: 4ace45ef     	eor	w15, w15, w14, ror #17
+    4f58: 0b100230     	add	w16, w17, w16
+    4f5c: 4a4e29ee     	eor	w14, w15, w14, lsr #10
+    4f60: b87279af     	ldr	w15, [x13, x18, lsl #2]
+    4f64: 4a1001ce     	eor	w14, w14, w16
+    4f68: 0b0f014f     	add	w15, w10, w15
+    4f6c: 0b0e01ef     	add	w15, w15, w14
+    4f70: 924015ef     	and	x15, x15, #0x3f
+    4f74: 386f686f     	ldrb	w15, [x3, x15]
+    4f78: b9416ff0     	ldr	w16, [sp, #0x16c]
+    4f7c: 4a0e020e     	eor	w14, w16, w14
+    4f80: 4a0f01ce     	eor	w14, w14, w15
+    4f84: b9016fee     	str	w14, [sp, #0x16c]
+    4f88: 3607faca     	tbz	w10, #0x0, 0x4ee0 <cprisk_vm_oph_post_handler_i+0x12c0>
+    4f8c: 1200094e     	and	w14, w10, #0x7
+    4f90: b9416fef     	ldr	w15, [sp, #0x16c]
+    4f94: 110005ce     	add	w14, w14, #0x1
+    4f98: 1ace2dee     	ror	w14, w15, w14
+    4f9c: b9016fee     	str	w14, [sp, #0x16c]
+    4fa0: 17ffffd0     	b	0x4ee0 <cprisk_vm_oph_post_handler_i+0x12c0>
+    4fa4: b9416fe8     	ldr	w8, [sp, #0x16c]
+    4fa8: f94003f3     	ldr	x19, [sp]
+    4fac: aa1f03e9     	mov	x9, xzr
+    4fb0: 52800708     	mov	w8, #0x38               // =56
+    4fb4: 8b090260     	add	x0, x19, x9
+    4fb8: 2a1f03e1     	mov	w1, wzr
+    4fbc: cb090102     	sub	x2, x8, x9
+    4fc0: 94000000     	bl	0x4fc0 <cprisk_vm_oph_post_handler_i+0x13a0>
+		0000000000004fc0:  R_AARCH64_CALL26	memset
+    4fc4: 90000009     	adrp	x9, 0x4000 <cprisk_vm_oph_post_handler_i+0x3e0>
+		0000000000004fc4:  R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16+0x180
+    4fc8: 4e080e80     	dup	v0.2d, x20
+    4fcc: 9000000a     	adrp	x10, 0x4000 <cprisk_vm_oph_post_handler_i+0x3e0>
+		0000000000004fcc:  R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16+0x190
+    4fd0: 9000000b     	adrp	x11, 0x4000 <cprisk_vm_oph_post_handler_i+0x3e0>
+		0000000000004fd0:  R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16+0x1a0
+    4fd4: 3dc00121     	ldr	q1, [x9]
+		0000000000004fd4:  R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16+0x180
+    4fd8: 90000009     	adrp	x9, 0x4000 <cprisk_vm_oph_post_handler_i+0x3e0>
+		0000000000004fd8:  R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16+0x1b0
+    4fdc: 3dc00142     	ldr	q2, [x10]
+		0000000000004fdc:  R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16+0x190
+    4fe0: 3dc00163     	ldr	q3, [x11]
+		0000000000004fe0:  R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16+0x1a0
+    4fe4: 3dc00124     	ldr	q4, [x9]
+		0000000000004fe4:  R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16+0x1b0
+    4fe8: 6ee14401     	ushl	v1.2d, v0.2d, v1.2d
+    4fec: aa1f03e8     	mov	x8, xzr
+    4ff0: 9105c3e9     	add	x9, sp, #0x170
+    4ff4: 6ee24402     	ushl	v2.2d, v0.2d, v2.2d
+    4ff8: 6ee34403     	ushl	v3.2d, v0.2d, v3.2d
+    4ffc: 6ee44400     	ushl	v0.2d, v0.2d, v4.2d
+    5000: 4e831800     	uzp1	v0.4s, v0.4s, v3.4s
+    5004: 4e811841     	uzp1	v1.4s, v2.4s, v1.4s
+    5008: 4e401820     	uzp1	v0.8h, v1.8h, v0.8h
+    500c: 0e212800     	xtn	v0.8b, v0.8h
+    5010: fd00b3e0     	str	d0, [sp, #0x160]
+    5014: 4c400260     	ld4	{ v0.16b, v1.16b, v2.16b, v3.16b }, [x19]
+    5018: 6f08a424     	ushll2	v4.8h, v1.16b, #0x0
+    501c: 6f08a445     	ushll2	v5.8h, v2.16b, #0x0
+    5020: 2f08a406     	ushll	v6.8h, v0.8b, #0x0
+    5024: 6f08a407     	ushll2	v7.8h, v0.16b, #0x0
+    5028: 2f08a430     	ushll	v16.8h, v1.8b, #0x0
+    502c: 2f08a451     	ushll	v17.8h, v2.8b, #0x0
+    5030: 6f08a472     	ushll2	v18.8h, v3.16b, #0x0
+    5034: 2f08a460     	ushll	v0.8h, v3.8b, #0x0
+    5038: 6e613893     	shll2	v19.4s, v4.8h, #16
+    503c: 6f18a4b4     	ushll2	v20.4s, v5.8h, #0x8
+    5040: 2f10a4d5     	ushll	v21.4s, v6.4h, #0x0
+    5044: 6f10a4c6     	ushll2	v6.4s, v6.8h, #0x0
+    5048: 6f10a4f6     	ushll2	v22.4s, v7.8h, #0x0
+    504c: 2f10a4e7     	ushll	v7.4s, v7.4h, #0x0
+    5050: 2e613884     	shll	v4.4s, v4.4h, #16
+    5054: 2f18a4a5     	ushll	v5.4s, v5.4h, #0x8
+    5058: 6e613a17     	shll2	v23.4s, v16.8h, #16
+    505c: 4eb41e73     	orr	v19.16b, v19.16b, v20.16b
+    5060: 6f18a634     	ushll2	v20.4s, v17.8h, #0x8
+    5064: 2e613a10     	shll	v16.4s, v16.4h, #16
+    5068: 2f18a631     	ushll	v17.4s, v17.4h, #0x8
+    506c: 4f3856d6     	shl	v22.4s, v22.4s, #0x18
+    5070: 4f3854e1     	shl	v1.4s, v7.4s, #0x18
+    5074: 4ea51c82     	orr	v2.16b, v4.16b, v5.16b
+    5078: 4f3854c4     	shl	v4.4s, v6.4s, #0x18
+    507c: 4f3856a6     	shl	v6.4s, v21.4s, #0x18
+    5080: 4eb41ee5     	orr	v5.16b, v23.16b, v20.16b
+    5084: 6f10a643     	ushll2	v3.4s, v18.8h, #0x0
+    5088: 4eb11e07     	orr	v7.16b, v16.16b, v17.16b
+    508c: 4eb61e70     	orr	v16.16b, v19.16b, v22.16b
+    5090: 2f10a651     	ushll	v17.4s, v18.4h, #0x0
+    5094: 4ea11c41     	orr	v1.16b, v2.16b, v1.16b
+    5098: 6f10a402     	ushll2	v2.4s, v0.8h, #0x0
+    509c: 2f10a400     	ushll	v0.4s, v0.4h, #0x0
+    50a0: 4ea41ca4     	orr	v4.16b, v5.16b, v4.16b
+    50a4: 4ea61ce5     	orr	v5.16b, v7.16b, v6.16b
+    50a8: 4ea31e03     	orr	v3.16b, v16.16b, v3.16b
+    50ac: 4eb11c21     	orr	v1.16b, v1.16b, v17.16b
+    50b0: 4ea21c82     	orr	v2.16b, v4.16b, v2.16b
+    50b4: 4ea01ca0     	orr	v0.16b, v5.16b, v0.16b
+    50b8: ad0c8fe1     	stp	q1, q3, [sp, #0x190]
+    50bc: ad0b8be0     	stp	q0, q2, [sp, #0x170]
+    50c0: 8b08012a     	add	x10, x9, x8
+    50c4: 91001108     	add	x8, x8, #0x4
+    50c8: b940394b     	ldr	w11, [x10, #0x38]
+    50cc: b9402550     	ldr	w16, [x10, #0x24]
+    50d0: f103011f     	cmp	x8, #0xc0
+    50d4: 2940314e     	ldp	w14, w12, [x10]
+    50d8: 138b456d     	ror	w13, w11, #0x11
+    50dc: 138c1d8f     	ror	w15, w12, #0x7
+    50e0: 4acb4dad     	eor	w13, w13, w11, ror #19
+    50e4: 4acc49ef     	eor	w15, w15, w12, ror #18
+    50e8: 4a4b29ab     	eor	w11, w13, w11, lsr #10
+    50ec: 0b0e020d     	add	w13, w16, w14
+    50f0: 4a4c0dec     	eor	w12, w15, w12, lsr #3
+    50f4: 0b0d016b     	add	w11, w11, w13
+    50f8: 0b0c016b     	add	w11, w11, w12
+    50fc: b900414b     	str	w11, [x10, #0x40]
+    5100: 54fffe01     	b.ne	0x50c0 <cprisk_vm_oph_post_handler_i+0x14a0>
+    5104: b94173e8     	ldr	w8, [sp, #0x170]
+    5108: b94103f3     	ldr	w19, [sp, #0x100]
+    510c: 5283e4e9     	mov	w9, #0x1f27             // =7975
+    5110: 72b4b869     	movk	w9, #0xa5c3, lsl #16
+    5114: b94107fc     	ldr	w28, [sp, #0x104]
+    5118: b9410be3     	ldr	w3, [sp, #0x108]
+    511c: 4a080268     	eor	w8, w19, w8
+    5120: b9410ff7     	ldr	w23, [sp, #0x10c]
+    5124: b94113ef     	ldr	w15, [sp, #0x110]
+    5128: b94117ec     	ldr	w12, [sp, #0x114]
+    512c: 4a090109     	eor	w9, w8, w9
+    5130: b9411beb     	ldr	w11, [sp, #0x118]
+    5134: b9411fe8     	ldr	w8, [sp, #0x11c]
+    5138: 528f3738     	mov	w24, #0x79b9            // =31161
+    513c: 528f82b9     	mov	w25, #0x7c15            // =31765
+    5140: 529d65f4     	mov	w20, #0xeb2f            // =60207
+    5144: 528379ba     	mov	w26, #0x1bcd            // =7117
+    5148: 2a1f03e1     	mov	w1, wzr
+    514c: 2a1f03e2     	mov	w2, wzr
+    5150: aa1f03ea     	mov	x10, xzr
+    5154: aa1f03fb     	mov	x27, xzr
+    5158: aa1f03e0     	mov	x0, xzr
+    515c: 528003e5     	mov	w5, #0x1f               // =31
+    5160: 52800266     	mov	w6, #0x13               // =19
+    5164: 528000ee     	mov	w14, #0x7               // =7
+    5168: 9105c3e7     	add	x7, sp, #0x170
+    516c: 72b3c6f8     	movk	w24, #0x9e37, lsl #16
+    5170: 72afe959     	movk	w25, #0x7f4a, lsl #16
+    5174: 72a4fa94     	movk	w20, #0x27d4, lsl #16
+    5178: 90000004     	adrp	x4, 0x5000 <cprisk_vm_oph_post_handler_i+0x13e0>
+		0000000000005178:  R_AARCH64_ADR_PREL_PG_HI21	.rodata+0x1c8
+    517c: 91000084     	add	x4, x4, #0x0
+		000000000000517c:  R_AARCH64_ADD_ABS_LO12_NC	.rodata+0x1c8
+    5180: 72a7b9ba     	movk	w26, #0x3dcd, lsl #16
+    5184: b9016fe9     	str	w9, [sp, #0x16c]
+    5188: 14000035     	b	0x525c <cprisk_vm_oph_post_handler_i+0x163c>
+    518c: b900a3f3     	str	w19, [sp, #0xa0]
+    5190: 2a1603f3     	mov	w19, w22
+    5194: 2a1703f6     	mov	w22, w23
+    5198: 2a0203f7     	mov	w23, w2
+    519c: 2a0303f8     	mov	w24, w3
+    51a0: 2a1503fa     	mov	w26, w21
+    51a4: 2a1103f5     	mov	w21, w17
+    51a8: 2a0f03f9     	mov	w25, w15
+    51ac: 94000000     	bl	0x51ac <cprisk_vm_oph_post_handler_i+0x158c>
+		00000000000051ac:  R_AARCH64_CALL26	cprisk_crypto_trace_now_i
+    51b0: 2a1703e2     	mov	w2, w23
+    51b4: 2a1603f7     	mov	w23, w22
+    51b8: 2a1303f6     	mov	w22, w19
+    51bc: b940a3f3     	ldr	w19, [sp, #0xa0]
+    51c0: 2a1903ef     	mov	w15, w25
+    51c4: 2a1503f1     	mov	w17, w21
+    51c8: 2a1a03f5     	mov	w21, w26
+    51cc: 9105c3e7     	add	x7, sp, #0x170
+    51d0: 2a1803e3     	mov	w3, w24
+    51d4: 90000004     	adrp	x4, 0x5000 <cprisk_vm_oph_post_handler_i+0x13e0>
+		00000000000051d4:  R_AARCH64_ADR_PREL_PG_HI21	.rodata+0x1c8
+    51d8: 91000084     	add	x4, x4, #0x0
+		00000000000051d8:  R_AARCH64_ADD_ABS_LO12_NC	.rodata+0x1c8
+    51dc: 528f3729     	mov	w9, #0x79b9             // =31161
+    51e0: 9100d685     	add	x5, x20, #0x35
+    51e4: b940dbfa     	ldr	w26, [sp, #0xd8]
+    51e8: 72b3c6e9     	movk	w9, #0x9e37, lsl #16
+    51ec: a94cabee     	ldp	x14, x10, [sp, #0xc8]
+    51f0: 0b020128     	add	w8, w9, w2
+    51f4: f94057e6     	ldr	x6, [sp, #0xa8]
+    51f8: 9100077b     	add	x27, x27, #0x1
+    51fc: 2956e3e1     	ldp	w1, w24, [sp, #0xb4]
+    5200: 51002102     	sub	w2, w8, #0x8
+    5204: 5294b4a8     	mov	w8, #0xa5a5             // =42405
+    5208: 910094c6     	add	x6, x6, #0x25
+    520c: 72b4b4a8     	movk	w8, #0xa5a5, lsl #16
+    5210: 910075ce     	add	x14, x14, #0x1d
+    5214: 9100354a     	add	x10, x10, #0xd
+    5218: 2957d3f9     	ldp	w25, w20, [sp, #0xbc]
+    521c: 0b080021     	add	w1, w1, w8
+    5220: 529d65e8     	mov	w8, #0xeb2f             // =60207
+    5224: 0b090318     	add	w24, w24, w9
+    5228: 72a4fa88     	movk	w8, #0x27d4, lsl #16
+    522c: f101037f     	cmp	x27, #0x40
+    5230: 2a1603eb     	mov	w11, w22
+    5234: 0b080294     	add	w20, w20, w8
+    5238: 52994d68     	mov	w8, #0xca6b             // =51819
+    523c: 2a1503ec     	mov	w12, w21
+    5240: 72b0bd68     	movk	w8, #0x85eb, lsl #16
+    5244: 0b08035a     	add	w26, w26, w8
+    5248: 528f82a8     	mov	w8, #0x7c15             // =31765
+    524c: 72afe948     	movk	w8, #0x7f4a, lsl #16
+    5250: 0b080339     	add	w25, w25, w8
+    5254: 2a1103e8     	mov	w8, w17
+    5258: 54001460     	b.eq	0x54e4 <cprisk_vm_oph_post_handler_i+0x18c4>
+    525c: a90cabee     	stp	x14, x10, [sp, #0xc8]
+    5260: 9240154a     	and	x10, x10, #0x3f
+    5264: 924015ce     	and	x14, x14, #0x3f
+    5268: b9416fed     	ldr	w13, [sp, #0x16c]
+    526c: 386a688a     	ldrb	w10, [x4, x10]
+    5270: 2a0f03f5     	mov	w21, w15
+    5274: 12000b6f     	and	w15, w27, #0x7
+    5278: 386e688e     	ldrb	w14, [x4, x14]
+    527c: 11002771     	add	w17, w27, #0x9
+    5280: 53081d50     	lsl	w16, w10, #24
+    5284: 110005ea     	add	w10, w15, #0x1
+    5288: 924014d2     	and	x18, x6, #0x3f
+    528c: 9240162f     	and	x15, x17, #0x3f
+    5290: 4a0d002d     	eor	w13, w1, w13
+    5294: 38726891     	ldrb	w17, [x4, x18]
+    5298: 2a0e420e     	orr	w14, w16, w14, lsl #16
+    529c: 1aca2eb0     	ror	w16, w21, w10
+    52a0: b86f78ef     	ldr	w15, [x7, x15, lsl #2]
+    52a4: 2a1703e9     	mov	w9, w23
+    52a8: 2a0303f7     	mov	w23, w3
+    52ac: 2a1c03e3     	mov	w3, w28
+    52b0: 4a0d020d     	eor	w13, w16, w13
+    52b4: 924014b0     	and	x16, x5, #0x3f
+    52b8: 2a1121ce     	orr	w14, w14, w17, lsl #8
+    52bc: 4a1301ef     	eor	w15, w15, w19
+    52c0: 38706890     	ldrb	w16, [x4, x16]
+    52c4: 2a1303fc     	mov	w28, w19
+    52c8: 4a0f01ad     	eor	w13, w13, w15
+    52cc: 2a0c03f6     	mov	w22, w12
+    52d0: 2a0b03f1     	mov	w17, w11
+    52d4: 2a1001ce     	orr	w14, w14, w16
+    52d8: 4a0d030f     	eor	w15, w24, w13
+    52dc: 53010f70     	ubfx	w16, w27, #1, #3
+    52e0: 4a0e01ee     	eor	w14, w15, w14
+    52e4: 529cccef     	mov	w15, #0xe667            // =58983
+    52e8: 72ad412f     	movk	w15, #0x6a09, lsl #16
+    52ec: 1aca2dce     	ror	w14, w14, w10
+    52f0: 0b0f01ad     	add	w13, w13, w15
+    52f4: 1100060f     	add	w15, w16, #0x1
+    52f8: 5283e4f0     	mov	w16, #0x1f27            // =7975
+    52fc: 72b4b870     	movk	w16, #0xa5c3, lsl #16
+    5300: 1acf2daf     	ror	w15, w13, w15
+    5304: 9000000d     	adrp	x13, 0x5000 <cprisk_vm_oph_post_handler_i+0x13e0>
+		0000000000005304:  R_AARCH64_ADR_PREL_PG_HI21	.rodata+0x208
+    5308: 910001ad     	add	x13, x13, #0x0
+		0000000000005308:  R_AARCH64_ADD_ABS_LO12_NC	.rodata+0x208
+    530c: 4a100330     	eor	w16, w25, w16
+    5310: 0b1001ce     	add	w14, w14, w16
+    5314: b87b79ad     	ldr	w13, [x13, x27, lsl #2]
+    5318: 6b0f01df     	cmp	w14, w15
+    531c: 4a0f01cc     	eor	w12, w14, w15
+    5320: 54000140     	b.eq	0x5348 <cprisk_vm_oph_post_handler_i+0x1728>
+    5324: 6b0d019f     	cmp	w12, w13
+    5328: 54000061     	b.ne	0x5334 <cprisk_vm_oph_post_handler_i+0x1714>
+    532c: 2a0c03ed     	mov	w13, w12
+    5330: 14000006     	b	0x5348 <cprisk_vm_oph_post_handler_i+0x1728>
+    5334: 9000000b     	adrp	x11, 0x5000 <cprisk_vm_oph_post_handler_i+0x13e0>
+		0000000000005334:  R_AARCH64_ADR_PREL_PG_HI21	.rodata+0x308
+    5338: 9100016b     	add	x11, x11, #0x0
+		0000000000005338:  R_AARCH64_ADD_ABS_LO12_NC	.rodata+0x308
+    533c: b87b796e     	ldr	w14, [x11, x27, lsl #2]
+    5340: 2b0e019f     	cmn	w12, w14
+    5344: 54000121     	b.ne	0x5368 <cprisk_vm_oph_post_handler_i+0x1748>
+    5348: 4a1a018b     	eor	w11, w12, w26
+    534c: 5297d22c     	mov	w12, #0xbe91            // =48785
+    5350: 9000000e     	adrp	x14, 0x5000 <cprisk_vm_oph_post_handler_i+0x13e0>
+		0000000000005350:  R_AARCH64_ADR_PREL_PG_HI21	.rodata+0x308
+    5354: 910001ce     	add	x14, x14, #0x0
+		0000000000005354:  R_AARCH64_ADD_ABS_LO12_NC	.rodata+0x308
+    5358: 72b89a4c     	movk	w12, #0xc4d2, lsl #16
+    535c: 4a0c028c     	eor	w12, w20, w12
+    5360: b87b79ce     	ldr	w14, [x14, x27, lsl #2]
+    5364: 0b0c016c     	add	w12, w11, w12
+    5368: 13951aab     	ror	w11, w21, #0x6
+    536c: 2917d3f9     	stp	w25, w20, [sp, #0xbc]
+    5370: 7200077f     	tst	w27, #0x3
+    5374: b900dbfa     	str	w26, [sp, #0xd8]
+    5378: 4ad52d6b     	eor	w11, w11, w21, ror #11
+    537c: 4ad5656f     	eor	w15, w11, w21, ror #25
+    5380: b87b78eb     	ldr	w11, [x7, x27, lsl #2]
+    5384: 0b0f0108     	add	w8, w8, w15
+    5388: 0a35022f     	bic	w15, w17, w21
+    538c: b81f43a8     	stur	w8, [x29, #-0xc]
+    5390: 0a1502c8     	and	w8, w22, w21
+    5394: b81f03ab     	stur	w11, [x29, #-0x10]
+    5398: 2a0801e8     	orr	w8, w15, w8
+    539c: 0a17006f     	and	w15, w3, w23
+    53a0: b85f43b0     	ldur	w16, [x29, #-0xc]
+    53a4: 0b100108     	add	w8, w8, w16
+    53a8: b81f43a8     	stur	w8, [x29, #-0xc]
+    53ac: b85f43a8     	ldur	w8, [x29, #-0xc]
+    53b0: 0b0801c8     	add	w8, w14, w8
+    53b4: 4a17006e     	eor	w14, w3, w23
+    53b8: 0b0c0108     	add	w8, w8, w12
+    53bc: 4b0c01ac     	sub	w12, w13, w12
+    53c0: 0a0e038e     	and	w14, w28, w14
+    53c4: b81f43a8     	stur	w8, [x29, #-0xc]
+    53c8: b85f03a8     	ldur	w8, [x29, #-0x10]
+    53cc: 0b080188     	add	w8, w12, w8
+    53d0: 139c0b8c     	ror	w12, w28, #0x2
+    53d4: b81f03a8     	stur	w8, [x29, #-0x10]
+    53d8: b85f43a8     	ldur	w8, [x29, #-0xc]
+    53dc: b85f03ad     	ldur	w13, [x29, #-0x10]
+    53e0: 4adc358c     	eor	w12, w12, w28, ror #13
+    53e4: 0b0801a8     	add	w8, w13, w8
+    53e8: 4adc598c     	eor	w12, w12, w28, ror #22
+    53ec: 4a0f01cd     	eor	w13, w14, w15
+    53f0: 0b0801ad     	add	w13, w13, w8
+    53f4: 0b09010f     	add	w15, w8, w9
+    53f8: 0b0d0193     	add	w19, w12, w13
+    53fc: 54000361     	b.ne	0x5468 <cprisk_vm_oph_post_handler_i+0x1848>
+    5400: 13830868     	ror	w8, w3, #0x2
+    5404: 13961ac9     	ror	w9, w22, #0x6
+    5408: 11002f6c     	add	w12, w27, #0xb
+    540c: 9240158c     	and	x12, x12, #0x3f
+    5410: 1aca2ded     	ror	w13, w15, w10
+    5414: 4ac33508     	eor	w8, w8, w3, ror #13
+    5418: 4ad62d29     	eor	w9, w9, w22, ror #11
+    541c: b86c78ec     	ldr	w12, [x7, x12, lsl #2]
+    5420: 4ac35908     	eor	w8, w8, w3, ror #22
+    5424: 4ad66529     	eor	w9, w9, w22, ror #25
+    5428: 4a0c0108     	eor	w8, w8, w12
+    542c: 4a1301ac     	eor	w12, w13, w19
+    5430: 0b090049     	add	w9, w2, w9
+    5434: 0b0c0108     	add	w8, w8, w12
+    5438: 4a090108     	eor	w8, w8, w9
+    543c: 0b0b0369     	add	w9, w27, w11
+    5440: 0b080129     	add	w9, w9, w8
+    5444: 92401529     	and	x9, x9, #0x3f
+    5448: 38696889     	ldrb	w9, [x4, x9]
+    544c: b9416feb     	ldr	w11, [sp, #0x16c]
+    5450: 4a080168     	eor	w8, w11, w8
+    5454: 4a090108     	eor	w8, w8, w9
+    5458: b9016fe8     	str	w8, [sp, #0x16c]
+    545c: b9416fe8     	ldr	w8, [sp, #0x16c]
+    5460: 1aca2d08     	ror	w8, w8, w10
+    5464: b9016fe8     	str	w8, [sp, #0x16c]
+    5468: aa0503f4     	mov	x20, x5
+    546c: f1003f7f     	cmp	x27, #0xf
+    5470: 2916e3e1     	stp	w1, w24, [sp, #0xb4]
+    5474: f90057e6     	str	x6, [sp, #0xa8]
+    5478: 54ffe8a0     	b.eq	0x518c <cprisk_vm_oph_post_handler_i+0x156c>
+    547c: f100bf7f     	cmp	x27, #0x2f
+    5480: 54ffeae1     	b.ne	0x51dc <cprisk_vm_oph_post_handler_i+0x15bc>
+    5484: b4ffeac0     	cbz	x0, 0x51dc <cprisk_vm_oph_post_handler_i+0x15bc>
+    5488: 29130bf7     	stp	w23, w2, [sp, #0x98]
+    548c: 2a0303f7     	mov	w23, w3
+    5490: 2a1c03f8     	mov	w24, w28
+    5494: aa0003fc     	mov	x28, x0
+    5498: b900a3f3     	str	w19, [sp, #0xa0]
+    549c: 2a1503f3     	mov	w19, w21
+    54a0: 2a1603f5     	mov	w21, w22
+    54a4: 2a1103f6     	mov	w22, w17
+    54a8: 2a0f03fa     	mov	w26, w15
+    54ac: 94000000     	bl	0x54ac <cprisk_vm_oph_post_handler_i+0x188c>
+		00000000000054ac:  R_AARCH64_CALL26	cprisk_crypto_trace_now_i
+    54b0: cb1c0000     	sub	x0, x0, x28
+    54b4: 94000000     	bl	0x54b4 <cprisk_vm_oph_post_handler_i+0x1894>
+		00000000000054b4:  R_AARCH64_CALL26	cprisk_crypto_trace_record_span_ticks_i
+    54b8: 2a1603f1     	mov	w17, w22
+    54bc: 2a1503f6     	mov	w22, w21
+    54c0: 2a1303f5     	mov	w21, w19
+    54c4: 2953cfe2     	ldp	w2, w19, [sp, #0x9c]
+    54c8: 2a1703e3     	mov	w3, w23
+    54cc: b9409bf7     	ldr	w23, [sp, #0x98]
+    54d0: 2a1a03ef     	mov	w15, w26
+    54d4: aa1c03e0     	mov	x0, x28
+    54d8: 9105c3e7     	add	x7, sp, #0x170
+    54dc: 2a1803fc     	mov	w28, w24
+    54e0: 17ffff3d     	b	0x51d4 <cprisk_vm_oph_post_handler_i+0x15b4>
+    54e4: 1e270260     	fmov	s0, w19
+    54e8: 1e2701e2     	fmov	s2, w15
+    54ec: 3dc043e1     	ldr	q1, [sp, #0x100]
+    54f0: b9411fed     	ldr	w13, [sp, #0x11c]
+    54f4: b9411beb     	ldr	w11, [sp, #0x118]
+    54f8: 910027ec     	add	x12, sp, #0x9
+    54fc: 2a1f03e8     	mov	w8, wzr
+    5500: aa1f03e9     	mov	x9, xzr
+    5504: aa1f03ea     	mov	x10, xzr
+    5508: 4e0c1f80     	mov	v0.s[1], w28
+    550c: 4e0c1ea2     	mov	v2.s[1], w21
+    5510: 0b1101ad     	add	w13, w13, w17
+    5514: 0b16016b     	add	w11, w11, w22
+    5518: b9011fed     	str	w13, [sp, #0x11c]
+    551c: 910403ee     	add	x14, sp, #0x100
+    5520: b9011beb     	str	w11, [sp, #0x118]
+    5524: 4e141c60     	mov	v0.s[2], w3
+    5528: 5284e163     	mov	w3, #0x270b             // =9995
+    552c: 72aa3da3     	movk	w3, #0x51ed, lsl #16
+    5530: 4e1c1ee0     	mov	v0.s[3], w23
+    5534: 4ea08425     	add	v5.4s, v1.4s, v0.4s
+    5538: fd408be0     	ldr	d0, [sp, #0x110]
+    553c: 0ea28400     	add	v0.2s, v0.2s, v2.2s
+    5540: 6e0540a6     	ext	v6.16b, v5.16b, v5.16b, #0x8
+    5544: 4e1c04a1     	dup	v1.4s, v5.s[3]
+    5548: 4e1404a4     	dup	v4.4s, v5.s[2]
+    554c: 4e0c04a3     	dup	v3.4s, v5.s[1]
+    5550: 4e0404a2     	dup	v2.4s, v5.s[0]
+    5554: fd0083e5     	str	d5, [sp, #0x100]
+    5558: 6e180406     	mov	v6.d[1], v0.d[0]
+    555c: 3c8ff186     	stur	q6, [x12, #0xff]
+    5560: 9105c3ec     	add	x12, sp, #0x170
+    5564: 9101318d     	add	x13, x12, #0x4c
+    5568: 14000006     	b	0x5580 <cprisk_vm_oph_post_handler_i+0x1960>
+    556c: 9100054a     	add	x10, x10, #0x1
+    5570: 91001d29     	add	x9, x9, #0x7
+    5574: 0b030108     	add	w8, w8, w3
+    5578: f100615f     	cmp	x10, #0x18
+    557c: 540005a0     	b.eq	0x5630 <cprisk_vm_oph_post_handler_i+0x1a10>
+    5580: 9240094f     	and	x15, x10, #0x7
+    5584: 92401530     	and	x16, x9, #0x3f
+    5588: 11001542     	add	w2, w10, #0x5
+    558c: b86f79cf     	ldr	w15, [x14, x15, lsl #2]
+    5590: b8707990     	ldr	w16, [x12, x16, lsl #2]
+    5594: b9416ff1     	ldr	w17, [sp, #0x16c]
+    5598: b86a79b2     	ldr	w18, [x13, x10, lsl #2]
+    559c: 4a0f020f     	eor	w15, w16, w15
+    55a0: 4a1101ef     	eor	w15, w15, w17
+    55a4: 11000d51     	add	w17, w10, #0x3
+    55a8: 13921e41     	ror	w1, w18, #0x7
+    55ac: 138f09f0     	ror	w16, w15, #0x2
+    55b0: 92400a31     	and	x17, x17, #0x7
+    55b4: b87179d1     	ldr	w17, [x14, x17, lsl #2]
+    55b8: 4ad24821     	eor	w1, w1, w18, ror #18
+    55bc: 4acf3610     	eor	w16, w16, w15, ror #13
+    55c0: 13911a20     	ror	w0, w17, #0x6
+    55c4: 4a520c32     	eor	w18, w1, w18, lsr #3
+    55c8: 4acf5a10     	eor	w16, w16, w15, ror #22
+    55cc: 4a0801ef     	eor	w15, w15, w8
+    55d0: 4ad12c00     	eor	w0, w0, w17, ror #11
+    55d4: 4acf4e10     	eor	w16, w16, w15, ror #19
+    55d8: 4ad16411     	eor	w17, w0, w17, ror #25
+    55dc: 92400840     	and	x0, x2, #0x7
+    55e0: 4acf4610     	eor	w16, w16, w15, ror #17
+    55e4: 0b110251     	add	w17, w18, w17
+    55e8: 4a4f2a0f     	eor	w15, w16, w15, lsr #10
+    55ec: b86079d0     	ldr	w16, [x14, x0, lsl #2]
+    55f0: 4a1101ef     	eor	w15, w15, w17
+    55f4: 0b100150     	add	w16, w10, w16
+    55f8: 0b0f0210     	add	w16, w16, w15
+    55fc: 92401610     	and	x16, x16, #0x3f
+    5600: 38706890     	ldrb	w16, [x4, x16]
+    5604: b9416ff1     	ldr	w17, [sp, #0x16c]
+    5608: 4a0f022f     	eor	w15, w17, w15
+    560c: 4a1001ef     	eor	w15, w15, w16
+    5610: b9016fef     	str	w15, [sp, #0x16c]
+    5614: 3607faca     	tbz	w10, #0x0, 0x556c <cprisk_vm_oph_post_handler_i+0x194c>
+    5618: 1200094f     	and	w15, w10, #0x7
+    561c: b9416ff0     	ldr	w16, [sp, #0x16c]
+    5620: 110005ef     	add	w15, w15, #0x1
+    5624: 1acf2e0f     	ror	w15, w16, w15
+    5628: b9016fef     	str	w15, [sp, #0x16c]
+    562c: 17ffffd0     	b	0x556c <cprisk_vm_oph_post_handler_i+0x194c>
+    5630: 4e141d60     	mov	v0.s[2], w11
+    5634: 910403e8     	add	x8, sp, #0x100
+    5638: b9416fe9     	ldr	w9, [sp, #0x16c]
+    563c: 91007108     	add	x8, x8, #0x1c
+    5640: 4d409100     	ld1	{ v0.s }[3], [x8]
+    5644: 90000008     	adrp	x8, 0x5000 <cprisk_vm_oph_post_handler_i+0x13e0>
+		0000000000005644:  R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16+0x1c0
+    5648: 3dc00105     	ldr	q5, [x8]
+		0000000000005648:  R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16+0x1c0
+    564c: 4e0c0406     	dup	v6.4s, v0.s[1]
+    5650: 4e140407     	dup	v7.4s, v0.s[2]
+    5654: 4e1c0410     	dup	v16.4s, v0.s[3]
+    5658: 4e040400     	dup	v0.4s, v0.s[0]
+    565c: 6ea54484     	ushl	v4.4s, v4.4s, v5.4s
+    5660: 6ea54421     	ushl	v1.4s, v1.4s, v5.4s
+    5664: 6ea54463     	ushl	v3.4s, v3.4s, v5.4s
+    5668: 6ea54442     	ushl	v2.4s, v2.4s, v5.4s
+    566c: 6ea544c6     	ushl	v6.4s, v6.4s, v5.4s
+    5670: 6ea54610     	ushl	v16.4s, v16.4s, v5.4s
+    5674: 6ea54400     	ushl	v0.4s, v0.4s, v5.4s
+    5678: 6ea544e5     	ushl	v5.4s, v7.4s, v5.4s
+    567c: 4e411881     	uzp1	v1.8h, v4.8h, v1.8h
+    5680: 4e431842     	uzp1	v2.8h, v2.8h, v3.8h
+    5684: 4e5018a3     	uzp1	v3.8h, v5.8h, v16.8h
+    5688: 4e461800     	uzp1	v0.8h, v0.8h, v6.8h
+    568c: 4e011841     	uzp1	v1.16b, v2.16b, v1.16b
+    5690: 4e031800     	uzp1	v0.16b, v0.16b, v3.16b
+    5694: ad0703e1     	stp	q1, q0, [sp, #0xe0]
+    5698: f94007f2     	ldr	x18, [sp, #0x8]
+    569c: ad470be3     	ldp	q3, q2, [sp, #0xe0]
+    56a0: ad400241     	ldp	q1, q0, [x18]
+    56a4: 390383ff     	strb	wzr, [sp, #0xe0]
+    56a8: 390387ff     	strb	wzr, [sp, #0xe1]
+    56ac: 39038bff     	strb	wzr, [sp, #0xe2]
+    56b0: 6e221c00     	eor	v0.16b, v0.16b, v2.16b
+    56b4: 6e231c21     	eor	v1.16b, v1.16b, v3.16b
+    56b8: 39038fff     	strb	wzr, [sp, #0xe3]
+    56bc: 390393ff     	strb	wzr, [sp, #0xe4]
+    56c0: 390397ff     	strb	wzr, [sp, #0xe5]
+    56c4: 4ea11c00     	orr	v0.16b, v0.16b, v1.16b
+    56c8: 39039bff     	strb	wzr, [sp, #0xe6]
+    56cc: 39039fff     	strb	wzr, [sp, #0xe7]
+    56d0: 3903a3ff     	strb	wzr, [sp, #0xe8]
+    56d4: 6e004001     	ext	v1.16b, v0.16b, v0.16b, #0x8
+    56d8: 3903a7ff     	strb	wzr, [sp, #0xe9]
+    56dc: 3903abff     	strb	wzr, [sp, #0xea]
+    56e0: 3903afff     	strb	wzr, [sp, #0xeb]
+    56e4: 3903b3ff     	strb	wzr, [sp, #0xec]
+    56e8: 0ea11c00     	orr	v0.8b, v0.8b, v1.8b
+    56ec: 3903b7ff     	strb	wzr, [sp, #0xed]
+    56f0: 3903bbff     	strb	wzr, [sp, #0xee]
+    56f4: 3903bfff     	strb	wzr, [sp, #0xef]
+    56f8: 9e660008     	fmov	x8, d0
+    56fc: 3903c3ff     	strb	wzr, [sp, #0xf0]
+    5700: 3903c7ff     	strb	wzr, [sp, #0xf1]
+    5704: 3903cbff     	strb	wzr, [sp, #0xf2]
+    5708: aa488108     	orr	x8, x8, x8, lsr #32
+    570c: 3903cfff     	strb	wzr, [sp, #0xf3]
+    5710: 3903d3ff     	strb	wzr, [sp, #0xf4]
+    5714: d350fd09     	lsr	x9, x8, #16
+    5718: 3903d7ff     	strb	wzr, [sp, #0xf5]
+    571c: 3903dbff     	strb	wzr, [sp, #0xf6]
+    5720: 3903dfff     	strb	wzr, [sp, #0xf7]
+    5724: 2a090108     	orr	w8, w8, w9
+    5728: 3903e3ff     	strb	wzr, [sp, #0xf8]
+    572c: 2a482108     	orr	w8, w8, w8, lsr #8
+    5730: 3903e7ff     	strb	wzr, [sp, #0xf9]
+    5734: 3903ebff     	strb	wzr, [sp, #0xfa]
+    5738: 72001d1f     	tst	w8, #0xff
+    573c: 3903efff     	strb	wzr, [sp, #0xfb]
+    5740: 3903f3ff     	strb	wzr, [sp, #0xfc]
+    5744: 3903f7ff     	strb	wzr, [sp, #0xfd]
+    5748: 3903fbff     	strb	wzr, [sp, #0xfe]
+    574c: 3903ffff     	strb	wzr, [sp, #0xff]
+    5750: 29500fe4     	ldp	w4, w3, [sp, #0x80]
+    5754: f94013e0     	ldr	x0, [sp, #0x20]
+    5758: b9401fe1     	ldr	w1, [sp, #0x1c]
+    575c: f9400be2     	ldr	x2, [sp, #0x10]
+    5760: 540006a0     	b.eq	0x5834 <cprisk_vm_oph_post_handler_i+0x1c14>
+    5764: f9403c08     	ldr	x8, [x0, #0x78]
+    5768: 5280004a     	mov	w10, #0x2               // =2
+    576c: 52800025     	mov	w5, #0x1                // =1
+    5770: b9400509     	ldr	w9, [x8, #0x4]
+    5774: 321c0129     	orr	w9, w9, #0x10
+    5778: 2900250a     	stp	w10, w9, [x8]
+    577c: 90000008     	adrp	x8, 0x5000 <cprisk_vm_oph_post_handler_i+0x13e0>
+		000000000000577c:  R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16+0x1d0
+    5780: 90000009     	adrp	x9, 0x5000 <cprisk_vm_oph_post_handler_i+0x13e0>
+		0000000000005780:  R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16+0x1e0
+    5784: 3dc00100     	ldr	q0, [x8]
+		0000000000005784:  R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16+0x1d0
+    5788: 90000008     	adrp	x8, 0x5000 <cprisk_vm_oph_post_handler_i+0x13e0>
+		0000000000005788:  R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16+0x1f0
+    578c: 9101c00a     	add	x10, x0, #0x70
+    5790: 3dc00121     	ldr	q1, [x9]
+		0000000000005790:  R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16+0x1e0
+    5794: 90000009     	adrp	x9, 0x5000 <cprisk_vm_oph_post_handler_i+0x13e0>
+		0000000000005794:  R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16+0x200
+    5798: 3dc00102     	ldr	q2, [x8]
+		0000000000005798:  R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16+0x1f0
+    579c: 90000008     	adrp	x8, 0x5000 <cprisk_vm_oph_post_handler_i+0x13e0>
+		000000000000579c:  R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16+0x210
+    57a0: 4d40cd43     	ld1r	{ v3.2d }, [x10]
+    57a4: 9000000a     	adrp	x10, 0x5000 <cprisk_vm_oph_post_handler_i+0x13e0>
+		00000000000057a4:  R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16+0x230
+    57a8: 3dc00124     	ldr	q4, [x9]
+		00000000000057a8:  R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16+0x200
+    57ac: 90000009     	adrp	x9, 0x5000 <cprisk_vm_oph_post_handler_i+0x13e0>
+		00000000000057ac:  R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16+0x240
+    57b0: 3dc00105     	ldr	q5, [x8]
+		00000000000057b0:  R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16+0x210
+    57b4: 90000008     	adrp	x8, 0x5000 <cprisk_vm_oph_post_handler_i+0x13e0>
+		00000000000057b4:  R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16+0x220
+    57b8: 3dc00146     	ldr	q6, [x10]
+		00000000000057b8:  R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16+0x230
+    57bc: 3dc00127     	ldr	q7, [x9]
+		00000000000057bc:  R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16+0x240
+    57c0: 3dc00110     	ldr	q16, [x8]
+		00000000000057c0:  R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16+0x220
+    57c4: 6ee04460     	ushl	v0.2d, v3.2d, v0.2d
+    57c8: 6ee14461     	ushl	v1.2d, v3.2d, v1.2d
+    57cc: 6ee24462     	ushl	v2.2d, v3.2d, v2.2d
+    57d0: 6ee64466     	ushl	v6.2d, v3.2d, v6.2d
+    57d4: 6ee74467     	ushl	v7.2d, v3.2d, v7.2d
+    57d8: 6ee44464     	ushl	v4.2d, v3.2d, v4.2d
+    57dc: 6ee54465     	ushl	v5.2d, v3.2d, v5.2d
+    57e0: 6ef04463     	ushl	v3.2d, v3.2d, v16.2d
+    57e4: 4e801820     	uzp1	v0.4s, v1.4s, v0.4s
+    57e8: 90000008     	adrp	x8, 0x5000 <cprisk_vm_oph_post_handler_i+0x13e0>
+		00000000000057e8:  R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16+0x250
+    57ec: 90000009     	adrp	x9, 0x5000 <cprisk_vm_oph_post_handler_i+0x13e0>
+		00000000000057ec:  R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16+0x260
+    57f0: 4e8618e6     	uzp1	v6.4s, v7.4s, v6.4s
+    57f4: 4e851863     	uzp1	v3.4s, v3.4s, v5.4s
+    57f8: 4e821882     	uzp1	v2.4s, v4.4s, v2.4s
+    57fc: 3dc00124     	ldr	q4, [x9]
+		00000000000057fc:  R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16+0x260
+    5800: 3cc34245     	ldur	q5, [x18, #0x34]
+    5804: 4e461861     	uzp1	v1.8h, v3.8h, v6.8h
+    5808: 4e421800     	uzp1	v0.8h, v0.8h, v2.8h
+    580c: 3dc00102     	ldr	q2, [x8]
+		000000000000580c:  R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16+0x250
+    5810: 3cc24243     	ldur	q3, [x18, #0x24]
+    5814: 4e011800     	uzp1	v0.16b, v0.16b, v1.16b
+    5818: 6e221c61     	eor	v1.16b, v3.16b, v2.16b
+    581c: 6e241ca2     	eor	v2.16b, v5.16b, v4.16b
+    5820: 6e201c21     	eor	v1.16b, v1.16b, v0.16b
+    5824: 6e201c40     	eor	v0.16b, v2.16b, v0.16b
+    5828: 3c824241     	stur	q1, [x18, #0x24]
+    582c: 3c834240     	stur	q0, [x18, #0x34]
+    5830: 140001bc     	b	0x5f20 <cprisk_vm_oph_post_handler_i+0x2300>
+    5834: f947c808     	ldr	x8, [x0, #0xf90]
+    5838: b90ec408     	str	w8, [x0, #0xec4]
+    583c: b94e8408     	ldr	w8, [x0, #0xe84]
+    5840: b94ea809     	ldr	w9, [x0, #0xea8]
+    5844: 12001c33     	and	w19, w1, #0xff
+    5848: 4a03026a     	eor	w10, w19, w3
+    584c: 5293e76e     	mov	w14, #0x9f3b            // =40763
+    5850: 2a1f03ec     	mov	w12, wzr
+    5854: 4a09010b     	eor	w11, w8, w9
+    5858: 4a04014a     	eor	w10, w10, w4
+    585c: 528f82a9     	mov	w9, #0x7c15             // =31765
+    5860: 4a0a016a     	eor	w10, w11, w10
+    5864: aa1f03ed     	mov	x13, xzr
+    5868: 72afe949     	movk	w9, #0x7f4a, lsl #16
+    586c: 913bb008     	add	x8, x0, #0xeec
+    5870: 72a08bae     	movk	w14, #0x45d, lsl #16
+    5874: 913bb00f     	add	x15, x0, #0xeec
+    5878: 2a0a03eb     	mov	w11, w10
+    587c: 384015f0     	ldrb	w16, [x15], #0x1
+    5880: 121d05b1     	and	w17, w13, #0x18
+    5884: 910021ad     	add	x13, x13, #0x8
+    5888: 1ad12210     	lsl	w16, w16, w17
+    588c: f10401bf     	cmp	x13, #0x100
+    5890: 4a0b020b     	eor	w11, w16, w11
+    5894: 4a090190     	eor	w16, w12, w9
+    5898: 0b0e018c     	add	w12, w12, w14
+    589c: 138b6d6b     	ror	w11, w11, #0x1b
+    58a0: 0b10016b     	add	w11, w11, w16
+    58a4: 54fffec1     	b.ne	0x587c <cprisk_vm_oph_post_handler_i+0x1c5c>
+    58a8: 53037d4d     	lsr	w13, w10, #3
+    58ac: 5284e16e     	mov	w14, #0x270b            // =9995
+    58b0: 529d65f0     	mov	w16, #0xeb2f            // =60207
+    58b4: 2a1f03ef     	mov	w15, wzr
+    58b8: 2a1f03ec     	mov	w12, wzr
+    58bc: 72aa3dae     	movk	w14, #0x51ed, lsl #16
+    58c0: 72a4fa90     	movk	w16, #0x27d4, lsl #16
+    58c4: aa1203f4     	mov	x20, x18
+    58c8: 91011256     	add	x22, x18, #0x44
+    58cc: 924011b1     	and	x17, x13, #0x1f
+    58d0: 121d0592     	and	w18, w12, #0x18
+    58d4: 1100218c     	add	w12, w12, #0x8
+    58d8: 38716ad1     	ldrb	w17, [x22, x17]
+    58dc: 7104019f     	cmp	w12, #0x100
+    58e0: 110015ad     	add	w13, w13, #0x5
+    58e4: 1ad22231     	lsl	w17, w17, w18
+    58e8: 4a0b022b     	eor	w11, w17, w11
+    58ec: 4a0e01f1     	eor	w17, w15, w14
+    58f0: 0b0f020f     	add	w15, w16, w15
+    58f4: 138b656b     	ror	w11, w11, #0x19
+    58f8: 510009ef     	sub	w15, w15, #0x2
+    58fc: 0b11016b     	add	w11, w11, w17
+    5900: 54fffe61     	b.ne	0x58cc <cprisk_vm_oph_post_handler_i+0x1cac>
+    5904: 4a0b014a     	eor	w10, w10, w11
+    5908: 5295daab     	mov	w11, #0xaed5            // =44757
+    590c: 5286a5b5     	mov	w21, #0x352d            // =13613
+    5910: 72b4496b     	movk	w11, #0xa24b, lsl #16
+    5914: 72affd75     	movk	w21, #0x7feb, lsl #16
+    5918: 5294d172     	mov	w18, #0xa68b            // =42635
+    591c: 4a0b014a     	eor	w10, w10, w11
+    5920: 72b08d92     	movk	w18, #0x846c, lsl #16
+    5924: b94087e3     	ldr	w3, [sp, #0x84]
+    5928: 4a4a414a     	eor	w10, w10, w10, lsr #16
+    592c: b94f900b     	ldr	w11, [x0, #0xf90]
+    5930: 1b157d4a     	mul	w10, w10, w21
+    5934: 4a4a3d4a     	eor	w10, w10, w10, lsr #15
+    5938: 1b127d4a     	mul	w10, w10, w18
+    593c: 4a4a414c     	eor	w12, w10, w10, lsr #16
+    5940: 4a03026a     	eor	w10, w19, w3
+    5944: 4a0b014a     	eor	w10, w10, w11
+    5948: 4a0c0157     	eor	w23, w10, w12
+    594c: 12000a6a     	and	w10, w19, #0x7
+    5950: 0b02018e     	add	w14, w12, w2
+    5954: 0b0a02ea     	add	w10, w23, w10
+    5958: 0b13014b     	add	w11, w10, w19
+    595c: 9240114d     	and	x13, x10, #0x1f
+    5960: 9240116b     	and	x11, x11, #0x1f
+    5964: 386d6acf     	ldrb	w15, [x22, x13]
+    5968: 1b097db0     	mul	w16, w13, w9
+    596c: 386b690b     	ldrb	w11, [x8, x11]
+    5970: 0b0e016b     	add	w11, w11, w14
+    5974: 4a0c020c     	eor	w12, w16, w12
+    5978: 4a0f016b     	eor	w11, w11, w15
+    597c: 382d6acb     	strb	w11, [x22, x13]
+    5980: 12001d6e     	and	w14, w11, #0xff
+    5984: 4a0e018c     	eor	w12, w12, w14
+    5988: 11000d4e     	add	w14, w10, #0x3
+    598c: 4a4c418c     	eor	w12, w12, w12, lsr #16
+    5990: 0b0e026f     	add	w15, w19, w14
+    5994: 924011cd     	and	x13, x14, #0x1f
+    5998: 110005ef     	add	w15, w15, #0x1
+    599c: 1b157d8c     	mul	w12, w12, w21
+    59a0: 924011eb     	and	x11, x15, #0x1f
+    59a4: 386d6acf     	ldrb	w15, [x22, x13]
+    59a8: 386b690b     	ldrb	w11, [x8, x11]
+    59ac: 4a4c3d8c     	eor	w12, w12, w12, lsr #15
+    59b0: 1b127d8c     	mul	w12, w12, w18
+    59b4: 4a4c418c     	eor	w12, w12, w12, lsr #16
+    59b8: 53087d90     	lsr	w16, w12, #8
+    59bc: 0b42220e     	add	w14, w16, w2, lsr #8
+    59c0: 1b097db0     	mul	w16, w13, w9
+    59c4: 0b0e016b     	add	w11, w11, w14
+    59c8: 4a0f016b     	eor	w11, w11, w15
+    59cc: 4a0c020c     	eor	w12, w16, w12
+    59d0: 382d6acb     	strb	w11, [x22, x13]
+    59d4: 12001d6e     	and	w14, w11, #0xff
+    59d8: 4a0e018c     	eor	w12, w12, w14
+    59dc: 1100194e     	add	w14, w10, #0x6
+    59e0: 4a4c418c     	eor	w12, w12, w12, lsr #16
+    59e4: 0b0e026f     	add	w15, w19, w14
+    59e8: 924011cd     	and	x13, x14, #0x1f
+    59ec: 110009ef     	add	w15, w15, #0x2
+    59f0: 1b157d8c     	mul	w12, w12, w21
+    59f4: 924011eb     	and	x11, x15, #0x1f
+    59f8: 386d6acf     	ldrb	w15, [x22, x13]
+    59fc: 386b690b     	ldrb	w11, [x8, x11]
+    5a00: 4a4c3d8c     	eor	w12, w12, w12, lsr #15
+    5a04: 1b127d8c     	mul	w12, w12, w18
+    5a08: 53107d90     	lsr	w16, w12, #16
+    5a0c: 0b42420e     	add	w14, w16, w2, lsr #16
+    5a10: 0b0e016b     	add	w11, w11, w14
+    5a14: 1b097dae     	mul	w14, w13, w9
+    5a18: 4a0f016b     	eor	w11, w11, w15
+    5a1c: 382d6acb     	strb	w11, [x22, x13]
+    5a20: 12001d6f     	and	w15, w11, #0xff
+    5a24: 4a4e41ef     	eor	w15, w15, w14, lsr #16
+    5a28: 4a0c01cc     	eor	w12, w14, w12
+    5a2c: 1100254e     	add	w14, w10, #0x9
+    5a30: 4a0c01ec     	eor	w12, w15, w12
+    5a34: 0b0e026f     	add	w15, w19, w14
+    5a38: 924011ce     	and	x14, x14, #0x1f
+    5a3c: 1b157d8c     	mul	w12, w12, w21
+    5a40: 11000def     	add	w15, w15, #0x3
+    5a44: 924011ef     	and	x15, x15, #0x1f
+    5a48: 1b097dd1     	mul	w17, w14, w9
+    5a4c: 386f690b     	ldrb	w11, [x8, x15]
+    5a50: 386e6acf     	ldrb	w15, [x22, x14]
+    5a54: 4a4c3d8c     	eor	w12, w12, w12, lsr #15
+    5a58: 1b127d8c     	mul	w12, w12, w18
+    5a5c: 53187d90     	lsr	w16, w12, #24
+    5a60: 0b42620d     	add	w13, w16, w2, lsr #24
+    5a64: 0b0d016b     	add	w11, w11, w13
+    5a68: 4a4c422d     	eor	w13, w17, w12, lsr #16
+    5a6c: 4a0f016b     	eor	w11, w11, w15
+    5a70: 382e6acb     	strb	w11, [x22, x14]
+    5a74: 12001d6f     	and	w15, w11, #0xff
+    5a78: 4a0c01ac     	eor	w12, w13, w12
+    5a7c: 1100314d     	add	w13, w10, #0xc
+    5a80: 4a0f018c     	eor	w12, w12, w15
+    5a84: 0b0d026f     	add	w15, w19, w13
+    5a88: 924011ad     	and	x13, x13, #0x1f
+    5a8c: 4a4c418c     	eor	w12, w12, w12, lsr #16
+    5a90: 110011ef     	add	w15, w15, #0x4
+    5a94: 1b097db0     	mul	w16, w13, w9
+    5a98: 924011eb     	and	x11, x15, #0x1f
+    5a9c: 386d6acf     	ldrb	w15, [x22, x13]
+    5aa0: 1b157d8c     	mul	w12, w12, w21
+    5aa4: 386b690b     	ldrb	w11, [x8, x11]
+    5aa8: 4a4c3d8c     	eor	w12, w12, w12, lsr #15
+    5aac: 1b127d8c     	mul	w12, w12, w18
+    5ab0: 4a4c418c     	eor	w12, w12, w12, lsr #16
+    5ab4: 8b42818e     	add	x14, x12, x2, lsr #32
+    5ab8: 4a0c020c     	eor	w12, w16, w12
+    5abc: 0b0e016b     	add	w11, w11, w14
+    5ac0: 4a0f016b     	eor	w11, w11, w15
+    5ac4: 382d6acb     	strb	w11, [x22, x13]
+    5ac8: 12001d6e     	and	w14, w11, #0xff
+    5acc: 4a0e018c     	eor	w12, w12, w14
+    5ad0: 11003d4e     	add	w14, w10, #0xf
+    5ad4: 4a4c418c     	eor	w12, w12, w12, lsr #16
+    5ad8: 0b0e026f     	add	w15, w19, w14
+    5adc: 924011cd     	and	x13, x14, #0x1f
+    5ae0: 110015ef     	add	w15, w15, #0x5
+    5ae4: 1b157d8c     	mul	w12, w12, w21
+    5ae8: 924011eb     	and	x11, x15, #0x1f
+    5aec: 386d6acf     	ldrb	w15, [x22, x13]
+    5af0: 386b690b     	ldrb	w11, [x8, x11]
+    5af4: 4a4c3d8c     	eor	w12, w12, w12, lsr #15
+    5af8: 1b127d8c     	mul	w12, w12, w18
+    5afc: 4a4c418c     	eor	w12, w12, w12, lsr #16
+    5b00: 53087d90     	lsr	w16, w12, #8
+    5b04: 8b42a20e     	add	x14, x16, x2, lsr #40
+    5b08: 1b097db0     	mul	w16, w13, w9
+    5b0c: 0b0e016b     	add	w11, w11, w14
+    5b10: 4a0f016b     	eor	w11, w11, w15
+    5b14: 4a0c020c     	eor	w12, w16, w12
+    5b18: 382d6acb     	strb	w11, [x22, x13]
+    5b1c: 12001d6e     	and	w14, w11, #0xff
+    5b20: 4a0e018c     	eor	w12, w12, w14
+    5b24: 1100494e     	add	w14, w10, #0x12
+    5b28: 1100554a     	add	w10, w10, #0x15
+    5b2c: 4a4c418c     	eor	w12, w12, w12, lsr #16
+    5b30: 0b0e026f     	add	w15, w19, w14
+    5b34: 924011cd     	and	x13, x14, #0x1f
+    5b38: 110019ef     	add	w15, w15, #0x6
+    5b3c: 1b097da9     	mul	w9, w13, w9
+    5b40: 1b157d8c     	mul	w12, w12, w21
+    5b44: 924011eb     	and	x11, x15, #0x1f
+    5b48: 386d6acf     	ldrb	w15, [x22, x13]
+    5b4c: 386b690b     	ldrb	w11, [x8, x11]
+    5b50: 4a4c3d8c     	eor	w12, w12, w12, lsr #15
+    5b54: 1b127d8c     	mul	w12, w12, w18
+    5b58: 53107d90     	lsr	w16, w12, #16
+    5b5c: 8b42c20e     	add	x14, x16, x2, lsr #48
+    5b60: 0b0e016b     	add	w11, w11, w14
+    5b64: 4a0f016b     	eor	w11, w11, w15
+    5b68: 382d6acb     	strb	w11, [x22, x13]
+    5b6c: 12001d6e     	and	w14, w11, #0xff
+    5b70: 4a4941ce     	eor	w14, w14, w9, lsr #16
+    5b74: 4a0c0129     	eor	w9, w9, w12
+    5b78: 0b0a026c     	add	w12, w19, w10
+    5b7c: 11001d8c     	add	w12, w12, #0x7
+    5b80: 9240114a     	and	x10, x10, #0x1f
+    5b84: 4a0901c9     	eor	w9, w14, w9
+    5b88: 9240118b     	and	x11, x12, #0x1f
+    5b8c: 386a6acc     	ldrb	w12, [x22, x10]
+    5b90: 1b157d29     	mul	w9, w9, w21
+    5b94: 386b690b     	ldrb	w11, [x8, x11]
+    5b98: 12001c28     	and	w8, w1, #0xff
+    5b9c: 7100591f     	cmp	w8, #0x16
+    5ba0: 4a493d29     	eor	w9, w9, w9, lsr #15
+    5ba4: 1b127d29     	mul	w9, w9, w18
+    5ba8: 53187d29     	lsr	w9, w9, #24
+    5bac: 8b42e129     	add	x9, x9, x2, lsr #56
+    5bb0: 0b090169     	add	w9, w11, w9
+    5bb4: 4a0c0129     	eor	w9, w9, w12
+    5bb8: 382a6ac9     	strb	w9, [x22, x10]
+    5bbc: 54000060     	b.eq	0x5bc8 <cprisk_vm_oph_post_handler_i+0x1fa8>
+    5bc0: 71003d1f     	cmp	w8, #0xf
+    5bc4: 540003e1     	b.ne	0x5c40 <cprisk_vm_oph_post_handler_i+0x2020>
+    5bc8: 7100591f     	cmp	w8, #0x16
+    5bcc: 52800408     	mov	w8, #0x20               // =32
+    5bd0: 2a0103fb     	mov	w27, w1
+    5bd4: 9a9f0108     	csel	x8, x8, xzr, eq
+    5bd8: aa0003fa     	mov	x26, x0
+    5bdc: aa0203fc     	mov	x28, x2
+    5be0: 9ac82458     	lsr	x24, x2, x8
+    5be4: 9105c3e0     	add	x0, sp, #0x170
+    5be8: 91011281     	add	x1, x20, #0x44
+    5bec: 52800402     	mov	w2, #0x20               // =32
+    5bf0: 9105c3f9     	add	x25, sp, #0x170
+    5bf4: 94000000     	bl	0x5bf4 <cprisk_vm_oph_post_handler_i+0x1fd4>
+		0000000000005bf4:  R_AARCH64_CALL26	memcpy
+    5bf8: f240131f     	tst	x24, #0x1f
+    5bfc: 54000140     	b.eq	0x5c24 <cprisk_vm_oph_post_handler_i+0x2004>
+    5c00: 52800408     	mov	w8, #0x20               // =32
+    5c04: aa1603e9     	mov	x9, x22
+    5c08: 9240130a     	and	x10, x24, #0x1f
+    5c0c: f1000508     	subs	x8, x8, #0x1
+    5c10: 91000718     	add	x24, x24, #0x1
+    5c14: 386a6b2a     	ldrb	w10, [x25, x10]
+    5c18: 3800152a     	strb	w10, [x9], #0x1
+    5c1c: 54ffff61     	b.ne	0x5c08 <cprisk_vm_oph_post_handler_i+0x1fe8>
+    5c20: 14000004     	b	0x5c30 <cprisk_vm_oph_post_handler_i+0x2010>
+    5c24: ad4b87e0     	ldp	q0, q1, [sp, #0x170]
+    5c28: 3c844280     	stur	q0, [x20, #0x44]
+    5c2c: 3c854281     	stur	q1, [x20, #0x54]
+    5c30: b94087e3     	ldr	w3, [sp, #0x84]
+    5c34: aa1a03e0     	mov	x0, x26
+    5c38: 2a1b03e1     	mov	w1, w27
+    5c3c: aa1c03e2     	mov	x2, x28
+    5c40: 51004428     	sub	w8, w1, #0x11
+    5c44: b94083e4     	ldr	w4, [sp, #0x80]
+    5c48: 12001d08     	and	w8, w8, #0xff
+    5c4c: 7100091f     	cmp	w8, #0x2
+    5c50: 540005e8     	b.hi	0x5d0c <cprisk_vm_oph_post_handler_i+0x20ec>
+    5c54: 92400848     	and	x8, x2, #0x7
+    5c58: 924012e9     	and	x9, x23, #0x1f
+    5c5c: 110006eb     	add	w11, w23, #0x1
+    5c60: 8b080c08     	add	x8, x0, x8, lsl #3
+    5c64: 38696aca     	ldrb	w10, [x22, x9]
+    5c68: 110016ec     	add	w12, w23, #0x5
+    5c6c: f9470d08     	ldr	x8, [x8, #0xe18]
+    5c70: 4a08014a     	eor	w10, w10, w8
+    5c74: 38296aca     	strb	w10, [x22, x9]
+    5c78: 92401169     	and	x9, x11, #0x1f
+    5c7c: 38696aca     	ldrb	w10, [x22, x9]
+    5c80: 11000aeb     	add	w11, w23, #0x2
+    5c84: 4a48214a     	eor	w10, w10, w8, lsr #8
+    5c88: 38296aca     	strb	w10, [x22, x9]
+    5c8c: 92401169     	and	x9, x11, #0x1f
+    5c90: 11000eeb     	add	w11, w23, #0x3
+    5c94: 38696aca     	ldrb	w10, [x22, x9]
+    5c98: 4a48414a     	eor	w10, w10, w8, lsr #16
+    5c9c: 38296aca     	strb	w10, [x22, x9]
+    5ca0: 92401169     	and	x9, x11, #0x1f
+    5ca4: 110012eb     	add	w11, w23, #0x4
+    5ca8: 38696aca     	ldrb	w10, [x22, x9]
+    5cac: 4a48614a     	eor	w10, w10, w8, lsr #24
+    5cb0: 38296aca     	strb	w10, [x22, x9]
+    5cb4: 92401169     	and	x9, x11, #0x1f
+    5cb8: d360fd0a     	lsr	x10, x8, #32
+    5cbc: 38696acb     	ldrb	w11, [x22, x9]
+    5cc0: 4a0a016a     	eor	w10, w11, w10
+    5cc4: 38296aca     	strb	w10, [x22, x9]
+    5cc8: 92401189     	and	x9, x12, #0x1f
+    5ccc: d368fd0a     	lsr	x10, x8, #40
+    5cd0: 38696acb     	ldrb	w11, [x22, x9]
+    5cd4: 11001aec     	add	w12, w23, #0x6
+    5cd8: 4a0a016a     	eor	w10, w11, w10
+    5cdc: 38296aca     	strb	w10, [x22, x9]
+    5ce0: 92401189     	and	x9, x12, #0x1f
+    5ce4: d370fd0a     	lsr	x10, x8, #48
+    5ce8: 38696acb     	ldrb	w11, [x22, x9]
+    5cec: 11001eec     	add	w12, w23, #0x7
+    5cf0: d378fd08     	lsr	x8, x8, #56
+    5cf4: 4a0a016a     	eor	w10, w11, w10
+    5cf8: 38296aca     	strb	w10, [x22, x9]
+    5cfc: 92401189     	and	x9, x12, #0x1f
+    5d00: 38696aca     	ldrb	w10, [x22, x9]
+    5d04: 4a080148     	eor	w8, w10, w8
+    5d08: 38296ac8     	strb	w8, [x22, x9]
+    5d0c: b94ee808     	ldr	w8, [x0, #0xee8]
+    5d10: b9407fe5     	ldr	w5, [sp, #0x7c]
+    5d14: 35001068     	cbnz	w8, 0x5f20 <cprisk_vm_oph_post_handler_i+0x2300>
+    5d18: b94e7809     	ldr	w9, [x0, #0xe78]
+    5d1c: f947c808     	ldr	x8, [x0, #0xf90]
+    5d20: 34000069     	cbz	w9, 0x5d2c <cprisk_vm_oph_post_handler_i+0x210c>
+    5d24: 92401109     	and	x9, x8, #0x1f
+    5d28: b40001a9     	cbz	x9, 0x5d5c <cprisk_vm_oph_post_handler_i+0x213c>
+    5d2c: b4000068     	cbz	x8, 0x5d38 <cprisk_vm_oph_post_handler_i+0x2118>
+    5d30: 92401508     	and	x8, x8, #0x3f
+    5d34: b4000148     	cbz	x8, 0x5d5c <cprisk_vm_oph_post_handler_i+0x213c>
+    5d38: 12001c28     	and	w8, w1, #0xff
+    5d3c: 7100411f     	cmp	w8, #0x10
+    5d40: 54000ee8     	b.hi	0x5f1c <cprisk_vm_oph_post_handler_i+0x22fc>
+    5d44: 52800029     	mov	w9, #0x1                // =1
+    5d48: 1ac82128     	lsl	w8, w9, w8
+    5d4c: 52800149     	mov	w9, #0xa                // =10
+    5d50: 72a00029     	movk	w9, #0x1, lsl #16
+    5d54: 6a09011f     	tst	w8, w9
+    5d58: 54000e20     	b.eq	0x5f1c <cprisk_vm_oph_post_handler_i+0x22fc>
+    5d5c: 9105c3e5     	add	x5, sp, #0x170
+    5d60: aa0003f8     	mov	x24, x0
+    5d64: 2a0103f7     	mov	w23, w1
+    5d68: 9105c3f6     	add	x22, sp, #0x170
+    5d6c: 9400007e     	bl	0x5f64 <cprisk_vm_wb_sidefx_build_input_i>
+    5d70: 9105c3e1     	add	x1, sp, #0x170
+    5d74: 910403e2     	add	x2, sp, #0x100
+    5d78: 528000e0     	mov	w0, #0x7                // =7
+    5d7c: 94000000     	bl	0x5d7c <cprisk_vm_oph_post_handler_i+0x215c>
+		0000000000005d7c:  R_AARCH64_CALL26	cprisk_whitebox_evaluate_domain
+    5d80: 34000460     	cbz	w0, 0x5e0c <cprisk_vm_oph_post_handler_i+0x21ec>
+    5d84: 910383e0     	add	x0, sp, #0xe0
+    5d88: 9105c3e1     	add	x1, sp, #0x170
+    5d8c: 52800082     	mov	w2, #0x4                // =4
+    5d90: b900e3ff     	str	wzr, [sp, #0xe0]
+    5d94: 94000000     	bl	0x5d94 <cprisk_vm_oph_post_handler_i+0x2174>
+		0000000000005d94:  R_AARCH64_CALL26	memcpy
+    5d98: b940e3f7     	ldr	w23, [sp, #0xe0]
+    5d9c: 910383e0     	add	x0, sp, #0xe0
+    5da0: 910022c1     	add	x1, x22, #0x8
+    5da4: 52800082     	mov	w2, #0x4                // =4
+    5da8: b900e3ff     	str	wzr, [sp, #0xe0]
+    5dac: 94000000     	bl	0x5dac <cprisk_vm_oph_post_handler_i+0x218c>
+		0000000000005dac:  R_AARCH64_CALL26	memcpy
+    5db0: b94eab08     	ldr	w8, [x24, #0xea8]
+    5db4: b940e3e9     	ldr	w9, [sp, #0xe0]
+    5db8: b94e870a     	ldr	w10, [x24, #0xe84]
+    5dbc: b94f930b     	ldr	w11, [x24, #0xf90]
+    5dc0: 4a170108     	eor	w8, w8, w23
+    5dc4: 4a090149     	eor	w9, w10, w9
+    5dc8: 4a48426a     	eor	w10, w19, w8, lsr #16
+    5dcc: 4a0b0129     	eor	w9, w9, w11
+    5dd0: 4a494129     	eor	w9, w9, w9, lsr #16
+    5dd4: 4a080148     	eor	w8, w10, w8
+    5dd8: 5294d16a     	mov	w10, #0xa68b            // =42635
+    5ddc: 1b157d08     	mul	w8, w8, w21
+    5de0: 72b08d8a     	movk	w10, #0x846c, lsl #16
+    5de4: 1b157d29     	mul	w9, w9, w21
+    5de8: 4a483d08     	eor	w8, w8, w8, lsr #15
+    5dec: 4a493d29     	eor	w9, w9, w9, lsr #15
+    5df0: 1b0a7d08     	mul	w8, w8, w10
+    5df4: 1b0a7d29     	mul	w9, w9, w10
+    5df8: 4a484108     	eor	w8, w8, w8, lsr #16
+    5dfc: 4a494129     	eor	w9, w9, w9, lsr #16
+    5e00: b90eab08     	str	w8, [x24, #0xea8]
+    5e04: b90e8709     	str	w9, [x24, #0xe84]
+    5e08: 14000005     	b	0x5e1c <cprisk_vm_oph_post_handler_i+0x21fc>
+    5e0c: 910403e2     	add	x2, sp, #0x100
+    5e10: aa1803e0     	mov	x0, x24
+    5e14: 2a1703e1     	mov	w1, w23
+    5e18: 94000ba0     	bl	0x8c98 <cprisk_vm_wb_sidefx_apply_out_i>
+    5e1c: 3905c3ff     	strb	wzr, [sp, #0x170]
+    5e20: 3905c7ff     	strb	wzr, [sp, #0x171]
+    5e24: 3905cbff     	strb	wzr, [sp, #0x172]
+    5e28: 3905cfff     	strb	wzr, [sp, #0x173]
+    5e2c: 3905d3ff     	strb	wzr, [sp, #0x174]
+    5e30: 3905d7ff     	strb	wzr, [sp, #0x175]
+    5e34: 3905dbff     	strb	wzr, [sp, #0x176]
+    5e38: 3905dfff     	strb	wzr, [sp, #0x177]
+    5e3c: 3905e3ff     	strb	wzr, [sp, #0x178]
+    5e40: 3905e7ff     	strb	wzr, [sp, #0x179]
+    5e44: 3905ebff     	strb	wzr, [sp, #0x17a]
+    5e48: 3905efff     	strb	wzr, [sp, #0x17b]
+    5e4c: 3905f3ff     	strb	wzr, [sp, #0x17c]
+    5e50: 3905f7ff     	strb	wzr, [sp, #0x17d]
+    5e54: 3905fbff     	strb	wzr, [sp, #0x17e]
+    5e58: 3905ffff     	strb	wzr, [sp, #0x17f]
+    5e5c: 390603ff     	strb	wzr, [sp, #0x180]
+    5e60: 390607ff     	strb	wzr, [sp, #0x181]
+    5e64: 39060bff     	strb	wzr, [sp, #0x182]
+    5e68: 39060fff     	strb	wzr, [sp, #0x183]
+    5e6c: 390613ff     	strb	wzr, [sp, #0x184]
+    5e70: 390617ff     	strb	wzr, [sp, #0x185]
+    5e74: 39061bff     	strb	wzr, [sp, #0x186]
+    5e78: 39061fff     	strb	wzr, [sp, #0x187]
+    5e7c: 390623ff     	strb	wzr, [sp, #0x188]
+    5e80: 390627ff     	strb	wzr, [sp, #0x189]
+    5e84: 39062bff     	strb	wzr, [sp, #0x18a]
+    5e88: 39062fff     	strb	wzr, [sp, #0x18b]
+    5e8c: 390633ff     	strb	wzr, [sp, #0x18c]
+    5e90: 390637ff     	strb	wzr, [sp, #0x18d]
+    5e94: 39063bff     	strb	wzr, [sp, #0x18e]
+    5e98: 39063fff     	strb	wzr, [sp, #0x18f]
+    5e9c: 390403ff     	strb	wzr, [sp, #0x100]
+    5ea0: 390407ff     	strb	wzr, [sp, #0x101]
+    5ea4: 39040bff     	strb	wzr, [sp, #0x102]
+    5ea8: 39040fff     	strb	wzr, [sp, #0x103]
+    5eac: 390413ff     	strb	wzr, [sp, #0x104]
+    5eb0: 390417ff     	strb	wzr, [sp, #0x105]
+    5eb4: 39041bff     	strb	wzr, [sp, #0x106]
+    5eb8: 39041fff     	strb	wzr, [sp, #0x107]
+    5ebc: 390423ff     	strb	wzr, [sp, #0x108]
+    5ec0: 390427ff     	strb	wzr, [sp, #0x109]
+    5ec4: 39042bff     	strb	wzr, [sp, #0x10a]
+    5ec8: 39042fff     	strb	wzr, [sp, #0x10b]
+    5ecc: 390433ff     	strb	wzr, [sp, #0x10c]
+    5ed0: 390437ff     	strb	wzr, [sp, #0x10d]
+    5ed4: 39043bff     	strb	wzr, [sp, #0x10e]
+    5ed8: 39043fff     	strb	wzr, [sp, #0x10f]
+    5edc: 390443ff     	strb	wzr, [sp, #0x110]
+    5ee0: 390447ff     	strb	wzr, [sp, #0x111]
+    5ee4: 39044bff     	strb	wzr, [sp, #0x112]
+    5ee8: 39044fff     	strb	wzr, [sp, #0x113]
+    5eec: 390453ff     	strb	wzr, [sp, #0x114]
+    5ef0: 390457ff     	strb	wzr, [sp, #0x115]
+    5ef4: 39045bff     	strb	wzr, [sp, #0x116]
+    5ef8: 39045fff     	strb	wzr, [sp, #0x117]
+    5efc: 390463ff     	strb	wzr, [sp, #0x118]
+    5f00: 390467ff     	strb	wzr, [sp, #0x119]
+    5f04: 39046bff     	strb	wzr, [sp, #0x11a]
+    5f08: 39046fff     	strb	wzr, [sp, #0x11b]
+    5f0c: 390473ff     	strb	wzr, [sp, #0x11c]
+    5f10: 390477ff     	strb	wzr, [sp, #0x11d]
+    5f14: 39047bff     	strb	wzr, [sp, #0x11e]
+    5f18: 39047fff     	strb	wzr, [sp, #0x11f]
+    5f1c: b9407fe5     	ldr	w5, [sp, #0x7c]
+    5f20: 910a03ff     	add	sp, sp, #0x280
+    5f24: a9454ff4     	ldp	x20, x19, [sp, #0x50]
+    5f28: a94457f6     	ldp	x22, x21, [sp, #0x40]
+    5f2c: a9435ff8     	ldp	x24, x23, [sp, #0x30]
+    5f30: a94267fa     	ldp	x26, x25, [sp, #0x20]
+    5f34: a9416ffc     	ldp	x28, x27, [sp, #0x10]
+    5f38: a8c67bfd     	ldp	x29, x30, [sp], #0x60
+    5f3c: 2a0503e0     	mov	w0, w5
+    5f40: d65f03c0     	ret
+    5f44: f2401d1f     	tst	x8, #0xff
+    5f48: 54ffc7a1     	b.ne	0x583c <cprisk_vm_oph_post_handler_i+0x1c1c>
+    5f4c: b94ec409     	ldr	w9, [x0, #0xec4]
+    5f50: 34feea29     	cbz	w9, 0x3c94 <cprisk_vm_oph_post_handler_i+0x74>
+    5f54: 4b090108     	sub	w8, w8, w9
+    5f58: 7100811f     	cmp	w8, #0x20
+    5f5c: 54ffc703     	b.lo	0x583c <cprisk_vm_oph_post_handler_i+0x1c1c>
+    5f60: 17fff74d     	b	0x3c94 <cprisk_vm_oph_post_handler_i+0x74>

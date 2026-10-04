@@ -1,0 +1,8 @@
+    39b4: 9102c3ff     	add	sp, sp, #0xb0
+    39b8: 14000000     	b	0x39b8 <cprisk_vm_dispatch_leaf_wb_wrapped_i+0x174>
+		00000000000039b8:  R_AARCH64_JUMP26	cprisk_vm_oph_post_handler_i
+    39bc: aa1f03e8     	mov	x8, xzr
+    3bfc: b90eeac8     	str	w8, [x22, #0xee8]
+    3c00: 94000000     	bl	0x3c00 <cprisk_vm_dispatch_leaf_wb_wrapped_i+0x3bc>
+		0000000000003c00:  R_AARCH64_CALL26	cprisk_vm_oph_post_handler_i
+    3c04: a94a4ff4     	ldp	x20, x19, [sp, #0xa0]
