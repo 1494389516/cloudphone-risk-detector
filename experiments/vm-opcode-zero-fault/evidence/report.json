@@ -1,0 +1,25 @@
+{
+  "base": "d07b76404e19cd3dffd790fae55158c329d164c0",
+  "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0\nCopyright (C) 2023 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+  "scope": "Linux host, deterministic platform substitutes from 2A; actual interpreter helpers and A/B loops; not Apple device validation",
+  "before": {
+    "zero_cases": 5120,
+    "zero_errors": 5107,
+    "nonzero_cases": 25600,
+    "nonzero_digest": "1216405bd6ed5cd6",
+    "loop_cases": 6,
+    "loop_errors": 6,
+    "source_sha256": "2bbc5fbea098533b68226fc5600b03b94f6c09f5e0d2c32b9c01b267c5d60116"
+  },
+  "after": {
+    "zero_cases": 5120,
+    "zero_errors": 0,
+    "nonzero_cases": 25600,
+    "nonzero_digest": "1216405bd6ed5cd6",
+    "loop_cases": 6,
+    "loop_errors": 0,
+    "source_sha256": "6305e8fa9cb0a2eae958eda9332cc9fb68391b76651ea84880a5a34d2419eff7"
+  },
+  "nonzero_byte_comparison": "25600/25600 identical",
+  "status": "PASS"
+}

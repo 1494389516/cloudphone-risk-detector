@@ -2148,6 +2148,9 @@ static uint8_t cprisk_vmp_opcode_fault_byte_i(uint64_t fault_mask,
                                               uint64_t func_id,
                                               uint32_t pc_index,
                                               uint8_t op_raw) {
+    /* Preserve the no-fault sentinel before mixing in the opcode domain. */
+    if (fault_mask == 0u)
+        return 0u;
     return cprisk_vmp_dispatch_fault_byte_i(
         fault_mask ^ 0x4F50434F4445464AULL, /* "OPCODEFJ" */
         func_id,
