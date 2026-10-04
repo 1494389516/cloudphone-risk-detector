@@ -17,7 +17,8 @@ extension VMSelfExpectInjector {
               expect.size == 8 else { throw MachOError.invalidData("CPSV v2 requires reserved manifest/expectation and file-backed TEXT") }
         let uuidCommands = file.loadCommands.filter { $0.cmd == 0x1b } // LC_UUID
         guard uuidCommands.count == 1 else { throw MachOError.invalidData("CPSV v2 requires one LC_UUID") }
-        let u = uuidCommands[0].offset
+        guard let u = Int(exactly: uuidCommands[0].offset), u <= file.data.count,
+              file.data.count - u >= 24 else { throw MachOError.invalidData("CPSV v2 UUID command outside file") }
         guard try file.readUInt32(at: u + 4) == 24 else { throw MachOError.invalidData("CPSV v2 malformed LC_UUID") }
         let uuid = file.data.subdata(in: (u+8)..<(u+24))
         guard text.address >= textSegment.vmAddress else { throw MachOError.invalidData("CPSV v2 TEXT RVA underflow") }
@@ -74,7 +75,8 @@ extension VMSelfExpectInjector {
     private static func v2FunctionStarts(file: MachOFile, base: UInt64) throws -> [UInt64] {
         let commands = file.loadCommands.filter { $0.cmd == LoadCommand.LC_FUNCTION_STARTS }
         guard commands.count == 1 else { throw MachOError.invalidData("CPSV v2 requires LC_FUNCTION_STARTS") }
-        let command = commands[0].offset
+        guard let command = Int(exactly: commands[0].offset), command <= file.data.count,
+              file.data.count - command >= 16 else { throw MachOError.invalidData("CPSV v2 function starts command outside file") }
         guard try file.readUInt32(at: command + 4) == 16 else { throw MachOError.invalidData("CPSV v2 malformed function starts command") }
         let offset = Int(try file.readUInt32(at: command + 8)), size = Int(try file.readUInt32(at: command + 12))
         guard offset <= file.data.count, size <= file.data.count - offset else { throw MachOError.invalidData("CPSV v2 function starts outside file") }
