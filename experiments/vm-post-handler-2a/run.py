@@ -16,6 +16,7 @@ assert after[:start]+after[end:]==before,'unexpected production change outside t
 refs=sorted(set(re.findall(r'\(const void \*\)&(\w+)',before)))
 address_map={name:0x100000+i*0x100 for i,name in enumerate(refs)}
 flags=['-U__APPLE__','-O2','-ffunction-sections','-fdata-sections','-I',str(core),'-include',str(here/'host_shim.h')]
+if platform.system()=='Darwin': flags += ['-isysroot',subprocess.check_output(['xcrun','--sdk','macosx','--show-sdk-path']).decode().strip()]
 if a.coverage: flags += ['-fprofile-instr-generate', '-fcoverage-mapping']
 modules=sorted(core.glob('cprisk_vm_oph_*.c'))+[core/'cprisk_vm_hardening.c',core/'vm_cff_fusion.c',core/'cprisk_vm_sync_barrier.c']
 report={'candidate_ref':a.candidate_ref or 'WORKTREE','host_platform':platform.platform(),'base':base,'compiler':subprocess.check_output([a.clang,'--version']).decode(),'flags':flags,'address_map':address_map,'limitations':['Host non-Apple code path forced; Mach-O discovery stubbed','whitebox/session/runtime/emulator/crypto tracing dependencies deterministic substitutes','data-only interpreter code-address references normalized; real Apple self-check not executed','not evaluate() performance or physical ARM64 execution']}

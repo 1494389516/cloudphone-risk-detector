@@ -29,6 +29,8 @@ report = {
     'scope': ('Host non-Apple code path forced, deterministic platform substitutes from 2A; actual '
               'interpreter helpers and A/B loops; not Apple device validation'),
 }
+platform_flags = (['-isysroot', subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-path']).decode().strip()]
+                  if platform.system() == 'Darwin' else [])
 for phase in ['before', 'after']:
     build = out / phase
     build.mkdir(exist_ok=True)
@@ -37,7 +39,7 @@ for phase in ['before', 'after']:
     (build / 'interpreter-under-test.c').write_bytes(source)
     binary = build / 'regression'
     subprocess.run([
-        args.cc, '-U__APPLE__', '-O2', '-ffunction-sections', '-fdata-sections',
+        args.cc, *platform_flags, '-U__APPLE__', '-O2', '-ffunction-sections', '-fdata-sections',
         '-I', str(core), '-I', str(build), '-include',
         str(here.parent / 'vm-post-handler-2a/host_shim.h'),
         str(here / 'regression.c'), *map(str, modules),

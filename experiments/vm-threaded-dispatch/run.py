@@ -56,6 +56,8 @@ int main(int argc, char **argv) {
     # On Darwin intentionally use the same non-Apple shim, not an Apple runtime claim.
     flags = [opt, '-U__APPLE__', '-ffunction-sections', '-fdata-sections', '-I', str(CORE),
              '-include', str(HERE.parent / 'vm-post-handler-2a/host_shim.h')]
+    if platform.system() == 'Darwin':
+        flags += ['-isysroot', subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-path']).decode().strip()]
     link = ['-Wl,-dead_strip'] if platform.system() == 'Darwin' else ['-Wl,--gc-sections']
     modules = sorted(CORE.glob('cprisk_vm_oph_*.c')) + [CORE / 'cprisk_vm_hardening.c', CORE / 'vm_cff_fusion.c', CORE / 'cprisk_vm_sync_barrier.c']
     for phase in ['legacy', 'threaded']:

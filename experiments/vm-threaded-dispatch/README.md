@@ -70,14 +70,14 @@ are in `evidence/`.
 ```sh
 python3 experiments/vm-threaded-dispatch/run.py --cc clang --opt O0 --output /tmp/thread-O0
 python3 experiments/vm-threaded-dispatch/run.py --cc clang --opt O2 --output /tmp/thread-O2
-python3 experiments/vm-threaded-dispatch/inspect.py --cc clang --objdump llvm-objdump --output /tmp/thread-arm64
+python3 experiments/vm-threaded-dispatch/inspect_arm64.py --cc clang --objdump llvm-objdump --output /tmp/thread-arm64
 ```
 
 On macOS the host comparisons deliberately force the same non-Apple path and use
 Darwin dead stripping. Apple objects use real SDK headers:
 
 ```sh
-python3 experiments/vm-threaded-dispatch/inspect.py --apple --cc "$(xcrun -f clang)" --objdump "$(xcrun -f llvm-objdump)" --output /tmp/thread-apple
+python3 experiments/vm-threaded-dispatch/inspect_arm64.py --apple --cc "$(xcrun -f clang)" --objdump "$(xcrun -f llvm-objdump)" --output /tmp/thread-apple
 python3 experiments/vm-threaded-dispatch/apple_release.py --ref d07b76404e19cd3dffd790fae55158c329d164c0 --output /tmp/stage2a-apple
 ```
 

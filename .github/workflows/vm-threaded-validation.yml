@@ -27,7 +27,7 @@ jobs:
           python3 experiments/vm-threaded-dispatch/run.py --cc "$(xcrun -f clang)" --opt O0 --output /tmp/vm-evidence/threaded-O0
           python3 experiments/vm-threaded-dispatch/run.py --cc "$(xcrun -f clang)" --opt O2 --output /tmp/vm-evidence/threaded-O2
       - name: Apple ARM64 object and musttail evidence
-        run: python3 experiments/vm-threaded-dispatch/inspect.py --apple --cc "$(xcrun -f clang)" --objdump "$(xcrun -f llvm-objdump)" --output /tmp/vm-evidence/apple-object
+        run: python3 experiments/vm-threaded-dispatch/inspect_arm64.py --apple --cc "$(xcrun -f clang)" --objdump "$(xcrun -f llvm-objdump)" --output /tmp/vm-evidence/apple-object
       - uses: actions/upload-artifact@v4
         if: always()
         with:
