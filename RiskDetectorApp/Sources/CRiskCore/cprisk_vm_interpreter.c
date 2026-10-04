@@ -1700,10 +1700,8 @@ __attribute__((used, section("__DATA," CPRISK_ARMOR_SECTION_VMP_SELF_SPANS)))
 static const uint8_t cprisk_vm_selfchk_spans_i[CPRISK_CPSV2_BYTES] = {
     0x43, 0x50, 0x53, 0x56, 2, 0, 0, 0, 58, 0, 0, 0
 }; /* Pointer-free reservation; zero UUID/ranges deliberately reject before injection. */
-#if defined(__APPLE__)
-__attribute__((used, section("__DATA," CPRISK_ARMOR_SECTION_VMP_SELF_EXPECT)))
-#endif
-static const uint8_t cprisk_vm_cpsv2_expect_i[8] = {0};
+/* The host linker owns the existing 8-byte mdvsk reservation. Do not add
+ * another C contribution: ld concatenates both contributions into 16 bytes. */
 #else
 #if defined(__APPLE__)
 #define CPRISK_VM_SELFCHK_SPAN_SECTION_ATTR "__DATA," CPRISK_ARMOR_SECTION_VMP_SELF_SPANS
@@ -2403,7 +2401,7 @@ static void cprisk_vm_m3_selfchk_run_i(const struct mach_header_64 *hdr,
     /* A threaded build always requires v2 plus keyed expectation, even when the
      * bytecode's optional M3 flags are absent. No v1/unhashed fallback. */
     uint32_t observed = 0u;
-    const uint32_t expected = cprisk_vm_m3_self_expect_hmac_resolve_i(hdr);
+    const uint32_t expected = cprisk_vm_cpsv2_expect_resolve_i(hdr);
     if (!cprisk_vm_cpsv2_observe_i(hdr, &observed) || !expected || observed != expected) {
         out->poison_flags |= CPRISK_VM_POISON_SELF_INTEGRITY | CPRISK_VM_POISON_BYTECODE;
         cprisk_vm_self_fail_acc_i(acc, func_id);

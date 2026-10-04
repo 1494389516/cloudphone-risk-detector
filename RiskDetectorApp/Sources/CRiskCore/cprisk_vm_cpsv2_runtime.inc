@@ -1,4 +1,14 @@
 /* Included after key derivation. No allocation or code read before validation. */
+static uint32_t cprisk_vm_cpsv2_expect_resolve_i(const struct mach_header_64 *hdr) {
+    if (!hdr) return 0u;
+    unsigned long size = 0;
+    const uint8_t *p = cprisk_find_section(hdr, CPRISK_ARMOR_SEGMENT_DATA,
+        CPRISK_ARMOR_SECTION_VMP_SELF_EXPECT, &size);
+    if (!p || size != 8u || cprisk_cpsv2_u32(p) != CPRISK_VMP_SELF_EXPECT_MAGIC_HMAC)
+        return 0u;
+    return cprisk_cpsv2_u32(p + 4u);
+}
+
 static int cprisk_vm_cpsv2_observe_i(const struct mach_header_64 *hdr, uint32_t *tag) {
 #if defined(__APPLE__)
     if (!hdr || !tag || hdr->ncmds > 4096u || hdr->sizeofcmds > 0x2000000u) return 0;

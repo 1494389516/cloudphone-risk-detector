@@ -17,7 +17,9 @@ there is no legacy/unhashed fallback.
 - 32-byte header: LE magic/version/count/reserved, 16-byte Mach-O LC_UUID.
   Then 58 entries of LE u64 image RVA, u32 byte length, u32 kind (960 bytes total).
   The reservation is pointer-free, so post-link injection cannot overwrite dyld
-  chained-fixup slots. The separate 8-byte CPSH expectation is also pre-reserved.
+  chained-fixup slots. The separate 8-byte CPSH expectation is reserved by the host linker (the
+  existing Xcode project already uses `-sectcreate`). Do not also emit a C
+  reservation: ld concatenates contributions, creating an invalid 16-byte section.
 - Validate exact size/count/order, UUID, identity, instruction alignment, nonzero
   lengths, TEXT bounds, overlap and overflow; cap ranges at 64 KiB and total at
   1 MiB. Snapshot descriptors before validation/hash. This is not protection

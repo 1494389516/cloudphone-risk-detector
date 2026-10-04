@@ -17,6 +17,7 @@ def main():
     source=(CORE/'cprisk_vm_interpreter.c').read_text()
     start=source.index('static void cprisk_vm_selfchk_hmac_key_i(');end=source.index('\nstatic uint64_t cprisk_vm_selfchk_fault_mask_i(',start)
     body='''#include "include/cprisk_vm_cpsv2_hash.h"
+#define CPRISK_VMP_SELF_EXPECT_MAGIC_HMAC 0x48535043u
 #include "include/cprisk_macho.h"
 #include <stdio.h>
 _Static_assert(S_THREAD_LOCAL_ZEROFILL == 0x12, "Match Apple's loader contract");
@@ -39,7 +40,7 @@ int main(void) {
     uint32_t tag=0; unsigned long n=0;
     const uint8_t *e=cprisk_find_section(&_mh_execute_header,"__DATA","__swift5_mdvsk",&n);
     int ok=cprisk_vm_cpsv2_observe_i(&_mh_execute_header,&tag);
-    return !(ok && n==8 && cprisk_cpsv2_u32(e)==0x48535043 && tag && tag==cprisk_cpsv2_u32(e+4));
+    return !(ok && n==8 && tag && tag==cprisk_vm_cpsv2_expect_resolve_i(&_mh_execute_header));
 }
 '''
     c=o/'fixture.c';c.write_text(body);exe=o/'fixture';linkmap=o/'linkmap.txt'
