@@ -1,0 +1,60 @@
+{
+  "candidate_ref": "d07b76404e19cd3dffd790fae55158c329d164c0",
+  "host_platform": "macOS-15.7.9-arm64-arm-64bit-Mach-O",
+  "base": "5d8febd30b317082200dd399ff5d0ac64f37df1a",
+  "compiler": "Apple clang version 17.0.0 (clang-1700.0.13.5)\nTarget: arm64-apple-darwin24.6.0\nThread model: posix\nInstalledDir: /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin\n",
+  "flags": [
+    "-U__APPLE__",
+    "-O2",
+    "-ffunction-sections",
+    "-fdata-sections",
+    "-I",
+    "/Users/runner/work/cloudphone-risk-detector/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore",
+    "-include",
+    "/Users/runner/work/cloudphone-risk-detector/cloudphone-risk-detector/experiments/vm-post-handler-2a/host_shim.h",
+    "-isysroot",
+    "/Applications/Xcode_16.4.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.5.sdk"
+  ],
+  "address_map": {
+    "cprisk_vm_dispatch_lookup": 1048576,
+    "cprisk_vm_dispatch_oph_materialized_i": 1048832,
+    "cprisk_vm_entry": 1049088,
+    "cprisk_vm_entry_alt1": 1049344,
+    "cprisk_vm_entry_alt2": 1049600,
+    "cprisk_vm_execute": 1049856,
+    "cprisk_vm_execute_lane0_i": 1050112,
+    "cprisk_vm_execute_lane1_i": 1050368,
+    "cprisk_vm_execute_lane2_i": 1050624,
+    "cprisk_vm_interp_finish_run_lane0_i": 1050880,
+    "cprisk_vm_interp_finish_run_lane1_i": 1051136,
+    "cprisk_vm_interp_finish_run_lane2_i": 1051392,
+    "cprisk_vm_interp_loop_a": 1051648,
+    "cprisk_vm_interp_loop_b": 1051904,
+    "cprisk_vm_m3_dead_bait_add_i": 1052160,
+    "cprisk_vm_m3_dead_bait_roll_i": 1052416,
+    "cprisk_vm_m3_dead_bait_xor_i": 1052672,
+    "cprisk_vm_m3_dead_dispatch_i": 1052928,
+    "cprisk_vm_m3_dead_heavy_shadow_i": 1053184,
+    "cprisk_vm_query_armor_capability_bits": 1053440,
+    "cprisk_vm_run_program_lane0_i": 1053696,
+    "cprisk_vm_run_program_lane1_i": 1053952,
+    "cprisk_vm_run_program_lane2_i": 1054208
+  },
+  "limitations": [
+    "Host non-Apple code path forced; Mach-O discovery stubbed",
+    "whitebox/session/runtime/emulator/crypto tracing dependencies deterministic substitutes",
+    "data-only interpreter code-address references normalized; real Apple self-check not executed",
+    "not evaluate() performance or physical ARM64 execution"
+  ],
+  "before": {
+    "cases": 6528,
+    "sha256": "f31deb389b6da6d172da2c2c960c41e188d65125209458e216d981a742920046",
+    "step_limit_reached": 192
+  },
+  "after": {
+    "cases": 6528,
+    "sha256": "f31deb389b6da6d172da2c2c960c41e188d65125209458e216d981a742920046",
+    "step_limit_reached": 192
+  },
+  "equal": true
+}

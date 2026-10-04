@@ -70,7 +70,7 @@ def main():
                 if not found: continue
                 image_path = re.search(r'^# Path: (.+)$', map_text, re.M)
                 assert image_path and len(found) == 1, 'Ambiguous linker map'
-                image = pathlib.Path(image_path[1])
+                image = pathlib.Path(image_path[1]).resolve()
                 addr, length = map(lambda s: int(s, 16), found[0])
                 assert length > 0 and addr % 4 == 0 and length % 4 == 0
                 offset, code = text_bytes(image, addr, length)

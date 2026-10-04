@@ -112,3 +112,41 @@ assertion remains enabled. The zero-fault runner now accepts Darwin linking.
 
 Release eligibility remains false. CI artifacts must be inspected; adding a workflow
 is not evidence that its jobs ran or passed.
+
+## Initial VM-only timing (Linux host)
+
+Three rounds, 1,000 samples per version per round, 32 warmups, alternating version
+order. Each sample includes frame setup, 260 real VM BRANCH_REL steps and a full
+result digest. No entry probes in timing builds; output digests agree.
+
+| Round | Legacy P50 / P95, microseconds | Threaded P50 / P95, microseconds | P95 change |
+| --- | --- | --- | --- |
+| 0 | 48.503 / 61.814 | 47.632 / 67.742 | +9.59% |
+| 1 | 48.543 / 61.333 | 47.702 / 61.773 | +0.72% |
+| 2 | 48.483 / 61.002 | 47.572 / 62.534 | +2.51% |
+
+P50 is slightly lower while P95 is higher in all three rounds; this is not a
+performance pass. Shared-runner scheduling noise, code replication/cache footprint
+and calling convention costs are plausible contributors, not measured causes.
+The limited BRANCH_REL workload and host timings cannot predict SDK evaluate()
+latency. Do not assert that threading must be faster. Raw samples and provenance
+are retained in evidence/. Broader per-opcode/device profiling is still required.
+
+```sh
+python3 experiments/vm-threaded-dispatch/benchmark.py --validation-output /tmp/thread-O2
+```
+
+## Apple CI evidence
+
+Run `37168302400`, head `14ad2fbc10637650372cd0ce3ce87c30f7a74d6e`,
+Apple Clang 17.0.0 (`clang-1700.0.13.5`) on macOS:
+
+- Historical stage 2A: all 6,528 comparisons identical.
+- Zero-mask regression: all checks pass.
+- Threaded O0/O2: all 6,528 comparisons and three 200,000-step lanes pass.
+- Apple iPhoneOS SDK ARM64 objects: 52 distinct context functions, musttail IR,
+  indirect branches; O0/O2/Os each have three identical object builds.
+
+Archived report JSON and the verified artifact SHA256 are in `evidence/apple-ci/`.
+This closes Apple **object** compiler support, not candidate final-link/CPSV/device
+acceptance. The separate linked Release job is reported independently.

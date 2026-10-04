@@ -1,0 +1,7 @@
+{
+  "head": "14ad2fbc10637650372cd0ce3ce87c30f7a74d6e",
+  "run_id": 37168302400,
+  "artifact_id": 11290557359,
+  "archive_sha256": "96ce36626e4684c4141921b64ba15bc0a4755c0efdd4383fbbdff7a6e8f5571d",
+  "checks": "host + Apple object only; linked release separate"
+}

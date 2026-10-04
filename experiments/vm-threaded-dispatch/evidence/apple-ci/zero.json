@@ -1,0 +1,25 @@
+{
+  "base": "d07b76404e19cd3dffd790fae55158c329d164c0",
+  "compiler": "Apple clang version 17.0.0 (clang-1700.0.13.5)\nTarget: arm64-apple-darwin24.6.0\nThread model: posix\nInstalledDir: /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin\n",
+  "scope": "Host non-Apple code path forced, deterministic platform substitutes from 2A; actual interpreter helpers and A/B loops; not Apple device validation",
+  "before": {
+    "zero_cases": 5120,
+    "zero_errors": 5107,
+    "nonzero_cases": 25600,
+    "nonzero_digest": "1216405bd6ed5cd6",
+    "loop_cases": 6,
+    "loop_errors": 6,
+    "source_sha256": "2bbc5fbea098533b68226fc5600b03b94f6c09f5e0d2c32b9c01b267c5d60116"
+  },
+  "after": {
+    "zero_cases": 5120,
+    "zero_errors": 0,
+    "nonzero_cases": 25600,
+    "nonzero_digest": "1216405bd6ed5cd6",
+    "loop_cases": 6,
+    "loop_errors": 0,
+    "source_sha256": "6305e8fa9cb0a2eae958eda9332cc9fb68391b76651ea84880a5a34d2419eff7"
+  },
+  "nonzero_byte_comparison": "25600/25600 identical",
+  "status": "PASS"
+}
