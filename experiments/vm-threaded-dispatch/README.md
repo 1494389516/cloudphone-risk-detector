@@ -52,7 +52,10 @@ structural guarantee. The probe corpus/stress have instrumentation; object inspe
 uses the uninstrumented implementation.
 
 The corpus includes CALL/RET/nested-call, error exits, hash failure and both WB
-outcomes. Complete initialized public output plus acc banks, vregs, encoded_pc and
+outcomes. Independent encrypted/plain NOP/HALT wire tests also pass through the candidate
+on all three lanes at O0/O2 (six combinations per build). These Linux results are
+recorded under encrypted_wire; the earlier Apple artifact predates this addition.
+Complete initialized public output plus acc banks, vregs, encoded_pc and
 steps are serialized. All other internal frame fields are not yet serialized.
 Code-address data is normalized only in generated test copies. Platform substitutes
 and the corpus are inherited from 2A; this is not Swift producer parity or real
@@ -150,3 +153,30 @@ Apple Clang 17.0.0 (`clang-1700.0.13.5`) on macOS:
 Archived report JSON and the verified artifact SHA256 are in `evidence/apple-ci/`.
 This closes Apple **object** compiler support, not candidate final-link/CPSV/device
 acceptance. The separate linked Release job is reported independently.
+
+## Final linked stage 2A Release evidence
+
+Run `37168584770`, head `ef6a7fd132df7d804375b747acb12bafa449bfcb`;
+measured revision `d07b76404e19cd3dffd790fae55158c329d164c0`. Xcode 16.4
+(16F6), Apple Clang 17.0.0, iPhoneOS SDK 18.5, arm64, stock Release.
+All three clean App builds and the symbol/call-site checks passed.
+
+| Repeat | Linked VMA | Link-map length | File offset | Function SHA256 |
+| --- | --- | ---: | ---: | --- |
+| 0 | 0x1000974f0 | 6308 | 619760 | 5725322e7eb0e45b057be60742f66de7b7c99cdbba514d927976b811bb9c2f69 |
+| 1 | 0x1000974f0 | 6308 | 619760 | same |
+| 2 | 0x1000974f0 | 6308 | 619760 | same |
+
+Final owner: `RiskDetectorApp.app/RiskDetectorApp`. Direct transfers to the
+post-hook are `b` at `0x100097388` and `bl` at `0x1000974b4`. This existing
+wrapper tail branch is not the new context-threaded dispatch. These addresses are
+linked VMAs, not ASLR runtime addresses. Whole-image hashes differ; only the
+measured function bytes/address/length are claimed reproducible.
+
+Full report and artifact provenance: `evidence/apple-ci/linked-release.json` and
+`linked-provenance.json`. The artifact includes all three logs, linker maps and
+full final-image disassemblies. No code-mutating armor pass, self-expect injection,
+signing, or physical device timing is covered by this stock Release result.
+
+See `CPSV_INTEGRATION.md` for the proposed 58-range candidate contract. It remains
+a proposal and is not implemented by this PR.

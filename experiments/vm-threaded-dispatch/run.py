@@ -105,9 +105,26 @@ int main(int argc, char **argv) {
                 row[mode]['probe'] = metrics
                 if mode == 'corpus': assert len(metrics['hits']) == 52 and min(metrics['hits']) > 0
                 else: assert metrics['stack_span'] < 65536
+        # Reuse independently encoded NOP/HALT wire tests through this engine too.
+        zero = (HERE.parent / 'vm-opcode-zero-fault/regression.c').read_text()
+        zero = zero.replace('"../vm-post-handler-2a/harness.c"',
+                            '"' + str(HERE.parent / 'vm-post-handler-2a/harness.c') + '"')
+        if phase == 'threaded':
+            zero = zero.replace('#undef main', '#undef main\n#include "threaded.inc"')
+            zero = zero.replace('if(lane==0)cprisk_vm_interp_loop_a(&f);else cprisk_vm_interp_loop_b(&f);',
+                                'if(lane==0)cprisk_thread_run_a_i(&f);else cprisk_thread_run_b_i(&f);')
+        zero_source = build / 'zero.c'; zero_source.write_text(zero)
+        zero_cmd = cmd[:]
+        zero_cmd[zero_cmd.index(str(build / 'harness.c'))] = str(zero_source)
+        zero_cmd[-1] = str(build / 'zero-regression')
+        subprocess.run(zero_cmd, check=True)
+        zero_result = json.loads(subprocess.check_output([str(build / 'zero-regression')], cwd=build))
+        assert zero_result['zero_errors'] == zero_result['loop_errors'] == 0
+        row['encrypted_wire'] = zero_result
         report[phase] = row
     for mode in ['corpus', 'stress']:
         assert (output / f'legacy/{mode}.txt').read_bytes() == (output / f'threaded/{mode}.txt').read_bytes(), mode + ' mismatch'
+    assert (output / 'legacy/nonzero.bin').read_bytes() == (output / 'threaded/nonzero.bin').read_bytes()
     report['status'] = 'HOST_THREADED_DIFFERENTIAL_PASS'
     (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({k: v for k, v in report.items() if k in ['status', 'opt', 'release_eligible']}, indent=2))

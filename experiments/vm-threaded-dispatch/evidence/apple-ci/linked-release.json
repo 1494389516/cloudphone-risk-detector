@@ -1,0 +1,118 @@
+{
+  "revision": "d07b76404e19cd3dffd790fae55158c329d164c0",
+  "xcode": "Xcode 16.4\nBuild version 16F6\n",
+  "compiler": "Apple clang version 17.0.0 (clang-1700.0.13.5)\nTarget: arm64-apple-darwin24.6.0\nThread model: posix\nInstalledDir: /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin\n",
+  "sdk": "18.5",
+  "scope": "stock Xcode iPhoneOS Release, no post-armor/self-expect injection or device execution",
+  "rows": [
+    {
+      "repeat": 0,
+      "command": [
+        "xcodebuild",
+        "-project",
+        "/private/tmp/vm-apple-release/worktree/RiskDetectorApp/RiskDetectorApp.xcodeproj",
+        "-scheme",
+        "RiskDetectorApp",
+        "-configuration",
+        "Release",
+        "-sdk",
+        "iphoneos",
+        "-destination",
+        "generic/platform=iOS",
+        "-derivedDataPath",
+        "/private/tmp/vm-apple-release/DerivedData-0",
+        "ARCHS=arm64",
+        "CODE_SIGNING_ALLOWED=NO",
+        "LD_GENERATE_MAP_FILE=YES",
+        "build"
+      ],
+      "images": [
+        {
+          "image": "Build/Products/Release-iphoneos/RiskDetectorApp.app/RiskDetectorApp",
+          "address": "0x1000974f0",
+          "length": 6308,
+          "file_offset": 619760,
+          "code_sha256": "5725322e7eb0e45b057be60742f66de7b7c99cdbba514d927976b811bb9c2f69",
+          "image_sha256": "af77429154e23ec796df362b137355668b121dd6c69e63da815d4649bbb81511",
+          "references": [
+            "100097388: 1400005a    \tb\t0x1000974f0 <_cprisk_vm_oph_post_handler_i>",
+            "1000974b4: 9400000f    \tbl\t0x1000974f0 <_cprisk_vm_oph_post_handler_i>"
+          ]
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "command": [
+        "xcodebuild",
+        "-project",
+        "/private/tmp/vm-apple-release/worktree/RiskDetectorApp/RiskDetectorApp.xcodeproj",
+        "-scheme",
+        "RiskDetectorApp",
+        "-configuration",
+        "Release",
+        "-sdk",
+        "iphoneos",
+        "-destination",
+        "generic/platform=iOS",
+        "-derivedDataPath",
+        "/private/tmp/vm-apple-release/DerivedData-1",
+        "ARCHS=arm64",
+        "CODE_SIGNING_ALLOWED=NO",
+        "LD_GENERATE_MAP_FILE=YES",
+        "build"
+      ],
+      "images": [
+        {
+          "image": "Build/Products/Release-iphoneos/RiskDetectorApp.app/RiskDetectorApp",
+          "address": "0x1000974f0",
+          "length": 6308,
+          "file_offset": 619760,
+          "code_sha256": "5725322e7eb0e45b057be60742f66de7b7c99cdbba514d927976b811bb9c2f69",
+          "image_sha256": "2ebb7f5d90ec8b3f510849fe248775d46bdacbaa7c2fd0b089163f874c77eca8",
+          "references": [
+            "100097388: 1400005a    \tb\t0x1000974f0 <_cprisk_vm_oph_post_handler_i>",
+            "1000974b4: 9400000f    \tbl\t0x1000974f0 <_cprisk_vm_oph_post_handler_i>"
+          ]
+        }
+      ]
+    },
+    {
+      "repeat": 2,
+      "command": [
+        "xcodebuild",
+        "-project",
+        "/private/tmp/vm-apple-release/worktree/RiskDetectorApp/RiskDetectorApp.xcodeproj",
+        "-scheme",
+        "RiskDetectorApp",
+        "-configuration",
+        "Release",
+        "-sdk",
+        "iphoneos",
+        "-destination",
+        "generic/platform=iOS",
+        "-derivedDataPath",
+        "/private/tmp/vm-apple-release/DerivedData-2",
+        "ARCHS=arm64",
+        "CODE_SIGNING_ALLOWED=NO",
+        "LD_GENERATE_MAP_FILE=YES",
+        "build"
+      ],
+      "images": [
+        {
+          "image": "Build/Products/Release-iphoneos/RiskDetectorApp.app/RiskDetectorApp",
+          "address": "0x1000974f0",
+          "length": 6308,
+          "file_offset": 619760,
+          "code_sha256": "5725322e7eb0e45b057be60742f66de7b7c99cdbba514d927976b811bb9c2f69",
+          "image_sha256": "053ca2c3ec3096cd6cc0f17fdfe51671303f030cbb828cd8136a19919900cd0b",
+          "references": [
+            "100097388: 1400005a    \tb\t0x1000974f0 <_cprisk_vm_oph_post_handler_i>",
+            "1000974b4: 9400000f    \tbl\t0x1000974f0 <_cprisk_vm_oph_post_handler_i>"
+          ]
+        }
+      ]
+    }
+  ],
+  "status": "APPLE_STOCK_RELEASE_POST_HANDLER_PASS"
+}

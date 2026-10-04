@@ -42,8 +42,8 @@
       "-include",
       "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/vm-post-handler-2a/host_shim.h",
       "-I",
-      "/tmp/vm-threaded-o0/legacy",
-      "/tmp/vm-threaded-o0/legacy/harness.c",
+      "/tmp/vm-threaded-wire-o0/legacy",
+      "/tmp/vm-threaded-wire-o0/legacy/harness.c",
       "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore/cprisk_vm_oph_basic.c",
       "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore/cprisk_vm_oph_bitwise.c",
       "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore/cprisk_vm_oph_branch.c",
@@ -59,7 +59,7 @@
       "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore/cprisk_vm_sync_barrier.c",
       "-Wl,--gc-sections",
       "-o",
-      "/tmp/vm-threaded-o0/legacy/regression"
+      "/tmp/vm-threaded-wire-o0/legacy/regression"
     ],
     "binary_sha256": "3e5898757d3b81ccf6d2c85792bb279d9db6bf15dcb199ee1d4a9e30daaf92d2",
     "corpus": {
@@ -69,6 +69,14 @@
     "stress": {
       "cases": 3,
       "sha256": "60044ab42b98be89eb228fc26fbf756911100b11cf332ed20ee86dce0c051d81"
+    },
+    "encrypted_wire": {
+      "zero_cases": 5120,
+      "zero_errors": 0,
+      "nonzero_cases": 25600,
+      "nonzero_digest": "1216405bd6ed5cd6",
+      "loop_cases": 6,
+      "loop_errors": 0
     }
   },
   "threaded": {
@@ -83,8 +91,8 @@
       "-include",
       "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/vm-post-handler-2a/host_shim.h",
       "-I",
-      "/tmp/vm-threaded-o0/threaded",
-      "/tmp/vm-threaded-o0/threaded/harness.c",
+      "/tmp/vm-threaded-wire-o0/threaded",
+      "/tmp/vm-threaded-wire-o0/threaded/harness.c",
       "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore/cprisk_vm_oph_basic.c",
       "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore/cprisk_vm_oph_bitwise.c",
       "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore/cprisk_vm_oph_branch.c",
@@ -100,7 +108,7 @@
       "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore/cprisk_vm_sync_barrier.c",
       "-Wl,--gc-sections",
       "-o",
-      "/tmp/vm-threaded-o0/threaded/regression"
+      "/tmp/vm-threaded-wire-o0/threaded/regression"
     ],
     "binary_sha256": "a47341c65e6481b24ced2a45ecdde66a09fb9618b07f69939b8a9af7ae433036",
     "corpus": {
@@ -224,6 +232,14 @@
           0
         ]
       }
+    },
+    "encrypted_wire": {
+      "zero_cases": 5120,
+      "zero_errors": 0,
+      "nonzero_cases": 25600,
+      "nonzero_digest": "1216405bd6ed5cd6",
+      "loop_cases": 6,
+      "loop_errors": 0
     }
   },
   "status": "HOST_THREADED_DIFFERENTIAL_PASS"
