@@ -5,7 +5,8 @@ ROOT=pathlib.Path(__file__).resolve().parents[2]; HERE=pathlib.Path(__file__).re
 p=argparse.ArgumentParser();p.add_argument('--cc',default='clang');p.add_argument('--swiftc');p.add_argument('--output',type=pathlib.Path,required=True);a=p.parse_args()
 o=a.output.resolve();o.mkdir(parents=True,exist_ok=True)
 lib=o/('contract.dylib' if sys.platform=='darwin' else 'contract.so')
-subprocess.run([a.cc,'-O2','-shared','-fPIC','-I',str(ROOT/'RiskDetectorApp/Sources/CRiskCore/include'),str(HERE/'contract.c'),'-o',str(lib)],check=True)
+sdk = subprocess.check_output(['xcrun','--sdk','macosx','--show-sdk-path']).decode().strip() if sys.platform=='darwin' else None
+subprocess.run([a.cc,*(['-isysroot',sdk] if sdk else []),'-O2','-shared','-fPIC','-I',str(ROOT/'RiskDetectorApp/Sources/CRiskCore/include'),str(HERE/'contract.c'),'-o',str(lib)],check=True)
 x=C.CDLL(str(lib)); x.parse.argtypes=[C.c_char_p,C.c_size_t,C.c_char_p,C.POINTER(C.c_uint64),C.c_uint64,C.c_uint64]
 x.tag.argtypes=[C.c_char_p,C.c_size_t,C.c_char_p,C.POINTER(C.c_uint64),C.c_char_p,C.c_size_t,C.c_char_p,C.POINTER(C.c_uint32)]
 kind=lambda i: i+1 if i<6 else (1+(i-6)//26)*256+((i-6)%26 if (i-6)%26<24 else (255 if (i-6)%26==24 else 254))
@@ -68,7 +69,7 @@ assert ctag(changed,image)==mac(changed,image)!=expected
 swift=False
 if a.swiftc:
     exe=o/'swift-contract'
-    subprocess.run([a.swiftc,str(ROOT/'cprisk-armor/Sources/MachOKit/CPSV2Manifest.swift'),str(HERE/'contract.swift'),'-o',str(exe)],check=True)
+    subprocess.run([a.swiftc,*(['-sdk',sdk] if sdk else []),str(ROOT/'cprisk-armor/Sources/MachOKit/CPSV2Manifest.swift'),str(HERE/'contract.swift'),'-o',str(exe)],check=True)
     subprocess.run([str(exe),str(o/'vectors.json')],check=True);swift=True
 report=dict(status='CPSV2_CONTRACT_PASS',cases=len(rows),negative=sum(not r['accepted'] for r in rows),tampered_ranges=58,tag_le=expected.hex(),swift_parity=swift,production_acceptance=False)
 (o/'report.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))

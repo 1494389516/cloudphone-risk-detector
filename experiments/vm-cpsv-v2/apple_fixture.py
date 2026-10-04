@@ -38,7 +38,8 @@ int main(void) {
 }
 '''
     c=o/'fixture.c';c.write_text(body);exe=o/'fixture';linkmap=o/'linkmap.txt'
-    subprocess.run(['xcrun','clang','-arch','arm64','-O2','-I',str(CORE),str(c),'-Wl,-map,'+str(linkmap),'-o',str(exe)],check=True)
+    sdk=subprocess.check_output(['xcrun','--sdk','macosx','--show-sdk-path']).decode().strip()
+    subprocess.run(['xcrun','clang','-isysroot',sdk,'-arch','arm64','-O2','-I',str(CORE),str(c),'-Wl,-map,'+str(linkmap),'-o',str(exe)],check=True)
     subprocess.run(['codesign','--force','--sign','-',str(exe)],check=True,capture_output=True)
     # Reserved/uninjected image must reject.
     assert subprocess.run([str(exe)]).returncode==1
