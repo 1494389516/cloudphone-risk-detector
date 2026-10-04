@@ -1,0 +1,8 @@
+{
+  "run_id": 37183576996,
+  "job_id": 111380826298,
+  "artifact_id": 11295544218,
+  "revision": "f329ef89fac9f3df5f4e7951716cd9184ccfbdce",
+  "artifact_sha256": "d879e55edb37657747d006717a9a91d8327f078c24f5bc216ed623c7728d5270",
+  "scope": "Apple C/Swift contract, signed host fixture and integrated arm64 objects; no device performance or final armored SDK execution"
+}

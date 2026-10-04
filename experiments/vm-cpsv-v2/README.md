@@ -33,10 +33,13 @@ there is no legacy/unhashed fallback.
   The sidecar is trusted build input, bound to the exact pre-injection image SHA256.
   Lengths must describe the final transformed functions. Do not use a stale
   linker map after size-changing transforms. Stripped/ambiguous extents reject.
+- Generate the sidecar with `python3 experiments/vm-cpsv-v2/layout.py --image IMAGE
+  --linkmap LINKMAP --output LAYOUT.json`. The tool rejects a map from a different
+  image path, missing/folded/overlapping functions and out-of-TEXT extents.
 - Run `cprisk-vm-self-expect --in IMAGE --hmac --material-hex MATERIAL
   --cpsv2-layout LAYOUT.json`, then sign. The Swift producer checks symbol identity
-  and LC_FUNCTION_STARTS boundaries, patches only reservations, and never shifts
-  sections. `--fnv` cannot enable v2. Secrets should normally use the existing root
+  and LC_FUNCTION_STARTS boundaries, patches the reservations and invalidates old signing metadata without moving
+  protected code sections. `--fnv` cannot enable v2. Secrets should normally use the existing root
   key/environment mechanism rather than literal shell arguments.
 
 `generate_runtime.py --check` verifies that checked-in handler preparation matches
@@ -69,3 +72,17 @@ entry (including prelude/finalization), and real device evaluate() P95 with proo
 of VM execution must pass. Hashing full ranges costs more than the old 176-byte
 prefix; host opcode-loop timing cannot establish its impact. No performance
 acceptance or complete virtualization of seven business functions is claimed.
+
+## Recorded Apple integration evidence
+
+Run 37183576996 (revision `f329ef89fac9f3df5f4e7951716cd9184ccfbdce`)
+passed C/Swift parity (2,983 cases), the signed native fixture (58 code mutations
+and seven manifest mutations rejected), integrated O0/O2 equivalence and stack
+stress, and all 52 handler tail checks at O0/O2/Os with three identical objects per
+configuration. JSON evidence and artifact provenance are in `evidence/apple/`.
+
+`apple_linked.py` additionally builds the actual app with the threaded flag,
+requires all 58 functions in the final iPhoneOS Release image, injects v2 using
+that image's linker map, and checks all 52 linked handler indirect tail branches.
+It deliberately fails if Xcode ignores the flag or drops the required functions.
+This is stock Release plus self-expect injection, not the complete armor pipeline.

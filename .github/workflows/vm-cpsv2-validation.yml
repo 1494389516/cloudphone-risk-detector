@@ -42,3 +42,19 @@ jobs:
             /tmp/cpsv2-arm64/*.asm
             /tmp/cpsv2-apple/*.txt
             /tmp/cpsv2-apple/*.json
+  linked-threaded-release:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Actual threaded iPhoneOS Release and final-image CPSV v2 injection
+        run: python3 experiments/vm-cpsv-v2/apple_linked.py --output /tmp/cpsv2-linked
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cpsv2-linked-release
+          path: |
+            /tmp/cpsv2-linked/report.json
+            /tmp/cpsv2-linked/*.log
+            /tmp/cpsv2-linked/*.json
+            /tmp/cpsv2-linked/*.txt

@@ -8,6 +8,7 @@ import argparse, hashlib, json, pathlib, re, shutil, struct, subprocess, sys
 ROOT=pathlib.Path(__file__).resolve().parents[2]; CORE=ROOT/'RiskDetectorApp/Sources/CRiskCore'
 sys.path.insert(0,str(ROOT/'experiments/vm-threaded-dispatch'))
 from apple_release import text_bytes
+from layout import build_layout
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--output',type=pathlib.Path,required=True);a=p.parse_args()
@@ -43,14 +44,11 @@ int main(void) {
     subprocess.run(['codesign','--force','--sign','-',str(exe)],check=True,capture_output=True)
     # Reserved/uninjected image must reject.
     assert subprocess.run([str(exe)]).returncode==1
-    pristine=exe.read_bytes();live=linkmap.read_text().split('# Dead Stripped Symbols:')[0]
-    ranges=[];offsets=[]
-    for name in names:
-        matches=re.findall(r'^\s*(0x[\da-fA-F]+)\s+(0x[\da-fA-F]+)\s+\[\s*\d+\]\s+_'+name+r'\s*$',live,re.M)
-        assert len(matches)==1,name
-        address,length=map(lambda x:int(x,16),matches[0]);offset,code=text_bytes(exe,address,length)
-        ranges.append(dict(name=name,address=address,length=length));offsets.append(offset)
-    layout=o/'layout.json';layout.write_text(json.dumps(dict(imageSHA256=hashlib.sha256(pristine).hexdigest(),ranges=ranges)))
+    pristine=exe.read_bytes()
+    layout_data=build_layout(exe,linkmap)
+    ranges=layout_data['ranges']
+    offsets=[text_bytes(exe,r['address'],r['length'])[0] for r in ranges]
+    layout=o/'layout.json';layout.write_text(json.dumps(layout_data))
     subprocess.run(['swift','build','--package-path',str(ROOT/'cprisk-armor'),'--product','cprisk-vm-self-expect'],check=True)
     tool=ROOT/'cprisk-armor/.build/debug/cprisk-vm-self-expect'
     inject=[str(tool),'--in',str(exe),'--material-hex','52'*32,'--cpsv2-layout',str(layout)]
