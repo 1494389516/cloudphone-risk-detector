@@ -86,3 +86,10 @@ requires all 58 functions in the final iPhoneOS Release image, injects v2 using
 that image's linker map, and checks all 52 linked handler indirect tail branches.
 It deliberately fails if Xcode ignores the flag or drops the required functions.
 This is stock Release plus self-expect injection, not the complete armor pipeline.
+
+The first actual Release injection exposed an existing MachOKit classification
+bug: `S_THREAD_LOCAL_ZEROFILL` (`__thread_bss`) was incorrectly treated as stored
+file bytes. The shared section classifier now treats it like the other zero-fill
+types. This is a prerequisite parser correction, not a change to another pass's
+algorithm. The native fixture now includes TLS zero-fill and checks the numeric
+type against Apple's own loader header to retain a regression case.

@@ -3969,7 +3969,8 @@ static int cprisk_vm_bc_seg_hash_should_check_i(const cprisk_vm_interp_frame_t *
 /* Shared post-handler boundary. Keep the existing callers and operation order:
  * bytecode check, auxiliary step, then optional white-box side effects.
  * noinline preserves an out-of-line code region; it does not fix its byte size
- * across toolchains or optimization levels. This is not yet a CPSV span. */
+ * across toolchains or optimization levels. V1 omits this region; gated V2
+ * measures and covers its full linked extent as roster kind 4. */
 __attribute__((noinline))
 cprisk_vm_flow_t cprisk_vm_oph_post_handler_i(cprisk_vm_interp_frame_t *fr,
                                               uint8_t logical,
@@ -4784,7 +4785,7 @@ static void cprisk_vm_run_program_lane0_i(const struct mach_header_64 *hdr,
     if (!cprisk_vm_prepare_program_i(hdr, d_sec, dhdr, b_sec, bsz, bh, 0u, func_id, acc, out, &fr))
         return;
     cprisk_vm_run_prelude_lane0_i(&fr);
-        /* Lane-specific prelude/finish order is preserved. */
+    /* Lane-specific prelude/finish order is preserved. */
 #if CPRISK_VM_THREADED_DISPATCH
     cprisk_thread_run_a_i(&fr);
 #else
@@ -4806,7 +4807,7 @@ static void cprisk_vm_run_program_lane1_i(const struct mach_header_64 *hdr,
     if (!cprisk_vm_prepare_program_i(hdr, d_sec, dhdr, b_sec, bsz, bh, 1u, func_id, acc, out, &fr))
         return;
     cprisk_vm_run_prelude_lane1_i(&fr);
-        /* Lane-specific prelude/finish order is preserved. */
+    /* Lane-specific prelude/finish order is preserved. */
 #if CPRISK_VM_THREADED_DISPATCH
     cprisk_thread_run_b_i(&fr);
 #else

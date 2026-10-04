@@ -19,6 +19,9 @@ def main():
     body='''#include "include/cprisk_vm_cpsv2_hash.h"
 #include "include/cprisk_macho.h"
 #include <stdio.h>
+_Static_assert(S_THREAD_LOCAL_ZEROFILL == 0x12, "Match Apple's loader contract");
+/* Regression: real SDK images contain file-less TLS zero-fill sections. */
+static _Thread_local volatile uint64_t tls_zero;
 __attribute__((used,section("__DATA,__swift5_mdvsi")))
 static const uint8_t manifest[CPRISK_CPSV2_BYTES]={0x43,0x50,0x53,0x56,2,0,0,0,58};
 __attribute__((used,section("__DATA,__swift5_mdvsk"))) static const uint8_t expectation[8]={0};
@@ -32,6 +35,7 @@ int cprisk_get_runtime_material(uint8_t *p) {memset(p,0x52,32);return 0;}
     body+=source[start:end]+'\n#include "cprisk_vm_cpsv2_runtime.inc"\n'
     body+='''extern const struct mach_header_64 _mh_execute_header;
 int main(void) {
+    tls_zero++;
     uint32_t tag=0; unsigned long n=0;
     const uint8_t *e=cprisk_find_section(&_mh_execute_header,"__DATA","__swift5_mdvsk",&n);
     int ok=cprisk_vm_cpsv2_observe_i(&_mh_execute_header,&tag);

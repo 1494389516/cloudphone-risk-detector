@@ -11,10 +11,11 @@ extension VMSelfExpectInjector {
         guard layout.imageSHA256 == imageHash else { throw MachOError.invalidData("CPSV v2 layout/image SHA256 mismatch") }
         guard let textSegment = try file.segment(named: "__TEXT"), textSegment.fileOffset == 0,
               let text = try file.section(segment: "__TEXT", section: "__text"),
+              text.storesDataInFile,
               let spans = try file.section(segment: ArmorABI.dataSegmentName, section: ArmorABI.Sections.vmpSelfSpans),
-              spans.size == UInt64(CPSV2Manifest.byteCount),
+              spans.storesDataInFile, spans.size == UInt64(CPSV2Manifest.byteCount),
               let expect = try file.section(segment: ArmorABI.dataSegmentName, section: ArmorABI.Sections.vmpSelfExpect),
-              expect.size == 8 else { throw MachOError.invalidData("CPSV v2 requires reserved manifest/expectation and file-backed TEXT") }
+              expect.storesDataInFile, expect.size == 8 else { throw MachOError.invalidData("CPSV v2 requires reserved manifest/expectation and file-backed TEXT") }
         let uuidCommands = file.loadCommands.filter { $0.cmd == 0x1b } // LC_UUID
         guard uuidCommands.count == 1 else { throw MachOError.invalidData("CPSV v2 requires one LC_UUID") }
         guard let u = Int(exactly: uuidCommands[0].offset), u <= file.data.count,
