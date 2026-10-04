@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import pathlib
+import platform
 import subprocess
 
 parser = argparse.ArgumentParser()
@@ -25,7 +26,7 @@ modules = sorted(core.glob('cprisk_vm_oph_*.c')) + [
 report = {
     'base': base,
     'compiler': subprocess.check_output([args.cc, '--version']).decode(),
-    'scope': ('Linux host, deterministic platform substitutes from 2A; actual '
+    'scope': ('Host non-Apple code path forced, deterministic platform substitutes from 2A; actual '
               'interpreter helpers and A/B loops; not Apple device validation'),
 }
 for phase in ['before', 'after']:
@@ -36,11 +37,11 @@ for phase in ['before', 'after']:
     (build / 'interpreter-under-test.c').write_bytes(source)
     binary = build / 'regression'
     subprocess.run([
-        args.cc, '-O2', '-ffunction-sections', '-fdata-sections',
+        args.cc, '-U__APPLE__', '-O2', '-ffunction-sections', '-fdata-sections',
         '-I', str(core), '-I', str(build), '-include',
         str(here.parent / 'vm-post-handler-2a/host_shim.h'),
         str(here / 'regression.c'), *map(str, modules),
-        '-Wl,--gc-sections', '-o', str(binary),
+        ('-Wl,-dead_strip' if platform.system() == 'Darwin' else '-Wl,--gc-sections'), '-o', str(binary),
     ], check=True)
     result = json.loads(subprocess.check_output([str(binary)], cwd=build))
     result['source_sha256'] = hashlib.sha256(source).hexdigest()
