@@ -2148,6 +2148,9 @@ static uint8_t cprisk_vmp_opcode_fault_byte_i(uint64_t fault_mask,
                                               uint64_t func_id,
                                               uint32_t pc_index,
                                               uint8_t op_raw) {
+    /* Preserve the no-fault sentinel before mixing in the opcode domain. */
+    if (fault_mask == 0u)
+        return 0u;
     return cprisk_vmp_dispatch_fault_byte_i(
         fault_mask ^ 0x4F50434F4445464AULL, /* "OPCODEFJ" */
         func_id,
@@ -3847,6 +3850,11 @@ static int cprisk_vm_bc_seg_hash_should_check_i(const cprisk_vm_interp_frame_t *
     return 1;
 }
 
+/* Shared post-handler boundary. Keep the existing callers and operation order:
+ * bytecode check, auxiliary step, then optional white-box side effects.
+ * noinline preserves an out-of-line code region; it does not fix its byte size
+ * across toolchains or optimization levels. This is not yet a CPSV span. */
+__attribute__((noinline))
 cprisk_vm_flow_t cprisk_vm_oph_post_handler_i(cprisk_vm_interp_frame_t *fr,
                                               uint8_t logical,
                                               uint64_t imm,
