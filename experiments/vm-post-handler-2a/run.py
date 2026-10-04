@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Host differential test; never claims Apple SDK/device validation."""
-import argparse, hashlib, json, os, pathlib, re, subprocess
-p=argparse.ArgumentParser();p.add_argument('--clang',default='clang');p.add_argument('--output',required=True);p.add_argument('--coverage',action='store_true');a=p.parse_args()
+import argparse, hashlib, json, os, pathlib, platform, re, subprocess
+p=argparse.ArgumentParser();p.add_argument('--clang',default='clang');p.add_argument('--output',required=True);p.add_argument('--coverage',action='store_true');p.add_argument('--candidate-ref',help='Validate a historical candidate instead of the working tree');a=p.parse_args()
 root=pathlib.Path(__file__).resolve().parents[2]; here=pathlib.Path(__file__).resolve().parent
 out=pathlib.Path(a.output).resolve();out.mkdir(parents=True,exist_ok=True)
 core=root/'RiskDetectorApp/Sources/CRiskCore';rel='RiskDetectorApp/Sources/CRiskCore/cprisk_vm_interpreter.c'
 base='5d8febd30b317082200dd399ff5d0ac64f37df1a'
-before=subprocess.check_output(['git','show',f'{base}:{rel}'],cwd=root).decode();after=(root/rel).read_text()
+before=subprocess.check_output(['git','show',f'{base}:{rel}'],cwd=root).decode();after=(subprocess.check_output(['git','show',f'{a.candidate_ref}:{rel}'],cwd=root).decode() if a.candidate_ref else (root/rel).read_text())
 # Production edit must be exactly the explicit boundary and its explanatory comment.
 marker='/* Shared post-handler boundary.'
 start=after.index(marker);end=after.index('cprisk_vm_flow_t cprisk_vm_oph_post_handler_i(',start)
@@ -15,16 +15,17 @@ assert after[:start]+after[end:]==before,'unexpected production change outside t
 # retain actual call targets, opcode implementations, loops and post-hook body.
 refs=sorted(set(re.findall(r'\(const void \*\)&(\w+)',before)))
 address_map={name:0x100000+i*0x100 for i,name in enumerate(refs)}
-flags=['-O2','-ffunction-sections','-fdata-sections','-I',str(core),'-include',str(here/'host_shim.h')]
+flags=['-U__APPLE__','-O2','-ffunction-sections','-fdata-sections','-I',str(core),'-include',str(here/'host_shim.h')]
+if platform.system()=='Darwin': flags += ['-isysroot',subprocess.check_output(['xcrun','--sdk','macosx','--show-sdk-path']).decode().strip()]
 if a.coverage: flags += ['-fprofile-instr-generate', '-fcoverage-mapping']
 modules=sorted(core.glob('cprisk_vm_oph_*.c'))+[core/'cprisk_vm_hardening.c',core/'vm_cff_fusion.c',core/'cprisk_vm_sync_barrier.c']
-report={'base':base,'compiler':subprocess.check_output([a.clang,'--version']).decode(),'flags':flags,'address_map':address_map,'limitations':['Linux non-Apple path; Mach-O discovery stubbed','whitebox/session/runtime/emulator/crypto tracing dependencies deterministic substitutes','data-only interpreter code-address references normalized; real Apple self-check not executed','not evaluate() performance or physical ARM64 execution']}
+report={'candidate_ref':a.candidate_ref or 'WORKTREE','host_platform':platform.platform(),'base':base,'compiler':subprocess.check_output([a.clang,'--version']).decode(),'flags':flags,'address_map':address_map,'limitations':['Host non-Apple code path forced; Mach-O discovery stubbed','whitebox/session/runtime/emulator/crypto tracing dependencies deterministic substitutes','data-only interpreter code-address references normalized; real Apple self-check not executed','not evaluate() performance or physical ARM64 execution']}
 for name,source in [('before',before),('after',after)]:
     build=out/name;build.mkdir(exist_ok=True)
     source=re.sub(r'\(const void \*\)&(\w+)',lambda m:f'(const void *)(uintptr_t)0x{address_map[m[1]]:x}u',source)
     (build/'interpreter-under-test.c').write_text(source)
     binary=build/'test'
-    cmd=[a.clang,*flags,'-I',str(build),str(here/'harness.c'),*map(str,modules),'-Wl,--gc-sections','-o',str(binary)]
+    cmd=[a.clang,*flags,'-I',str(build),str(here/'harness.c'),*map(str,modules),('-Wl,-dead_strip' if platform.system()=='Darwin' else '-Wl,--gc-sections'),'-o',str(binary)]
     subprocess.run(cmd,check=True)
     with (build/'results.txt').open('wb') as f:subprocess.run([str(binary)],stdout=f,check=True,timeout=120,env={**os.environ,'LLVM_PROFILE_FILE':str(build/'coverage.profraw')})
     data=(build/'results.txt').read_bytes();report[name]={'cases':len(data.splitlines()),'sha256':hashlib.sha256(data).hexdigest()}
