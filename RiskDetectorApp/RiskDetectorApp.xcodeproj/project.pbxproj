@@ -296,7 +296,6 @@
 		E107547A28FF1B4E0D881633 /* vm_encrypted_chunk.c in Sources */ = {isa = PBXBuildFile; fileRef = C126DA827DF59EF836936E61 /* vm_encrypted_chunk.c */; };
 		E38B1EDC398EB688EFBACF60 /* AppLifecycleHeartbeatProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 711E6D997FB97F3A18650AA3 /* AppLifecycleHeartbeatProvider.swift */; };
 		E4D3630DF22CBA518D4FCE95 /* JailbreakEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = E49C4EC3FCA42CB35D754B2F /* JailbreakEngine.swift */; };
-		E5DC6D231D771DCC7D920006 /* cprisk_vm_branch_ind_smoke.c in Sources */ = {isa = PBXBuildFile; fileRef = CD68A7AE48004479429C889D /* cprisk_vm_branch_ind_smoke.c */; };
 		E5EB498D752C93FC00BC6DE3 /* RiskSignalVocabulary.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC0FB95AA729115D8E5D3ECD /* RiskSignalVocabulary.swift */; };
 		E89B277DB719EB7BE3BA22A6 /* FridaHeapDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D57C175E829F3B44BA788D0 /* FridaHeapDetector.swift */; };
 		E9666D84AE0AD06AB97649EC /* NetworkInterfaceProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 754D2737E0A18EFE5A886556 /* NetworkInterfaceProvider.swift */; };
@@ -655,7 +654,6 @@
 		C9B5E7F3778A74594B5BF135 /* vm_function_ctx.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = vm_function_ctx.c; sourceTree = "<group>"; };
 		CAAABA0C9CD0C798E0066839 /* RiskReportSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiskReportSummary.swift; sourceTree = "<group>"; };
 		CBD60E4CFB5397BDEA282B23 /* ClientNonceWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientNonceWindow.swift; sourceTree = "<group>"; };
-		CD68A7AE48004479429C889D /* cprisk_vm_branch_ind_smoke.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_vm_branch_ind_smoke.c; sourceTree = "<group>"; };
 		CE21944F1F14FD90A1DB1132 /* cprisk_cff.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cprisk_cff.c; sourceTree = "<group>"; };
 		CF0418999C4C782A532C7B15 /* MultiPathFileDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiPathFileDetector.swift; sourceTree = "<group>"; };
 		CFA1F9D0D6DC3284BC571DC0 /* HostileEnvironmentReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostileEnvironmentReporter.swift; sourceTree = "<group>"; };
@@ -1307,7 +1305,6 @@
 				0007821953DE700465559CDE /* cprisk_text_tail_honeypot.c */,
 				BB4FBACBB5015902987454CF /* cprisk_tls_init.c */,
 				7BA49EA76A6332A9D4F69108 /* cprisk_trust_hook_surface.c */,
-				CD68A7AE48004479429C889D /* cprisk_vm_branch_ind_smoke.c */,
 				4F27C4760D7BF4C3D312C059 /* cprisk_vm_hardening.c */,
 				A6C61B085480D381D7B6E03B /* cprisk_vm_interpreter.c */,
 				3E28AFF1DBC724A7AE8C12DA /* cprisk_vm_oph_basic.c */,
@@ -1857,7 +1854,6 @@
 				28334657A159869DFB60E38C /* cprisk_text_tail_honeypot.c in Sources */,
 				EFE8C7AAA15F4ECADE3D6707 /* cprisk_tls_init.c in Sources */,
 				A515EA0325767C37C409B506 /* cprisk_trust_hook_surface.c in Sources */,
-				E5DC6D231D771DCC7D920006 /* cprisk_vm_branch_ind_smoke.c in Sources */,
 				6C98384218D6E17BB1EB8AC4 /* cprisk_vm_hardening.c in Sources */,
 				40C5860EC1D7A10F652ACDA7 /* cprisk_vm_interpreter.c in Sources */,
 				5CCB84D7DC86A944D48215AC /* cprisk_vm_oph_basic.c in Sources */,

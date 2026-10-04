@@ -1,3 +1,5 @@
+> 2026-10-04：按维护者要求移除仓库中的单元测试、差分/回归测试源码、测试运行脚本及对应测试 CI。下文测试命令和结果作为历史记录保留；需要复现时请使用删除前的提交 `16543b971eaeb247e8720f8aa927d45fe97e90c0`。代码生成、CPSV 布局生成和发布证据校验工具仍保留。
+
 # 隔离的 iPhone Release GF2 验证入口
 
 此入口从真实 SDK 提取的两个 GF2 函数生成 iPhoneOS IR，通过匹配的 LLVM 22/23 与固定 xollvm 插件生成真实 VM object，再由 Xcode 的 Apple clang 将最小 UIKit App 以 `-O2 -DNDEBUG` 链接。没有修改主 App、生产 SDK、默认构建或 Pass 13 `full` 阻断。
