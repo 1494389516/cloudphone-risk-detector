@@ -12,6 +12,70 @@
 #include <stdatomic.h>
 #include <string.h>
 
+/* Deployment gate: enable only for an image finalized by the CPSV v2 injector.
+ * Keep legacy shipping defaults until final-image and device acceptance passes. */
+#ifndef CPRISK_VM_THREADED_DISPATCH
+#define CPRISK_VM_THREADED_DISPATCH 0
+#endif
+#if CPRISK_VM_THREADED_DISPATCH
+#include "include/cprisk_vm_cpsv2_hash.h"
+struct cprisk_thread_context_i;
+static void cprisk_thread_run_a_i(cprisk_vm_interp_frame_t *);
+static void cprisk_thread_run_b_i(cprisk_vm_interp_frame_t *);
+static void cprisk_thread_a_nop_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_ret_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_raw_region_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_halt_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_add_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_branch_rel_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_branch_cond_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_call_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_mov_wide_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_adr_add_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_cond_select_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_load_store_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_xor_mix_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_or_lane_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_and_lane_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_rol_acc_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_vm_call_func_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_vreg_mov_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_vreg_alu_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_vreg_mem_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_sub_lane_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_mul_lane_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_add_rol_acc_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_branch_ind_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_poison_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_a_unknown_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_nop_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_ret_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_raw_region_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_halt_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_add_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_branch_rel_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_branch_cond_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_call_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_mov_wide_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_adr_add_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_cond_select_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_load_store_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_xor_mix_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_or_lane_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_and_lane_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_rol_acc_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_vm_call_func_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_vreg_mov_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_vreg_alu_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_vreg_mem_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_sub_lane_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_mul_lane_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_add_rol_acc_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_branch_ind_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_poison_i(struct cprisk_thread_context_i *);
+static void cprisk_thread_b_unknown_i(struct cprisk_thread_context_i *);
+#endif
+
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
 #include <mach/mach.h>
@@ -1629,6 +1693,16 @@ typedef struct {
     uint32_t kind;
 } cprisk_vm_selfchk_span_entry_t;
 
+#if CPRISK_VM_THREADED_DISPATCH
+#if defined(__APPLE__)
+__attribute__((used, section("__DATA," CPRISK_ARMOR_SECTION_VMP_SELF_SPANS)))
+#endif
+static const uint8_t cprisk_vm_selfchk_spans_i[CPRISK_CPSV2_BYTES] = {
+    0x43, 0x50, 0x53, 0x56, 2, 0, 0, 0, 58, 0, 0, 0
+}; /* Pointer-free reservation; zero UUID/ranges deliberately reject before injection. */
+/* The host linker owns the existing 8-byte mdvsk reservation. Do not add
+ * another C contribution: ld concatenates both contributions into 16 bytes. */
+#else
 #if defined(__APPLE__)
 #define CPRISK_VM_SELFCHK_SPAN_SECTION_ATTR "__DATA," CPRISK_ARMOR_SECTION_VMP_SELF_SPANS
 __attribute__((used, section(CPRISK_VM_SELFCHK_SPAN_SECTION_ATTR)))
@@ -1657,6 +1731,8 @@ static const struct {
 };
 
 _Static_assert(sizeof(cprisk_vm_selfchk_spans_i) == 64u, "CPSV (__swift5_mdvsi) blob size must match ABI");
+
+#endif
 
 static int cprisk_vm_selfchk_span_layout_resolve_i(const struct mach_header_64 *mh,
                                                    const cprisk_vm_selfchk_span_entry_t **out_entries,
@@ -1721,7 +1797,25 @@ static int cprisk_vm_m3_selfchk_cpsv_image_matches_static_i(const struct mach_he
         return 0;
     if (sz != sizeof(cprisk_vm_selfchk_spans_i))
         return -1;
-    return memcmp(p, &cprisk_vm_selfchk_spans_i, sizeof(cprisk_vm_selfchk_spans_i)) != 0 ? -1 : 0;
+#if CPRISK_VM_THREADED_DISPATCH
+    return -1; /* v2 uses the independent roster below; never this legacy path. */
+#else
+    const cprisk_vm_selfchk_span_header_t *h = (const void *)p;
+    const cprisk_vm_selfchk_span_entry_t *e = (const void *)(p + sizeof(*h));
+    const uint64_t addresses[3] = {
+        (uint64_t)(uintptr_t)&cprisk_vm_execute,
+        (uint64_t)(uintptr_t)&cprisk_vm_interp_loop_a,
+        (uint64_t)(uintptr_t)&cprisk_vm_dispatch_lookup
+    };
+    const uint32_t lengths[3] = { CPRISK_VM_M3_SELF_EXEC_BYTES,
+        CPRISK_VM_M3_SELF_LOOP_BYTES, CPRISK_VM_M3_SELF_DISPATCH_BYTES };
+    if (h->magic != CPRISK_VMP_SELF_SPAN_MAGIC || h->version != 1u || h->count != 3u || h->reserved)
+        return -1;
+    for (unsigned i = 0; i < 3; i++)
+        if (e[i].vmaddr != addresses[i] || e[i].length != lengths[i] || e[i].kind != i + 1u)
+            return -1;
+    return 0;
+#endif
 }
 #endif
 
@@ -2287,6 +2381,10 @@ static uint64_t cprisk_vm_selfchk_fault_mask_i(uint64_t func_id,
     return state;
 }
 
+#if CPRISK_VM_THREADED_DISPATCH
+#include "cprisk_vm_cpsv2_runtime.inc"
+#endif
+
 static void cprisk_vm_m3_selfchk_run_i(const struct mach_header_64 *hdr,
                                        uint8_t acc[32],
                                        uint64_t func_id,
@@ -2299,6 +2397,22 @@ static void cprisk_vm_m3_selfchk_run_i(const struct mach_header_64 *hdr,
         *out_fault_mask = 0u;
     if (out_seal_mix)
         *out_seal_mix = 0u;
+#if CPRISK_VM_THREADED_DISPATCH
+    /* A threaded build always requires v2 plus keyed expectation, even when the
+     * bytecode's optional M3 flags are absent. No v1/unhashed fallback. */
+    uint32_t observed = 0u;
+    const uint32_t expected = cprisk_vm_cpsv2_expect_resolve_i(hdr);
+    if (!cprisk_vm_cpsv2_observe_i(hdr, &observed) || !expected || observed != expected) {
+        out->poison_flags |= CPRISK_VM_POISON_SELF_INTEGRITY | CPRISK_VM_POISON_BYTECODE;
+        cprisk_vm_self_fail_acc_i(acc, func_id);
+        if (out_fault_mask)
+            *out_fault_mask = cprisk_vm_selfchk_fault_mask_i(func_id, bh->reserved, expected, observed);
+        if (out_seal_mix && out_fault_mask) *out_seal_mix = *out_fault_mask;
+    } else if (out_seal_mix) {
+        *out_seal_mix = cprisk_vm_m3_seal_mix_from_digest_u32_i(observed);
+    }
+    return;
+#endif
     if (!want)
         return;
 
@@ -3853,7 +3967,8 @@ static int cprisk_vm_bc_seg_hash_should_check_i(const cprisk_vm_interp_frame_t *
 /* Shared post-handler boundary. Keep the existing callers and operation order:
  * bytecode check, auxiliary step, then optional white-box side effects.
  * noinline preserves an out-of-line code region; it does not fix its byte size
- * across toolchains or optimization levels. This is not yet a CPSV span. */
+ * across toolchains or optimization levels. V1 omits this region; gated V2
+ * measures and covers its full linked extent as roster kind 4. */
 __attribute__((noinline))
 cprisk_vm_flow_t cprisk_vm_oph_post_handler_i(cprisk_vm_interp_frame_t *fr,
                                               uint8_t logical,
@@ -4322,6 +4437,10 @@ vm_leave_b:
         cprisk_vm_interp_finish_run_lane2_i(fr);
 }
 
+#if CPRISK_VM_THREADED_DISPATCH
+#include "cprisk_vm_threaded.inc"
+#endif
+
 static int cprisk_vm_prepare_program_i(const struct mach_header_64 *hdr,
                                        const uint8_t *d_sec,
                                        const cprisk_vmp_dispatch_header_t *dhdr,
@@ -4441,6 +4560,13 @@ static int cprisk_vm_prepare_program_i(const struct mach_header_64 *hdr,
     uint64_t decode_fault_mask = 0u;
     uint64_t m3_seal_mix = 0u;
     cprisk_vm_m3_selfchk_run_i(hdr, acc, func_id, bh, out, &decode_fault_mask, &m3_seal_mix);
+#if CPRISK_VM_THREADED_DISPATCH
+    if (out->poison_flags & CPRISK_VM_POISON_SELF_INTEGRITY) {
+        out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
+        cprisk_vm_wb_finalize_i(out, acc);
+        return 0;
+    }
+#endif
 
     const uint32_t m3_opaque = (bh->reserved & CPRISK_VMP_BC_FLAG_M3_OPAQUE_CHAIN) != 0u ? 1u : 0u;
     const uint32_t m3_dead = (bh->reserved & CPRISK_VMP_BC_FLAG_M3_DEAD_HANDLERS) != 0u ? 1u : 0u;
@@ -4657,7 +4783,12 @@ static void cprisk_vm_run_program_lane0_i(const struct mach_header_64 *hdr,
     if (!cprisk_vm_prepare_program_i(hdr, d_sec, dhdr, b_sec, bsz, bh, 0u, func_id, acc, out, &fr))
         return;
     cprisk_vm_run_prelude_lane0_i(&fr);
-        cprisk_vm_interp_loop_a(&fr);
+    /* Lane-specific prelude/finish order is preserved. */
+#if CPRISK_VM_THREADED_DISPATCH
+    cprisk_thread_run_a_i(&fr);
+#else
+    cprisk_vm_interp_loop_a(&fr);
+#endif
     cprisk_vm_run_finish_lane0_i(&fr, acc);
 }
 
@@ -4674,7 +4805,12 @@ static void cprisk_vm_run_program_lane1_i(const struct mach_header_64 *hdr,
     if (!cprisk_vm_prepare_program_i(hdr, d_sec, dhdr, b_sec, bsz, bh, 1u, func_id, acc, out, &fr))
         return;
     cprisk_vm_run_prelude_lane1_i(&fr);
-        cprisk_vm_interp_loop_b(&fr);
+    /* Lane-specific prelude/finish order is preserved. */
+#if CPRISK_VM_THREADED_DISPATCH
+    cprisk_thread_run_b_i(&fr);
+#else
+    cprisk_vm_interp_loop_b(&fr);
+#endif
     cprisk_vm_run_finish_lane1_i(&fr, acc);
 }
 
@@ -4691,7 +4827,12 @@ static void cprisk_vm_run_program_lane2_i(const struct mach_header_64 *hdr,
     if (!cprisk_vm_prepare_program_i(hdr, d_sec, dhdr, b_sec, bsz, bh, 2u, func_id, acc, out, &fr))
         return;
     cprisk_vm_run_prelude_lane2_i(&fr);
+    /* Lane-specific prelude/finish order is preserved. */
+#if CPRISK_VM_THREADED_DISPATCH
+    cprisk_thread_run_b_i(&fr);
+#else
     cprisk_vm_interp_loop_b(&fr);
+#endif
     cprisk_vm_run_finish_lane2_i(&fr, acc);
 }
 

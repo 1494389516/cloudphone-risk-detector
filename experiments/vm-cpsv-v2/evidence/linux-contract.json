@@ -1,0 +1,9 @@
+{
+  "status": "CPSV2_CONTRACT_PASS",
+  "cases": 2983,
+  "negative": 2979,
+  "tampered_ranges": 58,
+  "tag_le": "1568ec94",
+  "swift_parity": false,
+  "production_acceptance": false
+}

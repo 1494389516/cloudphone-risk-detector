@@ -29,6 +29,7 @@ public enum VMSelfExpectInjector {
 
     public enum Source: String, Sendable {
         case cpsvSpanMap = "cpsv"
+        case cpsvV2 = "cpsv-v2"
         case legacySymtab = "symtab"
     }
 
@@ -43,7 +44,7 @@ public enum VMSelfExpectInjector {
         /// Explicit source path used to resolve the three self-check windows.
         public let source: Source
         /// Compatibility mirror for existing callers that only branch on CPSV vs legacy symtab.
-        public var usedCPSVSpanMap: Bool { source == .cpsvSpanMap }
+        public var usedCPSVSpanMap: Bool { source == .cpsvSpanMap || source == .cpsvV2 }
     }
 
     /// Derives the 32-byte HMAC key the same way as
@@ -116,10 +117,22 @@ public enum VMSelfExpectInjector {
 
     /// Writes CPSH (magic + LE u32 HMAC tag) for the HMAC self-check path (`CPRISK_VMP_BC_FLAG_M3_SELFCHK_HMAC`).
     /// - Parameter runtimeMaterial32: Must match runtime `cprisk_get_runtime_material` (default: 32 zero bytes for CI).
-    public static func injectHmac(into machoURL: URL, runtimeMaterial32: Data? = nil) throws -> Result {
+    public static func injectHmac(into machoURL: URL, runtimeMaterial32: Data? = nil, cpsv2LayoutURL: URL? = nil) throws -> Result {
         let mat = runtimeMaterial32 ?? Data(count: 32)
         precondition(mat.count == 32)
         let file = try MachOFile(url: machoURL)
+        if let section = try file.section(segment: ArmorABI.dataSegmentName, section: ArmorABI.Sections.vmpSelfSpans) {
+            let payload = try section.readContent(from: file.data)
+            if payload.count >= 8, try readUInt32LE(payload, at: 4) == 2 {
+                guard try readUInt32LE(payload, at: 0) == spanMagicLE else {
+                    throw MachOError.invalidData("CPSV v2 magic mismatch")
+                }
+                return try injectV2(file: file, layoutURL: cpsv2LayoutURL, material: mat)
+            }
+        }
+        guard cpsv2LayoutURL == nil else {
+            throw MachOError.invalidData("--cpsv2-layout requires a reserved CPSV v2 image")
+        }
         let symbols = try file.readSymbols()
         let (concat, meta, usedCPSV) = try Self.selfCheckCodePrefix(file: file, symbols: symbols)
         let tag = hmacSelfCheckTag32(codePrefix: concat, runtimeMaterial32: mat)

@@ -15,6 +15,7 @@ p = argparse.ArgumentParser()
 p.add_argument('--cc', default='clang')
 p.add_argument('--objdump', default='llvm-objdump')
 p.add_argument('--apple', action='store_true')
+p.add_argument('--integrated', action='store_true')
 p.add_argument('--output', type=pathlib.Path, required=True)
 a = p.parse_args()
 out = a.output.resolve(); out.mkdir(parents=True, exist_ok=True)
@@ -22,8 +23,8 @@ here = pathlib.Path(__file__).resolve().parent; root = here.parents[1]
 core = root / 'RiskDetectorApp/Sources/CRiskCore'
 source = (core / 'cprisk_vm_interpreter.c').read_text()
 (out / 'threaded.inc').write_text(generate(source))
-(out / 'candidate.c').write_text(source + '\n#include "threaded.inc"\n'
-    'void cprisk_thread_test_entry(cprisk_vm_interp_frame_t *fr) {\n'
+(out / 'candidate.c').write_text(('#define CPRISK_VM_THREADED_DISPATCH 1\n' + source if a.integrated else source + '\n#include "threaded.inc"\n')
+    + 'void cprisk_thread_test_entry(cprisk_vm_interp_frame_t *fr) {\n'
     'if(fr->path_lane==0) cprisk_thread_run_a_i(fr); else cprisk_thread_run_b_i(fr);\n}\n')
 flags = ['-I', str(core)]
 if a.apple:
@@ -65,7 +66,7 @@ for opt in ['O0', 'O2', 'Os']:
     group = rows[-3:]
     assert len({r['object_sha256'] for r in group}) == 1, opt + ' repeat mismatch'
 report = {'status': 'THREADED_ARM64_OBJECT_PASS', 'apple_sdk': a.apple,
-          'final_linked_image': False, 'cpsv_validated': False,
+          'final_linked_image': False, 'cpsv_validated': False, 'integrated': a.integrated,
           'compiler': subprocess.check_output([a.cc, '--version']).decode(),
           'handler_count': 52, 'rows': rows}
 (out / 'report.json').write_text(json.dumps(report, indent=2) + '\n')

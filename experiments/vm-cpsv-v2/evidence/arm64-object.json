@@ -1,0 +1,2090 @@
+{
+  "status": "THREADED_ARM64_OBJECT_PASS",
+  "apple_sdk": false,
+  "final_linked_image": false,
+  "cpsv_validated": false,
+  "integrated": true,
+  "compiler": "Ubuntu clang version 18.1.3 (1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /tmp/vm-clang/root/usr/lib/llvm-18/bin\n",
+  "handler_count": 52,
+  "rows": [
+    {
+      "opt": "O0",
+      "repeat": 0,
+      "command": [
+        "/tmp/vm-clang/root/usr/lib/llvm-18/bin/clang",
+        "-I",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore",
+        "--target=aarch64-none-elf",
+        "-ffreestanding",
+        "-I",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/vm-post-handler-2a/freestanding",
+        "-include",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/vm-post-handler-2a/host_shim.h",
+        "-O0",
+        "-c",
+        "/tmp/cpsv2-arm64/candidate.c",
+        "-o",
+        "/tmp/cpsv2-arm64/O0-0.o"
+      ],
+      "object_sha256": "f509531cae796fa08dc58b3ed0f9fe844f84bf27e14c55c4b60bd6c0cf4871c8",
+      "handlers": {
+        "cprisk_thread_a_nop_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "e1f0e6da87d555c3e124da608a4ddb234a2a9f0e0479a54399a4a992630ad670"
+        },
+        "cprisk_thread_a_ret_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "0400268c894858d9412c92133ebcb818a50fa4e27e308c8aa2c0bca5bb739916"
+        },
+        "cprisk_thread_a_raw_region_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "b6e6565707e6d05811c1574ef750fc0d80ea49509d1c4f0e83388121f98943f2"
+        },
+        "cprisk_thread_a_halt_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "d650c574da7ec8554f030ce0fc32baef47bf1309ce5e25fa75533e3018582edc"
+        },
+        "cprisk_thread_a_add_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "b6fe97a68be6a0f23bbc12ff15031ce736b56019917591ba983a12844f48cc98"
+        },
+        "cprisk_thread_a_branch_rel_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "4a53d05dc54123dfcac6cda6d26b505b2bd0e7f314db69899b84b6d81df0af7d"
+        },
+        "cprisk_thread_a_branch_cond_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "ee521d14dabb6028da7cdb564ec68f89cf7d777ba5097f2b54924a8344c7902b"
+        },
+        "cprisk_thread_a_call_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "448548a1253918ca60d9b6041dbfb8c59ed8eae1ca064b3c57c69c62b3a3fb54"
+        },
+        "cprisk_thread_a_mov_wide_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "bd09867227f9fd99dcb0fb4b5562d19e476a9b3e20552d60d7f831487ff669be"
+        },
+        "cprisk_thread_a_adr_add_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "b8226f61f32f89736f0c1f4de336932f6a70ce1e5f97a2066a66d6481cb4d236"
+        },
+        "cprisk_thread_a_cond_select_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "6c4607503f566ac82260ebf4351d1cce162c93f6f9224fd61b644c688c954887"
+        },
+        "cprisk_thread_a_load_store_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "bd56357a71e0a5bf96492213ac928a8a399945a98a51bd6c8c299464833bf045"
+        },
+        "cprisk_thread_a_xor_mix_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "d09daf0b0e14521496d489c1fd5d51cc9fc0b6c8bb71d16bce3a41eba85aea78"
+        },
+        "cprisk_thread_a_or_lane_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "7ac97ab36ecb495acfe7467d1004ae874207aec27ab400b2d1427d4c767e1e02"
+        },
+        "cprisk_thread_a_and_lane_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "fa3dfb71c31deed364bee283ede500c73403bf1c613b0ddb30837c76896417a9"
+        },
+        "cprisk_thread_a_rol_acc_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "aa64f9e5889326fc92bd4016915588f358df93717fb25ea5821cfa8e1b53b0ab"
+        },
+        "cprisk_thread_a_vm_call_func_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "5eb609994d563ddb22419caa3f3d4d9c3455ffe88798b809a2db7e40a274c8fd"
+        },
+        "cprisk_thread_a_vreg_mov_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "02cd6b9c3a243794093d20b28071977eeb19e688695c488d3a682b51c3614d39"
+        },
+        "cprisk_thread_a_vreg_alu_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "d29cf256fe0533333af70e74f65b6de0057f8521680f3b053bed67cea31fa50b"
+        },
+        "cprisk_thread_a_vreg_mem_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "5b973d56c8f6147fee8bc2a6f39f5c148c78c75557e019d8393c5cf5afbd0e8e"
+        },
+        "cprisk_thread_a_sub_lane_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "90a019135739bd2119d9c2ac53addebc974202b3dc71d924db0d46e723b701d6"
+        },
+        "cprisk_thread_a_mul_lane_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "2f329a385d7e44ed9123d34cd0da04e1262d2a6c53dbd12054730dfa125663cf"
+        },
+        "cprisk_thread_a_add_rol_acc_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "e40209d12001906ac133bd3ee0f52245f2980a834010c8028a91117b2b60a7c6"
+        },
+        "cprisk_thread_a_branch_ind_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "691f614aa724b081d9263c40522b997c81eac52c3cdee001a85ff16f158217dd"
+        },
+        "cprisk_thread_a_poison_i": {
+          "instruction_lines": 902,
+          "disassembly_sha256": "abf22071fcbe719c8ff35c757df9a40c2872ad27492410b0d56b7c810b4cf559"
+        },
+        "cprisk_thread_a_unknown_i": {
+          "instruction_lines": 902,
+          "disassembly_sha256": "3901e5526bd3a36af47ab0ab5c9caf3b96cb33b699f5dc5733e2960464168137"
+        },
+        "cprisk_thread_b_nop_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "b2238409ce29d4acfe4a16e05cece7b9486665fc84e5a9b220a66fdf3814a1b2"
+        },
+        "cprisk_thread_b_ret_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "eabe21ac57678f62b14eedfee3de37e0b0d96522f096f6e923a9466ee8360ec3"
+        },
+        "cprisk_thread_b_raw_region_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "cab067de6bd93ea4a8112828f27dfe99f92b5dc6e83a93f3830c792abbf938ab"
+        },
+        "cprisk_thread_b_halt_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "3fe545b4aac00fd8b8a1eb3667801a5c3abb4be9031becc8120af221b3402ce6"
+        },
+        "cprisk_thread_b_add_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "b9935f8f181afb67c96703da1ba697510411a8f22d3f5b00e76d914ad7963948"
+        },
+        "cprisk_thread_b_branch_rel_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "95c65f0845e9b72eec8d1287f02e17990fb502c3c3258b3833ac781e53b77066"
+        },
+        "cprisk_thread_b_branch_cond_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "8349b6b2018bfd79f3749d9bbc7a45e2aa6b747f7c9d8e4cbbc8ce9cc5b489af"
+        },
+        "cprisk_thread_b_call_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "14cb00ce2e4195d006120c26cae9ce7ed78093c1210f56599b3673391219265d"
+        },
+        "cprisk_thread_b_mov_wide_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "8a8e17d78f68a4cbe48e0d03752f858fdc75de9d6e012f82738817cb76983c5b"
+        },
+        "cprisk_thread_b_adr_add_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "f50bc9592f28be6c174b9c7a1c0d8d241bf35ab30abcb890e2d9acaebf4f6a34"
+        },
+        "cprisk_thread_b_cond_select_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "e5b51512886b5ca966f329842567194719492d21c3cd1988bcdb1b108656bcea"
+        },
+        "cprisk_thread_b_load_store_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "e1ced583a7890ab521052bc0618d39c44c821eb47bab663f73331aa634146b2d"
+        },
+        "cprisk_thread_b_xor_mix_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "7d3c5c7a05b20c32c5ad1fb6ac79ac17d8c884d2b4c46edbbc3ea6fee7e8b957"
+        },
+        "cprisk_thread_b_or_lane_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "9809fae2bc066059a37bc9b86dd2b645480a36b32b06a238f2278c13e491f960"
+        },
+        "cprisk_thread_b_and_lane_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "5fc08c4fdc6b5101a4fb5ded55a987bff18a01268f18f3e3cd1e1eeafc37d010"
+        },
+        "cprisk_thread_b_rol_acc_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "a79cb84e90fc2597d893387562fc257d99cfb839ec780d49f73241089e72524f"
+        },
+        "cprisk_thread_b_vm_call_func_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "b9e50b6e2a93c8e446ce5dde87105432e34a445e3a6959532f8c2f083c61c33c"
+        },
+        "cprisk_thread_b_vreg_mov_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "d79bd4256e93607f519c85affb3a6012d47e02c7c29a8e20f23b3565ee191e6e"
+        },
+        "cprisk_thread_b_vreg_alu_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "b07ccdd3a2ac32aa767d5b00beb7d6e0e6dffaf6fa7571a29e93b2642b537a2c"
+        },
+        "cprisk_thread_b_vreg_mem_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "c58a789c02457b41203af0414933cb1bc1dc9ba6783020f9777f640c9cd33d05"
+        },
+        "cprisk_thread_b_sub_lane_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "884764352409f294ba7d90da9e57dc4b2def932071a536a4e29a574cc9f9a721"
+        },
+        "cprisk_thread_b_mul_lane_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "cd514643f11030ff29d99df5d93f2be36d68461eff0bacc31647166373b33ff7"
+        },
+        "cprisk_thread_b_add_rol_acc_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "6b06dfb5a0765eaf9d0cb14605cdc62b891cece569ebddcb28618c8bc57f3573"
+        },
+        "cprisk_thread_b_branch_ind_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "eaad3f4b3943b5984c489627d2fcd079e5fc74f615ec2b171fc6513720f2f0e6"
+        },
+        "cprisk_thread_b_poison_i": {
+          "instruction_lines": 885,
+          "disassembly_sha256": "2c2a9a2c241be640926b3ca66330a6a7e03820f7a85c6b38e2af43703d420cd1"
+        },
+        "cprisk_thread_b_unknown_i": {
+          "instruction_lines": 885,
+          "disassembly_sha256": "053914f224961721de688da76093d626f0c04bbaf23f99d93781c720de20b949"
+        }
+      }
+    },
+    {
+      "opt": "O0",
+      "repeat": 1,
+      "command": [
+        "/tmp/vm-clang/root/usr/lib/llvm-18/bin/clang",
+        "-I",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore",
+        "--target=aarch64-none-elf",
+        "-ffreestanding",
+        "-I",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/vm-post-handler-2a/freestanding",
+        "-include",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/vm-post-handler-2a/host_shim.h",
+        "-O0",
+        "-c",
+        "/tmp/cpsv2-arm64/candidate.c",
+        "-o",
+        "/tmp/cpsv2-arm64/O0-1.o"
+      ],
+      "object_sha256": "f509531cae796fa08dc58b3ed0f9fe844f84bf27e14c55c4b60bd6c0cf4871c8",
+      "handlers": {
+        "cprisk_thread_a_nop_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "e1f0e6da87d555c3e124da608a4ddb234a2a9f0e0479a54399a4a992630ad670"
+        },
+        "cprisk_thread_a_ret_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "0400268c894858d9412c92133ebcb818a50fa4e27e308c8aa2c0bca5bb739916"
+        },
+        "cprisk_thread_a_raw_region_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "b6e6565707e6d05811c1574ef750fc0d80ea49509d1c4f0e83388121f98943f2"
+        },
+        "cprisk_thread_a_halt_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "d650c574da7ec8554f030ce0fc32baef47bf1309ce5e25fa75533e3018582edc"
+        },
+        "cprisk_thread_a_add_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "b6fe97a68be6a0f23bbc12ff15031ce736b56019917591ba983a12844f48cc98"
+        },
+        "cprisk_thread_a_branch_rel_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "4a53d05dc54123dfcac6cda6d26b505b2bd0e7f314db69899b84b6d81df0af7d"
+        },
+        "cprisk_thread_a_branch_cond_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "ee521d14dabb6028da7cdb564ec68f89cf7d777ba5097f2b54924a8344c7902b"
+        },
+        "cprisk_thread_a_call_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "448548a1253918ca60d9b6041dbfb8c59ed8eae1ca064b3c57c69c62b3a3fb54"
+        },
+        "cprisk_thread_a_mov_wide_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "bd09867227f9fd99dcb0fb4b5562d19e476a9b3e20552d60d7f831487ff669be"
+        },
+        "cprisk_thread_a_adr_add_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "b8226f61f32f89736f0c1f4de336932f6a70ce1e5f97a2066a66d6481cb4d236"
+        },
+        "cprisk_thread_a_cond_select_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "6c4607503f566ac82260ebf4351d1cce162c93f6f9224fd61b644c688c954887"
+        },
+        "cprisk_thread_a_load_store_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "bd56357a71e0a5bf96492213ac928a8a399945a98a51bd6c8c299464833bf045"
+        },
+        "cprisk_thread_a_xor_mix_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "d09daf0b0e14521496d489c1fd5d51cc9fc0b6c8bb71d16bce3a41eba85aea78"
+        },
+        "cprisk_thread_a_or_lane_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "7ac97ab36ecb495acfe7467d1004ae874207aec27ab400b2d1427d4c767e1e02"
+        },
+        "cprisk_thread_a_and_lane_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "fa3dfb71c31deed364bee283ede500c73403bf1c613b0ddb30837c76896417a9"
+        },
+        "cprisk_thread_a_rol_acc_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "aa64f9e5889326fc92bd4016915588f358df93717fb25ea5821cfa8e1b53b0ab"
+        },
+        "cprisk_thread_a_vm_call_func_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "5eb609994d563ddb22419caa3f3d4d9c3455ffe88798b809a2db7e40a274c8fd"
+        },
+        "cprisk_thread_a_vreg_mov_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "02cd6b9c3a243794093d20b28071977eeb19e688695c488d3a682b51c3614d39"
+        },
+        "cprisk_thread_a_vreg_alu_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "d29cf256fe0533333af70e74f65b6de0057f8521680f3b053bed67cea31fa50b"
+        },
+        "cprisk_thread_a_vreg_mem_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "5b973d56c8f6147fee8bc2a6f39f5c148c78c75557e019d8393c5cf5afbd0e8e"
+        },
+        "cprisk_thread_a_sub_lane_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "90a019135739bd2119d9c2ac53addebc974202b3dc71d924db0d46e723b701d6"
+        },
+        "cprisk_thread_a_mul_lane_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "2f329a385d7e44ed9123d34cd0da04e1262d2a6c53dbd12054730dfa125663cf"
+        },
+        "cprisk_thread_a_add_rol_acc_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "e40209d12001906ac133bd3ee0f52245f2980a834010c8028a91117b2b60a7c6"
+        },
+        "cprisk_thread_a_branch_ind_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "691f614aa724b081d9263c40522b997c81eac52c3cdee001a85ff16f158217dd"
+        },
+        "cprisk_thread_a_poison_i": {
+          "instruction_lines": 902,
+          "disassembly_sha256": "abf22071fcbe719c8ff35c757df9a40c2872ad27492410b0d56b7c810b4cf559"
+        },
+        "cprisk_thread_a_unknown_i": {
+          "instruction_lines": 902,
+          "disassembly_sha256": "3901e5526bd3a36af47ab0ab5c9caf3b96cb33b699f5dc5733e2960464168137"
+        },
+        "cprisk_thread_b_nop_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "b2238409ce29d4acfe4a16e05cece7b9486665fc84e5a9b220a66fdf3814a1b2"
+        },
+        "cprisk_thread_b_ret_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "eabe21ac57678f62b14eedfee3de37e0b0d96522f096f6e923a9466ee8360ec3"
+        },
+        "cprisk_thread_b_raw_region_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "cab067de6bd93ea4a8112828f27dfe99f92b5dc6e83a93f3830c792abbf938ab"
+        },
+        "cprisk_thread_b_halt_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "3fe545b4aac00fd8b8a1eb3667801a5c3abb4be9031becc8120af221b3402ce6"
+        },
+        "cprisk_thread_b_add_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "b9935f8f181afb67c96703da1ba697510411a8f22d3f5b00e76d914ad7963948"
+        },
+        "cprisk_thread_b_branch_rel_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "95c65f0845e9b72eec8d1287f02e17990fb502c3c3258b3833ac781e53b77066"
+        },
+        "cprisk_thread_b_branch_cond_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "8349b6b2018bfd79f3749d9bbc7a45e2aa6b747f7c9d8e4cbbc8ce9cc5b489af"
+        },
+        "cprisk_thread_b_call_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "14cb00ce2e4195d006120c26cae9ce7ed78093c1210f56599b3673391219265d"
+        },
+        "cprisk_thread_b_mov_wide_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "8a8e17d78f68a4cbe48e0d03752f858fdc75de9d6e012f82738817cb76983c5b"
+        },
+        "cprisk_thread_b_adr_add_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "f50bc9592f28be6c174b9c7a1c0d8d241bf35ab30abcb890e2d9acaebf4f6a34"
+        },
+        "cprisk_thread_b_cond_select_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "e5b51512886b5ca966f329842567194719492d21c3cd1988bcdb1b108656bcea"
+        },
+        "cprisk_thread_b_load_store_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "e1ced583a7890ab521052bc0618d39c44c821eb47bab663f73331aa634146b2d"
+        },
+        "cprisk_thread_b_xor_mix_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "7d3c5c7a05b20c32c5ad1fb6ac79ac17d8c884d2b4c46edbbc3ea6fee7e8b957"
+        },
+        "cprisk_thread_b_or_lane_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "9809fae2bc066059a37bc9b86dd2b645480a36b32b06a238f2278c13e491f960"
+        },
+        "cprisk_thread_b_and_lane_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "5fc08c4fdc6b5101a4fb5ded55a987bff18a01268f18f3e3cd1e1eeafc37d010"
+        },
+        "cprisk_thread_b_rol_acc_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "a79cb84e90fc2597d893387562fc257d99cfb839ec780d49f73241089e72524f"
+        },
+        "cprisk_thread_b_vm_call_func_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "b9e50b6e2a93c8e446ce5dde87105432e34a445e3a6959532f8c2f083c61c33c"
+        },
+        "cprisk_thread_b_vreg_mov_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "d79bd4256e93607f519c85affb3a6012d47e02c7c29a8e20f23b3565ee191e6e"
+        },
+        "cprisk_thread_b_vreg_alu_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "b07ccdd3a2ac32aa767d5b00beb7d6e0e6dffaf6fa7571a29e93b2642b537a2c"
+        },
+        "cprisk_thread_b_vreg_mem_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "c58a789c02457b41203af0414933cb1bc1dc9ba6783020f9777f640c9cd33d05"
+        },
+        "cprisk_thread_b_sub_lane_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "884764352409f294ba7d90da9e57dc4b2def932071a536a4e29a574cc9f9a721"
+        },
+        "cprisk_thread_b_mul_lane_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "cd514643f11030ff29d99df5d93f2be36d68461eff0bacc31647166373b33ff7"
+        },
+        "cprisk_thread_b_add_rol_acc_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "6b06dfb5a0765eaf9d0cb14605cdc62b891cece569ebddcb28618c8bc57f3573"
+        },
+        "cprisk_thread_b_branch_ind_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "eaad3f4b3943b5984c489627d2fcd079e5fc74f615ec2b171fc6513720f2f0e6"
+        },
+        "cprisk_thread_b_poison_i": {
+          "instruction_lines": 885,
+          "disassembly_sha256": "2c2a9a2c241be640926b3ca66330a6a7e03820f7a85c6b38e2af43703d420cd1"
+        },
+        "cprisk_thread_b_unknown_i": {
+          "instruction_lines": 885,
+          "disassembly_sha256": "053914f224961721de688da76093d626f0c04bbaf23f99d93781c720de20b949"
+        }
+      }
+    },
+    {
+      "opt": "O0",
+      "repeat": 2,
+      "command": [
+        "/tmp/vm-clang/root/usr/lib/llvm-18/bin/clang",
+        "-I",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore",
+        "--target=aarch64-none-elf",
+        "-ffreestanding",
+        "-I",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/vm-post-handler-2a/freestanding",
+        "-include",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/vm-post-handler-2a/host_shim.h",
+        "-O0",
+        "-c",
+        "/tmp/cpsv2-arm64/candidate.c",
+        "-o",
+        "/tmp/cpsv2-arm64/O0-2.o"
+      ],
+      "object_sha256": "f509531cae796fa08dc58b3ed0f9fe844f84bf27e14c55c4b60bd6c0cf4871c8",
+      "handlers": {
+        "cprisk_thread_a_nop_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "e1f0e6da87d555c3e124da608a4ddb234a2a9f0e0479a54399a4a992630ad670"
+        },
+        "cprisk_thread_a_ret_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "0400268c894858d9412c92133ebcb818a50fa4e27e308c8aa2c0bca5bb739916"
+        },
+        "cprisk_thread_a_raw_region_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "b6e6565707e6d05811c1574ef750fc0d80ea49509d1c4f0e83388121f98943f2"
+        },
+        "cprisk_thread_a_halt_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "d650c574da7ec8554f030ce0fc32baef47bf1309ce5e25fa75533e3018582edc"
+        },
+        "cprisk_thread_a_add_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "b6fe97a68be6a0f23bbc12ff15031ce736b56019917591ba983a12844f48cc98"
+        },
+        "cprisk_thread_a_branch_rel_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "4a53d05dc54123dfcac6cda6d26b505b2bd0e7f314db69899b84b6d81df0af7d"
+        },
+        "cprisk_thread_a_branch_cond_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "ee521d14dabb6028da7cdb564ec68f89cf7d777ba5097f2b54924a8344c7902b"
+        },
+        "cprisk_thread_a_call_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "448548a1253918ca60d9b6041dbfb8c59ed8eae1ca064b3c57c69c62b3a3fb54"
+        },
+        "cprisk_thread_a_mov_wide_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "bd09867227f9fd99dcb0fb4b5562d19e476a9b3e20552d60d7f831487ff669be"
+        },
+        "cprisk_thread_a_adr_add_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "b8226f61f32f89736f0c1f4de336932f6a70ce1e5f97a2066a66d6481cb4d236"
+        },
+        "cprisk_thread_a_cond_select_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "6c4607503f566ac82260ebf4351d1cce162c93f6f9224fd61b644c688c954887"
+        },
+        "cprisk_thread_a_load_store_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "bd56357a71e0a5bf96492213ac928a8a399945a98a51bd6c8c299464833bf045"
+        },
+        "cprisk_thread_a_xor_mix_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "d09daf0b0e14521496d489c1fd5d51cc9fc0b6c8bb71d16bce3a41eba85aea78"
+        },
+        "cprisk_thread_a_or_lane_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "7ac97ab36ecb495acfe7467d1004ae874207aec27ab400b2d1427d4c767e1e02"
+        },
+        "cprisk_thread_a_and_lane_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "fa3dfb71c31deed364bee283ede500c73403bf1c613b0ddb30837c76896417a9"
+        },
+        "cprisk_thread_a_rol_acc_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "aa64f9e5889326fc92bd4016915588f358df93717fb25ea5821cfa8e1b53b0ab"
+        },
+        "cprisk_thread_a_vm_call_func_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "5eb609994d563ddb22419caa3f3d4d9c3455ffe88798b809a2db7e40a274c8fd"
+        },
+        "cprisk_thread_a_vreg_mov_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "02cd6b9c3a243794093d20b28071977eeb19e688695c488d3a682b51c3614d39"
+        },
+        "cprisk_thread_a_vreg_alu_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "d29cf256fe0533333af70e74f65b6de0057f8521680f3b053bed67cea31fa50b"
+        },
+        "cprisk_thread_a_vreg_mem_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "5b973d56c8f6147fee8bc2a6f39f5c148c78c75557e019d8393c5cf5afbd0e8e"
+        },
+        "cprisk_thread_a_sub_lane_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "90a019135739bd2119d9c2ac53addebc974202b3dc71d924db0d46e723b701d6"
+        },
+        "cprisk_thread_a_mul_lane_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "2f329a385d7e44ed9123d34cd0da04e1262d2a6c53dbd12054730dfa125663cf"
+        },
+        "cprisk_thread_a_add_rol_acc_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "e40209d12001906ac133bd3ee0f52245f2980a834010c8028a91117b2b60a7c6"
+        },
+        "cprisk_thread_a_branch_ind_i": {
+          "instruction_lines": 906,
+          "disassembly_sha256": "691f614aa724b081d9263c40522b997c81eac52c3cdee001a85ff16f158217dd"
+        },
+        "cprisk_thread_a_poison_i": {
+          "instruction_lines": 902,
+          "disassembly_sha256": "abf22071fcbe719c8ff35c757df9a40c2872ad27492410b0d56b7c810b4cf559"
+        },
+        "cprisk_thread_a_unknown_i": {
+          "instruction_lines": 902,
+          "disassembly_sha256": "3901e5526bd3a36af47ab0ab5c9caf3b96cb33b699f5dc5733e2960464168137"
+        },
+        "cprisk_thread_b_nop_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "b2238409ce29d4acfe4a16e05cece7b9486665fc84e5a9b220a66fdf3814a1b2"
+        },
+        "cprisk_thread_b_ret_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "eabe21ac57678f62b14eedfee3de37e0b0d96522f096f6e923a9466ee8360ec3"
+        },
+        "cprisk_thread_b_raw_region_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "cab067de6bd93ea4a8112828f27dfe99f92b5dc6e83a93f3830c792abbf938ab"
+        },
+        "cprisk_thread_b_halt_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "3fe545b4aac00fd8b8a1eb3667801a5c3abb4be9031becc8120af221b3402ce6"
+        },
+        "cprisk_thread_b_add_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "b9935f8f181afb67c96703da1ba697510411a8f22d3f5b00e76d914ad7963948"
+        },
+        "cprisk_thread_b_branch_rel_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "95c65f0845e9b72eec8d1287f02e17990fb502c3c3258b3833ac781e53b77066"
+        },
+        "cprisk_thread_b_branch_cond_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "8349b6b2018bfd79f3749d9bbc7a45e2aa6b747f7c9d8e4cbbc8ce9cc5b489af"
+        },
+        "cprisk_thread_b_call_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "14cb00ce2e4195d006120c26cae9ce7ed78093c1210f56599b3673391219265d"
+        },
+        "cprisk_thread_b_mov_wide_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "8a8e17d78f68a4cbe48e0d03752f858fdc75de9d6e012f82738817cb76983c5b"
+        },
+        "cprisk_thread_b_adr_add_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "f50bc9592f28be6c174b9c7a1c0d8d241bf35ab30abcb890e2d9acaebf4f6a34"
+        },
+        "cprisk_thread_b_cond_select_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "e5b51512886b5ca966f329842567194719492d21c3cd1988bcdb1b108656bcea"
+        },
+        "cprisk_thread_b_load_store_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "e1ced583a7890ab521052bc0618d39c44c821eb47bab663f73331aa634146b2d"
+        },
+        "cprisk_thread_b_xor_mix_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "7d3c5c7a05b20c32c5ad1fb6ac79ac17d8c884d2b4c46edbbc3ea6fee7e8b957"
+        },
+        "cprisk_thread_b_or_lane_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "9809fae2bc066059a37bc9b86dd2b645480a36b32b06a238f2278c13e491f960"
+        },
+        "cprisk_thread_b_and_lane_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "5fc08c4fdc6b5101a4fb5ded55a987bff18a01268f18f3e3cd1e1eeafc37d010"
+        },
+        "cprisk_thread_b_rol_acc_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "a79cb84e90fc2597d893387562fc257d99cfb839ec780d49f73241089e72524f"
+        },
+        "cprisk_thread_b_vm_call_func_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "b9e50b6e2a93c8e446ce5dde87105432e34a445e3a6959532f8c2f083c61c33c"
+        },
+        "cprisk_thread_b_vreg_mov_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "d79bd4256e93607f519c85affb3a6012d47e02c7c29a8e20f23b3565ee191e6e"
+        },
+        "cprisk_thread_b_vreg_alu_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "b07ccdd3a2ac32aa767d5b00beb7d6e0e6dffaf6fa7571a29e93b2642b537a2c"
+        },
+        "cprisk_thread_b_vreg_mem_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "c58a789c02457b41203af0414933cb1bc1dc9ba6783020f9777f640c9cd33d05"
+        },
+        "cprisk_thread_b_sub_lane_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "884764352409f294ba7d90da9e57dc4b2def932071a536a4e29a574cc9f9a721"
+        },
+        "cprisk_thread_b_mul_lane_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "cd514643f11030ff29d99df5d93f2be36d68461eff0bacc31647166373b33ff7"
+        },
+        "cprisk_thread_b_add_rol_acc_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "6b06dfb5a0765eaf9d0cb14605cdc62b891cece569ebddcb28618c8bc57f3573"
+        },
+        "cprisk_thread_b_branch_ind_i": {
+          "instruction_lines": 889,
+          "disassembly_sha256": "eaad3f4b3943b5984c489627d2fcd079e5fc74f615ec2b171fc6513720f2f0e6"
+        },
+        "cprisk_thread_b_poison_i": {
+          "instruction_lines": 885,
+          "disassembly_sha256": "2c2a9a2c241be640926b3ca66330a6a7e03820f7a85c6b38e2af43703d420cd1"
+        },
+        "cprisk_thread_b_unknown_i": {
+          "instruction_lines": 885,
+          "disassembly_sha256": "053914f224961721de688da76093d626f0c04bbaf23f99d93781c720de20b949"
+        }
+      }
+    },
+    {
+      "opt": "O2",
+      "repeat": 0,
+      "command": [
+        "/tmp/vm-clang/root/usr/lib/llvm-18/bin/clang",
+        "-I",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore",
+        "--target=aarch64-none-elf",
+        "-ffreestanding",
+        "-I",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/vm-post-handler-2a/freestanding",
+        "-include",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/vm-post-handler-2a/host_shim.h",
+        "-O2",
+        "-c",
+        "/tmp/cpsv2-arm64/candidate.c",
+        "-o",
+        "/tmp/cpsv2-arm64/O2-0.o"
+      ],
+      "object_sha256": "95fa1a7a887763a93e3d867f05ae2e720adc9898b697f5034effa84f97edd764",
+      "handlers": {
+        "cprisk_thread_a_nop_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "d8192103a13fb3e57e9c5a9320bd92937b5171ee5b29e67f7e98c3092b9b8327"
+        },
+        "cprisk_thread_a_ret_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "02d5d5f29ec487e2566f459743caaa8279b6c3735d4b385ce631eca6a01584fb"
+        },
+        "cprisk_thread_a_raw_region_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "7a7b86287dd62ba31acecee1ad47cad391d33cc5a994f991804e952a18d2d052"
+        },
+        "cprisk_thread_a_halt_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "cf0491070f329607b6ee7b83cdad0c03b6883594b0c16b04af89ab3d8223779c"
+        },
+        "cprisk_thread_a_add_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "81d40ea95d6db99e0392aecf03d3a398b92b6bc7946c8b8d6594db5fe786801b"
+        },
+        "cprisk_thread_a_branch_rel_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "8359d558ee43d3bcc80d36f3b8ceea971c4d9f0d6eeca2b68565a0755facf71a"
+        },
+        "cprisk_thread_a_branch_cond_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "80e99b256d0da96bc25b7872912596fd951651b2d0a7a605664524cab4ebc429"
+        },
+        "cprisk_thread_a_call_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "9eec10eaeeaa964832215cd959df76d92f8853dc58a71c4f845b6db2b1d5ec0e"
+        },
+        "cprisk_thread_a_mov_wide_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "0e23c0d72bf3e3ec1c9d69a6218fd9febcea84eff4bb18edb3ad33437e9619bf"
+        },
+        "cprisk_thread_a_adr_add_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "2ffb6d2e0b43caa800faa9e737d071d961b562b846b096c49fadd6e632fe7287"
+        },
+        "cprisk_thread_a_cond_select_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "49bb787dde44fb1f5d6df33f54a40b57229bcebd8f4343708fd3735bbf00cae8"
+        },
+        "cprisk_thread_a_load_store_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "30dbff8600813d6963e01ecc834c8c6e230c3642e7870b43a553324ffaf9ce09"
+        },
+        "cprisk_thread_a_xor_mix_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "a20ecb8f0d7556973ee5dc4896c78765b2941ee6b4720c8837eaa7ff673aa0c1"
+        },
+        "cprisk_thread_a_or_lane_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "adbb47220cc739bd2ed5dbe391455bbbda3a0d74918323c461d2c84ad31971c2"
+        },
+        "cprisk_thread_a_and_lane_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "492f4568b0f255943ba929c01ee1c7267ae6b7016d5d7cc9c60bb7946aa1d9b8"
+        },
+        "cprisk_thread_a_rol_acc_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "825712a3e8d1567e99282d9ab428a2f899a3ad658c23e4129e746404168df79c"
+        },
+        "cprisk_thread_a_vm_call_func_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "48be6d53a24d093e2769307e2cb68c3f7995fa0b97aee89068f1d9f2ea7f864b"
+        },
+        "cprisk_thread_a_vreg_mov_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "873f22cbbbf664419996b7f1d131820947db286b67da94389959a43d7bbe356b"
+        },
+        "cprisk_thread_a_vreg_alu_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "ac2ce518a1045a069a70e0224d7cca468d06cc0a4132750c21f589dc1a7395b7"
+        },
+        "cprisk_thread_a_vreg_mem_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "227a530bfa016f3ad6049aaa0f3d4344bc10b7834e8bf4f3c7143d55b278b34c"
+        },
+        "cprisk_thread_a_sub_lane_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "d35f49b51fd248573441c17820a3d1d421ab023fe935de5df4902bec83795fbd"
+        },
+        "cprisk_thread_a_mul_lane_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "2db560031ad18761b0c1f8759b53b3c948c1529be766da3e0ff0697885a5db7b"
+        },
+        "cprisk_thread_a_add_rol_acc_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "8140bbdfb7a42360163d9e7043c45ceca2eb2ab218586f8708947e509805108e"
+        },
+        "cprisk_thread_a_branch_ind_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "8bb278cce82d41068395738ff1a2d7f19e348b2a3b9342f292ccbbe4e1e691e7"
+        },
+        "cprisk_thread_a_poison_i": {
+          "instruction_lines": 544,
+          "disassembly_sha256": "49dece640d842b442cb6d07b0a19b10dbcceffffd65a76c53df3dd4bc646d95e"
+        },
+        "cprisk_thread_a_unknown_i": {
+          "instruction_lines": 544,
+          "disassembly_sha256": "083e62cd0fc7df52a03dde4e0b007e377cbb03937f781ecb66fbc9a71ed7a610"
+        },
+        "cprisk_thread_b_nop_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "8904ead0dac5964070d064df964a15892ca31ce57f40cceff46fb61f0620ea09"
+        },
+        "cprisk_thread_b_ret_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "e802182d74fd7c6a0b0b83ea704bcb1ab8a99592f2535b11a10eab2f1d276cd2"
+        },
+        "cprisk_thread_b_raw_region_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "48d1efaf010508b052503aaa6a0966edc325db5ab8d59e6b8830ca9719666380"
+        },
+        "cprisk_thread_b_halt_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "614795f9fb33bf7c7a08d0281a45aeef3951cb2cb6306f872f325e08ae2628c6"
+        },
+        "cprisk_thread_b_add_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "041b2a69adfc319c02ae2f394ab29c766fb080e3259aab0e31734beb093709f3"
+        },
+        "cprisk_thread_b_branch_rel_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "e762c5974c72c31a10598c3a6e479a245bd72508bdbbaf769496e95ecb86b270"
+        },
+        "cprisk_thread_b_branch_cond_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "267bb17f3f1b5b814162304e0032a7c9ea0e0183b7d5b20a0f753df2f3b73d94"
+        },
+        "cprisk_thread_b_call_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "c7f8294a2604c0f5b2e753542da28e866a1f4010d888afd99bbacf61c340b8a1"
+        },
+        "cprisk_thread_b_mov_wide_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "9afda2789f6c745059389a254926e3eabdd5075af02343179e84914cb8891b1c"
+        },
+        "cprisk_thread_b_adr_add_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "7a0883cd83938c90e7afd83d5645695d1075df4d8fce19141f48d8909dd66846"
+        },
+        "cprisk_thread_b_cond_select_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "a6ed196b928afdfa280117daca05b65cd659e7527050aef9341b124402e90bb9"
+        },
+        "cprisk_thread_b_load_store_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "6e5b3fcfb7fd49822a51c2ff00579257932a410f8690b105a3034a8644837f9d"
+        },
+        "cprisk_thread_b_xor_mix_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "affe1032ca00552d1da4042704796670e32e6602cb5eb8a07b0fd80e1df984ce"
+        },
+        "cprisk_thread_b_or_lane_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "3640514eadbc4e68fedba482a64c00a461bb0b85bca9aeb6432cf36245539cd6"
+        },
+        "cprisk_thread_b_and_lane_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "9ee51a744e75aec880efa05d75ad766b3385b0c1126bdfc9bf1fc6d2f21c9546"
+        },
+        "cprisk_thread_b_rol_acc_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "91a33ef3ca7440c8536f13f5d75ba2f86a5b70a3c52164fd8e7ddb9552d20040"
+        },
+        "cprisk_thread_b_vm_call_func_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "7ce71e6d4d52ba3daf2e39c0642d6d4897972dfc9be9a8d19fcd15efddc8e418"
+        },
+        "cprisk_thread_b_vreg_mov_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "3d516cf8c39c9ea44da2758df2f998702e5190c8869b83f0dfbd7588a5516534"
+        },
+        "cprisk_thread_b_vreg_alu_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "b25a6a159576517e07882a39dc3bc8b355ce0765fc4d7c031af64c792f6a923e"
+        },
+        "cprisk_thread_b_vreg_mem_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "063e0aa1e96c80a5023a7ae8e69cd56f44953ff937fc6fb8825c65daecded5d0"
+        },
+        "cprisk_thread_b_sub_lane_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "1cb1e477962a8981bb49481ba1646682d601143d3c61fe0b96a2ddee6e5c9133"
+        },
+        "cprisk_thread_b_mul_lane_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "146d44651341f417a87b3102fd73e88ec04b97501bcee2bb10d674a993ae401e"
+        },
+        "cprisk_thread_b_add_rol_acc_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "60f3133f192076c5a0869f06f57442e83d73295044059f99ffed4b3cefc0b8ee"
+        },
+        "cprisk_thread_b_branch_ind_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "564fddde3cbb45c8937bc3354d3db8fcfbfd89f2edbd55bf859f8e662a545f29"
+        },
+        "cprisk_thread_b_poison_i": {
+          "instruction_lines": 577,
+          "disassembly_sha256": "cfd0eb0b5ae6d1cfcd9845bf277a325a22abd286262e22a2f255cfaa65dfbd48"
+        },
+        "cprisk_thread_b_unknown_i": {
+          "instruction_lines": 577,
+          "disassembly_sha256": "1d0ade5317db1d8ecdb33d3a042b51379adf1705703bb1bd2437af1b4fe6b6e1"
+        }
+      }
+    },
+    {
+      "opt": "O2",
+      "repeat": 1,
+      "command": [
+        "/tmp/vm-clang/root/usr/lib/llvm-18/bin/clang",
+        "-I",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore",
+        "--target=aarch64-none-elf",
+        "-ffreestanding",
+        "-I",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/vm-post-handler-2a/freestanding",
+        "-include",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/vm-post-handler-2a/host_shim.h",
+        "-O2",
+        "-c",
+        "/tmp/cpsv2-arm64/candidate.c",
+        "-o",
+        "/tmp/cpsv2-arm64/O2-1.o"
+      ],
+      "object_sha256": "95fa1a7a887763a93e3d867f05ae2e720adc9898b697f5034effa84f97edd764",
+      "handlers": {
+        "cprisk_thread_a_nop_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "d8192103a13fb3e57e9c5a9320bd92937b5171ee5b29e67f7e98c3092b9b8327"
+        },
+        "cprisk_thread_a_ret_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "02d5d5f29ec487e2566f459743caaa8279b6c3735d4b385ce631eca6a01584fb"
+        },
+        "cprisk_thread_a_raw_region_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "7a7b86287dd62ba31acecee1ad47cad391d33cc5a994f991804e952a18d2d052"
+        },
+        "cprisk_thread_a_halt_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "cf0491070f329607b6ee7b83cdad0c03b6883594b0c16b04af89ab3d8223779c"
+        },
+        "cprisk_thread_a_add_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "81d40ea95d6db99e0392aecf03d3a398b92b6bc7946c8b8d6594db5fe786801b"
+        },
+        "cprisk_thread_a_branch_rel_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "8359d558ee43d3bcc80d36f3b8ceea971c4d9f0d6eeca2b68565a0755facf71a"
+        },
+        "cprisk_thread_a_branch_cond_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "80e99b256d0da96bc25b7872912596fd951651b2d0a7a605664524cab4ebc429"
+        },
+        "cprisk_thread_a_call_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "9eec10eaeeaa964832215cd959df76d92f8853dc58a71c4f845b6db2b1d5ec0e"
+        },
+        "cprisk_thread_a_mov_wide_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "0e23c0d72bf3e3ec1c9d69a6218fd9febcea84eff4bb18edb3ad33437e9619bf"
+        },
+        "cprisk_thread_a_adr_add_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "2ffb6d2e0b43caa800faa9e737d071d961b562b846b096c49fadd6e632fe7287"
+        },
+        "cprisk_thread_a_cond_select_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "49bb787dde44fb1f5d6df33f54a40b57229bcebd8f4343708fd3735bbf00cae8"
+        },
+        "cprisk_thread_a_load_store_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "30dbff8600813d6963e01ecc834c8c6e230c3642e7870b43a553324ffaf9ce09"
+        },
+        "cprisk_thread_a_xor_mix_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "a20ecb8f0d7556973ee5dc4896c78765b2941ee6b4720c8837eaa7ff673aa0c1"
+        },
+        "cprisk_thread_a_or_lane_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "adbb47220cc739bd2ed5dbe391455bbbda3a0d74918323c461d2c84ad31971c2"
+        },
+        "cprisk_thread_a_and_lane_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "492f4568b0f255943ba929c01ee1c7267ae6b7016d5d7cc9c60bb7946aa1d9b8"
+        },
+        "cprisk_thread_a_rol_acc_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "825712a3e8d1567e99282d9ab428a2f899a3ad658c23e4129e746404168df79c"
+        },
+        "cprisk_thread_a_vm_call_func_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "48be6d53a24d093e2769307e2cb68c3f7995fa0b97aee89068f1d9f2ea7f864b"
+        },
+        "cprisk_thread_a_vreg_mov_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "873f22cbbbf664419996b7f1d131820947db286b67da94389959a43d7bbe356b"
+        },
+        "cprisk_thread_a_vreg_alu_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "ac2ce518a1045a069a70e0224d7cca468d06cc0a4132750c21f589dc1a7395b7"
+        },
+        "cprisk_thread_a_vreg_mem_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "227a530bfa016f3ad6049aaa0f3d4344bc10b7834e8bf4f3c7143d55b278b34c"
+        },
+        "cprisk_thread_a_sub_lane_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "d35f49b51fd248573441c17820a3d1d421ab023fe935de5df4902bec83795fbd"
+        },
+        "cprisk_thread_a_mul_lane_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "2db560031ad18761b0c1f8759b53b3c948c1529be766da3e0ff0697885a5db7b"
+        },
+        "cprisk_thread_a_add_rol_acc_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "8140bbdfb7a42360163d9e7043c45ceca2eb2ab218586f8708947e509805108e"
+        },
+        "cprisk_thread_a_branch_ind_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "8bb278cce82d41068395738ff1a2d7f19e348b2a3b9342f292ccbbe4e1e691e7"
+        },
+        "cprisk_thread_a_poison_i": {
+          "instruction_lines": 544,
+          "disassembly_sha256": "49dece640d842b442cb6d07b0a19b10dbcceffffd65a76c53df3dd4bc646d95e"
+        },
+        "cprisk_thread_a_unknown_i": {
+          "instruction_lines": 544,
+          "disassembly_sha256": "083e62cd0fc7df52a03dde4e0b007e377cbb03937f781ecb66fbc9a71ed7a610"
+        },
+        "cprisk_thread_b_nop_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "8904ead0dac5964070d064df964a15892ca31ce57f40cceff46fb61f0620ea09"
+        },
+        "cprisk_thread_b_ret_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "e802182d74fd7c6a0b0b83ea704bcb1ab8a99592f2535b11a10eab2f1d276cd2"
+        },
+        "cprisk_thread_b_raw_region_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "48d1efaf010508b052503aaa6a0966edc325db5ab8d59e6b8830ca9719666380"
+        },
+        "cprisk_thread_b_halt_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "614795f9fb33bf7c7a08d0281a45aeef3951cb2cb6306f872f325e08ae2628c6"
+        },
+        "cprisk_thread_b_add_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "041b2a69adfc319c02ae2f394ab29c766fb080e3259aab0e31734beb093709f3"
+        },
+        "cprisk_thread_b_branch_rel_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "e762c5974c72c31a10598c3a6e479a245bd72508bdbbaf769496e95ecb86b270"
+        },
+        "cprisk_thread_b_branch_cond_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "267bb17f3f1b5b814162304e0032a7c9ea0e0183b7d5b20a0f753df2f3b73d94"
+        },
+        "cprisk_thread_b_call_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "c7f8294a2604c0f5b2e753542da28e866a1f4010d888afd99bbacf61c340b8a1"
+        },
+        "cprisk_thread_b_mov_wide_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "9afda2789f6c745059389a254926e3eabdd5075af02343179e84914cb8891b1c"
+        },
+        "cprisk_thread_b_adr_add_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "7a0883cd83938c90e7afd83d5645695d1075df4d8fce19141f48d8909dd66846"
+        },
+        "cprisk_thread_b_cond_select_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "a6ed196b928afdfa280117daca05b65cd659e7527050aef9341b124402e90bb9"
+        },
+        "cprisk_thread_b_load_store_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "6e5b3fcfb7fd49822a51c2ff00579257932a410f8690b105a3034a8644837f9d"
+        },
+        "cprisk_thread_b_xor_mix_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "affe1032ca00552d1da4042704796670e32e6602cb5eb8a07b0fd80e1df984ce"
+        },
+        "cprisk_thread_b_or_lane_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "3640514eadbc4e68fedba482a64c00a461bb0b85bca9aeb6432cf36245539cd6"
+        },
+        "cprisk_thread_b_and_lane_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "9ee51a744e75aec880efa05d75ad766b3385b0c1126bdfc9bf1fc6d2f21c9546"
+        },
+        "cprisk_thread_b_rol_acc_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "91a33ef3ca7440c8536f13f5d75ba2f86a5b70a3c52164fd8e7ddb9552d20040"
+        },
+        "cprisk_thread_b_vm_call_func_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "7ce71e6d4d52ba3daf2e39c0642d6d4897972dfc9be9a8d19fcd15efddc8e418"
+        },
+        "cprisk_thread_b_vreg_mov_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "3d516cf8c39c9ea44da2758df2f998702e5190c8869b83f0dfbd7588a5516534"
+        },
+        "cprisk_thread_b_vreg_alu_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "b25a6a159576517e07882a39dc3bc8b355ce0765fc4d7c031af64c792f6a923e"
+        },
+        "cprisk_thread_b_vreg_mem_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "063e0aa1e96c80a5023a7ae8e69cd56f44953ff937fc6fb8825c65daecded5d0"
+        },
+        "cprisk_thread_b_sub_lane_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "1cb1e477962a8981bb49481ba1646682d601143d3c61fe0b96a2ddee6e5c9133"
+        },
+        "cprisk_thread_b_mul_lane_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "146d44651341f417a87b3102fd73e88ec04b97501bcee2bb10d674a993ae401e"
+        },
+        "cprisk_thread_b_add_rol_acc_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "60f3133f192076c5a0869f06f57442e83d73295044059f99ffed4b3cefc0b8ee"
+        },
+        "cprisk_thread_b_branch_ind_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "564fddde3cbb45c8937bc3354d3db8fcfbfd89f2edbd55bf859f8e662a545f29"
+        },
+        "cprisk_thread_b_poison_i": {
+          "instruction_lines": 577,
+          "disassembly_sha256": "cfd0eb0b5ae6d1cfcd9845bf277a325a22abd286262e22a2f255cfaa65dfbd48"
+        },
+        "cprisk_thread_b_unknown_i": {
+          "instruction_lines": 577,
+          "disassembly_sha256": "1d0ade5317db1d8ecdb33d3a042b51379adf1705703bb1bd2437af1b4fe6b6e1"
+        }
+      }
+    },
+    {
+      "opt": "O2",
+      "repeat": 2,
+      "command": [
+        "/tmp/vm-clang/root/usr/lib/llvm-18/bin/clang",
+        "-I",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore",
+        "--target=aarch64-none-elf",
+        "-ffreestanding",
+        "-I",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/vm-post-handler-2a/freestanding",
+        "-include",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/vm-post-handler-2a/host_shim.h",
+        "-O2",
+        "-c",
+        "/tmp/cpsv2-arm64/candidate.c",
+        "-o",
+        "/tmp/cpsv2-arm64/O2-2.o"
+      ],
+      "object_sha256": "95fa1a7a887763a93e3d867f05ae2e720adc9898b697f5034effa84f97edd764",
+      "handlers": {
+        "cprisk_thread_a_nop_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "d8192103a13fb3e57e9c5a9320bd92937b5171ee5b29e67f7e98c3092b9b8327"
+        },
+        "cprisk_thread_a_ret_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "02d5d5f29ec487e2566f459743caaa8279b6c3735d4b385ce631eca6a01584fb"
+        },
+        "cprisk_thread_a_raw_region_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "7a7b86287dd62ba31acecee1ad47cad391d33cc5a994f991804e952a18d2d052"
+        },
+        "cprisk_thread_a_halt_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "cf0491070f329607b6ee7b83cdad0c03b6883594b0c16b04af89ab3d8223779c"
+        },
+        "cprisk_thread_a_add_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "81d40ea95d6db99e0392aecf03d3a398b92b6bc7946c8b8d6594db5fe786801b"
+        },
+        "cprisk_thread_a_branch_rel_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "8359d558ee43d3bcc80d36f3b8ceea971c4d9f0d6eeca2b68565a0755facf71a"
+        },
+        "cprisk_thread_a_branch_cond_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "80e99b256d0da96bc25b7872912596fd951651b2d0a7a605664524cab4ebc429"
+        },
+        "cprisk_thread_a_call_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "9eec10eaeeaa964832215cd959df76d92f8853dc58a71c4f845b6db2b1d5ec0e"
+        },
+        "cprisk_thread_a_mov_wide_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "0e23c0d72bf3e3ec1c9d69a6218fd9febcea84eff4bb18edb3ad33437e9619bf"
+        },
+        "cprisk_thread_a_adr_add_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "2ffb6d2e0b43caa800faa9e737d071d961b562b846b096c49fadd6e632fe7287"
+        },
+        "cprisk_thread_a_cond_select_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "49bb787dde44fb1f5d6df33f54a40b57229bcebd8f4343708fd3735bbf00cae8"
+        },
+        "cprisk_thread_a_load_store_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "30dbff8600813d6963e01ecc834c8c6e230c3642e7870b43a553324ffaf9ce09"
+        },
+        "cprisk_thread_a_xor_mix_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "a20ecb8f0d7556973ee5dc4896c78765b2941ee6b4720c8837eaa7ff673aa0c1"
+        },
+        "cprisk_thread_a_or_lane_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "adbb47220cc739bd2ed5dbe391455bbbda3a0d74918323c461d2c84ad31971c2"
+        },
+        "cprisk_thread_a_and_lane_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "492f4568b0f255943ba929c01ee1c7267ae6b7016d5d7cc9c60bb7946aa1d9b8"
+        },
+        "cprisk_thread_a_rol_acc_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "825712a3e8d1567e99282d9ab428a2f899a3ad658c23e4129e746404168df79c"
+        },
+        "cprisk_thread_a_vm_call_func_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "48be6d53a24d093e2769307e2cb68c3f7995fa0b97aee89068f1d9f2ea7f864b"
+        },
+        "cprisk_thread_a_vreg_mov_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "873f22cbbbf664419996b7f1d131820947db286b67da94389959a43d7bbe356b"
+        },
+        "cprisk_thread_a_vreg_alu_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "ac2ce518a1045a069a70e0224d7cca468d06cc0a4132750c21f589dc1a7395b7"
+        },
+        "cprisk_thread_a_vreg_mem_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "227a530bfa016f3ad6049aaa0f3d4344bc10b7834e8bf4f3c7143d55b278b34c"
+        },
+        "cprisk_thread_a_sub_lane_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "d35f49b51fd248573441c17820a3d1d421ab023fe935de5df4902bec83795fbd"
+        },
+        "cprisk_thread_a_mul_lane_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "2db560031ad18761b0c1f8759b53b3c948c1529be766da3e0ff0697885a5db7b"
+        },
+        "cprisk_thread_a_add_rol_acc_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "8140bbdfb7a42360163d9e7043c45ceca2eb2ab218586f8708947e509805108e"
+        },
+        "cprisk_thread_a_branch_ind_i": {
+          "instruction_lines": 810,
+          "disassembly_sha256": "8bb278cce82d41068395738ff1a2d7f19e348b2a3b9342f292ccbbe4e1e691e7"
+        },
+        "cprisk_thread_a_poison_i": {
+          "instruction_lines": 544,
+          "disassembly_sha256": "49dece640d842b442cb6d07b0a19b10dbcceffffd65a76c53df3dd4bc646d95e"
+        },
+        "cprisk_thread_a_unknown_i": {
+          "instruction_lines": 544,
+          "disassembly_sha256": "083e62cd0fc7df52a03dde4e0b007e377cbb03937f781ecb66fbc9a71ed7a610"
+        },
+        "cprisk_thread_b_nop_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "8904ead0dac5964070d064df964a15892ca31ce57f40cceff46fb61f0620ea09"
+        },
+        "cprisk_thread_b_ret_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "e802182d74fd7c6a0b0b83ea704bcb1ab8a99592f2535b11a10eab2f1d276cd2"
+        },
+        "cprisk_thread_b_raw_region_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "48d1efaf010508b052503aaa6a0966edc325db5ab8d59e6b8830ca9719666380"
+        },
+        "cprisk_thread_b_halt_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "614795f9fb33bf7c7a08d0281a45aeef3951cb2cb6306f872f325e08ae2628c6"
+        },
+        "cprisk_thread_b_add_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "041b2a69adfc319c02ae2f394ab29c766fb080e3259aab0e31734beb093709f3"
+        },
+        "cprisk_thread_b_branch_rel_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "e762c5974c72c31a10598c3a6e479a245bd72508bdbbaf769496e95ecb86b270"
+        },
+        "cprisk_thread_b_branch_cond_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "267bb17f3f1b5b814162304e0032a7c9ea0e0183b7d5b20a0f753df2f3b73d94"
+        },
+        "cprisk_thread_b_call_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "c7f8294a2604c0f5b2e753542da28e866a1f4010d888afd99bbacf61c340b8a1"
+        },
+        "cprisk_thread_b_mov_wide_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "9afda2789f6c745059389a254926e3eabdd5075af02343179e84914cb8891b1c"
+        },
+        "cprisk_thread_b_adr_add_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "7a0883cd83938c90e7afd83d5645695d1075df4d8fce19141f48d8909dd66846"
+        },
+        "cprisk_thread_b_cond_select_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "a6ed196b928afdfa280117daca05b65cd659e7527050aef9341b124402e90bb9"
+        },
+        "cprisk_thread_b_load_store_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "6e5b3fcfb7fd49822a51c2ff00579257932a410f8690b105a3034a8644837f9d"
+        },
+        "cprisk_thread_b_xor_mix_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "affe1032ca00552d1da4042704796670e32e6602cb5eb8a07b0fd80e1df984ce"
+        },
+        "cprisk_thread_b_or_lane_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "3640514eadbc4e68fedba482a64c00a461bb0b85bca9aeb6432cf36245539cd6"
+        },
+        "cprisk_thread_b_and_lane_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "9ee51a744e75aec880efa05d75ad766b3385b0c1126bdfc9bf1fc6d2f21c9546"
+        },
+        "cprisk_thread_b_rol_acc_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "91a33ef3ca7440c8536f13f5d75ba2f86a5b70a3c52164fd8e7ddb9552d20040"
+        },
+        "cprisk_thread_b_vm_call_func_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "7ce71e6d4d52ba3daf2e39c0642d6d4897972dfc9be9a8d19fcd15efddc8e418"
+        },
+        "cprisk_thread_b_vreg_mov_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "3d516cf8c39c9ea44da2758df2f998702e5190c8869b83f0dfbd7588a5516534"
+        },
+        "cprisk_thread_b_vreg_alu_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "b25a6a159576517e07882a39dc3bc8b355ce0765fc4d7c031af64c792f6a923e"
+        },
+        "cprisk_thread_b_vreg_mem_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "063e0aa1e96c80a5023a7ae8e69cd56f44953ff937fc6fb8825c65daecded5d0"
+        },
+        "cprisk_thread_b_sub_lane_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "1cb1e477962a8981bb49481ba1646682d601143d3c61fe0b96a2ddee6e5c9133"
+        },
+        "cprisk_thread_b_mul_lane_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "146d44651341f417a87b3102fd73e88ec04b97501bcee2bb10d674a993ae401e"
+        },
+        "cprisk_thread_b_add_rol_acc_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "60f3133f192076c5a0869f06f57442e83d73295044059f99ffed4b3cefc0b8ee"
+        },
+        "cprisk_thread_b_branch_ind_i": {
+          "instruction_lines": 842,
+          "disassembly_sha256": "564fddde3cbb45c8937bc3354d3db8fcfbfd89f2edbd55bf859f8e662a545f29"
+        },
+        "cprisk_thread_b_poison_i": {
+          "instruction_lines": 577,
+          "disassembly_sha256": "cfd0eb0b5ae6d1cfcd9845bf277a325a22abd286262e22a2f255cfaa65dfbd48"
+        },
+        "cprisk_thread_b_unknown_i": {
+          "instruction_lines": 577,
+          "disassembly_sha256": "1d0ade5317db1d8ecdb33d3a042b51379adf1705703bb1bd2437af1b4fe6b6e1"
+        }
+      }
+    },
+    {
+      "opt": "Os",
+      "repeat": 0,
+      "command": [
+        "/tmp/vm-clang/root/usr/lib/llvm-18/bin/clang",
+        "-I",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore",
+        "--target=aarch64-none-elf",
+        "-ffreestanding",
+        "-I",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/vm-post-handler-2a/freestanding",
+        "-include",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/vm-post-handler-2a/host_shim.h",
+        "-Os",
+        "-c",
+        "/tmp/cpsv2-arm64/candidate.c",
+        "-o",
+        "/tmp/cpsv2-arm64/Os-0.o"
+      ],
+      "object_sha256": "7744ba0cf29d83aa1b9ee33007e172ec0f5132f826944f1f19bb3b3547f54023",
+      "handlers": {
+        "cprisk_thread_a_nop_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "27ea4efe65d9c9c9050865cdb1a826fe25345322019d51087d8d41f2c2b74dae"
+        },
+        "cprisk_thread_a_ret_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "fcb37ae6ddf845ecb23920f402d679aecda12839b563ceab60c083abcb33a691"
+        },
+        "cprisk_thread_a_raw_region_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "fd61ea2337a070ba76637c2ba1f50ad5f385941df625de5f80500a4aa3a97a45"
+        },
+        "cprisk_thread_a_halt_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "cf9cdb59437341e0d992bbc807c37802d2009e2f3be9c4a806ed617bc15323b6"
+        },
+        "cprisk_thread_a_add_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "690cec0715396013d151bb08dfc03d2c86eb5602cfb55367e6bcb6fa42d537ed"
+        },
+        "cprisk_thread_a_branch_rel_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "6f6e582eafe23702e4e5ee656367f7a0fd04527eee593bbcaa594bc336914f2f"
+        },
+        "cprisk_thread_a_branch_cond_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "5b1edb8f44b17cd702c107c60342049df4f67f4cab0f119ec1bc1d6293824ede"
+        },
+        "cprisk_thread_a_call_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "87dc65fd09c1455e6b6ab8b51f1d2e29069128cb0b4e9ef4bdfeee3a61599cdc"
+        },
+        "cprisk_thread_a_mov_wide_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "7ad3de4453582256ef6dcb4e115fd716fea1b997b77ca42efc9bae850fa70a2f"
+        },
+        "cprisk_thread_a_adr_add_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "fc28e0edf5a666ffb30cc861fa4369999bbd4015581b8d9c4dce9cc9b70e5865"
+        },
+        "cprisk_thread_a_cond_select_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "a149c8565ed3e9098c1776417fc5095ac8b794272400659866314b29f942101a"
+        },
+        "cprisk_thread_a_load_store_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "0ea94cbfd1be37015fec8ff84f60bfe41c94a1dbb33496a12cb778f5c37d6247"
+        },
+        "cprisk_thread_a_xor_mix_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "b99200381c4338bf531213e6ec110db497a85bb6c42d273635b6be6d838855e2"
+        },
+        "cprisk_thread_a_or_lane_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "0f0d9522ee5e78a9ca43f61e900422d0cadd2d2b660f20190328b7d0f8187f58"
+        },
+        "cprisk_thread_a_and_lane_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "08ea2573839a5ae6a5363f35e7538a2b392496311df8c429e812e24d67a4d02d"
+        },
+        "cprisk_thread_a_rol_acc_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "e345a910230389c06aac4ea2cbdf635c9bfb6bb031caa85af30a8e185f5caa26"
+        },
+        "cprisk_thread_a_vm_call_func_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "955fe634f14a69d9ec67b039e627a168ce2fac8398f155d61d6626ed18dfeab3"
+        },
+        "cprisk_thread_a_vreg_mov_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "cbdac234881459a0752ef520b2b0ee4fe2e938a0f743c7ca1060ba0e349f0340"
+        },
+        "cprisk_thread_a_vreg_alu_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "518b96ebe26df1fd3cad22a37849fbbe47c80ffcff780af160fe7d6e485ac77e"
+        },
+        "cprisk_thread_a_vreg_mem_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "9c8e98283a71ee0ccbe33ee39da2612ad177ffbc99c39b9920eded94ddf66a36"
+        },
+        "cprisk_thread_a_sub_lane_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "cc48da42128a66714ffb27e92229584b6dd9dc00680554a9b435a47e4c357529"
+        },
+        "cprisk_thread_a_mul_lane_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "1b267beba9e45e4c5238fff519c221cb6c28987533117b2149a350008016b756"
+        },
+        "cprisk_thread_a_add_rol_acc_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "9230ba9d9e2595faf67a6c0dab5c171a37ad6fcd260354e76db8e42368565433"
+        },
+        "cprisk_thread_a_branch_ind_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "3e43ddf7ded6a7492a26f839a56c1017fd15c75998fe682a748e95f63447b513"
+        },
+        "cprisk_thread_a_poison_i": {
+          "instruction_lines": 477,
+          "disassembly_sha256": "3b17cc8d173f55e6ec18edf91f94301ebe6b5c3ee67f43f5d72669c962477786"
+        },
+        "cprisk_thread_a_unknown_i": {
+          "instruction_lines": 477,
+          "disassembly_sha256": "e4e2bd7f41b690661bf1be02394a20bc67957706aa3036169ee9f96ad26fc929"
+        },
+        "cprisk_thread_b_nop_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "7f52d93794cf829bc89c26c90f9e854b6434eff0350ef13a3debe78c282b4e60"
+        },
+        "cprisk_thread_b_ret_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "491ec5cde20394ed719585a3d939492c09e47ff094b458660096879f65985463"
+        },
+        "cprisk_thread_b_raw_region_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "c7e2defdf3ae13cbe507013bf8624428d401aec7c440d19d3e64a10b4cf64786"
+        },
+        "cprisk_thread_b_halt_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "64c9c968ef48b04118cd6bfe317d875a2196dba34c4103b0fe84e3e821db376b"
+        },
+        "cprisk_thread_b_add_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "b7f5beeb4c400af2ae7490bf96d3e6c92389c15e64789ddab36d4f6d3afa1a04"
+        },
+        "cprisk_thread_b_branch_rel_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "a66e002a1cfe33e936fe23e65e6593a357343b8049d830787f56ac5d05db6e83"
+        },
+        "cprisk_thread_b_branch_cond_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "71b56f5b711f290763816295895e339273ad6b2992c379d73b514e8da13a3257"
+        },
+        "cprisk_thread_b_call_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "1505c60175a8833d71defab04b2d8217a3b76605c81d51b49eae1b80f8c274e1"
+        },
+        "cprisk_thread_b_mov_wide_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "142632c5021fd9465b300e5e5349758500d988f2e23112142d3d0089a9099c41"
+        },
+        "cprisk_thread_b_adr_add_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "14265a0dd21a4fa9c29bef92f907888c31dec2b3918cf5ac7ded5beb90b36798"
+        },
+        "cprisk_thread_b_cond_select_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "e519a8dc9ea3000b9a186d91c0ef5b97fb867a309ef0b59b32640453aa8f046a"
+        },
+        "cprisk_thread_b_load_store_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "402da2cb636a4453f88a6a704118fd979294f73424df3274f66b35b069d2abff"
+        },
+        "cprisk_thread_b_xor_mix_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "d65f45e51fb6c22d8e77423c809b3cd71970a2cfa415eea039d903062d7c6372"
+        },
+        "cprisk_thread_b_or_lane_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "ad43d5ef4a91202809703c870bcea3f005d504cecd2599bd71ed58deab1da4ea"
+        },
+        "cprisk_thread_b_and_lane_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "7a829d06426f638dc8b0aa24ab3771b359951ee78afb9fbb04000576dbb86325"
+        },
+        "cprisk_thread_b_rol_acc_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "f0390007b4413ec8e98eb9003f6a51ecc8ea59076856192ce71aeb1d56abbc96"
+        },
+        "cprisk_thread_b_vm_call_func_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "d3ca67159a84b2ef1908ddfb39c9df3eb5a074a0f11e206e3a724e581a2ed541"
+        },
+        "cprisk_thread_b_vreg_mov_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "67e9f23cf1dd7898d087d9beca8e0fca0838dfab471875a2faa68ee33091cf8d"
+        },
+        "cprisk_thread_b_vreg_alu_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "d6b0f988ac1d4d8266ac1ed2c02ea51ec0c90465a4312d3cfce6f2d1975b3a79"
+        },
+        "cprisk_thread_b_vreg_mem_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "4432161b210b623696aa9ad293ae6784b8ccbf15ccc001a52841ceaeb04183d1"
+        },
+        "cprisk_thread_b_sub_lane_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "900774aff3e9afcbc3fb3013ad7c25b1583c9f99d849827d4fdc5cf7aedb1631"
+        },
+        "cprisk_thread_b_mul_lane_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "29dbc001dbe024265e250fa566ed873506cd76cce0402c8cf9be696eef63e397"
+        },
+        "cprisk_thread_b_add_rol_acc_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "85adece9c1e1d27d3289cd6e019eab0804f8e72605179189b8e5d8c49645ff17"
+        },
+        "cprisk_thread_b_branch_ind_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "4382026f469d4a356610b2f532eea51f9d542874d21365d7dba3848808d0c456"
+        },
+        "cprisk_thread_b_poison_i": {
+          "instruction_lines": 473,
+          "disassembly_sha256": "f2a03624ed067cbcc9bfb4b39c2014bdb5c3a5923d562b0caf99b1a74c8ee2e1"
+        },
+        "cprisk_thread_b_unknown_i": {
+          "instruction_lines": 473,
+          "disassembly_sha256": "d71a69fccd4b6e8f796a06bb139e7acceb40d659572ab3ee9b33908b45e70bb8"
+        }
+      }
+    },
+    {
+      "opt": "Os",
+      "repeat": 1,
+      "command": [
+        "/tmp/vm-clang/root/usr/lib/llvm-18/bin/clang",
+        "-I",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore",
+        "--target=aarch64-none-elf",
+        "-ffreestanding",
+        "-I",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/vm-post-handler-2a/freestanding",
+        "-include",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/vm-post-handler-2a/host_shim.h",
+        "-Os",
+        "-c",
+        "/tmp/cpsv2-arm64/candidate.c",
+        "-o",
+        "/tmp/cpsv2-arm64/Os-1.o"
+      ],
+      "object_sha256": "7744ba0cf29d83aa1b9ee33007e172ec0f5132f826944f1f19bb3b3547f54023",
+      "handlers": {
+        "cprisk_thread_a_nop_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "27ea4efe65d9c9c9050865cdb1a826fe25345322019d51087d8d41f2c2b74dae"
+        },
+        "cprisk_thread_a_ret_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "fcb37ae6ddf845ecb23920f402d679aecda12839b563ceab60c083abcb33a691"
+        },
+        "cprisk_thread_a_raw_region_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "fd61ea2337a070ba76637c2ba1f50ad5f385941df625de5f80500a4aa3a97a45"
+        },
+        "cprisk_thread_a_halt_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "cf9cdb59437341e0d992bbc807c37802d2009e2f3be9c4a806ed617bc15323b6"
+        },
+        "cprisk_thread_a_add_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "690cec0715396013d151bb08dfc03d2c86eb5602cfb55367e6bcb6fa42d537ed"
+        },
+        "cprisk_thread_a_branch_rel_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "6f6e582eafe23702e4e5ee656367f7a0fd04527eee593bbcaa594bc336914f2f"
+        },
+        "cprisk_thread_a_branch_cond_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "5b1edb8f44b17cd702c107c60342049df4f67f4cab0f119ec1bc1d6293824ede"
+        },
+        "cprisk_thread_a_call_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "87dc65fd09c1455e6b6ab8b51f1d2e29069128cb0b4e9ef4bdfeee3a61599cdc"
+        },
+        "cprisk_thread_a_mov_wide_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "7ad3de4453582256ef6dcb4e115fd716fea1b997b77ca42efc9bae850fa70a2f"
+        },
+        "cprisk_thread_a_adr_add_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "fc28e0edf5a666ffb30cc861fa4369999bbd4015581b8d9c4dce9cc9b70e5865"
+        },
+        "cprisk_thread_a_cond_select_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "a149c8565ed3e9098c1776417fc5095ac8b794272400659866314b29f942101a"
+        },
+        "cprisk_thread_a_load_store_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "0ea94cbfd1be37015fec8ff84f60bfe41c94a1dbb33496a12cb778f5c37d6247"
+        },
+        "cprisk_thread_a_xor_mix_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "b99200381c4338bf531213e6ec110db497a85bb6c42d273635b6be6d838855e2"
+        },
+        "cprisk_thread_a_or_lane_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "0f0d9522ee5e78a9ca43f61e900422d0cadd2d2b660f20190328b7d0f8187f58"
+        },
+        "cprisk_thread_a_and_lane_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "08ea2573839a5ae6a5363f35e7538a2b392496311df8c429e812e24d67a4d02d"
+        },
+        "cprisk_thread_a_rol_acc_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "e345a910230389c06aac4ea2cbdf635c9bfb6bb031caa85af30a8e185f5caa26"
+        },
+        "cprisk_thread_a_vm_call_func_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "955fe634f14a69d9ec67b039e627a168ce2fac8398f155d61d6626ed18dfeab3"
+        },
+        "cprisk_thread_a_vreg_mov_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "cbdac234881459a0752ef520b2b0ee4fe2e938a0f743c7ca1060ba0e349f0340"
+        },
+        "cprisk_thread_a_vreg_alu_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "518b96ebe26df1fd3cad22a37849fbbe47c80ffcff780af160fe7d6e485ac77e"
+        },
+        "cprisk_thread_a_vreg_mem_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "9c8e98283a71ee0ccbe33ee39da2612ad177ffbc99c39b9920eded94ddf66a36"
+        },
+        "cprisk_thread_a_sub_lane_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "cc48da42128a66714ffb27e92229584b6dd9dc00680554a9b435a47e4c357529"
+        },
+        "cprisk_thread_a_mul_lane_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "1b267beba9e45e4c5238fff519c221cb6c28987533117b2149a350008016b756"
+        },
+        "cprisk_thread_a_add_rol_acc_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "9230ba9d9e2595faf67a6c0dab5c171a37ad6fcd260354e76db8e42368565433"
+        },
+        "cprisk_thread_a_branch_ind_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "3e43ddf7ded6a7492a26f839a56c1017fd15c75998fe682a748e95f63447b513"
+        },
+        "cprisk_thread_a_poison_i": {
+          "instruction_lines": 477,
+          "disassembly_sha256": "3b17cc8d173f55e6ec18edf91f94301ebe6b5c3ee67f43f5d72669c962477786"
+        },
+        "cprisk_thread_a_unknown_i": {
+          "instruction_lines": 477,
+          "disassembly_sha256": "e4e2bd7f41b690661bf1be02394a20bc67957706aa3036169ee9f96ad26fc929"
+        },
+        "cprisk_thread_b_nop_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "7f52d93794cf829bc89c26c90f9e854b6434eff0350ef13a3debe78c282b4e60"
+        },
+        "cprisk_thread_b_ret_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "491ec5cde20394ed719585a3d939492c09e47ff094b458660096879f65985463"
+        },
+        "cprisk_thread_b_raw_region_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "c7e2defdf3ae13cbe507013bf8624428d401aec7c440d19d3e64a10b4cf64786"
+        },
+        "cprisk_thread_b_halt_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "64c9c968ef48b04118cd6bfe317d875a2196dba34c4103b0fe84e3e821db376b"
+        },
+        "cprisk_thread_b_add_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "b7f5beeb4c400af2ae7490bf96d3e6c92389c15e64789ddab36d4f6d3afa1a04"
+        },
+        "cprisk_thread_b_branch_rel_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "a66e002a1cfe33e936fe23e65e6593a357343b8049d830787f56ac5d05db6e83"
+        },
+        "cprisk_thread_b_branch_cond_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "71b56f5b711f290763816295895e339273ad6b2992c379d73b514e8da13a3257"
+        },
+        "cprisk_thread_b_call_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "1505c60175a8833d71defab04b2d8217a3b76605c81d51b49eae1b80f8c274e1"
+        },
+        "cprisk_thread_b_mov_wide_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "142632c5021fd9465b300e5e5349758500d988f2e23112142d3d0089a9099c41"
+        },
+        "cprisk_thread_b_adr_add_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "14265a0dd21a4fa9c29bef92f907888c31dec2b3918cf5ac7ded5beb90b36798"
+        },
+        "cprisk_thread_b_cond_select_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "e519a8dc9ea3000b9a186d91c0ef5b97fb867a309ef0b59b32640453aa8f046a"
+        },
+        "cprisk_thread_b_load_store_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "402da2cb636a4453f88a6a704118fd979294f73424df3274f66b35b069d2abff"
+        },
+        "cprisk_thread_b_xor_mix_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "d65f45e51fb6c22d8e77423c809b3cd71970a2cfa415eea039d903062d7c6372"
+        },
+        "cprisk_thread_b_or_lane_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "ad43d5ef4a91202809703c870bcea3f005d504cecd2599bd71ed58deab1da4ea"
+        },
+        "cprisk_thread_b_and_lane_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "7a829d06426f638dc8b0aa24ab3771b359951ee78afb9fbb04000576dbb86325"
+        },
+        "cprisk_thread_b_rol_acc_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "f0390007b4413ec8e98eb9003f6a51ecc8ea59076856192ce71aeb1d56abbc96"
+        },
+        "cprisk_thread_b_vm_call_func_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "d3ca67159a84b2ef1908ddfb39c9df3eb5a074a0f11e206e3a724e581a2ed541"
+        },
+        "cprisk_thread_b_vreg_mov_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "67e9f23cf1dd7898d087d9beca8e0fca0838dfab471875a2faa68ee33091cf8d"
+        },
+        "cprisk_thread_b_vreg_alu_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "d6b0f988ac1d4d8266ac1ed2c02ea51ec0c90465a4312d3cfce6f2d1975b3a79"
+        },
+        "cprisk_thread_b_vreg_mem_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "4432161b210b623696aa9ad293ae6784b8ccbf15ccc001a52841ceaeb04183d1"
+        },
+        "cprisk_thread_b_sub_lane_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "900774aff3e9afcbc3fb3013ad7c25b1583c9f99d849827d4fdc5cf7aedb1631"
+        },
+        "cprisk_thread_b_mul_lane_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "29dbc001dbe024265e250fa566ed873506cd76cce0402c8cf9be696eef63e397"
+        },
+        "cprisk_thread_b_add_rol_acc_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "85adece9c1e1d27d3289cd6e019eab0804f8e72605179189b8e5d8c49645ff17"
+        },
+        "cprisk_thread_b_branch_ind_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "4382026f469d4a356610b2f532eea51f9d542874d21365d7dba3848808d0c456"
+        },
+        "cprisk_thread_b_poison_i": {
+          "instruction_lines": 473,
+          "disassembly_sha256": "f2a03624ed067cbcc9bfb4b39c2014bdb5c3a5923d562b0caf99b1a74c8ee2e1"
+        },
+        "cprisk_thread_b_unknown_i": {
+          "instruction_lines": 473,
+          "disassembly_sha256": "d71a69fccd4b6e8f796a06bb139e7acceb40d659572ab3ee9b33908b45e70bb8"
+        }
+      }
+    },
+    {
+      "opt": "Os",
+      "repeat": 2,
+      "command": [
+        "/tmp/vm-clang/root/usr/lib/llvm-18/bin/clang",
+        "-I",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/RiskDetectorApp/Sources/CRiskCore",
+        "--target=aarch64-none-elf",
+        "-ffreestanding",
+        "-I",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/vm-post-handler-2a/freestanding",
+        "-include",
+        "/workspace/scratch/dc46284054c5/cloudphone-risk-detector/experiments/vm-post-handler-2a/host_shim.h",
+        "-Os",
+        "-c",
+        "/tmp/cpsv2-arm64/candidate.c",
+        "-o",
+        "/tmp/cpsv2-arm64/Os-2.o"
+      ],
+      "object_sha256": "7744ba0cf29d83aa1b9ee33007e172ec0f5132f826944f1f19bb3b3547f54023",
+      "handlers": {
+        "cprisk_thread_a_nop_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "27ea4efe65d9c9c9050865cdb1a826fe25345322019d51087d8d41f2c2b74dae"
+        },
+        "cprisk_thread_a_ret_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "fcb37ae6ddf845ecb23920f402d679aecda12839b563ceab60c083abcb33a691"
+        },
+        "cprisk_thread_a_raw_region_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "fd61ea2337a070ba76637c2ba1f50ad5f385941df625de5f80500a4aa3a97a45"
+        },
+        "cprisk_thread_a_halt_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "cf9cdb59437341e0d992bbc807c37802d2009e2f3be9c4a806ed617bc15323b6"
+        },
+        "cprisk_thread_a_add_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "690cec0715396013d151bb08dfc03d2c86eb5602cfb55367e6bcb6fa42d537ed"
+        },
+        "cprisk_thread_a_branch_rel_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "6f6e582eafe23702e4e5ee656367f7a0fd04527eee593bbcaa594bc336914f2f"
+        },
+        "cprisk_thread_a_branch_cond_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "5b1edb8f44b17cd702c107c60342049df4f67f4cab0f119ec1bc1d6293824ede"
+        },
+        "cprisk_thread_a_call_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "87dc65fd09c1455e6b6ab8b51f1d2e29069128cb0b4e9ef4bdfeee3a61599cdc"
+        },
+        "cprisk_thread_a_mov_wide_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "7ad3de4453582256ef6dcb4e115fd716fea1b997b77ca42efc9bae850fa70a2f"
+        },
+        "cprisk_thread_a_adr_add_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "fc28e0edf5a666ffb30cc861fa4369999bbd4015581b8d9c4dce9cc9b70e5865"
+        },
+        "cprisk_thread_a_cond_select_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "a149c8565ed3e9098c1776417fc5095ac8b794272400659866314b29f942101a"
+        },
+        "cprisk_thread_a_load_store_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "0ea94cbfd1be37015fec8ff84f60bfe41c94a1dbb33496a12cb778f5c37d6247"
+        },
+        "cprisk_thread_a_xor_mix_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "b99200381c4338bf531213e6ec110db497a85bb6c42d273635b6be6d838855e2"
+        },
+        "cprisk_thread_a_or_lane_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "0f0d9522ee5e78a9ca43f61e900422d0cadd2d2b660f20190328b7d0f8187f58"
+        },
+        "cprisk_thread_a_and_lane_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "08ea2573839a5ae6a5363f35e7538a2b392496311df8c429e812e24d67a4d02d"
+        },
+        "cprisk_thread_a_rol_acc_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "e345a910230389c06aac4ea2cbdf635c9bfb6bb031caa85af30a8e185f5caa26"
+        },
+        "cprisk_thread_a_vm_call_func_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "955fe634f14a69d9ec67b039e627a168ce2fac8398f155d61d6626ed18dfeab3"
+        },
+        "cprisk_thread_a_vreg_mov_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "cbdac234881459a0752ef520b2b0ee4fe2e938a0f743c7ca1060ba0e349f0340"
+        },
+        "cprisk_thread_a_vreg_alu_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "518b96ebe26df1fd3cad22a37849fbbe47c80ffcff780af160fe7d6e485ac77e"
+        },
+        "cprisk_thread_a_vreg_mem_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "9c8e98283a71ee0ccbe33ee39da2612ad177ffbc99c39b9920eded94ddf66a36"
+        },
+        "cprisk_thread_a_sub_lane_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "cc48da42128a66714ffb27e92229584b6dd9dc00680554a9b435a47e4c357529"
+        },
+        "cprisk_thread_a_mul_lane_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "1b267beba9e45e4c5238fff519c221cb6c28987533117b2149a350008016b756"
+        },
+        "cprisk_thread_a_add_rol_acc_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "9230ba9d9e2595faf67a6c0dab5c171a37ad6fcd260354e76db8e42368565433"
+        },
+        "cprisk_thread_a_branch_ind_i": {
+          "instruction_lines": 600,
+          "disassembly_sha256": "3e43ddf7ded6a7492a26f839a56c1017fd15c75998fe682a748e95f63447b513"
+        },
+        "cprisk_thread_a_poison_i": {
+          "instruction_lines": 477,
+          "disassembly_sha256": "3b17cc8d173f55e6ec18edf91f94301ebe6b5c3ee67f43f5d72669c962477786"
+        },
+        "cprisk_thread_a_unknown_i": {
+          "instruction_lines": 477,
+          "disassembly_sha256": "e4e2bd7f41b690661bf1be02394a20bc67957706aa3036169ee9f96ad26fc929"
+        },
+        "cprisk_thread_b_nop_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "7f52d93794cf829bc89c26c90f9e854b6434eff0350ef13a3debe78c282b4e60"
+        },
+        "cprisk_thread_b_ret_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "491ec5cde20394ed719585a3d939492c09e47ff094b458660096879f65985463"
+        },
+        "cprisk_thread_b_raw_region_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "c7e2defdf3ae13cbe507013bf8624428d401aec7c440d19d3e64a10b4cf64786"
+        },
+        "cprisk_thread_b_halt_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "64c9c968ef48b04118cd6bfe317d875a2196dba34c4103b0fe84e3e821db376b"
+        },
+        "cprisk_thread_b_add_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "b7f5beeb4c400af2ae7490bf96d3e6c92389c15e64789ddab36d4f6d3afa1a04"
+        },
+        "cprisk_thread_b_branch_rel_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "a66e002a1cfe33e936fe23e65e6593a357343b8049d830787f56ac5d05db6e83"
+        },
+        "cprisk_thread_b_branch_cond_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "71b56f5b711f290763816295895e339273ad6b2992c379d73b514e8da13a3257"
+        },
+        "cprisk_thread_b_call_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "1505c60175a8833d71defab04b2d8217a3b76605c81d51b49eae1b80f8c274e1"
+        },
+        "cprisk_thread_b_mov_wide_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "142632c5021fd9465b300e5e5349758500d988f2e23112142d3d0089a9099c41"
+        },
+        "cprisk_thread_b_adr_add_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "14265a0dd21a4fa9c29bef92f907888c31dec2b3918cf5ac7ded5beb90b36798"
+        },
+        "cprisk_thread_b_cond_select_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "e519a8dc9ea3000b9a186d91c0ef5b97fb867a309ef0b59b32640453aa8f046a"
+        },
+        "cprisk_thread_b_load_store_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "402da2cb636a4453f88a6a704118fd979294f73424df3274f66b35b069d2abff"
+        },
+        "cprisk_thread_b_xor_mix_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "d65f45e51fb6c22d8e77423c809b3cd71970a2cfa415eea039d903062d7c6372"
+        },
+        "cprisk_thread_b_or_lane_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "ad43d5ef4a91202809703c870bcea3f005d504cecd2599bd71ed58deab1da4ea"
+        },
+        "cprisk_thread_b_and_lane_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "7a829d06426f638dc8b0aa24ab3771b359951ee78afb9fbb04000576dbb86325"
+        },
+        "cprisk_thread_b_rol_acc_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "f0390007b4413ec8e98eb9003f6a51ecc8ea59076856192ce71aeb1d56abbc96"
+        },
+        "cprisk_thread_b_vm_call_func_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "d3ca67159a84b2ef1908ddfb39c9df3eb5a074a0f11e206e3a724e581a2ed541"
+        },
+        "cprisk_thread_b_vreg_mov_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "67e9f23cf1dd7898d087d9beca8e0fca0838dfab471875a2faa68ee33091cf8d"
+        },
+        "cprisk_thread_b_vreg_alu_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "d6b0f988ac1d4d8266ac1ed2c02ea51ec0c90465a4312d3cfce6f2d1975b3a79"
+        },
+        "cprisk_thread_b_vreg_mem_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "4432161b210b623696aa9ad293ae6784b8ccbf15ccc001a52841ceaeb04183d1"
+        },
+        "cprisk_thread_b_sub_lane_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "900774aff3e9afcbc3fb3013ad7c25b1583c9f99d849827d4fdc5cf7aedb1631"
+        },
+        "cprisk_thread_b_mul_lane_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "29dbc001dbe024265e250fa566ed873506cd76cce0402c8cf9be696eef63e397"
+        },
+        "cprisk_thread_b_add_rol_acc_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "85adece9c1e1d27d3289cd6e019eab0804f8e72605179189b8e5d8c49645ff17"
+        },
+        "cprisk_thread_b_branch_ind_i": {
+          "instruction_lines": 595,
+          "disassembly_sha256": "4382026f469d4a356610b2f532eea51f9d542874d21365d7dba3848808d0c456"
+        },
+        "cprisk_thread_b_poison_i": {
+          "instruction_lines": 473,
+          "disassembly_sha256": "f2a03624ed067cbcc9bfb4b39c2014bdb5c3a5923d562b0caf99b1a74c8ee2e1"
+        },
+        "cprisk_thread_b_unknown_i": {
+          "instruction_lines": 473,
+          "disassembly_sha256": "d71a69fccd4b6e8f796a06bb139e7acceb40d659572ab3ee9b33908b45e70bb8"
+        }
+      }
+    }
+  ]
+}

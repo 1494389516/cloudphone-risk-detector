@@ -1,0 +1,60 @@
+name: CPSV v2 integration (deployment gate remains closed)
+on:
+  pull_request:
+    paths:
+      - 'experiments/vm-cpsv-v2/**'
+      - 'experiments/vm-threaded-dispatch/**'
+      - 'RiskDetectorApp/Sources/CRiskCore/cprisk_vm*'
+      - 'RiskDetectorApp/Sources/CRiskCore/include/cprisk_vm*'
+      - 'cprisk-armor/Sources/MachOKit/*'
+      - 'cprisk-armor/Sources/cprisk-vm-self-expect/**'
+      - '.github/workflows/vm-cpsv2-validation.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contract-and-integration:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Generated runtime matches A/B prefixes
+        run: python3 experiments/vm-cpsv-v2/generate_runtime.py --check
+      - name: C and Swift malformed-manifest parity
+        run: python3 experiments/vm-cpsv-v2/run.py --cc "$(xcrun -f clang)" --swiftc "$(xcrun -f swiftc)" --output /tmp/cpsv2-contract
+      - name: Real Swift injection and C observer, signed native Mach-O fixture
+        run: python3 experiments/vm-cpsv-v2/apple_fixture.py --output /tmp/cpsv2-apple
+      - name: Integrated runtime equivalence and bounded stack
+        run: |
+          python3 experiments/vm-threaded-dispatch/run.py --integrated --cc "$(xcrun -f clang)" --opt O0 --output /tmp/cpsv2-O0
+          python3 experiments/vm-threaded-dispatch/run.py --integrated --cc "$(xcrun -f clang)" --opt O2 --output /tmp/cpsv2-O2
+      - name: Integrated Apple ARM64 musttail evidence
+        run: python3 experiments/vm-threaded-dispatch/inspect_arm64.py --integrated --apple --cc "$(xcrun -f clang)" --objdump "$(xcrun -f llvm-objdump)" --output /tmp/cpsv2-arm64
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cpsv2-integration
+          path: |
+            /tmp/cpsv2-*/report.json
+            /tmp/cpsv2-arm64/*.ll
+            /tmp/cpsv2-arm64/*.asm
+            /tmp/cpsv2-apple/*.txt
+            /tmp/cpsv2-apple/*.json
+  linked-threaded-release:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Actual threaded iPhoneOS Release and final-image CPSV v2 injection
+        run: python3 experiments/vm-cpsv-v2/apple_linked.py --output /tmp/cpsv2-linked
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cpsv2-linked-release
+          path: |
+            /tmp/cpsv2-linked/report.json
+            /tmp/cpsv2-linked/*.log
+            /tmp/cpsv2-linked/*.json
+            /tmp/cpsv2-linked/*.txt

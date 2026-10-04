@@ -93,6 +93,7 @@ public struct Section {
     public static let size: Int = 80
     public static let S_ZEROFILL: UInt32 = 0x1
     public static let S_GB_ZEROFILL: UInt32 = 0xC
+    public static let S_THREAD_LOCAL_ZEROFILL: UInt32 = 0x12
 
     // section_64 layout (each header is self-contained):
     //   +0  sectname     char[16]
@@ -155,6 +156,7 @@ public struct Section {
 
     public var storesDataInFile: Bool {
         sectionType != Self.S_ZEROFILL && sectionType != Self.S_GB_ZEROFILL
+            && sectionType != Self.S_THREAD_LOCAL_ZEROFILL
     }
 
     public func readContent(from fileData: Data) throws -> Data {

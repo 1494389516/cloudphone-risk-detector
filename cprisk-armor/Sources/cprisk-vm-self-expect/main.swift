@@ -8,13 +8,14 @@ private enum InjectMode {
 
 private func usage() -> Never {
     FileHandle.standardError.write(Data("""
-        usage: cprisk-vm-self-expect --in <mach-o-path> [--hmac | --fnv] [--root-key-hex <64-hex-chars> | --material-hex <64-hex-chars>] [--allow-zero-material]
+        usage: cprisk-vm-self-expect --in <mach-o-path> [--hmac | --fnv] [--root-key-hex <64-hex-chars> | --material-hex <64-hex-chars>] [--allow-zero-material] [--cpsv2-layout <json>]
 
         Post-link: writes __DATA,__swift5_mdvsk (LE u32 magic + LE u32 FNV-1a or CPSH tag). The hashed
         TEXT windows are taken from __DATA,__swift5_mdvsi (CPSV) when present; otherwise from symtab
         symbols _cprisk_vm_execute, _cprisk_vm_interp_loop_a, _cprisk_vm_dispatch_lookup — matching
         CRiskCore cprisk_vm_interpreter.c (48 + 64 + 64 byte prefixes).
 
+          --cpsv2-layout Final-image SHA256 plus linker-map function extents for a reserved v2 image.
           --hmac         Write CPSH + custom-pad HMAC-SHA256 tag (first 4 bytes LE). DEFAULT (keyed).
           --fnv          Write CPSF + keyless FNV-1a. WEAK: no secret — anyone who edits the TEXT
                          windows can recompute the expected value. Compatibility / no-key use only.
@@ -58,6 +59,7 @@ struct CLI {
         guard !args.isEmpty else { usage() }
 
         var inPath: String?
+        var cpsv2Layout: URL?
         // Default to the keyed HMAC path. The keyless FNV path is opt-in (--fnv) because its
         // expected value carries no secret and is trivially recomputable after a TEXT patch.
         var mode: InjectMode = .hmac
@@ -72,6 +74,11 @@ struct CLI {
                 let n = args.index(after: i)
                 guard n < args.endIndex else { usage() }
                 inPath = args[n]
+                i = args.index(after: n)
+            case "--cpsv2-layout":
+                let n = args.index(after: i)
+                guard n < args.endIndex else { usage() }
+                cpsv2Layout = URL(fileURLWithPath: args[n])
                 i = args.index(after: n)
             case "--fnv":
                 mode = .fnv
@@ -102,6 +109,7 @@ struct CLI {
         do {
             switch mode {
             case .fnv:
+                guard cpsv2Layout == nil else { throw MachOError.invalidData("CPSV v2 requires --hmac") }
                 let r = try VMSelfExpectInjector.inject(into: url)
                 let fnvHex = String(format: "%08x", r.fnvExpect)
                 let names = r.resolvedSymbolNames.joined(separator: ",")
@@ -143,7 +151,7 @@ struct CLI {
                 if let mat, mat.allSatisfy({ $0 == 0 }), !allowZeroMaterial {
                     throw MachOError.invalidData("all-zero runtime material requires --allow-zero-material (fixtures only)")
                 }
-                let r = try VMSelfExpectInjector.injectHmac(into: url, runtimeMaterial32: mat)
+                let r = try VMSelfExpectInjector.injectHmac(into: url, runtimeMaterial32: mat, cpsv2LayoutURL: cpsv2Layout)
                 let tagHex = String(format: "%08x", r.fnvExpect)
                 let names = r.resolvedSymbolNames.joined(separator: ",")
                 let vmaddrs = r.symbolVMAddresses.map { String(format: "0x%llx", $0) }.joined(separator: ",")
