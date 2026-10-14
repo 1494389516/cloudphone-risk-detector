@@ -19,7 +19,7 @@ jobs:
         run: swift build --package-path cprisk-armor
       - name: Build checked-in Xcode app for iOS Simulator
         run: >-
-          xcodebuild -project RiskDetectorApp/RiskDetectorApp.xcodeproj
+          xcodebuild -quiet -project RiskDetectorApp/RiskDetectorApp.xcodeproj
           -scheme RiskDetectorApp -configuration Debug
           -destination 'generic/platform=iOS Simulator'
           build CODE_SIGNING_ALLOWED=NO
