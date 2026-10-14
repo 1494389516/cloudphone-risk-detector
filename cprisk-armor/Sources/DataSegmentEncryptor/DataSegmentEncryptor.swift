@@ -22,11 +22,12 @@ public final class DataSegmentEncryptorPass: ArmorPass {
     public func execute(on file: MachOFile, config: PassConfig) throws -> PassResult {
         let fullAnchorHash = try readFullAnchorHash(from: file)
         let integrityHash = sha256(fullAnchorHash + fullAnchorHash + fullAnchorHash)
-        guard let whiteboxRootKey = config.encryptionKey else {
+        guard var whiteboxRootKey = config.encryptionKey else {
             throw MachOError.invalidData(
                 "DataSegmentEncryptorPass requires an encryption key (no zero/default key fallback)"
             )
         }
+        defer { whiteboxRootKey.resetBytes(in: 0..<whiteboxRootKey.count) }
         let whitebox = try ArmorWhiteBox.build(rootKey: whiteboxRootKey)
         let anchorAccumulator = anchorBoundAccumulator(
             whitebox: whitebox,
@@ -68,6 +69,7 @@ public final class DataSegmentEncryptorPass: ArmorPass {
         var details = [String]()
 
         var parentKey = loaderKey
+        defer { parentKey.resetBytes(in: 0..<parentKey.count) }
         let defaultChainDepth: UInt32 = 1
 
         for section in targetSections {
@@ -151,9 +153,6 @@ public final class DataSegmentEncryptorPass: ArmorPass {
         details.append(
             "Loader key is chained from the white-box accumulator seed plus pass4 anchor material"
         )
-
-        if !parentKey.isEmpty { parentKey.resetBytes(in: 0..<parentKey.count) }
-        if !whiteboxRootKey.isEmpty { whiteboxRootKey.resetBytes(in: 0..<whiteboxRootKey.count) }
 
         return PassResult(
             passName: name,
