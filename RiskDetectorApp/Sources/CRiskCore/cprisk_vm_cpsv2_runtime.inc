@@ -4,7 +4,7 @@ static uint32_t cprisk_vm_cpsv2_expect_resolve_i(const struct mach_header_64 *hd
     unsigned long size = 0;
     const uint8_t *p = cprisk_find_section(hdr, CPRISK_ARMOR_SEGMENT_DATA,
         CPRISK_ARMOR_SECTION_VMP_SELF_EXPECT, &size);
-    if (!p || size != 8u || cprisk_cpsv2_u32(p) != CPRISK_VMP_SELF_EXPECT_MAGIC_HMAC)
+    if (!p || size != 8u || cprisk_cpsv2_u32(p) != CPRISK_VMP_SELF_EXPECT_MAGIC_MAC)
         return 0u;
     return cprisk_cpsv2_u32(p + 4u);
 }
@@ -58,7 +58,7 @@ static int cprisk_vm_cpsv2_observe_i(const struct mach_header_64 *hdr, uint32_t 
         cprisk_secure_zero(material, sizeof(material));
         return 0;
     }
-    cprisk_vm_selfchk_hmac_key_i(material, key);
+    cprisk_vm_selfchk_mac_key_i(material, key);
     cprisk_secure_zero(material, sizeof(material));
     *tag = cprisk_cpsv2_tag(key, snapshot, base, ranges);
     cprisk_secure_zero(key, sizeof(key));

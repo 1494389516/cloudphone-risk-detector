@@ -1,9 +1,20 @@
 /*
  * CRiskCore — __TEXT.__text page encryption consumer (cprisk-armor pass 12).
  * Fail-closed: invalid metadata disables the feature without crashing loops.
- * HMAC / content-hash failure: integrity poison + trap-filled page (brk) to
+ * CPRisk-MAC / content-hash failure: integrity poison + trap-filled page (brk) to
  * avoid infinite EXC_BAD_ACCESS retries on the same faulting PC.
  */
+
+/* NOTE (issue 20 — SHA-256-chained XOR keystream, NOT AEAD): the
+ * per-entry keystream here is SHA-256(key || id || nonce) chained with
+ * XOR. It provides NO authentication by itself (the CPRisk-MAC tag is
+ * checked separately) and its security depends entirely on NONCE
+ * UNIQUENESS: the same (key, nonce) must never encrypt two different
+ * plaintexts, or the keystream is reused and plaintexts XOR together.
+ * The producer must guarantee unique nonces; cprisk_data_loader.c
+ * additionally refuses a (key, nonce) seen with a different ciphertext.
+ * Migration path: replace the XOR keystream with an AEAD
+ * (AES-GCM / ChaCha20-Poly1305) carrying the nonce + AAD in the tag. */
 
 #include "include/CRiskCore.h"
 #include "include/cprisk_armor_abi.h"
@@ -898,7 +909,7 @@ int cprisk_text_jit_decrypt(void *fault_addr) {
             return 1;
         }
         /*
-         * HMAC over the canonical encoding written by TextSegmentEncryptor.swift:
+         * CPRisk-MAC over the canonical encoding written by TextSegmentEncryptor.swift:
          *   u32 section_index | u32 nonce_len | nonce[nonce_len] |
          *   u32 ct_len        | ciphertext[ct_len]
          * Section_index binding prevents page transposition; ct_len in the
@@ -906,38 +917,38 @@ int cprisk_text_jit_decrypt(void *fault_addr) {
          * `nonce || ciphertext` form let truncation pass with matched
          * size_field updates).
          */
-        const size_t hmac_msg_len =
+        const size_t mac_msg_len =
             4u + 4u + (size_t)CPRISK_ARMOR_NONCE_SIZE + 4u + (size_t)ent->size;
-        uint8_t *hmac_msg = (uint8_t *)malloc(hmac_msg_len);
-        if (!hmac_msg) {
+        uint8_t *mac_msg = (uint8_t *)malloc(mac_msg_len);
+        if (!mac_msg) {
             cprisk_secure_zero(section_key, sizeof(section_key));
             (void)cprisk_armor_vm_protect(page, span, PROT_NONE);
             pthread_mutex_unlock(&s_text_mutex);
             return 0;
         }
         size_t mp = 0u;
-        hmac_msg[mp++] = (uint8_t)(section_index      );
-        hmac_msg[mp++] = (uint8_t)(section_index >>  8);
-        hmac_msg[mp++] = (uint8_t)(section_index >> 16);
-        hmac_msg[mp++] = (uint8_t)(section_index >> 24);
-        hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE      );
-        hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >>  8);
-        hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 16);
-        hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 24);
-        memcpy(hmac_msg + mp, ent->nonce, CPRISK_ARMOR_NONCE_SIZE);
+        mac_msg[mp++] = (uint8_t)(section_index      );
+        mac_msg[mp++] = (uint8_t)(section_index >>  8);
+        mac_msg[mp++] = (uint8_t)(section_index >> 16);
+        mac_msg[mp++] = (uint8_t)(section_index >> 24);
+        mac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE      );
+        mac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >>  8);
+        mac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 16);
+        mac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 24);
+        memcpy(mac_msg + mp, ent->nonce, CPRISK_ARMOR_NONCE_SIZE);
         mp += CPRISK_ARMOR_NONCE_SIZE;
-        hmac_msg[mp++] = (uint8_t)((uint32_t)ent->size      );
-        hmac_msg[mp++] = (uint8_t)((uint32_t)ent->size >>  8);
-        hmac_msg[mp++] = (uint8_t)((uint32_t)ent->size >> 16);
-        hmac_msg[mp++] = (uint8_t)((uint32_t)ent->size >> 24);
-        memcpy(hmac_msg + mp, ptr, (size_t)ent->size);
-        uint8_t computed_hmac[CPRISK_ARMOR_HASH_SIZE];
-        cprisk_hmac_sha256(section_key, CPRISK_ARMOR_KEY_SIZE, hmac_msg, hmac_msg_len, computed_hmac);
-        cprisk_secure_zero(hmac_msg, hmac_msg_len);
-        free(hmac_msg);
+        mac_msg[mp++] = (uint8_t)((uint32_t)ent->size      );
+        mac_msg[mp++] = (uint8_t)((uint32_t)ent->size >>  8);
+        mac_msg[mp++] = (uint8_t)((uint32_t)ent->size >> 16);
+        mac_msg[mp++] = (uint8_t)((uint32_t)ent->size >> 24);
+        memcpy(mac_msg + mp, ptr, (size_t)ent->size);
+        uint8_t computed_mac[CPRISK_ARMOR_HASH_SIZE];
+        cprisk_mac_sha256(section_key, CPRISK_ARMOR_KEY_SIZE, mac_msg, mac_msg_len, computed_mac);
+        cprisk_secure_zero(mac_msg, mac_msg_len);
+        free(mac_msg);
 
-        if (cprisk_hmac_verify(ent->hmac_tag, computed_hmac, CPRISK_ARMOR_HASH_SIZE) != 0) {
-            cprisk_secure_zero(computed_hmac, sizeof(computed_hmac));
+        if (cprisk_mac_verify(ent->mac_tag, computed_mac, CPRISK_ARMOR_HASH_SIZE) != 0) {
+            cprisk_secure_zero(computed_mac, sizeof(computed_mac));
             cprisk_secure_zero(section_key, sizeof(section_key));
             cprisk_text_poison_entry(ptr, (size_t)ent->size, page, span);
             s_poison[i] = 1;
@@ -945,7 +956,7 @@ int cprisk_text_jit_decrypt(void *fault_addr) {
             pthread_mutex_unlock(&s_text_mutex);
             return 1;
         }
-        cprisk_secure_zero(computed_hmac, sizeof(computed_hmac));
+        cprisk_secure_zero(computed_mac, sizeof(computed_mac));
 
         if (cprisk_armor_xor_region(
                 ptr,

@@ -8,6 +8,8 @@
 
 #define CPRISK_PIN_SHA256_DIGEST_LENGTH 32u
 
+/* Pinset return contract (issue 39): -1 = error, 0 = no match (incl.
+ * pin_count == 0, "no pin configured"), 1 = match. */
 int cprisk_pinset_contains_sha256_digest(
     const uint8_t *candidate_digest,
     size_t candidate_len,
@@ -190,7 +192,7 @@ CPRISK_ALIAS_RET(pid_t, cpra_0046, cprisk_getppid_direct,
 CPRISK_ALIAS_RET(uid_t, cpra_0047, cprisk_getuid_direct,
                  (void),
                  ())
-CPRISK_ALIAS_RET(int, cpra_0048, cprisk_hmac_sha256_hex,
+CPRISK_ALIAS_RET(int, cpra_0048, cprisk_mac_sha256_hex,
                  (const uint8_t *key, size_t key_len, const uint8_t *msg, size_t msg_len,
                   char out_hex[CPRISK_ARMOR_HEX_ENCODED_HASH_SIZE + 1]),
                  (key, key_len, msg, msg_len, out_hex))
