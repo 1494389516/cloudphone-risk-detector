@@ -39,7 +39,11 @@ RiskDetectorApp/Legacy/
 
 # Red team analysis notes & SDK spec (local only)
 RED_TEAM_ANALYSIS_ROUND*.md
-sdk *.txt
+# NOTE: the old pattern `sdk *.txt` (with a literal space) was ambiguous and
+# matched almost nothing intentionally. Use explicit no-space patterns below;
+# a file whose name literally contains a space must be renamed to match.
+sdk-*.txt
+sdk_*.txt
 
 # CFF / anti-deobfuscation implementation reports (local tracking)
 CFF_IMPLEMENTATION_REPORT.md
