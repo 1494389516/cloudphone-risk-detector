@@ -150,6 +150,13 @@ public final class CPRiskReport: NSObject {
         try encryptedData().base64EncodedString()
     }
 
+    /// 解密由 `encryptedData()` / `securePayload()` 产生的本地密文。
+    /// 与 iOS 的 `CPRiskStore.decryptReport` 对称；无可用密钥时抛错，
+    /// 调用方不得回退为明文读取（明文报告不得落盘、不得解析）。
+    public static func decryptStoredData(_ data: Data) throws -> Data {
+        try PayloadCrypto.decrypt(data)
+    }
+
     /// 预留：设置未来服务端聚合信号（本地环境下可不调用）。
     /// 这些字段会被写入 JSON 的 `server` 节点。
     @objc(setServerSignalsPublicIP:asn:asOrg:isDatacenter:ipDeviceAgg:ipAccountAgg:geoCountry:geoRegion:riskTags:)
@@ -589,6 +596,12 @@ public struct LocalSignals: Codable, Sendable {
     }
 }
 
+/// 服务端聚合信号（IP/ASN/机房/IP 聚合度…）。
+///
+/// ⚠️ 信任边界：端侧上报的 `server` 字段默认不被采信——SDK 侧仅接受
+/// 经 `setVerified(_:signature:)` 验签的信号，未验签注入会被丢弃；
+/// 服务端必须忽略端侧 `server` 字段，仅以服务端自己聚合的信息为准，
+/// 端侧字段只能作为联调回显，不得参与服务端判决。
 public struct ServerSignals: Codable, Sendable {
     public var publicIP: String?
     public var asn: String?

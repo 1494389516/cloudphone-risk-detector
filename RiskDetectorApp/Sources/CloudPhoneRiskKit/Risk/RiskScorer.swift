@@ -2,18 +2,12 @@ import Foundation
 
 // MARK: - Risk Scorer
 //
-// Stateless scoring engine that converts a RiskContext into a RiskScoreReport.
-//
-// Scoring Pipeline:
-//   1. Jailbreak confidence → ×jailbreakWeight (capped at scoreCap)
-//   2. Network signals      → VPN +vpnScore, Proxy +proxyScore (if enabled)
-//   3. Behavior analysis    → up to +maxBehaviorScore from 11 heuristics (capped)
-//   4. Extra signals        → up to +maxExtraSignalsScore from providers (de-duped)
-//   5. Total capped at scoreCap
-//
-// Hard Verdict: if isJailbroken && score < threshold → bumps score to threshold
-// isHighRisk  = score >= threshold || isJailbroken
-
+// ⚠️ DEPRECATED / 死代码：仓库内无调用方，主评分链路使用
+// `RiskDetectionEngine`（见 LocalAssessment/RiskDetectionEngine.swift）。
+// 本文件未物理删除：Xcode 工程（project.pbxproj，不在本任务可改目录内）
+// 显式引用了它，删除源文件会破坏工程文件索引；如需清理，请由工程
+// 维护方同时移除 pbxproj 中的引用后再删除本文件。
+@available(*, deprecated, message: "无调用方；主评分链路使用 RiskDetectionEngine")
 enum RiskScorer {
     // MARK: - Scoring Constants
 

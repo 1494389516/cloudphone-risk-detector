@@ -110,11 +110,17 @@ public struct ReportEnvelope: Codable, Sendable {
         /// 允许时间偏差（毫秒），默认 ±5 分钟
         public var timeDriftToleranceMillis: Int64 = 300_000
 
-        /// 当前签名版本
-        /// `v2h` — HKDF per-request key derivation on top of base HMAC (default, SDK 5.1+)
-        /// `v2`  — plain HMAC with static key (legacy, kept for backward compatibility)
-        /// `v2a` — armor CRiskCore-derived request binding
-        public var signatureVersion: String = "v2h"
+        /// 当前签名版本。默认 `v3`：assertion 字节摘要与 trustLevel 纳入签名域，
+        /// legacy 版本（`v1`/`v2`/`v2a`/`v2d`/`v2h`）不独立验证 assertion，
+        /// 仅当 `allowLegacySignatureVersions == true` 时才允许签发。
+        /// ⚠️ 服务端必须拒绝 legacy 版本信封：legacy 信封的 assertion 未纳入
+        /// 签名域，攻击者可在签名后替换/剥离 assertion 而不破坏 HMAC。
+        public var signatureVersion: String = "v3"
+
+        /// 是否允许签发 legacy 签名版本。默认 `false`（关闭）。
+        /// 仅过渡期调用方（如仍在签发 `v2a`/`v2d` 的上报链路）可显式传入 `true`，
+        /// 且必须在调用处注释过渡原因；新调用方不得开启。
+        public var allowLegacySignatureVersions: Bool = false
 
         /// When `true`, `create()` rejects requests that lack an `attestationKeyId`
         /// and `toGrpcRequestBytes()` / `toCompressedGrpcRequestBytes()` reject
@@ -128,13 +134,15 @@ public struct ReportEnvelope: Codable, Sendable {
         public init(
             nonceExpirationMillis: Int64 = 300_000,
             timeDriftToleranceMillis: Int64 = 300_000,
-            signatureVersion: String = "v2h",
-            requireHardwareAttestation: Bool = false
+            signatureVersion: String = "v3",
+            requireHardwareAttestation: Bool = false,
+            allowLegacySignatureVersions: Bool = false
         ) {
             self.nonceExpirationMillis = nonceExpirationMillis
             self.timeDriftToleranceMillis = timeDriftToleranceMillis
             self.signatureVersion = signatureVersion
             self.requireHardwareAttestation = requireHardwareAttestation
+            self.allowLegacySignatureVersions = allowLegacySignatureVersions
         }
     }
 
@@ -321,6 +329,15 @@ public struct ReportEnvelope: Codable, Sendable {
             throw ReportEnvelopeError.timestampOutOfRange
         }
 
+        // Legacy 签名版本（v1/v2/v2a/v2d/v2h）默认拒绝签发：其 assertion 未纳入
+        // 签名域，服务端无法独立验证 assertion。仅显式 opt-in
+        //（`allowLegacySignatureVersions == true`）的过渡期调用方可签发 legacy，
+        // 且服务端必须拒绝 legacy 信封。默认调用方签发 v3。
+        let legacySignatureVersions: Set<String> = ["v1", "v2", "v2a", "v2d", "v2h"]
+        if legacySignatureVersions.contains(config.signatureVersion), !config.allowLegacySignatureVersions {
+            throw ReportEnvelopeError.signingFailed
+        }
+
         // Attestation enforcement: if the caller requires a hardware trust root,
         // the attestationKeyId must be provided at create() time (it is included
         // in the signature domain).  The assertion itself is added post-create via
@@ -417,7 +434,7 @@ public struct ReportEnvelope: Codable, Sendable {
     /// attestationKeyId 必须在 create() 时已传入并纳入签名域，此处仅附加断言数据。
     /// 返回带 App Attest 断言的副本（SDK 4.4），trustLevel 设为 .hardware
     ///
-    /// ⚠️ v3 (SDK 7.5+): 该路径仅适用于 v2/v2a/v2d/v2h legacy 签名版本。
+    /// ⚠️ v3 (SDK 7.3.0, Version.current): 该路径仅适用于 v2/v2a/v2d/v2h legacy 签名版本。
     /// v3 把 assertion 字节摘要纳入签名域，必须在 `create()` 时传入 `attestationAssertion`，
     /// 不能在签名后通过本方法附加。若 envelope 是 v3，此处静默忽略写入并返回原值，
     /// 防止破坏 HMAC（导致 envelope 验签失败）。
@@ -450,7 +467,7 @@ public struct ReportEnvelope: Codable, Sendable {
 
     /// 设置信任等级（SDK 5.0）
     ///
-    /// ⚠️ v3 (SDK 7.5+): trustLevel 已纳入签名域，签名后修改会破坏 HMAC。
+    /// ⚠️ v3 (SDK 7.3.0, Version.current): trustLevel 已纳入签名域，签名后修改会破坏 HMAC。
     /// 必须在 `create(trustLevel:)` 时传入正确值；该方法对 v3 envelope 静默 no-op。
     public func withTrustLevel(_ level: TrustLevel) -> ReportEnvelope {
         if sigVer == "v3" {
@@ -1117,6 +1134,9 @@ public final class InMemoryNonceReplayStore: NonceReplayProtecting {
 #if DEBUG
 extension ReportEnvelope {
     /// Test-only convenience; excluded from Release builds.
+    /// ⚠️ `"default-test-key"` 是测试专用占位密钥，仅在 DEBUG 下编译，
+    /// Release 二进制中不存在；生产路径禁止使用默认/零密钥，
+    /// 无密钥时 `create(...)` 会抛 `signingFailed` 硬失败。
     @available(*, deprecated, message: "仅用于测试，请使用带 signingKey 参数的方法")
     public static func createForTesting(
         payloadData: Data,
