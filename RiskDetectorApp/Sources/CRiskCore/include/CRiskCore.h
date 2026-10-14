@@ -619,7 +619,7 @@ void cprisk_cleanup_string_decryptor(void);
  * begin() returns 0 and writes a 16-byte session nonce that the engine
  * can echo to the server so the verifier knows which session to replay.
  * record() folds (detector_id, score, methods_hash[32]) into a running
- * SHA256 chain.  finalize() returns 0 plus the HMAC-SHA256 tag and the
+ * SHA256 chain.  finalize() returns 0 plus the CPRisk-MAC-SHA256 tag and the
  * recorded count; subsequent record() calls without a fresh begin() are
  * no-ops.
  */
@@ -690,15 +690,15 @@ void cprisk_unload_protected_data(void);
 int cprisk_compute_integrity_hash(uint8_t *out_hash);
 
 /// Read the full anchor hash by reconstructing it from split anchor lanes.
-/// ABI v2: the full-hash section now stores only an HMAC tag; the actual
+/// ABI v2: the full-hash section now stores only an CPRisk-MAC tag; the actual
 /// hash is reassembled from the four 8-byte split lanes.
 /// Writes 32 bytes to out_hash. Returns 0 on success, -1 on failure.
 int cprisk_read_full_anchor_hash(uint8_t *out_hash);
 
-/// Verify the HMAC anchor tag stored in the full-hash section against
-/// the provided full_hash using root_material as the HMAC key.
-/// Returns 0 on success (HMAC matches), -1 on failure.
-int cprisk_verify_anchor_hmac(const uint8_t root_material[32],
+/// Verify the CPRisk-MAC anchor tag stored in the full-hash section against
+/// the provided full_hash using root_material as the CPRisk-MAC key.
+/// Returns 0 on success (CPRisk-MAC matches), -1 on failure.
+int cprisk_verify_anchor_mac(const uint8_t root_material[32],
                               const uint8_t full_hash[32]);
 
 /// Anti-debug / init policy tier for SDK integration (development vs production).
@@ -747,7 +747,7 @@ int cprisk_runtime_material_ready(void);
 /* ── Import Table Encryption Resolver ──────────────────────────────── */
 
 /// Resolve a symbol from the encrypted import table by index.
-/// Reads __DATA.__swift5_dyrel, verifies HMAC-SHA256 integrity, decrypts
+/// Reads __DATA.__swift5_dyrel, verifies CPRisk-MAC-SHA256 integrity, decrypts
 /// the symbol name via SHA256-based keystream, and resolves it via dlsym.
 ///
 /// symbol_index: zero-based index into the encrypted import table.
@@ -756,7 +756,7 @@ int cprisk_runtime_material_ready(void);
 /// out_addr: receives the resolved symbol address on success.
 ///
 /// Returns 0 on success (symbol resolved), -1 on failure
-/// (not found, tampered HMAC, bounds error, or dlsym failure).
+/// (not found, tampered CPRisk-MAC, bounds error, or dlsym failure).
 int cprisk_resolve_import(uint32_t symbol_index, void **out_addr);
 
 /// Sanity check: `dlsym(RTLD_DEFAULT,"mprotect")` must match export-trie resolution
@@ -801,6 +801,10 @@ int cprisk_whitebox_available(void);
 /// When embedded metadata sets \c CPRISK_ARMOR_WHITEBOX_FLAG_ASLR_TABLE_BIND (v2 header,
 /// 56-byte \c __swift5_mdext), table bytes in \c __swift5_mdbdy are XOR-masked vs Mach
 /// slide; runtime decodes using \c aslr_table_anchor_slide before PRF evaluation.
+/// White-box PRF (issue 47): the tables this evaluates ship inside the
+/// binary, so table extraction recovers the effective key material — the
+/// white-box layer is obfuscation, NOT a trust root. Migration for real
+/// secrecy: HKDF + AES-GCM / ChaCha20-Poly1305 with hardware-backed keys.
 /// Disable at runtime: \c CPRISK_WB_ASLR_TABLE_DISABLE=1. Strip decode path at compile
 /// time: \c CPRISK_DISABLE_WHITEBOX_ASLR_TABLE.
 /// Dynamic domains 6-7: when \c cprisk_get_effective_root() succeeds (after hybrid KDF), the PRF
@@ -818,9 +822,9 @@ int cprisk_whitebox_evaluate_domain(
 
 /// Derive a 32-byte effective signing key from the current runtime material and
 /// the caller-provided base key. This is the C-side equivalent of the former
-/// Swift HMAC(runtime_material, base_key_utf8) step.
+/// Swift CPRisk-MAC(runtime_material, base_key_utf8) step.
 /// ASLR bind (iOS device): release builds XOR slide-derived entropy into the first
-/// 8 bytes of runtime material before HMAC by default. Override with
+/// 8 bytes of runtime material before CPRisk-MAC by default. Override with
 /// `CPRISK_SIGNING_KEY_ASLR_BIND=1` to force enable or `=0` to force disable.
 /// Returns 0 on success, -1 on failure.
 int cprisk_derive_effective_signing_key(
@@ -831,8 +835,8 @@ int cprisk_derive_effective_signing_key(
 
 /// Variant of cprisk_derive_effective_signing_key() that performs request-level
 /// direct re-key with the full 32-byte request-binding digest:
-///   derived = HMAC(runtime_material, base_key)
-///   rebound = HMAC(derived, request_binding_digest)
+///   derived = CPRisk-MAC(runtime_material, base_key)
+///   rebound = CPRisk-MAC(derived, request_binding_digest)
 /// Returns 0 on success, -1 on failure.
 int cprisk_derive_effective_signing_key_with_request_binding_digest(
     const uint8_t *base_key,
@@ -850,9 +854,9 @@ int cprisk_derive_effective_signing_key_hex(
     char out_hex[CPRISK_ARMOR_HEX_ENCODED_HASH_SIZE + 1]
 );
 
-/// Generic HMAC-SHA256 helper that writes lower-case hex into out_hex
+/// Generic CPRisk-MAC-SHA256 helper that writes lower-case hex into out_hex
 /// (64 chars + trailing NUL). Returns 0 on success, -1 on failure.
-int cprisk_hmac_sha256_hex(
+int cprisk_mac_sha256_hex(
     const uint8_t *key,
     size_t key_len,
     const uint8_t *msg,
@@ -860,7 +864,7 @@ int cprisk_hmac_sha256_hex(
     char out_hex[CPRISK_ARMOR_HEX_ENCODED_HASH_SIZE + 1]
 );
 
-/// Derive the effective signing key from runtime material inside C, then HMAC
+/// Derive the effective signing key from runtime material inside C, then CPRisk-MAC
 /// the supplied message and return the lower-case hex digest in out_hex.
 /// This is the preferred bridge for v2a-style envelope signing because Swift
 /// no longer needs to hold runtime_material or perform the derivation itself.
@@ -912,15 +916,15 @@ int cprisk_verify_with_derived_key_and_request_binding_digest(
 /* ── Hybrid Key Derivation (Three-Layer KDF) ───────────────────────── */
 
 /* Initialize the three-layer Hybrid KDF from the root key.
- * Layer 2: deviceKey     = HMAC(rootKey, deviceSalt)
- * Layer 3: effectiveRoot  = HMAC(deviceKey, sessionToken)
+ * Layer 2: deviceKey     = CPRisk-MAC(rootKey, deviceSalt)
+ * Layer 3: effectiveRoot  = CPRisk-MAC(deviceKey, sessionToken)
  * Populates internal state consumed by dynamic white-box domains 6-7.
  * Call after cprisk_init_protection() or as part of its flow.
  * Returns 0 on success, -1 on invalid input. */
 int cprisk_init_hybrid_kdf(const uint8_t *root_key);
 
 /* Derive the Layer-2 device key from the root key.
- * deviceKey = HMAC(rootKey, deviceSalt)
+ * deviceKey = CPRisk-MAC(rootKey, deviceSalt)
  * Salt is sourced from IOKit/Keychain when available; static fallback otherwise.
  * Returns 0 on success, -1 on invalid input. */
 int cprisk_derive_device_key(const uint8_t *root_key,
@@ -943,8 +947,8 @@ int cprisk_is_device_bound(void);
 /* Install a session token for Layer-3 key derivation.
  * Accepted formats:
  *   - legacy: 32-byte raw token
- *   - signed: [32-byte token_data][32-byte HMAC(token_data)]
- * Returns 0 on success, -1 on invalid token or HMAC mismatch. */
+ *   - signed: [32-byte token_data][32-byte CPRisk-MAC(token_data)]
+ * Returns 0 on success, -1 on invalid token or CPRisk-MAC mismatch. */
 int cprisk_set_session_token(const uint8_t *token, size_t token_len);
 
 /* Retrieve the session key (Layer-3) for composing effectiveRoot.
@@ -1313,7 +1317,13 @@ uint32_t cprisk_verify_svc_stub_integrity(void);
 
 /// Constant-time compare of one raw SHA-256 digest against a packed pinset buffer.
 /// `packed_pins` must contain `pin_count * 32` bytes.
-/// Returns 1 on match, 0 on no match, -1 on invalid input.
+/// Return-value contract (issue 39 — Swift callers rely on this):
+///   -1 = error (invalid input: NULL digest / wrong length / NULL pins with pin_count > 0),
+///    0 = no pin matched (this INCLUDES pin_count == 0, i.e. "no pin
+///        configured": 0 means "no match", never "match". Callers that
+///        must distinguish "no pin configured" from "pin mismatch" check
+///        pin_count themselves before calling),
+///    1 = at least one pin matched.
 int cprisk_pinset_contains_sha256_digest(
     const uint8_t *candidate_digest,
     size_t candidate_len,
@@ -1328,7 +1338,9 @@ int cprisk_spki_sha256_from_sec_certificate(void *sec_certificate_ref, uint8_t o
 
 /// Layered pin match: `scopes` has one byte per pin — 0 = any position, 1 = leaf only (`chain_index == 0`),
 /// 2 = intermediate / non-leaf (`chain_index >= 1`). `packed_pins` is `pin_count * 32` bytes.
-/// Returns 1 on match, 0 on no match, -1 on invalid input.
+/// Return-value contract (issue 39): -1 = error (invalid input);
+/// 0 = no pin matched (including pin_count == 0 = "no pin configured");
+/// 1 = at least one pin matched (digest + scope both satisfied).
 int cprisk_pinset_match_layered_sha256_digest(
     const uint8_t *candidate_digest,
     size_t candidate_len,
@@ -1342,6 +1354,10 @@ int cprisk_pinset_match_layered_sha256_digest(
 int cprisk_stub_contains_svc_opcode(const void *fn, size_t len);
 
 /// FNV-1a (64-bit) over 16 bytes of stub text, page-mixed via stub_fn_addr (4 KiB page base XOR-fold).
+/// Accidental-change detection ONLY — FNV is not tamper-evidence (not
+/// collision-resistant, not keyed). Tamper-evidence comes from the SHA-256
+/// page masks in cprisk_verify_svc_stub_integrity(). Migration: CPRisk-MAC
+/// over (chunk || address) against a producer-signed snapshot.
 uint64_t cprisk_svc_stub_chunk_hash_fnv16(const uint8_t *chunk16, uintptr_t stub_fn_addr);
 
 /* ── Dual-Path Syscall Cross-Verification ──────────────────────────── */
@@ -1441,7 +1457,7 @@ enum {
     CPRISK_TIMING_ANOMALY_CLOCK_SKEW = 1u << 3,
     /** CNTPCT_EL0 delta vs mach_absolute_time delta around the same workload disagree (DBI / time virtualization). */
     CPRISK_TIMING_ANOMALY_DUAL_CLOCK_DRIFT = 1u << 4,
-    /** Internal SHA-256/HMAC sentinel observed gross slowdown consistent with DBI / Stalker / QBDI trace amplification. */
+    /** Internal SHA-256/CPRisk-MAC sentinel observed gross slowdown consistent with DBI / Stalker / QBDI trace amplification. */
     CPRISK_TIMING_ANOMALY_CRYPTO_TRACE = 1u << 5,
     /** Crypto-trace CNTPCT vs Mach skew on the same workload (see cprisk_crypto_trace). */
     CPRISK_TIMING_ANOMALY_CRYPTO_TRACE_SKEW = 1u << 6,
@@ -1572,6 +1588,10 @@ int cprisk_is_cntpct_clock_available(void);
 /// matrix: optional 256-byte (128 rows × 16 bytes) packed binary matrix; NULL = SDK default.
 /// translation: optional 16-byte vector; NULL = SDK default.
 /// output may alias input.
+/* GF(2) matrix init from a root-key-derived seed (preferred when a root
+ * key is available; the default init uses a public constant seed, which
+ * is obfuscation-only). Must run before the first transform use. */
+void cprisk_gf2_init_with_root_key(const uint8_t root_key[32]);
 void cprisk_gf2_affine_transform_16(
     uint8_t output[16],
     const uint8_t input[16],
