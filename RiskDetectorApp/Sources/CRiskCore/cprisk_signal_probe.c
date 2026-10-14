@@ -910,6 +910,11 @@ static void cprisk_reset_exception_delivery_probe_state_i(void) {
     atomic_store(&s_exception_delivery_probe_last_ns, 0u);
 }
 
+/* NOTE (issue 35, audited): this handler only stores to a volatile
+ * sig_atomic_t flag and calls siglongjmp(). Both are async-signal-safe
+ * (siglongjmp is on the POSIX async-signal-safe list), so this handler
+ * needs no self-pipe rewrite — unlike the memory-guard handler, which
+ * previously called non-safe functions and was rewritten. */
 static void cprisk_sigtrap_handler_i(int sig) {
     (void)sig;
     s_sigtrap_flag = 1;

@@ -1,8 +1,9 @@
 /*
- * CRiskCore — MTE / EMTE sysctl 探测与保守的区域绑定 canary。
- * 不支持的设备、模拟器或未定义 CPRISK_MTE_COMPILE_SUPPORT 时安全降级。
- * 为避免在旧芯片/旧工具链上触发 SIGILL，本文件不主动发射 STG/LDG 等 MTE 内存指令；
- * canary 语义退化为“绑定区域的基线摘要 + 顶字节标签快照”。
+ * CRiskCore — 软件基线 guard（software baseline guard），不是硬件 MTE 保护。
+ * 本文件不发射任何 MTE 指令（STG/LDG 等）；所谓 canary 只是“绑定区域的
+ * SHA-256 基线摘要 + 顶字节标签快照”软件比对，能发现内存被改写，但不提供
+ * 硬件 MTE 的标签化内存隔离/越界拦截能力。不要把本模块的通过当作硬件
+ * MTE 已生效的证据。不支持时返回 -2（“不支持”），不再返回 0 冒充成功。
  */
 
 #include "include/cprisk_mte_guard.h"
@@ -118,12 +119,13 @@ int cprisk_mte2_available(void) {
 
 int cprisk_mte_self_test(void) {
 #if !defined(CPRISK_MTE_COMPILE_SUPPORT)
-    s_last_self_test_rc = 0;
-    return 0;
+    /* Unsupported: -2 (not success). Callers must not treat this as pass. */
+    s_last_self_test_rc = -2;
+    return -2;
 #else
     if (cprisk_mte_platform_ineligible()) {
-        s_last_self_test_rc = 0;
-        return 0;
+        s_last_self_test_rc = -2;
+        return -2;
     }
 
     int32_t sys_mte = 0;
@@ -132,11 +134,13 @@ int cprisk_mte_self_test(void) {
     const unsigned mte_field = cprisk_id_aa64pfr1_mte_field(id);
 
     if (rc_sys != 0) {
-        s_last_self_test_rc = (mte_field != 0u) ? -1 : 0;
+        /* sysctl unreadable: if the CPU reports MTE, that is a mismatch
+         * (-1); otherwise MTE is simply unsupported (-2), not a pass. */
+        s_last_self_test_rc = (mte_field != 0u) ? -1 : -2;
         return s_last_self_test_rc;
     }
     if (sys_mte == 0) {
-        s_last_self_test_rc = (mte_field != 0u) ? -1 : 0;
+        s_last_self_test_rc = (mte_field != 0u) ? -1 : -2;
         return s_last_self_test_rc;
     }
 
@@ -155,16 +159,16 @@ int cprisk_mte_canary_install(
         memset(state, 0, sizeof(*state));
     (void)region;
     (void)size;
-    return 0;
+    return -2; /* unsupported, not success */
 #else
     if (!state || !region || size == 0u)
         return -1;
 
     memset(state, 0, sizeof(*state));
     if (cprisk_mte_platform_ineligible())
-        return 0;
+        return -2; /* unsupported, not success */
     if (cprisk_mte_available() == 0)
-        return 0;
+        return -2; /* unsupported, not success */
 
     state->guarded_region = region;
     state->region_size = size;
@@ -179,12 +183,12 @@ int cprisk_mte_canary_install(
 int cprisk_mte_canary_verify(cprisk_mte_canary_state_t *state) {
 #if !defined(CPRISK_MTE_COMPILE_SUPPORT)
     (void)state;
-    return 0;
+    return -2; /* unsupported, not success */
 #else
     if (!state || state->installed == 0u)
-        return 0;
+        return -2; /* not installed / unsupported, not success */
     if (cprisk_mte_available() == 0)
-        return 0;
+        return -2; /* unsupported, not success */
     if (!state->guarded_region || state->region_size == 0u) {
         cprisk_record_canary_violation_i(state);
         return -1;

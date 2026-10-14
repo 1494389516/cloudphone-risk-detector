@@ -52,6 +52,11 @@ void *cprisk_pac_sign_function_pointer(const void *ptr, uintptr_t discriminator)
 #endif
 }
 
+/* Authenticate an externally-signed pointer.
+ * NOTE: on non-arm64e builds this returns the pointer unchanged — that is
+ * a no-op fallback, NOT a verification. Callers that need real validation
+ * must check cprisk_pac_is_arm64e_supported() / the -1 return of
+ * cprisk_pac_validate_indirect_call_target() instead of trusting this. */
 void *cprisk_pac_auth_function_pointer(const void *ptr, uintptr_t discriminator) {
     if (ptr == NULL) {
         return NULL;
@@ -84,6 +89,14 @@ int cprisk_pac_is_arm64e_supported(void) {
 #endif
 }
 
+/* REAL validation of an externally-provided (already signed) indirect-call
+ * target: authenticate the pointer AS GIVEN with the supplied discriminator.
+ * This deliberately does NOT sign-then-authenticate: self-sign + self-auth
+ * always succeeds and proves nothing about the supplied pointer (that
+ * round-trip is a self-test, see cprisk_pac_self_test()).
+ * Returns 0 = authenticated, 1 = authenticated but weak binding (a wrong
+ * discriminator also authenticates it), -1 = failure (NULL, unavailable
+ * platform, or authentication failed). An unsigned / forged pointer fails. */
 int cprisk_pac_validate_indirect_call_target(const void *func_ptr, uintptr_t discriminator) {
     if (func_ptr == NULL) {
         atomic_store(&s_last_pac_flags, CPRISK_PAC_CFI_FLAG_AUTH_FAILED);
@@ -92,34 +105,37 @@ int cprisk_pac_validate_indirect_call_target(const void *func_ptr, uintptr_t dis
 
     uint32_t flags = CPRISK_PAC_CFI_FLAG_NONE;
 #if !CPRISK_PAC_RUNTIME_AVAILABLE
-    flags |= CPRISK_PAC_CFI_FLAG_UNAVAILABLE;
-#endif
-
-    void *signed_ptr = cprisk_pac_sign_function_pointer(func_ptr, discriminator);
-    if (signed_ptr == NULL) {
-        flags |= CPRISK_PAC_CFI_FLAG_SIGN_FAILED;
-    } else {
-        void *authed_ptr = cprisk_pac_auth_function_pointer(signed_ptr, discriminator);
-        if (authed_ptr == NULL) {
-            flags |= CPRISK_PAC_CFI_FLAG_AUTH_FAILED;
-        }
-#if CPRISK_PAC_RUNTIME_AVAILABLE
-        void *wrong_auth = cprisk_pac_auth_function_pointer(
-            signed_ptr,
-            discriminator ^ 0xBADC0FFEE0DDF00DULL
-        );
-        if (wrong_auth != NULL) {
-            flags |= CPRISK_PAC_CFI_FLAG_WEAK_BINDING;
-        }
-#endif
-    }
-
+    /* No PAC hardware/compiler support: authentication is impossible, so
+     * this is a failure, not a success. */
+    flags |= CPRISK_PAC_CFI_FLAG_UNAVAILABLE | CPRISK_PAC_CFI_FLAG_AUTH_FAILED;
     atomic_store(&s_last_pac_flags, flags);
-    return (flags & (CPRISK_PAC_CFI_FLAG_SIGN_FAILED |
-                     CPRISK_PAC_CFI_FLAG_AUTH_FAILED |
-                     CPRISK_PAC_CFI_FLAG_WEAK_BINDING)) == 0u ? 0 : 1;
+    return -1;
+#else
+    const void *authed = ptrauth_auth_function(
+        func_ptr,
+        ptrauth_key_function_pointer,
+        cprisk_pac_blend_discriminator(discriminator));
+    if (authed == NULL) {
+        flags |= CPRISK_PAC_CFI_FLAG_AUTH_FAILED;
+        atomic_store(&s_last_pac_flags, flags);
+        return -1;
+    }
+    /* Weak-binding probe: a wrong discriminator must NOT authenticate. */
+    const void *wrong_auth = ptrauth_auth_function(
+        func_ptr,
+        ptrauth_key_function_pointer,
+        cprisk_pac_blend_discriminator(discriminator ^ 0xBADC0FFEE0DDF00DULL));
+    if (wrong_auth != NULL) {
+        flags |= CPRISK_PAC_CFI_FLAG_WEAK_BINDING;
+    }
+    atomic_store(&s_last_pac_flags, flags);
+    return (flags & CPRISK_PAC_CFI_FLAG_WEAK_BINDING) != 0u ? 1 : 0;
+#endif
 }
 
+/* SELF-TEST ONLY (not validation): signs a known-good internal pointer
+ * and authenticates it back. A pass here proves the PAC mechanism works;
+ * it says nothing about any externally-supplied pointer. */
 int cprisk_pac_self_test(uintptr_t discriminator) {
     uint32_t flags = CPRISK_PAC_CFI_FLAG_NONE;
 #if !CPRISK_PAC_RUNTIME_AVAILABLE
@@ -178,11 +194,18 @@ int cprisk_pac_validate_core_callbacks(void) {
     uint32_t aggregatedFlags = CPRISK_PAC_CFI_FLAG_NONE;
     bool validationFailed = false;
 
+    /* NOTE: these callbacks are compiler-signed with the compiler's own
+     * discriminators (unknown to us), so they cannot be validated with
+     * cprisk_pac_validate_indirect_call_target() + an invented
+     * discriminator. This loop is therefore an explicit SELF-TEST
+     * (sign-then-auth round-trip of each pointer), not external validation. */
     for (size_t i = 0; i < (sizeof(callbacks) / sizeof(callbacks[0])); ++i) {
-        const int rc = cprisk_pac_validate_indirect_call_target(
-            callbacks[i].pointer,
-            callbacks[i].discriminator
-        );
+        void *signed_ptr = cprisk_pac_sign_function_pointer(
+            callbacks[i].pointer, callbacks[i].discriminator);
+        const int rc = (signed_ptr == NULL) ? -1 :
+            (cprisk_pac_auth_function_pointer(signed_ptr, callbacks[i].discriminator) == NULL ? -1 : 0);
+        if (rc != 0)
+            aggregatedFlags |= CPRISK_PAC_CFI_FLAG_AUTH_FAILED;
 
         const uint32_t lastFlags = (uint32_t)atomic_load(&s_last_pac_flags);
         aggregatedFlags |= lastFlags;
