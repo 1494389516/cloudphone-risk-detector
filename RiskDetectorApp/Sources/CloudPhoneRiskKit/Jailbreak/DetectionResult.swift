@@ -19,6 +19,21 @@ public struct DetectionResult: Sendable {
 
     /// 详细信息（可用于日志/调试）
     public let details: String
+
+    /// 检测是否实际不可用（例如模拟器上检测器无法运行）。
+    /// 模拟器路径与干净设备都会返回 confidence 0，但语义完全不同：
+    /// `unavailable == true` 表示“未检测”（本次评估未产生任何证据，
+    /// 不得当作干净设备采信），`false` 表示检测已运行且未命中。
+    /// 默认 `false`，保持现有四参构造可编译。
+    public let unavailable: Bool
+
+    public init(isJailbroken: Bool, confidence: Double, detectedMethods: [String], details: String, unavailable: Bool = false) {
+        self.isJailbroken = isJailbroken
+        self.confidence = confidence
+        self.detectedMethods = detectedMethods
+        self.details = details
+        self.unavailable = unavailable
+    }
 }
 
 // MARK: - 单个检测器的结果

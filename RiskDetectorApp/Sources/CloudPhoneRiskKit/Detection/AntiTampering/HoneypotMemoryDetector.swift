@@ -138,6 +138,8 @@ struct HoneypotMemoryDetector: Detector {
             var bases: [UnsafeMutableRawPointer] = []
             var sizes: [Int] = []
             var rows = ObfuscatedConstants.honeypotBaitRows
+            // 填充为无意义随机数据（永不代表真实凭据），写入后页面设为
+            // PROT_NONE，仅靠触碰触发的 SIGBUS 探测；内容从不被读取/比对。
             /* Shuffle region order so layout is not a fixed [row0,row1,row2] signature. */
             for i in stride(from: rows.count - 1, through: 1, by: -1) {
                 let j = Int(arc4random_uniform(UInt32(i + 1)))

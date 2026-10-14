@@ -221,7 +221,7 @@ public struct LocalAssessment: Codable, Sendable {
 }
 
 // MARK: - 兼容性扩展
-/// 与现有 RiskScorer 的兼容桥接
+/// 旧版 RiskScorer 已废弃（无调用方）；保留本扩展仅为历史兼容。
 extension LocalAssessment {
     /// 从 RiskScoreReport 创建 LocalAssessment（向后兼容）
     public static func from(

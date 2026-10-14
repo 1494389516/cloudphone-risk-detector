@@ -4,12 +4,6 @@ import Foundation
 
 struct FileDetector: Detector {
 
-    /// 每次 detect 随机抽样的 suspiciousPaths 百分比范围 (60-70%)
-    private static let suspiciousSamplePercentRange = 60...70
-
-    /// 抽样下限，即使百分比算出来更少也至少检查这么多
-    private static let suspiciousSampleFloor = 10
-
     func detect() throws -> DetectorResult {
 #if targetEnvironment(simulator)
         return DetectorResult(score: 0, methods: ["unavailable_simulator"])
@@ -34,26 +28,27 @@ struct FileDetector: Detector {
             Logger.log("jailbreak.file.hit: sandbox_mount_isolation_detected (+30)")
         }
 
-        // ── Anti-Stalker: path randomization + noise injection ──────────────
+        // ── Anti-Stalker: 确定性全量检查 + 确定性噪声穿插 ─────────────
         // Frida Stalker 可以追踪所有 SVC #0x80 syscall 并一次性提取完整路径列表。
-        // 对策：(1) 每次只随机抽样 60-70% 的路径，(2) 打乱顺序，(3) 在真实检查之间
-        // 穿插对合法系统路径的噪声 access() 调用，使 Stalker 无法区分检测目标与噪声。
-        // 抽样导致的检出率降低通过分数补偿因子 (N/X) 修正。
+        // 旧实现用 `Int.random(60...70%)` 抽样 + `Bool.random()` 噪声 + 分数补偿
+        // 因子 N/X（上限 4.0），导致同一设备两次评估的分数/命中集合不一致。
+        // 改为确定性全量检查：遍历全部可疑路径，分数为各路径分数之和，
+        // 无补偿因子；噪声 access() 以固定节拍（每 3 次真实检查穿插 1 次）
+        // 按声明顺序循环穿插，仍干扰 Stalker 的路径归因，但不影响结果。
+        // 顺序固定：`JailbreakEngine` 对 methods 去重排序，最终结果与
+        // 检查顺序无关，同一设备两次评估一致。
 
         let allSuspicious = ObfuscatedConstants.jailbreakSuspiciousPaths
-        let totalN = allSuspicious.count
-        let pct = Int.random(in: Self.suspiciousSamplePercentRange)
-        let sampleCount = max(Self.suspiciousSampleFloor, (totalN * pct) / 100)
-        let suspiciousPaths = PathRandomizer.randomSubset(from: allSuspicious, count: sampleCount)
+        let suspiciousPaths = allSuspicious
 
-        let noisePaths = ObfuscatedConstants.pathNoisePaths.shuffled()
+        let noisePaths = ObfuscatedConstants.pathNoisePaths
         var noiseIdx = 0
         var suspiciousPathScore: Double = 0
 
-        for item in suspiciousPaths {
-            // Probabilistically inject a noise access() via direct SVC before some real checks
-            if Bool.random() && noiseIdx < noisePaths.count {
-                _ = SVCDirectCall.secureAccess(noisePaths[noiseIdx])
+        for (index, item) in suspiciousPaths.enumerated() {
+            // 确定性噪声穿插：每 3 次真实检查前做 1 次噪声 access()。
+            if index % 3 == 0, !noisePaths.isEmpty {
+                _ = SVCDirectCall.secureAccess(noisePaths[noiseIdx % noisePaths.count])
                 noiseIdx += 1
             }
 
@@ -100,26 +95,24 @@ struct FileDetector: Detector {
             }
         }
 
-        // Score compensation: checked X of N paths → scale by N/X
-        let rawFactor = suspiciousPaths.isEmpty ? 1.0 : Double(totalN) / Double(suspiciousPaths.count)
-        let compensationFactor = min(rawFactor, 4.0)
-        score += suspiciousPathScore * compensationFactor
+        // 全量检查：分数为各路径分数之和，无抽样补偿因子。
+        score += suspiciousPathScore
 
         if suspiciousPermissionScore > 0 {
             score += suspiciousPermissionScore
             Logger.log("jailbreak.file.hit: suspicious_permission_denied (+\(Int(suspiciousPermissionScore)))")
         }
 
-        // ── Critical paths: always check ALL, order randomized + noise ────
-        let criticalPaths = ObfuscatedConstants.jailbreakCriticalPaths.shuffled()
-        let critNoisePaths = ObfuscatedConstants.pathNoisePaths.shuffled()
+        // ── Critical paths: 全部检查，确定性顺序 + 确定性噪声穿插 ────
+        let criticalPaths = ObfuscatedConstants.jailbreakCriticalPaths
+        let critNoisePaths = ObfuscatedConstants.pathNoisePaths
         var critNoiseIdx = 0
         var mismatchCount = 0
         var bypassCount = 0
         var tracedCount = 0
-        for path in criticalPaths {
-            if Bool.random() && critNoiseIdx < critNoisePaths.count {
-                _ = SVCDirectCall.secureAccess(critNoisePaths[critNoiseIdx])
+        for (index, path) in criticalPaths.enumerated() {
+            if index % 3 == 0, !critNoisePaths.isEmpty {
+                _ = SVCDirectCall.secureAccess(critNoisePaths[critNoiseIdx % critNoisePaths.count])
                 critNoiseIdx += 1
             }
 
