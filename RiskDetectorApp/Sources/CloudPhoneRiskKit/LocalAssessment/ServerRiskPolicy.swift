@@ -245,15 +245,13 @@ public final class PolicyManager: @unchecked Sendable {
     private var urlSession: URLSession
 
     private init() {
-        #if DEBUG
-        Logger.log("⚠️ PolicyManager.init: no certificate hashes configured yet — falling back to system CA in DEBUG. Call configurePinning(hashes:) before fetching policy.")
+        // 所有 TLS 会话都走 pinning，失败硬拒绝：无 pin 时挑战直接被取消、
+        // 策略拉取失败并回落本地缓存策略，绝不回落系统 CA。
+        // DEBUG 下亦然——需在拉取前调用 configurePinning(hashes:) 配置 pin。
         self.urlSession = CertificatePinningSessionDelegate.pinnedSession(
-            pinMaterial: .empty,
-            allowsSystemCA: true
+            pinMaterial: CPRiskKit.pinnedCertificatePinMaterial,
+            allowsSystemCA: false
         )
-        #else
-        self.urlSession = URLSession(configuration: .ephemeral)
-        #endif
         self.cachedPolicy = loadFromCache()
     }
 
@@ -261,16 +259,7 @@ public final class PolicyManager: @unchecked Sendable {
         lock.withLock {
             guard !pinMaterial.isEmpty else {
                 Logger.log("PolicyManager.configurePinning: empty hashes provided — all TLS connections would fail")
-                #if DEBUG
-                Logger.log("⚠️ PolicyManager.configurePinning: [DEBUG] falling back to system CA with empty hashes")
-                urlSession.invalidateAndCancel()
-                urlSession = CertificatePinningSessionDelegate.pinnedSession(
-                    pinMaterial: .empty,
-                    allowsSystemCA: true
-                )
-                #else
-                Logger.log("PolicyManager.configurePinning: refusing to configure pinning with empty hashes in Release — retaining previous session")
-                #endif
+                Logger.log("PolicyManager.configurePinning: refusing to configure pinning with empty hashes — retaining previous session")
                 return
             }
             urlSession.invalidateAndCancel()

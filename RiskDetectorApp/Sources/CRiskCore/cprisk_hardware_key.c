@@ -3,14 +3,16 @@
  *
  * Three-layer key derivation:
  *   Layer 1: rootKey       (CLI provided)
- *   Layer 2: deviceKey    = HMAC(rootKey, deviceSalt)
- *   Layer 3: effectiveRoot = HMAC(deviceKey, sessionToken)
+ *   Layer 2: deviceKey    = CPRisk-MAC(rootKey, deviceSalt)
+ *   Layer 3: effectiveRoot = CPRisk-MAC(deviceKey, sessionToken)
  *
  * This file implements Layer-2 (device binding).  Layer-3 (session binding)
  * lives in cprisk_session_token.c.
  *
- * Device salt is sourced from Keychain / IOKit when available; a static
- * fallback salt is used when platform services are unavailable.
+ * Device salt is sourced from Keychain / IOKit when available. There is
+ * NO static / constant fallback salt: if the platform services are
+ * unavailable, derivation HARD-FAILS (returns -1) instead of silently
+ * binding every device to the same public constant.
  */
 
 #include "include/CRiskCore.h"
@@ -30,29 +32,20 @@
 #include <IOKit/IOKitLib.h>
 #endif
 
-/* Fallback device salt used when IOKit/Keychain are unavailable.
- * Encodes "CRISKDEV1.00" — versioned so new deployments can detect
- * and rotate to real hardware roots without a protocol break. */
-static const uint8_t s_device_fallback_salt[CPRISK_ARMOR_KEY_SIZE] = {
-    0x43, 0x52, 0x49, 0x53, 0x4B, 0x44, 0x45, 0x56,
-    0x31, 0x2E, 0x30, 0x30, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-};
-
-/* 1 when a platform-derived hardware salt was successfully produced, 0 when
- * the static fallback salt is in use. */
+/* No constant fallback salt exists (a public constant salt would bind
+ * every device to the same value). 1 = a platform-derived hardware salt
+ * was successfully produced; 0 = device binding unavailable (hard fail). */
 static _Atomic int s_device_bound_ready = 0;
 
-/* HMAC-SHA256 wrapper that delegates to the inline definition in
+/* CPRisk-MAC-SHA256 wrapper that delegates to the inline definition in
  * cprisk_armor_abi.h, which is transitively included via CRiskCore.h. */
-static void cprisk_hmac_sha256_i(
+static void cprisk_mac_sha256_i(
     const uint8_t *key, size_t key_len,
     const uint8_t *msg, size_t msg_len,
     uint8_t out[CPRISK_ARMOR_HASH_SIZE]
 ) {
-    /* cprisk_hmac_sha256 is defined as static inline in cprisk_armor_abi.h */
-    cprisk_hmac_sha256(key, key_len, msg, msg_len, out);
+    /* cprisk_mac_sha256 is defined as static inline in cprisk_armor_abi.h */
+    cprisk_mac_sha256(key, key_len, msg, msg_len, out);
 }
 
 #if defined(__APPLE__)
@@ -280,7 +273,7 @@ static int cprisk_mix_device_and_keychain_salt_i(
     memcpy(mix_input, uuid_digest, CPRISK_ARMOR_KEY_SIZE);
     memcpy(mix_input + CPRISK_ARMOR_KEY_SIZE, mix_tag, sizeof(mix_tag) - 1);
 
-    cprisk_hmac_sha256_i(keychain_salt, CPRISK_ARMOR_KEY_SIZE,
+    cprisk_mac_sha256_i(keychain_salt, CPRISK_ARMOR_KEY_SIZE,
                          mix_input, sizeof(mix_input),
                          out_salt);
 
@@ -422,7 +415,7 @@ static int cprisk_get_ios_device_salt_i(uint8_t out_salt[CPRISK_ARMOR_KEY_SIZE])
     memcpy(mix_input, device_digest, CPRISK_ARMOR_HASH_SIZE);
     memcpy(mix_input + CPRISK_ARMOR_HASH_SIZE, mix_tag, sizeof(mix_tag) - 1);
 
-    cprisk_hmac_sha256_i(keychain_salt, CPRISK_ARMOR_KEY_SIZE,
+    cprisk_mac_sha256_i(keychain_salt, CPRISK_ARMOR_KEY_SIZE,
                          mix_input, sizeof(mix_input),
                          out_salt);
 
@@ -435,7 +428,7 @@ static int cprisk_get_ios_device_salt_i(uint8_t out_salt[CPRISK_ARMOR_KEY_SIZE])
 
 /* Platform-specific device-salt retrieval.
  * Returns 0 on success, -1 on failure.
- * On failure the caller falls back to s_device_fallback_salt. */
+ * On failure the caller HARD-FAILS (no constant-salt fallback). */
 static int cprisk_get_device_salt_i(uint8_t out_salt[CPRISK_ARMOR_KEY_SIZE]) {
 #if defined(__APPLE__) && TARGET_OS_OSX && !TARGET_OS_MACCATALYST
     return cprisk_get_macos_device_salt_i(out_salt);
@@ -456,16 +449,18 @@ int cprisk_derive_device_key(
 
     uint8_t device_salt[CPRISK_ARMOR_KEY_SIZE];
 
-    /* Attempt to retrieve real hardware salt; fall back to static salt. */
+    /* IOKit/Keychain unavailable => hard fail. Never substitute a
+     * constant salt: a public constant would make deviceKey identical
+     * on every device and void the device binding. */
     if (cprisk_get_device_salt_i(device_salt) != 0) {
-        memcpy(device_salt, s_device_fallback_salt, CPRISK_ARMOR_KEY_SIZE);
+        cprisk_secure_zero(device_salt, sizeof(device_salt));
         atomic_store(&s_device_bound_ready, 0);
-    } else {
-        atomic_store(&s_device_bound_ready, 1);
+        return -1;
     }
+    atomic_store(&s_device_bound_ready, 1);
 
-    /* deviceKey = HMAC(rootKey, deviceSalt) */
-    cprisk_hmac_sha256_i(root_key, CPRISK_ARMOR_KEY_SIZE,
+    /* deviceKey = CPRisk-MAC(rootKey, deviceSalt) */
+    cprisk_mac_sha256_i(root_key, CPRISK_ARMOR_KEY_SIZE,
                          device_salt, CPRISK_ARMOR_KEY_SIZE,
                          out_device_key);
 

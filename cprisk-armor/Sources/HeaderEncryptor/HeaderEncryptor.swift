@@ -2,18 +2,34 @@ import CryptoKit
 import Foundation
 import MachOKit
 
-/// Pass 3.5 / Pass 11: Encrypt mach_header_64 critical fields and store them
-/// in a dedicated `__DATA` `ArmorABI.Sections.headerBackup` section.  At runtime, CRiskCore
-/// reads the backup section, verifies the HMAC, decrypts the fields via XOR
-/// keystream, and restores the header before dyld finishes processing.
+/// Pass 3.5 / Pass 11: Header-backup encryption / header camouflage
+/// (NOT “header encryption”).
 ///
-/// Instead of zeroing the header (which leaves obvious forensic markers), we
-/// encrypt the fields and write a per-binary camouflage value into
-/// mach_header_64.reserved. Runtime restoration still supports the legacy
-/// fixed marker (`0x43504248`, "CPBH") for backward compatibility.
+/// What this pass actually does:
+///  1. Copies six `mach_header_64` fields into a dedicated `__DATA`
+///     `ArmorABI.Sections.headerBackup` section, encrypted with an XOR
+///     keystream and authenticated with a tag.
+///  2. Writes a per-binary camouflage value into `mach_header_64.reserved`.
 ///
-/// Layout of the backup section (64 bytes total):
-///   nonce[8] | encrypted_fields[24] | hmac_tag[32]
+/// What it does NOT do: the six fields (magic, filetype, ncmds,
+/// sizeofcmds, flags, reserved) REMAIN IN PLAINTEXT in the file header —
+/// only `reserved` is overwritten with the camouflage value. Do not describe
+/// this pass as encrypting the header; the header itself is still readable,
+/// and the encrypted copy lives in the backup section for a runtime restore
+/// consumer. At runtime, CRiskCore reads the backup section, verifies the
+/// tag, decrypts the fields via XOR keystream, and restores the header
+/// before dyld finishes processing.
+///
+/// Legacy marker: this producer NO LONGER writes the fixed marker `CPBH`
+/// (`0x43504248`) into the header — the camouflage value is per-binary.
+/// The runtime still ACCEPTS `CPBH` for backward compatibility with old
+/// binaries, which means old binaries still carry that globally stable,
+/// searchable marker. Removing runtime acceptance is a runtime-side decision
+/// (outside this producer); until then, the marker risk persists for
+/// previously shipped artifacts only.
+///
+/// Layout of the backup section (64 bytes total, FROZEN):
+///   nonce[8] | encrypted_fields[24] | cprisk_mac_tag[32]
 ///
 /// Encrypted fields (24 bytes, in Mach-O native byte order):
 ///   magic(4) | filetype(4) | ncmds(4) | sizeofcmds(4) | flags(4) | reserved_placeholder(4)
@@ -26,14 +42,16 @@ public final class HeaderEncryptorPass: ArmorPass {
     /// Legacy fixed marker kept for runtime backward compatibility.
     public static let legacyHeaderMagic: UInt32 = 0x4350_4248  // "CPBH"
 
-    /// Size of the backup section payload: nonce(8) + encrypted(24) + HMAC(32).
+    /// Size of the backup section payload: nonce(8) + encrypted(24) + CPRisk-MAC tag(32).
     public static let backupSectionSize = 64
 
     public init() {}
 
     public func execute(on file: MachOFile, config: PassConfig) throws -> PassResult {
-        guard config.encryptionKey != nil else {
-            throw MachOError.invalidData("HeaderEncryptorPass requires an encryption key")
+        guard let rootKey = config.encryptionKey else {
+            throw MachOError.invalidData(
+                "HeaderEncryptorPass requires an encryption key (no zero/default key fallback)"
+            )
         }
 
         // The backup must describe the header that will actually be written.
@@ -55,7 +73,7 @@ public final class HeaderEncryptorPass: ArmorPass {
         }
 
         // Build the WhiteBox bundle and derive the header encryption key.
-        let whitebox = ArmorWhiteBox.build(rootKey: config.encryptionKey)
+        let whitebox = try ArmorWhiteBox.build(rootKey: rootKey)
         let headerKey = deriveHeaderKey(whitebox: whitebox)
 
         // --- Read the six header fields that need protection ---
@@ -92,27 +110,31 @@ public final class HeaderEncryptorPass: ArmorPass {
         // --- Encrypt via XOR ---
         let encryptedFields = xor(fieldsData, keystream)
 
-        // HMAC scope binds (nonce_len, nonce, ct_len, ciphertext) with
+        // CPRisk-MAC scope binds (nonce_len, nonce, ct_len, ciphertext) with
         // length prefixes — see the canonical encoding mirror in
-        // cprisk_header_restore.c. The previous `nonce || ciphertext`
-        // form was vulnerable to truncation/extension attacks in theory;
+        // cprisk_header_restore.c. The tag MUST use CPRisk-MAC
+        // (ArmorABI.cpriskMAC, non-standard pads 0x6D/0xA3), NOT standard
+        // HMAC, because the runtime verifier (cprisk_verify_header_mac)
+        // computes CPRisk-MAC. A standard-HMAC tag would never verify.
+        // The previous `nonce || ciphertext` form was vulnerable to
+        // truncation/extension attacks in theory;
         // for the fixed 8+24 layout the practical risk is small but the
         // pattern matches DataSegmentEncryptor / StringEncryptor for
         // consistency, so future layout changes inherit the binding.
-        var hmacMessage = Data()
+        var macMessage = Data()
         var nonceLenLE = UInt32(nonce.count).littleEndian
-        withUnsafeBytes(of: &nonceLenLE) { hmacMessage.append(contentsOf: $0) }
-        hmacMessage.append(nonce)
+        withUnsafeBytes(of: &nonceLenLE) { macMessage.append(contentsOf: $0) }
+        macMessage.append(nonce)
         var ctLenLE = UInt32(encryptedFields.count).littleEndian
-        withUnsafeBytes(of: &ctLenLE) { hmacMessage.append(contentsOf: $0) }
-        hmacMessage.append(encryptedFields)
-        let hmacTag = ArmorABI.hmacSHA256(key: headerKey, message: hmacMessage)
+        withUnsafeBytes(of: &ctLenLE) { macMessage.append(contentsOf: $0) }
+        macMessage.append(encryptedFields)
+        let macTag = ArmorABI.cpriskMAC(key: headerKey, message: macMessage)
 
         // --- Assemble the 64-byte backup payload ---
         var backupPayload = Data()
         backupPayload.append(nonce)        // 8 bytes
         backupPayload.append(encryptedFields) // 24 bytes
-        backupPayload.append(hmacTag)      // 32 bytes
+        backupPayload.append(macTag)      // 32 bytes
         precondition(backupPayload.count == Self.backupSectionSize,
                      "Backup payload must be exactly 64 bytes")
 
@@ -127,7 +149,9 @@ public final class HeaderEncryptorPass: ArmorPass {
         // --- Write a camouflaged reserved value into mach_header_64.reserved ---
         // This avoids a globally stable marker while preserving deterministic
         // restoration logic (runtime recomputes the same value from nonce +
-        // original reserved field).
+        // original reserved field). Note the other five header fields stay
+        // plaintext in the file header (see the file header comment) — only
+        // `reserved` is camouflaged here.
         let camouflagedReserved = makeCamouflagedReserved(
             originalReserved: reserved,
             nonce: nonce
@@ -135,8 +159,8 @@ public final class HeaderEncryptorPass: ArmorPass {
         try file.writeUInt32(camouflagedReserved, at: 28)
 
         let details = [
-            "Encrypted mach_header_64 fields into \(ArmorABI.dataSegmentName).\(ArmorABI.Sections.headerBackup) (64 bytes)",
-            "Wrote camouflaged reserved=0x\(String(camouflagedReserved, radix: 16)) into header.reserved (legacy marker 0x\(String(Self.legacyHeaderMagic, radix: 16)) still supported at runtime)",
+            "Encrypted mach_header_64 field COPY into \(ArmorABI.dataSegmentName).\(ArmorABI.Sections.headerBackup) (64 bytes); the 6 fields remain plaintext in the file header (only reserved is camouflaged)",
+            "Wrote camouflaged reserved=0x\(String(camouflagedReserved, radix: 16)) into header.reserved (legacy marker 0x\(String(Self.legacyHeaderMagic, radix: 16)) no longer emitted; still accepted at runtime for old binaries)",
             "Header fields: magic=0x\(String(magic, radix: 16)), filetype=0x\(String(filetype, radix: 16)), ncmds=\(ncmds), sizeofcmds=\(sizeofcmds), flags=0x\(String(flags, radix: 16)), reserved=0x\(String(reserved, radix: 16))",
             "Removed \(removedCodeSignatureBytes) bytes of stale LC_CODE_SIGNATURE commands before snapshot",
             "Derived header key from WhiteBox Domain 9 (headerEncryptionKey)"
@@ -193,8 +217,10 @@ public final class HeaderEncryptorPass: ArmorPass {
     }
 
     /// HeaderEncryptor uses an 8-byte nonce (matches the fixed 64-byte backup layout
-    /// nonce[8] | encrypted[24] | hmac[32], and makeCamouflagedReserved's n0/n1 split).
-    /// This is independent of ArmorABI.nonceSize which other passes use for 16-byte nonces.
+    /// nonce[8] | encrypted[24] | cprisk_mac_tag[32], and makeCamouflagedReserved's n0/n1 split).
+    /// This is a FROZEN exception: do NOT “unify” it to `ArmorABI.nonceSize`
+    /// (16). Widening the nonce would change the published 64-byte backup
+    /// layout and the camouflage split the runtime parser expects.
     private static let nonceSize = 8
 
     private func generateNonce() throws -> Data {

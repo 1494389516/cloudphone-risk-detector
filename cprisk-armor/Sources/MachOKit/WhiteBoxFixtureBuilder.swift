@@ -22,7 +22,9 @@ public struct WhiteBoxFixtureBundle {
 }
 
 public enum WhiteBoxFixtureBuilder {
-    public static func build(rootKey: Data?) -> WhiteBoxFixtureBundle {
-        WhiteBoxFixtureBundle(storage: ArmorWhiteBox.build(rootKey: rootKey))
+    /// Fixture helper for tests. The root key is required (exactly 32 bytes,
+    /// non-zero) — no zero/default key fallback.
+    public static func build(rootKey: Data) throws -> WhiteBoxFixtureBundle {
+        WhiteBoxFixtureBundle(storage: try ArmorWhiteBox.build(rootKey: rootKey))
     }
 }

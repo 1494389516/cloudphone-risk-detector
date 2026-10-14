@@ -27,7 +27,12 @@ import Foundation
 /// - **异常检测**：检测突发的风险异常（如突然越狱）
 /// - **白名单动态更新**：根据历史稳定性动态调整白名单
 /// - **风险溯源**：追溯风险事件的历史演变
-///
+/// ⚠️ DEPRECATED / 平行实现：仓库内无使用方。主实现是
+/// `Analysis/DeviceHistory.swift` 的 `DeviceHistory`（被 AnomalyDetector、
+/// BehaviorBaseline、TemporalFeatures 使用），本结构为历史遗留的平行实现，
+/// 不再维护。未物理删除：Xcode 工程（project.pbxproj，不在本任务可改目录内）
+/// 显式引用了它，删除源文件会破坏工程文件索引。
+@available(*, deprecated, message: "平行遗留实现；主实现为 Analysis/DeviceHistory.DeviceHistory")
 public struct RiskDeviceHistory: Codable, Sendable {
 
     public let snapshots: [RiskDeviceSnapshot]

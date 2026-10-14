@@ -322,36 +322,30 @@ extension CPRiskKit {
     }
 
     // MARK: - Security Floor
+    //
+    // 注意：本函数只做“配置缺失时补安全默认值 + 越界钳制”，不再在 Release 下
+    // 强制把用户显式关闭的检测开关改回 true。原因：
+    // - `RiskConfig` / `JailbreakConfig` 的初始化默认值本身就是安全默认值
+    //  （检测开关默认全开），“缺失”即“未显式赋值”，无需在此改写；
+    // - 用户显式关闭（如 `JailbreakConfig.light` 关闭 env/sysctl/scheme/hook、
+    //   或宿主设置 `enableAntiTamper = false`）是合法调用方决策，强制改写会
+    //   让轻量/低功耗等配置失效且无法从外部观测。
+    // - 远程下发的配置仍由 `RemoteConfig.enforcingReleaseSecurityFloor()`
+    //   单独做安全地板（远程配置不可降级本地安全基线），与本函数职责不同。
+    // 每次实际改写（阈值钳制）都会记录日志，便于审计。
 
     internal func enforceSecurityFloor(_ config: inout RiskConfig) {
-        config.jailbreak.enableFileDetect = true
-        config.jailbreak.enableDyldDetect = true
-        config.jailbreak.enableSysctlDetect = true
-#if !DEBUG
-        config.jailbreak.enableEnvDetect = true
-        config.jailbreak.enableSchemeDetect = true
-        config.jailbreak.enableHookDetect = true
-        config.enableBehaviorDetect = true
-        config.enableNetworkSignals = true
-        if config.jailbreak.threshold > 50 {
-            config.jailbreak.threshold = 50
+        // 仅钳制越界阈值到合法范围；不触碰任何 Bool 开关。
+        if config.jailbreak.threshold > 100 || config.jailbreak.threshold < 0 {
+            let clamped = min(max(config.jailbreak.threshold, 0), 100)
+            Logger.log("enforceSecurityFloor: jailbreak.threshold \(config.jailbreak.threshold) clamped to \(clamped)")
+            config.jailbreak.threshold = clamped
         }
-        if config.threshold > 100 {
-            config.threshold = 55
+        if config.threshold > 100 || config.threshold < 0 {
+            let clamped = min(max(config.threshold, 0), 100)
+            Logger.log("enforceSecurityFloor: threshold \(config.threshold) clamped to \(clamped)")
+            config.threshold = clamped
         }
-#else
-        if config.jailbreak.threshold > 100 {
-            config.jailbreak.threshold = 50
-        }
-#endif
-#if !DEBUG
-        config.enableBehaviorDetect = true
-        config.enableNetworkSignals = true
-        config.jailbreak.enableFileDetect = true
-        config.jailbreak.enableDyldDetect = true
-        config.jailbreak.enableSysctlDetect = true
-        config.jailbreak.enableHookDetect = true
-#endif
     }
 
     // MARK: - Runtime Config Resolution

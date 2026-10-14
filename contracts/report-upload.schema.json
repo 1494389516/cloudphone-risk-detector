@@ -39,6 +39,7 @@
     },
     "trust_level": {
       "type": "string",
+      "enum": ["hardware", "derived", "degraded"],
       "x-swift-expression": "trustLevel?.rawValue"
     },
     "binding_digest": {

@@ -36,15 +36,16 @@ From the repository root, using Python 3.12:
 python3 -m venv /tmp/ir-vmp-tools
 /tmp/ir-vmp-tools/bin/python -m pip install -r experiments/ir-vmp/requirements.txt
 /tmp/ir-vmp-tools/bin/python experiments/ir-vmp/vnext.py validate
-/tmp/ir-vmp-tools/bin/python experiments/ir-vmp/vnext.py run --output /tmp/business-native
-/tmp/ir-vmp-tools/bin/python experiments/ir-vmp/vnext.py run --sanitize --output /tmp/business-sanitized
 ```
 
-Both results must say `BASELINE_ONLY_PASS`, never `HOST_VMP_PASS`. Sanitized
-native results cover the same input corpus and must not be added to it as
-independent coverage. In a ptrace-restricted environment only, LeakSanitizer may
-need `ASAN_OPTIONS=detect_leaks=0`; the runner records this environment explicitly.
-ASan/UBSan results do not prove VM memory safety.
+> `vnext.py` 的 `main` 仅接受 `validate` 与 `verify-release` 两个子命令；`run` 子命令已删除。
+> 下文旧版 `vnext.py run …` 命令与 `experiments/ir-vmp/tests` 单测命令均为历史记录，不可复现。
+> 基线/VM 差分执行入口随测试运行脚本一并删除（2026-10-04）。
+
+
+（历史记录）旧版 `run` 执行的基线结果曾要求 `BASELINE_ONLY_PASS`，永不为 `HOST_VMP_PASS`。Sanitized
+native 结果覆盖相同输入语料，不得作为独立覆盖计入。在 ptrace 受限环境中，LeakSanitizer 可能需要
+`ASAN_OPTIONS=detect_leaks=0`；runner 会显式记录该环境。ASan/UBSan 结果不证明 VM 内存安全。
 
 Build the pinned plugin with the existing `build_plugin.py --patch-set
 pointer-gep-v2` workflow. The build now matches `llvm-config --has-rtti` and loads
@@ -58,14 +59,16 @@ unused floating-point handlers. Target floating-point IR remains rejected.
 python3 experiments/ir-vmp/build_preflight.py \
   --llvm-root /path/to/llvm22 --output /tmp/preflight-build
 
-python3 experiments/ir-vmp/vnext.py run --mode xollvm \
-  --clang /path/to/llvm22/bin/clang --opt /path/to/llvm22/bin/opt \
-  --plugin /tmp/xollvm-build/cmake/Obfuscator.so \
-  --plugin-provenance /tmp/xollvm-build/plugin-provenance.json \
-  --preflight /tmp/preflight-build/preflight --output /tmp/business-vm
-
-CPRISK_PREFLIGHT=/tmp/preflight-build/preflight \
-  python3 -m unittest discover -s experiments/ir-vmp/tests -v
+# 历史记录：`vnext.py run` 与 `experiments/ir-vmp/tests` 均已删除，下述命令不可复现。
+# 现存入口仅为 `vnext.py validate` 与 `vnext.py verify-release`。
+# python3 experiments/ir-vmp/vnext.py run --mode xollvm \
+#   --clang /path/to/llvm22/bin/clang --opt /path/to/llvm22/bin/opt \
+#   --plugin /tmp/xollvm-build/cmake/Obfuscator.so \
+#   --plugin-provenance /tmp/xollvm-build/plugin-provenance.json \
+#   --preflight /tmp/preflight-build/preflight --output /tmp/business-vm
+#
+# CPRISK_PREFLIGHT=/tmp/preflight-build/preflight \
+#   python3 -m unittest discover -s experiments/ir-vmp/tests -v
 
 python3 experiments/ir-vmp/vnext.py verify-release \
   --evidence /tmp/business-vm/release-evidence.json

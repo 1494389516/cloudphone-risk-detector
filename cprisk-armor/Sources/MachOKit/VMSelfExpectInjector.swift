@@ -8,10 +8,19 @@ import Foundation
 /// absent (older fixtures / binaries), the injector falls back to the legacy three-symbol layout:
 /// `cprisk_vm_execute` (48 B) + `cprisk_vm_interp_loop_a` (64 B) + `cprisk_vm_dispatch_lookup` (64 B).
 /// Intended for the **linked** Mach-O (thin `MH_MAGIC_64` only).
+///
+/// CPSH tag width (read before relying on it): the CPSH value is only the
+/// FIRST 4 BYTES (little-endian) of a MAC digest — a 32-bit truncation. It
+/// is NOT a full-width MAC: it gives at most ~2^32 forgery resistance by
+/// brute force and must never be described as full-MAC authentication.
+/// The tag also covers only the three fixed TEXT windows, not the whole
+/// binary (see `CPSV v2` for the wider span map).
 public enum VMSelfExpectInjector {
     /// `CPRISK_VMP_SELF_EXPECT_MAGIC` — ASCII "CPSF" as little-endian u32.
     public static let magicLE: UInt32 = 0x4653_5043
     /// `CPRISK_VMP_SELF_EXPECT_MAGIC_HMAC` — ASCII "CPSH" as little-endian u32.
+    /// The CPSH value after this magic is a 32-bit TRUNCATION of a MAC digest
+    /// (first 4 bytes LE) — not a full-width MAC. See the file header.
     public static let magicHmacLE: UInt32 = 0x4853_5043
     /// `CPRISK_VMP_SELF_SPAN_MAGIC` — ASCII "CPSV" as little-endian u32.
     public static let spanMagicLE: UInt32 = 0x5653_5043
@@ -47,10 +56,13 @@ public enum VMSelfExpectInjector {
         public var usedCPSVSpanMap: Bool { source == .cpsvSpanMap || source == .cpsvV2 }
     }
 
-    /// Derives the 32-byte HMAC key the same way as
+    /// Derives the 32-byte key for the self-check MAC, the same way as
     /// `cprisk_vm_selfchk_hmac_key_i`: SHA-256(material || XOR-mixed label).
     /// A post-link expectation cannot depend on a future runtime session key.
-    public static func deriveSelfCheckHmacKey(runtimeMaterial32: Data) -> SymmetricKey {
+    /// (Name kept for wire compat — the key feeds either the standard-HMAC
+    /// v1 path or the CPRisk-MAC v2 path; see `hmacSelfCheckTag32` and
+    /// `injectV2`.)
+    public static func deriveSelfCheckCPRiskMACKey(runtimeMaterial32: Data) -> SymmetricKey {
         precondition(runtimeMaterial32.count == 32)
         var payload = Data(count: 50)
         payload.replaceSubrange(0..<32, with: runtimeMaterial32)
@@ -66,9 +78,17 @@ public enum VMSelfExpectInjector {
         return SymmetricKey(data: Data(digest))
     }
 
-    /// First 4 bytes (LE) of the custom-pad SHA-256 MAC — matches runtime `cprisk_vm_m3_selfchk_run_i`.
+    /// First 4 bytes (LE) of the standard HMAC-SHA256 digest over the code
+    /// prefix — matches the v1 runtime self-check construction. This is a
+    /// 32-bit TRUNCATION, not a full-width MAC (see the file header).
+    ///
+    /// NOTE: this v1 path uses `ArmorABI.hmacSHA256` (standard HMAC-SHA256,
+    /// pads 0x36 / 0x5C). The CPSV v2 path (`injectV2`) uses CPRisk-MAC
+    /// (custom pads 0x6D / 0xA3) instead, matching the deployed runtime's
+    /// custom-pad construction. The two are not interchangeable; do not
+    /// “fix” one to match the other without a contract-version negotiation.
     public static func hmacSelfCheckTag32(codePrefix: Data, runtimeMaterial32: Data) -> UInt32 {
-        let key = deriveSelfCheckHmacKey(runtimeMaterial32: runtimeMaterial32)
+        let key = deriveSelfCheckCPRiskMACKey(runtimeMaterial32: runtimeMaterial32)
         let keyData = key.withUnsafeBytes { Data($0) }
         let d = ArmorABI.hmacSHA256(key: keyData, message: codePrefix)
         guard d.count >= 4 else { return 0 }
@@ -115,10 +135,13 @@ public enum VMSelfExpectInjector {
         )
     }
 
-    /// Writes CPSH (magic + LE u32 HMAC tag) for the HMAC self-check path (`CPRISK_VMP_BC_FLAG_M3_SELFCHK_HMAC`).
-    /// - Parameter runtimeMaterial32: Must match runtime `cprisk_get_runtime_material` (default: 32 zero bytes for CI).
-    public static func injectHmac(into machoURL: URL, runtimeMaterial32: Data? = nil, cpsv2LayoutURL: URL? = nil) throws -> Result {
-        let mat = runtimeMaterial32 ?? Data(count: 32)
+    /// Writes CPSH (magic + LE u32 truncated-MAC tag) for the keyed self-check path.
+    /// - Parameter runtimeMaterial32: REQUIRED explicit 32-byte runtime
+    ///   material. There is no zero/default material fallback: callers must
+    ///   pass real material, or explicitly pass 32 zero bytes for CI
+    ///   fixtures (the CLI gates that behind `--allow-zero-material`).
+    public static func injectHmac(into machoURL: URL, runtimeMaterial32: Data, cpsv2LayoutURL: URL? = nil) throws -> Result {
+        let mat = runtimeMaterial32
         precondition(mat.count == 32)
         let file = try MachOFile(url: machoURL)
         if let section = try file.section(segment: ArmorABI.dataSegmentName, section: ArmorABI.Sections.vmpSelfSpans) {

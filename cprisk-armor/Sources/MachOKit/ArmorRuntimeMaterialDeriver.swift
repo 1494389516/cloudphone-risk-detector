@@ -14,7 +14,7 @@ public enum ArmorRuntimeMaterialDeriver {
         }
 
         let anchorHash = try readSplitAnchor(from: file)
-        let bundle = ArmorWhiteBox.build(rootKey: rootKey)
+        let bundle = try ArmorWhiteBox.build(rootKey: rootKey)
 
         try verifySectionPrefix(
             file: file,

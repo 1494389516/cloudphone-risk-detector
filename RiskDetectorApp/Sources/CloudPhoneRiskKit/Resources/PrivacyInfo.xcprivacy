@@ -8,9 +8,49 @@
     <array/>
     <key>NSPrivacyCollectedDataTypes</key>
     <array>
+        <!-- 设备 ID：Keychain 设备 ID、IDFV（默认上报前 SHA-256 哈希化，见 DeviceFingerprint）。不用于追踪。 -->
         <dict>
             <key>NSPrivacyCollectedDataType</key>
             <string>NSPrivacyCollectedDataTypeDeviceID</string>
+            <key>NSPrivacyCollectedDataTypeLinked</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypeTracking</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array>
+                <string>NSPrivacyCollectedDataTypePurposeFraudPrevention</string>
+            </array>
+        </dict>
+        <!-- 粗略位置：MCC/MNC（运营商代码）、时区/地区、服务端聚合的 geoCountry/geoRegion。仅用于云手机/改机识别，不用于追踪。 -->
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypeCoarseLocation</string>
+            <key>NSPrivacyCollectedDataTypeLinked</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypeTracking</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array>
+                <string>NSPrivacyCollectedDataTypePurposeFraudPrevention</string>
+            </array>
+        </dict>
+        <!-- 其他诊断数据：电池电量/状态、GPU 渲染指纹与 GPU 名称、越狱/反篡改/行为/时序检测信号、启动时间、安装时间。仅用于风控。 -->
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypeOtherDiagnosticData</string>
+            <key>NSPrivacyCollectedDataTypeLinked</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypeTracking</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array>
+                <string>NSPrivacyCollectedDataTypePurposeFraudPrevention</string>
+            </array>
+        </dict>
+        <!-- 其他数据：网络标识（服务端聚合的公网 IP/ASN/机房标记、IP 聚合度）、代理启用状态与类型（不上报主机/端口/PAC URL）、VPN 状态、网络接口类型、触摸/运动行为特征、设备型号/屏幕/系统版本/内核版本。仅用于风控。 -->
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypeOtherData</string>
             <key>NSPrivacyCollectedDataTypeLinked</key>
             <false/>
             <key>NSPrivacyCollectedDataTypeTracking</key>
@@ -37,6 +77,22 @@
             <key>NSPrivacyAccessedAPITypeReasons</key>
             <array>
                 <string>35F9.1</string>
+            </array>
+        </dict>
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>C617.1</string>
+            </array>
+        </dict>
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>E174.1</string>
             </array>
         </dict>
     </array>

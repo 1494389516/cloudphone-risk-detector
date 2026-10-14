@@ -71,8 +71,31 @@ extern "C" {
  * a cached result.
  *
  * @returns Bitmask of CPRISK_EMU_FLAG_* bits for each detected anomaly.
+ *
+ * NOTE (probe-status distinction): a return of 0 from cprisk_emulator_probe()
+ * means "probed, no anomaly found" ONLY on platforms where probing is
+ * actually performed. On platforms where probing is impossible (non-Apple
+ * builds, simulator), the probe never runs and 0 would be misleading, so
+ * use cprisk_emulator_probe_status() below to distinguish "not probed"
+ * (-1) from "probed and clean" (0) from "probed, anomalies found" (1).
+ * The cached result is also re-probed when older than
+ * CPRISK_EMULATOR_PROBE_TTL_SECONDS, so a one-time clean result cannot
+ * mask an emulator that attaches later.
  */
 uint32_t cprisk_emulator_probe(void);
+
+/** Cache time-to-live for cprisk_emulator_probe(), in seconds. */
+#define CPRISK_EMULATOR_PROBE_TTL_SECONDS 5u
+
+/**
+ * Probe and report status explicitly:
+ *   -1 = not probed (platform cannot probe: non-Apple / simulator),
+ *    0 = probed and clean (no anomaly flags),
+ *    1 = probed, one or more anomaly flags set.
+ * On return, *out_flags holds the anomaly bitmask (0 when not probed).
+ * Use this whenever "not probed" must not be confused with "clean".
+ */
+int cprisk_emulator_probe_status(uint32_t *out_flags);
 
 /**
  * Convert an anomaly flags bitmask into a weighted integer score (0–100).

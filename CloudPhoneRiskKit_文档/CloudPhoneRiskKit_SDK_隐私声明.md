@@ -116,6 +116,20 @@ SDK 可能处理以下设备级标识：
 - 当 Keychain 与本地降级存储都不可可靠使用时，SDK 可能返回带 `ephemeral:` 前缀的临时 ID。
 - 这些标识主要用于设备级风控、设备稳定识别、报告关联与信任等级判断。
 
+**实际采集字段清单（以代码为准）**：下表列出 SDK 代码实际读取的字段，优先于任何笼统表述。
+来源：`DeviceFingerprint.current()`、`EnhancedDeviceFingerprint`、`NetworkSignals`、各 Provider。
+
+| 类别 | 实际字段 |
+|------|---------|
+| 系统/设备 | `systemName`、`systemVersion`、`model`、`localizedModel`、`identifierForVendor`、硬件 `hw.machine` / `hw.model`、内核 build（`kern.osversion` / `kern.version` 解析）、系统 build 版本、是否模拟器 |
+| 语言/区域/时间 | `localeIdentifier`、语言代码、地区代码、`timeZoneIdentifier`、时区偏移秒数、24 小时制、是否公历 |
+| 屏幕/显示 | 屏幕宽/高（物理像素）、缩放比例、屏幕亮度、是否 ProMotion、最大帧率、深色模式、自动亮度 |
+| 硬件容量 | CPU 物理/逻辑核数、CPU 频率、内存大小、磁盘总容量/可用容量 |
+| 网络环境 | 网络接口名列表、蜂窝能力、WiFi/蜂窝连接态、DNS 服务器列表、代理开关（HTTP / HTTPS / SOCKS / PAC）、MCC / MNC（`CTTelephonyNetworkInfo`，首个运营商）、VPN 隧道接口名前缀、代理配置证据 |
+| 指纹摘要 | 设备画像哈希（`fingerprintHash`）、GPU 渲染指纹 SHA-256、IMU 噪声谱统计摘要 |
+
+电池电量/状态仅为 App 层 DTO 预留字段，当前 `NetworkSignals` 中填 `nil`，SDK 不主动采集电池数据。
+
 ### 4.2 设备环境与完整性类
 
 SDK 可能处理以下环境风险数据：
@@ -180,6 +194,11 @@ SDK 在启用对应能力时，可能处理：
 - 这部分能力通常需要宿主 App 在 `Info.plist` 中提供对应权限说明。
 - 当前设计更偏向**摘要/统计量**，而非"完整行为录像式原始重建"。
 - 是否离开设备，依赖宿主 App 是否将风险报告上传。
+- **触摸原始点短暂缓冲**：`TouchCapture` 会在内存中短暂缓存触摸点（`CGPoint`，上限约 10000 个，超限滚动丢弃），
+  快照时聚合成上述统计量后清零缓冲；原始点不写入磁盘、不随报告上传。
+- **运动采样只用统计量**：`MotionSampler` 仅取 `CMDeviceMotion.userAcceleration` 的幅值做计数/能量累加；
+  `PhysicalSensorProbe` 另读取重力（`gravity`）、用户加速度、陀螺仪（`rotationRate`）、磁力计（`magneticField`）
+  与气压计可用性，计算标准差/均值/RMS 等统计摘要后丢弃原始采样，不上传原始传感器轨迹。
 
 ### 4.3a 硬件物理指纹类（新增）
 
@@ -243,6 +262,19 @@ SDK 支持输出图计算相关特征，主要包括：
 
 - “哈希化”不等于“完全脱离隐私语境”
 - 这些字段仍然可能被视为与设备或账户相关的风险数据
+
+### 4.7 明确不采集（代码核实）
+
+经核查 SDK 源码，SDK **不**采集以下数据（源码中无对应框架调用）：
+
+- GPS / 精确地理位置（无 CoreLocation 调用；仅有时区/地区代码与服务端回传的粗粒度地理区域标签）
+- 通讯录、短信、通话记录
+- 照片、相机画面、麦克风录音
+- 剪贴板内容（无 `UIPasteboard` 调用）
+- 广告标识 IDFA（无 `ASIdentifierManager` / `advertisingIdentifier` 调用）
+- 沙箱内用户文件内容、应用内用户数据
+
+URL Scheme 查询仅用于越狱特征探测（如 `cydia://` 是否可打开），不用于统计已安装应用画像。
 
 ---
 

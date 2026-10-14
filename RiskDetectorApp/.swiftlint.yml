@@ -2,9 +2,13 @@
 # Tailored for a security SDK with intentionally complex detection logic
 
 # ─── Included / Excluded Paths ───────────────────────────────────────────────
+# Paths are resolved relative to this config file (RiskDetectorApp/).
+# cprisk-armor/ is covered too: armor sources ship in the same repo and
+# must meet the same lint bar as the SDK.
 included:
   - Sources
   - App
+  - ../cprisk-armor/Sources
 
 excluded:
   - .build

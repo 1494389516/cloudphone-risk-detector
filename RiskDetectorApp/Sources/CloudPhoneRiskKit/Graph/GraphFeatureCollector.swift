@@ -31,9 +31,6 @@ public enum GraphFeatureCollector {
 
         return GraphNodeDescriptor(
             hwProfileHash: hwProfileHash,
-            ipHash: nil,
-            asnHash: nil,
-            accountIdHash: nil,
             bssidHash: nil,
             appListHash: nil,
             installationKey: sha256Hex("cprisk.installation.v1|\(snapshot.deviceID)"),

@@ -2,36 +2,22 @@
 #include "include/cprisk_vm_interpreter_ops.h"
 #include "include/cprisk_vm_oph_variants.h"
 
-static uintptr_t cprisk_vm_oph_materialize_key_i(const cprisk_vm_interp_frame_t *fr,
-                                                 uint8_t logical,
-                                                 uint32_t hvar,
-                                                 uint32_t stage) {
-    uint32_t mix =
-        (uint32_t)fr->func_id ^
-        (uint32_t)(fr->func_id >> 32u) ^
-        fr->session_mix ^
-        fr->opaque_chain ^
-        ((uint32_t)logical * 0x9E3779B9u) ^
-        (hvar * 0x85EBCA6Bu) ^
-        (fr->path_lane * 0xC2B2AE35u) ^
-        ((uint32_t)fr->steps * 0x27D4EB2Du) ^
-        (stage * 0x165667B1u);
-    mix = cprisk_vmp_avalanche32_i(mix ^ (mix >> 16u));
-    return
-        (uintptr_t)mix ^
-        ((uintptr_t)mix << 17u) ^
-        ((uintptr_t)(mix ^ 0xA5A55A5Au) << 33u) ^
-        (uintptr_t)0x9E3779B97F4A7C15ULL;
-}
-
+/* Materialize (issue 61): this used to compute a key, XOR the handler
+ * pointer with it, and then XOR it again — (fn ^ key) ^ key == fn, an
+ * IDENTITY / no-op. It provided no protection whatsoever and must not
+ * be counted as a defense layer. The key derivation and both XORs are
+ * removed; the function now returns the handler unchanged and exists
+ * only to keep the dispatch call sites stable. */
 static cprisk_vm_oph_fn cprisk_vm_oph_materialize_i(const cprisk_vm_interp_frame_t *fr,
                                                     uint8_t logical,
                                                     uint32_t hvar,
                                                     uint32_t stage,
                                                     cprisk_vm_oph_fn fn) {
-    const uintptr_t key = cprisk_vm_oph_materialize_key_i(fr, logical, hvar, stage);
-    const uintptr_t enc = ((uintptr_t)(const void *)fn) ^ key;
-    return (cprisk_vm_oph_fn)(uintptr_t)(enc ^ key);
+    (void)fr;
+    (void)logical;
+    (void)hvar;
+    (void)stage;
+    return fn;
 }
 
 static cprisk_vm_flow_t cprisk_vm_dispatch_leaf_i(cprisk_vm_interp_frame_t *fr,

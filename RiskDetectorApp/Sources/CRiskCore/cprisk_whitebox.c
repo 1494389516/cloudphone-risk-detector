@@ -1,3 +1,22 @@
+/* ════════════════════════════════════════════════════════════════════
+ * WHITE-BOX PRF — READ THIS BEFORE TRUSTING IT (issue 47).
+ * ────────────────────────────────────────────────────────────────────
+ * The lookup tables in the __swift5_mdbdy / __swift5_mddsc sections ship
+ * INSIDE the binary. Anyone who can extract the tables can recover the
+ * effective key material they encode: the white-box layer is
+ * OBFUSCATION, not a trust root and not a substitute for a hardware
+ * key / Secure Enclave secret. Treat every value this file derives as
+ * "attacker-observable, attacker-reproducible given the binary".
+ * The migration path for anything that must actually stay secret is a
+ * standard KDF + AEAD: HKDF for derivation and AES-GCM or
+ * ChaCha20-Poly1305 for encryption, with the key in hardware-backed
+ * storage — not tables embedded in the shipped binary.
+ * Self-check tag note: bundle authentication uses a full 32-byte tag;
+ * any place that compares only a truncated 32-BIT prefix of a tag has
+ * only ~2^32 brute-force cost (a few billions of trials — feasible for
+ * a determined attacker), so a truncated comparison must never be the
+ * sole authentication check.
+ * ════════════════════════════════════════════════════════════════════ */
 #include "include/CRiskCore.h"
 #include "include/cprisk_cff.h"
 #include "include/cprisk_codesign_bind.h"
@@ -6,6 +25,9 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__APPLE__) || defined(__linux__)
+#include <sys/random.h>
+#endif
 #ifdef __APPLE__
 #include <TargetConditionals.h>
 #include <mach/mach_time.h>
@@ -142,9 +164,13 @@ static int cprisk_whitebox_aslr_table_bind_runtime_enabled_i(
         return 0;
     if ((header->flags & CPRISK_ARMOR_WHITEBOX_FLAG_ASLR_TABLE_BIND) == 0u)
         return 0;
+#if defined(DEBUG) && DEBUG
+    /* DEBUG-only override: in Release the environment is never trusted
+     * to disable a hardening binding. */
     const char *eb = getenv("CPRISK_WB_ASLR_TABLE_DISABLE");
     if (eb && eb[0] == '1' && eb[1] == '\0')
         return 0;
+#endif
     return 1;
 #endif
 }
@@ -234,6 +260,10 @@ int cprisk_test_set_whitebox_bundle(
     const uint8_t *tag,
     size_t tag_len
 ) {
+#if !defined(DEBUG) || !DEBUG
+    /* Test hook: inert outside DEBUG builds (issue 18). */
+    return -1;
+#endif
     if (!meta || meta_len < CPRISK_ARMOR_WHITEBOX_HEADER_V1_SIZE ||
         !code || code_len == 0 ||
         !data || data_len == 0 ||
@@ -260,10 +290,18 @@ int cprisk_test_set_whitebox_bundle(
 }
 
 void cprisk_test_clear_whitebox_bundle(void) {
+#if !defined(DEBUG) || !DEBUG
+    /* Test hook: inert outside DEBUG builds (issue 18). */
+    return;
+#endif
     cprisk_test_clear_whitebox_bundle_i();
 }
 
 void cprisk_test_set_whitebox_recompute_mismatch(int enabled) {
+#if !defined(DEBUG) || !DEBUG
+    /* Test hook: inert outside DEBUG builds (issue 18). */
+    return;
+#endif
     s_test_force_recompute_mismatch_i = enabled ? 1 : 0;
 }
 
@@ -311,22 +349,44 @@ static uint8_t cprisk_rotl8_i(uint8_t value, unsigned int shift) {
  * DCA countermeasure: per-evaluation Fisher-Yates shuffle over [0, STATE_SIZE).
  *
  * Each evaluation generates a random permutation of state-byte indices using a
- * splitmix64 PRNG seeded from mach_absolute_time() XOR the first 8 input bytes.
+ * splitmix64 PRNG seeded from the OS CSPRNG (getentropy(2) /
+ * arc4random_buf) XOR the first 8 input bytes. The seed is NEVER taken
+ * from an observable clock (mach_absolute_time / wall clock): a clock
+ * value is observable / predictable by an attacker who can read the same
+ * timer, which would let them reconstruct the permutation. If the OS
+ * CSPRNG is unavailable, the seed falls back to input bytes + a fixed
+ * constant (no clock) — still deterministic for that input, but the
+ * shuffle then provides no unpredictability; callers must treat that
+ * path as degraded.
  * Mix layers process state bytes in permuted order (still writing to correct
  * output slots — see correctness note in cprisk_whitebox_first_mix_layer_i).
  *
  * Effect: the table access order is different every evaluation.  First-order DCA
  * that correlates "which table index is accessed at position j of the trace" with
  * intermediate state values must now also recover the permutation, which is
- * derived from a high-resolution timer value and therefore unknown to the attacker
+ * derived from OS entropy and therefore unknown to the attacker
  * even when input and output are known.
  */
 static void cprisk_whitebox_gen_shuffle_i(
     uint8_t perm[CPRISK_WHITEBOX_STATE_SIZE],
     const uint8_t input[CPRISK_WHITEBOX_STATE_SIZE]
 ) {
-    uint64_t seed = mach_absolute_time();
-    /* Mix in first 8 bytes of input so same-time calls with different inputs diverge */
+    /* OS CSPRNG seed (never an observable clock — see comment above). */
+    uint64_t seed = 0u;
+    uint8_t entropy[8];
+    int entropy_ok = 0;
+#if defined(__APPLE__) || defined(__linux__)
+    if (getentropy(entropy, sizeof(entropy)) == 0)
+        entropy_ok = 1;
+#endif
+    if (!entropy_ok) {
+        arc4random_buf(entropy, sizeof(entropy));
+        entropy_ok = 1;
+    }
+    if (entropy_ok)
+        memcpy(&seed, entropy, sizeof(seed));
+    cprisk_secure_zero(entropy, sizeof(entropy));
+    /* Mix in first 8 bytes of input so same-entropy calls with different inputs diverge */
     uint64_t in64;
     memcpy(&in64, input, sizeof(in64));
     seed ^= in64;
@@ -445,7 +505,7 @@ static void cprisk_whitebox_second_mix_layer_i(
  *   noise without re-implementing the full state machine.
  *
  * Performance: 2 extra byte reads per state byte per round (negligible vs the
- * existing SHA-256 HMAC overhead).
+ * existing SHA-256 CPRisk-MAC overhead).
  *
  * IMPORTANT: volatile sink prevents the compiler from eliding the dummy reads.
  */
@@ -554,7 +614,7 @@ static int cprisk_whitebox_tag_matches_i(
 ) {
     if (!actual || actual_len != CPRISK_ARMOR_HASH_SIZE)
         return -1;
-    return cprisk_hmac_verify(expected, actual, CPRISK_ARMOR_HASH_SIZE);
+    return cprisk_mac_verify(expected, actual, CPRISK_ARMOR_HASH_SIZE);
 }
 
 static int cprisk_whitebox_config_digest_valid_i(
@@ -631,7 +691,7 @@ static int cprisk_whitebox_config_digest_valid_i(
 
     cprisk_sha256_final(&ctx, digest);
 
-    const int rc = cprisk_hmac_verify(header->config_digest,
+    const int rc = cprisk_mac_verify(header->config_digest,
                                       digest,
                                       sizeof(digest));
     cprisk_secure_zero(digest, sizeof(digest));
@@ -717,7 +777,7 @@ static int cprisk_whitebox_record_digest_valid_i(
                          sizeof(record->round_constants));
     cprisk_sha256_final(&ctx, digest);
 
-    const int rc = cprisk_hmac_verify(record->record_digest,
+    const int rc = cprisk_mac_verify(record->record_digest,
                                       digest,
                                       sizeof(digest));
     cprisk_secure_zero(digest, sizeof(digest));
@@ -781,6 +841,9 @@ static int cprisk_whitebox_validate_bundle_i(struct cprisk_whitebox_bundle_i *ou
      * silently ignore trailing bytes that may contain attacker-injected
      * content elsewhere on the page.
      */
+    /* Full 32-BYTE tag required. Do NOT truncate this comparison to
+     * 32 bits: a 32-bit tag check costs only ~2^32 brute-force trials
+     * and must never be the sole authentication check. */
     if (tag_size != (unsigned long)CPRISK_ARMOR_HASH_SIZE)
         return -1;
 
@@ -1113,6 +1176,10 @@ int cprisk_test_whitebox_prepare_domain_input(
     const uint8_t input[CPRISK_WHITEBOX_STATE_SIZE],
     uint8_t out[CPRISK_WHITEBOX_STATE_SIZE]
 ) {
+#if !defined(DEBUG) || !DEBUG
+    /* Test hook: inert outside DEBUG builds (issue 18). */
+    return -1;
+#endif
     if (!out)
         return -1;
     return cprisk_whitebox_prepare_prf_input_i(
@@ -1184,8 +1251,17 @@ int cprisk_whitebox_evaluate_domain(
     uint8_t out[32]
 ) {
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
-    /* Entry trace check: deterministic but incorrect PRF output */
-    if (!s_test_bundle_i.active && cprisk_is_being_traced_redundant()) {
+    /* Entry trace check: deterministic but incorrect PRF output.
+     * WARNING: this fake-output behaviour is only as good as the traced
+     * detection it depends on. If an attacker hooks the traced detector,
+     * the fake output never triggers. Two INDEPENDENT detectors are
+     * therefore OR-ed here (sysctl-based cprisk_is_being_traced() and
+     * the redundant multi-signal cprisk_is_being_traced_redundant());
+     * hooking one alone is not enough. The PRF path additionally has an
+     * independent recompute-and-compare check below, which does not
+     * depend on traced detection at all. */
+    if (!s_test_bundle_i.active &&
+        (cprisk_is_being_traced_redundant() || cprisk_is_being_traced())) {
         const uint8_t *src = input ? input : s_zero_state_i;
         cprisk_sha256_ctx pctx;
         cprisk_sha256_init(&pctx);
@@ -1248,8 +1324,10 @@ int cprisk_whitebox_evaluate_domain(
     cprisk_secure_zero(&bundle.header, sizeof(bundle.header));
 
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
-    /* Exit trace check: debugger may attach mid-evaluation */
-    if (rc == 0 && !s_test_bundle_i.active && cprisk_is_being_traced_redundant()) {
+    /* Exit trace check: debugger may attach mid-evaluation.
+     * Same dual-detector rationale as the entry check above. */
+    if (rc == 0 && !s_test_bundle_i.active &&
+        (cprisk_is_being_traced_redundant() || cprisk_is_being_traced())) {
         const uint8_t *src = input ? input : s_zero_state_i;
         cprisk_sha256_ctx pctx;
         cprisk_sha256_init(&pctx);
@@ -1283,13 +1361,15 @@ static int cprisk_derive_effective_signing_key_core_i(
     cprisk_signing_runtime_material_intermediate_mix(runtime_material);
 
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
-    /* Corrupt runtime material under debugger so derived key is silently wrong */
-    if (cprisk_is_being_traced_redundant()) {
+    /* Corrupt runtime material under debugger so derived key is silently wrong.
+     * Dual-detector (see evaluate_domain entry check): either detector
+     * firing is enough, so hooking one detector does not disable this. */
+    if (cprisk_is_being_traced_redundant() || cprisk_is_being_traced()) {
         for (size_t pi = 0; pi < CPRISK_ARMOR_HASH_SIZE; pi++)
             runtime_material[pi] ^= 0xA5u;
     }
     /*
-     * Bind HMAC key material to ASLR slide in release builds by default so
+     * Bind CPRisk-MAC key material to ASLR slide in release builds by default so
      * offline replay needs both the same runtime material and the same image
      * layout. Debug builds stay opt-in to avoid surprising local fixtures.
      *
@@ -1299,17 +1379,19 @@ static int cprisk_derive_effective_signing_key_core_i(
      *   - unset => enabled on release, disabled on debug
      */
     {
-        const char *eb = getenv("CPRISK_SIGNING_KEY_ASLR_BIND");
+        /* Env override is DEBUG-only: in Release the binding is always
+         * on (the environment must not be able to weaken signing). */
         int should_bind = 0;
+#if defined(DEBUG) && DEBUG
+        const char *eb = getenv("CPRISK_SIGNING_KEY_ASLR_BIND");
         if (eb && eb[0] != '\0') {
             should_bind = (eb[0] == '1' || eb[0] == 'y' || eb[0] == 'Y') ? 1 : 0;
         } else {
-#if defined(DEBUG)
             should_bind = 0;
-#else
-            should_bind = 1;
-#endif
         }
+#else
+        should_bind = 1;
+#endif
         if (should_bind) {
             const struct mach_header_64 *mh =
                 cprisk_find_own_header((const void *)&cprisk_derive_effective_signing_key);
@@ -1324,7 +1406,7 @@ static int cprisk_derive_effective_signing_key_core_i(
     }
 #endif
 
-    cprisk_hmac_sha256(runtime_material,
+    cprisk_mac_sha256(runtime_material,
                        CPRISK_ARMOR_HASH_SIZE,
                        cprisk_nonnull_bytes_i(base_key),
                        base_key_len,
@@ -1332,7 +1414,7 @@ static int cprisk_derive_effective_signing_key_core_i(
 
     if (request_binding_digest) {
         uint8_t rebound_key[CPRISK_ARMOR_HASH_SIZE];
-        cprisk_hmac_sha256(out_key,
+        cprisk_mac_sha256(out_key,
                            CPRISK_ARMOR_HASH_SIZE,
                            request_binding_digest,
                            CPRISK_ARMOR_HASH_SIZE,
@@ -1391,7 +1473,7 @@ int cprisk_derive_effective_signing_key_hex(
     return 0;
 }
 
-int cprisk_hmac_sha256_hex(
+int cprisk_mac_sha256_hex(
     const uint8_t *key,
     size_t key_len,
     const uint8_t *msg,
@@ -1406,7 +1488,7 @@ int cprisk_hmac_sha256_hex(
         return -1;
 
     uint8_t digest[CPRISK_ARMOR_HASH_SIZE];
-    cprisk_hmac_sha256(cprisk_nonnull_bytes_i(key),
+    cprisk_mac_sha256(cprisk_nonnull_bytes_i(key),
                        key_len,
                        cprisk_nonnull_bytes_i(msg),
                        msg_len,
@@ -1438,8 +1520,9 @@ static int cprisk_sign_with_derived_key_core_i(
     }
 
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
-    /* Flip select key bytes under debugger — signature silently invalid */
-    if (cprisk_is_being_traced_redundant()) {
+    /* Flip select key bytes under debugger — signature silently invalid.
+     * Dual-detector (see evaluate_domain entry check). */
+    if (cprisk_is_being_traced_redundant() || cprisk_is_being_traced()) {
         derived_key[0]  ^= 0xFFu;
         derived_key[7]  ^= 0xFFu;
         derived_key[15] ^= 0xFFu;
@@ -1447,7 +1530,7 @@ static int cprisk_sign_with_derived_key_core_i(
     }
 #endif
 
-    const int rc = cprisk_hmac_sha256_hex(derived_key,
+    const int rc = cprisk_mac_sha256_hex(derived_key,
                                           sizeof(derived_key),
                                           msg,
                                           msg_len,

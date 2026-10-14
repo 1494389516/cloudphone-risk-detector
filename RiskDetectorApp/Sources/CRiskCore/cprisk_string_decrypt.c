@@ -1,9 +1,20 @@
 /*
  * CRiskCore - Runtime string decryptor for cprisk-armor ABI v2.
  * Consumes the packed string table section using the shared layout defined in
- * include/cprisk_armor_abi.h. Verifies HMAC-SHA256 authentication tag before
+ * include/cprisk_armor_abi.h. Verifies CPRisk-MAC-SHA256 authentication tag before
  * decryption. Side-effect: each decryption updates an integrity accumulator.
  */
+
+/* NOTE (issue 20 — SHA-256-chained XOR keystream, NOT AEAD): the
+ * per-entry keystream here is SHA-256(key || id || nonce) chained with
+ * XOR. It provides NO authentication by itself (the CPRisk-MAC tag is
+ * checked separately) and its security depends entirely on NONCE
+ * UNIQUENESS: the same (key, nonce) must never encrypt two different
+ * plaintexts, or the keystream is reused and plaintexts XOR together.
+ * The producer must guarantee unique nonces; cprisk_data_loader.c
+ * additionally refuses a (key, nonce) seen with a different ciphertext.
+ * Migration path: replace the XOR keystream with an AEAD
+ * (AES-GCM / ChaCha20-Poly1305) carrying the nonce + AAD in the tag. */
 
 #include "include/CRiskCore.h"
 
@@ -201,7 +212,7 @@ static void cprisk_keystream_path_c(const uint8_t *key, uint32_t sid,
     seed_msg[4 + nonce_len + 3] = 0x49;
 
     uint8_t blk[CPRISK_SHA256_DIGEST_LENGTH];
-    cprisk_hmac_sha256(key, CPRISK_ARMOR_KEY_SIZE, seed_msg, msg_len, blk);
+    cprisk_mac_sha256(key, CPRISK_ARMOR_KEY_SIZE, seed_msg, msg_len, blk);
 
     uint32_t counter = 1;
     size_t off = 0;
@@ -340,7 +351,7 @@ static void cprisk_derive_per_string_key(
 ) {
     /*
      * KDF material = "cprisk.str.key.v1" || sid_le4 || nonce
-     * Domain label (WB#4) prevents key-confusion with other HMAC uses of
+     * Domain label (WB#4) prevents key-confusion with other CPRisk-MAC uses of
      * the same root key. StringEncryptor.swift must use the same prefix.
      */
     static const uint8_t label[] = "cprisk.str.key.v1";
@@ -353,7 +364,7 @@ static void cprisk_derive_per_string_key(
     material[label_len + 3] = (uint8_t)(string_id >> 24);
     memcpy(material + label_len + 4u, nonce, CPRISK_ARMOR_NONCE_SIZE);
 
-    cprisk_hmac_sha256(s_dec_key, CPRISK_ARMOR_KEY_SIZE,
+    cprisk_mac_sha256(s_dec_key, CPRISK_ARMOR_KEY_SIZE,
                        material, sizeof(material), s_per_string_key);
     cprisk_secure_zero(material, sizeof(material));
 }
@@ -416,6 +427,11 @@ int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) 
     uint32_t dlen = ent->data_length;
     if (dlen == 0 || dlen >= buffer_size)
         return -1;
+    /* Moved up from after the buffer write (issue 96): a dlen that does
+     * not fit in int would make the trailing (int)dlen return negative.
+     * (dlen is uint32_t, so a `dlen > UINT32_MAX` check would be dead.) */
+    if (dlen > (uint32_t)INT_MAX)
+        return -1;
     size_t data_block_sz = sec_sz - data_base;
     size_t data_end = (size_t)ent->data_offset + (size_t)dlen;
     if (data_end < (size_t)dlen || data_end < (size_t)ent->data_offset)
@@ -428,7 +444,7 @@ int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) 
     const uint8_t *enc = sec + data_base + ent->data_offset;
 
     /*
-     * Verify HMAC over the canonical encoding written by
+     * Verify CPRisk-MAC over the canonical encoding written by
      * StringEncryptor.swift:
      *   u32 string_id | u32 nonce_len | nonce[nonce_len] |
      *   u32 ct_len    | ciphertext[ct_len]
@@ -437,42 +453,41 @@ int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) 
      * length pair against the previous `nonce || ciphertext` scope.
      */
     {
-        const size_t hmac_msg_len =
+        const size_t mac_msg_len =
             4u + 4u + (size_t)CPRISK_ARMOR_NONCE_SIZE + 4u + (size_t)dlen;
-        if (dlen > UINT32_MAX) return -1;
-        uint8_t *hmac_msg = (uint8_t *)malloc(hmac_msg_len);
-        if (!hmac_msg)
+        uint8_t *mac_msg = (uint8_t *)malloc(mac_msg_len);
+        if (!mac_msg)
             return -1;
         size_t mp = 0u;
         const uint32_t sid_le = ent->string_id;
-        hmac_msg[mp++] = (uint8_t)(sid_le      );
-        hmac_msg[mp++] = (uint8_t)(sid_le >>  8);
-        hmac_msg[mp++] = (uint8_t)(sid_le >> 16);
-        hmac_msg[mp++] = (uint8_t)(sid_le >> 24);
-        hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE      );
-        hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >>  8);
-        hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 16);
-        hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 24);
-        memcpy(hmac_msg + mp, ent->nonce, CPRISK_ARMOR_NONCE_SIZE);
+        mac_msg[mp++] = (uint8_t)(sid_le      );
+        mac_msg[mp++] = (uint8_t)(sid_le >>  8);
+        mac_msg[mp++] = (uint8_t)(sid_le >> 16);
+        mac_msg[mp++] = (uint8_t)(sid_le >> 24);
+        mac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE      );
+        mac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >>  8);
+        mac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 16);
+        mac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 24);
+        memcpy(mac_msg + mp, ent->nonce, CPRISK_ARMOR_NONCE_SIZE);
         mp += CPRISK_ARMOR_NONCE_SIZE;
-        hmac_msg[mp++] = (uint8_t)(dlen      );
-        hmac_msg[mp++] = (uint8_t)(dlen >>  8);
-        hmac_msg[mp++] = (uint8_t)(dlen >> 16);
-        hmac_msg[mp++] = (uint8_t)(dlen >> 24);
-        memcpy(hmac_msg + mp, enc, dlen);
+        mac_msg[mp++] = (uint8_t)(dlen      );
+        mac_msg[mp++] = (uint8_t)(dlen >>  8);
+        mac_msg[mp++] = (uint8_t)(dlen >> 16);
+        mac_msg[mp++] = (uint8_t)(dlen >> 24);
+        memcpy(mac_msg + mp, enc, dlen);
 
-        uint8_t computed_hmac[CPRISK_ARMOR_HASH_SIZE];
-        cprisk_hmac_sha256(s_dec_key, CPRISK_ARMOR_KEY_SIZE,
-                           hmac_msg, hmac_msg_len, computed_hmac);
-        cprisk_secure_zero(hmac_msg, hmac_msg_len);
-        free(hmac_msg);
+        uint8_t computed_mac[CPRISK_ARMOR_HASH_SIZE];
+        cprisk_mac_sha256(s_dec_key, CPRISK_ARMOR_KEY_SIZE,
+                           mac_msg, mac_msg_len, computed_mac);
+        cprisk_secure_zero(mac_msg, mac_msg_len);
+        free(mac_msg);
 
-        if (cprisk_hmac_verify(ent->hmac_tag, computed_hmac,
+        if (cprisk_mac_verify(ent->mac_tag, computed_mac,
                                CPRISK_ARMOR_HASH_SIZE) != 0) {
-            cprisk_secure_zero(computed_hmac, sizeof(computed_hmac));
+            cprisk_secure_zero(computed_mac, sizeof(computed_mac));
             return -1;
         }
-        cprisk_secure_zero(computed_hmac, sizeof(computed_hmac));
+        cprisk_secure_zero(computed_mac, sizeof(computed_mac));
     }
 
     uint8_t *ks = NULL;
@@ -498,7 +513,9 @@ int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) 
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
     /* Subtle byte-level corruption under debugger; fixed accumulator poison
        ensures downstream key derivation also silently fails. */
-    if (cprisk_is_being_traced_redundant()) {
+    /* Dual-detector (issue 33): sysctl-based + redundant; hooking one
+     * traced detector alone must not disable the corruption. */
+    if (cprisk_is_being_traced_redundant() || cprisk_is_being_traced()) {
         for (uint32_t pi = 0; pi < dlen; pi++)
             buffer[pi] ^= 0x01;
         s_str_acc = 0xDEADBEEFCAFEBABEULL;
@@ -509,8 +526,6 @@ int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) 
     free(ks);
     cprisk_secure_zero(dh, sizeof(dh));
 
-    if (dlen > (uint32_t)INT_MAX)
-        return -1;
     return (int)dlen;
 }
 
@@ -555,6 +570,10 @@ uint32_t cprisk_test_select_string_decrypt_path(
     const uint8_t nonce[CPRISK_ARMOR_NONCE_SIZE],
     uint64_t seed
 ) {
+#if !defined(DEBUG) || !DEBUG
+    /* Test hook: inert outside DEBUG builds (issue 18). */
+    return 0;
+#endif
     if (!nonce) {
         return 0;
     }

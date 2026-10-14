@@ -6,7 +6,9 @@ Baseline SDK: `6aeaf6783247258eba3f516efebd006561d4471c`.
 
 `report-upload.schema.json` freezes the active **HTTP JSON** wire format. It is
 not ProtoJSON and not a binary gRPC message: snake_case keys, numeric Unix
-milliseconds, base64 bytes, raw string trust levels (unknown values retained).
+milliseconds, base64 bytes, `trust_level` restricted to the enum
+`hardware` / `derived` / `degraded` (unknown values are rejected by
+`validate_upload`, fail-closed; a future level needs a contract update).
 The historical `cprisk.v1` documentation proto is read-only legacy reference.
 The active `cloudphone.risk.v1` proto has additive proof/context fields; generated
 Swift protobuf transport is a separate pending migration, not claimed complete.
@@ -20,6 +22,9 @@ into an LLM. Challenge is a distinct action; no review translation is defined.
 ## Verification
 
 Test suites and dedicated fixtures were removed at the maintainer's request.
+`contracts/fixtures/wire_vectors.json` is a regenerable reference-vector file
+produced by `contracts/generate_wire_vectors.py` (test key via
+`CPRISK_WIRE_VECTOR_KEY_HEX`), not a restored test suite.
 The remaining CI checks generated contract consistency and builds the SDK/armor tools:
 
 ```sh
@@ -34,8 +39,35 @@ and consumes those exact bytes; it does not reproduce Foundation number formatti
 The verifier remains one component of the Collector acceptance gate, not an
 authentication or replay store.
 
-The SDK's historical MAC uses 0x6D/0xA3 pads, not standard HMAC. This patch preserves
-that existing signature protocol. A cryptographic migration needs its own version.
+The SDK's historical MAC is CPRisk-MAC (`legacy_cprisk_mac` in
+`report_contract.py`), which uses non-standard pads 0x6D/0xA3, NOT standard
+HMAC-SHA256 (0x36/0x5C). Its output is not interchangeable with standard HMAC
+and must never be verified with a standard HMAC implementation. This patch
+preserves that existing signature protocol. A cryptographic migration needs its
+own version: negotiate a contract/protocol version that uses standard HMAC,
+do not silently change the pads.
+
+## Server acceptance requirements (v2 signature-domain hole, v3 fix)
+
+Legacy signature versions (`v1` / `v2` / `v2a` / `v2d` / `v2h`) do NOT cover
+`trust_level`, `attestation_assertion` or `re_attestation_assertion` in the MAC
+input domain: an attacker holding the signing key could tamper with those
+client-reported fields after signing while the MAC still verified (the
+SHA-256("")-class hole). `v3` closes the domain by adding `trustLevel`,
+`sha256(attestationAssertion)` and `sha256(reAttestationAssertion)` to the
+signed input. Therefore:
+
+- The server MUST reject legacy signature versions for new uploads. Any
+  migration window that still accepts legacy versions must be time-boxed, and
+  legacy uploads must be treated as untrusted (never as hardware-backed).
+- Even for `v3`, the server MUST independently verify each assertion through
+  the Apple App Attest validation flow (certificate chain, nonce extension,
+  App ID, counter/replay, challenge binding). A v3 MAC only proves the
+  assertion bytes were not altered after signing; it does not prove Apple
+  issued them.
+- A server that only checks the envelope MAC without independently verifying
+  the assertion is still exploitable: it has zero hardware trust root, and a
+  signing-key holder can forge arbitrary `trust_level` / assertion claims.
 The reference validates transport digest/signature only. Session auth, freshness,
 atomic replay consumption, field-mapping registry, app/device/scene checks and
 Apple assertion verification remain collector responsibilities. A valid signature
@@ -154,14 +186,19 @@ a default bridge. `LocalAssessmentConfig` preserves the existing `DecisionConfig
 representation. This is source compatibility for rebuilt clients, not a promise
 of binary ABI compatibility with precompiled Swift clients after nominal type renames.
 
-`python3 contracts/check_local_assessment.py` builds a separate SwiftPM consumer
-on macOS, checks old/new protocol conformance and adapter aliases at compile time,
-then round-trips frozen legacy JSON for all five signal states. It verifies compact
-keys, state tags, action mappings, timestamps, request IDs, and metadata. It does
-not run device probes or claim real-device or server authorization validation.
+> ⚠️ `contracts/check_local_assessment.py`（以及它执行的
+> `local_assessment_adapter_regression.swift`）已随 2026-10-04 测试移除而删除，
+> 不可复现；下文对该脚本的描述为历史记录。现存可运行的对等检查是
+> `python3 contracts/check_adapter_configuration_source.py`（源码级接线与
+> 不可变策略拷贝检查，不编译 Swift、不替代原生行为/兼容性可执行文件）。
 
-The same runner also executes `local_assessment_adapter_regression.swift` with
-synthetic device/network/behavior inputs. It verifies that registered custom
+`python3 contracts/check_local_assessment.py`（历史记录，已删除）曾在 macOS 上构建一个独立的 SwiftPM
+consumer，检查旧/新协议一致性与适配器别名（编译期），并对五种信号状态做冻结 legacy JSON
+往返。它验证紧凑键、状态标签、动作映射、时间戳、请求 ID 与元数据；不运行设备探针，也不声称
+真实设备或服务端授权验证。
+
+The same runner also executed `local_assessment_adapter_regression.swift` (historical, deleted) with
+synthetic device/network/behavior inputs. It verified that registered custom
 provider signals survive synchronous assessment and every async configuration
 path: remote disabled, manager absent, remote failure, remote success, and the
 legacy `decide` bridge. A policy refresh preserves the engine's providers and
@@ -213,5 +250,5 @@ The caller's engine, custom providers and logging setting are preserved.
 The portable command `python3 contracts/check_adapter_configuration_source.py`
 checks wiring and complete immutable policy-copy fields. `--ref <commit>` checks
 an older source version with the same assertions. It does not compile Swift or
-replace the native behavior/compatibility executables. Run
-`python3 contracts/check_local_assessment.py` on macOS with Swift for those tests.
+replace the native behavior/compatibility executables. The deleted
+`python3 contracts/check_local_assessment.py` (see above) is not available.

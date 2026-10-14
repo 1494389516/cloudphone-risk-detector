@@ -510,7 +510,7 @@ private struct SystemLayerCollector {
         let device = UIDevice.current
         let systemName = device.systemName
         let systemVersion = device.systemVersion
-        let identifierForVendor = device.identifierForVendor?.uuidString
+        let identifierForVendor = DeviceFingerprint.reportedIdentifierForVendor(device.identifierForVendor?.uuidString)
         #elseif canImport(AppKit)
         let os = ProcessInfo.processInfo.operatingSystemVersion
         let systemName = "macOS"

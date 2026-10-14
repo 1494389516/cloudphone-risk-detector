@@ -6,8 +6,8 @@
 
 | 字段 | 值 |
 |------|-----|
-| ABI 语义版本 | **1.0.0** (`CPRISK_ABI_VERSION_MAJOR.MINOR.PATCH`) |
-| Armor ABI 版本 | 2 (`CPRISK_ARMOR_ABI_VERSION`) |
+| ABI 语义版本 | **2.0.0** (`CPRISK_ABI_VERSION_MAJOR.MINOR.PATCH`，以 `cprisk_armor_abi.h` 为准） |
+| Armor ABI 版本 | 3 (`CPRISK_ARMOR_ABI_VERSION`，以 `cprisk_armor_abi.h` 为准） |
 | Whitebox ABI 版本 | 2 (`CPRISK_ARMOR_WHITEBOX_ABI_VERSION`) |
 | Anti-Debug ABI 版本 | 1 (`CPRISK_ARMOR_ADBG_ABI_VERSION`) |
 | Text-Encrypt ABI 版本 | 1 (`CPRISK_TEXT_ENCRYPT_ABI_VERSION`) |
@@ -70,8 +70,8 @@ uint8_t patch = v & 0xFF;
 
 | 函数 | 稳定性 | 说明 |
 |------|--------|------|
-| `cprisk_hmac_sha256` | **Stable** | Custom-pad HMAC-SHA256 |
-| `cprisk_hmac_verify` | **Stable** | 常量时间 HMAC 比较 |
+| `cprisk_mac_sha256` | **Stable** | CPRisk-MAC（非标准 pads，与标准 HMAC-SHA256 不互通） |
+| `cprisk_mac_verify` | **Stable** | 常量时间 CPRisk-MAC 比较 |
 | `cprisk_derive_salt_xor_key` | **Stable** | 从 root key 派生 salt XOR 密钥 |
 | `cprisk_decode_salt` | **Stable** | XOR 解码 salt |
 | `cprisk_abi_version` | **Stable** | ABI 版本查询 |

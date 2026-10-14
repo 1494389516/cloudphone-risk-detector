@@ -55,17 +55,17 @@ out of line; preparation/selection is inlined at each context's tail.
 
 ## Validation and remaining gates
 
-- `run.py`: real C parser and streaming MAC vs independent Python oracle; optional
+- `run.py`（历史记录，脚本已删除，不可复现）: real C parser and streaming MAC vs independent Python oracle; optional
   `--swiftc` validates the same malformed/golden messages with the Swift codec.
-- `../vm-threaded-dispatch/run.py --integrated`: fixed-input three-way comparison
+- `../vm-threaded-dispatch/run.py --integrated`（历史记录，脚本已删除，不可复现）: fixed-input three-way comparison
   of pinned legacy, current legacy and current compiled threaded runtime; all 24
   opcodes, poison/unknown, bounds, step cap, CALL/RET/nested, plain/encrypted wire.
   Uses platform substitutes and normalized data-only code addresses. It does not
   claim entire SDK entry/finalization or self-check seal parity.
-- `../vm-threaded-dispatch/inspect_arm64.py --integrated [--apple]`: 52 separate
+- `../vm-threaded-dispatch/inspect_arm64.py --integrated [--apple]`（历史记录，脚本已删除，不可复现）: 52 separate
   machine-code handlers, each musttail in IR and indirect ARM64 branch, three
   repeated objects at O0/O2/Os. Object evidence, not final iOS deployment proof.
-- `apple_fixture.py`: real Swift injector and real C observer on an ad-hoc-signed
+- `apple_fixture.py`（历史记录，脚本已删除，不可复现）: real Swift injector and real C observer on an ad-hoc-signed
   native arm64 Mach-O fixture; all 58 ranges individually mutated and rejected,
   manifest mutations, uninjected image and stale sidecar rejected. Fixture roster
   functions are inert; this is not a production VM execution claim.
@@ -85,7 +85,7 @@ and seven manifest mutations rejected), integrated O0/O2 equivalence and stack
 stress, and all 52 handler tail checks at O0/O2/Os with three identical objects per
 configuration. JSON evidence and artifact provenance are in `evidence/apple/`.
 
-`apple_linked.py` additionally builds the actual app with the threaded flag,
+`apple_linked.py`（历史记录，脚本已删除，不可复现）additionally builds the actual app with the threaded flag,
 requires all 58 functions in the final iPhoneOS Release image, injects v2 using
 that image's linker map, and checks all 52 linked handler indirect tail branches.
 It deliberately fails if Xcode ignores the flag or drops the required functions.

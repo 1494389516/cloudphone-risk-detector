@@ -90,6 +90,11 @@ extension CPRiskKit {
         ProtectionStabilityStore.shared.markPhase(.armorRuntimeInit)
         let armorSnapshot = ensureArmorRuntimeStarted(trigger: "start", config: startConfig)
 #if os(iOS) && !targetEnvironment(macCatalyst)
+        // AppStoreSafe 下跳过 erase_macho_header（已在上方日志中说明）。
+        // 副作用说明：Mach-O 头擦除是不可逆的进程内修改——擦除后 dladdr /
+        // dyld 内省、符号解析、崩溃上报（crash symbolication）都会失效或
+        // 退化，且无法恢复；因此仅在 Armor 运行时成功启动（status == .active）
+        // 时才执行，AppStoreSafe（合规模式）下始终跳过。
         if !appStoreSafe, armorSnapshot.status == .active {
             cprisk_erase_macho_header()
         }

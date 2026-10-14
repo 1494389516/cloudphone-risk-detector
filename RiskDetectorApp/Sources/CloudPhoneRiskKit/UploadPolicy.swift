@@ -1,6 +1,12 @@
 import Foundation
 
 /// 分级上报时机策略
+///
+/// ⚠️ DEPRECATED / 死代码：仓库内无调用方，上报时机由调用方自行控制。
+/// 本文件未物理删除：Xcode 工程（project.pbxproj，不在本任务可改目录内）
+/// 显式引用了它，删除源文件会破坏工程文件索引；如需清理，请由工程
+/// 维护方同时移除 pbxproj 中的引用后再删除本文件。
+@available(*, deprecated, message: "无调用方；上报时机由调用方自行控制")
 public struct UploadPolicy: Codable, Sendable {
 
     // MARK: - Risk Level

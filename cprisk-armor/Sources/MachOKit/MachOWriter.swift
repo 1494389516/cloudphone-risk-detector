@@ -35,6 +35,21 @@ public final class MachOWriter {
     ///
     /// Requires padding between the end of load commands and the first section content
     /// to hold an additional 80-byte section_64 header.
+    ///
+    /// CHAINED FIXUPS (why no internal translation, and the guard that keeps
+    /// it honest): this function only inserts bytes and shifts FILE offsets;
+    /// it never changes any section's VM address. The chained-fixups payload
+    /// (`LC_DYLD_CHAINED_FIXUPS`) is addressed VMADDR-relative inside
+    /// (segment offsets / page starts / fixup targets) and blob-relative in
+    /// its header (starts/imports/symbols offsets), so its bytes stay valid
+    /// when only file offsets move — only the command's own `dataoff` needs
+    /// shifting, which `shiftOffsetsAfterInsertion` does. Because that
+    /// reasoning is load-bearing and easy to break with a future VMADDR
+    /// change, `addSection` snapshots the fixups blob before inserting and
+    /// verifies it byte-for-byte afterwards (plus the exact `dataoff`
+    /// shift). Any mismatch fails closed instead of silently shipping a
+    /// misaligned binary. If a future change ever alters VMADDR layout
+    /// during insertion, this check must be revisited — do not delete it.
     @discardableResult
     public static func addSection(
         to data: inout Data,
@@ -50,6 +65,9 @@ public final class MachOWriter {
         }
 
         _ = protection
+
+        // Snapshot the chained-fixups payload before any mutation (see above).
+        let chainedFixupsBefore = try chainedFixupsSnapshot(in: data)
 
         let target = try locateSegment(in: data, header: header, named: segment)
         guard target.segment.sections.allSatisfy({ $0.sectionName != section }) else {
@@ -93,6 +111,12 @@ public final class MachOWriter {
         )
 
         try insertSectionHeader(in: &data, section: newSection, segmentName: segment)
+        try verifyChainedFixupsUnchanged(
+            in: data,
+            before: chainedFixupsBefore,
+            insertionOffset: insertionPoint,
+            delta: growth
+        )
         return newSection
     }
 
@@ -413,6 +437,92 @@ public final class MachOWriter {
     }
 
     // MARK: - Private Helpers
+
+    /// Snapshot of the `LC_DYLD_CHAINED_FIXUPS` payload (`nil` when absent),
+    /// used to prove an insertion did not corrupt it (see `addSection`).
+    private struct ChainedFixupsSnapshot {
+        let dataOffset: Int
+        let dataSize: Int
+        let bytes: Data
+    }
+
+    private static func chainedFixupsSnapshot(in data: Data) throws -> ChainedFixupsSnapshot? {
+        let header = try MachOHeader(from: data)
+        guard header.isValid else {
+            throw MachOError.invalidMagic
+        }
+        var cmdOffset = MachOHeader.size
+        for _ in 0..<Int(header.numberOfCommands) {
+            let command = try LoadCommand(from: data, offset: UInt64(cmdOffset))
+            if command.cmd == 0x80000034, command.cmdSize >= 16 { // LC_DYLD_CHAINED_FIXUPS
+                let dataOff = try data.readUInt32(at: cmdOffset + 8)
+                let dataSize = try data.readUInt32(at: cmdOffset + 12)
+                guard dataOff != 0, dataSize != 0,
+                      Int(dataOff) <= data.count,
+                      Int(dataSize) <= data.count - Int(dataOff) else {
+                    throw MachOError.invalidData("LC_DYLD_CHAINED_FIXUPS range out of bounds")
+                }
+                return ChainedFixupsSnapshot(
+                    dataOffset: Int(dataOff),
+                    dataSize: Int(dataSize),
+                    bytes: data.subdata(in: Int(dataOff)..<(Int(dataOff) + Int(dataSize)))
+                )
+            }
+            cmdOffset += Int(command.cmdSize)
+        }
+        return nil
+    }
+
+    /// Fail closed if the chained-fixups payload changed during an insertion.
+    /// The payload bytes must be identical, the size unchanged, and `dataoff`
+    /// shifted by exactly `delta` iff the old `dataoff` was at/after the
+    /// insertion point (mirroring `shiftOffsetFieldIfNeeded`).
+    private static func verifyChainedFixupsUnchanged(
+        in data: Data,
+        before: ChainedFixupsSnapshot?,
+        insertionOffset: Int,
+        delta: Int
+    ) throws {
+        guard let before else { return }
+        let header = try MachOHeader(from: data)
+        guard header.isValid else {
+            throw MachOError.invalidMagic
+        }
+        var cmdOffset = MachOHeader.size
+        var found = false
+        for _ in 0..<Int(header.numberOfCommands) {
+            let command = try LoadCommand(from: data, offset: UInt64(cmdOffset))
+            if command.cmd == 0x80000034, command.cmdSize >= 16 {
+                found = true
+                let dataOff = try data.readUInt32(at: cmdOffset + 8)
+                let dataSize = try data.readUInt32(at: cmdOffset + 12)
+                let expectedOff = before.dataOffset >= insertionOffset
+                    ? before.dataOffset + delta
+                    : before.dataOffset
+                guard Int(dataOff) == expectedOff else {
+                    throw MachOError.validationFailed(
+                        "LC_DYLD_CHAINED_FIXUPS dataoff moved unexpectedly after insertion "
+                        + "(got \(dataOff), expected \(expectedOff)): refusing to ship a possibly misaligned binary"
+                    )
+                }
+                guard Int(dataSize) == before.dataSize,
+                      Int(dataOff) <= data.count,
+                      Int(dataSize) <= data.count - Int(dataOff),
+                      data.subdata(in: Int(dataOff)..<(Int(dataOff) + Int(dataSize))) == before.bytes else {
+                    throw MachOError.validationFailed(
+                        "LC_DYLD_CHAINED_FIXUPS payload changed during section insertion: "
+                        + "refusing to ship a possibly misaligned binary"
+                    )
+                }
+            }
+            cmdOffset += Int(command.cmdSize)
+        }
+        guard found else {
+            throw MachOError.validationFailed(
+                "LC_DYLD_CHAINED_FIXUPS disappeared during section insertion"
+            )
+        }
+    }
 
     /// Serialize a `Section` into an 80-byte section_64 blob.
     private static func buildSectionHeaderData(_ sec: Section) throws -> Data {

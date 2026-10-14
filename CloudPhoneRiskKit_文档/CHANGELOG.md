@@ -5,6 +5,10 @@ All notable changes to CloudPhoneRiskKit will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+> 版本真相：当前代码 `Version.current` = **7.3.0**（`RiskDetectorApp/Sources/CloudPhoneRiskKit/Risk/RiskReport.swift`）。
+> 7.4 条目标注为**未发布**（内容未随 `Version.current` 发布），不代表已发布版本。2026-10-04 之前记录的
+> 测试通过计数（如“385 测试全绿”）均为测试移除前的历史记录；现状态为测试已移除、CI 不跑测试。
+
 ## [Unreleased]
 
 ### Security
@@ -26,20 +30,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **OpenAPI 描述强化**：`attestationAssertion` 增加显式警告，要求服务端 MUST 调用 Apple App Attest 验证流程独立验证（仅校验 envelope HMAC 等价于零硬件信任根）；`trustLevel` 标注为客户端自报字段
 - 校正 v4.6 CHANGELOG 中 "attestation 入签名域" 措辞 — 当时仅 `attestationKeyId` 入域，assertion 字节内容直到 v3 才闭合
 - 新增 binding mode `self_reported_fields_bound_v3`
+- **服务端要求**：服务端 MUST 拒绝 legacy 签名版本（`v1`/`v2`/`v2a`/`v2d`/`v2h`）的新上报（迁移窗口须有时限，legacy 上报一律按不可信处理）；即使 v3 也 MUST 经 Apple App Attest 流程独立验证 assertion。**未独立验证 assertion、仅校验 envelope MAC 的服务端仍可被利用**——MAC 只证明签名后未被篡改，不证明 Apple 签发了 assertion，持有签名密钥者可伪造任意 `trustLevel`/assertion 声明（零硬件信任根）。
 
 ### Added
-- XCFramework 构建文档 (`docs/XCFRAMEWORK_BUILD.md`)
+- XCFramework 构建文档 (`CloudPhoneRiskKit_文档/XCFRAMEWORK_BUILD.md`)
 - 集成指南 (`CloudPhoneRiskKit_文档/INTEGRATION_GUIDE.md`，含 CocoaPods 自建 podspec；仓库根目录不跟踪 `CloudPhoneRiskKit.podspec`)
 - 多租户密钥管理 (`TenantKeyManager`)
-- SLA 文档 (`docs/SLA.md`)
-- 集成成本评估 (`docs/INTEGRATION_COST.md`)
+- SLA 文档 (`CloudPhoneRiskKit_文档/SLA.md`)
+- 集成成本评估 (`CloudPhoneRiskKit_文档/INTEGRATION_COST.md`)
 - Objective-C 桥接层 (`CPRiskKitObjCBridge`)
-- SDK Portal 设计规范 (`docs/SDK_PORTAL_SPEC.md`)
+- SDK Portal 设计规范 (`CloudPhoneRiskKit_文档/SDK_PORTAL_SPEC.md`)
 - `ReportEnvelope.create()` 新增 `attestationAssertion` / `reAttestationAssertion` 参数（v3 签名版本必须在创建时传入）
 
 ---
 
-## [7.4] - 2026-04-26
+## [7.4] - 未发布（`Version.current` 仍为 7.3.0；原 2026-04-26 草稿）
 
 ### Security
 
@@ -199,7 +204,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [6.5] - 2025-12
 
 ### Added
-- 白盒 PRF 引擎：5 域 table-driven SPN，~160KB S-box 嵌入二进制，root key 不可逆提取
+- 白盒 PRF 引擎：5 域 table-driven SPN，~160KB S-box 嵌入二进制，root key 不可逆提取（6.5 当时为 5 域；现行 9 域，以 `cprisk_whitebox.c` / `cprisk_armor_abi.h` 为准）
 - `AppSigningIdentityDetector` 反重打包：TeamID/bundleID/entitlement 一致性 + 基线漂移检测
 - 白盒 4 section 占位符：`__swift5_awbm/awbc/awbd/awbt`
 - CRiskCore 白盒运行时：validate bundle → PRF evaluate → signing helper
@@ -264,7 +269,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - v2a 验签密钥派生修复
 - 10 项 Bug 修复
-- 385 测试全绿
+- 385 测试全绿（历史记录；测试已于 2026-10-04 移除）
 
 ---
 

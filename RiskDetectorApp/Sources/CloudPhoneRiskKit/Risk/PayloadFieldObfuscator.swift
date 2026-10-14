@@ -1,8 +1,15 @@
 import CryptoKit
 import Foundation
 
-/// 字段混淆映射配置。
+/// 字段混淆/重命名映射配置（仅重命名键，不提供机密性）。
 /// 内部语义字段 -> 上报混淆字段。
+///
+/// ⚠️ 本机制不是加密：它只把可读的键名（如 `"jailbreak"`）替换为短键
+///（如 `"jb"`），任何能看到上报载荷的人都可以按映射表或频率分析还原。
+/// 机密性由外层加密信封提供（`ReportEnvelope` 的 AES-GCM 加密 +
+/// HMAC/v3 签名）；没有加密信封时，键重命名不能阻止载荷被读取。
+/// 命名上保留历史名称 `Obfuscator` / `obfuscate` 仅为兼容，请按
+/// “字段重命名”理解，不要按“加密/混淆即安全”理解。
 public struct PayloadFieldMapping: Codable, Sendable {
     /// Depth scope at which key renaming is applied. The previous default
     /// (top-level only) left nested signal dictionaries with literal
@@ -32,9 +39,9 @@ public struct PayloadFieldMapping: Codable, Sendable {
 
     /// Default scope is `.topLevel` for backwards compatibility with existing
     /// callers (DecoyFieldInjector, legacy server-pushed mappings). New
-    /// integrations that want full nested obfuscation should pass
+    /// integrations that want full nested renaming should pass
     /// `depthScope: .all` explicitly, or use `deriveSessionMapping(...)`
-    /// which forces .all.
+    /// which forces .all.（重命名 ≠ 机密性，见上方 `PayloadFieldMapping` 注释。）
     public init(version: String, mappings: [String: String], expiresAtMillis: Int64? = nil, depthScope: DepthScope = .topLevel) {
         self.version = version
         self.mappings = mappings
@@ -68,7 +75,7 @@ public struct PayloadFieldMapping: Codable, Sendable {
 }
 
 public enum PayloadFieldObfuscator {
-    /// 使用映射将语义字段混淆为上报字段
+    /// 使用映射将语义字段重命名为上报字段（仅重命名，不加密；见 `PayloadFieldMapping` 注释）。
     public static func obfuscate(jsonData: Data, mapping: PayloadFieldMapping) throws -> Data {
         guard mapping.validate() else {
             throw ReportEnvelope.ReportEnvelopeError.invalidPayload

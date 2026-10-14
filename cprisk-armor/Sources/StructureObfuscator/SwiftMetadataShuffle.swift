@@ -60,6 +60,17 @@ enum SwiftMetadataShuffle {
 
     /// Reorder Swift relative-pointer tables and re-encode offsets so each slot still resolves to
     /// the same absolute target as before (multiset of target addresses preserved).
+    ///
+    /// UNVERIFIED ASSUMPTION: this relies on “the Swift runtime does not
+    /// depend on descriptor-table order”. That has NOT been verified for
+    /// every shuffled table — first-match-wins lookups, duplicate handling,
+    /// or ordering-sensitive registration could observe the permutation.
+    /// The shuffle is best-effort obfuscation, not proven behavior-preserving.
+    /// The producer verifies after rewriting that the multiset of resolved
+    /// targets is unchanged (and restores the original bytes + fails closed
+    /// on mismatch), but that check cannot prove runtime order-independence.
+    /// Validate shuffled binaries on target devices; if order-sensitivity is
+    /// ever observed, disable the shuffle.
     static func applyDescriptorTableShuffles(
         to file: MachOFile,
         buildSeed: UInt64
@@ -116,10 +127,39 @@ enum SwiftMetadataShuffle {
             }
             guard valid, newRels.count == n else { continue }
 
+            // Snapshot the original slot words so a failed post-write
+            // verification can restore them exactly.
+            var originalRels = [UInt32]()
+            originalRels.reserveCapacity(n)
+            for i in 0..<n {
+                originalRels.append(try file.readUInt32(at: sectionOffset + i * 4))
+            }
+
             for i in 0..<n {
                 let slotOff = sectionOffset + i * 4
                 try file.writeUInt32(UInt32(bitPattern: newRels[i]), at: slotOff)
                 bytes += 4
+            }
+
+            // Post-write verification: the multiset of resolved targets must
+            // be unchanged (permutation only — no target added, dropped, or
+            // mis-encoded). On mismatch, restore the original slot words and
+            // fail closed: a half-shuffled table is worse than no shuffle.
+            var rewrittenTargets = [Int]()
+            rewrittenTargets.reserveCapacity(n)
+            for i in 0..<n {
+                let slotOff = sectionOffset + i * 4
+                let rel = try file.readUInt32(at: slotOff)
+                rewrittenTargets.append(slotOff + 4 + Int(Int32(bitPattern: rel)))
+            }
+            guard rewrittenTargets.sorted() == targetAbsolutes.sorted() else {
+                for i in 0..<n {
+                    try file.writeUInt32(originalRels[i], at: sectionOffset + i * 4)
+                }
+                throw MachOError.invalidData(
+                    "Swift shuffle verification failed for \(target.segment).\(target.section): "
+                    + "rewritten target multiset != original; original bytes restored"
+                )
             }
 
             records.append(
@@ -133,6 +173,9 @@ enum SwiftMetadataShuffle {
             )
             details.append(
                 "Swift descriptor shuffle: \(target.segment).\(target.section) (\(n) slots, rel re-encoded)"
+            )
+            details.append(
+                "Swift shuffle assumption (UNVERIFIED): Swift runtime does not depend on descriptor-table order; target multiset verified post-write"
             )
         }
 

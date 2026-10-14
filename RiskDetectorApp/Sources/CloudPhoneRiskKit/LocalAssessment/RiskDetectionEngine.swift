@@ -8,7 +8,7 @@ import Foundation
 /// 1. **场景化**: 不同业务场景使用不同的风险阈值和权重
 /// 2. **可配置**: 所有阈值、权重、规则都可通过 Policy 配置
 /// 3. **可扩展**: 支持自定义信号提供者和决策树
-/// 4. **向后兼容**: 与现有 RiskScorer API 保持兼容
+/// 4. **向后兼容**: 旧版 RiskScorer 已废弃（无调用方），本引擎为唯一主评分链路
 ///
 /// ## 使用示例
 /// ```swift
@@ -34,7 +34,25 @@ public struct RiskDetectionEngine: Sendable {
 
     /// 本地 killSwitch 覆盖开关 — 设为 true 时即使远程配置启用 killSwitch 也继续正常评估。
     /// 用于防止远程配置被劫持后一键关闭所有防护。
-    public nonisolated(unsafe) static var localKillSwitchOverride: Bool = false
+    ///
+    /// ⚠️ 风险：开启后远程 kill switch（紧急降级/止血）将失效，评估继续拦截。
+    /// 因此该开关不对外部调用方公开：仅限 SDK 内部经授权调用
+    /// `setLocalKillSwitchOverride(_:reason:)` 修改，每次修改都会写入审计日志。
+    /// Kill switch 生效/被覆盖时，评估路径同样记录审计日志
+    ///（见 `evaluate()` 中的 `kill_switch_activated` / `kill_switch_overridden`）。
+    internal nonisolated(unsafe) static var localKillSwitchOverride: Bool = false
+
+    /// 授权修改本地 kill switch 覆盖开关。`reason` 为必填审计原因，
+    /// 会随审计日志记录；请勿在生产代码中无条件开启。
+    internal static func setLocalKillSwitchOverride(_ enabled: Bool, reason: String) {
+        localKillSwitchOverride = enabled
+        Logger.audit(action: "kill_switch_override_changed", details: [
+            "enabled": enabled ? "true" : "false",
+            "reason": reason,
+            "timestamp": ISO8601DateFormatter().string(from: Date()),
+        ])
+        Logger.log("kill_switch_override_changed enabled=\(enabled) reason=\(reason)")
+    }
 
     /// 自定义信号提供者
     private let customProviders: [String: @Sendable (RiskContext) -> [RiskSignal]]
@@ -2309,7 +2327,7 @@ public struct BlindChallengeRule: Codable, Sendable {
 // MARK: - 向后兼容扩展
 extension RiskDetectionEngine {
 
-    /// 兼容旧版 RiskScorer 接口
+    /// 兼容旧版 RiskScorer 接口（RiskScorer 已废弃，本引擎为唯一主评分链路）
     /// 使用默认场景和策略评估风险
     func score(
         context: RiskContext,

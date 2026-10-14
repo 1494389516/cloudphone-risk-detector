@@ -31,9 +31,9 @@ GF2 函数是从实际源码中精确提取的 static 函数体；实验编译�
 
 未修改的上游插件拒绝 stack 的指针 null 比较；本地补丁支持 address space 0 的 eq/ne/null，但不支持有序指针比较或非零 address space。历史 `pointer-eq-ne-v1` 在预处理后仍因结构体写入偏移错误而差分失败；`pointer-gep-v2` 使用目标 DataLayout 计算常量结构体/嵌套 GEP 的字节偏移，动态 GEP 使用 allocation size 并拒绝大于 65,535 的步长，在显式 `lower-constant-intrinsics` 后获得 stack `HOST_VMP_PASS`。这项预处理不是 VM 原生支持 `llvm.objectsize`。保留历史边界和原始 null/错误路径语义；两组测试都不能证明任意外部调用 ABI、Swift、ARC、async、异常或浮点语义正确。
 
-## 运行未保护基线
+## 运行未保护基线（历史记录：`run.py` 已删除，不可复现）
 
-从仓库根目录运行，需要 Python 3 和 C 编译器：
+历史命令（不可复现；`run.py` 已于 2026-10-04 随测试运行脚本删除）：
 
 ```bash
 python3 experiments/ir-vmp/run.py --mode baseline-only --cc cc --output /tmp/ir-vmp-gf2
@@ -60,9 +60,9 @@ python3 experiments/ir-vmp/build_plugin.py \
 
 验证当前本地补丁时，在上述命令加 `--patch-set pointer-gep-v2` 并使用独立的空构建目录。v2 是相对固定上游的累积补丁，包含 pointer eq/ne/null 与 GEP 修复，无需先应用 v1。构建脚本只向 staging tree 应用已审查、固定哈希的补丁，保留上游 checkout 干净；schema v2 provenance 额外记录 patch manifest、各文件前后哈希与补丁源码树哈希。补丁改变 `OP_COUNT` 和 decoy base，**不能混用补丁版与未修改上游版插件/字节码**。当前结果见 [pointer-gep-v2 记录](validation/pointer-gep-v2-macos-arm64.json)；历史 v1 的通过与拒绝边界见 [pointer-eq-ne-v1 记录](validation/pointer-eq-ne-v1-macos-arm64.json)。
 
-## 运行真实 VM 差分
+## 运行真实 VM 差分（历史记录：`run.py` 已删除，不可复现）
 
-`--plugin` 使用构建报告中的真实插件路径（平台可能是 `.so` 或 `.dylib`）：
+历史命令（不可复现）。`--plugin` 使用构建报告中的真实插件路径（平台可能是 `.so` 或 `.dylib`）：
 
 ```bash
 python3 experiments/ir-vmp/run.py --mode xollvm --suite gf2 \

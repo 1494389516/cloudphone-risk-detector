@@ -94,7 +94,13 @@ extension CPRiskKit {
             bindingMode = "plain_hmac_fallback_v1"
         }
 
-        let envelopeConfig = ReportEnvelope.Config(signatureVersion: signatureVersion)
+        // 过渡期显式 opt-in legacy 签发：本链路仍签发 v2a/v2d（DEBUG 下可能为 v1），
+        // 线上签名字节保持不变。legacy 信封的 assertion 未纳入签名域，
+        // 服务端必须拒绝 legacy 版本信封；待服务端完成 v3 切换后应移除本 opt-in。
+        let envelopeConfig = ReportEnvelope.Config(
+            signatureVersion: signatureVersion,
+            allowLegacySignatureVersions: true
+        )
 
         return try ReportEnvelope.create(
             payloadData: payloadData,

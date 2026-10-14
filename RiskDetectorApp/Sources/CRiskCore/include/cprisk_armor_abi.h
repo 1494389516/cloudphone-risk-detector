@@ -1,6 +1,23 @@
 #ifndef CPRISK_ARMOR_ABI_H
 #define CPRISK_ARMOR_ABI_H
 
+/* ════════════════════════════════════════════════════════════════════
+ * CPRisk-MAC — NOT standard HMAC-SHA256. READ BEFORE TOUCHING.
+ * ────────────────────────────────────────────────────────────────────
+ * The MAC in this file (cprisk_mac_sha256 / cprisk_mac_verify, pad
+ * macros CPRISK_MAC_IPAD_* and CPRISK_MAC_OPAD_*) uses NON-STANDARD pads
+ * (ipad = 0x6D, opad = 0xA3; the standard HMAC pads are 0x36 / 0x5C).
+ * It is therefore NOT interoperable with any standard HMAC-SHA256
+ * implementation, and must never be presented as "HMAC" (the old name
+ * was a misnomer, fixed by renaming to CPRisk-MAC).
+ *
+ * DO NOT "fix" the pads to 0x36/0x5C: that would silently break
+ * interop with the existing server/producer side, which uses the same
+ * non-standard pads. The migration path is to introduce a protocol /
+ * contract version that negotiates standard HMAC-SHA256 (or an AEAD)
+ * and to keep CPRisk-MAC only for the legacy contract version.
+ * ════════════════════════════════════════════════════════════════════ */
+
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -157,7 +174,7 @@ uint32_t cprisk_abi_version(void) {
 
 #define CPRISK_ARMOR_ANCHOR_LANE_COUNT 4u
 #define CPRISK_ARMOR_ANCHOR_LANE_SIZE 8u
-#define CPRISK_ARMOR_HMAC_FULL_HASH_SECTION_SIZE CPRISK_ARMOR_HASH_SIZE
+#define CPRISK_ARMOR_MAC_FULL_HASH_SECTION_SIZE CPRISK_ARMOR_HASH_SIZE
 #define CPRISK_MAX_SECTION_SIZE (256UL * 1024UL * 1024UL)
 #define CPRISK_MAX_ENTRY_COUNT 64u
 
@@ -174,7 +191,7 @@ struct cprisk_armor_strtab_index_entry {
     uint32_t data_offset;
     uint32_t data_length;
     uint8_t  nonce[CPRISK_ARMOR_NONCE_SIZE];
-    uint8_t  hmac_tag[CPRISK_ARMOR_HASH_SIZE];
+    uint8_t  mac_tag[CPRISK_ARMOR_HASH_SIZE];
 };
 
 struct cprisk_armor_loader_header {
@@ -192,7 +209,7 @@ struct cprisk_armor_loader_entry {
     uint64_t size;
     uint8_t  content_hash[CPRISK_ARMOR_HASH_SIZE];
     uint8_t  nonce[CPRISK_ARMOR_NONCE_SIZE];
-    uint8_t  hmac_tag[CPRISK_ARMOR_HASH_SIZE];
+    uint8_t  mac_tag[CPRISK_ARMOR_HASH_SIZE];
     uint32_t section_index;       /* v3: 1-based section order for chained KDF */
     uint32_t chained_key_depth;   /* v3: >=1 levels of chaining; 0 treated as 1 */
 };
@@ -241,7 +258,7 @@ struct cprisk_armor_whitebox_header {
      *   T_logical[i] = T_store[i] ^ P(i, slide_runtime) ^ P(i, anchor_slide)
      * where P is derived from cprisk_wbx_slide_term_u64(slide) per 32-byte block (see cprisk_whitebox.c).
      * When anchor_slide matches the slide used at build time for masking, T_logical matches the
-     * producer's logical tables; digest/HMAC over T_store remains stable.
+     * producer's logical tables; digest/CPRisk-MAC over T_store remains stable.
      */
     uint64_t aslr_table_anchor_slide;
 };
@@ -259,7 +276,7 @@ struct cprisk_text_encrypt_entry {
     uint32_t key_id;
     uint32_t flags;
     uint8_t  nonce[CPRISK_ARMOR_NONCE_SIZE];
-    uint8_t  hmac_tag[CPRISK_ARMOR_HASH_SIZE];
+    uint8_t  mac_tag[CPRISK_ARMOR_HASH_SIZE];
     uint8_t  content_hash[CPRISK_ARMOR_HASH_SIZE];
 };
 
@@ -299,46 +316,50 @@ _Static_assert(CPRISK_ARMOR_ANCHOR_LANE_COUNT * CPRISK_ARMOR_ANCHOR_LANE_SIZE ==
                    CPRISK_ARMOR_HASH_SIZE,
                "split anchor sections must reconstruct a 32-byte hash");
 
-/* ── Custom-pad SHA-256 MAC ───────────────────────────────────────── */
+/* ── CPRisk-MAC: custom-pad SHA-256 MAC (NOT standard HMAC-SHA256) ──
+ * Non-standard pads (ipad 0x6D / opad 0xA3) kept for interop with the
+ * existing server/producer. See the banner at the top of this file.
+ * Never silently change the pads; migrate via contract-version
+ * negotiation instead. */
 
-#define CPRISK_HMAC_BLOCK_SIZE 64
+#define CPRISK_MAC_BLOCK_SIZE 64
 
 /* Custom service-coordinated pad bytes; split to avoid a single literal fingerprint. */
-#define CPRISK_HMAC_IPAD_XOR_A ((uint8_t)0xD7u)
-#define CPRISK_HMAC_IPAD_XOR_B ((uint8_t)0xBAu) /* A^B = 0x6D */
-#define CPRISK_HMAC_OPAD_XOR_A ((uint8_t)0x4Cu)
-#define CPRISK_HMAC_OPAD_XOR_B ((uint8_t)0xEFu) /* A^B = 0xA3 */
+#define CPRISK_MAC_IPAD_XOR_A ((uint8_t)0xD7u)
+#define CPRISK_MAC_IPAD_XOR_B ((uint8_t)0xBAu) /* A^B = 0x6D */
+#define CPRISK_MAC_OPAD_XOR_A ((uint8_t)0x4Cu)
+#define CPRISK_MAC_OPAD_XOR_B ((uint8_t)0xEFu) /* A^B = 0xA3 */
 
 static inline __attribute__((always_inline))
-void cprisk_hmac_sha256(const uint8_t *key, size_t key_len,
+void cprisk_mac_sha256(const uint8_t *key, size_t key_len,
                         const uint8_t *msg, size_t msg_len,
                         uint8_t out[CPRISK_ARMOR_HASH_SIZE]) {
     cprisk_crypto_trace_primitive_enter_i();
-    uint8_t k_norm[CPRISK_HMAC_BLOCK_SIZE];
-    memset(k_norm, 0, CPRISK_HMAC_BLOCK_SIZE);
-    if (key_len > CPRISK_HMAC_BLOCK_SIZE) {
+    uint8_t k_norm[CPRISK_MAC_BLOCK_SIZE];
+    memset(k_norm, 0, CPRISK_MAC_BLOCK_SIZE);
+    if (key_len > CPRISK_MAC_BLOCK_SIZE) {
         cprisk_sha256(key, key_len, k_norm);
     } else {
         memcpy(k_norm, key, key_len);
     }
 
-    uint8_t ipad[CPRISK_HMAC_BLOCK_SIZE];
-    uint8_t opad[CPRISK_HMAC_BLOCK_SIZE];
-    for (int i = 0; i < CPRISK_HMAC_BLOCK_SIZE; i++) {
-        ipad[i] = (uint8_t)(k_norm[i] ^ CPRISK_HMAC_IPAD_XOR_A ^ CPRISK_HMAC_IPAD_XOR_B);
-        opad[i] = (uint8_t)(k_norm[i] ^ CPRISK_HMAC_OPAD_XOR_A ^ CPRISK_HMAC_OPAD_XOR_B);
+    uint8_t ipad[CPRISK_MAC_BLOCK_SIZE];
+    uint8_t opad[CPRISK_MAC_BLOCK_SIZE];
+    for (int i = 0; i < CPRISK_MAC_BLOCK_SIZE; i++) {
+        ipad[i] = (uint8_t)(k_norm[i] ^ CPRISK_MAC_IPAD_XOR_A ^ CPRISK_MAC_IPAD_XOR_B);
+        opad[i] = (uint8_t)(k_norm[i] ^ CPRISK_MAC_OPAD_XOR_A ^ CPRISK_MAC_OPAD_XOR_B);
     }
 
     cprisk_sha256_ctx ctx;
     uint8_t inner_hash[CPRISK_SHA256_DIGEST_LENGTH];
 
     cprisk_sha256_init(&ctx);
-    cprisk_sha256_update(&ctx, ipad, CPRISK_HMAC_BLOCK_SIZE);
+    cprisk_sha256_update(&ctx, ipad, CPRISK_MAC_BLOCK_SIZE);
     cprisk_sha256_update(&ctx, msg, msg_len);
     cprisk_sha256_final(&ctx, inner_hash);
 
     cprisk_sha256_init(&ctx);
-    cprisk_sha256_update(&ctx, opad, CPRISK_HMAC_BLOCK_SIZE);
+    cprisk_sha256_update(&ctx, opad, CPRISK_MAC_BLOCK_SIZE);
     cprisk_sha256_update(&ctx, inner_hash, CPRISK_SHA256_DIGEST_LENGTH);
     cprisk_sha256_final(&ctx, out);
 
@@ -382,9 +403,9 @@ void cprisk_decode_salt(const uint8_t *encoded, size_t len,
     out[len] = '\0';
 }
 
-/* Constant-time comparison for HMAC tags. */
+/* Constant-time comparison for CPRisk-MAC tags. */
 static inline __attribute__((always_inline))
-int cprisk_hmac_verify(const uint8_t *expected, const uint8_t *actual, size_t len) {
+int cprisk_mac_verify(const uint8_t *expected, const uint8_t *actual, size_t len) {
     uint8_t diff = 0;
     for (size_t i = 0; i < len; i++)
         diff |= expected[i] ^ actual[i];

@@ -145,7 +145,9 @@ public struct NetworkSignals: Codable, Sendable {
     /// Returns (nil, nil) on non-UIKit platforms or when battery monitoring is unavailable.
     private static func captureBattery() -> (level: Double?, state: String?) {
         #if canImport(UIKit)
+        let wasEnabled = UIDevice.current.isBatteryMonitoringEnabled
         UIDevice.current.isBatteryMonitoringEnabled = true
+        defer { UIDevice.current.isBatteryMonitoringEnabled = wasEnabled }
         let rawLevel = UIDevice.current.batteryLevel
         // batteryLevel returns -1.0 when monitoring is unavailable
         guard rawLevel >= 0 else { return (nil, nil) }
@@ -210,27 +212,36 @@ private final class NetworkPathSnapshot {
 }
 
 enum ProxyDetector {
+    /// 代理证据：只上报是否启用 + 类型（`pac_enabled` / `http_proxy_enabled` /
+    /// `proxy_type`），不上报主机、端口、PAC URL。代理主机/端口与完整 PAC URL
+    /// 可能泄露用户所用代理服务的身份与配置，属于敏感网络信息，风控判决
+    /// 只需要“是否经代理”与代理类型，不需要具体端点。
     static func proxyEvidence() -> [String: String] {
         guard let settings = CFNetworkCopySystemProxySettings()?.takeRetainedValue() as? [String: Any] else {
             return [:]
         }
 
         let httpEnabled = (settings[kCFNetworkProxiesHTTPEnable as String] as? NSNumber)?.boolValue ?? false
-        let httpProxy = settings[kCFNetworkProxiesHTTPProxy as String] as? String
-        let httpPort = settings[kCFNetworkProxiesHTTPPort as String] as? NSNumber
+        let httpsEnabled = (settings[kCFNetworkProxiesHTTPSEnable as String] as? NSNumber)?.boolValue ?? false
+        let socksEnabled = (settings[kCFNetworkProxiesSOCKSEnable as String] as? NSNumber)?.boolValue ?? false
         let pacEnabled = (settings[kCFNetworkProxiesProxyAutoConfigEnable as String] as? NSNumber)?.boolValue ?? false
-        let pacURL = settings[kCFNetworkProxiesProxyAutoConfigURLString as String] as? String
 
         var out: [String: String] = [:]
-        if pacEnabled, let pacURL, !pacURL.isEmpty {
-            out["pac_url"] = pacURL
+        if pacEnabled {
+            out["pac_enabled"] = "true"
         }
-        if httpEnabled, let httpProxy, !httpProxy.isEmpty {
-            if let httpPort {
-                out["http_proxy"] = "\(httpProxy):\(httpPort)"
-            } else {
-                out["http_proxy"] = httpProxy
-            }
+        if httpEnabled || httpsEnabled {
+            out["http_proxy_enabled"] = "true"
+        }
+        if socksEnabled {
+            out["socks_proxy_enabled"] = "true"
+        }
+        var types: [String] = []
+        if pacEnabled { types.append("pac") }
+        if httpEnabled || httpsEnabled { types.append("http") }
+        if socksEnabled { types.append("socks") }
+        if !types.isEmpty {
+            out["proxy_type"] = types.joined(separator: ",")
         }
         return out
     }

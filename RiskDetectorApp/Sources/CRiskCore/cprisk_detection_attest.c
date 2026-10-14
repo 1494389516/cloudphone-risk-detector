@@ -77,7 +77,7 @@ static void cprisk_attest_ensure_key_i(void) {
     if (atomic_load(&s_attest_key_init))
         return;
 
-    /* Derive once: HMAC under WhiteBox Domain 5 using a stable label.
+    /* Derive once: CPRisk-MAC under WhiteBox Domain 5 using a stable label.
      * Subsequent sessions reuse this key. */
     uint8_t input[32];
     memset(input, 0, sizeof(input));
@@ -186,7 +186,7 @@ int cprisk_attest_session_finalize(uint8_t out_tag[CPRISK_ARMOR_HASH_SIZE],
         return -1;
     }
 
-    /* Final tag = HMAC(s_attest_key, "cprisk.attest.tag.v1" || nonce || running_hash || count_le4)
+    /* Final tag = CPRisk-MAC(s_attest_key, "cprisk.attest.tag.v1" || nonce || running_hash || count_le4)
      * Keying the FINAL step (rather than the rolling chain) means the
      * attacker cannot pre-compute partial states without the key. */
     uint8_t msg[24 + 16 + CPRISK_ARMOR_HASH_SIZE + 4];
@@ -205,7 +205,7 @@ int cprisk_attest_session_finalize(uint8_t out_tag[CPRISK_ARMOR_HASH_SIZE],
     msg[mp++] = (uint8_t)(s_attest_count >> 16);
     msg[mp++] = (uint8_t)(s_attest_count >> 24);
 
-    cprisk_hmac_sha256(s_attest_key, sizeof(s_attest_key),
+    cprisk_mac_sha256(s_attest_key, sizeof(s_attest_key),
                        msg, sizeof(msg), out_tag);
 
     if (out_count) *out_count = s_attest_count;

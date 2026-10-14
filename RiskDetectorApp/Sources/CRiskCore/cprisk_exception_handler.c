@@ -6,6 +6,18 @@
  * Caveats:
  * - Uses EXCEPTION_STATE_IDENTITY; handler advances PC past breakpoint and replies.
  * - __TVOS_PROHIBITED/__WATCHOS_PROHIBITED on task_* APIs: may be unavailable on tvOS/watchOS.
+ * - RACE / LIMITATION (issue 34): exception-port registration is NOT
+ *   atomic with process start. Between exec and our first successful
+ *   task_set_exception_ports, a debugger / Frida gadget that registers
+ *   earlier (or re-registers later) wins the port. This module mitigates
+ *   — never eliminates — that window by (a) registering as early as
+ *   possible via cprisk_capture_early_exception_ports() at startup,
+ *   (b) periodic verify + reclaim (cprisk_early_exception_port_reclaim),
+ *   and (c) fingerprinting the port on every verify so a swap is
+ *   detected and reported (last_hijack_detected / last_race_detected).
+ *   A hijack that happens and is undone between two verifies is
+ *   undetectable by this module; do not treat "port matches" as proof
+ *   that no hijack ever occurred.
  */
 
 #include "include/CRiskCore.h"

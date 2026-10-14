@@ -1,5 +1,5 @@
 /*
- * cprisk_crypto_trace.h — Timing / trace sentinel for SHA-256 and HMAC entry paths.
+ * cprisk_crypto_trace.h — Timing / trace sentinel for SHA-256 and CPRisk-MAC entry paths.
  *
  * Surfaces (1) gross slowdown on a tiny workload, (2) CNTPCT_EL0 vs Mach
  * disagreement on the same region (orthogonal to pure wall dilation), and

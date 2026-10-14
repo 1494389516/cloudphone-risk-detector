@@ -13,7 +13,6 @@ enum ScenarioPolicySignalBridge {
     static func deriveSignals(
         snapshot: RiskSnapshot,
         existingSignals: [RiskSignal],
-        defaults: UserDefaults = .standard,
         now: Date = Date()
     ) -> [RiskSignal] {
         var out: [RiskSignal] = []
@@ -30,7 +29,7 @@ enum ScenarioPolicySignalBridge {
         if let dnsTunnel = dnsTunnelSignal(from: existingSignals) {
             out.append(dnsTunnel)
         }
-        if let idfvReinstall = idfvReinstallSignal(snapshot: snapshot, defaults: defaults, now: now) {
+        if let idfvReinstall = idfvReinstallSignal(snapshot: snapshot, now: now) {
             out.append(idfvReinstall)
         }
         if let mccMismatch = mccMismatchSignal(snapshot: snapshot) {
@@ -191,16 +190,18 @@ enum ScenarioPolicySignalBridge {
 
     static func idfvReinstallSignal(
         snapshot: RiskSnapshot,
-        defaults: UserDefaults = .standard,
         now: Date = Date()
     ) -> RiskSignal? {
         guard let idfv = snapshot.device.identifierForVendor?.trimmingCharacters(in: .whitespacesAndNewlines),
               !idfv.isEmpty else {
             return nil
         }
+        // 注意：此处 `idfv` 默认已是 SHA-256 哈希（见 `DeviceFingerprint.reportedIdentifierForVendor`），
+        // 历史记录存的是哈希值，`current_idfv_suffix` 为哈希后 8 位，仅作变化
+        // 关联提示，原始 IDFV 不会落盘/上报。
 
         let nowTs = now.timeIntervalSince1970
-        var history = loadIDFVHistory(defaults: defaults)
+        var history = loadIDFVHistory()
             ?? IDFVHistory(lastValue: idfv, changeTimestamps: [])
         history.changeTimestamps.removeAll { nowTs - $0 > idfvWindow }
 
@@ -209,7 +210,7 @@ enum ScenarioPolicySignalBridge {
             history.lastValue = idfv
         }
 
-        saveIDFVHistory(history, defaults: defaults)
+        saveIDFVHistory(history)
 
         guard history.changeTimestamps.count >= idfvTriggerCount else { return nil }
 
@@ -257,14 +258,28 @@ enum ScenarioPolicySignalBridge {
         )
     }
 
-    private static func loadIDFVHistory(defaults: UserDefaults) -> IDFVHistory? {
-        guard let data = defaults.data(forKey: idfvHistoryKey) else { return nil }
-        return try? JSONDecoder().decode(IDFVHistory.self, from: data)
+    /// IDFV 历史不再明文存 UserDefaults：AES-GCM 加密文件（SecureFileStore）。
+    /// 遗留明文记录仅做一次性迁移读取，迁移后删除。
+    private static func loadIDFVHistory() -> IDFVHistory? {
+        if let encrypted = SecureFileStore.shared.read(key: idfvHistoryKey),
+           let decrypted = try? PayloadCrypto.decrypt(encrypted),
+           let history = try? JSONDecoder().decode(IDFVHistory.self, from: decrypted) {
+            return history
+        }
+        let defaults = UserDefaults.standard
+        guard let data = defaults.data(forKey: idfvHistoryKey),
+              let history = try? JSONDecoder().decode(IDFVHistory.self, from: data) else {
+            return nil
+        }
+        saveIDFVHistory(history)
+        defaults.removeObject(forKey: idfvHistoryKey)
+        return history
     }
 
-    private static func saveIDFVHistory(_ history: IDFVHistory, defaults: UserDefaults) {
-        guard let data = try? JSONEncoder().encode(history) else { return }
-        defaults.set(data, forKey: idfvHistoryKey)
+    private static func saveIDFVHistory(_ history: IDFVHistory) {
+        guard let data = try? JSONEncoder().encode(history),
+              let encrypted = try? PayloadCrypto.encrypt(data) else { return }
+        SecureFileStore.shared.write(key: idfvHistoryKey, data: encrypted)
     }
 
     private static func isDeviceTamperDriver(_ signal: RiskSignal) -> Bool {

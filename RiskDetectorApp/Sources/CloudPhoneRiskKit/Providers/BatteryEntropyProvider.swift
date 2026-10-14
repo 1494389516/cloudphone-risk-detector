@@ -100,7 +100,9 @@ struct BatteryEntropyCollector {
 
     #if canImport(UIKit)
     private func collectFromUIDevice(samples: Int, interval: TimeInterval) -> [Double] {
+        let wasEnabled = UIDevice.current.isBatteryMonitoringEnabled
         UIDevice.current.isBatteryMonitoringEnabled = true
+        defer { UIDevice.current.isBatteryMonitoringEnabled = wasEnabled }
         var result: [Double] = []
         for _ in 0..<samples {
             let level = Float(UIDevice.current.batteryLevel)

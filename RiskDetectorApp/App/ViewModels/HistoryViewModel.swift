@@ -85,9 +85,13 @@ public class HistoryViewModel: ObservableObject {
         #if canImport(CloudPhoneRiskAppCore)
         let summaries = RiskReportStorage.listSummaries()
         items = summaries.map { HistoryItem(stored: $0.report, summary: $0.summary) }
-        #else
-        // Mock for preview
+        #elseif DEBUG
+        // 仅 DEBUG 预览用 mock：虚构的报告列表，绝不能在 Release 中出现，
+        // 否则用户会看到不存在的“历史报告”，且 mock 摘要可能被误当作
+        // 真实风控结果外流（截图/分享）。
         items = Self.mockItems()
+        #else
+        items = []
         #endif
 
         isLoading = false
@@ -146,7 +150,8 @@ public class HistoryViewModel: ObservableObject {
     }
 
     // MARK: - Mock
-    #if !canImport(CloudPhoneRiskAppCore)
+    // 仅 DEBUG 编译：虚构数据，禁止进 Release（见 reload() 的门控注释）。
+    #if !canImport(CloudPhoneRiskAppCore) && DEBUG
     private static func mockItems() -> [HistoryItem] {
         let summary1 = RiskReportSummary(
             generatedAt: "2026-01-11T10:30:00Z",

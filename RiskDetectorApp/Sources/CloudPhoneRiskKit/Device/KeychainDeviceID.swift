@@ -29,9 +29,14 @@ final class KeychainDeviceID {
     private let account = "device_id"
     /// SDK 4.4 Phase 6: 设备绑定，兼容无密码设备；避免 kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly
     private let accessible = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-    private let defaults = UserDefaults.standard
-    private let fallbackKey = "cloudphone_device_id_fallback_v1"
-    private let fallbackHMACKey = "cloudphone_device_id_fallback_v1_hmac"
+    /// Keychain 不可用时的回退存储：AES-GCM 加密文件（SecureFileStore + PayloadCrypto），
+    /// 不再把设备 ID 明文写入 UserDefaults。历史明文回退（UserDefaults）仅做一次性
+    /// 迁移读取，迁移成功后立即删除。
+    private let fileStore = SecureFileStore.shared
+    private let fallbackStoreKey = "cloudphone_device_id_fallback_v1"
+    // 遗留明文回退键（仅迁移读取用，读取后删除；新写入不再使用）。
+    private let legacyFallbackKey = "cloudphone_device_id_fallback_v1"
+    private let legacyFallbackHMACKey = "cloudphone_device_id_fallback_v1_hmac"
     private let fallbackHMACPurpose = "device_id_fallback"
     private let unavailableDeviceID = "CPRISKKIT-DEVICE-ID-UNAVAILABLE"
 
@@ -161,24 +166,37 @@ final class KeychainDeviceID {
     }
 
     private func readFallback() -> String? {
-        guard let data = defaults.data(forKey: fallbackKey),
-              let signature = defaults.data(forKey: fallbackHMACKey),
+        // 首选：加密文件回退（AES-GCM 提供机密性 + 完整性）。
+        if let encrypted = fileStore.read(key: fallbackStoreKey),
+           let decrypted = try? PayloadCrypto.decrypt(encrypted),
+           let value = String(data: decrypted, encoding: .utf8),
+           !value.isEmpty {
+            return value
+        }
+        // 遗留迁移：历史明文 UserDefaults 回退（带 HMAC 校验），读到后立即
+        // 转存为加密文件并删除明文，避免明文设备 ID 继续残留。
+        let defaults = UserDefaults.standard
+        guard let data = defaults.data(forKey: legacyFallbackKey),
+              let signature = defaults.data(forKey: legacyFallbackHMACKey),
               StorageIntegrityGuard.verify(data, signature: signature, purpose: fallbackHMACPurpose),
               let value = String(data: data, encoding: .utf8),
               !value.isEmpty else {
-            defaults.removeObject(forKey: fallbackKey)
-            defaults.removeObject(forKey: fallbackHMACKey)
+            defaults.removeObject(forKey: legacyFallbackKey)
+            defaults.removeObject(forKey: legacyFallbackHMACKey)
             return nil
         }
+        _ = saveFallback(value)
+        defaults.removeObject(forKey: legacyFallbackKey)
+        defaults.removeObject(forKey: legacyFallbackHMACKey)
         return value
     }
 
     @discardableResult
     private func saveFallback(_ value: String) -> Bool {
-        let data = Data(value.utf8)
-        let signature = StorageIntegrityGuard.sign(data, purpose: fallbackHMACPurpose)
-        defaults.set(data, forKey: fallbackKey)
-        defaults.set(signature, forKey: fallbackHMACKey)
-        return defaults.data(forKey: fallbackKey) == data
+        // 加密后写入文件；加密失败（无可用密钥）时返回 false，调用方走 ephemeral 路径，
+        // 绝不明文落盘。
+        guard let encrypted = try? PayloadCrypto.encrypt(Data(value.utf8)) else { return false }
+        guard fileStore.write(key: fallbackStoreKey, data: encrypted) else { return false }
+        return fileStore.read(key: fallbackStoreKey) == encrypted
     }
 }

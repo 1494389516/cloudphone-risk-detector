@@ -2,15 +2,46 @@
 
 Callers must independently authenticate sessions, atomically reserve nonces, check
 freshness, authorize app/tenant, and validate Apple assertions. Valid MAC != human.
-Legacy SDK uses a custom SHA256 MAC, explicitly NOT standard HMAC.
+
+⚠️ CPRisk-MAC IS NOT STANDARD HMAC-SHA256 — DO NOT INTEROPERATE WITH STANDARD HMAC.
+The legacy SDK message MAC (``legacy_cprisk_mac``) uses NON-STANDARD pads
+(ipad=0x6D, opad=0xA3; standard HMAC-SHA256 uses 0x36/0x5C). Its output therefore
+differs from ``hmac.new(key, message, hashlib.sha256)`` for the same key/message and
+must NEVER be verified with a standard HMAC implementation. The non-standard pads
+are preserved byte-for-byte for compatibility with the deployed server; silently
+"fixing" them to the standard pads would break interop with every existing
+deployment. Migration path: negotiate a contract/protocol version that uses
+standard HMAC (e.g. ``pseudonymize`` / HKDF helpers here), do not silently change pads.
 """
 import base64
 import hashlib
 import hmac
 import json
+import re
 
 class ContractError(ValueError):
     pass
+
+# Format/enum allow-lists for optional envelope fields (see validate_upload).
+# trust_level: TrustLevel raw values in RiskDetectorApp (TrustChainManager.swift).
+# Unknown trust levels are REJECTED (fail-closed); a future level needs a contract
+# update, it must not be silently retained as trusted input.
+_TRUST_LEVELS = frozenset({'hardware', 'derived', 'degraded'})
+# binding_mode: union of ReportEnvelope (defaultBindingMode / isBindingModeCompatible)
+# and GrpcReportPayload (signatureBindingMode) producer values.
+_BINDING_MODES = frozenset({
+    'hkdf_hmac_v1', 'plain_hmac_v1', 'plain_hmac_fallback_v1',
+    'armor_request_binding_sha256_v1', 'self_reported_fields_bound_v3',
+    'external_signature_provider_v1',
+    'hkdf_derived_request_bound', 'armor_runtime_derived_request_bound',
+    'degraded_base_key_request_bound', 'base_key_request_bound',
+})
+# field_mapping_version: server-owned mapping version label (e.g. "v1"); no spaces.
+_FIELD_MAPPING_VERSION_RE = re.compile(r'\A[A-Za-z0-9._:-]{1,64}\Z')
+# attestation_key_id: Apple App Attest key identifier (base64/base64url alphabet).
+_ATTESTATION_KEY_ID_RE = re.compile(r'\A[A-Za-z0-9+/=_-]{1,256}\Z')
+# binding_digest: lowercase hex SHA-256 of the signature input (ReportEnvelope.bindingDigestHex).
+_BINDING_DIGEST_RE = re.compile(r'\A[0-9a-f]{64}\Z')
 
 UPLOAD_FIELDS = frozenset('kind contract_version app_id sdk_version report_id ts nonce session_token sig_ver key_id field_mapping_version device_id scene payload_json signature payload_sha256 attestation_key_id attestation_assertion trust_level re_attestation_assertion binding_mode binding_digest output_path_integrity'.split())
 
@@ -42,6 +73,18 @@ def validate_upload(value, *, require_hardware=False):
     for field in ('field_mapping_version','attestation_key_id','trust_level','binding_mode','binding_digest'):
         if field in value and not isinstance(value[field],str):
             raise ContractError('expected string: '+field)
+    # Format / enum validation (type-only checks are not enough: these fields
+    # steer server trust decisions and mapping selection).
+    if 'field_mapping_version' in value and not _FIELD_MAPPING_VERSION_RE.match(value['field_mapping_version']):
+        raise ContractError('invalid field_mapping_version format')
+    if 'attestation_key_id' in value and not _ATTESTATION_KEY_ID_RE.match(value['attestation_key_id']):
+        raise ContractError('invalid attestation_key_id format')
+    if 'trust_level' in value and value['trust_level'] not in _TRUST_LEVELS:
+        raise ContractError('unknown trust_level rejected: '+value['trust_level'])
+    if 'binding_mode' in value and value['binding_mode'] not in _BINDING_MODES:
+        raise ContractError('unknown binding_mode rejected: '+value['binding_mode'])
+    if 'binding_digest' in value and not _BINDING_DIGEST_RE.match(value['binding_digest']):
+        raise ContractError('invalid binding_digest format (expected 64 lowercase hex)')
     payload = _bytes(value.get('payload_json'))
     digest = _bytes(value.get('payload_sha256'))
     prefix = f"{len(value['nonce'].encode())}:{value['nonce']}|{value['ts']}|{len(value['report_id'].encode())}:{value['report_id']}|".encode()
@@ -73,11 +116,27 @@ def pseudonymize(key, *, tenant, app, domain, key_version, value):
     message=json.dumps(parts,ensure_ascii=False,separators=(',',':')).encode()
     return hmac.new(key,message,hashlib.sha256).hexdigest()
 
-def legacy_mac(key,message):
+def legacy_cprisk_mac(key,message):
+    """CPRisk-MAC: legacy SDK message MAC with NON-STANDARD pads (ipad=0x6D, opad=0xA3).
+
+    NOT standard HMAC-SHA256 (pads 0x36/0x5C) and NOT interoperable with it.
+    The pads are intentionally preserved for compatibility with the deployed
+    server; see the module docstring. Migrate via contract/protocol version
+    negotiation to standard HMAC — never by silently changing these pads.
+    """
     key=hashlib.sha256(key).digest() if len(key)>64 else key
     key=key.ljust(64,b'\x00')
     inner=hashlib.sha256(bytes(x^0x6D for x in key)+message).digest()
     return hashlib.sha256(bytes(x^0xA3 for x in key)+inner).hexdigest()
+
+def legacy_mac(key,message):
+    """Deprecated alias for :func:`legacy_cprisk_mac` (kept for compatibility).
+
+    The old name hid the fact that this is NOT standard HMAC. New code must
+    call :func:`legacy_cprisk_mac` and must not verify its output with a
+    standard HMAC implementation.
+    """
+    return legacy_cprisk_mac(key,message)
 
 def canonical_payload(raw):
     """Validate JSON but return exact producer-signed UTF-8; never recanonicalize.
@@ -149,6 +208,6 @@ def verify_upload(upload,effective_key,*,require_hardware=False):
         value=validate_upload(upload,require_hardware=require_hardware)
         if value['sig_ver'] not in {'v1','v2','v2h','v2a','v2d','v3'}:
             return False
-        return hmac.compare_digest(legacy_mac(effective_key,signature_input(value)), value['signature'])
+        return hmac.compare_digest(legacy_cprisk_mac(effective_key,signature_input(value)), value['signature'])
     except ContractError:
         return False

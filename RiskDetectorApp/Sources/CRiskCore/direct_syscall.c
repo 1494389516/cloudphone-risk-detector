@@ -1161,7 +1161,15 @@ int cprisk_csops_direct(pid_t pid, unsigned int ops, void *useraddr, size_t user
 #endif
 }
 
-/* ── SVC stub integrity (FNV-1a chunk hashes + rolling verify + SVC scan) ─ */
+/* ── SVC stub integrity (FNV-1a chunk hashes + rolling verify + SVC scan) ─
+ * NOTE (issue 46): the FNV-1a chunk hash below is ACCIDENTAL-CHANGE
+ * detection only — FNV is not collision-resistant and not keyed, so it
+ * does NOT prove the stub was not deliberately tampered with. Real
+ * tamper evidence in this same verify path comes from the SHA-256 page
+ * masks (cprisk_svc_stub_sha256_aux_mask_i / deny-attach SHA-256 page
+ * mask). Migration path: replace the rolling FNV compare with a
+ * CPRisk-MAC (or SHA-256) over (chunk || stub address) and compare
+ * against a producer-signed snapshot. */
 
 extern uint32_t cprisk_deny_attach_stub_integrity_mask(void);
 extern uint32_t cprisk_deny_attach_stub_sha256_page_mask(void);

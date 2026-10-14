@@ -2,7 +2,7 @@
 
 > 文档定位：面向开源用户、审计者、接入方的项目入口说明。
 > 目标：让外部开发者在 10 分钟内判断 SDK 的能力边界、接入成本、验证方式和剩余风险。
-> 当前状态：仓库尚未提供正式 `LICENSE` 文件，因此对外发布前应先确认开源协议。README badge 暂标为 `License TBD`，避免把源码可见误写成已经完成开源授权。
+> 当前状态：仓库根目录已提供正式 `LICENSE` 文件（MIT，Copyright (c) 2026 CloudPhoneRiskKit authors），README badge 已标为 `License-MIT`。源码可见不等于可商用保证，使用前请阅读 `LICENSE` 全文。
 
 ---
 
@@ -22,7 +22,10 @@
 
 ## 2. 三分钟验证
 
-在仓库根目录执行：
+> ⚠️ 历史记录：下文 `swift test` 命令与“1041 tests”基线结果为测试移除前（2026-10-04 之前）的记录，
+> 测试已移除、CI 不跑测试，不可复现。当前可运行的检查见 `contracts/README.md`（生成契约检查、架构门禁）。
+
+在仓库根目录执行（历史记录，已不可复现）：
 
 ```bash
 cd RiskDetectorApp
@@ -30,13 +33,13 @@ swift test --disable-sandbox \
   --scratch-path "${TMPDIR:-/tmp}/cloudphone-risk-detector-riskdetector-tests"
 ```
 
-当前基线验证结果：
+当前基线验证结果（历史记录）：
 
 ```text
 Executed 1041 tests, with 4 tests skipped and 0 failures
 ```
 
-说明：
+说明（历史记录，下文描述的是已删除测试当时的行为）：
 
 - macOS SwiftPM / XCTest 环境下，Keychain、Application Support、secure store 可能出现权限受限日志；测试已覆盖这些沙盒降级路径。
 - `armor runtime` 在未加固测试二进制中会走 debug fallback，部分 active-path armor 用例会跳过，这是环境性跳过，不代表核心 SDK 不能构建。
@@ -153,12 +156,12 @@ CPRiskKitObjCBridge *bridge = [[CPRiskKitObjCBridge alloc] init];
 
 ### 必做
 
-- [ ] 添加正式 `LICENSE` 文件，并在 README badge 中替换 `License TBD`。
+- [x] 添加正式 `LICENSE` 文件（已存在：仓库根目录 `LICENSE`，MIT），并在 README badge 中替换 `License TBD`（已替换为 `License-MIT`）。
 - [ ] 确认仓库中没有真实密钥、token、证书、客户域名或生产策略。
 - [ ] 检查 `CloudPhoneRiskKit_文档/INTEGRATION_GUIDE.md` 中示例 GitHub URL、版本号、Release 地址是否为真实发布地址。
 - [ ] 提供最小 Demo App 运行截图或录屏，展示 start/evaluate/report 三步。
 - [ ] 在 README 中保留“检测结果是风险信号，不是绝对防护”的边界声明。
-- [ ] 提供 CI badge 或最少提供最近一次测试摘要。
+- [ ] 提供 CI badge 或最少提供最近一次检查摘要（注意：测试已移除，CI 不跑测试；摘要应为生成契约/架构门禁等现存检查，而非测试通过数）。
 - [ ] 明确 App Store Safe / Enhanced / Research / Armored Release 四种模式的默认开关。
 
 ### 推荐
@@ -212,7 +215,7 @@ CPRiskKitObjCBridge *bridge = [[CPRiskKitObjCBridge alloc] init];
 
 要把这个项目真正打成开源标杆，优先级建议是：
 
-1. 先补 `LICENSE`、`SECURITY.md`、`CONTRIBUTING.md`。
+1. `LICENSE` 已存在（MIT）；仍需补 `SECURITY.md`、`CONTRIBUTING.md`。
 2. 把 README 的“能力很强”变成“外部可复现”。
 3. 把测试和 benchmark 接到 CI。
 4. 每个 detector 新增时同步写：威胁、信号、误报条件、测试样本。

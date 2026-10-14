@@ -133,6 +133,11 @@ private struct StringLiteralLocation {
     let segmentName: String
     let sectionName: String
     let fileOffset: UInt64
+    /// VM address of the first byte of the literal (section.address + file
+    /// offset within the section). Recorded for the Pass 1 write-back map so
+    /// a runtime consumer can restore decrypted bytes to the address the
+    /// program actually reads from.
+    let vmAddress: UInt64
     let byteLength: Int
 }
 
@@ -169,6 +174,14 @@ enum StringKeystreamVariant: UInt8, CaseIterable {
 ///
 /// 将 mustEncrypt 和 shouldEncrypt 类别全部加密写入 string table section，
 /// 并将原始 section 中对应字节零填充，防止 `strings` 工具直接提取。
+///
+/// 回填（write-back）：60 字节的 string-table index entry 本身不含目标地址，
+/// 运行时仅凭它无法把解密结果写回程序真正读取的原始地址。因此本 pass
+/// 额外写入 `__DATA,__swift5_strwb` 回填映射（见
+/// `ArmorABI.StringTable.WritebackMap`）：每条记录含 stringID、原始文件偏移、
+/// 原始 VM 地址与长度，供运行时回填消费。注意：映射只是被“发出”，目前
+/// 尚未验证有运行时消费方真正读取它；在回填消费方落地并验证之前，原始
+/// 地址在 Pass 1 之后保持零填充，只有查表解密可用——不要宣称回填已生效。
 public final class StringEncryptorPass: ArmorPass {
     public let name = "StringEncryptor"
 
@@ -177,7 +190,7 @@ public final class StringEncryptorPass: ArmorPass {
     public func execute(on file: MachOFile, config: PassConfig) throws -> PassResult {
         let locatedStrings = try collectStringLiterals(from: file)
         let records = buildRecords(from: locatedStrings)
-        let stringKey = deriveStringKey(rootKey: config.encryptionKey)
+        let stringKey = try deriveStringKey(rootKey: config.encryptionKey)
         let dispatchSeed = deriveKeystreamDispatchSeed(key: stringKey)
 
         var payload = ArmorABI.StringTable.Header(count: UInt32(records.count)).serialized()
@@ -248,6 +261,41 @@ public final class StringEncryptorPass: ArmorPass {
             align: 2
         )
 
+        // Emit the Pass 1 write-back map BEFORE zero-filling: the map records
+        // the pre-pass original locations (file offset / VM address / length)
+        // for every encrypted literal, so a runtime consumer can write each
+        // decrypted string back to the address the program reads from.
+        // Ordering invariant: both section insertions append at the end of
+        // __DATA, after every string-literal section's bytes, so the recorded
+        // offsets stay valid. The zero-fill verification below fails closed
+        // if that invariant ever breaks.
+        let writebackEntries = records.compactMap { record -> ArmorABI.StringTable.WritebackMap.Entry? in
+            guard let location = record.location else { return nil }
+            return ArmorABI.StringTable.WritebackMap.Entry(
+                stringID: record.id,
+                fileOffset: location.fileOffset,
+                vmAddress: location.vmAddress,
+                byteLength: UInt64(location.byteLength)
+            )
+        }
+        var writebackPayload = ArmorABI.StringTable.WritebackMap.Header(
+            count: UInt32(writebackEntries.count)
+        ).serialized()
+        for entry in writebackEntries {
+            writebackPayload.append(entry.serialized())
+        }
+        precondition(
+            writebackPayload.count == ArmorABI.StringTable.WritebackMap.headerSize
+                + writebackEntries.count * ArmorABI.StringTable.WritebackMap.recordSize,
+            "write-back map size mismatch"
+        )
+        _ = try file.addOrUpdateSection(
+            segment: ArmorABI.dataSegmentName,
+            section: ArmorABI.StringTable.WritebackMap.sectionName,
+            content: writebackPayload,
+            align: 2
+        )
+
         // 零填充已加密字符串在原始 section 中的位置，防止 strings 工具提取
         var zeroFilledCount = 0
         var touchedSections = Set<String>()
@@ -259,14 +307,34 @@ public final class StringEncryptorPass: ArmorPass {
             zeroFilledCount += 1
         }
 
+        // Fail closed: every mapped original location must now read back as
+        // zeros. A mismatch means the recorded offsets no longer describe
+        // the bytes that were actually zero-filled (e.g. a section insertion
+        // moved them), and the write-back map would point at live bytes.
+        for entry in writebackEntries {
+            let start = Int(entry.fileOffset)
+            let end = start + Int(entry.byteLength)
+            guard start >= 0, end <= file.data.count else {
+                throw MachOError.invalidData(
+                    "write-back map entry for string \(entry.stringID) is out of bounds"
+                )
+            }
+            guard file.data.subdata(in: start..<end).allSatisfy({ $0 == 0 }) else {
+                throw MachOError.invalidData(
+                    "write-back map entry for string \(entry.stringID) does not point at zero-filled bytes"
+                )
+            }
+        }
+
         let encryptedFromBinary = records.filter { $0.location != nil }.count
         let sectionSummary = touchedSections.sorted().joined(separator: ", ")
         return PassResult(
             passName: name,
             itemsProcessed: records.count,
-            bytesModified: payload.count,
+            bytesModified: payload.count + writebackPayload.count,
             details: [
                 "Wrote encrypted string table to \(ArmorABI.dataSegmentName).\(ArmorABI.StringTable.sectionName)",
+                "Wrote write-back map (\(writebackEntries.count) entries) to \(ArmorABI.dataSegmentName).\(ArmorABI.StringTable.WritebackMap.sectionName); runtime write-back consumer still pending — original addresses stay zero-filled until one lands",
                 "Bootstrap string id \(StringBootstrap.id) is retained for compatibility with the existing table layout",
                 "Encrypted \(encryptedFromBinary) string literals (zero-filled \(zeroFilledCount) original positions)",
                 "Scanned sections: \(sectionSummary.isEmpty ? "none" : sectionSummary)",
@@ -308,7 +376,8 @@ public final class StringEncryptorPass: ArmorPass {
                     in: content,
                     segmentName: segment.name,
                     sectionName: section.sectionName,
-                    sectionFileOffset: UInt64(section.offset)
+                    sectionFileOffset: UInt64(section.offset),
+                    sectionVMAddress: section.address
                 ))
             }
         }
@@ -328,13 +397,15 @@ public final class StringEncryptorPass: ArmorPass {
         in content: Data,
         segmentName: String,
         sectionName: String,
-        sectionFileOffset: UInt64
+        sectionFileOffset: UInt64,
+        sectionVMAddress: UInt64
     ) -> [LocatedStringLiteral] {
         var candidates = scanNullTerminatedUTF8(
             in: content,
             segmentName: segmentName,
             sectionName: sectionName,
-            sectionFileOffset: sectionFileOffset
+            sectionFileOffset: sectionFileOffset,
+            sectionVMAddress: sectionVMAddress
         )
 
         guard ArmorABI.StringEncryption.enhancedDataScanSectionNames.contains(sectionName) else {
@@ -346,7 +417,8 @@ public final class StringEncryptorPass: ArmorPass {
                 in: content,
                 segmentName: segmentName,
                 sectionName: sectionName,
-                sectionFileOffset: sectionFileOffset
+                sectionFileOffset: sectionFileOffset,
+                sectionVMAddress: sectionVMAddress
             ))
         }
 
@@ -355,7 +427,8 @@ public final class StringEncryptorPass: ArmorPass {
                 in: content,
                 segmentName: segmentName,
                 sectionName: sectionName,
-                sectionFileOffset: sectionFileOffset
+                sectionFileOffset: sectionFileOffset,
+                sectionVMAddress: sectionVMAddress
             ))
         }
 
@@ -364,7 +437,8 @@ public final class StringEncryptorPass: ArmorPass {
                 in: content,
                 segmentName: segmentName,
                 sectionName: sectionName,
-                sectionFileOffset: sectionFileOffset
+                sectionFileOffset: sectionFileOffset,
+                sectionVMAddress: sectionVMAddress
             ))
         }
 
@@ -376,7 +450,8 @@ public final class StringEncryptorPass: ArmorPass {
         in content: Data,
         segmentName: String,
         sectionName: String,
-        sectionFileOffset: UInt64
+        sectionFileOffset: UInt64,
+        sectionVMAddress: UInt64
     ) -> [LocatedStringLiteral] {
         var results = [LocatedStringLiteral]()
         var position = 0
@@ -405,6 +480,7 @@ public final class StringEncryptorPass: ArmorPass {
                             segmentName: segmentName,
                             sectionName: sectionName,
                             fileOffset: sectionFileOffset + UInt64(position),
+                            vmAddress: sectionVMAddress + UInt64(position),
                             byteLength: length
                         )
                     ))
@@ -426,7 +502,8 @@ public final class StringEncryptorPass: ArmorPass {
         in content: Data,
         segmentName: String,
         sectionName: String,
-        sectionFileOffset: UInt64
+        sectionFileOffset: UInt64,
+        sectionVMAddress: UInt64
     ) -> [LocatedStringLiteral] {
         var results = [LocatedStringLiteral]()
         var position = 0
@@ -465,6 +542,7 @@ public final class StringEncryptorPass: ArmorPass {
                             segmentName: segmentName,
                             sectionName: sectionName,
                             fileOffset: sectionFileOffset + UInt64(position),
+                            vmAddress: sectionVMAddress + UInt64(position),
                             byteLength: end - position
                         )
                     ))
@@ -485,7 +563,8 @@ public final class StringEncryptorPass: ArmorPass {
         in content: Data,
         segmentName: String,
         sectionName: String,
-        sectionFileOffset: UInt64
+        sectionFileOffset: UInt64,
+        sectionVMAddress: UInt64
     ) -> [LocatedStringLiteral] {
         var results = [LocatedStringLiteral]()
         let minLength = ArmorABI.StringEncryption.minimumCandidateCharacterLength
@@ -507,6 +586,7 @@ public final class StringEncryptorPass: ArmorPass {
                             segmentName: segmentName,
                             sectionName: sectionName,
                             fileOffset: sectionFileOffset + UInt64(payloadStart),
+                            vmAddress: sectionVMAddress + UInt64(payloadStart),
                             byteLength: len8
                         )
                     ))
@@ -531,6 +611,7 @@ public final class StringEncryptorPass: ArmorPass {
                             segmentName: segmentName,
                             sectionName: sectionName,
                             fileOffset: sectionFileOffset + UInt64(payloadStart),
+                            vmAddress: sectionVMAddress + UInt64(payloadStart),
                             byteLength: len16
                         )
                     ))
@@ -547,7 +628,8 @@ public final class StringEncryptorPass: ArmorPass {
         in content: Data,
         segmentName: String,
         sectionName: String,
-        sectionFileOffset: UInt64
+        sectionFileOffset: UInt64,
+        sectionVMAddress: UInt64
     ) -> [LocatedStringLiteral] {
         var results = [LocatedStringLiteral]()
         let minLength = ArmorABI.StringEncryption.minimumBoundedRunLength
@@ -582,6 +664,7 @@ public final class StringEncryptorPass: ArmorPass {
                     segmentName: segmentName,
                     sectionName: sectionName,
                     fileOffset: sectionFileOffset + UInt64(start),
+                    vmAddress: sectionVMAddress + UInt64(start),
                     byteLength: length
                 )
             ))
@@ -705,8 +788,11 @@ public final class StringEncryptorPass: ArmorPass {
 
 // MARK: - 密钥派生与加密辅助（仅构建工具侧使用）
 
-private func deriveStringKey(rootKey: Data?) -> Data {
-    let whitebox = ArmorWhiteBox.build(rootKey: rootKey)
+private func deriveStringKey(rootKey: Data?) throws -> Data {
+    guard let rootKey else {
+        throw MachOError.invalidData("StringEncryptorPass requires an encryption key (no zero/default key fallback)")
+    }
+    let whitebox = try ArmorWhiteBox.build(rootKey: rootKey)
     return whitebox.prf(
         domain: .pass1StringKey,
         input: Data(repeating: 0, count: ArmorABI.hashSize)

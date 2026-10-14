@@ -1,9 +1,17 @@
 /*
  * CRiskCore - Data segment decryptor for cprisk-armor ABI v2.
  * Consumes the packed loader descriptor section, validates each target section
- * against the current image, verifies HMAC-SHA256 authentication before
+ * against the current image, verifies CPRisk-MAC-SHA256 authentication before
  * decrypting in place, and rolls back all previously applied entries if any
  * step fails.
+ *
+ * NOTE (issue 20 — SHA-256-chained XOR keystream, NOT AEAD): the keystream
+ * is SHA-256(key || id || nonce) XOR. It has no authentication of its own
+ * (the CPRisk-MAC tag is checked first) and its security depends entirely
+ * on NONCE UNIQUENESS. This file enforces it at decrypt time via
+ * cprisk_data_nonce_reuse_check_i(): a (key, nonce) pair seen with a
+ * different ciphertext is refused. Migration path: AEAD
+ * (AES-GCM / ChaCha20-Poly1305) with nonce + AAD in the tag.
  */
 
 #include "include/CRiskCore.h"
@@ -43,6 +51,71 @@ static void init_dlsym_once(void) {
     s_mprotect_fn = (cprisk_mprotect_func_t)cprisk_dlsym("libsystem_kernel.dylib", "mprotect");
     s_mlock_fn = (cprisk_mlock_func_t)cprisk_dlsym("libsystem_kernel.dylib", "mlock");
     s_munlock_fn = (cprisk_munlock_func_t)cprisk_dlsym("libsystem_kernel.dylib", "munlock");
+}
+
+/* ── Nonce-reuse detection (issue 20) ────────────────────────────────
+ * The per-section keystream is SHA-256(key || id || nonce) XOR: NOT an
+ * AEAD, so its security rests entirely on nonce uniqueness. Reusing one
+ * (key, nonce) for two different plaintexts reuses the keystream and
+ * leaks plaintext XOR. The registry below records (key fingerprint,
+ * key_id, nonce) -> ciphertext hash for every successfully MAC-verified
+ * section decrypt in this process:
+ *   - same (key, nonce, ciphertext) again  -> legitimate re-decrypt, allowed;
+ *   - same (key, nonce), DIFFERENT ciphertext -> nonce reuse, REFUSED
+ *     (caller treats it like a MAC failure: page stays PROT_NONE + poison).
+ * Called with the loader mutex held by the decrypt path; the registry has
+ * its own mutex for safety. 64 slots, round-robin eviction: eviction only
+ * weakens detection for old entries, never causes a false refusal. */
+#define CPRISK_DATA_NONCE_REGISTRY_SLOTS 64u
+typedef struct {
+    uint8_t key_fp[CPRISK_ARMOR_HASH_SIZE];
+    uint32_t key_id;
+    uint8_t nonce[CPRISK_ARMOR_NONCE_SIZE];
+    uint8_t ct_hash[CPRISK_ARMOR_HASH_SIZE];
+    uint8_t valid;
+} cprisk_data_nonce_entry_i;
+static cprisk_data_nonce_entry_i s_nonce_registry[CPRISK_DATA_NONCE_REGISTRY_SLOTS];
+static uint32_t s_nonce_registry_next = 0u;
+static pthread_mutex_t s_nonce_registry_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static int cprisk_data_nonce_reuse_check_i(const uint8_t *key, uint32_t key_id,
+                                           const uint8_t *nonce,
+                                           const uint8_t *ciphertext, size_t ct_len) {
+    if (!key || !nonce || !ciphertext)
+        return -1;
+    uint8_t key_fp[CPRISK_ARMOR_HASH_SIZE];
+    uint8_t ct_hash[CPRISK_ARMOR_HASH_SIZE];
+    cprisk_sha256(key, CPRISK_ARMOR_KEY_SIZE, key_fp);
+    cprisk_sha256(ciphertext, ct_len, ct_hash);
+    int rc = 0;
+    pthread_mutex_lock(&s_nonce_registry_mutex);
+    for (uint32_t i = 0; i < CPRISK_DATA_NONCE_REGISTRY_SLOTS; i++) {
+        const cprisk_data_nonce_entry_i *e = &s_nonce_registry[i];
+        if (e->valid == 0u || e->key_id != key_id)
+            continue;
+        if (memcmp(e->nonce, nonce, CPRISK_ARMOR_NONCE_SIZE) != 0)
+            continue;
+        if (memcmp(e->key_fp, key_fp, CPRISK_ARMOR_HASH_SIZE) != 0)
+            continue;
+        /* Same (key, nonce) seen before: refuse iff ciphertext differs. */
+        if (memcmp(e->ct_hash, ct_hash, CPRISK_ARMOR_HASH_SIZE) != 0)
+            rc = -1;
+        break;
+    }
+    if (rc == 0) {
+        cprisk_data_nonce_entry_i *slot =
+            &s_nonce_registry[s_nonce_registry_next % CPRISK_DATA_NONCE_REGISTRY_SLOTS];
+        s_nonce_registry_next++;
+        memcpy(slot->key_fp, key_fp, CPRISK_ARMOR_HASH_SIZE);
+        slot->key_id = key_id;
+        memcpy(slot->nonce, nonce, CPRISK_ARMOR_NONCE_SIZE);
+        memcpy(slot->ct_hash, ct_hash, CPRISK_ARMOR_HASH_SIZE);
+        slot->valid = 1u;
+    }
+    pthread_mutex_unlock(&s_nonce_registry_mutex);
+    cprisk_secure_zero(key_fp, sizeof(key_fp));
+    cprisk_secure_zero(ct_hash, sizeof(ct_hash));
+    return rc;
 }
 
 static inline uint32_t cprisk_mprotect_effective_fail_threshold(void) {
@@ -147,19 +220,35 @@ uint32_t cprisk_get_mprotect_fail_streak_threshold(void) {
 }
 
 void cprisk_test_mprotect_set_force_direct_fail(int enabled) {
+#if !defined(DEBUG) || !DEBUG
+    /* Test hook: inert outside DEBUG builds (issue 18). */
+    return;
+#endif
     s_test_mprotect_force_direct_fail = enabled ? 1 : 0;
 }
 
 void cprisk_test_mprotect_set_force_fallback_fail(int enabled) {
+#if !defined(DEBUG) || !DEBUG
+    /* Test hook: inert outside DEBUG builds (issue 18). */
+    return;
+#endif
     s_test_mprotect_force_fallback_fail = enabled ? 1 : 0;
 }
 
 void cprisk_test_mprotect_set_fail_streak_threshold(uint32_t threshold) {
+#if !defined(DEBUG) || !DEBUG
+    /* Test hook: inert outside DEBUG builds (issue 18). */
+    return;
+#endif
     s_mprotect_fail_streak_threshold =
         (threshold == 0u) ? CPRISK_MPROTECT_FULL_FAIL_STREAK_THRESHOLD : threshold;
 }
 
 void cprisk_test_mprotect_reset_tamper_state(void) {
+#if !defined(DEBUG) || !DEBUG
+    /* Test hook: inert outside DEBUG builds (issue 18). */
+    return;
+#endif
     cprisk_reset_libc_fallback_used_mask();
     s_mprotect_tampered = 0;
     s_mprotect_direct_failure_count = 0u;
@@ -319,7 +408,7 @@ void cprisk_armor_derive_chained_key(
     uint8_t depth,
     uint8_t out_key[CPRISK_ARMOR_KEY_SIZE]
 ) {
-    /* Level 1: HMAC(parent, index || nonce) */
+    /* Level 1: CPRisk-MAC(parent, index || nonce) */
     if (nonce_len > CPRISK_ARMOR_NONCE_SIZE) {
         memset(out_key, 0, CPRISK_ARMOR_KEY_SIZE);
         return;
@@ -331,23 +420,23 @@ void cprisk_armor_derive_chained_key(
     chain_material[3] = (uint8_t)(section_index >> 24);
     memcpy(chain_material + 4, nonce, nonce_len);
 
-    cprisk_hmac_sha256(parent_key, CPRISK_ARMOR_KEY_SIZE,
+    cprisk_mac_sha256(parent_key, CPRISK_ARMOR_KEY_SIZE,
                        chain_material, 4 + nonce_len, out_key);
     cprisk_secure_zero(chain_material, sizeof(chain_material));
 
-    /* Depth levels beyond 1: recursive HMAC */
+    /* Depth levels beyond 1: recursive CPRisk-MAC */
     for (uint8_t d = 1; d < depth; d++) {
         uint8_t round_key[CPRISK_ARMOR_KEY_SIZE];
         memcpy(round_key, out_key, CPRISK_ARMOR_KEY_SIZE);
 
         uint8_t label[] = "cprisk.chained.v1.";
-        cprisk_hmac_sha256(round_key, CPRISK_ARMOR_KEY_SIZE,
+        cprisk_mac_sha256(round_key, CPRISK_ARMOR_KEY_SIZE,
                            label, sizeof(label) - 1, out_key);
 
         uint8_t depth_material[CPRISK_ARMOR_KEY_SIZE + 1];
         memcpy(depth_material, out_key, CPRISK_ARMOR_KEY_SIZE);
         depth_material[CPRISK_ARMOR_KEY_SIZE] = d;
-        cprisk_hmac_sha256(depth_material, CPRISK_ARMOR_KEY_SIZE + 1,
+        cprisk_mac_sha256(depth_material, CPRISK_ARMOR_KEY_SIZE + 1,
                            depth_material, CPRISK_ARMOR_KEY_SIZE + 1, out_key);
 
         cprisk_secure_zero(round_key, sizeof(round_key));
@@ -683,7 +772,8 @@ int cprisk_load_protected_data(void) {
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
     /* Poison data accumulator under debugger — downstream key derivation
        silently produces wrong material. */
-    if (cprisk_is_being_traced_redundant()) {
+    /* Dual-detector (issue 33): sysctl-based + redundant. */
+    if (cprisk_is_being_traced_redundant() || cprisk_is_being_traced()) {
         s_data_acc ^= 0xDEADBEEFCAFEBABEULL;
         cprisk_integrity_poison_data_loader_lane();
     }
@@ -748,7 +838,7 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
                 decrypt_key = s_ldr_key;
             }
 
-            /* Verify HMAC-SHA256(key, nonce || ciphertext) before decrypting */
+            /* Verify CPRisk-MAC-SHA256(key, nonce || ciphertext) before decrypting */
             {
                 if (ent->size > SIZE_MAX - CPRISK_ARMOR_NONCE_SIZE) {
                     if (cprisk_hidden_mprotect(page, span, PROT_NONE) != 0) {
@@ -758,22 +848,22 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
                     return 0;
                 }
                 /*
-                 * HMAC scope binds (section_index, nonce_len, nonce,
+                 * CPRisk-MAC scope binds (section_index, nonce_len, nonce,
                  * ct_len, ciphertext) — must match the canonical encoding
                  * in DataSegmentEncryptor.swift. Without these length
                  * prefixes and the section_index binding, two sections
                  * with identical encrypted payloads produced identical
-                 * HMACs (transposable) and a truncation/extension could
+                 * CPRisk-MACs (transposable) and a truncation/extension could
                  * find a matching length pair.
                  *
                  * Wire layout (little-endian):
                  *   u32 section_index | u32 nonce_len | nonce[nonce_len] |
                  *   u32 ct_len        | ciphertext[ct_len]
                  */
-                const size_t hmac_msg_len =
+                const size_t mac_msg_len =
                     4u + 4u + (size_t)CPRISK_ARMOR_NONCE_SIZE + 4u + (size_t)ent->size;
-                uint8_t *hmac_msg = (uint8_t *)malloc(hmac_msg_len);
-                if (!hmac_msg) {
+                uint8_t *mac_msg = (uint8_t *)malloc(mac_msg_len);
+                if (!mac_msg) {
                     if (cprisk_hidden_mprotect(page, span, PROT_NONE) != 0) {
                         cprisk_integrity_poison_data_loader_lane();
                     }
@@ -781,36 +871,49 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
                     return 0;
                 }
                 size_t mp = 0u;
-                hmac_msg[mp++] = (uint8_t)(ent->section_index      );
-                hmac_msg[mp++] = (uint8_t)(ent->section_index >>  8);
-                hmac_msg[mp++] = (uint8_t)(ent->section_index >> 16);
-                hmac_msg[mp++] = (uint8_t)(ent->section_index >> 24);
-                hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE      );
-                hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >>  8);
-                hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 16);
-                hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 24);
-                memcpy(hmac_msg + mp, ent->nonce, CPRISK_ARMOR_NONCE_SIZE);
+                mac_msg[mp++] = (uint8_t)(ent->section_index      );
+                mac_msg[mp++] = (uint8_t)(ent->section_index >>  8);
+                mac_msg[mp++] = (uint8_t)(ent->section_index >> 16);
+                mac_msg[mp++] = (uint8_t)(ent->section_index >> 24);
+                mac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE      );
+                mac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >>  8);
+                mac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 16);
+                mac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 24);
+                memcpy(mac_msg + mp, ent->nonce, CPRISK_ARMOR_NONCE_SIZE);
                 mp += CPRISK_ARMOR_NONCE_SIZE;
-                hmac_msg[mp++] = (uint8_t)((uint32_t)ent->size      );
-                hmac_msg[mp++] = (uint8_t)((uint32_t)ent->size >>  8);
-                hmac_msg[mp++] = (uint8_t)((uint32_t)ent->size >> 16);
-                hmac_msg[mp++] = (uint8_t)((uint32_t)ent->size >> 24);
-                memcpy(hmac_msg + mp, ptr, (size_t)ent->size);
-                uint8_t computed_hmac[CPRISK_ARMOR_HASH_SIZE];
-                cprisk_hmac_sha256(decrypt_key, CPRISK_ARMOR_KEY_SIZE,
-                                   hmac_msg, hmac_msg_len, computed_hmac);
-                cprisk_secure_zero(hmac_msg, hmac_msg_len);
-                free(hmac_msg);
-                if (cprisk_hmac_verify(ent->hmac_tag, computed_hmac,
+                mac_msg[mp++] = (uint8_t)((uint32_t)ent->size      );
+                mac_msg[mp++] = (uint8_t)((uint32_t)ent->size >>  8);
+                mac_msg[mp++] = (uint8_t)((uint32_t)ent->size >> 16);
+                mac_msg[mp++] = (uint8_t)((uint32_t)ent->size >> 24);
+                memcpy(mac_msg + mp, ptr, (size_t)ent->size);
+                uint8_t computed_mac[CPRISK_ARMOR_HASH_SIZE];
+                cprisk_mac_sha256(decrypt_key, CPRISK_ARMOR_KEY_SIZE,
+                                   mac_msg, mac_msg_len, computed_mac);
+                cprisk_secure_zero(mac_msg, mac_msg_len);
+                free(mac_msg);
+                if (cprisk_mac_verify(ent->mac_tag, computed_mac,
                                        CPRISK_ARMOR_HASH_SIZE) != 0) {
-                    cprisk_secure_zero(computed_hmac, sizeof(computed_hmac));
+                    cprisk_secure_zero(computed_mac, sizeof(computed_mac));
                     if (cprisk_hidden_mprotect(page, span, PROT_NONE) != 0) {
                         cprisk_integrity_poison_data_loader_lane();
                     }
                     pthread_mutex_unlock(&s_loader_mutex);
                     return 0;
                 }
-                cprisk_secure_zero(computed_hmac, sizeof(computed_hmac));
+                cprisk_secure_zero(computed_mac, sizeof(computed_mac));
+            }
+            /* Nonce-reuse refusal (issue 20): same (key, nonce) with a
+             * different ciphertext means the XOR keystream was reused.
+             * Refuse exactly like a MAC failure. */
+            if (cprisk_data_nonce_reuse_check_i(decrypt_key, ent->key_id,
+                                                ent->nonce, ptr,
+                                                (size_t)ent->size) != 0) {
+                cprisk_integrity_poison_data_loader_lane();
+                if (cprisk_hidden_mprotect(page, span, PROT_NONE) != 0) {
+                    cprisk_integrity_poison_data_loader_lane();
+                }
+                pthread_mutex_unlock(&s_loader_mutex);
+                return 0;
             }
             if (cprisk_armor_xor_region(ptr, (size_t)ent->size, ent->key_id,
                                     ent->nonce, CPRISK_ARMOR_NONCE_SIZE,
@@ -841,7 +944,8 @@ int cprisk_jit_decrypt_page(void *fault_addr) {
 #if defined(__APPLE__) && (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR)
                 /* Perturb decrypted plaintext under debugger — data looks
                    decrypted but content is silently wrong. */
-                if (cprisk_is_being_traced_redundant()) {
+                /* Dual-detector (issue 33): sysctl-based + redundant. */
+                if (cprisk_is_being_traced_redundant() || cprisk_is_being_traced()) {
                     for (size_t pi = 0; pi < 4 && pi < (size_t)ent->size; pi++)
                         ptr[pi] ^= 0x01;
                     cprisk_integrity_poison_data_loader_lane();

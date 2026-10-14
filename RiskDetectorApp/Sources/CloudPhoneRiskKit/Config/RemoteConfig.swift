@@ -372,6 +372,40 @@ public struct Policy: Codable, Sendable {
         mediumRemoteRiskActions: [.challenge, .log]
     )
 
+    /// 安全地板钳制：远程下发的 policy 不得降级本地安全基线。
+    /// 高风险阈值上限 60（默认值）、中风险阈值上限 40（默认值），
+    /// 且 mediumThreshold ≤ threshold；minDetectionCount 钳制到 1…10
+    ///（远程把它抬高会导致时序检测永远不触发）。
+    /// 每次实际改写都会记录日志。
+    public func clampedToSecurityFloor() -> Policy {
+        var changes: [String] = []
+        var threshold = threshold
+        if threshold > 60 { changes.append("threshold: \(threshold) -> 60"); threshold = 60 }
+        if threshold < 0 { changes.append("threshold: \(threshold) -> 0"); threshold = 0 }
+        var mediumThreshold = mediumThreshold
+        if mediumThreshold > 40 { changes.append("mediumThreshold: \(mediumThreshold) -> 40"); mediumThreshold = 40 }
+        if mediumThreshold < 0 { changes.append("mediumThreshold: \(mediumThreshold) -> 0"); mediumThreshold = 0 }
+        if mediumThreshold > threshold {
+            changes.append("mediumThreshold: \(mediumThreshold) -> \(threshold) (must be <= threshold)")
+            mediumThreshold = threshold
+        }
+        var minDetectionCount = minDetectionCount
+        if minDetectionCount > 10 { changes.append("minDetectionCount: \(minDetectionCount) -> 10"); minDetectionCount = 10 }
+        if minDetectionCount < 1 { changes.append("minDetectionCount: \(minDetectionCount) -> 1"); minDetectionCount = 1 }
+        if !changes.isEmpty {
+            Logger.log("Policy.clampedToSecurityFloor: \(changes.joined(separator: ", "))")
+        }
+        return Policy(
+            threshold: threshold,
+            mediumThreshold: mediumThreshold,
+            timeWindow: timeWindow,
+            minDetectionCount: minDetectionCount,
+            weights: weights,
+            highRemoteRiskActions: highRemoteRiskActions,
+            mediumRemoteRiskActions: mediumRemoteRiskActions
+        )
+    }
+
     public static let development = Policy(
         threshold: 80,
         mediumThreshold: 50,
@@ -523,6 +557,47 @@ public struct BehaviorThresholds: Codable, Sendable {
     }
 
     public static let `default` = BehaviorThresholds()
+
+    /// 服务端范围钳制：远程下发的 13 项行为阈值超出合法范围时钳制到范围内，
+    /// 并记录每次钳制（调用方日志）。范围按各字段语义硬编码：
+    /// 分数类 0…1、spread 类 0…100、CV 类 0…10、方差类 ≥0、
+    /// maxBehaviorScore 1…100，且 low ≤ high（乱序时交换）。
+    /// 钳制而不是拒绝：单项越界不应导致整份远程配置失效。
+    public func clampedToServerRanges() -> BehaviorThresholds {
+        var changes: [String] = []
+        func clamp(_ value: Double, _ lo: Double, _ hi: Double, _ name: String) -> Double {
+            let clamped = min(max(value, lo), hi)
+            if clamped != value { changes.append("\(name): \(value) -> \(clamped)") }
+            return clamped
+        }
+        var tsl = clamp(touchSpreadLow, 0, 100, "touchSpreadLow")
+        var tsh = clamp(touchSpreadHigh, 0, 100, "touchSpreadHigh")
+        if tsl > tsh { swap(&tsl, &tsh); changes.append("touchSpreadLow/High reordered") }
+        var ticl = clamp(touchIntervalCVLow, 0, 10, "touchIntervalCVLow")
+        var tich = clamp(touchIntervalCVHigh, 0, 10, "touchIntervalCVHigh")
+        if ticl > tich { swap(&ticl, &tich); changes.append("touchIntervalCVLow/High reordered") }
+        var slh = clamp(swipeLinearityHigh, 0, 1, "swipeLinearityHigh")
+        var sll = clamp(swipeLinearityLow, 0, 1, "swipeLinearityLow")
+        if sll > slh { swap(&sll, &slh); changes.append("swipeLinearityLow/High reordered") }
+        let ms = clamp(motionStillness, 0, 1, "motionStillness")
+        let tmc = clamp(touchMotionCorrelation, 0, 1, "touchMotionCorrelation")
+        let msc = clamp(minStillnessForCorrelation, 0, 1, "minStillnessForCorrelation")
+        let fv = clamp(forceVariance, 0, 1, "forceVariance")
+        let rv = clamp(radiusVariance, 0, 1, "radiusVariance")
+        let sscv = clamp(swipeSpeedCV, 0, 10, "swipeSpeedCV")
+        let mbs = clamp(maxBehaviorScore, 1, 100, "maxBehaviorScore")
+        if !changes.isEmpty {
+            Logger.log("BehaviorThresholds.clampedToServerRanges: \(changes.joined(separator: ", "))")
+        }
+        return BehaviorThresholds(
+            touchSpreadLow: tsl, touchSpreadHigh: tsh,
+            touchIntervalCVLow: ticl, touchIntervalCVHigh: tich,
+            swipeLinearityHigh: slh, swipeLinearityLow: sll,
+            motionStillness: ms, touchMotionCorrelation: tmc,
+            minStillnessForCorrelation: msc, forceVariance: fv,
+            radiusVariance: rv, swipeSpeedCV: sscv, maxBehaviorScore: mbs
+        )
+    }
 }
 
 // MARK: - 检测器配置
@@ -1431,7 +1506,8 @@ extension RemoteConfig {
             timestamp: timestamp,
             environment: environment,
             description: description,
-            policy: policy,
+            // policy 同样过安全地板：远程不得把高/中风险阈值抬高来降级检测。
+            policy: policy.clampedToSecurityFloor(),
             detector: detector.enforcingReleaseSecurityFloor(),
             whitelist: whitelist,
             experiments: experiments,
@@ -1483,6 +1559,9 @@ extension RemoteConfig {
 
 extension RemoteDetectorConfig {
     func enforcingReleaseSecurityFloor() -> RemoteDetectorConfig {
+        // 最小检测集合：远程不得关闭核心检测开关；采样/时长参数钳制到
+        // 合法范围（远程把它抬到天文数字会让行为检测永远不触发）。
+        // 13 项行为阈值与各机型覆盖统一过服务端范围钳制。
         RemoteDetectorConfig(
             jailbreakThreshold: min(jailbreakThreshold, 50),
             jailbreakEnableFileDetect: true,
@@ -1492,17 +1571,17 @@ extension RemoteDetectorConfig {
             jailbreakEnableSchemeDetect: true,
             jailbreakEnableHookDetect: true,
             enableBehaviorDetect: true,
-            behaviorSampleWindow: behaviorSampleWindow,
-            touchMinSampleCount: touchMinSampleCount,
-            motionMinSampleCount: motionMinSampleCount,
+            behaviorSampleWindow: min(max(behaviorSampleWindow, 10), 1000),
+            touchMinSampleCount: min(max(touchMinSampleCount, 1), 100),
+            motionMinSampleCount: min(max(motionMinSampleCount, 1), 100),
             enableNetworkSignals: true,
             detectVPN: detectVPN,
             detectProxy: detectProxy,
             enableCloudPhoneDetect: enableCloudPhoneDetect,
-            maxDetectionDuration: maxDetectionDuration,
+            maxDetectionDuration: min(max(maxDetectionDuration, 500), 30_000),
             enableAsyncDetection: enableAsyncDetection,
-            behaviorThresholds: behaviorThresholds,
-            deviceModelBehaviorOverrides: deviceModelBehaviorOverrides
+            behaviorThresholds: behaviorThresholds?.clampedToServerRanges(),
+            deviceModelBehaviorOverrides: deviceModelBehaviorOverrides?.mapValues { $0.clampedToServerRanges() }
         )
     }
 }

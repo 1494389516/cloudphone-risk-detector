@@ -138,7 +138,7 @@ void cprisk_vm_hardening_init(cprisk_vm_interp_frame_t *fr)
          * the other produce different hashes — a plain FNV-1a chain over
          * the bytes alone would collide on (prefix, prefix||suffix) pairs.
          * This matches the length-prefix discipline used by other digest
-         * derivations in the codebase (string HMAC ABI, etc.).
+         * derivations in the codebase (string CPRisk-MAC ABI, etc.).
          */
         uint32_t h = 0x811C9DC5u;
         h ^= (fr->blen      ) & 0xFFu; h *= 0x01000193u;

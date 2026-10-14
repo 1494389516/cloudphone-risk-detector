@@ -12,7 +12,13 @@ public enum VMPatchRewriterError: Error, CustomStringConvertible {
     }
 }
 
-/// Function-ID ABI only; not a bridge for arbitrary native function arguments.
+/// Function-ID ABI only; NOT a bridge for arbitrary native function arguments.
+///
+/// The trampoline passes only a function-ID (in `x0`) and tail-branches to
+/// the VM entry. There is NO argument marshalling, NO return-value
+/// conversion, and NO calling-convention adaptation for arbitrary native
+/// signatures — callers must already conform to the VM entry convention.
+/// Do not describe Pass 13 as providing an ABI bridge.
 /// Tail branches preserve the caller's LR (a BL followed by RET would loop).
 public enum VMTrampolineTemplate: UInt32, CaseIterable, Sendable, Equatable {
     /// `MOVZ/MOVK*3` on `x0`, `B`, padding.

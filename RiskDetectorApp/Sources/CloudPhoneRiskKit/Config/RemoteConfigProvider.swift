@@ -66,7 +66,10 @@ public final class RemoteConfigProvider: @unchecked Sendable {
         self._configStalenessThreshold = cacheValidityDuration
         self.urlSession = CertificatePinningSessionDelegate.pinnedSession(
             pinMaterial: pinnedPinMaterial,
-            allowsSystemCA: pinnedPinMaterial.isEmpty
+            // 空 pin 时也不回落系统 CA：pin 未配置时拉取直接失败（delegate 取消
+            // 挑战），调用方使用本地默认配置。绝不“无 pin 即信任系统 CA”，
+            // 否则攻击者只需让 pin 配置丢失即可用任意 CA 证书劫持远程配置。
+            allowsSystemCA: false
         )
 
         if let cached = cache.load(), !cached.isExpired(duration: cacheValidityDuration) {

@@ -1,5 +1,8 @@
 # CloudPhoneRiskKit SDK Portal 设计规范
 
+> 占位说明：本文示例中的域名（`*.example.com`，RFC 2606 保留示例域）、邮箱与 API Key 均为占位示例，
+> 不是真实地址或真实密钥；接入时请替换为实际值。
+
 > 版本: 1.0 | 日期: 2026-03-27
 
 ---
@@ -184,7 +187,7 @@ Response 200:
   "config": { ... RemoteConfig JSON ... },
   "signature": "base64-hmac-sha256",
   "published_at": "2026-03-27T10:00:00Z",
-  "publisher": "admin@example.com"
+  "publisher": "admin@example.com"  // 占位示例：请替换为真实管理员邮箱
 }
 ```
 
@@ -354,14 +357,14 @@ POST /api/v1/tenants
 Body:
 {
   "name": "Example Corp",
-  "contact_email": "admin@example.com",
+  "contact_email": "admin@example.com",  // 占位示例：请替换为真实联系邮箱
   "tier": "standard" | "enterprise",
   "daily_quota": 1000000
 }
 Response 201:
 {
   "tenant_id": "uuid",
-  "api_key": "cpk_live_...",
+  "api_key": "cpk_live_...",  // 占位示例：不是真实密钥；真实密钥须由服务端签发并经 Secret 管理
   "created_at": "..."
 }
 ```
@@ -654,7 +657,7 @@ spec:
     spec:
       containers:
         - name: portal-api
-          image: registry.example.com/riskkit-portal-api:latest
+          image: registry.example.com/riskkit-portal-api:latest  # 占位示例：请替换为真实镜像仓库地址
           ports:
             - containerPort: 8080
           env:

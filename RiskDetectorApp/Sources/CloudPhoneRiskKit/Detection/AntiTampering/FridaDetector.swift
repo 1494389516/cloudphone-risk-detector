@@ -181,6 +181,11 @@ struct FridaDetector: Detector {
     }
 
     private var aggressivePortSweepEnabled: Bool {
+        #if !DEBUG
+        // 环境变量开关仅在 DEBUG 生效：Release 下忽略调用方环境，防止
+        // 通过注入环境变量改变检测行为（开启激进端口扫描）。
+        return false
+        #endif
         guard let raw = ProcessInfo.processInfo.environment[ObfuscatedConstants.envKeyCpriskFridaPortSweep]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() else {
@@ -190,6 +195,9 @@ struct FridaDetector: Detector {
     }
 
     private var fullPortSweepEnabled: Bool {
+        #if !DEBUG
+        return false
+        #endif
         guard let raw = ProcessInfo.processInfo.environment[ObfuscatedConstants.envKeyCpriskFridaPortSweepAll]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() else {
@@ -199,6 +207,9 @@ struct FridaDetector: Detector {
     }
 
     private var fullPortSweepMaxPort: Int {
+        #if !DEBUG
+        return 65535
+        #endif
         guard let raw = ProcessInfo.processInfo.environment[ObfuscatedConstants.envKeyCpriskFridaPortSweepMax]?
             .trimmingCharacters(in: .whitespacesAndNewlines),
               let parsed = Int(raw),
@@ -210,6 +221,9 @@ struct FridaDetector: Detector {
 
     /// 可选：外部/测试注入的内存命中（显式 `CPRISK_FRIDA_MEMSIG=1` 才启用，避免与内置扫描耦合）。
     private var hookMemorySignatureScanEnabled: Bool {
+        #if !DEBUG
+        return false
+        #endif
         guard let raw = ProcessInfo.processInfo.environment[ObfuscatedConstants.envKeyCpriskFridaMemsig]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() else {
@@ -219,6 +233,9 @@ struct FridaDetector: Detector {
     }
 
     private var anomalousPortScanEnvEnabled: Bool {
+        #if !DEBUG
+        return false
+        #endif
         guard let raw = ProcessInfo.processInfo.environment[ObfuscatedConstants.envKeyCpriskFridaAnomScan]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() else {

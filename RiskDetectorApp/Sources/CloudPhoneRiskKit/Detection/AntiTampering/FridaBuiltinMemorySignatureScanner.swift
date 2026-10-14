@@ -226,7 +226,12 @@ enum FridaBuiltinMemorySignatureScanner {
         }
     }
 
+    // 环境变量开关仅在 DEBUG 生效：Release 下一律返回默认值，防止通过
+    // 注入环境变量关闭/放大内存特征扫描。
     private static func envBool(key: String, defaultIfUnset: Bool) -> Bool {
+        #if !DEBUG
+        return defaultIfUnset
+        #endif
         guard let raw = ProcessInfo.processInfo.environment[key]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased(), !raw.isEmpty else {
@@ -242,6 +247,9 @@ enum FridaBuiltinMemorySignatureScanner {
     }
 
     private static func envInt(key: String, defaultValue: Int) -> Int {
+        #if !DEBUG
+        return defaultValue
+        #endif
         guard let raw = ProcessInfo.processInfo.environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
               let parsed = Int(raw) else {
             return defaultValue
@@ -250,6 +258,9 @@ enum FridaBuiltinMemorySignatureScanner {
     }
 
     private static func envUInt64(key: String, defaultValue: UInt64) -> UInt64 {
+        #if !DEBUG
+        return defaultValue
+        #endif
         guard let raw = ProcessInfo.processInfo.environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
               let parsed = UInt64(raw) else {
             return defaultValue

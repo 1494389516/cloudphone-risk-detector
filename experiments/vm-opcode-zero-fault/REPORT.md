@@ -2,6 +2,8 @@
 
 # 零 fault mask 的 opcode 扰动修复
 
+> 2026-10-04：按维护者要求移除仓库中的单元测试、差分/回归测试源码、测试运行脚本及对应测试 CI。下文测试命令和结果作为历史记录保留；需要复现时请使用删除前的提交 `16543b971eaeb247e8720f8aa927d45fe97e90c0`。
+
 基线：`d07b76404e19cd3dffd790fae55158c329d164c0`（阶段 2A 远端提交）。
 其 Git tree 与本地原提交 `263d0fd4945925e20421324ebaa4d7f97b1b5aab` 完全一致。
 
@@ -29,7 +31,7 @@ Linux x86_64，GCC 13.3.0，`-O2`。使用真实解释器、handler 和循环，
 非零 mask 包括 1、2、UINT64_MAX、域常量本身及固定混合值；结果并非断言
 每个故障字节非零，而是逐字节验证已有注入行为没有变化。
 
-复现：
+复现（历史记录：`run.py` 已于 2026-10-04 删除，命令不可复现）：
 
 ```sh
 python experiments/vm-opcode-zero-fault/run.py --cc gcc --output /tmp/vm-opcode-regression

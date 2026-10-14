@@ -1,7 +1,14 @@
 # SDK implementation evidence
 
+> ⚠️ 历史记录：本文记录实现当时的执行证据。`contracts/tests/` 已于 2026-10-04 按维护者要求移除，
+> 测试已移除、CI 不跑测试；下文 `unittest discover -s contracts/tests` 命令与“8/14 tests pass”等计数
+> 均为删除前的历史记录，不可复现。另：`validate_upload` 现已拒绝未知 `trust_level`（fail-closed），
+> 下文“Reference accepts unknown trust-level strings”一句已过期，见修正注。
+
 Pinned source SHA: `6aeaf6783247258eba3f516efebd006561d4471c`.
 Working tree changes only; no commit/branch operation performed by sub-agent.
+
+> ⚠️ 钉住的 SHA 对应修复前树（commit `f763c32`）。`fix/code-review` 分支的修复改动了被钉住的源码文件，上述 SHA 已失效；重新验证前不要把本文当作当前树的证据。
 
 | Issue | Trigger / minimal reproduction | Changed function or artifact | State |
 |---|---|---|---|
@@ -16,7 +23,7 @@ Working tree changes only; no commit/branch operation performed by sub-agent.
 
 Before implementation:
 
-- `python -m unittest discover -s contracts/tests -v`: exit 1,
+- `python -m unittest discover -s contracts/tests -v` (历史记录，目录已删除): exit 1,
   `ModuleNotFoundError: No module named 'contracts.report_contract'`.
   This is the new missing-contract test red, **not** proof of reproducing the
   original Swift bug at runtime.
@@ -25,7 +32,7 @@ Before implementation:
 
 After implementation:
 
-- `python -m unittest discover -s contracts/tests -v`: exit 0, 8 tests passed,
+- `python -m unittest discover -s contracts/tests -v` (历史记录，目录已删除): exit 0, 8 tests passed,
   including 20 vector subcases and tampered attestation-key negatives.
 - `git diff --check`: exit 0.
 
@@ -44,7 +51,8 @@ PR draft until a supported Apple runner executes tests and reviews protocol roll
   new signal ID with identical 55 weight. No unrelated detector or threshold edits.
 - Local churn no longer sets the old compressed graph-cluster bit, avoiding false
   cross-device semantics; old historical graph IDs remain supported.
-- Native DTO is still handwritten. Reference accepts unknown trust-level strings,
+- Native DTO is still handwritten. Reference rejects unknown trust-level strings
+  (fail-closed; a future level needs a contract update),
   rejects timestamp seconds and typed SDK/business-event confusion. It rejects
   floating-point payloads explicitly pending a universal canonical format.
 
@@ -57,7 +65,7 @@ Trigger / reproduction: producer-signed JSON containing `1e-7`, `-0.0`, Unicode
 and null was rejected by the Python verifier; `output_path_integrity: {"x":7}`
 passed structural validation despite the schema; no executable HKDF base-key
 verification existed. Initial `python -m unittest contracts.tests.test_wire_completion
--v` returned **2 failures, 1 error** (the imported legacy suite also ran).
+-v` (历史记录，目录已删除) returned **2 failures, 1 error** (the imported legacy suite also ran).
 
 Fixes:
 - `GrpcReportPayload.toGrpcCompatiblePayload`: transports the exact Foundation
@@ -74,7 +82,7 @@ Fixes:
   against the same wire fixtures used by Python. Existing proof and graph tests
   remain present.
 
-After patch: `python -m unittest discover -s contracts/tests -v`: **14 tests pass**,
+After patch: `python -m unittest discover -s contracts/tests -v` (历史记录，目录已删除): **14 tests pass**,
 including **20 original vectors + 8 additional raw-wire vectors**. This count does
 not represent full repository coverage. `python contracts/generate.py --check`
 and `git diff --check` pass.

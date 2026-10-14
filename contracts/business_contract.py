@@ -33,7 +33,13 @@ def decision_event(request):
     _validate(request,schema)
     event=dict(request['business_event'])
     if event['event_id']!=request['business_event_id']: raise ValueError('business event id mismatch')
-    event['ts']=event.pop('occurred_at_ms')/1000
+    # Integer-millisecond domain: NEVER float-divide milliseconds (``/ 1000`` loses
+    # precision for large timestamps). Keep exact ms in ``ts_ms``; ``ts`` is
+    # integer seconds (floor) for consumers that need second resolution.
+    occurred_ms=event.pop('occurred_at_ms')
+    if type(occurred_ms) is not int: raise ValueError('occurred_at_ms must be integer milliseconds')
+    event['ts_ms']=occurred_ms
+    event['ts']=occurred_ms//1000
     event['report_ids']=request['sdk_report_ids']
     event['decision_request_id']=request['request_id']
     return event

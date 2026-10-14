@@ -33,8 +33,15 @@ static uint64_t kCpriskGf2InitChecksum = 0u;
 
 static pthread_once_t kCpriskGf2InitOnce = PTHREAD_ONCE_INIT;
 
-// 种子常量。该值唯一影响矩阵内容，不影响算法正确性。
-static const uint64_t kCpriskGf2InitSeed = 0xCAFEBABEDEADBEEFULL;
+// 公开种子常量。该值唯一影响矩阵内容，不影响算法正确性。
+// 警告：该种子是公开常量（任何人读二进制都能拿到），因此由它生成的
+// 矩阵只提供混淆（obfuscation），不提供任何密钥性：攻击者拿到矩阵后
+// 即可完整复现该仿射变换。需要密钥绑定的调用方必须改用
+// cprisk_gf2_init_with_root_key()，由根密钥派生种子。
+// 由根密钥派生的种子在首次初始化前通过 pending 槽位传入（见
+// cprisk_gf2_init_with_root_key）；先运行的初始化获胜。
+static uint64_t s_gf2_pending_seed = 0u;
+static int s_gf2_pending_seed_set = 0;
 
 static uint64_t cprisk_gf2_xorshift64(uint64_t s) {
     s ^= s << 13;
@@ -77,9 +84,38 @@ uint64_t cprisk_gf2_compute_full_checksum(void) {
 // to N_EXT. v7.7 audit-fix F1+F4 (post-1st-pass: comment was wrong about the mechanism).
 // Seed kCpriskGf2InitSeed (0xCAFEBABEDEADBEEFULL) is materialized as immediate here —
 // VMP partial walks it through VPC to defeat constant-search matrix recovery.
+/* Derive the GF(2) matrix seed from a 32-byte root key:
+ * seed = SHA256("cprisk.gf2.seed.v1" || root_key), first 8 bytes LE.
+ * Prefer this over the public-constant seed whenever a root key is
+ * available: the matrix then depends on secret material instead of a
+ * value anyone can read out of the binary. Must be called before the
+ * first transform use (pthread_once: whichever init runs first wins). */
+static void cprisk_gf2_init_if_needed(void);
+
+__attribute__((visibility("default")))
+void cprisk_gf2_init_with_root_key(const uint8_t root_key[32]) {
+    if (root_key == NULL)
+        return;
+    static const char label[] = "cprisk.gf2.seed.v1";
+    uint8_t material[sizeof(label) - 1u + 32u];
+    memcpy(material, label, sizeof(label) - 1u);
+    memcpy(material + sizeof(label) - 1u, root_key, 32u);
+    uint8_t digest[32];
+    cprisk_sha256(material, sizeof(material), digest);
+    cprisk_secure_zero(material, sizeof(material));
+    uint64_t seed = 0u;
+    memcpy(&seed, digest, sizeof(seed));
+    cprisk_secure_zero(digest, sizeof(digest));
+    if (seed == 0u)
+        seed = 0x9E3779B97F4A7C15ULL;
+    s_gf2_pending_seed = seed;
+    s_gf2_pending_seed_set = 1;
+    cprisk_gf2_init_if_needed();
+}
+
 __attribute__((visibility("default")))
 void cprisk_gf2_init_real(void) {
-    uint64_t s = kCpriskGf2InitSeed;
+    uint64_t s = s_gf2_pending_seed_set ? s_gf2_pending_seed : kCpriskGf2InitSeed;
     for (size_t i = 0u; i < CPRISK_GF2_MATRIX_BYTES; ++i) {
         s = cprisk_gf2_xorshift64(s);
         kCpriskGf2Matrix[i] = (uint8_t)(s & 0xFFu);

@@ -12,10 +12,13 @@
 #include "include/cprisk_memory_guard.h"
 #include "include/CRiskCore.h"
 
+#include <errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <string.h>
 #include <signal.h>
 #include <pthread.h>
+#include <unistd.h>
 #include <stdatomic.h>
 #include <sys/mman.h>
 #include <mach/mach.h>
@@ -45,6 +48,15 @@ static int s_sigbus_guard_installed = 0;
 static struct cprisk_guard_state *s_sigbus_guard_state = NULL;
 
 static int s_fault_handlers_installed = 0;
+/* Self-pipe for the SIGBUS/SIGSEGV handler (issue 35): the handler only
+ * writes one byte here + sets sig_atomic_t flags (both async-signal-safe)
+ * and then re-raises; all real work (poison, deception material, watchdog
+ * notes) happens in normal context via cprisk_guard_fault_drain_pending().
+ * The handler must NEVER call malloc/locks/printf/sigaction/raise or
+ * forward to a previous handler — none of those are async-signal-safe. */
+static int s_fault_pipe[2] = { -1, -1 };
+static volatile sig_atomic_t s_fault_pending_sig = 0;
+static volatile uintptr_t s_fault_pending_addr = 0;
 static uint32_t s_mem_trap_fault_ref = 0;
 static uint32_t s_text_honeypot_fault_ref = 0;
 static volatile uintptr_t s_text_honeypot_lo = 0;
@@ -111,61 +123,73 @@ static int cprisk_sigbus_addr_in_guard(const struct cprisk_guard_state *state, c
 
 static void cprisk_guard_fault_handler_i(int sig, siginfo_t *info, void *uap);
 
-static void cprisk_forward_prev_sigbus(int sig, siginfo_t *info, void *uap) {
-    if ((s_prev_sigbus_action.sa_flags & SA_SIGINFO) != 0) {
-        void (*prev_sigaction)(int, siginfo_t *, void *) = s_prev_sigbus_action.sa_sigaction;
-        if (prev_sigaction != NULL &&
-            prev_sigaction != (void (*)(int, siginfo_t *, void *))SIG_IGN &&
-            prev_sigaction != (void (*)(int, siginfo_t *, void *))SIG_DFL) {
-            prev_sigaction(sig, info, uap);
-            return;
-        }
-    } else {
-        if (s_prev_sigbus_action.sa_handler == SIG_IGN)
-            return;
-        if (s_prev_sigbus_action.sa_handler != NULL &&
-            s_prev_sigbus_action.sa_handler != SIG_DFL) {
-            s_prev_sigbus_action.sa_handler(sig);
-            return;
-        }
-    }
+static int cprisk_addr_in_text_honeypot(const void *addr);
 
-    struct sigaction dfl_action;
-    memset(&dfl_action, 0, sizeof(dfl_action));
-    dfl_action.sa_handler = SIG_DFL;
-    sigaction(SIGBUS, &dfl_action, NULL);
-    raise(SIGBUS);
+/* Drain the fault self-pipe in NORMAL context (never from a handler) and
+ * run the real fault response exactly once per recorded fault. A monitoring
+ * thread / watchdog should call this periodically; if it is never called,
+ * the fault is still recorded in s_fault_pending_* and the process still
+ * terminates via the re-raise in the handler. */
+void cprisk_guard_fault_drain_pending(void) {
+    int pending = 0;
+    if (s_fault_pipe[0] >= 0) {
+        uint8_t buf[32];
+        ssize_t r;
+        do {
+            r = read(s_fault_pipe[0], buf, sizeof(buf));
+            if (r > 0)
+                pending = 1;
+        } while (r > 0);
+    }
+    if (s_fault_pending_sig != 0)
+        pending = 1;
+    if (!pending)
+        return;
+    const uintptr_t addr = s_fault_pending_addr;
+    s_fault_pending_sig = 0;
+    s_fault_pending_addr = 0;
+    /* Same filter the old in-handler code applied: only guard/honeypot
+     * addresses trigger the poison/deception response. Other faults
+     * (real crashes) terminate via the re-raise without extra side effects. */
+    if (cprisk_sigbus_addr_in_guard(s_sigbus_guard_state, (const void *)addr) ||
+        cprisk_addr_in_text_honeypot((const void *)addr))
+        cprisk_guard_page_fault_notify();
 }
 
-static void cprisk_forward_prev_sigsegv(int sig, siginfo_t *info, void *uap) {
-    if ((s_prev_sigsegv_action.sa_flags & SA_SIGINFO) != 0) {
-        void (*prev_sigaction)(int, siginfo_t *, void *) = s_prev_sigsegv_action.sa_sigaction;
-        if (prev_sigaction != NULL &&
-            prev_sigaction != (void (*)(int, siginfo_t *, void *))SIG_IGN &&
-            prev_sigaction != (void (*)(int, siginfo_t *, void *))SIG_DFL) {
-            prev_sigaction(sig, info, uap);
-            return;
-        }
-    } else {
-        if (s_prev_sigsegv_action.sa_handler == SIG_IGN)
-            return;
-        if (s_prev_sigsegv_action.sa_handler != NULL &&
-            s_prev_sigsegv_action.sa_handler != SIG_DFL) {
-            s_prev_sigsegv_action.sa_handler(sig);
-            return;
-        }
-    }
-
-    signal(SIGSEGV, SIG_DFL);
-    raise(SIGSEGV);
-}
+/* Previous-handler forwarding was intentionally REMOVED (issue 35): calling
+ * an unknown previous handler / sigaction / raise from inside a signal
+ * handler is not async-signal-safe. The fault is recorded via the
+ * self-pipe + flags above and re-raised; the disposition was reset to
+ * default by SA_RESETHAND, so the re-raise terminates with the default
+ * action. Limitation: a previously installed handler (e.g. a crash
+ * reporter) is NOT chained on this path. */
 
 static int cprisk_fault_handlers_install_locked(void) {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sigemptyset(&sa.sa_mask);
     sa.sa_sigaction = cprisk_guard_fault_handler_i;
-    sa.sa_flags = SA_SIGINFO | SA_NODEFER;
+    /* SA_RESETHAND: the first delivery resets the disposition to default,
+     * so the handler's kill() re-raise terminates with the default action
+     * instead of re-entering the handler. SA_NODEFER is intentionally NOT
+     * set: the faulting signal stays blocked while the handler runs. */
+    sa.sa_flags = SA_SIGINFO | SA_RESETHAND;
+    /* Self-pipe (best effort): created once; if it fails, the handler
+     * still records via flags + re-raises. */
+    if (s_fault_pipe[0] < 0) {
+        /* pipe2() does NOT exist on Apple platforms: use pipe() +
+         * fcntl() there. (Linux may use pipe2, but the portable path
+         * works everywhere, so just use it.) */
+        if (pipe(s_fault_pipe) == 0) {
+            (void)fcntl(s_fault_pipe[0], F_SETFL, O_NONBLOCK);
+            (void)fcntl(s_fault_pipe[1], F_SETFL, O_NONBLOCK);
+            (void)fcntl(s_fault_pipe[0], F_SETFD, FD_CLOEXEC);
+            (void)fcntl(s_fault_pipe[1], F_SETFD, FD_CLOEXEC);
+        } else {
+            s_fault_pipe[0] = -1;
+            s_fault_pipe[1] = -1;
+        }
+    }
 
     if (sigaction(SIGBUS, &sa, &s_prev_sigbus_action) != 0)
         return -1;
@@ -183,6 +207,14 @@ static void cprisk_fault_handlers_uninstall_locked(void) {
     (void)sigaction(SIGBUS, &s_prev_sigbus_action, NULL);
     (void)sigaction(SIGSEGV, &s_prev_sigsegv_action, NULL);
     s_fault_handlers_installed = 0;
+    if (s_fault_pipe[0] >= 0) {
+        (void)close(s_fault_pipe[0]);
+        s_fault_pipe[0] = -1;
+    }
+    if (s_fault_pipe[1] >= 0) {
+        (void)close(s_fault_pipe[1]);
+        s_fault_pipe[1] = -1;
+    }
 }
 
 static int cprisk_fault_handlers_acquire_mem_trap_locked(void) {
@@ -228,18 +260,35 @@ static int cprisk_addr_in_text_honeypot(const void *addr) {
     return (t >= lo && t < hi) ? 1 : 0;
 }
 
+/* Async-signal-safe fault handler (issue 35): ONLY async-signal-safe
+ * operations here — plain stores to volatile sig_atomic_t / uintptr_t,
+ * write(2) to the self-pipe, kill(2), _Exit(2). In particular this
+ * handler does NOT call cprisk_guard_page_fault_notify() (locks, Mach
+ * calls, deception-material work — none of it is signal-safe) and does
+ * NOT forward to a previous handler. The handler is installed with
+ * SA_RESETHAND, so the kill() below is delivered with the DEFAULT
+ * disposition and terminates the process; the recorded fault is picked
+ * up by cprisk_guard_fault_drain_pending() if a monitor thread drains
+ * the pipe before termination. Guard-page faults are fatal by design:
+ * the faulting instruction would otherwise retry forever. */
 static void cprisk_guard_fault_handler_i(int sig, siginfo_t *info, void *uap) {
-    if (info != NULL) {
-        void *addr = info->si_addr;
-        if (cprisk_sigbus_addr_in_guard(s_sigbus_guard_state, addr) ||
-            cprisk_addr_in_text_honeypot(addr)) {
-            cprisk_guard_page_fault_notify();
-        }
+    (void)uap;
+    if (info != NULL)
+        s_fault_pending_addr = (uintptr_t)info->si_addr;
+    s_fault_pending_sig = sig;
+    if (s_fault_pipe[1] >= 0) {
+        const uint8_t b = (uint8_t)sig;
+        ssize_t r;
+        do {
+            r = write(s_fault_pipe[1], &b, 1);
+        } while (r < 0 && errno == EINTR);
+        (void)r;
     }
-    if (sig == SIGBUS)
-        cprisk_forward_prev_sigbus(sig, info, uap);
-    else
-        cprisk_forward_prev_sigsegv(sig, info, uap);
+    /* Re-raise with default disposition (SA_RESETHAND reset it). */
+    (void)kill(getpid(), sig);
+    /* If kill() returned (signal blocked), do not return to the faulting
+     * instruction — that would spin. _Exit is async-signal-safe. */
+    _Exit(128 + sig);
 }
 
 int cprisk_register_text_honeypot_page(void *page, size_t len) {

@@ -2,7 +2,7 @@
  * CRiskCore - Import Table Encryption resolver for cprisk-armor ABI.
  *
  * Reads the encrypted import table from __DATA.__swift5_dyrel,
- * verifies HMAC-SHA256 integrity, decrypts symbol names via
+ * verifies CPRisk-MAC-SHA256 integrity, decrypts symbol names via
  * SHA256-based keystream, and resolves them via dlsym.
  *
  * Table layout:
@@ -14,8 +14,8 @@
  *   Index entries (48 bytes each):
  *     uint32_t data_offset   (relative to start of encrypted name data)
  *     uint32_t data_length   (byte length of encrypted name)
- *     uint8_t  nonce[8]      (random nonce used in HMAC and keystream)
- *     uint8_t  hmac_tag[32]  (HMAC-SHA256 over nonce || plaintext_name)
+ *     uint8_t  nonce[8]      (random nonce used in CPRisk-MAC and keystream)
+ *     uint8_t  mac_tag[32]  (CPRisk-MAC-SHA256 over nonce || plaintext_name)
  *   Encrypted name data (variable):
  *     Concatenated encrypted name bytes, in entry order.
  */
@@ -58,7 +58,7 @@
 
 /*
  * dlsym(RTLD_DEFAULT, …) is a high-value hook target: it can steer encrypted
- * imports to attacker stubs while leaving HMAC/name decryption intact.
+ * imports to attacker stubs while leaving CPRisk-MAC/name decryption intact.
  * cprisk_dlsym() walks the Mach-O export trie from dyld_all_image_infos (no
  * libc dlsym). When trie resolution in known system dylibs yields a unique
  * address that disagrees with dlsym, fail closed.
@@ -124,6 +124,10 @@ static void *cprisk_import_crosscheck_dlsym_vs_trie_i(
 }
 
 uint32_t cprisk_test_import_resolve_strategy_for_symbol(const char *symbol_name) {
+#if !defined(DEBUG) || !DEBUG
+    /* Test hook: inert outside DEBUG builds (issue 18). */
+    return 0;
+#endif
     if (!symbol_name || symbol_name[0] == '\0') {
         return CPRISK_IMPORT_RESOLVE_PATH_NONE;
     }
@@ -263,7 +267,7 @@ static uint32_t cprisk_import_cache_tag_i(
     memcpy(msg + 4 + sizeof(addr), &table_fingerprint, sizeof(table_fingerprint));
 
     uint8_t digest[CPRISK_SHA256_DIGEST_LENGTH];
-    cprisk_hmac_sha256(key, CPRISK_ARMOR_KEY_SIZE, msg, sizeof(msg), digest);
+    cprisk_mac_sha256(key, CPRISK_ARMOR_KEY_SIZE, msg, sizeof(msg), digest);
     uint32_t tag = 0u;
     memcpy(&tag, digest, sizeof(tag));
     cprisk_secure_zero(digest, sizeof(digest));
@@ -354,26 +358,17 @@ static int cprisk_derive_import_key(uint8_t out_key[CPRISK_ARMOR_KEY_SIZE]) {
 
     uint8_t zero_seed[CPRISK_ARMOR_KEY_SIZE];
     memset(zero_seed, 0, sizeof(zero_seed));
+    /* No fallback key derivation (issue 60/79): if the white-box
+     * evaluation fails, import decryption HARD-FAILS. A deterministic
+     * fallback key derived from runtime material would silently
+     * substitute a weaker, always-available key path. */
     int rc = cprisk_whitebox_evaluate_domain(
         CPRISK_WHITEBOX_DOMAIN_IMPORT_ENCRYPTION,
         zero_seed,
         out_key
     );
-    if (rc != 0) {
-        uint8_t runtime_material[CPRISK_ARMOR_KEY_SIZE];
-        static const char label[] = "cprisk.import.key.fallback.v1";
-        uint8_t fallback_seed[CPRISK_ARMOR_KEY_SIZE + sizeof(label) - 1u];
-        memset(runtime_material, 0, sizeof(runtime_material));
-        if (cprisk_get_runtime_material(runtime_material) == 0) {
-            memset(fallback_seed, 0, sizeof(fallback_seed));
-            memcpy(fallback_seed, runtime_material, CPRISK_ARMOR_KEY_SIZE);
-            memcpy(fallback_seed + CPRISK_ARMOR_KEY_SIZE, label, sizeof(label) - 1u);
-            cprisk_sha256(fallback_seed, sizeof(fallback_seed), out_key);
-            rc = 0;
-            cprisk_secure_zero(fallback_seed, sizeof(fallback_seed));
-        }
-        cprisk_secure_zero(runtime_material, sizeof(runtime_material));
-    }
+    if (rc != 0)
+        cprisk_secure_zero(out_key, CPRISK_ARMOR_KEY_SIZE);
     cprisk_secure_zero(zero_seed, sizeof(zero_seed));
     return rc;
 }
@@ -540,7 +535,7 @@ int cprisk_resolve_import(uint32_t symbol_index, void **out_addr) {
     memcpy(&data_off, idx, 4);
     memcpy(&data_len, idx + 4, 4);
     const uint8_t *nonce = idx + 8;
-    const uint8_t *stored_hmac = idx + 16;
+    const uint8_t *stored_mac = idx + 16;
 
     /* Encrypted name data starts after all index entries */
     const uint8_t *encrypted_names_base = sec + index_table_end;
@@ -569,24 +564,24 @@ int cprisk_resolve_import(uint32_t symbol_index, void **out_addr) {
     }
     name_buf[data_len] = '\0';
 
-    /* Verify HMAC-SHA256 over nonce || plaintext_name.
-     * HMAC input = nonce (8 bytes) || plaintext_name. */
-    uint8_t hmac_input[8 + 512];
-    memcpy(hmac_input, nonce, 8);
-    memcpy(hmac_input + 8, name_buf, data_len);
-    uint8_t computed_hmac[CPRISK_SHA256_DIGEST_LENGTH];
-    cprisk_hmac_sha256(key, CPRISK_ARMOR_KEY_SIZE,
-                       hmac_input, 8 + data_len,
-                       computed_hmac);
+    /* Verify CPRisk-MAC-SHA256 over nonce || plaintext_name.
+     * CPRisk-MAC input = nonce (8 bytes) || plaintext_name. */
+    uint8_t mac_input[8 + 512];
+    memcpy(mac_input, nonce, 8);
+    memcpy(mac_input + 8, name_buf, data_len);
+    uint8_t computed_mac[CPRISK_SHA256_DIGEST_LENGTH];
+    cprisk_mac_sha256(key, CPRISK_ARMOR_KEY_SIZE,
+                       mac_input, 8 + data_len,
+                       computed_mac);
 
-    if (cprisk_hmac_verify(stored_hmac, computed_hmac,
+    if (cprisk_mac_verify(stored_mac, computed_mac,
                             CPRISK_SHA256_DIGEST_LENGTH) != 0) {
-        /* HMAC mismatch — tampered or wrong key */
+        /* CPRisk-MAC mismatch — tampered or wrong key */
         cprisk_secure_zero(name_buf, data_len);
         cprisk_secure_zero(ks, data_len < sizeof(ks) ? data_len : sizeof(ks));
         cprisk_secure_zero(key, sizeof(key));
-        cprisk_secure_zero(hmac_input, sizeof(hmac_input));
-        cprisk_secure_zero(computed_hmac, sizeof(computed_hmac));
+        cprisk_secure_zero(mac_input, sizeof(mac_input));
+        cprisk_secure_zero(computed_mac, sizeof(computed_mac));
         return -1;
     }
 
@@ -602,8 +597,8 @@ int cprisk_resolve_import(uint32_t symbol_index, void **out_addr) {
             cprisk_secure_zero(name_buf, data_len);
             cprisk_secure_zero(ks, data_len < sizeof(ks) ? data_len : sizeof(ks));
             cprisk_secure_zero(key, sizeof(key));
-            cprisk_secure_zero(hmac_input, sizeof(hmac_input));
-            cprisk_secure_zero(computed_hmac, sizeof(computed_hmac));
+            cprisk_secure_zero(mac_input, sizeof(mac_input));
+            cprisk_secure_zero(computed_mac, sizeof(computed_mac));
             return -1;
         }
         resolve_path_flags |= CPRISK_IMPORT_RESOLVE_PATH_RTLD_FALLBACK;
@@ -628,8 +623,8 @@ int cprisk_resolve_import(uint32_t symbol_index, void **out_addr) {
     /* Clean up decrypted name before returning */
     cprisk_secure_zero(name_buf, data_len);
     cprisk_secure_zero(ks, data_len < sizeof(ks) ? data_len : sizeof(ks));
-    cprisk_secure_zero(hmac_input, sizeof(hmac_input));
-    cprisk_secure_zero(computed_hmac, sizeof(computed_hmac));
+    cprisk_secure_zero(mac_input, sizeof(mac_input));
+    cprisk_secure_zero(computed_mac, sizeof(computed_mac));
     cprisk_secure_zero(key, sizeof(key));
 
     *out_addr = addr;

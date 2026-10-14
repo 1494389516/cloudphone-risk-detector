@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 #if canImport(UIKit)
 import UIKit
@@ -6,6 +7,24 @@ import AppKit
 #endif
 
 public struct DeviceFingerprint: Codable, Sendable {
+    /// 是否对 IDFV 做哈希化上报（默认 `true`）。
+    ///
+    /// ⚠️ 追踪风险：IDFV 是同一供应商下稳定的设备标识，原始 UUID 上报后
+    /// 可被服务端跨会话追踪到同一台设备。默认对 IDFV 做 SHA-256 哈希：
+    /// 哈希仍是稳定伪匿名标识（同一设备 → 同一哈希），因此 IDFV 变化
+    /// 检测（重装/换机）逻辑仍然成立，但原始 UUID 不会出现在上报载荷、
+    /// 日志与崩溃转储中。注意：哈希不是匿名化——服务端仍能按哈希关联
+    /// 同一设备；如需彻底避免关联，需关闭上报（见 `hashIdentifierForVendor = false`
+    /// 仅在明确需要原始 IDFV 的合规场景下使用，且须经隐私评审）。
+    /// 字段名 `"iv"` 不变，避免改协议。
+    public static var hashIdentifierForVendor: Bool = true
+
+    /// IDFV 上报值：默认返回 SHA-256 哈希（hex），`hashIdentifierForVendor == false` 时返回原始 UUID。
+    public static func reportedIdentifierForVendor(_ rawUUIDString: String?) -> String? {
+        guard let raw = rawUUIDString, !raw.isEmpty else { return nil }
+        guard hashIdentifierForVendor else { return raw }
+        return SHA256.hash(data: Data(raw.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
     public var systemName: String
     public var systemVersion: String
     public var model: String
@@ -63,7 +82,7 @@ public struct DeviceFingerprint: Codable, Sendable {
             systemVersion: device.systemVersion,
             model: device.model,
             localizedModel: device.localizedModel,
-            identifierForVendor: device.identifierForVendor?.uuidString,
+            identifierForVendor: Self.reportedIdentifierForVendor(device.identifierForVendor?.uuidString),
             localeIdentifier: locale.identifier,
             timeZoneIdentifier: tz.identifier,
             timeZoneOffsetSeconds: tz.secondsFromGMT(),

@@ -8,7 +8,7 @@ Baseline: `5d8febd30b317082200dd399ff5d0ac64f37df1a`. Scope: 2A only; no tail di
 
 The baseline already has ONE shared out-of-line C definition named `cprisk_vm_oph_post_handler_i`. Its callers are in `cprisk_vm_dispatch_leaf_wb_wrapped_i`, not directly in Loop A/B. Moving or wrapping the function again would add an unnecessary boundary. The production change adds `__attribute__((noinline))` to that existing definition and a comment explaining the boundary. The body, signature, callers, and all other production files remain unchanged.
 
-Preserved order: bytecode SHA256 check (including failure early return), auxiliary update, inline-WB-done early return, periodic WB. XOR pre-mask/handler/unmask remains in the original wrapper. All loop hooks, fake dependency acc effects, A-only sync barrier, B bitmask cadences, handler returns, and cleanup remain unchanged. `run.py` asserts the entire interpreter source equals the baseline after removing exactly the annotation/comment.
+Preserved order: bytecode SHA256 check (including failure early return), auxiliary update, inline-WB-done early return, periodic WB. XOR pre-mask/handler/unmask remains in the original wrapper. All loop hooks, fake dependency acc effects, A-only sync barrier, B bitmask cadences, handler returns, and cleanup remain unchanged. `run.py`（历史记录，脚本已删除）曾断言整个解释器源码在仅移除 annotation/comment 后与基线一致。
 
 This is one explicitly non-inlined shared function, not a newly introduced API or symbol. `noinline` is a compiler constraint; it does not promise fixed machine-code size or whole-program linker uniqueness for all possible toolchains.
 
@@ -26,7 +26,7 @@ Actual production loop bodies, opcode handlers/variants, SHA256, hardening hooks
 
 Coverage caught a fixture issue before acceptance: the baseline's opcode-fault transform is nonidentity even with mask zero, so identity wire bytes did not reach every requested logical opcode. Fixtures now construct wire/class pairs through that existing decoder. This baseline behavior is NOT fixed in 2A; the corpus does not establish Swift emitter/runtime parity. Earlier incomplete-coverage runs are not acceptance evidence.
 
-Reproduce:
+Reproduce（历史记录：`run.py` 已于 2026-10-04 删除，命令不可复现）：
 
 ```sh
 python experiments/vm-post-handler-2a/run.py --clang /path/to/llvm/bin/clang --output /tmp/vm-post-native

@@ -4,15 +4,20 @@ info:
   description: |
     CloudPhoneRiskKit SDK 与风控服务端交互的 API 规范。
     覆盖风险评估上报、配置下发、健康检查三大场景。
+    契约优先级：报告上报以 `contracts/report-upload.schema.json`（HTTP JSON）为准；
+    `risk_service.proto`（cprisk.v1）为 LEGACY 只读参考，其字段名/时间表示/动作枚举与现行契约
+    不一致时以 HTTP JSON 为准，不得用于新集成。
+    时间表示：上报请求用整数 Unix 毫秒 `ts`；本文件其余 date-time 字段为 ISO-8601 字符串
+    （evaluate/config/health），两者不可混用；proto 的 `google.protobuf.Timestamp` 仅为 LEGACY 参考。
   version: "1.0.0"
   contact:
     name: Risk SDK Team
 
 servers:
   - url: https://risk-api.example.com
-    description: 生产环境
+    description: 生产环境（占位示例：请替换为实际服务端地址；example.com 为保留示例域，不是真实地址）
   - url: https://risk-api-staging.example.com
-    description: 预发布环境
+    description: 预发布环境（占位示例：请替换为实际服务端地址）
 
 paths:
   /v1/risk/evaluate:
@@ -175,8 +180,8 @@ components:
           example: "A1B2C3D4-E5F6-7890-ABCD-EF1234567890"
         sdkVersion:
           type: string
-          description: SDK 版本号
-          example: "6.5.0"
+          description: SDK 版本号（以代码 `Version.current` 为准，当前为 7.3.0）
+          example: "7.3.0"
         scenario:
           type: string
           description: 业务场景标识
@@ -213,6 +218,11 @@ components:
         action:
           type: string
           enum: [allow, challenge, monitor, block]
+          description: |
+            服务端动作集合。`monitor` = 仅观察、不挑战（服务端策略 `monitor` 阈值）。
+            本地 `RiskAction.stepUpAuth`（升级认证）是端侧决策动作，不出现在服务端响应中：
+            端侧公开动作会把 `stepUpAuth` 合并为 `challenge`（`toPublicRiskAction()`）。
+            proto（LEGACY）中的 `MONITOR` 与此处的 `monitor` 同名但属于只读参考，不作为现行契约依据。
         reasons:
           type: array
           items:
@@ -225,50 +235,80 @@ components:
     # ──────── Report Upload ────────
 
     ReportEnvelope:
+      # 现行 HTTP JSON 上报契约：字段名/类型以 contracts/report-upload.schema.json 为准。
+      # 本文件旧版的 camelCase 字段（reportId/payload/timestamp/signatureVersion）不是线格式，
+      # 已统一为下划线字段（report_id/payload_json/ts/sig_ver）。proto（LEGACY）中的同名字段
+      # （bytes payload、Timestamp timestamp）仅为只读参考，不得用于新集成。
       type: object
-      required: [reportId, payload, nonce, timestamp, keyId, signature]
+      required: [kind, contract_version, app_id, sdk_version, report_id, ts, nonce, session_token, sig_ver, key_id, device_id, scene, payload_json, signature, payload_sha256]
       properties:
-        reportId:
+        kind:
           type: string
-          format: uuid
-        payload:
+          const: sdk_report
+          description: HTTP 判别字段（新增；采集方 allow-list 须先升级）
+        contract_version:
+          type: integer
+          const: 1
+          description: HTTP 契约版本
+        app_id:
           type: string
-          description: Base64 编码的加密 payload
+          description: 应用 ID
+        sdk_version:
+          type: string
+          description: SDK 版本号（以代码 `Version.current` 为准，当前为 7.3.0）
+        report_id:
+          type: string
+          description: 报告 ID
+        ts:
+          type: integer
+          format: int64
+          description: Unix 毫秒时间戳（整数；2000-01-01 <= ts < 2100-01-01）。不是 ISO-8601 字符串，也不是秒。
         nonce:
           type: string
-          description: 一次性随机值（防重放）
-        timestamp:
+          description: 一次性随机值（防重放；服务端须原子消费）
+        session_token:
           type: string
-          format: date-time
-        keyId:
-          type: string
-          description: 签名密钥标识
-        signatureVersion:
+          description: 会话令牌（服务端须独立认证）
+        sig_ver:
           type: string
           enum: [v1, v2, v2a, v2d, v2h, v3]
           description: |
             签名版本。
-            - `v2`/`v2a`/`v2d`/`v2h`: legacy 签名域 = sigVer|nonce|ts|sessionToken|reportId|keyId|fieldMappingVersion|attestationKeyId|canonicalPayload
-              ⚠️ trustLevel / attestationAssertion / reAttestationAssertion 字节内容**不在签名域内** —— 服务端必须独立验证（见下）
-            - `v3` (推荐): 签名域扩展为 sigVer|nonce|ts|sessionToken|reportId|keyId|fmv|akId|trustLevel|sha256(attestationAssertion)|sha256(reAttestationAssertion)|canonicalPayload
-              所有客户端自报字段已纳入 HMAC，服务端单一信任 envelope.signature 即可
+            - `v1`/`v2`/`v2a`/`v2d`/`v2h` (legacy)：签名域 = sigVer|nonce|ts|sessionToken|reportId|keyId|fieldMappingVersion|attestationKeyId|canonicalPayload
+              ⚠️ trustLevel / attestationAssertion / reAttestationAssertion 字节内容**不在签名域内** —— 持有签名密钥者可在签名后篡改这些字段而 MAC 仍通过（SHA-256("") 类漏洞）。
+              服务端 MUST 拒绝 legacy 签名版本的新上报（迁移窗口须有时限，legacy 上报一律按不可信处理）。
+            - `v3` (推荐/现行)：签名域扩展为 sigVer|nonce|ts|sessionToken|reportId|keyId|fmv|akId|trustLevel|sha256(attestationAssertion)|sha256(reAttestationAssertion)|canonicalPayload
+              v3 MAC 只证明 assertion 字节签名后未被篡改，不证明 Apple 签发了 assertion；服务端仍 MUST 独立做 Apple App Attest 验证。
+              未独立验证 assertion、仅校验 envelope MAC 的服务端仍可被利用（零硬件信任根）。
+        key_id:
+          type: string
+          description: 签名密钥标识
+        device_id:
+          type: string
+          description: 设备 ID
+        scene:
+          type: string
+          description: 业务场景
+        payload_json:
+          type: string
+          description: Base64 编码的生产者签名 canonical payload 字节（原样传输，服务端不得重序列化）
+        payload_sha256:
+          type: string
+          description: Base64 编码的 payload 绑定摘要 SHA256(`len(nonce):nonce|ts|len(reportId):reportId|` + payload)
         signature:
           type: string
-          description: HMAC 签名（hex 编码）
-        bindingMode:
-          type: string
-          description: 签名绑定模式
-        trustLevel:
-          type: string
           description: |
-            ⚠️ **客户端自报字段，不可独立信任** (legacy 签名版本下不在 HMAC 域内)。
-            服务端 MUST 根据 attestation 验证结果 + 自身风险模型独立计算实际 trustLevel；
-            envelope 中此字段仅作信号参考。
-            v3 签名版本下 trustLevel 已纳入 HMAC，可在签名验证通过后信任。
-        attestationKeyId:
+            CPRisk-MAC 签名（hex 编码）。注意：legacy 签名使用非标准 pads（ipad=0x6D, opad=0xA3），
+            不是标准 HMAC-SHA256，不得用标准 HMAC 实现验签（见 `contracts/report_contract.py` 的 `legacy_cprisk_mac`）。
+        field_mapping_version:
           type: string
-          description: App Attest 密钥 ID（已在所有签名版本的 HMAC 域内）
-        attestationAssertion:
+          pattern: "^[A-Za-z0-9._:-]{1,64}$"
+          description: 字段混淆映射版本（服务端自有逆映射选择器）
+        attestation_key_id:
+          type: string
+          pattern: "^[A-Za-z0-9+/=_-]{1,256}$"
+          description: App Attest 密钥 ID（已在所有签名版本的 MAC 域内）
+        attestation_assertion:
           type: string
           description: |
             App Attest assertion (Base64)。
@@ -279,14 +319,32 @@ components:
             SDK 客户端仅做格式与一致性检查，**不在客户端验证密码学链路**。
             若服务端仅校验 envelope HMAC 而不独立验证 assertion，等价于零硬件信任根（SHA-256("") trap）。
             v3 签名版本下 sha256(assertion) 已纳入 HMAC，无法被签名后篡改 —— 但 Apple 链验证仍然必须做。
-        reAttestationAssertion:
+        re_attestation_assertion:
           type: string
           description: |
             ⚠️ Re-attestation assertion，与 attestationAssertion 同样需服务端独立 Apple 链验证。
             必须验证 challenge 来源是否为本次会话下发，防止 assertion 重放。
-        fieldMappingVersion:
+        trust_level:
           type: string
-          description: 字段混淆映射版本
+          enum: [hardware, derived, degraded]
+          description: |
+            客户端自报信任等级；未知值服务端 MUST 拒绝（`validate_upload` fail-closed）。
+            服务端 MUST 根据 attestation 验证结果 + 自身风险模型独立计算实际 trustLevel；
+            envelope 中此字段仅作信号参考。v3 下 trustLevel 已纳入 HMAC，签名后修改会破坏 MAC，
+            但仍不等于 Apple 背书——Apple 链验证仍然必须做。
+        binding_mode:
+          type: string
+          enum: [hkdf_hmac_v1, plain_hmac_v1, plain_hmac_fallback_v1, armor_request_binding_sha256_v1, self_reported_fields_bound_v3, external_signature_provider_v1, hkdf_derived_request_bound, armor_runtime_derived_request_bound, degraded_base_key_request_bound, base_key_request_bound]
+          description: 签名绑定模式（未知值服务端 MUST 拒绝）
+        binding_digest:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: 签名输入的 SHA-256 hex 摘要（64 位小写十六进制）
+        output_path_integrity:
+          type: object
+          additionalProperties:
+            type: string
+          description: 输出路径完整性遥测（字符串映射）
 
     ReportUploadResponse:
       type: object
@@ -298,8 +356,9 @@ components:
         signatureValid:
           type: boolean
         serverTimestamp:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
+          description: 服务端 Unix 毫秒时间戳（整数，与上报 `ts` 同一时间表示；不是 ISO-8601 字符串）
 
     # ──────── Config Fetch ────────
 
@@ -350,7 +409,10 @@ components:
           $ref: "#/components/schemas/RealtimeTelemetryAdaptiveConfig"
         signature:
           type: string
-          description: 服务端对配置 JSON 的 Ed25519 签名
+          description: |
+            服务端对配置 JSON 的签名。以 `ConfigSignatureVerifier` 为准：Ed25519 公钥已配置时用
+            Ed25519 验签（签名 64 字节）；未配置时回退 HMAC-SHA256；Ed25519 已配置但签名非 64 字节时
+            直接拒绝，不回退 HMAC（防降级攻击）。不得只写“Ed25519 签名”而忽略 HMAC 回退路径。
 
     RemoteConfigPolicy:
       type: object
@@ -403,6 +465,7 @@ components:
         expiresAt:
           type: string
           format: date-time
+          description: ISO-8601 字符串（配置类字段用 ISO-8601；上报 `ts` 用整数 Unix 毫秒，两者不可混用）
         mapping:
           type: object
           additionalProperties:

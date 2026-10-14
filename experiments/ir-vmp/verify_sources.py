@@ -6,15 +6,62 @@ from pathlib import Path
 import argparse
 
 
+def _skip_string(text, index):
+    """Return the index just past a string/char literal starting at ``index``.
+
+    Handles backslash escapes. A char literal is never allowed to span a
+    newline; an unterminated quote bails at end-of-input so the caller fails
+    closed instead of looping.
+    """
+    quote = text[index]
+    index += 1
+    while index < len(text):
+        char = text[index]
+        if char == '\\':
+            index += 2
+            continue
+        if char == quote:
+            return index + 1
+        if char == '\n' and quote == "'":
+            return index
+        index += 1
+    return index
+
+
 def extract_function(text, name, return_type):
-    # Restricted extraction of these pinned, brace-balanced C bodies; not a C parser.
+    """Extract one pinned, brace-balanced C function body.
+
+    NOT a C parser: this is a restricted lexical scanner for the pinned
+    sources only. It counts braces while SKIPPING string literals, char
+    literals, ``//`` line comments and ``/* */`` block comments, so braces
+    inside them no longer misalign the end of the function (the previous
+    naive counter truncated at the first ``}`` in a string/comment).
+    Remaining limitations, stated explicitly: it does not understand
+    preprocessor conditionals that change brace balance, trigraphs, line
+    continuations inside comments, or C23 digit separators (``'``) in code.
+    Pinned sources are hash-pinned, so any such drift fails verification
+    instead of being silently mis-extracted.
+    """
     start = text.index("static " + return_type + " " + name + "(")
     end = text.index("{", start) + 1
     depth = 1
+    index = end
     while depth:
-        depth += (text[end] == "{") - (text[end] == "}")
-        end += 1
-    return (text[start:end] + "\n").encode()
+        char = text[index]
+        if char in ('"', "'"):
+            index = _skip_string(text, index)
+            continue
+        if char == '/' and index + 1 < len(text) and text[index + 1] == '/':
+            newline = text.find('\n', index)
+            index = len(text) if newline < 0 else newline + 1
+            continue
+        if char == '/' and index + 1 < len(text) and text[index + 1] == '*':
+            close = text.find('*/', index + 2)
+            index = len(text) if close < 0 else close + 2
+            continue
+        depth += (char == "{") - (char == "}")
+        index += 1
+    return (text[start:index] + "\n").encode()
 
 
 def verify_suite(suite):
@@ -62,13 +109,9 @@ def verify():
     text = source.decode("utf-8")
     bodies = []
     for name in manifest["functions"]:
-        start = text.index("static uint64_t " + name + "(")
-        end = text.index("{", start) + 1
-        depth = 1
-        while depth:
-            depth += (text[end] == "{") - (text[end] == "}")
-            end += 1
-        bodies.append(text[start:end])
+        # Same string/comment-aware scanner as extract_function; do not
+        # duplicate a second naive brace counter here.
+        bodies.append(extract_function(text, name, "uint64_t").decode("utf-8").rstrip("\n"))
     extracted = ("\n\n".join(bodies) + "\n").encode()
     if extracted != (directory / "gf2_candidates.inc").read_bytes():
         raise ValueError("Extracted SDK function bodies differ from pinned source")

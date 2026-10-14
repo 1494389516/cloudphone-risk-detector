@@ -160,8 +160,10 @@ ls -la "$OUTPUT_DIR/CloudPhoneRiskKit.xcframework/"
 
 ### 对 XCFramework 签名（分发前）
 
+> 占位说明：下文 `<你的团队名>` / `<TEAM_ID>` 为占位符，请替换为 Apple Developer 账号的真实团队名与 Team ID。
+
 ```bash
-codesign --timestamp --sign "Apple Distribution: YourTeamName (TEAM_ID)" \
+codesign --timestamp --sign "Apple Distribution: <你的团队名> (<TEAM_ID>)" \
   "$OUTPUT_DIR/CloudPhoneRiskKit.xcframework"
 ```
 
@@ -176,7 +178,7 @@ codesign --verify --deep --strict --verbose=2 \
 
 ```bash
 for fw in "$OUTPUT_DIR/CloudPhoneRiskKit.xcframework"/*/CloudPhoneRiskKit.framework; do
-  codesign --timestamp --sign "Apple Distribution: YourTeamName (TEAM_ID)" "$fw"
+  codesign --timestamp --sign "Apple Distribution: <你的团队名> (<TEAM_ID>)" "$fw"
 done
 ```
 
@@ -255,7 +257,7 @@ output/
 
 ## CI/CD 集成（GitHub Actions）
 
-以下为完整的 GitHub Actions workflow 示例，在推送 tag 时自动构建 XCFramework 并创建 Release：
+以下为待创建的 GitHub Actions workflow **模板**（仓库内尚不存在 `.github/workflows/build-xcframework.yml`，需要时按此内容创建），在推送 tag 时自动构建 XCFramework 并创建 Release：
 
 ```yaml
 # .github/workflows/build-xcframework.yml

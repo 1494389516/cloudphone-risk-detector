@@ -27,8 +27,14 @@ import Foundation
 final class JailbreakEngine {
     /// 置信度上限
     private static let confidenceCap: Double = 100
-    /// 检测器异常（负分/抛异常）时的惩罚分（高危权重，避免静默通过）
-    private static let detectorAnomalyPenalty: Double = 80
+    /// 单个检测器连续异常（抛异常/负分）达到该次数时才升级计分。
+    /// 故障（检测器本身出错）与“检测到越狱”是两回事：单次故障只标记、
+    /// 不直接加高分，避免故障设备被误判高危；连续故障才视为可疑并升级。
+    private static let consecutiveFaultEscalationThreshold = 2
+    /// 连续故障升级时计入的分值（远低于旧的单次故障 +80）。
+    private static let consecutiveFaultEscalationScore: Double = 40
+    /// 各检测器连续故障计数（跨次评估累计，成功一次即清零）。
+    private var consecutiveFaults: [String: Int] = [:]
 
     func detect(config: JailbreakConfig) -> DetectionResult {
 #if targetEnvironment(simulator)
@@ -50,41 +56,43 @@ final class JailbreakEngine {
             isJailbroken: false,
             confidence: 0,
             detectedMethods: [],
-            details: "unavailable_simulator"
+            details: "unavailable_simulator",
+            unavailable: true
         )
 #endif
 
         var score: Double = 0
         var methods: [String] = []
+        var faultLabels: [String] = []
 
         #if DEBUG
         Logger.log("jailbreak: start(threshold=\(config.threshold))")
         #endif
 
         if config.enableFileDetect {
-            accumulateDetector("file", &score, &methods) { try FileDetector().detect() }
+            accumulateDetector("file", &score, &methods, &faultLabels) { try FileDetector().detect() }
         }
 
         if config.enableDyldDetect {
-            accumulateDetector("dyld", &score, &methods) { try DyldDetector().detect() }
+            accumulateDetector("dyld", &score, &methods, &faultLabels) { try DyldDetector().detect() }
         }
 
         if config.enableEnvDetect {
-            accumulateDetector("env", &score, &methods) { try EnvDetector().detect() }
+            accumulateDetector("env", &score, &methods, &faultLabels) { try EnvDetector().detect() }
         }
 
         if config.enableSysctlDetect {
-            accumulateDetector("sysctl", &score, &methods) { try SysctlDetector().detect() }
+            accumulateDetector("sysctl", &score, &methods, &faultLabels) { try SysctlDetector().detect() }
         }
 
         #if canImport(UIKit)
         if config.enableSchemeDetect {
-            accumulateDetector("scheme", &score, &methods) { try SchemeDetector().detect() }
+            accumulateDetector("scheme", &score, &methods, &faultLabels) { try SchemeDetector().detect() }
         }
         #endif
 
         if config.enableHookDetect {
-            accumulateDetector(ObfuscatedConstants.keywordHook, &score, &methods) { try HookDetector().detect() }
+            accumulateDetector(ObfuscatedConstants.keywordHook, &score, &methods, &faultLabels) { try HookDetector().detect() }
         }
 
         methods = Array(Set(methods)).sorted()
@@ -96,7 +104,7 @@ final class JailbreakEngine {
             isJailbroken: isJailbroken,
             confidence: min(score, Self.confidenceCap),
             detectedMethods: methods,
-            details: details(methods: methods, score: score)
+            details: details(methods: methods, score: score, faults: faultLabels)
         )
     }
 
@@ -104,17 +112,16 @@ final class JailbreakEngine {
         _ label: String,
         _ score: inout Double,
         _ methods: inout [String],
+        _ faults: inout [String],
         _ block: () throws -> DetectorResult
     ) {
         do {
             let result = try block()
             if result.score < 0 {
-                #if DEBUG
-                Logger.log("jailbreak.\(label): negative score(\(result.score)), treating as suspicious")
-                #endif
-                score += Self.detectorAnomalyPenalty
-                methods.append("jailbreak_anomaly:\(label):negative_score")
+                // 检测器故障（负分），不是“检测到越狱”：只标记，不加高分。
+                recordDetectorFault(label: label, reason: "negative_score", score: &score, methods: &methods, faults: &faults)
             } else {
+                consecutiveFaults[label] = 0
                 #if DEBUG
                 Logger.log("jailbreak.\(label): score=\(result.score) hits=\(result.methods.count)")
                 #endif
@@ -122,19 +129,38 @@ final class JailbreakEngine {
                 methods.append(contentsOf: result.methods)
             }
         } catch {
-            #if DEBUG
-            Logger.log("jailbreak.\(label): detector threw error(\(error)), treating as suspicious")
-            #endif
-            score += Self.detectorAnomalyPenalty
-            methods.append("jailbreak_anomaly:\(label):threw")
+            // 检测器故障（抛异常），不是“检测到越狱”：只标记，不加高分。
+            recordDetectorFault(label: label, reason: "threw", score: &score, methods: &methods, faults: &faults)
         }
     }
 
-    private func details(methods: [String], score: Double) -> String {
+    /// 记录一次检测器故障：标记 `jailbreak_fault:<label>:<reason>`，并在该检测器
+    /// 连续故障达到阈值时才升级计分（熔断/去重），同时记录日志。
+    private func recordDetectorFault(
+        label: String,
+        reason: String,
+        score: inout Double,
+        methods: inout [String],
+        faults: inout [String]
+    ) {
+        let streak = (consecutiveFaults[label] ?? 0) + 1
+        consecutiveFaults[label] = streak
+        faults.append("\(label):\(reason):streak=\(streak)")
+        methods.append("jailbreak_fault:\(label):\(reason)")
+        Logger.log("jailbreak.\(label): detector fault (\(reason)), consecutive streak=\(streak) — marked, not scored as jailbreak")
+        if streak >= Self.consecutiveFaultEscalationThreshold {
+            score += Self.consecutiveFaultEscalationScore
+            methods.append("jailbreak_fault_escalated:\(label)")
+            Logger.log("jailbreak.\(label): consecutive faults escalated (streak=\(streak), +\(Self.consecutiveFaultEscalationScore))")
+        }
+    }
+
+    private func details(methods: [String], score: Double, faults: [String] = []) -> String {
         """
         jailbreak_score=\(min(score, Self.confidenceCap))
         hits=\(methods.count)
         methods=\(methods.joined(separator: ","))
+        detector_faults=\(faults.isEmpty ? "none" : faults.joined(separator: ","))
         """
     }
 }

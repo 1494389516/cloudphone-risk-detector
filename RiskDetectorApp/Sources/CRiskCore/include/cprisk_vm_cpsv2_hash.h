@@ -1,4 +1,7 @@
-/* Streaming custom-pad MAC; caller must validate/snapshot the manifest first. */
+/* Streaming CPRisk-MAC (custom-pad SHA-256 MAC — NOT standard HMAC-SHA256;
+ * non-standard pads ipad 0x6D / opad 0xA3, kept for interop with the existing
+ * server/producer; see the banner in cprisk_armor_abi.h). Caller must
+ * validate/snapshot the manifest first. */
 #ifndef CPRISK_VM_CPSV2_HASH_H
 #define CPRISK_VM_CPSV2_HASH_H
 #include "cprisk_vm_cpsv2.h"
@@ -10,7 +13,7 @@ static inline uint32_t cprisk_cpsv2_tag(const uint8_t key[32],
     cprisk_crypto_trace_primitive_enter_i();
     cprisk_sha256_ctx hash;
     for (unsigned i = 0; i < 64u; i++)
-        pad[i] = (i < 32u ? key[i] : 0u) ^ CPRISK_HMAC_IPAD_XOR_A ^ CPRISK_HMAC_IPAD_XOR_B;
+        pad[i] = (i < 32u ? key[i] : 0u) ^ CPRISK_MAC_IPAD_XOR_A ^ CPRISK_MAC_IPAD_XOR_B;
     cprisk_sha256_init(&hash);
     cprisk_sha256_update(&hash, pad, sizeof(pad));
     cprisk_sha256_update(&hash, snapshot, CPRISK_CPSV2_BYTES);
@@ -18,7 +21,7 @@ static inline uint32_t cprisk_cpsv2_tag(const uint8_t key[32],
         cprisk_sha256_update(&hash, (const uint8_t *)(base + ranges[i].rva), ranges[i].length);
     cprisk_sha256_final(&hash, inner);
     for (unsigned i = 0; i < 64u; i++)
-        pad[i] = (i < 32u ? key[i] : 0u) ^ CPRISK_HMAC_OPAD_XOR_A ^ CPRISK_HMAC_OPAD_XOR_B;
+        pad[i] = (i < 32u ? key[i] : 0u) ^ CPRISK_MAC_OPAD_XOR_A ^ CPRISK_MAC_OPAD_XOR_B;
     cprisk_sha256_init(&hash);
     cprisk_sha256_update(&hash, pad, sizeof(pad));
     cprisk_sha256_update(&hash, inner, sizeof(inner));

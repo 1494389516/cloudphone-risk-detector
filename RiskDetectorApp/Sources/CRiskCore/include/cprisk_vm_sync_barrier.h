@@ -110,7 +110,7 @@ int cprisk_vm_sync_barrier_watchdog_stuck(const cprisk_vm_sync_barrier_ctx_t *ct
  * after the originating VM frame is torn down.
  *
  * Used by the signing layer to poison the HKDF derivation when the watchdog
- * is absent (strong unidbg indicator), causing the resulting HMAC to differ
+ * is absent (strong unidbg indicator), causing the resulting CPRisk-MAC to differ
  * from what the server expects — silently and without an observable crash.
  */
 uint32_t cprisk_vm_sync_barrier_global_stuck(void);

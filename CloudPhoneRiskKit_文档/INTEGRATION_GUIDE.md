@@ -38,7 +38,7 @@
 ```swift
 dependencies: [
     .package(
-        url: "https://github.com/anthropic/cloudphone-risk-detector.git",
+        url: "https://github.com/1494389516/cloudphone-risk-detector.git",
         from: "7.3.0"
     ),
 ],
@@ -63,7 +63,8 @@ dependencies: [],
 targets: [
     .binaryTarget(
         name: "CloudPhoneRiskKit",
-        url: "https://releases.example.com/CloudPhoneRiskKit-7.3.0.xcframework.zip",
+        // 占位示例：请替换为实际发布地址（不要直接使用该域名），或从 GitHub Releases 下载。
+        url: "https://<你的发布域名>/CloudPhoneRiskKit-7.3.0.xcframework.zip",
         checksum: "<SHA-256-CHECKSUM>"
     ),
     .target(
@@ -130,7 +131,7 @@ open YourApp.xcworkspace
 ### 1. 在 Cartfile 中添加
 
 ```
-github "anthropic/cloudphone-risk-detector" ~> 7.3
+github "1494389516/cloudphone-risk-detector" ~> 7.3
 ```
 
 ### 2. 构建 XCFramework
@@ -150,7 +151,7 @@ carthage update --use-xcframeworks --platform iOS
 
 ### 1. 获取 XCFramework
 
-从 [GitHub Releases](https://github.com/anthropic/cloudphone-risk-detector/releases) 下载 `CloudPhoneRiskKit.xcframework.zip`。
+从 [GitHub Releases](https://github.com/1494389516/cloudphone-risk-detector/releases) 下载 `CloudPhoneRiskKit.xcframework.zip`。
 
 ### 2. 验证完整性
 

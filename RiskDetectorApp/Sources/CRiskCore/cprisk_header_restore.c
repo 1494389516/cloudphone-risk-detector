@@ -2,13 +2,13 @@
  * cprisk_header_restore.c — Runtime header decryption for cprisk-armor.
  *
  * Consumes the `__DATA.__swift5_mhsav` section produced by Pass 11
- * (HeaderEncryptorPass).  Verifies HMAC-SHA256 before writing decrypted
+ * (HeaderEncryptorPass).  Verifies CPRisk-MAC-SHA256 before writing decrypted
  * fields back to mach_header_64.
  *
  * Layout of backup section (64 bytes):
  *   offset  0.. 7:  nonce[8]
  *   offset  8..31:  encrypted_fields[24]  (magic + filetype + ncmds + sizeofcmds + flags + reserved)
- *   offset 32..63:  hmac_tag[32]
+ *   offset 32..63:  mac_tag[32]
  *
  * The producer (Swift) now writes a per-binary camouflage value into
  * mach_header_64.reserved (instead of a fixed marker). Runtime restoration
@@ -45,7 +45,7 @@ static inline int cprisk_hdr_mprotect(void *addr, size_t len, int prot) {
 /* Camouflage mix constant (must match HeaderEncryptorPass.makeCamouflagedReserved). */
 #define CPRISK_HBHDR_CAMO_XOR 0xA5C31F27u
 
-/* Backup section size: nonce(8) + encrypted(24) + HMAC(32) = 64 bytes. */
+/* Backup section size: nonce(8) + encrypted(24) + CPRisk-MAC(32) = 64 bytes. */
 #define CPRISK_HBHDR_SECTION_SIZE 64
 #define CPRISK_HBHDR_NONCE_SIZE 8
 #define CPRISK_HBHDR_ENC_FIELDS_SIZE 24
@@ -166,25 +166,16 @@ static int cprisk_derive_header_key(uint8_t out_key[CPRISK_ARMOR_KEY_SIZE]) {
     uint8_t zero_seed[CPRISK_ARMOR_KEY_SIZE];
     memset(zero_seed, 0, CPRISK_ARMOR_KEY_SIZE);
 
+    /* No fallback key derivation (issue 60/79): if the white-box
+     * evaluation fails, header decryption HARD-FAILS. A deterministic
+     * fallback key derived from runtime material would silently
+     * substitute a weaker, always-available key path. */
     int rc = cprisk_whitebox_evaluate_domain(
         CPRISK_WHITEBOX_DOMAIN_HEADER_ENCRYPTION,
         zero_seed,
         out_key);
-    if (rc != 0) {
-        uint8_t runtime_material[CPRISK_ARMOR_KEY_SIZE];
-        static const char label[] = "cprisk.header.key.fallback.v1";
-        uint8_t fallback_seed[CPRISK_ARMOR_KEY_SIZE + sizeof(label) - 1u];
-        memset(runtime_material, 0, sizeof(runtime_material));
-        if (cprisk_get_runtime_material(runtime_material) == 0) {
-            memset(fallback_seed, 0, sizeof(fallback_seed));
-            memcpy(fallback_seed, runtime_material, CPRISK_ARMOR_KEY_SIZE);
-            memcpy(fallback_seed + CPRISK_ARMOR_KEY_SIZE, label, sizeof(label) - 1u);
-            cprisk_sha256(fallback_seed, sizeof(fallback_seed), out_key);
-            rc = 0;
-            cprisk_secure_zero(fallback_seed, sizeof(fallback_seed));
-        }
-        cprisk_secure_zero(runtime_material, sizeof(runtime_material));
-    }
+    if (rc != 0)
+        cprisk_secure_zero(out_key, CPRISK_ARMOR_KEY_SIZE);
 
     /* zero out the stack copy of the seed */
     cprisk_secure_zero(zero_seed, sizeof(zero_seed));
@@ -193,23 +184,28 @@ static int cprisk_derive_header_key(uint8_t out_key[CPRISK_ARMOR_KEY_SIZE]) {
 
 /* Generate a keystream block: SHA256(key || keyID_le[4] || nonce).
  * Returns the first CPRISK_SHA256_DIGEST_LENGTH bytes of the keystream.
- * This mirrors the Swift makeKeystream() logic. */
+ * This mirrors the Swift makeKeystream() logic. The header path uses the
+ * FROZEN 8-byte nonce (CPRISK_HBHDR_NONCE_SIZE), NOT the generic 16-byte
+ * CPRISK_ARMOR_NONCE_SIZE: the 64-byte backup layout is nonce[8] |
+ * encrypted[24] | tag[32], and the producer (HeaderEncryptor) seeds with
+ * 8 nonce bytes. Using 16 here would read 8 ciphertext bytes into the
+ * seed and never match the producer. */
 static void cprisk_hdr_keystream(
     const uint8_t key[CPRISK_ARMOR_KEY_SIZE],
     uint32_t key_id,
-    const uint8_t nonce[CPRISK_ARMOR_NONCE_SIZE],
+    const uint8_t nonce[CPRISK_HBHDR_NONCE_SIZE],
     uint8_t *out,
     size_t len
 ) {
-    uint8_t seed[CPRISK_ARMOR_KEY_SIZE + 4 + CPRISK_ARMOR_NONCE_SIZE];
-    size_t seed_len = CPRISK_ARMOR_KEY_SIZE + 4 + CPRISK_ARMOR_NONCE_SIZE;
+    uint8_t seed[CPRISK_ARMOR_KEY_SIZE + 4 + CPRISK_HBHDR_NONCE_SIZE];
+    size_t seed_len = CPRISK_ARMOR_KEY_SIZE + 4 + CPRISK_HBHDR_NONCE_SIZE;
 
     memcpy(seed, key, CPRISK_ARMOR_KEY_SIZE);
     seed[32] = (uint8_t)(key_id);
     seed[33] = (uint8_t)(key_id >> 8);
     seed[34] = (uint8_t)(key_id >> 16);
     seed[35] = (uint8_t)(key_id >> 24);
-    memcpy(seed + 36, nonce, CPRISK_ARMOR_NONCE_SIZE);
+    memcpy(seed + 36, nonce, CPRISK_HBHDR_NONCE_SIZE);
 
     /* Produce the first block */
     uint8_t blk[CPRISK_SHA256_DIGEST_LENGTH];
@@ -230,7 +226,7 @@ static void cprisk_decrypt_header_fields(
     size_t enc_len,
     const uint8_t key[CPRISK_ARMOR_KEY_SIZE],
     uint32_t key_id,
-    const uint8_t nonce[CPRISK_ARMOR_NONCE_SIZE]
+    const uint8_t nonce[CPRISK_HBHDR_NONCE_SIZE]
 ) {
     if (enc_len == 0 || enc_len > 256)
         return;
@@ -245,37 +241,38 @@ static void cprisk_decrypt_header_fields(
     cprisk_secure_zero(ks, sizeof(ks));
 }
 
-/* Verify HMAC over the canonical encoding written by HeaderEncryptor.swift:
+/* Verify CPRisk-MAC over the canonical encoding written by HeaderEncryptor.swift:
  *   u32 nonce_len | nonce[nonce_len] | u32 ct_len | ciphertext[ct_len]
+ * with nonce_len = 8 (CPRISK_HBHDR_NONCE_SIZE, frozen 64-byte layout).
  * Returns 0 on match, -1 on mismatch. */
-static int cprisk_verify_header_hmac(
+static int cprisk_verify_header_mac(
     const uint8_t key[CPRISK_ARMOR_KEY_SIZE],
-    const uint8_t nonce[CPRISK_ARMOR_NONCE_SIZE],
+    const uint8_t nonce[CPRISK_HBHDR_NONCE_SIZE],
     const uint8_t *enc_fields,
     size_t enc_len,
     const uint8_t expected_tag[CPRISK_ARMOR_HASH_SIZE]
 ) {
-    uint8_t hmac_msg[4u + CPRISK_ARMOR_NONCE_SIZE + 4u + CPRISK_HBHDR_ENC_FIELDS_SIZE];
+    uint8_t mac_msg[4u + CPRISK_HBHDR_NONCE_SIZE + 4u + CPRISK_HBHDR_ENC_FIELDS_SIZE];
     size_t mp = 0u;
-    hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE      );
-    hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >>  8);
-    hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 16);
-    hmac_msg[mp++] = (uint8_t)(CPRISK_ARMOR_NONCE_SIZE >> 24);
-    memcpy(hmac_msg + mp, nonce, CPRISK_ARMOR_NONCE_SIZE);
-    mp += CPRISK_ARMOR_NONCE_SIZE;
-    hmac_msg[mp++] = (uint8_t)((uint32_t)enc_len      );
-    hmac_msg[mp++] = (uint8_t)((uint32_t)enc_len >>  8);
-    hmac_msg[mp++] = (uint8_t)((uint32_t)enc_len >> 16);
-    hmac_msg[mp++] = (uint8_t)((uint32_t)enc_len >> 24);
-    memcpy(hmac_msg + mp, enc_fields, enc_len);
+    mac_msg[mp++] = (uint8_t)(CPRISK_HBHDR_NONCE_SIZE      );
+    mac_msg[mp++] = (uint8_t)(CPRISK_HBHDR_NONCE_SIZE >>  8);
+    mac_msg[mp++] = (uint8_t)(CPRISK_HBHDR_NONCE_SIZE >> 16);
+    mac_msg[mp++] = (uint8_t)(CPRISK_HBHDR_NONCE_SIZE >> 24);
+    memcpy(mac_msg + mp, nonce, CPRISK_HBHDR_NONCE_SIZE);
+    mp += CPRISK_HBHDR_NONCE_SIZE;
+    mac_msg[mp++] = (uint8_t)((uint32_t)enc_len      );
+    mac_msg[mp++] = (uint8_t)((uint32_t)enc_len >>  8);
+    mac_msg[mp++] = (uint8_t)((uint32_t)enc_len >> 16);
+    mac_msg[mp++] = (uint8_t)((uint32_t)enc_len >> 24);
+    memcpy(mac_msg + mp, enc_fields, enc_len);
     mp += enc_len;
 
     uint8_t computed_tag[CPRISK_ARMOR_HASH_SIZE];
-    cprisk_hmac_sha256(key, CPRISK_ARMOR_KEY_SIZE,
-                       hmac_msg, mp,
+    cprisk_mac_sha256(key, CPRISK_ARMOR_KEY_SIZE,
+                       mac_msg, mp,
                        computed_tag);
 
-    const int rc = cprisk_hmac_verify(expected_tag, computed_tag,
+    const int rc = cprisk_mac_verify(expected_tag, computed_tag,
                                       CPRISK_ARMOR_HASH_SIZE);
     cprisk_secure_zero(computed_tag, sizeof(computed_tag));
     return rc;
@@ -340,7 +337,7 @@ static int cprisk_restore_macho_header_impl_i(void) {
     /* Parse the backup section layout */
     const uint8_t *nonce       = sec +  0;
     const uint8_t *enc_fields = sec +  CPRISK_HBHDR_NONCE_SIZE;
-    const uint8_t *hmac_tag   = sec +  CPRISK_HBHDR_NONCE_SIZE
+    const uint8_t *mac_tag   = sec +  CPRISK_HBHDR_NONCE_SIZE
                                     + CPRISK_HBHDR_ENC_FIELDS_SIZE;
 
     /* Derive the header key via WhiteBox Domain 9 */
@@ -350,10 +347,10 @@ static int cprisk_restore_macho_header_impl_i(void) {
         return cprisk_header_fields_sane_i(hdr_const) ? 1 : -1;
     }
 
-    /* Verify HMAC before writing any decrypted data */
-    if (cprisk_verify_header_hmac(header_key, nonce,
+    /* Verify CPRisk-MAC before writing any decrypted data */
+    if (cprisk_verify_header_mac(header_key, nonce,
                                   enc_fields, CPRISK_HBHDR_ENC_FIELDS_SIZE,
-                                  hmac_tag) != 0) {
+                                  mac_tag) != 0) {
         cprisk_secure_zero(header_key, sizeof(header_key));
         return cprisk_header_fields_sane_i(hdr_const) ? 1 : -1;
     }

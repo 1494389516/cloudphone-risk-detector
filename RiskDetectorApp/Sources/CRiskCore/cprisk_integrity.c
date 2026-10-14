@@ -1,7 +1,7 @@
 /*
  * CRiskCore - Multi-path integrity verification for cprisk-armor ABI v2.
  * Three independent paths compute the __TEXT.__text hash; path C reconstructs
- * the digest from the four split anchor sections. The HMAC anchor tag is
+ * the digest from the four split anchor sections. The CPRisk-MAC anchor tag is
  * verified against the reconstructed hash using the root key.
  * The combined result feeds key derivation, so tampering silently corrupts
  * the derived key.
@@ -32,15 +32,17 @@ _Static_assert(CPRISK_SHA256_DIGEST_LENGTH == CPRISK_ARMOR_HASH_SIZE,
 /* ── internal ──────────────────────────────────────────────────────── */
 
 /* Single-thread assumption: cprisk_init_protection / cprisk_prepare_deception_material_i
- * are called from Swift start() before any concurrent evaluate(). s_runtime_material_ready,
- * s_deception_material_ready are not atomic; use _Atomic or pthread_once if multi-threaded. */
+ * are called from Swift start() before any concurrent evaluate().
+ * Init/cleanup are single-threaded by contract (Swift start() runs
+ * before any concurrent evaluate()); the ready flags below are _Atomic
+ * so concurrent readers observe publication safely (issue 37). */
 static uint8_t s_runtime_material[CPRISK_ARMOR_HASH_SIZE];
-static int s_runtime_material_ready;
+static _Atomic int s_runtime_material_ready;
 
 /* Hybrid KDF state: three-layer key derivation.
  *   Layer 1: rootKey       (CLI provided)
- *   Layer 2: deviceKey    = HMAC(rootKey, deviceSalt)
- *   Layer 3: effectiveRoot = HMAC(deviceKey, sessionToken)
+ *   Layer 2: deviceKey    = CPRisk-MAC(rootKey, deviceSalt)
+ *   Layer 3: effectiveRoot = CPRisk-MAC(deviceKey, sessionToken)
  *
  * effectiveRoot is stored in s_effective_root and used in place of
  * root_key for all subsequent derivations (white-box domain evaluation,
@@ -54,7 +56,7 @@ static int s_effective_root_ready;
 /* Non-static so cprisk_anti_dump_probe.c can set it when dump/injection is detected. */
 volatile int s_integrity_deception_active;
 static uint8_t s_deception_material[CPRISK_ARMOR_HASH_SIZE];
-static int s_deception_material_ready;
+static _Atomic int s_deception_material_ready;
 
 static uint8_t s_saved_integrity_hash[CPRISK_ARMOR_HASH_SIZE];
 static int s_integrity_hash_saved;
@@ -906,6 +908,11 @@ static void cprisk_antidebug_apply_policies_i(uint32_t trigger_flags, int init_r
     if ((policy_bits & CPRISK_ARMOR_ADBG_POLICY_CRASH_ON_DEBUGGER) != 0u && debugger_confirmed) {
         applied |= CPRISK_ARMOR_ADBG_POLICY_CRASH_ON_DEBUGGER;
         s_adbg_snapshot_i.last_soft_fail_mode = 1u;
+        /* DEFAULT: no crash (issue 42). The response is record + poison +
+         * deception: the output becomes untrustworthy without killing a
+         * possibly-legitimate session on a false positive. A hard trap
+         * is an EXPLICIT OPT-IN only (build flag
+         * CPRISK_ANTI_DEBUG_HARD_CRASH_ON_DEBUGGER=1, default 0). */
         cprisk_integrity_poison_antidebug_lane();
         cprisk_prepare_deception_material_i(NULL, NULL, NULL);
         s_integrity_deception_active = 1;
@@ -932,6 +939,10 @@ int cprisk_get_antidebug_plan_snapshot(cprisk_antidebug_plan_snapshot_t *out_sna
 }
 
 int cprisk_test_set_antidebug_plan(const uint8_t *plan, size_t plan_len) {
+#if !defined(DEBUG) || !DEBUG
+    /* Test hook: inert outside DEBUG builds (issue 18). */
+    return -1;
+#endif
     if (!plan || plan_len == 0u)
         return -1;
 
@@ -951,6 +962,10 @@ int cprisk_test_set_antidebug_plan(const uint8_t *plan, size_t plan_len) {
 }
 
 void cprisk_test_clear_antidebug_plan(void) {
+#if !defined(DEBUG) || !DEBUG
+    /* Test hook: inert outside DEBUG builds (issue 18). */
+    return;
+#endif
     if (s_test_adbg_plan_i != NULL) {
         cprisk_secure_zero(s_test_adbg_plan_i, s_test_adbg_plan_len_i);
         free(s_test_adbg_plan_i);
@@ -964,17 +979,24 @@ static const struct mach_header_64 *cprisk_own_hdr_i(void) {
     return cprisk_find_own_header((const void *)cprisk_own_hdr_i);
 }
 
-static void cprisk_fill_root_material_i(const uint8_t *root_key,
+/* Fill the 32-byte root material. STRICT length: the caller must supply
+ * exactly CPRISK_ARMOR_KEY_SIZE (32) bytes of full-entropy key material.
+ * Short keys are NOT zero-padded and long keys are NOT silently truncated
+ * — either is a hard failure (returns -1, out is zeroed), because padding
+ * collapses entropy and truncation silently discards key bits.
+ * No PBKDF2 / Argon2 / scrypt stretching exists in this C layer: the
+ * input must already be a full-entropy key, NEVER a human password.
+ * Callers holding a password must stretch it with a platform KDF
+ * (or HKDF over a high-entropy secret) before calling here; feeding a
+ * weak password directly would make the "32-byte key" low-entropy. */
+static int cprisk_fill_root_material_i(const uint8_t *root_key,
                                         size_t root_key_len,
                                         uint8_t out[CPRISK_ARMOR_KEY_SIZE]) {
     memset(out, 0, CPRISK_ARMOR_KEY_SIZE);
-    if (!root_key || root_key_len == 0)
-        return;
-
-    size_t copy_len = root_key_len;
-    if (copy_len > CPRISK_ARMOR_KEY_SIZE)
-        copy_len = CPRISK_ARMOR_KEY_SIZE;
-    memcpy(out, root_key, copy_len);
+    if (!root_key || root_key_len != CPRISK_ARMOR_KEY_SIZE)
+        return -1;
+    memcpy(out, root_key, CPRISK_ARMOR_KEY_SIZE);
+    return 0;
 }
 
 static void cprisk_u64_to_le_i(uint64_t value, uint8_t out[8]) {
@@ -1150,11 +1172,11 @@ static void cprisk_prepare_deception_material_i(
     const uint8_t *full_anchor_hash,
     const uint8_t *integrity_hash
 ) {
-    if (s_deception_material_ready)
+    if (atomic_load(&s_deception_material_ready) != 0)
         return;
     cprisk_derive_decoy_material_i(
         root_material, full_anchor_hash, integrity_hash, s_deception_material);
-    s_deception_material_ready = 1;
+    atomic_store(&s_deception_material_ready, 1);
 }
 
 static int cprisk_should_activate_deception_i(void) {
@@ -1249,7 +1271,7 @@ static void cprisk_integrity_poison_lane_sidefx_i(uint32_t lane) {
 }
 
 static void cprisk_integrity_poison_lane_tweak_deception_i(uint32_t lane) {
-    if (lane >= (uint32_t)CPRISK_POISON_LANE_COUNT || !s_deception_material_ready)
+    if (lane >= (uint32_t)CPRISK_POISON_LANE_COUNT || atomic_load(&s_deception_material_ready) == 0)
         return;
     const uint32_t salt0 = s_poison_semantic_rolling[0] ^ (lane * 0x243F6A88u);
     const uint32_t salt1 = s_poison_semantic_rolling[1] ^ (s_poison_lane_seq[lane] * 7u);
@@ -1353,7 +1375,7 @@ static void cprisk_integrity_poison_staged_note_i(uint32_t lane) {
      * Signature-noise: fold staged tick into deception material so staged-only responses are not
      * bitwise stable across ticks (complements lane_tweak_deception_i when full commit is deferred).
      */
-    if (s_deception_material_ready) {
+    if (atomic_load(&s_deception_material_ready) != 0) {
         const uint32_t tv = (uint32_t)(t & 0xFFFFFFFFu);
         uint32_t *dm = (uint32_t *)s_deception_material;
         dm[0] ^= tv ^ (uint32_t)(z >> 32);
@@ -1575,7 +1597,7 @@ static int cprisk_verify_anchor_whitebox_i(
         return -1;
     }
 
-    const int rc = cprisk_hmac_verify(sec, computed_tag, CPRISK_ARMOR_HASH_SIZE);
+    const int rc = cprisk_mac_verify(sec, computed_tag, CPRISK_ARMOR_HASH_SIZE);
     cprisk_secure_zero(computed_tag, sizeof(computed_tag));
     return rc;
 }
@@ -1590,7 +1612,7 @@ static int cprisk_init_protection_legacy_i(
     int rc = -1;
     memset(loader_key, 0, sizeof(loader_key));
 
-    if (cprisk_verify_anchor_hmac(root_material, full_anchor_hash) != 0) {
+    if (cprisk_verify_anchor_mac(root_material, full_anchor_hash) != 0) {
         rc = -4;
         goto cleanup;
     }
@@ -1642,7 +1664,7 @@ static int cprisk_init_protection_legacy_i(
         s_runtime_material);
     if (!cprisk_mini_vm_bootstrap_disabled())
         cprisk_mini_vm_bootstrap_material32(s_runtime_material);
-    s_runtime_material_ready = 1;
+    atomic_store(&s_runtime_material_ready, 1);
     rc = 0;
 
 cleanup:
@@ -1768,7 +1790,7 @@ static int cprisk_init_protection_whitebox_i(
 
     if (!cprisk_mini_vm_bootstrap_disabled())
         cprisk_mini_vm_bootstrap_material32(s_runtime_material);
-    s_runtime_material_ready = 1;
+    atomic_store(&s_runtime_material_ready, 1);
     rc = 0;
 
 cleanup:
@@ -1986,7 +2008,7 @@ int cprisk_read_full_anchor_hash(uint8_t *out_hash) {
     return path_c(hdr, out_hash);
 }
 
-int cprisk_verify_anchor_hmac(const uint8_t root_material[CPRISK_ARMOR_KEY_SIZE],
+int cprisk_verify_anchor_mac(const uint8_t root_material[CPRISK_ARMOR_KEY_SIZE],
                               const uint8_t full_hash[CPRISK_ARMOR_HASH_SIZE]) {
     const struct mach_header_64 *hdr = cprisk_own_hdr_i();
     if (!hdr)
@@ -1995,16 +2017,16 @@ int cprisk_verify_anchor_hmac(const uint8_t root_material[CPRISK_ARMOR_KEY_SIZE]
     unsigned long sz = 0;
     const uint8_t *sec = cprisk_find_section(
         hdr, CPRISK_ARMOR_SEGMENT_DATA, CPRISK_ARMOR_SECTION_FULL_HASH, &sz);
-    if (!sec || sz < CPRISK_ARMOR_HMAC_FULL_HASH_SECTION_SIZE)
+    if (!sec || sz < CPRISK_ARMOR_MAC_FULL_HASH_SECTION_SIZE)
         return -1;
 
-    uint8_t computed_hmac[CPRISK_ARMOR_HASH_SIZE];
-    cprisk_hmac_sha256(root_material, CPRISK_ARMOR_KEY_SIZE,
+    uint8_t computed_mac[CPRISK_ARMOR_HASH_SIZE];
+    cprisk_mac_sha256(root_material, CPRISK_ARMOR_KEY_SIZE,
                        full_hash, CPRISK_ARMOR_HASH_SIZE,
-                       computed_hmac);
+                       computed_mac);
 
-    int result = cprisk_hmac_verify(sec, computed_hmac, CPRISK_ARMOR_HASH_SIZE);
-    cprisk_secure_zero(computed_hmac, sizeof(computed_hmac));
+    int result = cprisk_mac_verify(sec, computed_mac, CPRISK_ARMOR_HASH_SIZE);
+    cprisk_secure_zero(computed_mac, sizeof(computed_mac));
     return result;
 }
 
@@ -2024,6 +2046,13 @@ static uint64_t cprisk_monotonic_ns(void) {
     return abs_time / tb.denom * tb.numer + (abs_time % tb.denom) * tb.numer / tb.denom;
 }
 
+/* Start of protection. NOTE (start→seal window, issue 54): the runtime
+ * material is published (ready flag set) only after ALL init steps
+ * (integrity hash, anchor hash, white-box/legacy init) complete inside
+ * this call; callers must treat the process as unsealed until this
+ * returns 0, and must call cprisk_cleanup_protection() on failure so no
+ * half-initialised material stays live. Keep this function short and
+ * single-threaded: concurrent evaluate() calls must wait for it. */
 int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
     uint64_t t_start = cprisk_monotonic_ns();
 
@@ -2040,8 +2069,8 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
     atomic_store(&s_staged_opacity_tick, 0ull);
     s_integrity_hash_saved = 0;
     s_integrity_deception_active = 0;
-    s_runtime_material_ready = 0;
-    s_deception_material_ready = 0;
+    atomic_store(&s_runtime_material_ready, 0);
+    atomic_store(&s_deception_material_ready, 0);
     cprisk_secure_zero(s_runtime_material, sizeof(s_runtime_material));
     cprisk_secure_zero(s_saved_integrity_hash, sizeof(s_saved_integrity_hash));
     cprisk_secure_zero(s_deception_material, sizeof(s_deception_material));
@@ -2051,7 +2080,11 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
 #endif
     cprisk_antidebug_reset_plan_state_i();
 
-    cprisk_fill_root_material_i(root_key, root_key_len, root_material);
+    if (cprisk_fill_root_material_i(root_key, root_key_len, root_material) != 0) {
+        /* Wrong-length root key: hard fail (no zero-pad / no truncation). */
+        rc = -1;
+        goto cleanup;
+    }
 
     /* Reject NULL or all-zero root keys */
     {
@@ -2108,6 +2141,9 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
      * This populates s_effective_root which dynamic white-box domains 6-7 consume.
      * Called regardless of the whitebox/legacy init result so that the
      * new domains are available as soon as a valid root_key is provided. */
+    /* Hybrid KDF failure (e.g. device binding unavailable) leaves the
+     * effective root unready; dependent paths fail closed. Return value
+     * is intentionally not fatal to init_protection itself. */
     (void)cprisk_init_hybrid_kdf(root_key);
 
     if (rc == 0) {
@@ -2119,7 +2155,7 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
         if (cprisk_mte_available() != 0) {
             if (cprisk_mte_self_test() != 0) {
                 cprisk_secure_zero(s_runtime_material, sizeof(s_runtime_material));
-                s_runtime_material_ready = 0;
+                atomic_store(&s_runtime_material_ready, 0);
                 cprisk_unload_protected_data();
                 cprisk_cleanup_string_decryptor();
                 cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_RECHECK);
@@ -2135,7 +2171,7 @@ int cprisk_init_protection(const uint8_t *root_key, size_t root_key_len) {
                 cprisk_mte_canary_remove(&s_runtime_material_canary);
                 cprisk_mte_canary_remove(&s_saved_integrity_canary);
                 cprisk_secure_zero(s_runtime_material, sizeof(s_runtime_material));
-                s_runtime_material_ready = 0;
+                atomic_store(&s_runtime_material_ready, 0);
                 cprisk_unload_protected_data();
                 cprisk_cleanup_string_decryptor();
                 cprisk_integrity_poison_lane_full_i(CPRISK_POISON_LANE_RECHECK);
@@ -2154,9 +2190,15 @@ cleanup:
     }
     if (rc != 0) {
         cprisk_secure_zero(s_runtime_material, sizeof(s_runtime_material));
-        s_runtime_material_ready = 0;
+        atomic_store(&s_runtime_material_ready, 0);
     }
 
+    /* Shorten key lifetime (issue 52): stack copies are zeroed as soon
+     * as they are no longer needed. Complete eradication is impossible —
+     * copies may still exist in the caller's buffer, in registers, in
+     * Swift-side material, and in derived values — so zeroing here is
+     * hygiene, not a guarantee. The long-lived copies (s_runtime_material
+     * etc.) are zeroed by cprisk_cleanup_protection(). */
     cprisk_secure_zero(root_material, sizeof(root_material));
     cprisk_secure_zero(integrity, sizeof(integrity));
     cprisk_secure_zero(full_anchor_hash, sizeof(full_anchor_hash));
@@ -2172,9 +2214,9 @@ void cprisk_cleanup_protection(void) {
 #endif
     cprisk_secure_zero(s_runtime_material, sizeof(s_runtime_material));
     cprisk_secure_zero(s_saved_integrity_hash, sizeof(s_saved_integrity_hash));
-    s_runtime_material_ready = 0;
+    atomic_store(&s_runtime_material_ready, 0);
     cprisk_secure_zero(s_deception_material, sizeof(s_deception_material));
-    s_deception_material_ready = 0;
+    atomic_store(&s_deception_material_ready, 0);
     s_integrity_hash_saved = 0;
     s_integrity_poisoned = 0;
     cprisk_integrity_poison_semantic_reset_i();
@@ -2221,7 +2263,7 @@ int cprisk_get_runtime_material(uint8_t out_material[32]) {
     if (!out_material)
         return -1;
 
-    if (s_integrity_poisoned || s_integrity_deception_active || !s_runtime_material_ready) {
+    if (s_integrity_poisoned || s_integrity_deception_active || atomic_load(&s_runtime_material_ready) == 0) {
         cprisk_prepare_deception_material_i(NULL, NULL, NULL);
         memcpy(out_material, s_deception_material, CPRISK_ARMOR_HASH_SIZE);
         cprisk_poison_runtime_material_output_mix_i(out_material);
@@ -2233,7 +2275,7 @@ int cprisk_get_runtime_material(uint8_t out_material[32]) {
 }
 
 int cprisk_runtime_material_ready(void) {
-    return s_runtime_material_ready ? 1 : 0;
+    return atomic_load(&s_runtime_material_ready) != 0 ? 1 : 0;
 }
 
 enum {
@@ -2281,8 +2323,11 @@ int cprisk_recheck_integrity(void) {
     }
 
 #if defined(CPRISK_MTE_COMPILE_SUPPORT)
-    if (cprisk_mte_canary_verify(&s_runtime_material_canary) != 0 ||
-        cprisk_mte_canary_verify(&s_saved_integrity_canary) != 0) {
+    /* Only -1 (baseline mismatch) is a failure. -2 means "unsupported /
+     * not installed" and must NOT poison: on devices without MTE the
+     * canary is legitimately absent. */
+    if (cprisk_mte_canary_verify(&s_runtime_material_canary) == -1 ||
+        cprisk_mte_canary_verify(&s_saved_integrity_canary) == -1) {
         cprisk_integrity_poison_from_recheck_i(CPRISK_POISON_RECHECK_SUB_MTE);
         cprisk_antidebug_apply_policies_i(
             CPRISK_ADBG_TRIGGER_INTEGRITY_TAMPER_I,
@@ -2504,6 +2549,10 @@ uint64_t cprisk_get_init_timing_threshold_ns(void) {
 }
 
 void cprisk_test_set_init_timing_threshold_ns_override(uint64_t threshold_ns) {
+#if !defined(DEBUG) || !DEBUG
+    /* Test hook: inert outside DEBUG builds (issue 18). */
+    return;
+#endif
     s_init_timing_threshold_override_ns = threshold_ns;
 }
 
@@ -2511,6 +2560,10 @@ void cprisk_test_set_init_timing_threshold_ns_override(uint64_t threshold_ns) {
 static uint32_t s_signing_mix_last_fp;
 
 void cprisk_test_reset_staged_poison_for_tests(void) {
+#if !defined(DEBUG) || !DEBUG
+    /* Test hook: inert outside DEBUG builds (issue 18). */
+    return;
+#endif
     atomic_store(&s_staged_watchdog_hits, 0u);
     atomic_store(&s_staged_anti_dump_hits, 0u);
     atomic_store(&s_staged_opacity_tick, 0ull);
@@ -2557,7 +2610,7 @@ static void cprisk_signing_mix_set_fp_i(uint32_t tier_tag28, uint64_t seed) {
 void cprisk_signing_runtime_material_intermediate_mix(uint8_t buf[32]) {
     if (!buf)
         return;
-    if (!s_runtime_material_ready)
+    if (atomic_load(&s_runtime_material_ready) == 0)
         return;
     if (s_integrity_poisoned || s_integrity_deception_active)
         return;
@@ -2767,6 +2820,10 @@ uint64_t cprisk_test_init_timing_threshold_ns_for_machine(
     const char *machine,
     cprisk_runtime_hardening_mode_t mode
 ) {
+#if !defined(DEBUG) || !DEBUG
+    /* Test hook: inert outside DEBUG builds (issue 18). */
+    return 0;
+#endif
     return cprisk_compute_init_timing_threshold_ns_for_machine_i(machine, mode);
 }
 
@@ -2776,6 +2833,10 @@ int cprisk_check_init_timing(void) {
 }
 
 void cprisk_test_secure_zero(void *buf, size_t len) {
+#if !defined(DEBUG) || !DEBUG
+    /* Test hook: inert outside DEBUG builds (issue 18). */
+    return;
+#endif
     cprisk_secure_zero(buf, len);
 }
 
@@ -2792,9 +2853,9 @@ int cprisk_init_hybrid_kdf(const uint8_t *root_key) {
     s_effective_root_ready = 0;
 
     /* Layer 2: Derive device key.
-     * deviceKey = HMAC(rootKey, deviceSalt)
-     * deviceSalt is sourced from IOKit/Keychain when available,
-     * or the static fallback salt. */
+     * deviceKey = CPRisk-MAC(rootKey, deviceSalt)
+     * deviceSalt is sourced from IOKit/Keychain when available;
+     * if unavailable, derivation hard-fails (no constant-salt fallback). */
     if (cprisk_derive_device_key(root_key, s_device_key) == 0) {
         s_device_key_ready = 1;
     }
@@ -2817,8 +2878,8 @@ int cprisk_init_hybrid_kdf(const uint8_t *root_key) {
      * freshness is enforced at the *session_token* level (caller's
      * responsibility), not at effective_root. */
     if (has_session && s_device_key_ready) {
-        /* effectiveRoot = HMAC(deviceKey, sessionKey) — binds to device AND session. */
-        cprisk_hmac_sha256(s_device_key, CPRISK_ARMOR_KEY_SIZE,
+        /* effectiveRoot = CPRisk-MAC(deviceKey, sessionKey) — binds to device AND session. */
+        cprisk_mac_sha256(s_device_key, CPRISK_ARMOR_KEY_SIZE,
                            session_key, CPRISK_ARMOR_KEY_SIZE,
                            s_effective_root);
         s_effective_root_ready = 1;
@@ -2828,11 +2889,14 @@ int cprisk_init_hybrid_kdf(const uint8_t *root_key) {
         memcpy(s_effective_root, s_device_key, CPRISK_ARMOR_KEY_SIZE);
         s_effective_root_ready = 1;
     } else {
-        /* Final fallback: effectiveRoot = rootKey.
-         * This preserves backward compatibility when device/session
-         * binding is not available. */
-        memcpy(s_effective_root, root_key, CPRISK_ARMOR_KEY_SIZE);
-        s_effective_root_ready = 1;
+        /* NO final fallback (issue 60): when device binding failed there
+         * is no effective root. Silently falling back to the raw rootKey
+         * would present an unbound key as a device/session-bound one.
+         * Callers see s_effective_root_ready == 0 and fail closed. */
+        cprisk_secure_zero(s_effective_root, sizeof(s_effective_root));
+        s_effective_root_ready = 0;
+        cprisk_secure_zero(session_key, sizeof(session_key));
+        return -1;
     }
 
     cprisk_secure_zero(session_key, sizeof(session_key));

@@ -230,7 +230,10 @@ public final class LocalEnvelopeReplayStore: NonceReplayProtecting, @unchecked S
 
 extension CPRiskKit {
     /// 本地校验安全信封（用于 SDK 回归验证链路）。
-    /// 默认仅接受 v2 签名，并启用持久化重放保护。
+    /// 默认允许版本与 SDK 实际签发版本一致：`v2a` / `v2d` / `v2h` / `v3`
+    ///（`v2` 从未由当前 SDK 签发，故不再默认接受；`v1` 亦不接受）。
+    /// ⚠️ 这只是本地兼容校验：服务端必须拒绝 legacy 版本（`v2a`/`v2d`/`v2h`），
+    /// 仅接受 `v3`，因为 legacy 信封的 assertion 未纳入签名域、无法独立验证。
     ///
     /// **Attestation 一致性**：当 `validateAttestationConsistency == true`（默认）时，若 envelope 带有
     /// `attestationKeyId` 但 `attestationAssertion` 为空，视为异常（`.attestationIncomplete`），防止
@@ -240,7 +243,7 @@ extension CPRiskKit {
     public func validateSecureReportEnvelope(
         _ envelope: ReportEnvelope,
         signingKey: String,
-        allowedSignatureVersions: Set<String> = ["v2", "v2a", "v2h", "v3"],
+        allowedSignatureVersions: Set<String> = ["v2a", "v2d", "v2h", "v3"],
         enableReplayProtection: Bool = true,
         validateAttestationConsistency: Bool = true,
         nonceStore: NonceReplayProtecting? = nil,
@@ -287,7 +290,7 @@ extension CPRiskKit {
     public func validateSecureReportEnvelope(
         _ envelope: ReportEnvelope,
         keyResolver: (String) -> String?,
-        allowedSignatureVersions: Set<String> = ["v2", "v2a", "v2h", "v3"],
+        allowedSignatureVersions: Set<String> = ["v2a", "v2d", "v2h", "v3"],
         enableReplayProtection: Bool = true,
         validateAttestationConsistency: Bool = true,
         nonceStore: NonceReplayProtecting? = nil,
@@ -312,7 +315,7 @@ extension CPRiskKit {
     public func validateSecureReportEnvelopeJSON(
         _ json: String,
         signingKey: String,
-        allowedSignatureVersions: Set<String> = ["v2", "v2a", "v2h", "v3"],
+        allowedSignatureVersions: Set<String> = ["v2a", "v2d", "v2h", "v3"],
         enableReplayProtection: Bool = true,
         validateAttestationConsistency: Bool = true,
         nonceStore: NonceReplayProtecting? = nil,

@@ -31,7 +31,12 @@ public final class TextSegmentEncryptorPass: ArmorPass {
     public func execute(on file: MachOFile, config: PassConfig) throws -> PassResult {
         let fullAnchorHash = try readFullAnchorHash(from: file)
         let integrityHash = sha256(fullAnchorHash + fullAnchorHash + fullAnchorHash)
-        let whitebox = ArmorWhiteBox.build(rootKey: config.encryptionKey)
+        guard let rootKey = config.encryptionKey else {
+            throw MachOError.invalidData(
+                "TextSegmentEncryptorPass requires an encryption key (no zero/default key fallback)"
+            )
+        }
+        let whitebox = try ArmorWhiteBox.build(rootKey: rootKey)
         let anchorAccumulator = anchorBoundAccumulator(
             whitebox: whitebox,
             fullAnchorHash: fullAnchorHash,
@@ -438,7 +443,7 @@ enum TextSectionKeyDerivation {
         whitebox: ArmorWhiteBoxBundle
     ) -> Data {
         precondition(parentKey.count == ArmorABI.keySize, "parentKey must be 32 bytes")
-        precondition(nonce.count == ArmorABI.nonceSize, "nonce must be 8 bytes")
+        precondition(nonce.count == ArmorABI.nonceSize, "nonce must be \(ArmorABI.nonceSize) bytes")
 
         var material = Data()
         var sectionLe = sectionIndex.littleEndian

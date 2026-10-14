@@ -142,7 +142,7 @@ static uint32_t vm_cff_trace_keystream_i(const uint32_t *rk, uint32_t pos) {
 /*
  * Domain-separated SHA256 chain. Two SHA256 calls with distinct domain tags
  * derive 64 bytes of pseudo-random output from the IKM (function id +
- * bytecode hash). This is HKDF-Expand-style without the HMAC overhead —
+ * bytecode hash). This is HKDF-Expand-style without the CPRisk-MAC overhead —
  * appropriate because the IKM is already a hash output (high entropy) and
  * we use it for symmetric-key derivation, not authentication.
  *
