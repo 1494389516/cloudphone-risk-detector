@@ -141,8 +141,13 @@ package struct ArmorWhiteBoxBundle {
 }
 
 package enum ArmorWhiteBox {
-    package static func build(rootKey: Data?) -> ArmorWhiteBoxBundle {
-        var normalizedRootKey = normalizedRootKey(rootKey)
+    /// Build the white-box bundle for an explicit 32-byte root key.
+    ///
+    /// Hard-fails (throws) on a missing, short, or all-zero key. There is
+    /// NO zero/default key fallback: deriving white-box tables from a zero
+    /// key would make every domain key predictable.
+    package static func build(rootKey: Data) throws -> ArmorWhiteBoxBundle {
+        var normalizedRootKey = try normalizedRootKey(rootKey)
         let buildSalt = currentBuildSalt()
         var records = [ArmorWhiteBoxBundle.DomainRecord]()
         var codeSection = Data()
@@ -231,12 +236,19 @@ package enum ArmorWhiteBox {
         return bundle
     }
 
-    package static func normalizedRootKey(_ rootKey: Data?) -> Data {
-        var key = Data(repeating: 0, count: ArmorABI.keySize)
-        guard let rootKey else { return key }
-        let prefix = rootKey.prefix(ArmorABI.keySize)
-        key.replaceSubrange(0..<prefix.count, with: prefix)
-        return key
+    /// Validate an explicit root key. No zero-padding of short keys, no
+    /// zero/default fallback: a key must be exactly 32 bytes and non-zero.
+    /// Throws on nil-length, short, long, or all-zero input.
+    package static func normalizedRootKey(_ rootKey: Data) throws -> Data {
+        guard rootKey.count == ArmorABI.keySize else {
+            throw MachOError.invalidData(
+                "armor root key must be exactly \(ArmorABI.keySize) bytes (got \(rootKey.count))"
+            )
+        }
+        guard !rootKey.allSatisfy({ $0 == 0 }) else {
+            throw MachOError.invalidData("armor root key must not be all-zero")
+        }
+        return rootKey
     }
 
     package static func sha256(_ data: Data) -> Data {
