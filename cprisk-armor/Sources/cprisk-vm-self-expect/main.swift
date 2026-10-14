@@ -16,7 +16,11 @@ private func usage() -> Never {
         CRiskCore cprisk_vm_interpreter.c (48 + 64 + 64 byte prefixes).
 
           --cpsv2-layout Final-image SHA256 plus linker-map function extents for a reserved v2 image.
-          --hmac         Write CPSH + custom-pad HMAC-SHA256 tag (first 4 bytes LE). DEFAULT (keyed).
+          --hmac         Write CPSH + keyed MAC tag (first 4 bytes LE, truncated — NOT a full-width MAC).
+                         V1 span-map path uses standard HMAC-SHA256; the CPSV v2 path uses CPRisk-MAC
+                         (NON-STANDARD pads 0x6D / 0xA3), which is not standard HMAC-SHA256 and does not
+                         interoperate with standard implementations. Pads are frozen by deployed
+                         runtime/server interop — do not change them. DEFAULT (keyed).
           --fnv          Write CPSF + keyless FNV-1a. WEAK: no secret — anyone who edits the TEXT
                          windows can recompute the expected value. Compatibility / no-key use only.
           --material-hex 32-byte runtime material as 64 hex digits (HMAC key derivation). REQUIRED for
@@ -122,7 +126,7 @@ struct CLI {
                     "cprisk-vm-self-expect: ok mode=fnv fnv=0x\(fnvHex) source=\(r.source.rawValue) symbols=\(names) vmaddr=\(vmaddrs) fileoff=\(fileoffs)"
                 )
             case .hmac:
-                let mat: Data?
+                let mat: Data
                 if materialHex != nil && rootKeyHex != nil {
                     throw MachOError.invalidData("use only one of --root-key-hex and --material-hex")
                 } else if let h = rootKeyHex {
@@ -137,8 +141,11 @@ struct CLI {
                     let file = try MachOFile(url: url)
                     mat = try ArmorRuntimeMaterialDeriver.derive(from: file, rootKey: rootKey)
                 } else if allowZeroMaterial {
-                    // injectHmac defaults to 32 zero bytes when mat == nil.
-                    mat = nil
+                    // EXPLICIT CI-only zero material: no silent default.
+                    // injectHmac takes a required material argument; the
+                    // zero bytes here exist only because the operator passed
+                    // --allow-zero-material. Never ship such an artifact.
+                    mat = Data(count: 32)
                     FileHandle.standardError.write(Data(
                         "cprisk-vm-self-expect: WARNING: --hmac with all-zero material (CI mode). The self-check tag is recomputable; DO NOT ship this artifact.\n".utf8
                     ))
@@ -148,7 +155,7 @@ struct CLI {
                     ))
                     exit(2)
                 }
-                if let mat, mat.allSatisfy({ $0 == 0 }), !allowZeroMaterial {
+                if mat.allSatisfy({ $0 == 0 }), !allowZeroMaterial {
                     throw MachOError.invalidData("all-zero runtime material requires --allow-zero-material (fixtures only)")
                 }
                 let r = try VMSelfExpectInjector.injectHmac(into: url, runtimeMaterial32: mat, cpsv2LayoutURL: cpsv2Layout)

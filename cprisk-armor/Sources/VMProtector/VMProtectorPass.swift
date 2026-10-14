@@ -1,6 +1,30 @@
 import Foundation
 import MachOKit
 
+// ══════════════════════════════════════════════════════════════════════════
+// PASS 13 (VMProtector) IS NOT A DELIVERABLE SECURITY PROMISE
+// ══════════════════════════════════════════════════════════════════════════
+// Do NOT count Pass 13 in any security commitment, release checklist, or
+// “protected” claim. The CLI (`cprisk-armor/main.swift`) hard-fails any run
+// that enables Pass 13, including `--all`, until an ABI-preserving
+// lifter/runtime exists. Anything this file emits today is metadata /
+// best-effort bytecode, not effective code protection.
+//
+// Known semantic gaps (do not hand-wave these away):
+//  1. LIFT CAP — the lifter stops after 24 instructions per function
+//     (`ARMLiftConfig(maxInstructions: 24)`) and appends `halt` when no
+//     RET was reached. The tail of any longer function is NOT lifted and
+//     NOT virtualized.
+//  2. RAWREGION SEMANTIC LOSS — any AArch64 word the lifter does not
+//     understand becomes `rawRegion` (raw-word passthrough). The
+//     interpreter replays the word without understanding it: flags,
+//     memory effects, and control flow of those words are NOT modeled.
+//     `rawRegion` must never be counted as virtualization coverage.
+//  3. NO ABI BRIDGE — the entry trampoline (`VMPatchRewriter`) carries a
+//     function-ID only. There is no argument/return marshalling and no
+//     calling-convention bridge for arbitrary native functions.
+// ══════════════════════════════════════════════════════════════════════════
+
 // MARK: - Policy (YAML subset)
 
 public enum VMPolicyTier: String, Sendable {
@@ -500,6 +524,7 @@ public final class VMProtectorPass: ArmorPass {
         var partialEmitted = 0
         var unresolved = 0
         var details: [String] = [
+            "PASS 13 IS NOT A DELIVERABLE SECURITY PROMISE (see file header): lift capped at 24 insns/function, rawRegion = semantic loss, trampoline = function-ID only",
             "policy: \(policyURL.path)",
             "version: \(policy.version)",
             "full=\(policy.full.count) partial=\(policy.partial.count) never=\(policy.never.count)",

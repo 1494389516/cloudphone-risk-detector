@@ -149,8 +149,11 @@ func printUsage() {
       --pass10          Pass 10: Import Table Encryption
       --pass11          Pass 11: Header Encryption
       --pass12          Pass 12: __TEXT.__text page encryption + metadata
-      --pass13          Pass 13: VMProtector (policy-driven bytecode + entry trampoline)
-      --all             Enable all passes
+      --pass13          Pass 13: VMProtector (DISABLED — any run enabling it hard-fails; see below)
+      --all             Enable all passes — NOTE: --all includes Pass 13, so --all ALWAYS FAILS
+                        with an explicit error. For a shippable run, select passes explicitly
+                        without --pass13 (e.g. --pass1 --pass2 --pass3 --pass4 --pass5 --pass6
+                        --pass7 --pass8 --pass9 --pass10 --pass11 --pass12).
       --cff-policy      Override cff_policy.yaml path for Pass 9
       --vmp-policy      Override vmp_policy.yaml path for Pass 13 (default: RiskDetectorApp/vmp_policy.yaml search)
       --safety-profile standard|appstore-safe
@@ -188,7 +191,14 @@ func printUsage() {
       SwiftPM (Release only): CPRISK_ENABLE_SWIFT_METADATA_CONVERGENCE=1 enables -disable-reflection-metadata
         and -disable-reflection-names in Package.swift (stronger than minimal; test before shipping).
 
-    Pass 13 (VMProtector) — choosing --input:
+    Pass 13 (VMProtector) — DISABLED / NOT A DELIVERABLE SECURITY PROMISE:
+      Any run that enables Pass 13 (including --all) hard-fails with an explicit
+      error. Do not count Pass 13 in security commitments. Known gaps: the
+      lifter stops after 24 instructions per function, unrecognized words
+      become rawRegion passthrough (semantic loss), and the entry trampoline
+      carries a function-ID only (no ABI bridge for native arguments).
+
+    Pass 13 (VMProtector) — choosing --input (when it is re-enabled):
       Pass 13 resolves policy names from vmp_policy.yaml by matching the Mach-O symbol table. If the
       input is stripped (typical for many shipping app executables), Swift/C symbols may be missing
       and targets will not resolve — this is usually not a policy typo, but a stripped symtab.
