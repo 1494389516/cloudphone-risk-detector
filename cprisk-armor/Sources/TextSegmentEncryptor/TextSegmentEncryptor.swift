@@ -169,7 +169,7 @@ public final class TextSegmentEncryptorPass: ArmorPass {
         )
 
         details.insert(
-            "Edge policy: encryptFirstPage=\(encryptFirstPage) encryptLastPage=\(encryptLastPage) encryptPartialTail=\(hasPartialTailChunk ? String(encryptLastChunk) : "n/a")",
+            "Edge policy: complete aligned 16 KiB blocks; edge and LC_MAIN entry blocks stay plaintext",
             at: 0
         )
 
