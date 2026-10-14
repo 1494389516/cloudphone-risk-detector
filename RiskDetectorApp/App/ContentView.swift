@@ -1,7 +1,9 @@
 import SwiftUI
+import CloudPhoneRiskAppCore
 
 /// Demo App 主界面：把三个 ViewModel 接入 TabView，做最小可用展示
 ///（检测状态/结果、历史列表、设置开关），不再只留占位文本。
+@MainActor
 struct ContentView: View {
     @StateObject private var detection = DetectionViewModel()
     @StateObject private var history = HistoryViewModel()
@@ -44,7 +46,7 @@ struct ContentView: View {
                 Button("开始检测") {
                     detection.detect(config: settings.currentConfig())
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(ReportActionButtonStyle(prominent: true))
                 .disabled(detection.isDetecting)
                 if detection.lastDTO != nil {
                     Button("保存报告") {
@@ -52,7 +54,8 @@ struct ContentView: View {
                             history.reload()
                         }
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(ReportActionButtonStyle(prominent: false))
+                    .disabled(detection.isDetecting)
                 }
                 Spacer()
             }
@@ -62,24 +65,27 @@ struct ContentView: View {
     }
 
     private func resultView(dto: RiskReportDTO) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let level = RiskLevel.from(score: dto.score)
+        return VStack(alignment: .leading, spacing: 8) {
             HStack {
-                if let level = detection.riskLevel {
-                    Image(systemName: level.icon).foregroundColor(level.color)
-                    Text(level.rawValue).foregroundColor(level.color).bold()
-                }
-                Text("分数：\(Int(dto.score))")
+                Image(systemName: level.icon).foregroundColor(level.color)
+                Text(level.rawValue).foregroundColor(level.color).bold()
+                Text("分数：\(formattedScore(dto.score))")
                 Spacer()
             }
             Text("高风险：\(dto.isHighRisk ? "是" : "否")")
-            Text("越狱：\(dto.jailbreak.isJailbroken ? "是" : "否")（置信度 \(Int(dto.jailbreak.confidence))）")
-            if !dto.jailbreak.detectedMethods.isEmpty {
+            Text("越狱：\(dto.jailbreak.isJailbroken ? "是" : "否")（置信度 \(formattedScore(dto.jailbreak.confidence))）")
+            if settings.debugShowDetailedSignals && !dto.jailbreak.detectedMethods.isEmpty {
                 Text("命中：\(dto.jailbreak.detectedMethods.joined(separator: ", "))")
                     .font(.caption).foregroundColor(.secondary)
             }
             Text(dto.summary).font(.caption).foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func formattedScore(_ value: Double) -> String {
+        value.isFinite ? String(format: "%.0f", value.rounded(.towardZero)) : "—"
     }
 
     // MARK: - 历史
@@ -138,11 +144,11 @@ struct ContentView: View {
     private var settingsTab: some View {
         NavigationView {
             Form {
-                Section("检测开关") {
+                Section(header: Text("检测开关")) {
                     Toggle("行为检测", isOn: $settings.enableBehaviorDetect)
                     Toggle("网络信号", isOn: $settings.enableNetworkSignals)
                 }
-                Section("越狱检测") {
+                Section(header: Text("越狱检测")) {
                     Toggle("文件检测", isOn: $settings.jailbreakEnableFileDetect)
                     Toggle("dyld 检测", isOn: $settings.jailbreakEnableDyldDetect)
                     Toggle("环境变量检测", isOn: $settings.jailbreakEnableEnvDetect)
@@ -150,22 +156,23 @@ struct ContentView: View {
                     Toggle("URL Scheme 检测", isOn: $settings.jailbreakEnableSchemeDetect)
                     Toggle("Hook 检测", isOn: $settings.jailbreakEnableHookDetect)
                 }
-                Section("阈值") {
+                Section(header: Text("阈值")) {
                     HStack {
                         Text("风险阈值")
                         Spacer()
-                        Text("\(Int(settings.threshold))")
+                        Text(formattedScore(settings.threshold))
                     }
                     Slider(value: $settings.threshold, in: 0...100, step: 1)
                     HStack {
                         Text("越狱阈值")
                         Spacer()
-                        Text("\(Int(settings.jailbreakThreshold))")
+                        Text(formattedScore(settings.jailbreakThreshold))
                     }
                     Slider(value: $settings.jailbreakThreshold, in: 0...100, step: 1)
                 }
-                Section("调试") {
+                Section(header: Text("调试")) {
                     Toggle("日志", isOn: $settings.logEnabled)
+                        .onChange(of: settings.logEnabled) { settings.setLogEnabled($0) }
                     Toggle("显示详细信号", isOn: $settings.debugShowDetailedSignals)
                 }
                 Section {
@@ -176,5 +183,20 @@ struct ContentView: View {
             .navigationTitle("设置")
             .onDisappear { settings.save() }
         }
+    }
+}
+
+/// Uses only iOS 14 APIs, matching the app's deployment target.
+private struct ReportActionButtonStyle: ButtonStyle {
+    let prominent: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .foregroundColor(prominent ? .white : .accentColor)
+            .background(RoundedRectangle(cornerRadius: 8)
+                .fill(Color.accentColor.opacity(prominent ? 1 : 0.12)))
+            .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }

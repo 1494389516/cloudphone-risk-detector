@@ -222,8 +222,15 @@ enum ProxyDetector {
         }
 
         let httpEnabled = (settings[kCFNetworkProxiesHTTPEnable as String] as? NSNumber)?.boolValue ?? false
+        #if os(macOS)
         let httpsEnabled = (settings[kCFNetworkProxiesHTTPSEnable as String] as? NSNumber)?.boolValue ?? false
         let socksEnabled = (settings[kCFNetworkProxiesSOCKSEnable as String] as? NSNumber)?.boolValue ?? false
+        #else
+        // Separate HTTPS/SOCKS settings are desktop-only CFNetwork APIs.
+        // iOS exposes HTTP proxy and PAC configuration through the keys below.
+        let httpsEnabled = false
+        let socksEnabled = false
+        #endif
         let pacEnabled = (settings[kCFNetworkProxiesProxyAutoConfigEnable as String] as? NSNumber)?.boolValue ?? false
 
         var out: [String: String] = [:]
