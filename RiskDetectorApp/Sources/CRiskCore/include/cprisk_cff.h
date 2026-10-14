@@ -24,8 +24,14 @@ extern "C" {
 #define CPRISK_CFF_RELEASE_BUILD 0
 #endif
 
+/* Fake/decoy states default OFF (issue 44). Previously this defaulted to
+ * CPRISK_CFF_RELEASE_BUILD, i.e. decoy states were silently ON in Release.
+ * Callers must now opt in explicitly (CPRISK_CFF_ENABLE_FAKE_STATE=1).
+ * A configuration error / bad seed must never silently fall through to a
+ * decoy path: with fake states off, cprisk_cff_should_visit_fake_state()
+ * returns 0 and the real path (or a hard error) is taken. */
 #ifndef CPRISK_CFF_ENABLE_FAKE_STATE
-#define CPRISK_CFF_ENABLE_FAKE_STATE CPRISK_CFF_RELEASE_BUILD
+#define CPRISK_CFF_ENABLE_FAKE_STATE 0
 #endif
 
 #ifndef CPRISK_CFF_ITERATION_BUDGET

@@ -49,6 +49,12 @@ void cprisk_remove_memory_trap(struct cprisk_guard_state *state);
 int cprisk_register_text_honeypot_page(void *page, size_t len);
 void cprisk_unregister_text_honeypot_page(void);
 
+/* Drain a recorded guard-page fault in normal context (see
+ * cprisk_memory_guard.c): runs the poison/deception response for a fault
+ * the signal handler recorded via self-pipe + flags. Safe to call any
+ * time; no-op when nothing is pending. */
+void cprisk_guard_fault_drain_pending(void);
+
 /* Optional SIGBUS guard wiring for active anti-dump trapping.
  * install_memory_trap/remove_memory_trap already call these internally. */
 int  cprisk_install_sigbus_guard(struct cprisk_guard_state *state);

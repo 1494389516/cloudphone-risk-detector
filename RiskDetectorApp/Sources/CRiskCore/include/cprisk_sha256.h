@@ -11,7 +11,7 @@
  * FIPS K[i] does not need to live as one local scalar operand.
  *
  * A lightweight crypto trace hook runs on \c cprisk_sha256() one-shot and on
- * \c cprisk_hmac_sha256() entry; see cprisk_crypto_trace.h.
+ * \c cprisk_mac_sha256() entry; see cprisk_crypto_trace.h.
  */
 
 #ifndef CPRISK_SHA256_H
