@@ -1,6 +1,28 @@
 // LEGACY READ-ONLY REFERENCE: cprisk.v1 nested envelopes are not the active upload contract.
 // New HTTP uploads use contracts/report-upload.schema.json; protobuf uses RiskDetectorApp/Proto/risk_report.proto.
 // No implicit SDK-report -> business-event or challenge -> review conversion is permitted.
+//
+// DO NOT USE THIS FILE FOR NEW INTEGRATIONS. The active contract is the HTTP JSON
+// contract (CloudPhoneRiskKit_文档/api/openapi.yaml + contracts/report-upload.schema.json).
+// Known divergences where this LEGACY proto differs from the active HTTP JSON contract
+// (HTTP JSON wins in every case):
+//   - Action set: this proto's RiskAction has MONITOR, but the local RiskAction has
+//     stepUpAuth instead (local-only; mapped to challenge on the wire). The HTTP JSON
+//     EvaluateResponse action set is [allow, challenge, monitor, block]; server-side
+//     `monitor` (observe-only) is NOT the same as local `stepUpAuth` (step-up auth).
+//   - RemoteConfig.signature: this proto carries an untyped string. The active rule
+//     (ConfigSignatureVerifier) is Ed25519 (64 bytes) when the public key is configured,
+//     else HMAC-SHA256 fallback; a non-64-byte signature with Ed25519 configured is
+//     rejected without fallback. "Ed25519 only" is an incomplete description.
+//   - Time representation: this proto uses google.protobuf.Timestamp, while the active
+//     HTTP JSON upload uses integer Unix milliseconds (`ts`). Do not convert one to
+//     the other implicitly.
+//   - ReportEnvelope: this proto uses camelCase-ish proto fields, bytes payload and
+//     Timestamp timestamp; the active HTTP JSON upload uses snake_case fields,
+//     base64 `payload_json` / `payload_sha256`, integer `ts`, and `sig_ver`.
+//   - trust_level: the active contract restricts it to the enum
+//     [hardware, derived, degraded] and rejects unknown values; this proto's free
+//     string field predates that restriction.
 syntax = "proto3";
 
 package cprisk.v1;
