@@ -181,22 +181,17 @@ enum ObfuscatedConstants {
         StringDeobfuscator.xorDecode([0x36, 0x3d, 0x3a, 0x27], key: 0x55)
     }
 
-    /// Honeypot bait lines (base64; decoded only when arming pages).
+    /// Honeypot 填充行：无意义随机字节（运行时生成），永不代表真实凭据。
+    /// 旧版此处写了形似真实凭据的字符串（“AES-256-Key-…”等），若被内存
+    /// 扫描工具 / 崩溃转储捕获，会被误认为真实密钥外泄。蜜罐只靠
+    /// PROT_NONE 页面触碰触发 SIGBUS 探测，从不读取/比对内容，
+    /// 因此填充内容可以是任意无意义数据。
     static var honeypotBaitRows: [[String]] {
-        [
-            [
-                StringDeobfuscator.base64Decode("QUVTLTI1Ni1LZXktQ2xvdWRQaG9uZS1TZWN1cmU="),
-                StringDeobfuscator.base64Decode("TWFzdGVyS2V5LVJTQS00MDk2LUludGVybmFs"),
-            ],
-            [
-                StringDeobfuscator.base64Decode("RGV2aWNlLUlELUNsb3VkUGhvbmUtUmlzay1TREs="),
-                StringDeobfuscator.base64Decode("U2Vzc2lvbi1Ub2tlbi1JbnRlcm5hbC1TZWNyZXQ="),
-            ],
-            [
-                StringDeobfuscator.base64Decode("UHJpdmF0ZUtleS1FQy1QMjU2LVNpZ25pbmc="),
-                StringDeobfuscator.base64Decode("Q2VydGlmaWNhdGUtQ2hhaW4tUm9vdC1DQS1Qcm9k"),
-            ],
-        ]
+        (0..<3).map { _ in
+            (0..<2).map { _ in
+                String((0..<24).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! })
+            }
+        }
     }
 
     /// Critical jailbreak paths used by multi-path consensus detectors.

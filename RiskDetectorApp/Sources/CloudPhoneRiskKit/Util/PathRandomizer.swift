@@ -1,9 +1,12 @@
 import Foundation
 
 // MARK: - 路径运行时随机化 [4.4.x]
-
-/// 降低 Stalker/syscall 跟踪一次性提取全部特征的风险。
-/// 提供随机抽样与打乱顺序，使每次 detect() 检查的路径子集不同。
+//
+// ⚠️ DEPRECATED / 死代码：自 FileDetector 改为确定性全量检查后，仓库内
+// 已无调用方。未物理删除：Xcode 工程（project.pbxproj，不在本任务可改
+// 目录内）显式引用了它；如需清理，请由工程维护方同时移除 pbxproj 中的
+// 引用后再删除本文件。
+@available(*, deprecated, message: "无调用方；FileDetector 已改为确定性全量检查")
 enum PathRandomizer {
 
     /// 带种子的随机数生成器，用于可复现的测试

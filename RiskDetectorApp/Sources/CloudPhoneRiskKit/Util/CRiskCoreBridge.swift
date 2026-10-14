@@ -1,6 +1,15 @@
 import CRiskCore
 import Foundation
 
+/// CRiskCore 桥接索引解析。
+///
+/// ⚠️ 测试钩子不在 Swift 侧解析：C 层的测试钩子桥接别名
+/// `cpra_0089`~`cpra_0100`（`cprisk_test_*`，如白盒 bundle 清除、mprotect
+/// 故障注入、anti-debug 计划篡改）对应的 `CPRISK_SWIFT_BRIDGE_IMPORT_TEST_*`
+/// 索引在本文件中有意不声明、不解析，Swift 代码无法调用它们。
+/// 如需在 C 侧收紧，请在 C 侧把这些别名收进 `#if DEBUG` 编译门控；
+/// Swift 侧已保证：即使 C 侧符号存在，Swift 也无调用路径。
+/// 另：`CPRISKKIT_ARMOR_ROOT_KEY_HEX` 是密钥供给路径（非测试开关），不在此列。
 enum CRiskCoreBridge {
     private static let lock = NSLock()
     private static var cache: [UInt32: UnsafeMutableRawPointer] = [:]
