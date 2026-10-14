@@ -2,6 +2,8 @@
 
 # IR-VMP 验证记录
 
+> 2026-10-04：按维护者要求移除仓库中的单元测试、差分/回归测试源码、测试运行脚本及对应测试 CI。下文测试命令和结果作为历史记录保留；需要复现时请使用删除前的提交 `16543b971eaeb247e8720f8aa927d45fe97e90c0`。代码生成、CPSV 布局生成和发布证据校验工具仍保留。
+
 ## 2026-10-01：v2 GEP 边界与 iOS 验证入口复核
 
 最终集成时重新执行 stack、GF2 和未签名 iPhoneOS Release App 构建，分别得到 4,155 例 `HOST_VMP_PASS`、4,096 例 `HOST_VMP_PASS` 和 `IOS_RELEASE_APP_BUILD_PASS`。当前源码哈希、产物哈希与原始报告摘要保存在 [final-integration-macos-arm64.json](validation/final-integration-macos-arm64.json)；源码提取、Python/JSON 语法、补丁哈希和 diff 检查均通过，策略文件的非注释配置与基准完全一致。
@@ -90,7 +92,7 @@ Darwin stack 的 `llvm.objectsize` 仍需显式 LLVM 预处理，此通过不代
 
 结构化结果、插件及产物哈希见 [macos-arm64-llvm22.json](validation/macos-arm64-llvm22.json)。插件 SHA-256：`fbe46e386b25172f20e3836d130d4f486f9d0af8dbc87091c2a4d2d7b5403231`。原始报告和大型 IR/二进制保留在本次机器的 `/tmp` 目录，JSON 中记录其路径；这些临时路径不保证跨机器可用。
 
-真实主机验证使用以下命令（先按 README 构建插件；替换路径即可复现）：
+真实主机验证曾使用以下命令（历史记录：`run.py` 已于 2026-10-04 删除，不可复现）：
 
 ```bash
 python3 experiments/ir-vmp/build_plugin.py \

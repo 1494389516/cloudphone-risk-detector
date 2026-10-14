@@ -8,7 +8,7 @@
 
 ## 构建独立 App
 
-从仓库根目录运行，要求本机已有 Xcode、iPhoneOS SDK、匹配 LLVM 和已构建插件：
+历史命令（不可复现；`run.py` 已于 2026-10-04 删除）。原要求：本机已有 Xcode、iPhoneOS SDK、匹配 LLVM 和已构建插件：
 
 ```bash
 python3 experiments/ir-vmp/ios/run.py --mode build-only \
@@ -29,7 +29,7 @@ xcrun devicectl list devices --timeout 15 --json-output /tmp/ir-vmp-device-inven
 security find-identity -v -p codesigning
 ```
 
-提供实际设备 ID、身份和 profile 路径后运行：
+提供实际设备 ID、身份和 profile 路径后运行（历史记录；脚本已删除，命令不可复现；下文 `Your Name` / `IDENTITY` 为占位符，须替换为你自己的签名身份）：
 
 ```bash
 python3 experiments/ir-vmp/ios/run.py --mode device \
