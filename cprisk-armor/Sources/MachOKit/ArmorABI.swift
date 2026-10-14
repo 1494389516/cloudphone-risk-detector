@@ -1,6 +1,34 @@
 import CryptoKit
 import Foundation
 
+// ══════════════════════════════════════════════════════════════════════════
+// MESSAGE AUTHENTICATION — TWO DIFFERENT CONSTRUCTIONS, DO NOT CONFLATE
+// ══════════════════════════════════════════════════════════════════════════
+// This file defines TWO keyed SHA-256 MACs with different pad bytes:
+//
+//  1. `ArmorABI.hmacSHA256` — STANDARD HMAC-SHA256 (ipad 0x36 / opad 0x5C,
+//     RFC 2104). Interoperates with any standard HMAC-SHA256 implementation.
+//  2. `ArmorABI.cpriskMAC` — CPRisk-MAC, a NON-STANDARD variant (ipad 0x6D /
+//     opad 0xA3). It is NOT standard HMAC-SHA256 and does NOT interoperate
+//     with standard implementations. It exists only for compatibility with
+//     the already-deployed CRiskCore / server side, which uses these pads
+//     (`cprisk_mac_sha256` in CRiskCore, `CPRiskMessageAuth` in Swift).
+//
+// The two produce different tags for the same (key, message). NEVER silently
+// change either side's pad bytes: that would change every authentication tag
+// on the wire and break interop with deployed binaries / the server. The
+// migration path is to introduce a protocol/contract version that negotiates
+// standard HMAC — not to edit pads in place.
+//
+// OPEN INTEROP QUESTION (recorded, not resolved here): the deployed CRiskCore
+// runtime verifies armor-produced tags with its custom-pad construction, while
+// several armor passes emit tags with the standard construction. Whether a
+// given pass's tags verify at runtime depends on which construction the
+// matching runtime verifier uses; that pairing must be confirmed per pass
+// against the runtime before shipping. This file deliberately changes NO pad
+// bytes; it only names the two constructions honestly.
+// ══════════════════════════════════════════════════════════════════════════
+
 private extension Data {
     mutating func appendLittleEndian(_ value: UInt32) {
         var le = value.littleEndian
@@ -13,10 +41,64 @@ private extension Data {
     }
 }
 
+/// Standard HMAC-SHA256 (RFC 2104): pads are ipad 0x36 / opad 0x5C.
+/// This is a standard construction — do NOT rename it CPRisk-MAC, and do NOT
+/// change its pads. It is NOT interchangeable with `CPRiskMessageAuth`
+/// (custom pads 0x6D / 0xA3) below; see the file-top notice.
 private enum ArmorMessageAuth {
     static let blockSize = 64
     static let innerPadByte: UInt8 = 0x36
     static let outerPadByte: UInt8 = 0x5C
+
+    static func authenticationCode(key: Data, message: Data) -> Data {
+        var normalizedKey = [UInt8](repeating: 0, count: blockSize)
+        if key.count > blockSize {
+            let digest = Data(SHA256.hash(data: key))
+            normalizedKey.replaceSubrange(0..<digest.count, with: digest)
+        } else {
+            normalizedKey.replaceSubrange(0..<key.count, with: key)
+        }
+
+        var innerKey = normalizedKey
+        var outerKey = normalizedKey
+        for index in 0..<blockSize {
+            innerKey[index] ^= innerPadByte
+            outerKey[index] ^= outerPadByte
+        }
+
+        var innerInput = Data(innerKey)
+        innerInput.append(message)
+        let innerDigest = Data(SHA256.hash(data: innerInput))
+
+        var outerInput = Data(outerKey)
+        outerInput.append(innerDigest)
+        return Data(SHA256.hash(data: outerInput))
+    }
+
+    static func constantTimeEquals(_ lhs: Data, _ rhs: Data) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        var diff: UInt8 = 0
+        for i in 0..<lhs.count {
+            diff |= lhs[i] ^ rhs[i]
+        }
+        return diff == 0
+    }
+}
+
+/// CPRisk-MAC — NON-STANDARD keyed SHA-256 MAC used for compatibility with
+/// the deployed CRiskCore / server side.
+///
+/// Pads are ipad 0x6D / opad 0xA3 (NOT the standard HMAC pads 0x36 / 0x5C).
+/// CPRisk-MAC is NOT standard HMAC-SHA256 and does NOT interoperate with
+/// standard implementations. The pad bytes are part of the deployed wire
+/// contract: do NOT change them. Migration to standard HMAC requires a
+/// protocol/contract version negotiation, not a silent pad edit.
+private enum CPRiskMessageAuth {
+    static let blockSize = 64
+    /// NON-STANDARD inner pad. Frozen by deployed CRiskCore / server interop.
+    static let innerPadByte: UInt8 = 0x6D
+    /// NON-STANDARD outer pad. Frozen by deployed CRiskCore / server interop.
+    static let outerPadByte: UInt8 = 0xA3
 
     static func authenticationCode(key: Data, message: Data) -> Data {
         var normalizedKey = [UInt8](repeating: 0, count: blockSize)
@@ -513,7 +595,21 @@ public enum ArmorABI {
     /// `__DATA,__swift5_ptmap` or `__DATA,__sw5_mdmap`, verify `magic == CPMD`, then for each record
     /// recompute the same Fisher–Yates permutation from `subseed` (see `SwiftMetadataShuffle` in
     /// StructureObfuscator) and invert the slot rewrite — only needed if a tool requires the
-    /// original compiler ordering; execution does not depend on table order.
+    /// original compiler ordering.
+    ///
+    /// **UNVERIFIED ASSUMPTION — “execution does not depend on table order”.**
+    /// The shuffle preserves the *multiset* of resolved targets (each slot is
+    /// re-encoded to point at one of the original targets), but it has NOT been
+    /// verified that the Swift runtime is order-independent for every shuffled
+    /// table (`__swift5_types`, `__swift5_proto`, `__swift5_fieldmd`) — e.g.
+    /// first-match-wins lookups, duplicate handling, or ordering-sensitive
+    /// registration could observe the permutation. Treat the shuffle as
+    /// best-effort obfuscation, not as proven behavior-preserving. The producer
+    /// verifies the target multiset after rewriting (see
+    /// `SwiftMetadataShuffle.applyDescriptorTableShuffles`) and restores the
+    /// original bytes + fails closed on mismatch, but that check cannot prove
+    /// runtime order-independence. Validate shuffled binaries on target
+    /// devices; if order-sensitivity is ever observed, disable the shuffle.
     ///
     /// Header: `{ magic, abi_version, flags, record_count, build_seed, reserved64 }` (32 bytes).
     /// Record: `{ segment[16], section[16], file_offset, entry_count, subseed }` (48 bytes).
@@ -531,7 +627,99 @@ public enum ArmorABI {
         public static let headerSize = 12
         // 60 = 4(stringID) + 4(dataOffset) + 4(dataLength) + 16(nonce) + 32(hmacTag).
         // Matches C header `_Static_assert(sizeof(strtab_index_entry) == 60)`.
+        // The 60-byte entry is FROZEN: do not add fields to it. Pass 1
+        // write-back locations live in the separate map below instead.
         public static let indexEntrySize = 60
+
+        /// Pass 1 write-back map section (`__DATA,__swift5_strwb`).
+        ///
+        /// The 60-byte index entry carries no target address, so a runtime
+        /// that only reads the string table cannot write a decrypted string
+        /// back to the address the program actually reads from (Pass 1
+        /// zero-fills those original bytes). This separate map supplies the
+        /// missing (stringID → original file offset / VM address / length)
+        /// mapping so a runtime write-back consumer CAN restore decrypted
+        /// bytes in place. It is additive: parsers that only understand the
+        /// 60-byte entries ignore this section.
+        ///
+        /// Status: the map is EMITTED by Pass 1, but no in-tree runtime
+        /// consumer has been verified to read it yet. Until a runtime
+        /// write-back consumer lands and is verified, original addresses
+        /// stay zeroed after Pass 1 and only table-lookup decryption works.
+        /// Do NOT claim Pass 1 write-back is active.
+        public enum WritebackMap {
+            /// Magic "CPSW" in file order.
+            public static let magic: UInt32 = 0x43505357
+            public static let sectionName = "__swift5_strwb"
+            public static let version: UInt32 = 1
+            public static let headerSize = 16
+            /// Record: { string_id u32, flags u32, file_offset u64,
+            ///           vm_address u64, byte_length u64 } = 32 bytes.
+            public static let recordSize = 32
+
+            /// Packed layout: { magic, version, count, reserved }.
+            public struct Header {
+                public let magic: UInt32
+                public let version: UInt32
+                public let count: UInt32
+                public let reserved: UInt32
+
+                public init(
+                    magic: UInt32 = WritebackMap.magic,
+                    version: UInt32 = WritebackMap.version,
+                    count: UInt32,
+                    reserved: UInt32 = 0
+                ) {
+                    self.magic = magic
+                    self.version = version
+                    self.count = count
+                    self.reserved = reserved
+                }
+
+                public func serialized() -> Data {
+                    var data = Data()
+                    data.appendLittleEndian(magic)
+                    data.appendLittleEndian(version)
+                    data.appendLittleEndian(count)
+                    data.appendLittleEndian(reserved)
+                    return data
+                }
+            }
+
+            /// Packed layout: { string_id, flags, file_offset, vm_address, byte_length }.
+            /// `flags` is reserved (must be 0).
+            public struct Entry {
+                public let stringID: UInt32
+                public let flags: UInt32
+                public let fileOffset: UInt64
+                public let vmAddress: UInt64
+                public let byteLength: UInt64
+
+                public init(
+                    stringID: UInt32,
+                    flags: UInt32 = 0,
+                    fileOffset: UInt64,
+                    vmAddress: UInt64,
+                    byteLength: UInt64
+                ) {
+                    self.stringID = stringID
+                    self.flags = flags
+                    self.fileOffset = fileOffset
+                    self.vmAddress = vmAddress
+                    self.byteLength = byteLength
+                }
+
+                public func serialized() -> Data {
+                    var data = Data()
+                    data.appendLittleEndian(stringID)
+                    data.appendLittleEndian(flags)
+                    data.appendLittleEndian(fileOffset)
+                    data.appendLittleEndian(vmAddress)
+                    data.appendLittleEndian(byteLength)
+                    return data
+                }
+            }
+        }
 
         /// Packed layout: { magic, version, count }.
         public struct Header {
@@ -771,15 +959,38 @@ public enum ArmorABI {
         }
     }
 
-    /// Custom-pad SHA-256 MAC — used for authentication tags throughout the ABI.
+    /// Standard HMAC-SHA256 (RFC 2104, pads 0x36 / 0x5C).
+    ///
+    /// WARNING: this is NOT the same construction as the deployed CRiskCore
+    /// `cprisk_mac_sha256` / `CPRiskMessageAuth`, which use custom pads
+    /// (0x6D / 0xA3) — see `cpriskMAC` below and the file-top notice. Tags
+    /// from the two are not interchangeable. Do not change the pads here.
     public static func hmacSHA256(key: Data, message: Data) -> Data {
         ArmorMessageAuth.authenticationCode(key: key, message: message)
     }
 
-    /// Constant-time HMAC-SHA256 verification helper.
+    /// Constant-time standard HMAC-SHA256 verification helper.
     public static func verifyHMACSHA256(key: Data, message: Data, expectedTag: Data) -> Bool {
         ArmorMessageAuth.constantTimeEquals(
             ArmorMessageAuth.authenticationCode(key: key, message: message),
+            expectedTag
+        )
+    }
+
+    /// CPRisk-MAC — NON-STANDARD keyed SHA-256 MAC (pads 0x6D / 0xA3).
+    ///
+    /// NOT standard HMAC-SHA256; does NOT interoperate with standard
+    /// implementations. Kept for compatibility with the deployed CRiskCore /
+    /// server side, which uses these pads. Do NOT change the pad bytes;
+    /// migrate via protocol/contract version negotiation instead.
+    public static func cpriskMAC(key: Data, message: Data) -> Data {
+        CPRiskMessageAuth.authenticationCode(key: key, message: message)
+    }
+
+    /// Constant-time CPRisk-MAC verification helper.
+    public static func verifyCPRiskMAC(key: Data, message: Data, expectedTag: Data) -> Bool {
+        CPRiskMessageAuth.constantTimeEquals(
+            CPRiskMessageAuth.authenticationCode(key: key, message: message),
             expectedTag
         )
     }

@@ -16,9 +16,15 @@ public final class IntegrityAnchorPass: ArmorPass {
             throw MachOError.sectionNotFound("__TEXT", "__text")
         }
 
+        guard let rootKey = config.encryptionKey else {
+            throw MachOError.invalidData(
+                "IntegrityAnchorPass requires an encryption key (no zero/default key fallback)"
+            )
+        }
+
         let textHash = ArmorWhiteBox.sha256(try textSection.readContent(from: file.data))
         let lanes = ArmorABI.Integrity.splitAnchorLanes(for: textHash)
-        let whiteboxBundle = ArmorWhiteBox.build(rootKey: config.encryptionKey)
+        let whiteboxBundle = try ArmorWhiteBox.build(rootKey: rootKey)
         let anchorTag = whiteboxBundle.prf(domain: .anchorTag, input: textHash)
 
         for (name, lane) in zip(ArmorABI.Integrity.splitSectionNames, lanes) {
@@ -37,10 +43,32 @@ public final class IntegrityAnchorPass: ArmorPass {
             align: 3
         )
 
-        // Whitebox sections are optional placeholders — older app builds may not link them in.
-        // Only write when the placeholder already exists; otherwise skip silently to keep the pass functional.
+        // White-box sections are REQUIRED placeholders: the runtime verifies
+        // the white-box bundle (metadata/code/data/tag) against the anchor.
+        // A missing placeholder is an explicit hard failure — never skip
+        // silently, or the binary would ship with anchor lanes but no
+        // white-box bundle and the runtime would reject (or silently
+        // distrust) the anchor chain.
+        let requiredWhiteboxSections = [
+            ArmorABI.WhiteBox.Sections.metadata,
+            ArmorABI.WhiteBox.Sections.code,
+            ArmorABI.WhiteBox.Sections.data,
+            ArmorABI.WhiteBox.Sections.tag,
+        ]
+        var missingWhiteboxSections: [String] = []
+        for section in requiredWhiteboxSections {
+            if try file.section(segment: ArmorABI.dataSegmentName, section: section) == nil {
+                missingWhiteboxSections.append("\(ArmorABI.dataSegmentName).\(section)")
+            }
+        }
+        guard missingWhiteboxSections.isEmpty else {
+            throw MachOError.invalidData(
+                "IntegrityAnchorPass: missing required white-box placeholder section(s): "
+                + missingWhiteboxSections.joined(separator: ", ")
+                + ". Link the white-box placeholders (or add them to the link) before running Pass 4."
+            )
+        }
         func writeIfPresent(_ section: String, _ content: Data) throws {
-            guard try file.section(segment: ArmorABI.dataSegmentName, section: section) != nil else { return }
             _ = try file.addOrUpdateSection(
                 segment: ArmorABI.dataSegmentName,
                 section: section,

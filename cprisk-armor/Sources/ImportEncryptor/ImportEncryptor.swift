@@ -6,20 +6,45 @@ import Security
 /// Pass 10: Import Table Encryption
 ///
 /// Encrypts import symbol names discovered from LC_DYLD_INFO_ONLY bind streams
-/// and stores them in `__DATA` `ArmorABI.Sections.importEncryptedTable`. At runtime, CRiskCore resolves
-/// symbols via dlsym on first use.
+/// and stores them in `__DATA` `ArmorABI.Sections.importEncryptedTable` as an
+/// auxiliary copy the runtime can consult on demand (export-trie first,
+/// `dlsym` fallback).
+///
+/// BIND STREAMS ARE PRESERVED — NEVER ZEROED. `dyld` needs the bind opcodes
+/// to bind imports at launch: a stream of all-zero bytes decodes as
+/// `BIND_OPCODE_DONE` only, so `dyld` would see no bindings and every
+/// non-whitelisted import would fault on first use. An earlier version of
+/// this pass zeroed the bind streams (“scrubbing”); that breaks launch and
+/// has been removed. Static visibility of import names is therefore reduced
+/// only by the auxiliary encrypted copy, not by destroying the bind data
+/// `dyld` requires.
 ///
 /// Security properties:
-/// - Symbol names are not visible in IDA import panel
-/// - Each symbol authenticated with HMAC-SHA256 before decryption
+/// - Each symbol authenticated with a 32-byte tag before decryption
 /// - Keystream derived via SHA256 to prevent oracle attacks
 /// - Whitelisted symbols (malloc, pthread_create, etc.) remain in place
+///
+/// Wire format (FROZEN by the CRiskCore import-resolver parser — do not
+/// “unify” this table to `ArmorABI.nonceSize`):
+///   Header (16 bytes): magic(4) + version(4) + count(4) + reserved(4)
+///   Index entries (48 bytes each): offset(4) + length(4) + nonce(8) + hmac(32)
+///   Encrypted name data (variable)
+/// The parser reads nonce[8] at entry+8 and the tag at entry+16, and verifies
+/// the tag over nonce(8) || plaintext. Emitting 16-byte nonces / 56-byte
+/// entries here would make the table unparseable by the runtime.
 public final class ImportEncryptorPass: ArmorPass {
     public let name = "ImportEncryptor"
 
     /// Magic bytes: "CPIM" (0x43494D50)
     private static let tableMagic: UInt32 = 0x43494D50
     private static let tableVersion: UInt32 = 1
+    /// Index-entry size in bytes: offset(4) + length(4) + nonce(8) + tag(32).
+    /// FROZEN by the CRiskCore import-resolver parser (`CPRISK_IMPORT_INDEX_SZ`).
+    private static let indexEntrySize = 48
+    /// Per-symbol nonce size in bytes. FROZEN by the CRiskCore parser, which
+    /// reads nonce[8] / tag at fixed entry offsets. Deliberately NOT
+    /// `ArmorABI.nonceSize` (16) — see the file header.
+    private static let tableNonceSize = 8
 
     /// Minimal runtime whitelist: symbols that must remain available
     /// for process bootstrap / threading / dynamic resolution plumbing.
@@ -74,18 +99,18 @@ public final class ImportEncryptorPass: ArmorPass {
                            details: ["No non-whitelisted imported symbols found"])
         }
 
-        // Step 5: Derive import encryption key from root key via white-box domain 8
-        let importKey: Data
-        if let rootKey = config.encryptionKey {
-            let whitebox = ArmorWhiteBox.build(rootKey: rootKey)
-            importKey = whitebox.prf(
-                domain: .importEncryptionKey,
-                input: Data(repeating: 0, count: ArmorABI.hashSize)
+        // Step 5: Derive import encryption key from root key via white-box domain 8.
+        // No zero/default key fallback: a missing key is a hard failure.
+        guard let rootKey = config.encryptionKey else {
+            throw MachOError.invalidData(
+                "ImportEncryptorPass requires an encryption key (no zero/default key fallback)"
             )
-        } else {
-            // Fallback: use zero key (for non-production builds)
-            importKey = Data(repeating: 0, count: ArmorABI.hashSize)
         }
+        let whitebox = try ArmorWhiteBox.build(rootKey: rootKey)
+        let importKey = whitebox.prf(
+            domain: .importEncryptionKey,
+            input: Data(repeating: 0, count: ArmorABI.hashSize)
+        )
 
         // Step 6: Build encrypted import table
         let encryptedData = try buildEncryptedTable(symbols: toEncrypt, key: importKey)
@@ -100,21 +125,22 @@ public final class ImportEncryptorPass: ArmorPass {
             slackPadding: .keyedPseudorandom(material: slackMat)
         )
 
-        // Step 8: Scrub original bind opcode streams so static tooling cannot
-        // recover original import names from LC_DYLD_INFO_ONLY payloads.
-        let scrubSummary = try scrubBindStreams(on: file, dyldInfoCmd: dyldInfoCmd)
-
+        // Step 8: DO NOT scrub/zero the original bind opcode streams.
+        // dyld consumes these streams at launch to bind imports; zeroing
+        // them leaves dyld with no bindings (every zero byte decodes as
+        // BIND_OPCODE_DONE) and breaks the binary. The encrypted table from
+        // Step 6 is an auxiliary copy only.
         return PassResult(
             passName: name,
             itemsProcessed: toEncrypt.count,
-            bytesModified: encryptedData.count + scrubSummary.bytesScrubbed,
+            bytesModified: encryptedData.count,
             details: [
                 "Encrypted \(toEncrypt.count) import symbol names",
                 "Stored in \(ArmorABI.dataSegmentName).\(ArmorABI.Sections.importEncryptedTable)",
                 "Whitelist size: \(Self.whitelist.count) symbols",
                 "Key domain: \(ArmorABI.WhiteBox.Domain.importEncryptionKey.rawValue)",
                 "Imported symbols discovered: \(symbols.count)",
-                "Scrubbed bind streams: \(scrubSummary.streamCount) regions, \(scrubSummary.bytesScrubbed) bytes",
+                "Bind streams preserved (not zeroed): dyld requires them to bind imports at launch",
             ]
         )
     }
@@ -130,17 +156,6 @@ public final class ImportEncryptorPass: ArmorPass {
             try parseBindStream(from: data, offset: stream.offset, size: stream.size, symbols: &symbols)
         }
         return symbols.sorted()
-    }
-
-    private func scrubBindStreams(on file: MachOFile, dyldInfoCmd: LoadCommand) throws -> ScrubSummary {
-        let streams = try bindStreamRegions(from: dyldInfoCmd, imageSize: file.data.count)
-        var scrubbed = 0
-        for stream in streams where stream.size > 0 {
-            let zeros = Data(repeating: 0, count: stream.size)
-            try file.replaceBytes(at: UInt64(stream.offset), with: zeros)
-            scrubbed += stream.size
-        }
-        return ScrubSummary(streamCount: streams.count, bytesScrubbed: scrubbed)
     }
 
     private func bindStreamRegions(from dyldInfoCmd: LoadCommand, imageSize: Int) throws -> [BindStreamRegion] {
@@ -303,12 +318,14 @@ public final class ImportEncryptorPass: ArmorPass {
 
     // MARK: - Table Building
 
-    /// Build the encrypted import table:
+    /// Build the encrypted import table (frozen wire format — see file header):
     ///   Header (16 bytes): magic(4) + version(4) + count(4) + reserved(4)
     ///   Index entries (48 bytes each): offset(4) + length(4) + nonce(8) + hmac(32)
     ///   Encrypted name data (variable)
     ///
     /// Each symbol's encrypted name immediately follows the index table.
+    /// Nonce is 8 bytes (`tableNonceSize`), NOT `ArmorABI.nonceSize` (16):
+    /// the CRiskCore parser reads nonce[8] at entry+8 and the tag at entry+16.
     private func buildEncryptedTable(symbols: [String], key: Data) throws -> Data {
         var table = Data()
 
@@ -326,9 +343,10 @@ public final class ImportEncryptorPass: ArmorPass {
 
         for (index, symbol) in symbols.enumerated() {
             let nameData = Data(symbol.utf8)
-            let nonce = try generateNonce(count: ArmorABI.nonceSize)
+            let nonce = try generateNonce(count: Self.tableNonceSize)
 
-            // HMAC for integrity: HMAC(key, nonce || encrypted_name)
+            // Tag for integrity: HMAC(key, nonce || plaintext_name) with an
+            // 8-byte nonce — the exact input the CRiskCore parser verifies.
             let hmacInput = nonce + nameData  // HMAC over plaintext for integrity
             let hmacTag = ArmorABI.hmacSHA256(key: key, message: hmacInput)
 
@@ -348,9 +366,11 @@ public final class ImportEncryptorPass: ArmorPass {
 
         // Now write index entries. offset = position within encrypted name data area,
         // starting from 0 at the first encrypted name byte.
+        // Entry layout (48 bytes): offset(4) + length(4) + nonce(8) + hmac(32).
         var dataOffset = 0
         for (nonce, hmacTag, encrypted) in encryptedNames {
-            // Index entry: offset(4) + length(4) + nonce(8) + hmac(32) = 48 bytes
+            precondition(nonce.count == Self.tableNonceSize, "import table nonce must be 8 bytes")
+            precondition(hmacTag.count == ArmorABI.hashSize, "import table tag must be 32 bytes")
             table.appendUInt32LE(UInt32(dataOffset))
             table.appendUInt32LE(UInt32(encrypted.count))
             table.append(nonce)
@@ -363,12 +383,20 @@ public final class ImportEncryptorPass: ArmorPass {
             table.append(encrypted)
         }
 
+        // Fail closed on layout drift: the parser strides the index by 48.
+        precondition(
+            table.count == 16 + encryptedNames.count * Self.indexEntrySize + dataOffset,
+            "import table size mismatch: expected 16 + count*48 + data"
+        )
+
         return table
     }
 
     /// Derive a keystream using SHA256-CTR-like construction.
-    /// Material: key || index (4 bytes LE) || nonce || counter (8 bytes LE)
-    /// Result: SHA256(material) repeated as needed
+    /// Material: key || index (4 bytes LE) || nonce(8) || counter (8 bytes LE)
+    /// Result: SHA256(material) repeated as needed.
+    /// The nonce here is the 8-byte table nonce (`tableNonceSize`), matching
+    /// the CRiskCore parser's keystream derivation.
     private func deriveKeystream(key: Data, index: UInt32, nonce: Data, length: Int) -> Data {
         guard length > 0 else { return Data() }
 
@@ -430,11 +458,6 @@ private struct BindStreamRegion {
     let kind: String
     let offset: Int
     let size: Int
-}
-
-private struct ScrubSummary {
-    let streamCount: Int
-    let bytesScrubbed: Int
 }
 
 // MARK: - Helper extensions for Data
