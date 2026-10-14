@@ -12,6 +12,18 @@ public enum CertificatePinScope: UInt8, Sendable {
     case intermediate = 2
 }
 
+/// pinset 校验三态结果。C 侧 `cprisk_pinset_*` 返回 `-1`（错误）/ `0`（不匹配）/ `1`（匹配）；
+/// Swift 侧必须区分 `-1` 与 `0`：错误时无条件取消握手，绝不回落系统 CA；
+/// 仅 `0`（明确不匹配）时才按 `allowsSystemCA` 决定是否回落。
+public enum PinMatchOutcome: Sendable {
+    /// 明确匹配。
+    case match
+    /// 明确不匹配（输入有效，校验完成）。
+    case noMatch
+    /// 校验错误（非法输入 / 内部错误）：无法得出结论，必须按失败处理。
+    case error
+}
+
 /// Runtime material for TLS SPKI pinning without retaining `sha256/...` **strings** in the delegate /
 /// global configuration path (reduces trivial `strings`/heap scans for pin literals).
 ///
@@ -91,16 +103,16 @@ public final class PinnedCertificatePinMaterial: @unchecked Sendable {
         }
     }
 
-    /// CRiskCore duplicate validation path for layered pins.
-    func matchesLayeredDigestViaCore(_ digest: Data, chainIndex: Int) -> Bool {
-        guard digest.count == Self.digestLength, !slots.isEmpty else { return false }
-        guard chainIndex >= 0 else { return false }
-        return digest.withUnsafeBytes { candBuf -> Bool in
-            guard let candBase = candBuf.bindMemory(to: UInt8.self).baseAddress else { return false }
+    /// CRiskCore duplicate validation path for layered pins (三态：match / noMatch / error)。
+    func matchesLayeredDigestViaCoreOutcome(_ digest: Data, chainIndex: Int) -> PinMatchOutcome {
+        guard digest.count == Self.digestLength, !slots.isEmpty else { return .error }
+        guard chainIndex >= 0 else { return .error }
+        return digest.withUnsafeBytes { candBuf -> PinMatchOutcome in
+            guard let candBase = candBuf.bindMemory(to: UInt8.self).baseAddress else { return .error }
             return packedDigests.withUnsafeBufferPointer { pinBuf in
-                guard let pinBase = pinBuf.baseAddress else { return false }
+                guard let pinBase = pinBuf.baseAddress else { return .error }
                 return packedScopes.withUnsafeBufferPointer { scBuf in
-                    guard let scBase = scBuf.baseAddress else { return false }
+                    guard let scBase = scBuf.baseAddress else { return .error }
                     let rc = cprisk_pinset_match_layered_sha256_digest(
                         candBase,
                         digest.count,
@@ -109,28 +121,47 @@ public final class PinnedCertificatePinMaterial: @unchecked Sendable {
                         scBase,
                         UInt32(chainIndex)
                     )
-                    return rc == 1
+                    switch rc {
+                    case 1: return .match
+                    case 0: return .noMatch
+                    default: return .error
+                    }
                 }
             }
         }
     }
 
-    /// CRiskCore-side duplicate validation path using a packed digest buffer (non-layered; any scope).
-    func containsRawDigestViaCore(_ digest: Data) -> Bool {
-        guard digest.count == Self.digestLength, !slots.isEmpty else { return false }
-        return digest.withUnsafeBytes { candBuf -> Bool in
-            guard let candBase = candBuf.bindMemory(to: UInt8.self).baseAddress else { return false }
+    /// 旧 Bool 包装：仅明确匹配为 true；错误按不匹配处理（调用方须用
+    /// `matchesLayeredDigestViaCoreOutcome` 区分错误与不匹配）。
+    func matchesLayeredDigestViaCore(_ digest: Data, chainIndex: Int) -> Bool {
+        matchesLayeredDigestViaCoreOutcome(digest, chainIndex: chainIndex) == .match
+    }
+
+    /// CRiskCore-side duplicate validation path using a packed digest buffer (non-layered; any scope)，三态。
+    func containsRawDigestViaCoreOutcome(_ digest: Data) -> PinMatchOutcome {
+        guard digest.count == Self.digestLength, !slots.isEmpty else { return .error }
+        return digest.withUnsafeBytes { candBuf -> PinMatchOutcome in
+            guard let candBase = candBuf.bindMemory(to: UInt8.self).baseAddress else { return .error }
             return packedDigests.withUnsafeBufferPointer { pinBuf in
-                guard let pinBase = pinBuf.baseAddress else { return false }
+                guard let pinBase = pinBuf.baseAddress else { return .error }
                 let rc = cprisk_pinset_contains_sha256_digest(
                     candBase,
                     digest.count,
                     pinBase,
                     slots.count
                 )
-                return rc == 1
+                switch rc {
+                case 1: return .match
+                case 0: return .noMatch
+                default: return .error
+                }
             }
         }
+    }
+
+    /// 旧 Bool 包装：仅明确匹配为 true。
+    func containsRawDigestViaCore(_ digest: Data) -> Bool {
+        containsRawDigestViaCoreOutcome(digest) == .match
     }
 
     private static func positionAllowed(scopeByte: UInt8, chainIndex: UInt32) -> UInt8 {

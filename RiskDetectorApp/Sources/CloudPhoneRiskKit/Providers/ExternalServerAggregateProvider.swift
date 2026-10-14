@@ -16,6 +16,12 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
 
     private let lock = UnfairLock()
     private var current: ServerSignals?
+    /// `current` 是否经 `setVerified(_:signature:)` 验签接受。
+    /// 未验签的端侧注入（`setDebugBypassingVerification`，仅 DEBUG）默认不被采信：
+    /// `serverSignals()` / `signals()` 会丢弃它。服务端必须忽略端侧上报的
+    /// `server` 字段，仅以服务端自己聚合的 IP/ASN/机房信息为准；端侧 `server`
+    /// 字段只能作为联调回显，不得参与服务端判决。
+    private var currentIsVerified: Bool = false
     private var graphFeatures: GraphFeatures?
     private var serverSignalKey: SymmetricKey?
     private var realtimeTelemetryFeedback: RealtimeTelemetryFeedback?
@@ -99,6 +105,7 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
     func clear() {
         lock.withLock {
             current = nil
+            currentIsVerified = false
             graphFeatures = nil
             realtimeTelemetryFeedback = nil
         }
@@ -116,7 +123,11 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
             return
         }
         #if DEBUG
-        lock.withLock { current = signals }
+        lock.withLock {
+            current = signals
+            // 未验签：默认不被采信（serverSignals/signals 会丢弃）。
+            currentIsVerified = false
+        }
         Logger.log("server_aggregate.set (deprecated): set")
         #else
         Logger.log("server_aggregate.set rejected: use setVerified in Release builds")
@@ -147,6 +158,7 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
             // Re-check key hasn't been cleared between verification and store
             guard serverSignalKey != nil else { return false }
             current = signals
+            currentIsVerified = true
             return true
         }
         if !accepted {
@@ -201,7 +213,9 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
     /// 生成“实时遥测自适应”快照：显式反馈优先，riskTags 可覆盖。
     /// 若无可用反馈，返回 nil（调用方应回退到静态配置）。
     func realtimeAdaptiveFeedbackSnapshot(nowEpochSeconds: TimeInterval = Date().timeIntervalSince1970) -> RealtimeAdaptiveFeedbackSnapshot? {
-        let (s, gf, explicitFeedback) = lock.withLock { (current, graphFeatures, realtimeTelemetryFeedback) }
+        // 未验签的端侧 server 信号不参与自适应（riskTags 提示同理）。
+        let (rawCurrent, verified, gf, explicitFeedback) = lock.withLock { (current, currentIsVerified, graphFeatures, realtimeTelemetryFeedback) }
+        let s = verified ? rawCurrent : nil
         var sourceTags: [String] = []
 
         var riskPressure: Double?
@@ -252,9 +266,12 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
     }
 
     func serverSignals(snapshot: RiskSnapshot) -> ServerSignals? {
-        let (s, gf) = lock.withLock { (current, graphFeatures) }
-        guard s != nil || gf != nil else { return nil }
-        var merged = s ?? ServerSignals()
+        // 仅采信验签来源的 server 信号；未验签的端侧注入默认丢弃。
+        // 即使验签通过，服务端也必须忽略端侧 `server` 字段、仅以服务端聚合为准。
+        let (s, verified, gf) = lock.withLock { (current, currentIsVerified, graphFeatures) }
+        let trusted = verified ? s : nil
+        guard trusted != nil || gf != nil else { return nil }
+        var merged = trusted ?? ServerSignals()
         if let gf {
             merged.communityId = gf.communityId
             merged.communityRiskDensity = gf.communityRiskDensity
@@ -271,7 +288,9 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
     }
 
     func signals(snapshot: RiskSnapshot) -> [RiskSignal] {
-        let (s, gf) = lock.withLock { (current, graphFeatures) }
+        // 与 serverSignals() 一致：未验签的端侧 server 信号不产生评分信号。
+        let (rawSignals, verified, gf) = lock.withLock { (current, currentIsVerified, graphFeatures) }
+        let s = verified ? rawSignals : nil
         guard s != nil || gf != nil else { return [] }
 
         var out: [RiskSignal] = []

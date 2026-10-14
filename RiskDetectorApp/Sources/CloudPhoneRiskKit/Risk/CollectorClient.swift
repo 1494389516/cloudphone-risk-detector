@@ -62,10 +62,16 @@ public actor CollectorClient {
         if let session {
             self.session = session
         } else {
+            // 默认会话走证书 pinning（全局已配置的 pin 材料），失败硬拒绝：
+            // 无 pin 时挑战被取消，Collector 请求失败，绝不回落系统 CA。
             let cfg = URLSessionConfiguration.ephemeral
             cfg.timeoutIntervalForRequest = configuration.timeout
             cfg.timeoutIntervalForResource = configuration.timeout
-            self.session = URLSession(configuration: cfg)
+            self.session = CertificatePinningSessionDelegate.pinnedSession(
+                configuration: cfg,
+                pinMaterial: CPRiskKit.pinnedCertificatePinMaterial,
+                allowsSystemCA: false
+            )
         }
     }
 

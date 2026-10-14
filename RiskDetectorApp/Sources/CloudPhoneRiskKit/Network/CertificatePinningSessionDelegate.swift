@@ -135,7 +135,18 @@ public final class CertificatePinningSessionDelegate: NSObject, URLSessionDelega
         for (chainIndex, cert) in certificates.enumerated() {
             guard let spkiDigest = spkiSHA256DigestFromCore(certificate: cert) else { continue }
             let swiftMatch = pinMaterial.matchesLayeredDigest(spkiDigest, chainIndex: chainIndex)
-            let coreMatch = pinMaterial.matchesLayeredDigestViaCore(spkiDigest, chainIndex: chainIndex)
+            let coreOutcome = pinMaterial.matchesLayeredDigestViaCoreOutcome(spkiDigest, chainIndex: chainIndex)
+            // C 侧返回 -1（error）时无条件取消：错误 ≠ 不匹配，绝不回落系统 CA。
+            guard coreOutcome != .error else {
+                recordPinning(
+                    host: host,
+                    kind: .pinValidatorDiverged,
+                    detail: ["reason": "core_pinset_error", "chain_index": "\(chainIndex)"]
+                )
+                completionHandler(.cancelAuthenticationChallenge, nil)
+                return
+            }
+            let coreMatch = coreOutcome == .match
             if swiftMatch != coreMatch {
                 recordPinning(
                     host: host,

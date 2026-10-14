@@ -168,7 +168,9 @@ final class EnvironmentConsistencyProvider: RiskSignalProvider {
 
     /// 必须在主线程调用（UIDevice 为 @MainActor）
     private func captureBatteryEntry() -> String {
+        let wasEnabled = UIDevice.current.isBatteryMonitoringEnabled
         UIDevice.current.isBatteryMonitoringEnabled = true
+        defer { UIDevice.current.isBatteryMonitoringEnabled = wasEnabled }
         let state = UIDevice.current.batteryState
         let level = Double(UIDevice.current.batteryLevel >= 0 ? UIDevice.current.batteryLevel : 0)
         return "\(batteryStateString(state)):\(String(format: "%.4f", level))"
