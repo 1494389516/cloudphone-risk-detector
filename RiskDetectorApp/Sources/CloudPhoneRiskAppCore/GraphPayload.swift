@@ -2,6 +2,11 @@ import CloudPhoneRiskKit
 import Foundation
 
 // MARK: - 3.0-beta.2 新增：面向图算法的结构体
+//
+// ⚠️ LEGACY：Kit 侧无生产方。Kit 的 `Payload` 用紧凑键 `"gd"` 编码的是
+// `GraphNodeDescriptor`，不是本结构。本结构仅保留给遗留全键 JSON
+//（`graphPayload` 键）与 `legacyGraphPayload` 解析；新代码请使用
+// `GraphNodeDescriptor`（DTO 的 `graphNode` 字段）。
 
 /// 图算法载荷 - 包含图算法所需的全部特征数据
 public struct GraphPayload: Codable, Sendable {

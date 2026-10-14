@@ -91,8 +91,12 @@ public enum RiskReportStorage {
     #if os(iOS)
       return CPRiskStore.shared.decryptReport(atPath: path, error: nil)
     #else
-      guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return nil }
-      return String(data: data, encoding: .utf8)
+      // 与 iOS 一致：只接受加密落盘的 `.bin` 文件；解密失败返回 nil。
+      // 历史明文 `.json` 文件不再被读取（Release 下明文报告不得解析）。
+      guard !path.hasSuffix(".json") else { return nil }
+      guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+            let plaintext = try? CPRiskReport.decryptStoredData(data) else { return nil }
+      return String(data: plaintext, encoding: .utf8)
     #endif
   }
 

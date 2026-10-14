@@ -65,10 +65,13 @@ public final class RiskDetectionService {
 #else
         guard let dir = try? RiskReportStorage.reportsDirectoryURL() else { return nil }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let filename = "risk-\(iso8601Now()).json"
+        // 与 iOS 一致：始终加密落盘（AES-GCM，密钥在 Keychain）。
+        // 加密失败（如无可用密钥）时返回 nil，绝不回退为明文 `.json` 落盘。
+        let filename = "risk-\(iso8601Now()).bin"
         let url = dir.appendingPathComponent(filename)
         do {
-            try report.unencryptedPayloadData(prettyPrinted: true).write(to: url, options: [.atomic])
+            let encrypted = try report.encryptedData()
+            try encrypted.write(to: url, options: [.atomic])
             if let dto = RiskReportMapper.dto(from: report.unencryptedPayloadData(prettyPrinted: false)) {
                 RiskReportSummaryIO.writeMeta(for: dto, reportPath: url.path)
             }
@@ -177,7 +180,7 @@ public final class RiskDetectionService {
     public func validateSecureReportEnvelope(
         _ envelope: ReportEnvelope,
         signingKey: String,
-        allowedSignatureVersions: Set<String> = ["v2"],
+        allowedSignatureVersions: Set<String> = ["v2a", "v2d", "v2h", "v3"],
         enableReplayProtection: Bool = true,
         validateAttestationConsistency: Bool = true,
         nonceStore: NonceReplayProtecting? = nil,
@@ -198,7 +201,7 @@ public final class RiskDetectionService {
     public func validateSecureReportEnvelopeJSON(
         _ json: String,
         signingKey: String,
-        allowedSignatureVersions: Set<String> = ["v2"],
+        allowedSignatureVersions: Set<String> = ["v2a", "v2d", "v2h", "v3"],
         enableReplayProtection: Bool = true,
         validateAttestationConsistency: Bool = true,
         nonceStore: NonceReplayProtecting? = nil,

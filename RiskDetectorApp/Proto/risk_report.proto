@@ -1,6 +1,13 @@
-// CloudPhoneRiskKit 6.5 - gRPC/JSON 上报协议
-// 用于 HTTP/2 或 gRPC 传输层，内层 JSON 作为业务载荷。
-// 不依赖 grpc-swift，客户端使用手动 JSON 编码发送。
+// ⚠️ LEGACY 只读快照 — 请勿修改本文件。
+// 本文件是 CloudPhoneRiskKit 6.5 时代的 gRPC/JSON 上报协议快照，仅作历史参考。
+// 现行 SDK 版本为 7.3.0（见 `RiskReport.swift` 的 `Version.current`）。
+// 现行契约由 Swift 侧 `ReportEnvelope` / `GrpcReportPayload` 定义；
+// 本文件的字段与现行契约不一致处以 Swift 侧为准，例如：
+//  - 现行 payload 使用紧凑键（如 GraphNodeDescriptor 编码为 `"gd"`），
+//    本文件的字段名/编号不再与现行 payload 对应；
+//  - 现行签名默认版本为 `v3`（legacy 版本需显式 opt-in），
+//    本文件的 `sig_ver` 注释仍反映旧默认。
+// 如需新增/变更协议，请在 Swift 侧定义并另起新文件，不要复活本快照。
 
 syntax = "proto3";
 

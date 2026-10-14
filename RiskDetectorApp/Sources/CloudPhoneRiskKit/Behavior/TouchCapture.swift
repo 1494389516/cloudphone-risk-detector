@@ -205,6 +205,17 @@ private enum UIApplicationSendEventSwizzler {
             return
         }
 
+        // 防重复交换：若 original 的 IMP 已等于 swizzled 的 IMP，说明已被
+        // 交换过（或宿主/其他 SDK 已交换到同一实现），再次交换会把实现
+        // 换回来，导致采集静默停止。token 一次性保护之外再加 IMP 比对。
+        // 宿主冲突风险：宿主 App 或其他 SDK 若也交换 `sendEvent`，交换顺序
+        // 会影响调用链——宿主在 SDK 之后交换时链式转发通常仍可用，但若宿主
+        // 覆盖而非转发、或重复交换，触摸采集可能静默失效；本 SDK 无法从
+        // 宿主侧探测，只能保证自身不重复交换。
+        let originalIMP = method_getImplementation(originalMethod)
+        let swizzledIMP = method_getImplementation(swizzledMethod)
+        guard originalIMP != swizzledIMP else { return }
+
         method_exchangeImplementations(originalMethod, swizzledMethod)
     }
 }

@@ -45,8 +45,17 @@ public struct RiskReportDTO: Codable, Sendable {
     public var hardSignals: [SignalItemDTO]
     public var softSignals: [SignalItemDTO]
 
-    /// 图算法载荷
+    /// 图算法载荷（legacy）
+    ///
+    /// ⚠️ LEGACY：Kit 侧无生产方。Kit 的 `Payload` 用紧凑键 `"gd"` 编码的
+    /// 是 `GraphNodeDescriptor`（见 `RiskReport.swift`），不是本结构；
+    /// 旧版 `CompactPayloadMirror` 把 `"gd"` 按本结构解码会导致整份紧凑
+    /// payload 解码失败。现 `"gd"` 按 `GraphNodeDescriptor` 解码并映射到
+    /// DTO 的 `graphNode`；本结构仅保留给遗留全键 JSON（`graphPayload` 键）
+    /// 与 `legacyGraphPayload` 解析。
     public var graphPayload: GraphPayload?
+    /// 图节点描述符（Kit `Payload.graphNode`，紧凑键 `"gd"`）。
+    public var graphNode: GraphNodeDescriptor?
     /// blind challenge 绑定载荷（beta.4）
     public var challengeBinding: ChallengeBindingPayload?
 
@@ -81,6 +90,7 @@ public struct RiskReportDTO: Codable, Sendable {
         hardSignals: [SignalItemDTO],
         softSignals: [SignalItemDTO],
         graphPayload: GraphPayload? = nil,
+        graphNode: GraphNodeDescriptor? = nil,
         challengeBinding: ChallengeBindingPayload? = nil
     ) {
         self.sdkVersion = sdkVersion
@@ -113,6 +123,7 @@ public struct RiskReportDTO: Codable, Sendable {
         self.hardSignals = hardSignals
         self.softSignals = softSignals
         self.graphPayload = graphPayload
+        self.graphNode = graphNode
         self.challengeBinding = challengeBinding
     }
 }
@@ -318,7 +329,7 @@ public enum RiskReportMapper {
                         id: "cloud_ip_device_agg",
                         title: "IP 设备聚合度",
                         kind: .soft,
-                        detected: n >= 20,
+                        detected: n >= CloudPhoneAggregationThresholds.ipDeviceAgg,
                         confidence: .medium,
                         method: "server_signals",
                         evidenceSummary: "\(n)"
@@ -332,7 +343,7 @@ public enum RiskReportMapper {
                         id: "cloud_ip_account_agg",
                         title: "IP 账号聚合度",
                         kind: .soft,
-                        detected: n >= 30,
+                        detected: n >= CloudPhoneAggregationThresholds.ipAccountAgg,
                         confidence: .medium,
                         method: "server_signals",
                         evidenceSummary: "\(n)"
@@ -400,6 +411,7 @@ public enum RiskReportMapper {
             hardSignals: hard,
             softSignals: soft,
             graphPayload: payload.graphPayload,
+            graphNode: payload.graphNode,
             challengeBinding: payload.challengeBinding
         )
     }
@@ -492,7 +504,7 @@ public enum RiskReportMapper {
                         id: "cloud_ip_device_agg",
                         title: "IP 设备聚合度",
                         kind: .soft,
-                        detected: n >= 20,
+                        detected: n >= CloudPhoneAggregationThresholds.ipDeviceAgg,
                         confidence: .medium,
                         method: "server_signals",
                         evidenceSummary: "\(n)"
@@ -506,7 +518,7 @@ public enum RiskReportMapper {
                         id: "cloud_ip_account_agg",
                         title: "IP 账号聚合度",
                         kind: .soft,
-                        detected: n >= 30,
+                        detected: n >= CloudPhoneAggregationThresholds.ipAccountAgg,
                         confidence: .medium,
                         method: "server_signals",
                         evidenceSummary: "\(n)"
@@ -832,6 +844,7 @@ private protocol PayloadMirrorProtocol {
     var server: ServerSignals? { get }
     var local: LocalSignals? { get }
     var graphPayload: GraphPayload? { get }
+    var graphNode: GraphNodeDescriptor? { get }
     var challengeBinding: ChallengeBindingPayload? { get }
     var jailbreakIsJailbroken: Bool { get }
     var jailbreakConfidence: Double { get }
@@ -868,6 +881,7 @@ private struct PayloadMirror: Decodable {
     var server: ServerSignals?
     var local: LocalSignals?
     var graphPayload: GraphPayload?
+    var graphNode: GraphNodeDescriptor?
     var challengeBinding: ChallengeBindingPayload?
 }
 
@@ -906,7 +920,11 @@ private struct CompactPayloadMirror: Decodable {
     var signals: [RiskSignal]
     var server: ServerSignals?
     var local: LocalSignals?
-    var graphPayload: GraphPayload?
+    var graphPayload: GraphPayload? { nil }
+    /// Kit 侧 `Payload.graphNode` 编码为紧凑键 `"gd"`，类型为
+    /// `GraphNodeDescriptor`（不是 `GraphPayload`）。旧版此处把 `"gd"`
+    /// 按 `GraphPayload` 解码，导致含 graphNode 的紧凑 payload 整份解码失败。
+    var graphNode: GraphNodeDescriptor?
     var challengeBinding: ChallengeBindingPayload?
 
     private enum CodingKeys: String, CodingKey {
@@ -937,7 +955,7 @@ private struct CompactPayloadMirror: Decodable {
         case signals = "sg"
         case server = "sr"
         case local = "lc"
-        case graphPayload = "gd"
+        case graphNode = "gd"
         case challengeBinding = "cb"
     }
 }

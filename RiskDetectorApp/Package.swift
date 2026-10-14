@@ -45,6 +45,16 @@ func configuredTool(_ key: String) -> Bool {
     }
 }
 
+// ⚠️ 供应链风险说明：以下两处均已是显式 env opt-in（默认关闭），
+// 但开启后会改变构建行为，须在受控 CI 环境中审慎使用：
+//  - `CPRISK_ENABLE_SWIFT_METADATA_CONVERGENCE=1` 开启 `unsafeFlags`
+//   （`-disable-reflection-metadata` / `-disable-reflection-names`）：
+//    会剥离反射元数据，影响 Mirror / 反射类调试与部分运行时行为；
+//    任何能设置该环境变量的人都能改变 Release 产物。
+//  - `CPRISK_ENABLE_HIKARI=1` / `CPRISK_HIKARI_REQUIRED=1` 允许
+//    `SWIFT_EXEC` / `CC` 指向自定义编译器包装器：包装器在构建时以
+//    构建机权限运行，可注入任意代码到产物中。切勿在不可信环境
+//    或从不可信来源的脚本中开启；CI 中应固定包装器路径并校验其哈希。
 let protectedReleaseSwiftSettings: [SwiftSetting] = packageEnvEnabled("CPRISK_ENABLE_SWIFT_METADATA_CONVERGENCE") ? [
     .unsafeFlags([
         "-Xfrontend", "-disable-reflection-metadata",
