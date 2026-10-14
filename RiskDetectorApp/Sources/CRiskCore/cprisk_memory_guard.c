@@ -6,14 +6,13 @@
  *      preventing post-decryption injection.
  *   2. Optionally plants guard (honeypot) pages with VM_PROT_NONE around
  *      the protected region. Accesses typically raise SIGBUS or SIGSEGV; the
- *      unified handler routes known trap addresses to cprisk_guard_page_fault_notify().
+ *      handler terminates with the original signal. A normal-context monitor
+ *      may drain a best-effort guard-fault notification before termination.
  */
 
 #include "include/cprisk_memory_guard.h"
 #include "include/CRiskCore.h"
 
-#include <errno.h>
-#include <fcntl.h>
 #include <stdint.h>
 #include <string.h>
 #include <signal.h>
@@ -36,11 +35,6 @@
 extern void cprisk_svc_reloc_rx_page_whitelist_bounds(uintptr_t *out_lo, uintptr_t *out_hi);
 #endif
 
-#ifndef CPRISK_PAGE_MASK
-#define CPRISK_PAGE_MASK (~(uintptr_t)0xFFF)
-#endif
-#define CPRISK_PAGE_SIZE_4K 0x1000u
-
 static pthread_mutex_t s_sigbus_guard_mutex = PTHREAD_MUTEX_INITIALIZER;
 static struct sigaction s_prev_sigbus_action;
 static struct sigaction s_prev_sigsegv_action;
@@ -48,53 +42,43 @@ static int s_sigbus_guard_installed = 0;
 static struct cprisk_guard_state *s_sigbus_guard_state = NULL;
 
 static int s_fault_handlers_installed = 0;
-/* Self-pipe for the SIGBUS/SIGSEGV handler (issue 35): the handler only
- * writes one byte here + sets sig_atomic_t flags (both async-signal-safe)
- * and then re-raises; all real work (poison, deception material, watchdog
- * notes) happens in normal context via cprisk_guard_fault_drain_pending().
- * The handler must NEVER call malloc/locks/printf/sigaction/raise or
- * forward to a previous handler — none of those are async-signal-safe. */
-static int s_fault_pipe[2] = { -1, -1 };
-static volatile sig_atomic_t s_fault_pending_sig = 0;
-static volatile uintptr_t s_fault_pending_addr = 0;
+/* Only a lock-free atomic mailbox is touched by the fatal signal handler.
+ * A self-pipe introduces fd close/reuse races and can block when nonblocking
+ * setup fails. This optional notification is best effort: termination never
+ * waits for a monitoring thread to drain it. */
+_Static_assert(ATOMIC_POINTER_LOCK_FREE == 2, "guard fault mailbox must be signal-safe");
+static _Atomic(void *) s_fault_pending_addr = NULL;
 static uint32_t s_mem_trap_fault_ref = 0;
 static uint32_t s_text_honeypot_fault_ref = 0;
 static volatile uintptr_t s_text_honeypot_lo = 0;
 static volatile uintptr_t s_text_honeypot_hi = 0;
 
+static uintptr_t cprisk_guard_page_size_i(void) {
+    const long size = sysconf(_SC_PAGESIZE);
+    if (size <= 0 || ((uintptr_t)size & ((uintptr_t)size - 1u)) != 0u)
+        return 0u;
+    return (uintptr_t)size;
+}
+
 static int page_span(void *ptr, size_t len,
                      vm_address_t *page_out, vm_size_t *span_out) {
-    if ((uintptr_t)ptr > UINTPTR_MAX - len)
+    const uintptr_t size = cprisk_guard_page_size_i();
+    if (!ptr || len == 0u || !page_out || !span_out || size == 0u)
         return -1;
-    uintptr_t start = (uintptr_t)ptr & CPRISK_PAGE_MASK;
-    uintptr_t end   = ((uintptr_t)ptr + len + CPRISK_PAGE_SIZE_4K - 1) & CPRISK_PAGE_MASK;
+    const uintptr_t base = (uintptr_t)ptr;
+    const uintptr_t mask = size - 1u;
+    if (len > UINTPTR_MAX - base)
+        return -1;
+    const uintptr_t raw_end = base + len;
+    if (raw_end > UINTPTR_MAX - mask)
+        return -1;
+    const uintptr_t start = base & ~mask;
+    const uintptr_t end = (raw_end + mask) & ~mask;
+    if (end <= start)
+        return -1;
     *page_out = (vm_address_t)start;
     *span_out = (vm_size_t)(end - start);
     return 0;
-}
-
-static void cprisk_best_effort_madv_free(void *region, size_t len) {
-    vm_address_t page = 0;
-    vm_size_t span = 0;
-    if (!region || len == 0)
-        return;
-    if (page_span(region, len, &page, &span) != 0 || span == 0)
-        return;
-
-    int advised = -1;
-#if defined(MADV_FREE_REUSABLE)
-    advised = madvise((void *)(uintptr_t)page, (size_t)span, MADV_FREE_REUSABLE);
-#endif
-#if defined(MADV_FREE)
-    if (advised != 0)
-        advised = madvise((void *)(uintptr_t)page, (size_t)span, MADV_FREE);
-#endif
-#if defined(MADV_DONTNEED)
-    if (advised != 0)
-        (void)madvise((void *)(uintptr_t)page, (size_t)span, MADV_DONTNEED);
-#else
-    (void)advised;
-#endif
 }
 
 static int cprisk_sigbus_addr_in_guard(const struct cprisk_guard_state *state, const void *addr) {
@@ -125,71 +109,29 @@ static void cprisk_guard_fault_handler_i(int sig, siginfo_t *info, void *uap);
 
 static int cprisk_addr_in_text_honeypot(const void *addr);
 
-/* Drain the fault self-pipe in NORMAL context (never from a handler) and
- * run the real fault response exactly once per recorded fault. A monitoring
- * thread / watchdog should call this periodically; if it is never called,
- * the fault is still recorded in s_fault_pending_* and the process still
- * terminates via the re-raise in the handler. */
+/* Best-effort notification in normal context. Guard faults are fatal, so
+ * this is not guaranteed to run before the process terminates. */
 void cprisk_guard_fault_drain_pending(void) {
-    int pending = 0;
-    if (s_fault_pipe[0] >= 0) {
-        uint8_t buf[32];
-        ssize_t r;
-        do {
-            r = read(s_fault_pipe[0], buf, sizeof(buf));
-            if (r > 0)
-                pending = 1;
-        } while (r > 0);
-    }
-    if (s_fault_pending_sig != 0)
-        pending = 1;
-    if (!pending)
+    void *addr = atomic_exchange_explicit(&s_fault_pending_addr, NULL, memory_order_acq_rel);
+    if (addr == NULL)
         return;
-    const uintptr_t addr = s_fault_pending_addr;
-    s_fault_pending_sig = 0;
-    s_fault_pending_addr = 0;
-    /* Same filter the old in-handler code applied: only guard/honeypot
-     * addresses trigger the poison/deception response. Other faults
-     * (real crashes) terminate via the re-raise without extra side effects. */
-    if (cprisk_sigbus_addr_in_guard(s_sigbus_guard_state, (const void *)addr) ||
-        cprisk_addr_in_text_honeypot((const void *)addr))
+    pthread_mutex_lock(&s_sigbus_guard_mutex);
+    const int is_guard = cprisk_sigbus_addr_in_guard(s_sigbus_guard_state, addr) ||
+        cprisk_addr_in_text_honeypot(addr);
+    pthread_mutex_unlock(&s_sigbus_guard_mutex);
+    if (is_guard)
         cprisk_guard_page_fault_notify();
 }
 
-/* Previous-handler forwarding was intentionally REMOVED (issue 35): calling
- * an unknown previous handler / sigaction / raise from inside a signal
- * handler is not async-signal-safe. The fault is recorded via the
- * self-pipe + flags above and re-raised; the disposition was reset to
- * default by SA_RESETHAND, so the re-raise terminates with the default
- * action. Limitation: a previously installed handler (e.g. a crash
- * reporter) is NOT chained on this path. */
-
+/* Previous crash handlers are not chained. The fault is fatal and must retain
+ * its signal exit status; signal disposition/mask operations below are
+ * async-signal-safe (see Apple's sigaction(2) documentation). */
 static int cprisk_fault_handlers_install_locked(void) {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sigemptyset(&sa.sa_mask);
     sa.sa_sigaction = cprisk_guard_fault_handler_i;
-    /* SA_RESETHAND: the first delivery resets the disposition to default,
-     * so the handler's kill() re-raise terminates with the default action
-     * instead of re-entering the handler. SA_NODEFER is intentionally NOT
-     * set: the faulting signal stays blocked while the handler runs. */
     sa.sa_flags = SA_SIGINFO | SA_RESETHAND;
-    /* Self-pipe (best effort): created once; if it fails, the handler
-     * still records via flags + re-raises. */
-    if (s_fault_pipe[0] < 0) {
-        /* pipe2() does NOT exist on Apple platforms: use pipe() +
-         * fcntl() there. (Linux may use pipe2, but the portable path
-         * works everywhere, so just use it.) */
-        if (pipe(s_fault_pipe) == 0) {
-            (void)fcntl(s_fault_pipe[0], F_SETFL, O_NONBLOCK);
-            (void)fcntl(s_fault_pipe[1], F_SETFL, O_NONBLOCK);
-            (void)fcntl(s_fault_pipe[0], F_SETFD, FD_CLOEXEC);
-            (void)fcntl(s_fault_pipe[1], F_SETFD, FD_CLOEXEC);
-        } else {
-            s_fault_pipe[0] = -1;
-            s_fault_pipe[1] = -1;
-        }
-    }
 
     if (sigaction(SIGBUS, &sa, &s_prev_sigbus_action) != 0)
         return -1;
@@ -207,14 +149,6 @@ static void cprisk_fault_handlers_uninstall_locked(void) {
     (void)sigaction(SIGBUS, &s_prev_sigbus_action, NULL);
     (void)sigaction(SIGSEGV, &s_prev_sigsegv_action, NULL);
     s_fault_handlers_installed = 0;
-    if (s_fault_pipe[0] >= 0) {
-        (void)close(s_fault_pipe[0]);
-        s_fault_pipe[0] = -1;
-    }
-    if (s_fault_pipe[1] >= 0) {
-        (void)close(s_fault_pipe[1]);
-        s_fault_pipe[1] = -1;
-    }
 }
 
 static int cprisk_fault_handlers_acquire_mem_trap_locked(void) {
@@ -260,34 +194,26 @@ static int cprisk_addr_in_text_honeypot(const void *addr) {
     return (t >= lo && t < hi) ? 1 : 0;
 }
 
-/* Async-signal-safe fault handler (issue 35): ONLY async-signal-safe
- * operations here — plain stores to volatile sig_atomic_t / uintptr_t,
- * write(2) to the self-pipe, kill(2), _Exit(2). In particular this
- * handler does NOT call cprisk_guard_page_fault_notify() (locks, Mach
- * calls, deception-material work — none of it is signal-safe) and does
- * NOT forward to a previous handler. The handler is installed with
- * SA_RESETHAND, so the kill() below is delivered with the DEFAULT
- * disposition and terminates the process; the recorded fault is picked
- * up by cprisk_guard_fault_drain_pending() if a monitor thread drains
- * the pipe before termination. Guard-page faults are fatal by design:
- * the faulting instruction would otherwise retry forever. */
+/* No locks, allocation, fd access, or callback forwarding in this handler.
+ * Re-deliver the fatal signal to the current thread after unblocking it;
+ * kill(getpid(), sig) followed by _Exit otherwise often reports an ordinary
+ * exit instead of a signal crash, because sig is blocked during the handler. */
 static void cprisk_guard_fault_handler_i(int sig, siginfo_t *info, void *uap) {
     (void)uap;
-    if (info != NULL)
-        s_fault_pending_addr = (uintptr_t)info->si_addr;
-    s_fault_pending_sig = sig;
-    if (s_fault_pipe[1] >= 0) {
-        const uint8_t b = (uint8_t)sig;
-        ssize_t r;
-        do {
-            r = write(s_fault_pipe[1], &b, 1);
-        } while (r < 0 && errno == EINTR);
-        (void)r;
-    }
-    /* Re-raise with default disposition (SA_RESETHAND reset it). */
-    (void)kill(getpid(), sig);
-    /* If kill() returned (signal blocked), do not return to the faulting
-     * instruction — that would spin. _Exit is async-signal-safe. */
+    atomic_store_explicit(&s_fault_pending_addr,
+                          info != NULL ? info->si_addr : NULL,
+                          memory_order_release);
+    struct sigaction dfl;
+    dfl.sa_handler = SIG_DFL;
+    dfl.sa_flags = 0;
+    sigemptyset(&dfl.sa_mask);
+    sigset_t unblocked;
+    sigemptyset(&unblocked);
+    sigaddset(&unblocked, sig);
+    if (sigaction(sig, &dfl, NULL) == 0 &&
+        sigprocmask(SIG_UNBLOCK, &unblocked, NULL) == 0)
+        (void)raise(sig);
+    /* Only a failed re-delivery reaches this fallback. */
     _Exit(128 + sig);
 }
 
@@ -367,6 +293,8 @@ int cprisk_protect_decrypted_pages(void *region, size_t len) {
     if (page_span(region, len, &page, &span) != 0)
         return -1;
 
+    /* These pages still contain live plaintext. MADV_FREE/REUSABLE would
+     * allow the VM to discard it; changing protection must preserve bytes. */
     kern_return_t kr = vm_protect(
         mach_task_self(),
         page,
@@ -376,8 +304,36 @@ int cprisk_protect_decrypted_pages(void *region, size_t len) {
     if (kr != KERN_SUCCESS)
         return -1;
 
-    cprisk_best_effort_madv_free(region, len);
     return 0;
+}
+
+/* Every region intersecting the requested span must satisfy the policy.
+ * Querying just its first region can miss writable pages or holes later on. */
+static int cprisk_vm_range_has_protection_i(vm_address_t page, vm_size_t span,
+                                           vm_prot_t required, vm_prot_t forbidden) {
+    if (span == 0u || page > UINTPTR_MAX - span)
+        return 0;
+    const vm_address_t end = page + span;
+    vm_address_t cursor = page;
+    while (cursor < end) {
+        vm_address_t region = cursor;
+        vm_size_t region_size = 0u;
+        vm_region_basic_info_data_64_t info;
+        mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+        mach_port_t object_name = MACH_PORT_NULL;
+        const kern_return_t kr = vm_region_64(
+            mach_task_self(), &region, &region_size, VM_REGION_BASIC_INFO_64,
+            (vm_region_info_t)&info, &count, &object_name);
+        if (object_name != MACH_PORT_NULL)
+            mach_port_deallocate(mach_task_self(), object_name);
+        if (kr != KERN_SUCCESS || region > cursor || region_size == 0u ||
+            region > UINTPTR_MAX - region_size || region + region_size <= cursor)
+            return 0;
+        if ((info.protection & required) != required || (info.protection & forbidden) != 0)
+            return 0;
+        cursor = region + region_size;
+    }
+    return 1;
 }
 
 #if defined(__APPLE__)
@@ -390,10 +346,6 @@ static vm_prot_t cprisk_vm_prot_from_bsd_i(int prot) {
     if ((prot & PROT_EXEC) != 0)
         p |= VM_PROT_EXECUTE;
     return p;
-}
-
-static int cprisk_vm_prot_covers_i(vm_prot_t have, vm_prot_t need) {
-    return (have & need) == need;
 }
 #endif
 
@@ -414,29 +366,8 @@ int cprisk_vm_crosscheck_mprotect(void *addr, size_t len, int bsd_prot) {
 
     const vm_prot_t need = cprisk_vm_prot_from_bsd_i(bsd_prot);
 
-    vm_address_t addr_in = page;
-    vm_size_t region_size = 0;
-    vm_region_basic_info_data_64_t info;
-    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-    mach_port_t object_name = MACH_PORT_NULL;
-
-    kern_return_t kr = vm_region_64(
-        mach_task_self(),
-        &addr_in,
-        &region_size,
-        VM_REGION_BASIC_INFO_64,
-        (vm_region_info_t)&info,
-        &count,
-        &object_name);
-
-    if (object_name != MACH_PORT_NULL)
-        mach_port_deallocate(mach_task_self(), object_name);
-
-    if (kr != KERN_SUCCESS)
-        return 1;
-    if (addr_in > page)
-        return 1;
-    if (!cprisk_vm_prot_covers_i(info.protection, need))
+    const vm_prot_t forbidden = (VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE) & ~need;
+    if (!cprisk_vm_range_has_protection_i(page, span, need, forbidden))
         return 1;
 
     kern_return_t kr2 = vm_protect(
@@ -488,33 +419,7 @@ int cprisk_verify_page_protection(void *region, size_t len) {
     if (page_span(region, len, &page, &span) != 0)
         return 0;
 
-    vm_address_t addr = page;
-    vm_size_t region_size = 0;
-    vm_region_basic_info_data_64_t info;
-    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-    mach_port_t object_name = MACH_PORT_NULL;
-
-    kern_return_t kr = vm_region_64(
-        mach_task_self(),
-        &addr,
-        &region_size,
-        VM_REGION_BASIC_INFO_64,
-        (vm_region_info_t)&info,
-        &count,
-        &object_name);
-
-    if (object_name != MACH_PORT_NULL)
-        mach_port_deallocate(mach_task_self(), object_name);
-
-    if (kr != KERN_SUCCESS)
-        return 0;
-
-    if (addr > page)
-        return 0;
-
-    int is_readonly = ((info.protection & VM_PROT_WRITE) == 0) &&
-                      ((info.protection & VM_PROT_READ) != 0);
-    return is_readonly ? 1 : 0;
+    return cprisk_vm_range_has_protection_i(page, span, VM_PROT_READ, VM_PROT_WRITE);
 }
 
 int cprisk_unprotect_pages(void *region, size_t len) {
@@ -547,12 +452,17 @@ int cprisk_install_memory_trap(void *region, size_t len,
 
     vm_address_t guard_addrs[2];
     int guard_valid[2];
-    guard_valid[0] = (page >= CPRISK_PAGE_SIZE_4K);
-    guard_addrs[0] = guard_valid[0] ? (page - CPRISK_PAGE_SIZE_4K) : 0;
-    guard_valid[1] = 1;  /* upper guard always valid */
+    const vm_size_t guard_size = (vm_size_t)cprisk_guard_page_size_i();
+    if (guard_size == 0u)
+        return -1;
+    guard_valid[0] = (page >= guard_size);
+    guard_addrs[0] = guard_valid[0] ? (page - guard_size) : 0;
+    guard_valid[1] = (page + span <= UINTPTR_MAX - guard_size);
     guard_addrs[1] = page + span;
 
     int planted = 0;
+    /* The state may already be published to the normal-context fault drain. */
+    pthread_mutex_lock(&s_sigbus_guard_mutex);
     for (int i = 0; i < 2 && state->trap_count < CPRISK_GUARD_MAX_TRAPS; i++) {
         if (!guard_valid[i])
             continue;
@@ -560,7 +470,7 @@ int cprisk_install_memory_trap(void *region, size_t len,
         kern_return_t kr = vm_allocate(
             mach_task_self(),
             &alloc_addr,
-            CPRISK_PAGE_SIZE_4K,
+            guard_size,
             VM_FLAGS_FIXED);
 
         if (kr != KERN_SUCCESS)
@@ -569,18 +479,18 @@ int cprisk_install_memory_trap(void *region, size_t len,
         kr = vm_protect(
             mach_task_self(),
             alloc_addr,
-            CPRISK_PAGE_SIZE_4K,
+            guard_size,
             FALSE,
             VM_PROT_NONE);
 
         if (kr != KERN_SUCCESS) {
             state->protect_failed = 1;
-            vm_deallocate(mach_task_self(), alloc_addr, CPRISK_PAGE_SIZE_4K);
+            vm_deallocate(mach_task_self(), alloc_addr, guard_size);
             continue;
         }
 
         state->traps[state->trap_count].addr = (void *)alloc_addr;
-        state->traps[state->trap_count].size = CPRISK_PAGE_SIZE_4K;
+        state->traps[state->trap_count].size = guard_size;
         state->trap_count++;
         planted++;
     }
@@ -590,11 +500,11 @@ int cprisk_install_memory_trap(void *region, size_t len,
      * already mapped (standard in any __DATA segment), so planted may be 0.
      * Setting pages_protected=1 unconditionally masks this silent failure and
      * misleads any caller that inspects state->pages_protected. */
-    state->pages_protected = (planted > 0) ? 1 : 0;
+    state->pages_protected = (state->trap_count > 0) ? 1 : 0;
+    pthread_mutex_unlock(&s_sigbus_guard_mutex);
     if (planted > 0) {
         if (cprisk_install_sigbus_guard(state) != 0)
             state->poison_mode_enabled = 0u;
-        cprisk_best_effort_madv_free(region, len);
     }
     return planted;
 }
@@ -603,6 +513,8 @@ void cprisk_remove_memory_trap(struct cprisk_guard_state *state) {
     if (!state)
         return;
 
+    // Detach published trap metadata before releasing any referenced pages.
+    cprisk_remove_sigbus_guard(state);
     uint32_t limit = state->trap_count;
     if (limit > CPRISK_GUARD_MAX_TRAPS)
         limit = CPRISK_GUARD_MAX_TRAPS;
@@ -614,7 +526,6 @@ void cprisk_remove_memory_trap(struct cprisk_guard_state *state) {
                 (vm_size_t)state->traps[i].size);
         }
     }
-    cprisk_remove_sigbus_guard(state);
     memset(state, 0, sizeof(*state));
 }
 

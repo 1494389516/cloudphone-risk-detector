@@ -9,7 +9,8 @@
  *   4. cprisk_unprotect_pages()         — restores VM_PROT_WRITE (for re-encryption)
  *   5. cprisk_remove_memory_trap()      — deallocates guard pages
  *
- * All functions are safe to call multiple times and tolerate NULL/0-size inputs.
+ * All functions tolerate NULL/0-size inputs. Calls that mutate the same
+ * cprisk_guard_state must be serialized by the owner of that state.
  */
 
 #ifndef CPRISK_MEMORY_GUARD_H
@@ -34,7 +35,7 @@ struct cprisk_guard_state {
     uint32_t trap_count;
     int      pages_protected;
     int      protect_failed;
-    uint8_t  poison_mode_enabled;  /* when set, guard-page SIGBUS triggers integrity poison */
+    uint8_t  poison_mode_enabled;  /* fatal fault handlers installed; notification is best effort */
 };
 
 int  cprisk_protect_decrypted_pages(void *region, size_t len);
@@ -49,10 +50,10 @@ void cprisk_remove_memory_trap(struct cprisk_guard_state *state);
 int cprisk_register_text_honeypot_page(void *page, size_t len);
 void cprisk_unregister_text_honeypot_page(void);
 
-/* Drain a recorded guard-page fault in normal context (see
- * cprisk_memory_guard.c): runs the poison/deception response for a fault
- * the signal handler recorded via self-pipe + flags. Safe to call any
- * time; no-op when nothing is pending. */
+/* Drain a best-effort atomic guard-fault notification in normal context.
+ * No-op when nothing is pending; must not be called from a signal handler.
+ * Faults are fatal: notification delivery before termination is not guaranteed,
+ * and previously installed crash handlers are not chained. */
 void cprisk_guard_fault_drain_pending(void);
 
 /* Optional SIGBUS guard wiring for active anti-dump trapping.
