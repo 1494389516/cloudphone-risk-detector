@@ -107,6 +107,7 @@ config.enableNetworkSignals = true
 config.threshold = 55.0
 config.enableAntiTamper = true
 config.enableRemoteConfig = true
+// 占位示例：请替换为实际服务端地址（api.example.com 为保留示例域，不是真实地址）。
 config.remoteConfigURLString = "https://api.example.com/riskkit/config"
 
 // 审核期间使用

@@ -31,7 +31,7 @@
 
 环境为 Linux，没有 Swift、Clang、Xcode 和 Apple SDK。以下结果为本地实际执行：
 
-- `python3 -m unittest discover -s contracts/tests -v`：22 个检查通过。
+- `python3 -m unittest discover -s contracts/tests -v`（历史记录，`contracts/tests/` 已于 2026-10-04 删除，不可复现）：22 个检查通过。
   其中 8 个为本轮加固契约检查：6 个源码/配置静态检查，2 个实际运行 Bash 的失败/可选跳过行为检查；其余 14 个为原有 wire contract 检查。
 - `python3 contracts/generate.py --check`：通过，生成契约未漂移。
 - 两个 Release 脚本及新增 CI Bash 块的 `bash -n`：通过。
