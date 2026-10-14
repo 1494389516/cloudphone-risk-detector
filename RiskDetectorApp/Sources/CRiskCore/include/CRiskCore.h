@@ -377,14 +377,16 @@ int cprisk_socket_direct(int domain, int type, int protocol, int *error_out);
 /// Returns 0 on success, -1 on error.
 int cprisk_connect_direct(int sockfd, const struct sockaddr *addr, socklen_t addrlen, int *error_out);
 
-/// Sign an unauthenticated function pointer for later indirect calls.
-/// On arm64e this applies pointer authentication; on other architectures it is
-/// a no-op pass-through and simply returns ptr.
+/// Re-sign a standard-ABI C function pointer (or dlsym function result) for
+/// storage with the supplied discriminator. On arm64e the input must already
+/// carry the standard function-pointer signature; raw unsigned addresses are
+/// not accepted. Other architectures pass ptr through unchanged.
 void *cprisk_pac_sign_function_pointer(const void *ptr, uintptr_t discriminator);
 
 /// Authenticate a previously signed function pointer before invocation.
-/// Returns NULL when authentication fails (arm64e), otherwise returns an
-/// authenticated callable pointer.
+/// Returns NULL only for NULL input. On arm64e invalid non-NULL signatures may
+/// trap; success returns a standard-ABI callable pointer. Other architectures
+/// pass ptr through without authentication.
 void *cprisk_pac_auth_function_pointer(const void *ptr, uintptr_t discriminator);
 
 /// Returns 1 when arm64e PAC runtime support is compiled in, 0 otherwise.
@@ -400,18 +402,17 @@ enum {
     CPRISK_PAC_CFI_FLAG_CALLBACK_VALIDATION_FAILED = 1u << 5,
 };
 
-/// Validate PAC/CFI binding by signing + authenticating a function pointer with
-/// the supplied discriminator.
-/// Returns 0 when validation succeeds (or PAC is unavailable), 1 on validation
-/// failure, -1 on invalid input.
+/// Authenticate an already signed pointer under the supplied discriminator.
+/// Returns 0 after authentication, -1 for NULL input or unavailable PAC.
+/// Invalid non-NULL signatures may trap; this is not a nullable validity query.
 int cprisk_pac_validate_indirect_call_target(const void *func_ptr, uintptr_t discriminator);
 
 /// Run a PAC self-test on an internal function pointer + call path.
 /// Returns 0 on success (or PAC unavailable), 1 when validation fails.
 int cprisk_pac_self_test(uintptr_t discriminator);
 
-/// Validate a built-in core callback target used by the integrity pipeline.
-/// Returns 0 when callback binding is valid (or PAC unavailable), 1 otherwise.
+/// Self-test storage-schema round trips of built-in callbacks, not their code
+/// integrity. Returns 0 on success (or PAC unavailable), 1 otherwise.
 int cprisk_pac_validate_core_callbacks(void);
 
 /// Return last PAC/CFI status flags (CPRISK_PAC_CFI_FLAG_*).
