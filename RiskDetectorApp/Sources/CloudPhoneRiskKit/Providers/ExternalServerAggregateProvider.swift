@@ -24,6 +24,8 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
     private var currentIsVerified: Bool = false
     private var graphFeatures: GraphFeatures?
     private var serverSignalKey: SymmetricKey?
+    /// Invalidates verification already in flight when the key or session changes.
+    private var verificationGeneration: UInt64 = 0
     private var realtimeTelemetryFeedback: RealtimeTelemetryFeedback?
 
     struct GraphFeatures {
@@ -96,14 +98,20 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
         lock.withLock { realtimeTelemetryFeedback = nil }
     }
 
-    /// Configure the HMAC key used by `setVerified(_:signature:)`.
+    /// Configure the CPRisk-MAC key used by `setVerified(_:signature:)`.
     func configureServerSignalKey(_ key: Data) {
-        lock.withLock { serverSignalKey = SymmetricKey(data: key) }
+        lock.withLock {
+            verificationGeneration &+= 1
+            serverSignalKey = key.isEmpty ? nil : SymmetricKey(data: key)
+            current = nil
+            currentIsVerified = false
+        }
     }
 
     /// 清空服务端信号和图特征，Release 下始终可用（用于 clearExternalServerSignals）。
     func clear() {
         lock.withLock {
+            verificationGeneration &+= 1
             current = nil
             currentIsVerified = false
             graphFeatures = nil
@@ -124,6 +132,7 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
         }
         #if DEBUG
         lock.withLock {
+            verificationGeneration &+= 1
             current = signals
             // 未验签：默认不被采信（serverSignals/signals 会丢弃）。
             currentIsVerified = false
@@ -136,36 +145,38 @@ final class ExternalServerAggregateProvider: RiskSignalProvider {
 
     /// Accept server signals only after custom SHA-256 MAC verification.
     /// `signature` = MAC(serverSignalKey, canonicalJSON(signals)).
-    func setVerified(_ signals: ServerSignals, signature: Data) {
-        guard let capturedKey = lock.withLock({ serverSignalKey }) else {
+    @discardableResult
+    func setVerified(_ signals: ServerSignals, signature: Data) -> Bool {
+        let (key, generation) = lock.withLock { (serverSignalKey, verificationGeneration) }
+        guard let capturedKey = key else {
             Logger.log("server_aggregate.setVerified rejected: no key configured")
-            return
+            return false
         }
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         guard let payload = try? encoder.encode(signals) else {
             Logger.log("server_aggregate.setVerified rejected: encode failed")
-            return
+            return false
         }
 
         guard CPRiskMessageAuth.isValidAuthenticationCode(signature, authenticating: payload, using: capturedKey) else {
             Logger.log("server_aggregate.setVerified rejected: MAC mismatch")
-            return
+            return false
         }
 
         let accepted = lock.withLock { () -> Bool in
-            // Re-check key hasn't been cleared between verification and store
-            guard serverSignalKey != nil else { return false }
+            guard verificationGeneration == generation, serverSignalKey != nil else { return false }
             current = signals
             currentIsVerified = true
             return true
         }
         if !accepted {
-            Logger.log("server_aggregate.setVerified rejected: key cleared during verification")
-            return
+            Logger.log("server_aggregate.setVerified rejected: key or session changed during verification")
+            return false
         }
         Logger.log("server_aggregate.setVerified: accepted")
+        return true
     }
 
     func setGraphFeatures(

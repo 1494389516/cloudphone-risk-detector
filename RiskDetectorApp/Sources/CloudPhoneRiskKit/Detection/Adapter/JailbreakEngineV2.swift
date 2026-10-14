@@ -77,6 +77,7 @@ public final class JailbreakEngineV2 {
     private var consecutiveDetectorFaults: [DetectorID: Int] = [:]
     /// 快速检测各类别连续故障计数。
     private var consecutiveQuickFaults: [String: Int] = [:]
+    private let faultLock = UnfairLock()
     private static let consecutiveFaultEscalationThreshold = 2
     private static let consecutiveFaultEscalationScore: Double = 40
     
@@ -159,15 +160,18 @@ public final class JailbreakEngineV2 {
         for (category, detector) in quickDetectors {
             do {
                 let result = try detector.detect()
-                consecutiveQuickFaults[category] = 0
+                faultLock.withLock { consecutiveQuickFaults[category] = 0 }
                 if result.score > 0 {
                     detectedCategories.append(category)
                     totalScore += result.score
                 }
             } catch {
                 // 单次故障只标记，不直接判高危；连续故障才升级并记录。
-                let streak = (consecutiveQuickFaults[category] ?? 0) + 1
-                consecutiveQuickFaults[category] = streak
+                let streak = faultLock.withLock { () -> Int in
+                    let next = min(consecutiveQuickFaults[category] ?? 0, Int.max - 1) + 1
+                    consecutiveQuickFaults[category] = next
+                    return next
+                }
                 Logger.log("quick_detect.\(category): detector fault, consecutive streak=\(streak) — marked, not scored as risk")
                 if streak >= Self.consecutiveFaultEscalationThreshold {
                     detectedCategories.append(category)
@@ -252,15 +256,18 @@ public final class JailbreakEngineV2 {
         if result.methods.contains(where: { $0.hasPrefix("detector_fault:") }) {
             return faultResult(for: id, reason: "threw", preserving: result)
         }
-        consecutiveDetectorFaults[id] = 0
+        faultLock.withLock { consecutiveDetectorFaults[id] = 0 }
         return result
     }
 
     /// 检测器故障归一化：单次故障只标记（score 0），连续故障达到阈值才
     /// 升级计分并记录；成功一次即清零连续计数。
     private func faultResult(for id: DetectorID, reason: String, preserving base: DetectorResult? = nil) -> DetectorResult {
-        let streak = (consecutiveDetectorFaults[id] ?? 0) + 1
-        consecutiveDetectorFaults[id] = streak
+        let streak = faultLock.withLock { () -> Int in
+            let next = min(consecutiveDetectorFaults[id] ?? 0, Int.max - 1) + 1
+            consecutiveDetectorFaults[id] = next
+            return next
+        }
         Logger.log("detector id=\(id.rawValue) fault (\(reason)), consecutive streak=\(streak) — marked, not scored as jailbreak")
         var methods = base?.methods ?? ["detector_fault:\(id.rawValue)"]
         var score: Double = 0

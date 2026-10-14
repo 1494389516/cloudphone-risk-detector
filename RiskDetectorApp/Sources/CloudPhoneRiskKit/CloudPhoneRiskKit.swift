@@ -282,7 +282,8 @@ public final class CPRiskKit: NSObject {
     @objc(setExternalServerSignalsPublicIP:asn:asOrg:isDatacenter:ipDeviceAgg:ipAccountAgg:geoCountry:geoRegion:riskTags:)
     /// ⚠️ 未验签的端侧注入：该入口写入的信号默认不被采信
     /// （见 `ExternalServerAggregateProvider` 的验签来源门控），仅 DEBUG 联调用。
-    /// 生产路径请使用 `setVerified(_:signature:)`（需预先配置 HMAC key）。
+    /// 生产路径请使用 `setVerifiedExternalServerSignals(_:signature:)`，
+    /// 并预先调用 `configureServerSignalKey(_:)`。
     /// 无论何种来源，服务端必须忽略端侧上报的 `server` 字段，仅以服务端
     /// 自己聚合的 IP/ASN/机房信息为准。
     public static func setExternalServerSignals(
@@ -294,6 +295,19 @@ public final class CPRiskKit: NSObject {
             ServerSignals(publicIP: publicIP, asn: asn, asOrg: asOrg, isDatacenter: isDatacenter?.boolValue,
                           ipDeviceAgg: ipDeviceAgg?.intValue, ipAccountAgg: ipAccountAgg?.intValue,
                           geoCountry: geoCountry, geoRegion: geoRegion, riskTags: riskTags))
+    }
+
+    /// Configure the external-signal CPRisk-MAC key. Reconfiguration clears
+    /// previously accepted signals; an empty key disables signed injection.
+    @objc public static func configureServerSignalKey(_ key: Data) {
+        ExternalServerAggregateProvider.shared.configureServerSignalKey(key)
+    }
+
+    /// Verify CPRisk-MAC over JSONEncoder's sorted-key encoding of `signals`.
+    /// Returns false if verification fails or the key/session changes while verifying.
+    @discardableResult
+    public static func setVerifiedExternalServerSignals(_ signals: ServerSignals, signature: Data) -> Bool {
+        ExternalServerAggregateProvider.shared.setVerified(signals, signature: signature)
     }
 
     @objc(setGraphFeaturesWithCommunityId:communityRiskDensity:hwProfileDegree:devicePageRank:isInDenseSubgraph:riskTags:)

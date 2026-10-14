@@ -174,7 +174,7 @@ final class KeychainDeviceID {
             return value
         }
         // 遗留迁移：历史明文 UserDefaults 回退（带 HMAC 校验），读到后立即
-        // 转存为加密文件并删除明文，避免明文设备 ID 继续残留。
+        // 转存为加密文件，确认写入成功后再删除旧值；失败时保留供下次重试。
         let defaults = UserDefaults.standard
         guard let data = defaults.data(forKey: legacyFallbackKey),
               let signature = defaults.data(forKey: legacyFallbackHMACKey),
@@ -185,9 +185,12 @@ final class KeychainDeviceID {
             defaults.removeObject(forKey: legacyFallbackHMACKey)
             return nil
         }
-        _ = saveFallback(value)
-        defaults.removeObject(forKey: legacyFallbackKey)
-        defaults.removeObject(forKey: legacyFallbackHMACKey)
+        if saveFallback(value) {
+            defaults.removeObject(forKey: legacyFallbackKey)
+            defaults.removeObject(forKey: legacyFallbackHMACKey)
+        } else {
+            Logger.log("KeychainDeviceID: encrypted fallback migration deferred")
+        }
         return value
     }
 

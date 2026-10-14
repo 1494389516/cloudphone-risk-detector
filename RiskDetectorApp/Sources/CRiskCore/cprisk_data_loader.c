@@ -88,6 +88,7 @@ static int cprisk_data_nonce_reuse_check_i(const uint8_t *key, uint32_t key_id,
     cprisk_sha256(key, CPRISK_ARMOR_KEY_SIZE, key_fp);
     cprisk_sha256(ciphertext, ct_len, ct_hash);
     int rc = 0;
+    int found = 0;
     pthread_mutex_lock(&s_nonce_registry_mutex);
     for (uint32_t i = 0; i < CPRISK_DATA_NONCE_REGISTRY_SLOTS; i++) {
         const cprisk_data_nonce_entry_i *e = &s_nonce_registry[i];
@@ -98,11 +99,13 @@ static int cprisk_data_nonce_reuse_check_i(const uint8_t *key, uint32_t key_id,
         if (memcmp(e->key_fp, key_fp, CPRISK_ARMOR_HASH_SIZE) != 0)
             continue;
         /* Same (key, nonce) seen before: refuse iff ciphertext differs. */
+        found = 1;
         if (memcmp(e->ct_hash, ct_hash, CPRISK_ARMOR_HASH_SIZE) != 0)
             rc = -1;
         break;
     }
-    if (rc == 0) {
+    /* Re-decrypts must not evict unrelated nonce history. */
+    if (rc == 0 && !found) {
         cprisk_data_nonce_entry_i *slot =
             &s_nonce_registry[s_nonce_registry_next % CPRISK_DATA_NONCE_REGISTRY_SLOTS];
         s_nonce_registry_next++;

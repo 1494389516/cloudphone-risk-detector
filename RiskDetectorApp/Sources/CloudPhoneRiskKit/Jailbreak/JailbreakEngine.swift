@@ -35,6 +35,7 @@ final class JailbreakEngine {
     private static let consecutiveFaultEscalationScore: Double = 40
     /// 各检测器连续故障计数（跨次评估累计，成功一次即清零）。
     private var consecutiveFaults: [String: Int] = [:]
+    private let faultLock = UnfairLock()
 
     func detect(config: JailbreakConfig) -> DetectionResult {
 #if targetEnvironment(simulator)
@@ -121,7 +122,7 @@ final class JailbreakEngine {
                 // 检测器故障（负分），不是“检测到越狱”：只标记，不加高分。
                 recordDetectorFault(label: label, reason: "negative_score", score: &score, methods: &methods, faults: &faults)
             } else {
-                consecutiveFaults[label] = 0
+                faultLock.withLock { consecutiveFaults[label] = 0 }
                 #if DEBUG
                 Logger.log("jailbreak.\(label): score=\(result.score) hits=\(result.methods.count)")
                 #endif
@@ -143,8 +144,11 @@ final class JailbreakEngine {
         methods: inout [String],
         faults: inout [String]
     ) {
-        let streak = (consecutiveFaults[label] ?? 0) + 1
-        consecutiveFaults[label] = streak
+        let streak = faultLock.withLock { () -> Int in
+            let next = min(consecutiveFaults[label] ?? 0, Int.max - 1) + 1
+            consecutiveFaults[label] = next
+            return next
+        }
         faults.append("\(label):\(reason):streak=\(streak)")
         methods.append("jailbreak_fault:\(label):\(reason)")
         Logger.log("jailbreak.\(label): detector fault (\(reason)), consecutive streak=\(streak) — marked, not scored as jailbreak")

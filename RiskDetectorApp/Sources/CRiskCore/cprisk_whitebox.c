@@ -376,7 +376,7 @@ static void cprisk_whitebox_gen_shuffle_i(
     uint64_t seed = 0u;
     uint8_t entropy[8];
     int entropy_ok = 0;
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(__linux__)
     if (getentropy(entropy, sizeof(entropy)) == 0)
         entropy_ok = 1;
 #endif
