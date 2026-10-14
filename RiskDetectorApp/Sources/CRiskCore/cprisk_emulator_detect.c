@@ -66,8 +66,11 @@ static char *xor_decode(const uint8_t *enc, size_t len, char *out, uint8_t key) 
 /* ── Probe cache ─────────────────────────────────────────────────────────── */
 
 /* Cache the result after the first call to avoid repeating slow probes.
- * 0xFFFFFFFF == not yet computed. */
+ * 0xFFFFFFFF == not yet computed. The cache expires after
+ * CPRISK_EMULATOR_PROBE_TTL_SECONDS so a stale clean result cannot mask
+ * an emulator that appears later (issue 41). */
 static _Atomic(uint32_t) s_cached_flags = ATOMIC_VAR_INIT(0xFFFFFFFFu);
+static _Atomic(uint64_t) s_cached_at_unix = ATOMIC_VAR_INIT(0u);
 
 /* ── Individual probes ───────────────────────────────────────────────────── */
 
@@ -279,11 +282,24 @@ static int probe_cpu_clock_frozen(void) {
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
 
+static int cprisk_emulator_can_probe_i(void) {
+#if defined(__APPLE__) && !TARGET_OS_SIMULATOR
+    return 1;
+#else
+    return 0;
+#endif
+}
+
 uint32_t cprisk_emulator_probe(void) {
-    /* Return cached result if available */
+    /* Return cached result if available and fresh (TTL re-probe). */
     uint32_t cached = atomic_load_explicit(&s_cached_flags, memory_order_relaxed);
-    if (cached != 0xFFFFFFFFu)
-        return cached;
+    if (cached != 0xFFFFFFFFu) {
+        const uint64_t at = atomic_load_explicit(&s_cached_at_unix, memory_order_relaxed);
+        const uint64_t now = (uint64_t)time(NULL);
+        if (at != 0u && now >= at && now - at < CPRISK_EMULATOR_PROBE_TTL_SECONDS)
+            return cached;
+        /* Stale cache: fall through and re-probe. */
+    }
 
     uint32_t flags = 0u;
 
@@ -325,7 +341,20 @@ uint32_t cprisk_emulator_probe(void) {
         flags |= CPRISK_EMU_FLAG_WATCHDOG_STUCK;
 
     atomic_store_explicit(&s_cached_flags, flags, memory_order_release);
+    atomic_store_explicit(&s_cached_at_unix, (uint64_t)time(NULL), memory_order_release);
     return flags;
+}
+
+int cprisk_emulator_probe_status(uint32_t *out_flags) {
+    if (!out_flags)
+        return -1;
+    if (!cprisk_emulator_can_probe_i()) {
+        *out_flags = 0u;
+        return -1; /* not probed — must not be read as "clean" */
+    }
+    const uint32_t flags = cprisk_emulator_probe();
+    *out_flags = flags;
+    return flags == 0u ? 0 : 1;
 }
 
 uint32_t cprisk_emulator_quick_probe(void) {
