@@ -25,7 +25,7 @@
 #include "include/cprisk_sha256.h"
 #include <stdint.h>
 #include <string.h>
-#include <stdatomic.h>
+#include <pthread.h>
 #include <time.h>
 #include <limits.h>
 
@@ -41,12 +41,19 @@
  * Local CPRisk-MAC validation is a tamper filter. Server-side attestation remains
  * the source of truth. */
 
-/* Per-instance session state — single-thread assumption matches
- * cprisk_integrity.c (s_runtime_material etc.).  Guard with
- * pthread_once / _Atomic if multi-threaded init is required. */
+/* Publish/clear token bytes, validity, and expiry as one protected state.
+ * An atomic validity flag alone cannot protect concurrent copies/clears. */
+static pthread_mutex_t s_session_mutex = PTHREAD_MUTEX_INITIALIZER;
 static uint8_t s_session_token[CPRISK_ARMOR_KEY_SIZE];
-static _Atomic int s_session_token_valid = 0;
+static int s_session_token_valid = 0;
 static time_t s_session_token_expires_at;
+
+/* Caller holds s_session_mutex. */
+static void cprisk_clear_session_token_locked_i(void) {
+    cprisk_secure_zero(s_session_token, sizeof(s_session_token));
+    s_session_token_valid = 0;
+    s_session_token_expires_at = 0;
+}
 
 /* CPRisk-MAC-SHA256 wrapper delegating to the static inline in cprisk_armor_abi.h */
 static void cprisk_mac_sha256_i(
@@ -73,7 +80,7 @@ static int cprisk_session_mac_key_i(uint8_t out_key[CPRISK_ARMOR_HASH_SIZE]) {
 }
 
 static int cprisk_session_is_expired_i(time_t now) {
-    if (atomic_load(&s_session_token_valid) == 0)
+    if (s_session_token_valid == 0)
         return 1;
     if (s_session_token_expires_at <= 0)
         return 1;
@@ -128,9 +135,11 @@ int cprisk_set_session_token(const uint8_t *token, size_t token_len) {
     if ((time_t)CPRISK_SESSION_TOKEN_TTL_SECONDS > (time_t)(LONG_MAX - now))
         return -1;
 
+    pthread_mutex_lock(&s_session_mutex);
     memcpy(s_session_token, token, CPRISK_ARMOR_KEY_SIZE);
-    atomic_store(&s_session_token_valid, 1);
     s_session_token_expires_at = now + (time_t)CPRISK_SESSION_TOKEN_TTL_SECONDS;
+    s_session_token_valid = 1;
+    pthread_mutex_unlock(&s_session_mutex);
 
     return 0;
 }
@@ -140,28 +149,35 @@ int cprisk_get_session_key(uint8_t out_key[CPRISK_ARMOR_KEY_SIZE]) {
         return -1;
 
     time_t now = time(NULL);
+    pthread_mutex_lock(&s_session_mutex);
     if (now < 0 || cprisk_session_is_expired_i(now)) {
-        cprisk_clear_session_token();
+        cprisk_clear_session_token_locked_i();
+        cprisk_secure_zero(out_key, CPRISK_ARMOR_KEY_SIZE);
+        pthread_mutex_unlock(&s_session_mutex);
         return -1;
     }
 
     /* Return session token as-is.
      * The caller composes effectiveRoot = CPRisk-MAC(deviceKey, sessionKey). */
     memcpy(out_key, s_session_token, CPRISK_ARMOR_KEY_SIZE);
+    pthread_mutex_unlock(&s_session_mutex);
     return 0;
 }
 
 int cprisk_has_session_token(void) {
     time_t now = time(NULL);
+    pthread_mutex_lock(&s_session_mutex);
     if (now < 0 || cprisk_session_is_expired_i(now)) {
-        cprisk_clear_session_token();
+        cprisk_clear_session_token_locked_i();
+        pthread_mutex_unlock(&s_session_mutex);
         return 0;
     }
+    pthread_mutex_unlock(&s_session_mutex);
     return 1;
 }
 
 void cprisk_clear_session_token(void) {
-    cprisk_secure_zero(s_session_token, sizeof(s_session_token));
-    atomic_store(&s_session_token_valid, 0);
-    s_session_token_expires_at = 0;
+    pthread_mutex_lock(&s_session_mutex);
+    cprisk_clear_session_token_locked_i();
+    pthread_mutex_unlock(&s_session_mutex);
 }

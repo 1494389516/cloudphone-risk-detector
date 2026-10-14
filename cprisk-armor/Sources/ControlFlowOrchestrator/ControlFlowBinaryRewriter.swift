@@ -252,7 +252,7 @@ final class ControlFlowBinaryRewriter {
     ///  3. The STP frame size (imm7 × 8) must be sane: 8…4096 bytes with a
     ///     negative pre-index offset. Random data rarely satisfies this.
     ///  4. Without a function-starts table, the preceding word must look like
-    ///     a function boundary (RET / branch / NOP / zero padding / BRK).
+    ///     a function boundary (RET / unconditional branch / NOP / zero padding / BRK).
     /// Even with these filters the scan is still a heuristic: it can only
     /// raise confidence, never prove a location is a function entry.
     private func heuristicPrologueCandidates(
@@ -266,7 +266,8 @@ final class ControlFlowBinaryRewriter {
         var lastFileOffset = -Self.heuristicMinFunctionGap
 
         let functionStarts = Self.functionStartVMAddresses(in: file)
-        let dataInCodeRanges = Self.dataInCodeFileRanges(in: file)
+        // Malformed authoritative metadata must not enable weaker scanning.
+        guard let dataInCodeRanges = Self.dataInCodeFileRanges(in: file) else { return [] }
 
         let slotCount = textSize / 4
         for slotIndex in 0..<slotCount {
@@ -308,7 +309,7 @@ final class ControlFlowBinaryRewriter {
                 continue
             }
             // (2) Data-in-code ranges hold data, not instructions.
-            if dataInCodeRanges.contains(where: { actualFileOffset >= $0.0 && actualFileOffset < $0.1 }) {
+            if dataInCodeRanges.contains(where: { $0.0 < fileOffset + 4 && $0.1 > actualFileOffset }) {
                 continue
             }
             // (3) Frame-size sanity: imm7 (bits 20–15) is a signed scaled
@@ -346,24 +347,24 @@ final class ControlFlowBinaryRewriter {
     }
 
     /// Decode `LC_FUNCTION_STARTS` into the set of function-start VM addresses.
-    /// Returns `nil` when the command is absent or undecodable (caller then
-    /// falls back to the weaker boundary/frame-size checks). Deltas are
+    /// Returns `nil` only when the command is absent. Malformed metadata
+    /// returns an empty set, so no heuristic candidate can be accepted. Deltas are
     /// accumulated from the `__TEXT` segment VM address, matching the
     /// linker’s encoding.
     private static func functionStartVMAddresses(in file: MachOFile) -> Set<UInt64>? {
-        guard let command = file.loadCommands.first(where: { $0.cmd == 0x26 }) else {
-            return nil
-        }
-        guard let cmdOff = Int(exactly: command.offset), cmdOff <= file.data.count,
+        let commands = file.loadCommands.filter { $0.cmd == 0x26 }
+        guard let command = commands.first else { return nil }
+        guard commands.count == 1, command.cmdSize == 16,
+              let cmdOff = Int(exactly: command.offset), cmdOff <= file.data.count,
               file.data.count - cmdOff >= 16,
               let dataOff = try? file.readUInt32(at: cmdOff + 8),
               let dataSize = try? file.readUInt32(at: cmdOff + 12),
               let textSegment = try? file.segment(named: "__TEXT") else {
-            return nil
+            return []
         }
         let start = Int(dataOff), end = Int(dataOff) + Int(dataSize)
         guard start <= file.data.count, end <= file.data.count, end >= start else {
-            return nil
+            return []
         }
         var addresses = Set<UInt64>()
         var address = textSegment.vmAddress
@@ -375,46 +376,51 @@ final class ControlFlowBinaryRewriter {
             while pos < end, shift < 64 {
                 let byte = file.data[pos]
                 pos += 1
+                guard shift != 63 || byte <= 1 else { return [] }
                 delta |= UInt64(byte & 0x7F) << shift
                 if byte & 0x80 == 0 { terminated = true; break }
                 shift += 7
             }
-            guard terminated else { return nil }
-            if delta == 0 { break }
+            guard terminated else { return [] }
+            if delta == 0 { return addresses }
             let (next, overflow) = address.addingReportingOverflow(delta)
-            guard !overflow else { return nil }
+            guard !overflow, next >= textSegment.vmAddress,
+                  next - textSegment.vmAddress < textSegment.vmSize else { return [] }
             address = next
             addresses.insert(address)
         }
-        return addresses
+        // A non-empty table must end with a zero delta, never a partial list.
+        return []
     }
 
     /// `LC_DATA_IN_CODE` ranges as (fileOffset, fileOffsetEnd) pairs. Bytes in
     /// these ranges are data (jump tables / literals) embedded in `__text`.
-    private static func dataInCodeFileRanges(in file: MachOFile) -> [(Int, Int)] {
-        guard let command = file.loadCommands.first(where: { $0.cmd == 0x29 }) else {
-            return []
-        }
-        guard let cmdOff = Int(exactly: command.offset), cmdOff <= file.data.count,
+    /// Returns nil for malformed metadata, disabling heuristic rewriting.
+    private static func dataInCodeFileRanges(in file: MachOFile) -> [(Int, Int)]? {
+        let commands = file.loadCommands.filter { $0.cmd == 0x29 }
+        guard let command = commands.first else { return [] }
+        guard commands.count == 1, command.cmdSize == 16,
+              let cmdOff = Int(exactly: command.offset), cmdOff <= file.data.count,
               file.data.count - cmdOff >= 16,
               let dataOff = try? file.readUInt32(at: cmdOff + 8),
               let dataSize = try? file.readUInt32(at: cmdOff + 12) else {
-            return []
+            return nil
         }
         let start = Int(dataOff), end = Int(dataOff) + Int(dataSize)
         guard start <= file.data.count, end <= file.data.count, end >= start,
               (end - start) % 8 == 0 else {
-            return []
+            return nil
         }
         var ranges: [(Int, Int)] = []
         var pos = start
         while pos + 8 <= end {
             guard let off = try? file.data.readUInt32LE(at: pos) else {
-                break
+                return nil
             }
             // u16 length at pos+4 (no shared readUInt16LE helper in this file).
-            guard pos + 6 <= file.data.count else { break }
+            guard pos + 6 <= file.data.count else { return nil }
             let len = UInt16(file.data[pos + 4]) | (UInt16(file.data[pos + 5]) << 8)
+            guard Int(off) <= file.data.count, Int(len) <= file.data.count - Int(off) else { return nil }
             if len > 0 {
                 ranges.append((Int(off), Int(off) + Int(len)))
             }
@@ -424,16 +430,15 @@ final class ControlFlowBinaryRewriter {
     }
 
     /// Heuristic only: does this word plausibly END a function (i.e. sit
-    /// immediately before a function entry)? Covers RET, unconditional and
-    /// conditional branches, NOP, zero padding, and BRK. A match raises
+    /// immediately before a function entry)? Covers RET, unconditional
+    /// branches, NOP, zero padding, and BRK. Calls and conditional branches
+    /// can fall through and do not establish a boundary. A match raises
     /// confidence but never proves a boundary.
     private static func isPlausibleFunctionBoundary(_ word: UInt32) -> Bool {
         if word == 0xD65F_03C0 { return true } // RET
         if word == 0xD503_201F { return true } // NOP
         if word == 0 { return true } // zero padding
-        if (word & 0x7C00_0000) == 0x1400_0000 { return true } // B
-        if (word & 0x7C00_0000) == 0x9400_0000 { return true } // BL
-        if (word & 0xFF00_0010) == 0x5400_0000 { return true } // B.cond
+        if (word & 0xFC00_0000) == 0x1400_0000 { return true } // B (not BL)
         if (word & 0xFFE0_0000) == 0xD420_0000 { return true } // BRK
         return false
     }
