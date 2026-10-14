@@ -24,7 +24,10 @@ public struct ARMLiftConfig: Sendable, Equatable {
     }
 }
 
-/// AArch64 → VMIR lifter (build-time). Unrecognized patterns become `rawRegion`.
+/// AArch64 → VMIR lifter (build-time). Unrecognized patterns become `rawRegion`
+/// (raw-word passthrough = semantic loss; see `VMLogicalOp.rawRegion`).
+/// Lifting stops after `config.maxInstructions` (default 24 in the pass) —
+/// longer functions are truncated and the remainder is NOT virtualized.
 public struct ARM64Lifter: Sendable {
     public init() {}
 

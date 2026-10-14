@@ -6,7 +6,11 @@ import Foundation
 public enum VMLogicalOp: UInt8, CaseIterable, Sendable {
     case nop = 0
     case ret = 1
-    /// Unclassified or unknown AArch64 word (passthrough / semantic loss).
+    /// Unclassified or unknown AArch64 word (passthrough / SEMANTIC LOSS).
+    ///
+    /// The interpreter replays the raw word without modeling its flags,
+    /// memory effects, or control flow. `rawRegion` is NOT virtualization
+    /// coverage — never count it as such in any security claim.
     case rawRegion = 2
     case halt = 3
     /// Byte-lane add into accumulator (matches `CPRISK_VM_OP_ADD`).

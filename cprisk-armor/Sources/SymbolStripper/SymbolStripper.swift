@@ -20,7 +20,8 @@ public final class SymbolStripperPass: ArmorPass {
 
     private static let LC_SYMTAB:   UInt32 = 0x02
     private static let LC_DYSYMTAB: UInt32 = 0x0B
-    private static let LC_FUNCTION_STARTS: UInt32 = 0x26
+    // LC_FUNCTION_STARTS (0x26) is deliberately NOT zeroed by this pass
+    // (CPSV v2 / tooling need it); see zeroStaticAnalysisLinkeditCommands.
     private static let LC_DATA_IN_CODE: UInt32 = 0x29
 
     private static let systemModulePrefixes: [String] = [
@@ -91,6 +92,11 @@ public final class SymbolStripperPass: ArmorPass {
         if symbols.isEmpty {
             details.append("No nlist symbols found; linkedit symbol metadata still normalized")
         }
+        details.append(
+            "CPSV v2 INCOMPATIBLE: this pass destroys the symbol table, and CPSV v2 requires it "
+            + "to resolve layout ranges. Do not run CPSV v2 self-expect injection on this output "
+            + "(it fails closed with a Pass 6 conflict error). LC_FUNCTION_STARTS is preserved."
+        )
 
         return PassResult(
             passName: name,
@@ -100,11 +106,18 @@ public final class SymbolStripperPass: ArmorPass {
         )
     }
 
-    /// Function starts and data-in-code tables are static-analysis hints, not
-    /// runtime requirements. Once we intentionally remove the symbol table, stale
-    /// linkedit gaps before these tables make Apple's `strip` fail its strict
-    /// ordering checks. Clear them so a later linkedit compaction can produce a
-    /// self-consistent already-stripped file.
+    /// LC_DATA_IN_CODE is a static-analysis hint, not a runtime requirement.
+    /// Once we intentionally remove the symbol table, stale linkedit gaps
+    /// before these tables make Apple's `strip` fail its strict ordering
+    /// checks. Clear LC_DATA_IN_CODE so a later linkedit compaction can
+    /// produce a self-consistent already-stripped file.
+    ///
+    /// LC_FUNCTION_STARTS is DELIBERATELY PRESERVED (not zeroed): CPSV v2
+    /// self-expect injection and other tooling need it for function-boundary
+    /// checks, and it carries only address deltas — no symbol names — so
+    /// keeping it does not re-expose stripped names. (Preserving it does
+    /// NOT make Pass 6 output CPSV-v2-compatible: v2 also needs the symbol
+    /// table, which this pass destroys. See `injectV2`'s conflict error.)
     private func zeroStaticAnalysisLinkeditCommands(in file: MachOFile) throws -> Int {
         var bytesZeroed = 0
         var cmdOffset = MachOHeader.size
@@ -114,7 +127,7 @@ public final class SymbolStripperPass: ArmorPass {
             let cmdSize = try file.readUInt32(at: cmdOffset + 4)
             guard cmdSize >= 8 else { break }
 
-            if (cmd == Self.LC_FUNCTION_STARTS || cmd == Self.LC_DATA_IN_CODE), cmdSize >= 16 {
+            if cmd == Self.LC_DATA_IN_CODE, cmdSize >= 16 {
                 let oldOff = try file.readUInt32(at: cmdOffset + 8)
                 let oldSize = try file.readUInt32(at: cmdOffset + 12)
                 if oldOff != 0 || oldSize != 0 {
