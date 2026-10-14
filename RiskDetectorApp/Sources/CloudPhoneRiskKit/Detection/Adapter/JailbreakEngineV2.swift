@@ -68,9 +68,17 @@ public final class JailbreakEngineV2 {
     }
     
     // MARK: - 属性
-    
+
     private let legacyEngine: JailbreakEngine
     private let v2Config: V2Config
+
+    /// 各检测器连续故障（抛异常/超时）计数：单次故障只标记不计高分，
+    /// 连续故障达到阈值才升级计分（与 `JailbreakEngine` 一致的熔断/去重）。
+    private var consecutiveDetectorFaults: [DetectorID: Int] = [:]
+    /// 快速检测各类别连续故障计数。
+    private var consecutiveQuickFaults: [String: Int] = [:]
+    private static let consecutiveFaultEscalationThreshold = 2
+    private static let consecutiveFaultEscalationScore: Double = 40
     
     // MARK: - 初始化
     
@@ -133,7 +141,8 @@ public final class JailbreakEngineV2 {
         return QuickDetectionResult(
             isRisky: false,
             riskLevel: .none,
-            detectedCategories: []
+            detectedCategories: [],
+            unavailable: true
         )
 #else
         var detectedCategories: [String] = []
@@ -150,13 +159,21 @@ public final class JailbreakEngineV2 {
         for (category, detector) in quickDetectors {
             do {
                 let result = try detector.detect()
+                consecutiveQuickFaults[category] = 0
                 if result.score > 0 {
                     detectedCategories.append(category)
                     totalScore += result.score
                 }
             } catch {
-                detectedCategories.append(category)
-                totalScore += 80
+                // 单次故障只标记，不直接判高危；连续故障才升级并记录。
+                let streak = (consecutiveQuickFaults[category] ?? 0) + 1
+                consecutiveQuickFaults[category] = streak
+                Logger.log("quick_detect.\(category): detector fault, consecutive streak=\(streak) — marked, not scored as risk")
+                if streak >= Self.consecutiveFaultEscalationThreshold {
+                    detectedCategories.append(category)
+                    totalScore += Self.consecutiveFaultEscalationScore
+                    Logger.log("quick_detect.\(category): consecutive faults escalated (streak=\(streak))")
+                }
             }
         }
         
@@ -221,16 +238,38 @@ public final class JailbreakEngineV2 {
                 box.value = try work()
             } catch {
                 Logger.log("detector id=\(id.rawValue) threw: \(error)")
-                box.value = DetectorResult(score: 80, methods: ["detector_anomaly:\(id.rawValue)"])
+                // 故障不是“检测到越狱”：标记为故障，由调用方按连续故障计数决定是否升级。
+                box.value = DetectorResult(score: 0, methods: ["detector_fault:\(id.rawValue)"])
             }
             semaphore.signal()
         }
         let waitResult = semaphore.wait(timeout: .now() + timeout)
         if waitResult == .timedOut {
             Logger.log("detector id=\(id.rawValue) timeout after \(timeout)s")
-            return DetectorResult(score: 80, methods: ["detector_timeout:\(id.rawValue)"])
+            return faultResult(for: id, reason: "timeout")
         }
-        return box.value
+        let result = box.value
+        if result.methods.contains(where: { $0.hasPrefix("detector_fault:") }) {
+            return faultResult(for: id, reason: "threw", preserving: result)
+        }
+        consecutiveDetectorFaults[id] = 0
+        return result
+    }
+
+    /// 检测器故障归一化：单次故障只标记（score 0），连续故障达到阈值才
+    /// 升级计分并记录；成功一次即清零连续计数。
+    private func faultResult(for id: DetectorID, reason: String, preserving base: DetectorResult? = nil) -> DetectorResult {
+        let streak = (consecutiveDetectorFaults[id] ?? 0) + 1
+        consecutiveDetectorFaults[id] = streak
+        Logger.log("detector id=\(id.rawValue) fault (\(reason)), consecutive streak=\(streak) — marked, not scored as jailbreak")
+        var methods = base?.methods ?? ["detector_fault:\(id.rawValue)"]
+        var score: Double = 0
+        if streak >= Self.consecutiveFaultEscalationThreshold {
+            score = Self.consecutiveFaultEscalationScore
+            methods.append("detector_fault_escalated:\(id.rawValue)")
+            Logger.log("detector id=\(id.rawValue) consecutive faults escalated (streak=\(streak), +\(score))")
+        }
+        return DetectorResult(score: score, methods: methods)
     }
 
     private static let emptyDetectorResult = DetectorResult.empty
@@ -484,7 +523,8 @@ public final class JailbreakEngineV2 {
             isJailbroken: false,
             confidence: 0,
             detectedMethods: ["unavailable_simulator"],
-            details: "simulator_environment"
+            details: "simulator_environment",
+            unavailable: true
         )
     }
     
@@ -530,6 +570,18 @@ public struct QuickDetectionResult {
     
     /// 检测到的风险类别
     public let detectedCategories: [String]
+
+    /// 检测是否实际不可用（模拟器上检测器无法运行）。
+    /// 与 `DetectionResult.unavailable` 同义：`true` 表示“未检测”，
+    /// 不得当作干净设备采信。默认 `false`。
+    public let unavailable: Bool
+
+    public init(isRisky: Bool, riskLevel: RiskLevel, detectedCategories: [String], unavailable: Bool = false) {
+        self.isRisky = isRisky
+        self.riskLevel = riskLevel
+        self.detectedCategories = detectedCategories
+        self.unavailable = unavailable
+    }
     
     /// 风险等级
     public enum RiskLevel {

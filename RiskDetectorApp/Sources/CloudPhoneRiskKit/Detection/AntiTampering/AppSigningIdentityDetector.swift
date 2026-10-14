@@ -205,14 +205,14 @@ struct AppSigningIdentityDetector: Detector {
         }
     }
 
-    private static let baselineStorageKey = "com.cloudphone.riskkit.app_signing_identity.baseline.v1"
+    /// 签名基线不再明文存 UserDefaults：AES-GCM 加密文件（SecureFileStore）。
+    /// 遗留明文记录仅做一次性迁移读取，迁移后删除。明文基线可被攻击者
+    /// 篡改为当前（已篡改）身份，从而掩盖签名身份变化。
+    private static let baselineStorageKey = "app_signing_identity.baseline.v1"
+    private static let legacyBaselineDefaultsKey = "com.cloudphone.riskkit.app_signing_identity.baseline.v1"
     private static let baselineLock = UnfairLock()
 
-    private let userDefaults: UserDefaults
-
-    init(userDefaults: UserDefaults = .standard) {
-        self.userDefaults = userDefaults
-    }
+    init() {}
 
     func detect() throws -> DetectorResult {
         inspect().detectorResult
@@ -543,22 +543,34 @@ struct AppSigningIdentityDetector: Detector {
 
     private func loadBaseline() -> IdentityBaseline? {
         Self.baselineLock.withLock {
-            guard let data = userDefaults.data(forKey: Self.baselineStorageKey) else {
+            if let encrypted = SecureFileStore.shared.read(key: Self.baselineStorageKey),
+               let decrypted = try? PayloadCrypto.decrypt(encrypted),
+               let baseline = try? JSONDecoder().decode(IdentityBaseline.self, from: decrypted) {
+                return baseline
+            }
+            // 遗留迁移：历史明文 UserDefaults 基线，读到后转存加密文件并删除明文。
+            let defaults = UserDefaults.standard
+            guard let data = defaults.data(forKey: Self.legacyBaselineDefaultsKey),
+                  let baseline = try? JSONDecoder().decode(IdentityBaseline.self, from: data) else {
                 return nil
             }
-
-            return try? JSONDecoder().decode(IdentityBaseline.self, from: data)
+            saveBaselineLocked(baseline)
+            defaults.removeObject(forKey: Self.legacyBaselineDefaultsKey)
+            return baseline
         }
     }
 
     private func saveBaseline(_ baseline: IdentityBaseline) {
-        Self.baselineLock.withLock {
-            guard let data = try? JSONEncoder().encode(baseline) else {
-                return
-            }
+        Self.baselineLock.withLock { saveBaselineLocked(baseline) }
+    }
 
-            userDefaults.set(data, forKey: Self.baselineStorageKey)
+    /// 调用方须已持有 `baselineLock`。
+    private func saveBaselineLocked(_ baseline: IdentityBaseline) {
+        guard let data = try? JSONEncoder().encode(baseline),
+              let encrypted = try? PayloadCrypto.encrypt(data) else {
+            return
         }
+        SecureFileStore.shared.write(key: Self.baselineStorageKey, data: encrypted)
     }
 
     private static var isDebugBuild: Bool {
