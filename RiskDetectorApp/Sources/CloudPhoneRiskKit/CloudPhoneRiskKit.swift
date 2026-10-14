@@ -136,9 +136,11 @@ public final class CPRiskKit: NSObject {
         #endif
     }()
     internal static let armorRootKeyEnvironmentKey = "CPRISKKIT_ARMOR_ROOT_KEY_HEX"
-    #if DEBUG
-    internal static let armorDebugFallbackRootKeyHex = "00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f"
-    #endif
+    // NOTE: There is intentionally NO hard-coded / DEBUG fallback Armor root key.
+    // A hard-coded key (previously a sequential hex test key) would ship in every
+    // binary and let anyone derive Armor signing material. Without a provisioned
+    // key the Armor runtime hard-fails (`missing_root_key`) instead of silently
+    // degrading to a known key.
 
     internal var armorRuntimeSnapshot = ArmorRuntimeSnapshot.inactive
     internal var lastLocalAntiDebugMode: CPRiskAntiDebugRuntimeMode = .production
@@ -278,6 +280,11 @@ public final class CPRiskKit: NSObject {
     }
 
     @objc(setExternalServerSignalsPublicIP:asn:asOrg:isDatacenter:ipDeviceAgg:ipAccountAgg:geoCountry:geoRegion:riskTags:)
+    /// ⚠️ 未验签的端侧注入：该入口写入的信号默认不被采信
+    /// （见 `ExternalServerAggregateProvider` 的验签来源门控），仅 DEBUG 联调用。
+    /// 生产路径请使用 `setVerified(_:signature:)`（需预先配置 HMAC key）。
+    /// 无论何种来源，服务端必须忽略端侧上报的 `server` 字段，仅以服务端
+    /// 自己聚合的 IP/ASN/机房信息为准。
     public static func setExternalServerSignals(
         publicIP: String?, asn: String?, asOrg: String?, isDatacenter: NSNumber?,
         ipDeviceAgg: NSNumber?, ipAccountAgg: NSNumber?,

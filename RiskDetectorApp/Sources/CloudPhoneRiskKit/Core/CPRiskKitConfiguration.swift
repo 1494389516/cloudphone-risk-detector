@@ -36,6 +36,8 @@ extension CPRiskKit {
 
     internal enum ArmorRootKeySource: String {
         case environment
+        /// Retained for diagnostics compatibility only. No fallback key exists
+        /// anymore — `resolveArmorRootKey()` never produces this case.
         case debugFallback
         case missing
         case invalidEnvironment

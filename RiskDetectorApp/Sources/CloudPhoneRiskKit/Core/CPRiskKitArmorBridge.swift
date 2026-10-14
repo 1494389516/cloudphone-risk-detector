@@ -201,21 +201,14 @@ extension CPRiskKit {
             )
         }
 
-#if DEBUG
-        return ArmorRootKeyResolution(
-            keyData: Data(hexString: armorDebugFallbackRootKeyHex),
-            source: .debugFallback,
-            debugFallbackUsed: true,
-            failureReason: nil
-        )
-#else
+        // No hard-coded / DEBUG fallback root key: without a provisioned key
+        // this hard-fails with `missing_root_key` (see CloudPhoneRiskKit.swift).
         return ArmorRootKeyResolution(
             keyData: nil,
             source: .missing,
             debugFallbackUsed: false,
             failureReason: "missing_root_key"
         )
-#endif
     }
 
     internal static func hasArmorAnchor() -> Bool {
