@@ -59,9 +59,7 @@ public enum VMSelfExpectInjector {
     /// Derives the 32-byte key for the self-check MAC, the same way as
     /// `cprisk_vm_selfchk_hmac_key_i`: SHA-256(material || XOR-mixed label).
     /// A post-link expectation cannot depend on a future runtime session key.
-    /// (Name kept for wire compat — the key feeds either the standard-HMAC
-    /// v1 path or the CPRisk-MAC v2 path; see `hmacSelfCheckTag32` and
-    /// `injectV2`.)
+    /// The key feeds CPRisk-MAC in both v1 and v2 runtime self-checks.
     public static func deriveSelfCheckCPRiskMACKey(runtimeMaterial32: Data) -> SymmetricKey {
         precondition(runtimeMaterial32.count == 32)
         var payload = Data(count: 50)
@@ -78,19 +76,13 @@ public enum VMSelfExpectInjector {
         return SymmetricKey(data: Data(digest))
     }
 
-    /// First 4 bytes (LE) of the standard HMAC-SHA256 digest over the code
-    /// prefix — matches the v1 runtime self-check construction. This is a
-    /// 32-bit TRUNCATION, not a full-width MAC (see the file header).
-    ///
-    /// NOTE: this v1 path uses `ArmorABI.hmacSHA256` (standard HMAC-SHA256,
-    /// pads 0x36 / 0x5C). The CPSV v2 path (`injectV2`) uses CPRisk-MAC
-    /// (custom pads 0x6D / 0xA3) instead, matching the deployed runtime's
-    /// custom-pad construction. The two are not interchangeable; do not
-    /// “fix” one to match the other without a contract-version negotiation.
+    /// First 4 bytes (LE) of CPRisk-MAC over the code prefix, matching the
+    /// v1 C runtime (cprisk_vm_m3_self_check_i). The legacy public function
+    /// name is retained for source compatibility; this is not standard HMAC.
     public static func hmacSelfCheckTag32(codePrefix: Data, runtimeMaterial32: Data) -> UInt32 {
         let key = deriveSelfCheckCPRiskMACKey(runtimeMaterial32: runtimeMaterial32)
         let keyData = key.withUnsafeBytes { Data($0) }
-        let d = ArmorABI.hmacSHA256(key: keyData, message: codePrefix)
+        let d = ArmorABI.cpriskMAC(key: keyData, message: codePrefix)
         guard d.count >= 4 else { return 0 }
         return UInt32(d[0]) | (UInt32(d[1]) << 8) | (UInt32(d[2]) << 16) | (UInt32(d[3]) << 24)
     }

@@ -41,17 +41,22 @@ public final class DataSegmentEncryptorPass: ArmorPass {
             anchorAccumulator: anchorAccumulator
         )
 
-        let plaintextPayload = buildProtectedBlob(
+        var plaintextPayload = buildProtectedBlob(
             fullAnchorHash: fullAnchorHash,
             integrityHash: integrityHash,
             anchorAccumulator: anchorAccumulator
         )
 
+        guard plaintextPayload.count <= 16_384 else {
+            throw MachOError.invalidData("Protected blob exceeds its isolated 16 KiB page")
+        }
+        plaintextPayload.append(Data(repeating: 0, count: 16_384 - plaintextPayload.count))
+
         try file.addOrUpdateSection(
             segment: ArmorABI.dataSegmentName,
             section: ArmorABI.Loader.protectedSectionName,
             content: plaintextPayload,
-            align: 3
+            align: 14
         )
 
         guard let dataSegment = try file.segment(named: ArmorABI.dataSegmentName) else {
@@ -62,6 +67,16 @@ public final class DataSegmentEncryptorPass: ArmorPass {
             ArmorABI.DataEncryption.isEncryptable(section.sectionName)
                 && section.storesDataInFile
                 && section.size > 0
+        }
+
+        // Page permissions are shared by all bytes of a physical VM page.
+        // Reject legacy mixed layouts before encrypting any of their bytes.
+        for section in targetSections {
+            guard section.address % 16_384 == 0, section.size % 16_384 == 0 else {
+                throw MachOError.invalidData(
+                    "Pass 3 requires isolated 16 KiB sections: \(section.segmentName).\(section.sectionName). Rebuild with page-aligned, page-sized encrypted sections."
+                )
+            }
         }
 
         var entries = [ArmorABI.Loader.Entry]()
@@ -93,7 +108,7 @@ public final class DataSegmentEncryptorPass: ArmorPass {
             )
             try file.replaceBytes(at: UInt64(section.offset), with: encrypted)
 
-            // HMAC scope binds (section_index, nonce_len, nonce, ct_len, ciphertext)
+            // CPRisk-MAC scope binds (section_index, nonce_len, nonce, ct_len, ciphertext)
             // so two sections cannot be transposed without invalidating
             // the tag, and a truncation/extension cannot find a matching
             // length pair. The runtime decoder MUST mirror this exact
@@ -111,7 +126,7 @@ public final class DataSegmentEncryptorPass: ArmorPass {
             var ctLenLE = UInt32(encrypted.count).littleEndian
             withUnsafeBytes(of: &ctLenLE) { hmacMessage.append(contentsOf: $0) }
             hmacMessage.append(encrypted)
-            let hmacTag = ArmorABI.hmacSHA256(key: sectionKey, message: hmacMessage)
+            let hmacTag = ArmorABI.cpriskMAC(key: sectionKey, message: hmacMessage)
 
             entries.append(ArmorABI.Loader.Entry(
                 segmentName: section.segmentName,
@@ -287,16 +302,16 @@ private func deriveChainedKey(
     appendUInt32(sectionIndex, to: &material)
     material.append(nonce)
 
-    var derived = ArmorABI.hmacSHA256(key: parentKey, message: material)
+    var derived = ArmorABI.cpriskMAC(key: parentKey, message: material)
     if depth > 1 {
         for d in 1..<depth {
-            derived = ArmorABI.hmacSHA256(
+            derived = ArmorABI.cpriskMAC(
                 key: derived,
                 message: Data("cprisk.chained.v1.".utf8)
             )
             var depthMaterial = derived
             depthMaterial.append(UInt8(d))
-            derived = ArmorABI.hmacSHA256(key: depthMaterial, message: depthMaterial)
+            derived = ArmorABI.cpriskMAC(key: depthMaterial, message: depthMaterial)
         }
     }
     return derived

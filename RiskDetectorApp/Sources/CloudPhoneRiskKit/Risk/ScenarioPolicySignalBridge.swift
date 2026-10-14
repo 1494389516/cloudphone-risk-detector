@@ -1,6 +1,7 @@
 import Foundation
 
 enum ScenarioPolicySignalBridge {
+    private static let idfvHistoryLock = NSLock()
     private static let idfvHistoryKey = "cprk_scenario_policy.idfv_history"
     private static let idfvWindow: TimeInterval = 30 * 24 * 3600
     private static let idfvTriggerCount = 2
@@ -200,6 +201,8 @@ enum ScenarioPolicySignalBridge {
         // 历史记录存的是哈希值，`current_idfv_suffix` 为哈希后 8 位，仅作变化
         // 关联提示，原始 IDFV 不会落盘/上报。
 
+        idfvHistoryLock.lock()
+        defer { idfvHistoryLock.unlock() }
         let nowTs = now.timeIntervalSince1970
         var history = loadIDFVHistory()
             ?? IDFVHistory(lastValue: idfv, changeTimestamps: [])
@@ -271,15 +274,17 @@ enum ScenarioPolicySignalBridge {
               let history = try? JSONDecoder().decode(IDFVHistory.self, from: data) else {
             return nil
         }
-        saveIDFVHistory(history)
-        defaults.removeObject(forKey: idfvHistoryKey)
+        if saveIDFVHistory(history) {
+            defaults.removeObject(forKey: idfvHistoryKey)
+        }
         return history
     }
 
-    private static func saveIDFVHistory(_ history: IDFVHistory) {
+    @discardableResult
+    private static func saveIDFVHistory(_ history: IDFVHistory) -> Bool {
         guard let data = try? JSONEncoder().encode(history),
-              let encrypted = try? PayloadCrypto.encrypt(data) else { return }
-        SecureFileStore.shared.write(key: idfvHistoryKey, data: encrypted)
+              let encrypted = try? PayloadCrypto.encrypt(data) else { return false }
+        return SecureFileStore.shared.write(key: idfvHistoryKey, data: encrypted)
     }
 
     private static func isDeviceTamperDriver(_ signal: RiskSignal) -> Bool {

@@ -11,18 +11,9 @@ private enum TextArmorSeed {
 /// Pass 12: encrypts `__TEXT,__text` at page granularity and emits `__DATA` text-encryption metadata
 /// (`ArmorABI.Sections.textEncryption`) for CRiskCore.
 ///
-/// **Edges:** Historically the first and last 4K pages were left plaintext as a safety margin. When
-/// possible, this pass now also encrypts those pages:
-/// - **First page:** encrypted only if `LC_MAIN` exists and the entry **file offset** falls in
-///   `__TEXT,__text` but **not** in the first 4 KiB (so the initial PC from dyld is not in ciphertext).
-/// - **Last page:** encrypted when a symbol table is present (Pass 12 runs before Pass 6) **and**
-///   every `N_SECT` symbol with a value in that page looks like a VM trampoline (`cprisk_vm_entry*`),
-///   **or** there are no such symbols in that page. If there is no `LC_SYMTAB`, a full-size last page
-///   stays plaintext (conservative).
-/// - **Tail chunk:** `__text` is not always an exact multiple of 4 KiB. When the final chunk is a
-///   partial page, it is encrypted independently from the "last full page" symbol policy unless
-///   `LC_MAIN.entryoff` lands inside that tail chunk (rare, but guarded fail-safe).
-///   Runtime validation/decrypt uses the emitted per-entry `size`.
+/// Emits only complete, VM-aligned 16 KiB blocks inside __text. Partial edge
+/// blocks and the LC_MAIN entry block stay plaintext. Descriptor key indices
+/// retain the legacy 4 KiB unit, so the runtime KDF encoding does not change.
 public final class TextSegmentEncryptorPass: ArmorPass {
     public let name = "TextSegmentEncryptor"
 
@@ -53,50 +44,26 @@ public final class TextSegmentEncryptorPass: ArmorPass {
             throw MachOError.sectionNotFound("__TEXT", "__text")
         }
 
-        let pageSize = 4096
+        let pageSize = 16_384
         let totalSize = Int(textSection.size)
-        guard totalSize >= pageSize * 3 else {
-            return PassResult(
-                passName: name,
-                itemsProcessed: 0,
-                bytesModified: 0,
-                details: ["Skipped: __text smaller than 3 pages (safe margin)"]
-            )
-        }
-
-        let pageCount = (totalSize + pageSize - 1) / pageSize
-
-        let encryptFirstPage = Self.shouldEncryptFirstTextPage(
-            file: file,
-            textSectionOffset: UInt64(textSection.offset),
-            textSectionSize: UInt64(textSection.size)
-        )
-        let encryptLastPage = try Self.shouldEncryptLastTextPage(
-            file: file,
-            textVMA: textSection.address,
-            textSize: UInt64(textSection.size),
-            pageCount: pageCount,
-            pageSize: pageSize
-        )
-        let lastChunkOffset = (pageCount - 1) * pageSize
-        let lastChunkSize = Swift.max(0, totalSize - lastChunkOffset)
-        let hasPartialTailChunk = lastChunkSize > 0 && lastChunkSize < pageSize
-        let encryptLastChunk = hasPartialTailChunk
-            ? Self.shouldEncryptPartialTailChunk(
-                file: file,
-                textSectionOffset: UInt64(textSection.offset),
-                textSectionSize: UInt64(textSection.size),
-                pageCount: pageCount,
-                pageSize: pageSize
-            )
-            : encryptLastPage
-
+        let prefix = Int((UInt64(pageSize) - textSection.address % UInt64(pageSize)) % UInt64(pageSize))
+        let pageCount = totalSize > prefix ? (totalSize - prefix) / pageSize : 0
         var pagesToEncrypt = [Int]()
-        pagesToEncrypt.reserveCapacity(pageCount)
         for pageIdx in 0..<pageCount {
-            if pageIdx == 0 && !encryptFirstPage { continue }
-            if pageIdx == pageCount - 1 && !encryptLastChunk { continue }
-            pagesToEncrypt.append(pageIdx)
+            let chunkOffset = prefix + pageIdx * pageSize
+            // Keep full edge blocks as a conservative bootstrap margin.
+            if pageIdx == 0 || pageIdx == pageCount - 1 { continue }
+            let fileStart = UInt64(textSection.offset) + UInt64(chunkOffset)
+            let containsEntry = file.loadCommands.contains { command in
+                guard command.cmd == LoadCommand.LC_MAIN,
+                      command.cmdSize >= 24,
+                      let entry = Self.readUInt64LE(command.rawData, at: 8) else { return false }
+                return entry >= fileStart && entry < fileStart + UInt64(pageSize)
+            }
+            if !containsEntry { pagesToEncrypt.append(pageIdx) }
+        }
+        guard pagesToEncrypt.count <= 64 else {
+            throw MachOError.invalidData("Pass 12 exceeds the runtime's 64-entry descriptor limit")
         }
 
         guard !pagesToEncrypt.isEmpty else {
@@ -116,7 +83,7 @@ public final class TextSegmentEncryptorPass: ArmorPass {
         var bytesXor = 0
 
         for pageIdx in pagesToEncrypt {
-            let chunkOffset = pageIdx * pageSize
+            let chunkOffset = prefix + pageIdx * pageSize
             let chunkSize = Swift.min(pageSize, totalSize - chunkOffset)
             guard chunkSize > 0 else { continue }
 
@@ -127,7 +94,8 @@ public final class TextSegmentEncryptorPass: ArmorPass {
             let plaintext = file.data.subdata(in: start..<end)
             let contentHash = sha256(plaintext)
             let nonce = try generateNonce()
-            let sectionIndex = TextEncryption.sectionIndexBase + UInt32(pageIdx)
+            let logicalPageIndex = UInt32(chunkOffset / 4096)
+            let sectionIndex = TextEncryption.sectionIndexBase + logicalPageIndex
             let sectionKey = TextSectionKeyDerivation.derive(
                 parentKey: loaderKey,
                 sectionIndex: sectionIndex,
@@ -135,12 +103,12 @@ public final class TextSegmentEncryptorPass: ArmorPass {
                 depth: 1,
                 whitebox: whitebox
             )
-            let keyID = baseKeyID &+ UInt32(pageIdx)
+            let keyID = baseKeyID &+ logicalPageIndex
             let keystream = makeKeystream(key: sectionKey, keyID: keyID, nonce: nonce, length: chunkSize)
             let encrypted = xor(plaintext, keystream)
             try file.replaceBytes(at: offset, with: encrypted)
 
-            // HMAC scope binds (section_index, nonce_len, nonce, ct_len, ciphertext)
+            // CPRisk-MAC scope binds (section_index, nonce_len, nonce, ct_len, ciphertext)
             // — the previous `nonce || ciphertext` form let an attacker truncate
             // an encrypted page and update the size descriptor without
             // invalidating the tag (size was outside the HMAC scope). The C
@@ -159,7 +127,7 @@ public final class TextSegmentEncryptorPass: ArmorPass {
             var ctLenLE = UInt32(encrypted.count).littleEndian
             withUnsafeBytes(of: &ctLenLE) { hmacMessage.append(contentsOf: $0) }
             hmacMessage.append(encrypted)
-            let hmacTag = ArmorABI.hmacSHA256(key: sectionKey, message: hmacMessage)
+            let hmacTag = ArmorABI.cpriskMAC(key: sectionKey, message: hmacMessage)
 
             entries.append(
                 TextEncryption.Entry(
@@ -450,16 +418,16 @@ enum TextSectionKeyDerivation {
         withUnsafeBytes(of: &sectionLe) { material.append(contentsOf: $0) }
         material.append(nonce)
 
-        var derived = ArmorABI.hmacSHA256(key: parentKey, message: material)
+        var derived = ArmorABI.cpriskMAC(key: parentKey, message: material)
         if depth > 1 {
             for d in 1..<depth {
-                derived = ArmorABI.hmacSHA256(
+                derived = ArmorABI.cpriskMAC(
                     key: derived,
                     message: Data("cprisk.chained.v1.".utf8)
                 )
                 var depthMaterial = derived
                 depthMaterial.append(UInt8(d))
-                derived = ArmorABI.hmacSHA256(key: depthMaterial, message: depthMaterial)
+                derived = ArmorABI.cpriskMAC(key: depthMaterial, message: depthMaterial)
             }
         }
 

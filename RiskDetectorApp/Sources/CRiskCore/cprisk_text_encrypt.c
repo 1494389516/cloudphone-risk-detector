@@ -17,6 +17,7 @@
  * (AES-GCM / ChaCha20-Poly1305) carrying the nonce + AAD in the tag. */
 
 #include "include/CRiskCore.h"
+#include "include/cprisk_page_span.h"
 #include "include/cprisk_armor_abi.h"
 #include "include/cprisk_macho.h"
 #include "include/cprisk_sha256.h"
@@ -97,7 +98,8 @@ static int cprisk_text_derive_section_key_i(const uint8_t parent_key[CPRISK_ARMO
     (!defined(TARGET_OS_TV) || !TARGET_OS_TV) && \
     (!defined(TARGET_OS_WATCH) || !TARGET_OS_WATCH)
 
-#define CPRISK_TEXT_PAGE_SIZE 4096u
+#define CPRISK_TEXT_PAGE_SIZE 4096u /* Frozen descriptor KDF index unit, not VM granularity. */
+#define CPRISK_TEXT_HONEYPOT_SIZE 16384u
 /* Idle re-encrypt eligibility: min time a page may stay decrypted before XOR+PROT_NONE.
  * Hot __TEXT can remain fault-free for long stretches; pair with watchdog idle cadence
  * (primary + secondary) so plaintext is not gated only on ~1 Hz ticks. */
@@ -141,17 +143,7 @@ static const struct mach_header_64 *cprisk_text_own_hdr(void) {
 }
 
 static int cprisk_text_page_span(uint8_t *target, size_t sz, void **page_out, size_t *len_out) {
-    if (!target || sz == 0 || !page_out || !len_out)
-        return -1;
-    if ((uintptr_t)target > UINTPTR_MAX - sz)
-        return -1;
-    if ((uintptr_t)target + sz > UINTPTR_MAX - 0xFFF)
-        return -1;
-    uintptr_t page = (uintptr_t)target & ~(uintptr_t)0xFFF;
-    uintptr_t end = ((uintptr_t)target + sz + 0xFFF) & ~(uintptr_t)0xFFF;
-    *page_out = (void *)page;
-    *len_out = (size_t)(end - page);
-    return 0;
+    return cprisk_system_page_span_i(target, sz, page_out, len_out);
 }
 
 static int cprisk_text_validate_bounds(
@@ -160,26 +152,30 @@ static int cprisk_text_validate_bounds(
 ) {
     if (!hdr || !ent)
         return -1;
-    /* Build-time Pass 12 may emit a tail descriptor shorter than 4 KiB when
-     * __TEXT.__text is not page-aligned on disk. Runtime only requires the
-     * entry to start on a page boundary and stay fully inside __TEXT.__text. */
-    if (ent->size == 0)
-        return -1;
-    if (ent->vm_addr % CPRISK_TEXT_PAGE_SIZE != 0)
+    const size_t native_page = cprisk_system_page_size_i();
+    if (!native_page || !ent->size || ent->vm_addr % native_page != 0u ||
+        ent->size % native_page != 0u)
         return -1;
 
+    if (native_page < sizeof(*hdr) || hdr->sizeofcmds > native_page - sizeof(*hdr))
+        return -1;
     const uint8_t *cursor = (const uint8_t *)(hdr + 1);
     const uint8_t *end = (const uint8_t *)hdr + sizeof(struct mach_header_64) + hdr->sizeofcmds;
     for (uint32_t i = 0; i < hdr->ncmds; i++) {
         const struct load_command *lc = (const struct load_command *)cursor;
-        if (lc->cmdsize == 0 || cursor + lc->cmdsize > end)
-            break;
+        const size_t remaining = (size_t)(end - cursor);
+        if (remaining < sizeof(*lc) || lc->cmdsize < sizeof(*lc) || lc->cmdsize > remaining)
+            return -1;
         if (lc->cmd == LC_SEGMENT_64) {
+            if (lc->cmdsize < sizeof(struct segment_command_64))
+                return -1;
             const struct segment_command_64 *seg = (const struct segment_command_64 *)cursor;
             if (strncmp(seg->segname, "__TEXT", 16) != 0) {
                 cursor += lc->cmdsize;
                 continue;
             }
+            if (seg->nsects > (lc->cmdsize - sizeof(*seg)) / sizeof(struct section_64))
+                return -1;
             const struct section_64 *sections =
                 (const struct section_64 *)(cursor + sizeof(*seg));
             for (uint32_t s = 0; s < seg->nsects; s++) {
@@ -189,6 +185,8 @@ static int cprisk_text_validate_bounds(
                 if ((seg->initprot & VM_PROT_EXECUTE) == 0)
                     return -1;
                 uint64_t lo = sec->addr;
+                if (sec->addr > UINT64_MAX - sec->size)
+                    return -1;
                 uint64_t hi = sec->addr + sec->size;
                 uint64_t e0 = ent->vm_addr;
                 uint64_t e1 = ent->vm_addr + ent->size;
@@ -276,7 +274,7 @@ static void cprisk_text_honeypot_disarm(void) {
     if (!s_text_honeypot_armed || !s_text_honeypot_page)
         return;
     cprisk_unregister_text_honeypot_page();
-    (void)cprisk_armor_vm_protect(s_text_honeypot_page, CPRISK_TEXT_PAGE_SIZE, PROT_READ | PROT_EXEC);
+    (void)cprisk_armor_vm_protect(s_text_honeypot_page, CPRISK_TEXT_HONEYPOT_SIZE, PROT_READ | PROT_EXEC);
     s_text_honeypot_armed = 0;
     s_text_honeypot_page = NULL;
 }
@@ -292,8 +290,8 @@ static void cprisk_text_honeypot_fill_entropy_i(void *page) {
     int err = 0;
     size_t off = 0;
     uint64_t mix = (uint64_t)(uintptr_t)page ^ (uint64_t)mach_absolute_time();
-    while (off < CPRISK_TEXT_PAGE_SIZE) {
-        size_t n = CPRISK_TEXT_PAGE_SIZE - off;
+    while (off < CPRISK_TEXT_HONEYPOT_SIZE) {
+        size_t n = CPRISK_TEXT_HONEYPOT_SIZE - off;
         if (n > sizeof(buf)) {
             n = sizeof(buf);
         }
@@ -315,20 +313,20 @@ static void cprisk_text_honeypot_arm(const struct mach_header_64 *hdr) {
         return;
     unsigned long psz = 0;
     const uint8_t *p = cprisk_find_section(hdr, "__TEXT", "__cprisk_pad", &psz);
-    if (!p || psz < CPRISK_TEXT_PAGE_SIZE)
+    if (!p || psz < CPRISK_TEXT_HONEYPOT_SIZE)
         return;
-    if (((uintptr_t)p % CPRISK_TEXT_PAGE_SIZE) != 0)
+    if (((uintptr_t)p % CPRISK_TEXT_HONEYPOT_SIZE) != 0)
         return;
     void *page = (void *)(uintptr_t)p;
-    if (cprisk_armor_vm_protect(page, CPRISK_TEXT_PAGE_SIZE, PROT_READ | PROT_WRITE) != 0)
+    if (cprisk_armor_vm_protect(page, CPRISK_TEXT_HONEYPOT_SIZE, PROT_READ | PROT_WRITE) != 0)
         return;
     cprisk_text_honeypot_fill_entropy_i(page);
-    if (cprisk_armor_vm_protect(page, CPRISK_TEXT_PAGE_SIZE, PROT_NONE) != 0) {
-        (void)cprisk_armor_vm_protect(page, CPRISK_TEXT_PAGE_SIZE, PROT_READ | PROT_EXEC);
+    if (cprisk_armor_vm_protect(page, CPRISK_TEXT_HONEYPOT_SIZE, PROT_NONE) != 0) {
+        (void)cprisk_armor_vm_protect(page, CPRISK_TEXT_HONEYPOT_SIZE, PROT_READ | PROT_EXEC);
         return;
     }
-    if (cprisk_register_text_honeypot_page(page, CPRISK_TEXT_PAGE_SIZE) != 0) {
-        (void)cprisk_armor_vm_protect(page, CPRISK_TEXT_PAGE_SIZE, PROT_READ | PROT_EXEC);
+    if (cprisk_register_text_honeypot_page(page, CPRISK_TEXT_HONEYPOT_SIZE) != 0) {
+        (void)cprisk_armor_vm_protect(page, CPRISK_TEXT_HONEYPOT_SIZE, PROT_READ | PROT_EXEC);
         return;
     }
     s_text_honeypot_armed = 1;
@@ -598,7 +596,7 @@ static uint32_t cprisk_text_encrypt_self_check_locked_i(uint64_t now_ticks) {
 
     if (s_text_honeypot_armed && s_text_honeypot_page != NULL) {
         vm_prot_t honeypot_prot = 0;
-        if (cprisk_text_query_vm_protection_i(s_text_honeypot_page, CPRISK_TEXT_PAGE_SIZE, &honeypot_prot) == 0) {
+        if (cprisk_text_query_vm_protection_i(s_text_honeypot_page, CPRISK_TEXT_HONEYPOT_SIZE, &honeypot_prot) == 0) {
             if ((honeypot_prot & (VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE)) != 0) {
                 flags |= CPRISK_TEXT_ENCRYPT_SELF_CHECK_FLAG_HONEYPOT_PROTECTION_DRIFT;
             }
@@ -732,6 +730,21 @@ void cprisk_text_encrypt_install(const uint8_t loader_key[CPRISK_ARMOR_KEY_SIZE]
 
     const struct cprisk_text_encrypt_entry *src =
         (const struct cprisk_text_encrypt_entry *)(sec + sizeof(struct cprisk_text_encrypt_header));
+
+    for (uint32_t i = 0; i < count; ++i) {
+        int invalid = cprisk_text_validate_bounds(hdr, &src[i]) != 0;
+        for (uint32_t j = 0; !invalid && j < i; ++j) {
+            invalid = src[i].vm_addr < src[j].vm_addr + src[j].size &&
+                      src[j].vm_addr < src[i].vm_addr + src[i].size;
+        }
+        if (invalid) {
+            cprisk_integrity_poison_text_encrypt_lane();
+            cprisk_secure_zero(s_parent_key, sizeof(s_parent_key));
+            s_parent_ready = 0;
+            pthread_mutex_unlock(&s_text_mutex);
+            return;
+        }
+    }
 
     s_entries = (struct cprisk_text_encrypt_entry *)calloc((size_t)count, sizeof(struct cprisk_text_encrypt_entry));
     s_poison = (uint8_t *)calloc((size_t)count, 1);

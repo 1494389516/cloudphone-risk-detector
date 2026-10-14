@@ -57,7 +57,8 @@ public final class MachOWriter {
         section: String,
         content: Data,
         protection: UInt32,
-        flags: UInt32 = 0
+        flags: UInt32 = 0,
+        align requestedAlignment: UInt32? = nil
     ) throws -> Section {
         let header = try MachOHeader(from: data)
         guard header.isValid else {
@@ -76,7 +77,8 @@ public final class MachOWriter {
 
         let targetSegmentEnd = try checkedAdd(target.segment.fileOffset, target.segment.fileSize, context: "segment \(segment) tail")
 
-        let alignment = try fileAlignment(forSectionAlign: target.segment.sections.last?.align ?? 0)
+        let sectionAlignment = requestedAlignment ?? target.segment.sections.last?.align ?? 0
+        let alignment = try fileAlignment(forSectionAlign: sectionAlignment)
         let contentOffset = try align(targetSegmentEnd, to: alignment)
         let paddingCount = try checkedInt(contentOffset - targetSegmentEnd, context: "section padding")
         let growth = try checkedInt(UInt64(paddingCount + content.count), context: "section growth")
@@ -105,7 +107,7 @@ public final class MachOWriter {
         let newSection = Section(
             sectionName: section, segmentName: segment,
             address: contentAddress, size: UInt64(content.count),
-            offset: UInt32(contentOffset), align: target.segment.sections.last?.align ?? 0,
+            offset: UInt32(contentOffset), align: sectionAlignment,
             relocationOffset: 0, numberOfRelocations: 0,
             flags: flags, reserved1: 0, reserved2: 0, reserved3: 0
         )

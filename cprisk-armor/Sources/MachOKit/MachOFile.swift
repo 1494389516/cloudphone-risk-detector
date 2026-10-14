@@ -657,7 +657,8 @@ public final class MachOFile {
             section: sectionName,
             content: content,
             protection: targetSegment.initProt,
-            flags: flags
+            flags: flags,
+            align: align
         )
         try reparse()
         return appendedSection

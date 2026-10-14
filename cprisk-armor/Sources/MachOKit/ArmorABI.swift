@@ -20,13 +20,9 @@ import Foundation
 // migration path is to introduce a protocol/contract version that negotiates
 // standard HMAC — not to edit pads in place.
 //
-// OPEN INTEROP QUESTION (recorded, not resolved here): the deployed CRiskCore
-// runtime verifies armor-produced tags with its custom-pad construction, while
-// several armor passes emit tags with the standard construction. Whether a
-// given pass's tags verify at runtime depends on which construction the
-// matching runtime verifier uses; that pairing must be confirmed per pass
-// against the runtime before shipping. This file deliberately changes NO pad
-// bytes; it only names the two constructions honestly.
+// Armor data/text/string/import MACs and chained KDFs use cpriskMAC to
+// match their C consumers. Standard hmacSHA256 remains for white-box table
+// generation; both CPSV versions use cpriskMAC like their runtime consumers.
 // ══════════════════════════════════════════════════════════════════════════
 
 private extension Data {
@@ -642,11 +638,9 @@ public enum ArmorABI {
         /// bytes in place. It is additive: parsers that only understand the
         /// 60-byte entries ignore this section.
         ///
-        /// Status: the map is EMITTED by Pass 1, but no in-tree runtime
-        /// consumer has been verified to read it yet. Until a runtime
-        /// write-back consumer lands and is verified, original addresses
-        /// stay zeroed after Pass 1 and only table-lookup decryption works.
-        /// Do NOT claim Pass 1 write-back is active.
+        /// Reserved layout only. Pass 1 now rejects destructive literal rewriting
+        /// before mutation because a bootstrap-safe consumer is not implemented.
+        /// Do not emit this map or zero original addresses until that path exists.
         public enum WritebackMap {
             /// Magic "CPSW" in file order.
             public static let magic: UInt32 = 0x43505357

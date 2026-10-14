@@ -19,6 +19,7 @@
 #include "include/CRiskCore.h"
 
 #include <stdatomic.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,7 +40,7 @@ static uint8_t  s_dec_key[CPRISK_ARMOR_KEY_SIZE];
 static _Atomic int s_dec_ready;
 static uint64_t s_str_acc;
 static uint64_t s_dispatch_seed;
-static uint8_t  s_per_string_key[CPRISK_ARMOR_KEY_SIZE];
+static pthread_mutex_t s_string_mutex = PTHREAD_MUTEX_INITIALIZER;
 /*
  * The previous lazy-decrypt path kept a 512-byte plaintext buffer
  * (s_lazy_buf) at a stable BSS address. Per the red-team self-audit,
@@ -347,7 +348,8 @@ static void cprisk_keystream_distributed(const uint8_t *key, uint32_t sid,
 
 static void cprisk_derive_per_string_key(
     uint32_t string_id,
-    const uint8_t *nonce
+    const uint8_t *nonce,
+    uint8_t out_key[CPRISK_ARMOR_KEY_SIZE]
 ) {
     /*
      * KDF material = "cprisk.str.key.v1" || sid_le4 || nonce
@@ -365,7 +367,7 @@ static void cprisk_derive_per_string_key(
     memcpy(material + label_len + 4u, nonce, CPRISK_ARMOR_NONCE_SIZE);
 
     cprisk_mac_sha256(s_dec_key, CPRISK_ARMOR_KEY_SIZE,
-                       material, sizeof(material), s_per_string_key);
+                       material, sizeof(material), out_key);
     cprisk_secure_zero(material, sizeof(material));
 }
 
@@ -374,14 +376,16 @@ static void cprisk_derive_per_string_key(
 int cprisk_init_string_decryptor(const uint8_t *key, size_t key_len) {
     if (!key || key_len != CPRISK_ARMOR_KEY_SIZE)
         return -1;
+    pthread_mutex_lock(&s_string_mutex);
     memcpy(s_dec_key, key, CPRISK_ARMOR_KEY_SIZE);
     s_dispatch_seed = cprisk_derive_dispatch_seed(key, key_len);
     atomic_store(&s_dec_ready, 1);
     s_str_acc = 0;
+    pthread_mutex_unlock(&s_string_mutex);
     return 0;
 }
 
-int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) {
+static int cprisk_decrypt_string_locked_i(uint32_t string_id, char *buffer, size_t buffer_size) {
     if (!atomic_load(&s_dec_ready) || !buffer || buffer_size == 0)
         return -1;
 
@@ -495,10 +499,12 @@ int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) 
     if (!ks)
         return -1;
     memset(ks, 0, dlen);
-    cprisk_derive_per_string_key(string_id, ent->nonce);
-    cprisk_keystream_distributed(s_per_string_key, string_id,
+    uint8_t per_string_key[CPRISK_ARMOR_KEY_SIZE];
+    cprisk_derive_per_string_key(string_id, ent->nonce, per_string_key);
+    cprisk_keystream_distributed(per_string_key, string_id,
                                  ent->nonce, CPRISK_ARMOR_NONCE_SIZE, ks, dlen,
                                  s_dispatch_seed);
+    cprisk_secure_zero(per_string_key, sizeof(per_string_key));
 
     for (uint32_t i = 0; i < dlen; i++)
         buffer[i] = (char)(enc[i] ^ ks[i]);
@@ -529,8 +535,19 @@ int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) 
     return (int)dlen;
 }
 
+int cprisk_decrypt_string(uint32_t string_id, char *buffer, size_t buffer_size) {
+    /* Serialize key lifetime and the integrity accumulator with init/cleanup. */
+    pthread_mutex_lock(&s_string_mutex);
+    const int result = cprisk_decrypt_string_locked_i(string_id, buffer, buffer_size);
+    pthread_mutex_unlock(&s_string_mutex);
+    return result;
+}
+
 uint64_t cprisk_get_string_integrity_accumulator(void) {
-    return s_str_acc;
+    pthread_mutex_lock(&s_string_mutex);
+    const uint64_t value = s_str_acc;
+    pthread_mutex_unlock(&s_string_mutex);
+    return value;
 }
 
 /*
@@ -552,8 +569,8 @@ void cprisk_string_lazy_scrub_all(void) {
 }
 
 void cprisk_cleanup_string_decryptor(void) {
+    pthread_mutex_lock(&s_string_mutex);
     cprisk_secure_zero(s_dec_key, sizeof(s_dec_key));
-    cprisk_secure_zero(s_per_string_key, sizeof(s_per_string_key));
     atomic_store(&s_dec_ready, 0);
     /* Use cprisk_secure_zero (volatile + memset) for the integrity
      * accumulator and dispatch seed too — even though both are static
@@ -563,6 +580,7 @@ void cprisk_cleanup_string_decryptor(void) {
      * just "this is a value reset". */
     cprisk_secure_zero(&s_str_acc, sizeof(s_str_acc));
     cprisk_secure_zero(&s_dispatch_seed, sizeof(s_dispatch_seed));
+    pthread_mutex_unlock(&s_string_mutex);
 }
 
 uint32_t cprisk_test_select_string_decrypt_path(

@@ -345,10 +345,10 @@ public final class ImportEncryptorPass: ArmorPass {
             let nameData = Data(symbol.utf8)
             let nonce = try generateNonce(count: Self.tableNonceSize)
 
-            // Tag for integrity: HMAC(key, nonce || plaintext_name) with an
+            // Tag for integrity: CPRisk-MAC(key, nonce || plaintext_name) with an
             // 8-byte nonce — the exact input the CRiskCore parser verifies.
             let hmacInput = nonce + nameData  // HMAC over plaintext for integrity
-            let hmacTag = ArmorABI.hmacSHA256(key: key, message: hmacInput)
+            let hmacTag = ArmorABI.cpriskMAC(key: key, message: hmacInput)
 
             // Keystream: SHA256-based (not HMAC, to keep derivation fast and simple)
             let keystream = deriveKeystream(

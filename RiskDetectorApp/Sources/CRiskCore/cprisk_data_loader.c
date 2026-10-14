@@ -15,6 +15,7 @@
  */
 
 #include "include/CRiskCore.h"
+#include "include/cprisk_page_span.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -515,17 +516,23 @@ static int cprisk_resolve_loader_target(
         cprisk_copy_fixed_name_l(ent->section_name, section_name) != 0)
         return -1;
 
-    const size_t page_size = 0x1000;
-    if (hdr->sizeofcmds > page_size - sizeof(struct mach_header_64))
+    const size_t page_size = cprisk_system_page_size_i();
+    if (page_size < sizeof(struct mach_header_64) ||
+        ent->vm_addr % page_size != 0u || ent->size % page_size != 0u ||
+        hdr->sizeofcmds > page_size - sizeof(struct mach_header_64))
         return -1;
     const uint8_t *cursor = (const uint8_t *)(hdr + 1);
     const uint8_t *end = (const uint8_t *)hdr + sizeof(struct mach_header_64) + hdr->sizeofcmds;
     for (uint32_t i = 0; i < hdr->ncmds; i++) {
         const struct load_command *lc = (const struct load_command *)cursor;
         size_t remaining = (size_t)(end - cursor);
-        if (lc->cmdsize == 0 || lc->cmdsize > remaining)
+        if (remaining < sizeof(*lc))
+            return -1;
+        if (lc->cmdsize < sizeof(*lc) || lc->cmdsize > remaining)
             break;
         if (lc->cmd == LC_SEGMENT_64) {
+            if (lc->cmdsize < sizeof(struct segment_command_64))
+                return -1;
             const struct segment_command_64 *seg =
                 (const struct segment_command_64 *)cursor;
             size_t seg_sz = sizeof(struct segment_command_64);
@@ -606,17 +613,7 @@ int cprisk_armor_xor_region(uint8_t *target, size_t sz, uint32_t key_id,
 
 static int cprisk_page_span_l(uint8_t *target, size_t sz,
                                void **page_out, size_t *len_out) {
-    if (!target || sz == 0 || !page_out || !len_out)
-        return -1;
-    if ((uintptr_t)target > UINTPTR_MAX - sz)
-        return -1;
-    if ((uintptr_t)target + sz > UINTPTR_MAX - 0xFFF)
-        return -1;
-    uintptr_t page = (uintptr_t)target & ~(uintptr_t)0xFFF;
-    uintptr_t end = ((uintptr_t)target + sz + 0xFFF) & ~(uintptr_t)0xFFF;
-    *page_out = (void *)page;
-    *len_out = (size_t)(end - page);
-    return 0;
+    return cprisk_system_page_span_i(target, sz, page_out, len_out);
 }
 
 static void cprisk_rollback_l(
@@ -681,6 +678,16 @@ int cprisk_load_protected_data(void) {
     const struct cprisk_armor_loader_entry *entries =
         (const struct cprisk_armor_loader_entry *)(sec + sizeof(struct cprisk_armor_loader_header));
     intptr_t slide = cprisk_compute_slide(hdr);
+
+    /* Validate every range before changing any permissions. Partial-page
+     * sections would expose neighboring ciphertext or block unrelated data. */
+    for (uint32_t i = 0; i < count; ++i) {
+        struct cprisk_loader_target target;
+        if (cprisk_resolve_loader_target(hdr, slide, &entries[i], &target) != 0) {
+            cprisk_integrity_poison_data_loader_lane();
+            return -1;
+        }
+    }
 
     if (count > 0) {
         struct cprisk_armor_loader_entry *entries_tmp = NULL;

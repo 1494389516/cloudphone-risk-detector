@@ -172,16 +172,11 @@ enum StringKeystreamVariant: UInt8, CaseIterable {
 /// Pass 1: 扫描字符串字面量相关 section（按 sectionName 匹配，跨 segment）：
 /// `__cstring`、`__const`、`__constg_swiftt`。
 ///
-/// 将 mustEncrypt 和 shouldEncrypt 类别全部加密写入 string table section，
-/// 并将原始 section 中对应字节零填充，防止 `strings` 工具直接提取。
+/// 检测 mustEncrypt 和 shouldEncrypt 类别；存在待改写的原始字面量时拒绝执行。
 ///
-/// 回填（write-back）：60 字节的 string-table index entry 本身不含目标地址，
-/// 运行时仅凭它无法把解密结果写回程序真正读取的原始地址。因此本 pass
-/// 额外写入 `__DATA,__swift5_strwb` 回填映射（见
-/// `ArmorABI.StringTable.WritebackMap`）：每条记录含 stringID、原始文件偏移、
-/// 原始 VM 地址与长度，供运行时回填消费。注意：映射只是被“发出”，目前
-/// 尚未验证有运行时消费方真正读取它；在回填消费方落地并验证之前，原始
-/// 地址在 Pass 1 之后保持零填充，只有查表解密可用——不要宣称回填已生效。
+/// In-place rewriting is currently rejected before mutation: the runtime has
+/// no bootstrap-safe consumer for the reserved write-back map. A binary with
+/// no eligible original literals may still receive the bootstrap lookup table.
 public final class StringEncryptorPass: ArmorPass {
     public let name = "StringEncryptor"
 
@@ -190,6 +185,13 @@ public final class StringEncryptorPass: ArmorPass {
     public func execute(on file: MachOFile, config: PassConfig) throws -> PassResult {
         let locatedStrings = try collectStringLiterals(from: file)
         let records = buildRecords(from: locatedStrings)
+        let originalCount = records.filter { $0.location != nil }.count
+        guard originalCount == 0 else {
+            throw MachOError.invalidData(
+                "Pass 1 in-place string encryption is unavailable: no bootstrap-safe runtime write-back consumer exists. "
+                + "Refusing to erase \(originalCount) original literals. Rebuild without --pass1; explicit table lookup alone cannot restore native references."
+            )
+        }
         let stringKey = try deriveStringKey(rootKey: config.encryptionKey)
         let dispatchSeed = deriveKeystreamDispatchSeed(key: stringKey)
 
@@ -201,14 +203,14 @@ public final class StringEncryptorPass: ArmorPass {
             let nonce = try generateNonce()
 
             // Mirror cprisk_derive_per_string_key() in the C runtime:
-            //   perStringKey = HMAC(stringKey, "cprisk.str.key.v1" || sid_le4 || nonce)
+            //   perStringKey = CPRisk-MAC(stringKey, "cprisk.str.key.v1" || sid_le4 || nonce)
             // Domain label added per WB#4 to prevent key-confusion between this
             // HMAC use and any other HMAC derivation sharing the same root key.
             var pskMaterial = Data("cprisk.str.key.v1".utf8)
             var sidForPSK = record.id.littleEndian
             withUnsafeBytes(of: &sidForPSK) { pskMaterial.append(contentsOf: $0) }
             pskMaterial.append(nonce)
-            let perStringKey = ArmorABI.hmacSHA256(key: stringKey, message: pskMaterial)
+            let perStringKey = ArmorABI.cpriskMAC(key: stringKey, message: pskMaterial)
 
             let encrypted = xor(
                 plaintext,
@@ -220,7 +222,7 @@ public final class StringEncryptorPass: ArmorPass {
                     dispatchSeed: dispatchSeed
                 )
             )
-            // HMAC scope binds (string_id, nonce_len, nonce, ct_len, ciphertext)
+            // CPRisk-MAC scope binds (string_id, nonce_len, nonce, ct_len, ciphertext)
             // so two strings cannot be transposed without invalidating the
             // tag, and a truncation/extension cannot find a matching length
             // pair (the previous `nonce || ciphertext` form was vulnerable to
@@ -239,7 +241,7 @@ public final class StringEncryptorPass: ArmorPass {
             var ctLenLE = UInt32(encrypted.count).littleEndian
             withUnsafeBytes(of: &ctLenLE) { hmacMessage.append(contentsOf: $0) }
             hmacMessage.append(encrypted)
-            let hmacTag = ArmorABI.hmacSHA256(key: stringKey, message: hmacMessage)
+            let hmacTag = ArmorABI.cpriskMAC(key: stringKey, message: hmacMessage)
 
             payload.append(
                 ArmorABI.StringTable.IndexEntry(
@@ -261,83 +263,13 @@ public final class StringEncryptorPass: ArmorPass {
             align: 2
         )
 
-        // Emit the Pass 1 write-back map BEFORE zero-filling: the map records
-        // the pre-pass original locations (file offset / VM address / length)
-        // for every encrypted literal, so a runtime consumer can write each
-        // decrypted string back to the address the program reads from.
-        // Ordering invariant: both section insertions append at the end of
-        // __DATA, after every string-literal section's bytes, so the recorded
-        // offsets stay valid. The zero-fill verification below fails closed
-        // if that invariant ever breaks.
-        let writebackEntries = records.compactMap { record -> ArmorABI.StringTable.WritebackMap.Entry? in
-            guard let location = record.location else { return nil }
-            return ArmorABI.StringTable.WritebackMap.Entry(
-                stringID: record.id,
-                fileOffset: location.fileOffset,
-                vmAddress: location.vmAddress,
-                byteLength: UInt64(location.byteLength)
-            )
-        }
-        var writebackPayload = ArmorABI.StringTable.WritebackMap.Header(
-            count: UInt32(writebackEntries.count)
-        ).serialized()
-        for entry in writebackEntries {
-            writebackPayload.append(entry.serialized())
-        }
-        precondition(
-            writebackPayload.count == ArmorABI.StringTable.WritebackMap.headerSize
-                + writebackEntries.count * ArmorABI.StringTable.WritebackMap.recordSize,
-            "write-back map size mismatch"
-        )
-        _ = try file.addOrUpdateSection(
-            segment: ArmorABI.dataSegmentName,
-            section: ArmorABI.StringTable.WritebackMap.sectionName,
-            content: writebackPayload,
-            align: 2
-        )
-
-        // 零填充已加密字符串在原始 section 中的位置，防止 strings 工具提取
-        var zeroFilledCount = 0
-        var touchedSections = Set<String>()
-        for record in records {
-            guard let location = record.location else { continue }
-            let zeroData = Data(repeating: 0, count: location.byteLength)
-            try file.replaceBytes(at: location.fileOffset, with: zeroData)
-            touchedSections.insert("\(location.segmentName).\(location.sectionName)")
-            zeroFilledCount += 1
-        }
-
-        // Fail closed: every mapped original location must now read back as
-        // zeros. A mismatch means the recorded offsets no longer describe
-        // the bytes that were actually zero-filled (e.g. a section insertion
-        // moved them), and the write-back map would point at live bytes.
-        for entry in writebackEntries {
-            let start = Int(entry.fileOffset)
-            let end = start + Int(entry.byteLength)
-            guard start >= 0, end <= file.data.count else {
-                throw MachOError.invalidData(
-                    "write-back map entry for string \(entry.stringID) is out of bounds"
-                )
-            }
-            guard file.data.subdata(in: start..<end).allSatisfy({ $0 == 0 }) else {
-                throw MachOError.invalidData(
-                    "write-back map entry for string \(entry.stringID) does not point at zero-filled bytes"
-                )
-            }
-        }
-
-        let encryptedFromBinary = records.filter { $0.location != nil }.count
-        let sectionSummary = touchedSections.sorted().joined(separator: ", ")
         return PassResult(
             passName: name,
             itemsProcessed: records.count,
-            bytesModified: payload.count + writebackPayload.count,
+            bytesModified: payload.count,
             details: [
-                "Wrote encrypted string table to \(ArmorABI.dataSegmentName).\(ArmorABI.StringTable.sectionName)",
-                "Wrote write-back map (\(writebackEntries.count) entries) to \(ArmorABI.dataSegmentName).\(ArmorABI.StringTable.WritebackMap.sectionName); runtime write-back consumer still pending — original addresses stay zero-filled until one lands",
-                "Bootstrap string id \(StringBootstrap.id) is retained for compatibility with the existing table layout",
-                "Encrypted \(encryptedFromBinary) string literals (zero-filled \(zeroFilledCount) original positions)",
-                "Scanned sections: \(sectionSummary.isEmpty ? "none" : sectionSummary)",
+                "Wrote bootstrap lookup table; no original literals were modified",
+                "In-place string rewriting is rejected until bootstrap-safe runtime write-back is available",
             ]
         )
     }
@@ -919,7 +851,7 @@ private func keystreamPathC(key: Data, stringID: UInt32, nonce: Data, length: In
     seedMessage.append(nonce)
     seedMessage.append(Data([0x43, 0x50, 0x52, 0x49])) // "CPRI"
 
-    var block = ArmorABI.hmacSHA256(key: key, message: seedMessage)
+    var block = ArmorABI.cpriskMAC(key: key, message: seedMessage)
     var output = Data()
     output.reserveCapacity(length)
     var counter: UInt32 = 1

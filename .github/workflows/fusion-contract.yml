@@ -17,13 +17,16 @@ jobs:
         run: python3 contracts/generate.py --check
       - name: Build armor tools
         run: swift build --package-path cprisk-armor
-      - name: Compile PAC and memory guard runtimes for arm64e
+      - name: Compile armor runtimes for arm64e
         run: >-
           xcrun --sdk iphoneos clang -arch arm64e -miphoneos-version-min=14.0
           -std=gnu11 -Werror=implicit-function-declaration -fsyntax-only
           -isysroot "$(xcrun --sdk iphoneos --show-sdk-path)"
           RiskDetectorApp/Sources/CRiskCore/cprisk_pac.c
           RiskDetectorApp/Sources/CRiskCore/cprisk_memory_guard.c
+          RiskDetectorApp/Sources/CRiskCore/cprisk_data_loader.c
+          RiskDetectorApp/Sources/CRiskCore/cprisk_text_encrypt.c
+          RiskDetectorApp/Sources/CRiskCore/cprisk_string_decrypt.c
       - name: Build checked-in Xcode app for iOS Simulator
         run: >-
           xcodebuild -quiet -project RiskDetectorApp/RiskDetectorApp.xcodeproj
