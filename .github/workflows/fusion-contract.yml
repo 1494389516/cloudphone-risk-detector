@@ -1,3 +1,7 @@
+# CI runs NO tests: there is no unit/integration test step in this workflow.
+# A green run means “it builds and the generated contracts are current” —
+# it does NOT mean the armor transforms, runtime decryption, or VM paths
+# are functionally correct. Do not treat green CI as functional verification.
 name: Build and contract generation
 on:
   pull_request:
@@ -7,7 +11,8 @@ jobs:
   build:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      # Pinned to a full commit SHA (v4.2.2) — a mutable tag can be repointed.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Generated wire contract is current
         run: python3 contracts/generate.py --check
       - name: Build armor tools
