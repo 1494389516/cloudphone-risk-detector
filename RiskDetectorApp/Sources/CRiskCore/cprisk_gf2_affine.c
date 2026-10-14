@@ -40,6 +40,9 @@ static pthread_once_t kCpriskGf2InitOnce = PTHREAD_ONCE_INIT;
 // cprisk_gf2_init_with_root_key()，由根密钥派生种子。
 // 由根密钥派生的种子在首次初始化前通过 pending 槽位传入（见
 // cprisk_gf2_init_with_root_key）；先运行的初始化获胜。
+static const uint64_t kCpriskGf2InitSeed = 0xCAFEBABEDEADBEEFULL;
+static pthread_mutex_t s_gf2_seed_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int s_gf2_seed_frozen = 0;
 static uint64_t s_gf2_pending_seed = 0u;
 static int s_gf2_pending_seed_set = 0;
 
@@ -108,14 +111,21 @@ void cprisk_gf2_init_with_root_key(const uint8_t root_key[32]) {
     cprisk_secure_zero(digest, sizeof(digest));
     if (seed == 0u)
         seed = 0x9E3779B97F4A7C15ULL;
-    s_gf2_pending_seed = seed;
-    s_gf2_pending_seed_set = 1;
+    pthread_mutex_lock(&s_gf2_seed_mutex);
+    if (!s_gf2_seed_frozen && !s_gf2_pending_seed_set) {
+        s_gf2_pending_seed = seed;
+        s_gf2_pending_seed_set = 1;
+    }
+    pthread_mutex_unlock(&s_gf2_seed_mutex);
     cprisk_gf2_init_if_needed();
 }
 
 __attribute__((visibility("default")))
 void cprisk_gf2_init_real(void) {
+    pthread_mutex_lock(&s_gf2_seed_mutex);
     uint64_t s = s_gf2_pending_seed_set ? s_gf2_pending_seed : kCpriskGf2InitSeed;
+    s_gf2_seed_frozen = 1;
+    pthread_mutex_unlock(&s_gf2_seed_mutex);
     for (size_t i = 0u; i < CPRISK_GF2_MATRIX_BYTES; ++i) {
         s = cprisk_gf2_xorshift64(s);
         kCpriskGf2Matrix[i] = (uint8_t)(s & 0xFFu);

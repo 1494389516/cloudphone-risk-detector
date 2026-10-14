@@ -68,8 +68,8 @@ public actor CollectorClient {
             cfg.timeoutIntervalForRequest = configuration.timeout
             cfg.timeoutIntervalForResource = configuration.timeout
             self.session = CertificatePinningSessionDelegate.pinnedSession(
-                configuration: cfg,
                 pinMaterial: CPRiskKit.pinnedCertificatePinMaterial,
+                configuration: cfg,
                 allowsSystemCA: false
             )
         }
