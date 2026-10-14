@@ -11,18 +11,21 @@ public struct OrchestratedFunctionPlan: Equatable, Sendable {
     public let notes: [String]
 
     public var summaryLine: String {
+        // Fields marked (plan-only) do NOT change the bytes armor writes —
+        // only `perFunctionSeed` reaches the rewriter (see StateEncodingPlan).
+        // Never read them as “protection enabled”.
         [
             symbol,
             "tier=\(tier.rawValue)",
-            "dispatcher=\(dispatcherStyle.rawValue)",
-            "codec=\(stateEncodingPlan.style.rawValue)",
-            "runtimeSalt=\(stateEncodingPlan.usesRuntimeSalt)",
-            "runtimeSaltMode=\(antiDeobfuscationPlan.runtimeSaltMode.rawValue)",
-            "fakeStates=\(stateEncodingPlan.releaseFakeStateCount)",
-            "fakeStateReleaseOnly=\(antiDeobfuscationPlan.fakeStateReleaseOnlyEnabled)",
-            "multiDispatcher=\(antiDeobfuscationPlan.multiDispatcherEnabled)",
-            "pass8Aware=\(runtimeDependencyPlan.pass8Aware)",
-            "pass8CFFAware=\(antiDeobfuscationPlan.pass8CFFAwarenessEnabled)"
+            "dispatcher=plan-only:\(dispatcherStyle.rawValue)",
+            "codec=plan-only:\(stateEncodingPlan.style.rawValue)",
+            "runtimeSalt=plan-only:\(stateEncodingPlan.usesRuntimeSalt)",
+            "runtimeSaltMode=plan-only:\(antiDeobfuscationPlan.runtimeSaltMode.rawValue)",
+            "fakeStates=plan-only:\(stateEncodingPlan.releaseFakeStateCount)",
+            "fakeStateReleaseOnly=plan-only:\(antiDeobfuscationPlan.fakeStateReleaseOnlyEnabled)",
+            "multiDispatcher=plan-only:\(antiDeobfuscationPlan.multiDispatcherEnabled)",
+            "pass8Aware=plan-only:\(runtimeDependencyPlan.pass8Aware)",
+            "pass8CFFAware=plan-only:\(antiDeobfuscationPlan.pass8CFFAwarenessEnabled)"
         ].joined(separator: " ")
     }
 }
@@ -173,8 +176,10 @@ public struct ControlFlowOrchestratorPass: ArmorPass {
             "policy: \(policyURL.path)",
             "version: \(policy.version)",
             "heavy=\(policy.heavy.count) medium=\(policy.medium.count) light=\(policy.light.count) regionOnly=\(policy.regionOnly.count) never=\(policy.never.count)",
-            "runtimeSalt=\(policy.antiDeobfuscation.enableRuntimeSalt) fakeStateReleaseOnly=\(policy.antiDeobfuscation.enableFakeStateReleaseOnly) multiDispatcher=\(policy.antiDeobfuscation.enableMultiDispatcher)",
-            "pass8Aware=\(policy.antiDeobfuscation.enablePass8CFFAwareness)",
+            // Policy-expression fields only: they describe the plan, not
+            // emitted protection. Only per-function seeds reach the rewriter.
+            "runtimeSalt(plan-only)=\(policy.antiDeobfuscation.enableRuntimeSalt) fakeStateReleaseOnly(plan-only)=\(policy.antiDeobfuscation.enableFakeStateReleaseOnly) multiDispatcher(plan-only)=\(policy.antiDeobfuscation.enableMultiDispatcher)",
+            "pass8Aware(plan-only)=\(policy.antiDeobfuscation.enablePass8CFFAwareness)",
             String(format: "stateSeedMaterial=0x%016llX", buildSeed)
         ]
 

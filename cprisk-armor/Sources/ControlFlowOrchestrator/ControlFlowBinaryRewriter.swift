@@ -242,6 +242,19 @@ final class ControlFlowBinaryRewriter {
 
     /// Scan `__TEXT.__text` for `STP x29, x30, [sp, #-N]!` prologues.
     /// Returns file-offset-sorted candidate structs ready for `rewriteFunction`.
+    ///
+    /// TIGHTENED HEURISTIC (a bare STP pattern match misidentifies data and
+    /// mid-function stack adjustments as function entries):
+    ///  1. When `LC_FUNCTION_STARTS` is present, a candidate is accepted only
+    ///     if its VM address is in the function-starts set (authoritative).
+    ///  2. Candidates inside `LC_DATA_IN_CODE` ranges are rejected — those
+    ///     bytes are jump-table / literal data embedded in `__text`, not code.
+    ///  3. The STP frame size (imm7 × 8) must be sane: 8…4096 bytes with a
+    ///     negative pre-index offset. Random data rarely satisfies this.
+    ///  4. Without a function-starts table, the preceding word must look like
+    ///     a function boundary (RET / branch / NOP / zero padding / BRK).
+    /// Even with these filters the scan is still a heuristic: it can only
+    /// raise confidence, never prove a location is a function entry.
     private func heuristicPrologueCandidates(
         file: MachOFile,
         textStart: Int,
@@ -251,6 +264,9 @@ final class ControlFlowBinaryRewriter {
     ) -> [CFFManagedFunctionCandidate] {
         var candidates: [CFFManagedFunctionCandidate] = []
         var lastFileOffset = -Self.heuristicMinFunctionGap
+
+        let functionStarts = Self.functionStartVMAddresses(in: file)
+        let dataInCodeRanges = Self.dataInCodeFileRanges(in: file)
 
         let slotCount = textSize / 4
         for slotIndex in 0..<slotCount {
@@ -286,6 +302,30 @@ final class ControlFlowBinaryRewriter {
             }
 
             let vmAddress = textVMStart + UInt64(actualSlotIndex * 4)
+
+            // (1) Function-starts table is authoritative when present.
+            if let starts = functionStarts, !starts.contains(vmAddress) {
+                continue
+            }
+            // (2) Data-in-code ranges hold data, not instructions.
+            if dataInCodeRanges.contains(where: { actualFileOffset >= $0.0 && actualFileOffset < $0.1 }) {
+                continue
+            }
+            // (3) Frame-size sanity: imm7 (bits 20–15) is a signed scaled
+            // offset; a pre-index STP must move SP down by 8…4096 bytes.
+            let imm7 = Int((raw >> 15) & 0x7F)
+            let signedImm = (imm7 & 0x40) != 0 ? imm7 - 128 : imm7
+            guard signedImm < 0, (8...4096).contains(-signedImm * 8) else {
+                continue
+            }
+            // (4) Without a function-starts table, require a plausible
+            // function boundary immediately before the candidate.
+            if functionStarts == nil, actualFileOffset > textStart {
+                guard let prev = try? file.data.readUInt32LE(at: actualFileOffset - 4),
+                      Self.isPlausibleFunctionBoundary(prev) else {
+                    continue
+                }
+            }
             let syntheticName = String(format: "__heuristic_func_0x%X", actualFileOffset - textStart)
             let plan = makeLightFallbackPlan(symbol: syntheticName)
             let profile = FunctionCFFTier.light.rewriteProfile!
@@ -303,6 +343,99 @@ final class ControlFlowBinaryRewriter {
             lastFileOffset = actualFileOffset
         }
         return candidates
+    }
+
+    /// Decode `LC_FUNCTION_STARTS` into the set of function-start VM addresses.
+    /// Returns `nil` when the command is absent or undecodable (caller then
+    /// falls back to the weaker boundary/frame-size checks). Deltas are
+    /// accumulated from the `__TEXT` segment VM address, matching the
+    /// linker’s encoding.
+    private static func functionStartVMAddresses(in file: MachOFile) -> Set<UInt64>? {
+        guard let command = file.loadCommands.first(where: { $0.cmd == 0x26 }) else {
+            return nil
+        }
+        guard let cmdOff = Int(exactly: command.offset), cmdOff <= file.data.count,
+              file.data.count - cmdOff >= 16,
+              let dataOff = try? file.readUInt32(at: cmdOff + 8),
+              let dataSize = try? file.readUInt32(at: cmdOff + 12),
+              let textSegment = try? file.segment(named: "__TEXT") else {
+            return nil
+        }
+        let start = Int(dataOff), end = Int(dataOff) + Int(dataSize)
+        guard start <= file.data.count, end <= file.data.count, end >= start else {
+            return nil
+        }
+        var addresses = Set<UInt64>()
+        var address = textSegment.vmAddress
+        var pos = start
+        while pos < end {
+            var delta: UInt64 = 0
+            var shift = 0
+            var terminated = false
+            while pos < end, shift < 64 {
+                let byte = file.data[pos]
+                pos += 1
+                delta |= UInt64(byte & 0x7F) << shift
+                if byte & 0x80 == 0 { terminated = true; break }
+                shift += 7
+            }
+            guard terminated else { return nil }
+            if delta == 0 { break }
+            let (next, overflow) = address.addingReportingOverflow(delta)
+            guard !overflow else { return nil }
+            address = next
+            addresses.insert(address)
+        }
+        return addresses
+    }
+
+    /// `LC_DATA_IN_CODE` ranges as (fileOffset, fileOffsetEnd) pairs. Bytes in
+    /// these ranges are data (jump tables / literals) embedded in `__text`.
+    private static func dataInCodeFileRanges(in file: MachOFile) -> [(Int, Int)] {
+        guard let command = file.loadCommands.first(where: { $0.cmd == 0x29 }) else {
+            return []
+        }
+        guard let cmdOff = Int(exactly: command.offset), cmdOff <= file.data.count,
+              file.data.count - cmdOff >= 16,
+              let dataOff = try? file.readUInt32(at: cmdOff + 8),
+              let dataSize = try? file.readUInt32(at: cmdOff + 12) else {
+            return []
+        }
+        let start = Int(dataOff), end = Int(dataOff) + Int(dataSize)
+        guard start <= file.data.count, end <= file.data.count, end >= start,
+              (end - start) % 8 == 0 else {
+            return []
+        }
+        var ranges: [(Int, Int)] = []
+        var pos = start
+        while pos + 8 <= end {
+            guard let off = try? file.data.readUInt32LE(at: pos) else {
+                break
+            }
+            // u16 length at pos+4 (no shared readUInt16LE helper in this file).
+            guard pos + 6 <= file.data.count else { break }
+            let len = UInt16(file.data[pos + 4]) | (UInt16(file.data[pos + 5]) << 8)
+            if len > 0 {
+                ranges.append((Int(off), Int(off) + Int(len)))
+            }
+            pos += 8
+        }
+        return ranges
+    }
+
+    /// Heuristic only: does this word plausibly END a function (i.e. sit
+    /// immediately before a function entry)? Covers RET, unconditional and
+    /// conditional branches, NOP, zero padding, and BRK. A match raises
+    /// confidence but never proves a boundary.
+    private static func isPlausibleFunctionBoundary(_ word: UInt32) -> Bool {
+        if word == 0xD65F_03C0 { return true } // RET
+        if word == 0xD503_201F { return true } // NOP
+        if word == 0 { return true } // zero padding
+        if (word & 0x7C00_0000) == 0x1400_0000 { return true } // B
+        if (word & 0x7C00_0000) == 0x9400_0000 { return true } // BL
+        if (word & 0xFF00_0010) == 0x5400_0000 { return true } // B.cond
+        if (word & 0xFFE0_0000) == 0xD420_0000 { return true } // BRK
+        return false
     }
 
     /// Apply light-tier CFF mutations to ARM64-prologue-detected functions in a stripped binary.
@@ -597,6 +730,19 @@ final class ControlFlowBinaryRewriter {
         }
 
         do {
+            // Post-write verification + rollback.
+            //
+            // LIMITATION — READ BEFORE TRUSTING THIS: the check below only
+            // proves that the bytes at each patched offset now EQUAL the
+            // intended replacement, and the rollback only restores the
+            // original byte values at those offsets. Neither proves that a
+            // patched offset was ORIGINALLY an instruction. If the prologue
+            // heuristic misidentified a data word as a function entry, the
+            // rewrite would corrupt data, and a “successful” verification
+            // would merely confirm the corruption landed as intended.
+            // Rollback is byte restoration, not semantic validation — the
+            // real protection is the tightened prologue filter in
+            // `heuristicPrologueCandidates`, not this check.
             for mutation in mutations {
                 try file.replaceBytes(
                     at: UInt64(mutation.fileOffset),

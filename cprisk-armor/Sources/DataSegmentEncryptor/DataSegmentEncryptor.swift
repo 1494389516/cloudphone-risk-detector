@@ -22,8 +22,12 @@ public final class DataSegmentEncryptorPass: ArmorPass {
     public func execute(on file: MachOFile, config: PassConfig) throws -> PassResult {
         let fullAnchorHash = try readFullAnchorHash(from: file)
         let integrityHash = sha256(fullAnchorHash + fullAnchorHash + fullAnchorHash)
-        var whiteboxRootKey = config.encryptionKey ?? Data(repeating: 0, count: ArmorABI.keySize)
-        let whitebox = ArmorWhiteBox.build(rootKey: whiteboxRootKey)
+        guard let whiteboxRootKey = config.encryptionKey else {
+            throw MachOError.invalidData(
+                "DataSegmentEncryptorPass requires an encryption key (no zero/default key fallback)"
+            )
+        }
+        let whitebox = try ArmorWhiteBox.build(rootKey: whiteboxRootKey)
         let anchorAccumulator = anchorBoundAccumulator(
             whitebox: whitebox,
             fullAnchorHash: fullAnchorHash,
@@ -197,11 +201,11 @@ public final class DataSegmentEncryptorPass: ArmorPass {
 }
 
 package func anchorBoundAccumulator(
-    rootKey: Data?,
+    rootKey: Data,
     fullAnchorHash: Data,
     integrityHash: Data
-) -> UInt64 {
-    let whitebox = ArmorWhiteBox.build(rootKey: rootKey)
+) throws -> UInt64 {
+    let whitebox = try ArmorWhiteBox.build(rootKey: rootKey)
     return anchorBoundAccumulator(
         whitebox: whitebox,
         fullAnchorHash: fullAnchorHash,
@@ -210,12 +214,12 @@ package func anchorBoundAccumulator(
 }
 
 package func deriveLoaderKey(
-    rootKey: Data?,
+    rootKey: Data,
     fullAnchorHash: Data,
     integrityHash: Data,
     anchorAccumulator: UInt64
-) -> Data {
-    let whitebox = ArmorWhiteBox.build(rootKey: rootKey)
+) throws -> Data {
+    let whitebox = try ArmorWhiteBox.build(rootKey: rootKey)
     return deriveLoaderKey(
         whitebox: whitebox,
         fullAnchorHash: fullAnchorHash,
@@ -278,7 +282,7 @@ private func deriveChainedKey(
     depth: UInt32
 ) -> Data {
     precondition(parentKey.count == ArmorABI.keySize, "parentKey must be 32 bytes")
-    precondition(nonce.count == ArmorABI.nonceSize, "nonce must be 8 bytes")
+    precondition(nonce.count == ArmorABI.nonceSize, "nonce must be \(ArmorABI.nonceSize) bytes")
 
     var material = Data()
     appendUInt32(sectionIndex, to: &material)
