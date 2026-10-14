@@ -1537,8 +1537,9 @@ int cprisk_vm_set_branch_target_ctx_i(const cprisk_vmp_bytecode_header_t *bh,
         }
         return 0;
     }
-    int64_t target = (int64_t)(uint64_t)pc + delta_bytes;
-    if (target < 0 || target % (int64_t)CPRISK_VM_INSN_WIDTH != 0
+    int64_t target = 0;
+    if (__builtin_add_overflow((int64_t)pc, delta_bytes, &target)
+        || target < 0 || target % (int64_t)CPRISK_VM_INSN_WIDTH != 0
         || (uint64_t)target + CPRISK_VM_INSN_WIDTH > (uint64_t)blen) {
         if (out) {
             out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
@@ -1610,6 +1611,19 @@ static int cprisk_vmp_headers_ok_i(const uint8_t *d_s,
         return 0;
     if (b_sz < needed)
         return 0;
+    /* Validate every body before execution: VM_CALL_FUNC may select an entry
+     * other than the initial function. Each body must contain whole wire
+     * instructions and must not overlap the header/entry table. */
+    for (uint32_t i = 0u; i < bh->entry_count; ++i) {
+        cprisk_vmp_bytecode_entry_t entry;
+        memcpy(&entry, b_s + hdr_total + (size_t)i * entry_stride, sizeof(entry));
+        const uint64_t off = entry.bytecode_offset;
+        const uint64_t len = entry.bytecode_length;
+        if (off < (uint64_t)needed || off > (uint64_t)b_sz
+            || len > (uint64_t)b_sz - off
+            || len == 0u || len % CPRISK_VM_INSN_WIDTH != 0u)
+            return 0;
+    }
     if (out_bh)
         *out_bh = bh;
     return 1;
@@ -2317,7 +2331,7 @@ static uint32_t cprisk_vm_m3_self_expect_resolve_i(const struct mach_header_64 *
 #endif
 }
 
-static uint32_t cprisk_vm_m3_self_expect_hmac_resolve_i(const struct mach_header_64 *mh) {
+static uint32_t cprisk_vm_m3_self_expect_mac_resolve_i(const struct mach_header_64 *mh) {
 #if CPRISK_VM_M3_SELF_EXPECT != 0u
     (void)mh;
     return 0u;
@@ -2329,14 +2343,14 @@ static uint32_t cprisk_vm_m3_self_expect_hmac_resolve_i(const struct mach_header
         return 0u;
     for (size_t o = 0; o + 8 <= sz && o < 128; o += 4) {
         uint32_t mg = cprisk_read_le_u32_i(p + o);
-        if (mg == CPRISK_VMP_SELF_EXPECT_MAGIC_HMAC)
+        if (mg == CPRISK_VMP_SELF_EXPECT_MAGIC_MAC)
             return cprisk_read_le_u32_i(p + o + 4u);
     }
     return 0u;
 #endif
 }
 
-static void cprisk_vm_selfchk_hmac_key_i(const uint8_t runtime_mat[32], uint8_t key_out[32]) {
+static void cprisk_vm_selfchk_mac_key_i(const uint8_t runtime_mat[32], uint8_t key_out[32]) {
     /*
      * KDF: SHA256( runtime_mat || decode(label) )
      * Label bytes are XOR-mixed at rest (no plaintext "CPRISK..." in .text/.rodata).
@@ -2429,42 +2443,42 @@ static void cprisk_vm_m3_selfchk_run_i(const struct mach_header_64 *hdr,
 #endif
 
     const uint32_t exp_fnv = cprisk_vm_m3_self_expect_resolve_i(hdr);
-    const uint32_t exp_hmac = cprisk_vm_m3_self_expect_hmac_resolve_i(hdr);
+    const uint32_t exp_mac = cprisk_vm_m3_self_expect_mac_resolve_i(hdr);
 #if CPRISK_VM_SELFCHK_FORCE_LEGACY_FNV
-    const int use_hmac = 0;
+    const int use_mac = 0;
 #else
-    const int explicit_hmac = (bh->reserved & CPRISK_VMP_BC_FLAG_M3_SELFCHK_HMAC) != 0u;
-    const int implicit_hmac =
-        (CPRISK_VM_SELFCHK_PREFER_HMAC_WHEN_AMBIGUOUS != 0) && exp_hmac != 0u && exp_fnv == 0u;
-    const int use_hmac = explicit_hmac || implicit_hmac;
+    const int explicit_mac = (bh->reserved & CPRISK_VMP_BC_FLAG_M3_SELFCHK_MAC) != 0u;
+    const int implicit_mac =
+        (CPRISK_VM_SELFCHK_PREFER_MAC_WHEN_AMBIGUOUS != 0) && exp_mac != 0u && exp_fnv == 0u;
+    const int use_mac = explicit_mac || implicit_mac;
 #endif
 
-    if (use_hmac) {
+    if (use_mac) {
         uint8_t rt[32];
         cprisk_get_runtime_material(rt);
         uint8_t hk[32];
-        cprisk_vm_selfchk_hmac_key_i(rt, hk);
+        cprisk_vm_selfchk_mac_key_i(rt, hk);
         uint8_t full[32];
         uint8_t msg[CPRISK_VM_M3_SELF_BYTES];
         cprisk_vm_selfchk_collect_msg_i(hdr, msg);
-        cprisk_hmac_sha256(hk, 32u, msg, sizeof(msg), full);
+        cprisk_mac_sha256(hk, 32u, msg, sizeof(msg), full);
         cprisk_secure_zero(hk, sizeof(hk));
         uint32_t tag32 = cprisk_read_le_u32_i(full);
         cprisk_secure_zero(full, sizeof(full));
-        if (exp_hmac == 0u) {
+        if (exp_mac == 0u) {
 #if CPRISK_VM_SELFCHK_POLICY >= 1
             out->poison_flags |= CPRISK_VM_POISON_SELF_INTEGRITY | CPRISK_VM_POISON_BYTECODE;
             cprisk_vm_self_fail_acc_i(acc, func_id);
             if (out_fault_mask)
-                *out_fault_mask = cprisk_vm_selfchk_fault_mask_i(func_id, bh->reserved, exp_hmac, tag32);
+                *out_fault_mask = cprisk_vm_selfchk_fault_mask_i(func_id, bh->reserved, exp_mac, tag32);
             if (out_seal_mix && out_fault_mask)
                 *out_seal_mix = *out_fault_mask;
 #endif
-        } else if (tag32 != exp_hmac) {
+        } else if (tag32 != exp_mac) {
             out->poison_flags |= CPRISK_VM_POISON_SELF_INTEGRITY | CPRISK_VM_POISON_BYTECODE;
             cprisk_vm_self_fail_acc_i(acc, func_id);
             if (out_fault_mask)
-                *out_fault_mask = cprisk_vm_selfchk_fault_mask_i(func_id, bh->reserved, exp_hmac, tag32);
+                *out_fault_mask = cprisk_vm_selfchk_fault_mask_i(func_id, bh->reserved, exp_mac, tag32);
             if (out_seal_mix && out_fault_mask)
                 *out_seal_mix = *out_fault_mask;
         } else {
@@ -4544,12 +4558,6 @@ static int cprisk_vm_prepare_program_i(const struct mach_header_64 *hdr,
     const uint32_t lane_perm_idx = ((selected->reserved >> 24u) == CPRISK_VMP_ENTRY_PROFILE_MAGIC)
         ? (selected->reserved & 0x7u) : 0u;
 
-    uint64_t return_stack[CPRISK_VM_MAX_SUBCALL_DEPTH];
-    uint32_t return_sp = 0u;
-    cprisk_vm_vmcall_snap_t vm_snap[CPRISK_VM_MAX_VM_NEST_DEPTH];
-    uint32_t vm_snap_sp = 0u;
-    uint64_t vregs[8];
-    memset(vregs, 0, sizeof(vregs));
     if (vpc_a == 0u) {
         out->status = CPRISK_VM_STATUS_INVALID_BYTECODE;
         out->poison_flags |= CPRISK_VM_POISON_BYTECODE;
@@ -4663,11 +4671,8 @@ static int cprisk_vm_prepare_program_i(const struct mach_header_64 *hdr,
     fr->acc_lane_map[0] = s_acc_lane_perms[lane_perm_idx][0];
     fr->acc_lane_map[1] = s_acc_lane_perms[lane_perm_idx][1];
     fr->acc_lane_map[2] = s_acc_lane_perms[lane_perm_idx][2];
-    memcpy(fr->return_stack, return_stack, sizeof(return_stack));
-    fr->return_sp = return_sp;
-    memcpy(fr->vm_snap, vm_snap, sizeof(vm_snap));
-    fr->vm_snap_sp = vm_snap_sp;
-    memcpy(fr->vregs, vregs, sizeof(vregs));
+    /* The frame memset above initializes both stacks, their cursors and vregs.
+     * Do not overwrite those zeros with uninitialized local stack storage. */
     fr->enc_imm = enc_imm;
     fr->enc_op = enc_op;
     fr->imm_seed_root = imm_seed_root;
