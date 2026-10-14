@@ -70,7 +70,7 @@ objects per optimization are byte-identical. This is object evidence, not a link
 Apple image or LTO/armor acceptance. Raw outputs are reproducible; summary reports
 are in `evidence/`.
 
-## Reproduce
+## Reproduce（历史记录：`run.py` / `inspect_arm64.py` / `apple_release.py` / `benchmark.py` 均已于 2026-10-04 删除，命令不可复现）
 
 ```sh
 python3 experiments/vm-threaded-dispatch/run.py --cc clang --opt O0 --output /tmp/thread-O0
@@ -93,9 +93,9 @@ sizes; does not infer size from arbitrary adjacent symbols. A missing/stripped
 function fails instead of being counted as verification. It does not run armor,
 self-expect injection or any iPhone benchmark.
 
-The old 2A runner now accepts `--candidate-ref d07b764...` to reproduce its historical
+The old 2A runner（历史记录，脚本已删除）now accepts `--candidate-ref d07b764...` to reproduce its historical
 source-only noinline change after the later semantic fix. Its strict annotation-only
-assertion remains enabled. The zero-fault runner now accepts Darwin linking.
+assertion remains enabled. The zero-fault runner（历史记录，脚本已删除）now accepts Darwin linking.
 
 ## Remaining production gates
 
@@ -138,6 +138,7 @@ latency. Do not assert that threading must be faster. Raw samples and provenance
 are retained in evidence/. Broader per-opcode/device profiling is still required.
 
 ```sh
+# 历史记录：benchmark.py 已删除，命令不可复现。
 python3 experiments/vm-threaded-dispatch/benchmark.py --validation-output /tmp/thread-O2
 ```
 

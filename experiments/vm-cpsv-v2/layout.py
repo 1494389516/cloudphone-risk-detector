@@ -15,7 +15,9 @@ def build_layout(image, linkmap):
     if not owner or pathlib.Path(owner[1]).resolve()!=image:
         raise ValueError('Linker map belongs to a different image path')
     roster=ROOT/'RiskDetectorApp/Sources/CRiskCore/cprisk_vm_cpsv2_roster.inc'
-    names=re.findall(r'CPRISK_CPSV2_IDENTITY\((\w+)\)',roster.read_text());assert len(names)==58
+    names=re.findall(r'CPRISK_CPSV2_IDENTITY\((\w+)\)',roster.read_text())
+    # Real validation, not assert: asserts are stripped under `python -O`.
+    if len(names)!=58: raise ValueError('CPSV2 roster must list exactly 58 identities')
     ranges=[]
     for name in names:
         matches=re.findall(r'^\s*(0x[\da-fA-F]+)\s+(0x[\da-fA-F]+)\s+\[\s*\d+\]\s+_'+name+r'\s*$',live,re.M)
