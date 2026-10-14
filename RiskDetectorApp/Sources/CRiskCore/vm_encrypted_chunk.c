@@ -29,11 +29,12 @@
 #define VM_CHUNK_MAGIC_DECRYPTED 0x44454352u  /* "DECR" */
 #define VM_CHUNK_HOTNESS_THRESHOLD 100
 
-/* 计算HMAC-SHA256 (简化实现) */
-static void vm_chunk_compute_hmac(const uint8_t *data, size_t len,
+/* 计算 FNV-1a 校验和（原名 vm_chunk_compute_hmac / "简化 CPRisk-MAC"，实为
+ * FNV-1a 哈希，不是 CPRisk-MAC、不是 HMAC、不是认证：知道密钥/数据的人
+ * 都能伪造，且 128 位输出无密钥认证语义。仅作误改检测，不要当作防篡改。 */
+static void vm_chunk_compute_fnv_checksum(const uint8_t *data, size_t len,
                                    const uint8_t key[32],
                                    uint8_t out[16]) {
-    /* 简化HMAC: 实际应使用完整HMAC-SHA256 */
     uint64_t h1 = 0xCBF29CE484222325ULL;
     uint64_t h2 = 0x100000001B3ULL;
 
@@ -120,8 +121,8 @@ int vm_chunk_make_execute_only(void *mem, size_t size) {
 /* 解密并验证代码块
  *
  * 流程:
- * 1. 验证HMAC标签
- * 2. AES-GCM解密
+ * 1. 验证CPRisk-MAC标签
+ * 2. XOR 解混淆（原注释称 AES-GCM 是错误的：本模块从未实现 AEAD）
  * 3. 写入execute-only内存
  * 4. 降级权限
  */
@@ -136,9 +137,9 @@ int vm_chunk_decrypt_and_verify(vm_encrypted_chunk_t *chunk,
         return VM_CHUNK_ERROR_INVALID_MAGIC;
     }
 
-    /* 验证HMAC标签 */
+    /* 验证 FNV-1a 校验和（非认证，仅误改检测） */
     uint8_t computed_tag[16];
-    vm_chunk_compute_hmac(chunk->encrypted_data, chunk->data_len,
+    vm_chunk_compute_fnv_checksum(chunk->encrypted_data, chunk->data_len,
                            key, computed_tag);
 
     if (memcmp(computed_tag, chunk->auth_tag, 16) != 0) {
@@ -151,7 +152,7 @@ int vm_chunk_decrypt_and_verify(vm_encrypted_chunk_t *chunk,
         return VM_CHUNK_ERROR_ALLOC_FAILED;
     }
 
-    /* 解密数据 (简化XOR加密，实际应使用AES-GCM) */
+    /* 解密数据：XOR 混淆（不是加密/不是 AES-GCM） */
     /* 派生XOR密钥流 */
     for (size_t i = 0; i < chunk->data_len; i++) {
         uint8_t keystream = key[i % 32] ^ chunk->nonce[i % 12];
@@ -245,8 +246,8 @@ int vm_chunk_init(vm_encrypted_chunk_t *chunk,
     chunk->chunk_id = chunk_id;
     chunk->data_len = (uint32_t)plaintext_len;
 
-    /* 生成随机nonce */
-    /* 实际应使用真随机数生成器 */
+    /* 注意：nonce 是确定性派生的（chunk_id 异或常量），不是真随机；
+     * 与 XOR 密钥流组合时不提供 nonce 唯一性保证。本模块已废弃。 */
     for (int i = 0; i < 12; i++) {
         chunk->nonce[i] = (uint8_t)(chunk_id ^ (i * 0x5A));
     }
@@ -257,8 +258,8 @@ int vm_chunk_init(vm_encrypted_chunk_t *chunk,
         chunk->encrypted_data[i] = plaintext[i] ^ keystream;
     }
 
-    /* 计算认证标签 */
-    vm_chunk_compute_hmac(chunk->encrypted_data, plaintext_len,
+    /* 计算 FNV-1a 校验和（非认证标签） */
+    vm_chunk_compute_fnv_checksum(chunk->encrypted_data, plaintext_len,
                            key, chunk->auth_tag);
 
     chunk->hotness_counter = 0;
@@ -284,7 +285,7 @@ int vm_chunk_verify_integrity(const vm_encrypted_chunk_t *chunk,
     }
 
     uint8_t computed_tag[16];
-    vm_chunk_compute_hmac(chunk->encrypted_data, chunk->data_len,
+    vm_chunk_compute_fnv_checksum(chunk->encrypted_data, chunk->data_len,
                            key, computed_tag);
 
     if (memcmp(computed_tag, chunk->auth_tag, 16) != 0) {

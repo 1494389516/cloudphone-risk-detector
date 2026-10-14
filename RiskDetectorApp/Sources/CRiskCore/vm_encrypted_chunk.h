@@ -2,6 +2,10 @@
  * ============================================================================
  * VM运行时按需解码头文件 (vm_encrypted_chunk.h)
  * ============================================================================
+ * DEPRECATED / 未接入主路径：本模块无任何生产调用方（仅自身内部调用），
+ * 不要接入主路径。其“认证标签”实际是 FNV-1a 校验和（见下），不是
+ * MAC/认证，不提供防篡改；“解密”实际是 XOR 混淆，不是 AEAD 加密。
+ * 如需真实认证加密，请使用带 CPRisk-MAC/AEAD 的主路径，不要用本模块。
  */
 
 #ifndef VM_ENCRYPTED_CHUNK_H
@@ -28,7 +32,7 @@ typedef struct {
     uint32_t hotness_counter;    /* 访问热度 */
     uint64_t last_access_time;   /* 最后访问时间 */
     uint8_t  nonce[12];          /* GCM nonce */
-    uint8_t  auth_tag[16];       /* 认证标签 */
+    uint8_t  auth_tag[16];       /* FNV-1a 校验和（名字是历史遗留：不是认证标签/MAC） */
     uint8_t  encrypted_data[VM_CHUNK_MAX_SIZE]; /* 加密数据 */
 } vm_encrypted_chunk_t;
 

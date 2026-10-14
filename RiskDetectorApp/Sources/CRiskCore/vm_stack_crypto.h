@@ -1,6 +1,11 @@
 /*
  * ============================================================================
- * VM堆栈加密保护头文件 (vm_stack_crypto.h)
+ * VM堆栈混淆保护头文件 (vm_stack_crypto.h)
+ * ============================================================================
+ * DEPRECATED / 未接入主路径：无生产调用方（仅自身内部调用），不要接入主路径。
+ * OBFUSCATION, NOT ENCRYPTION（问题 43）：本模块是 XOR / ROTL / ADD 混淆，
+ * 不是加密——没有认证、没有密钥扩展、已知明文下可直接逆推；它只能让栈
+ * 内容在内存转储里不那么直观，绝不能当作机密性保护。
  * ============================================================================
  *
  * 设计目标:
@@ -21,7 +26,7 @@
 extern "C" {
 #endif
 
-/* 栈加密上下文结构体
+/* 栈混淆上下文结构体
  *
  * 每个受保护的VM函数拥有独立的上下文
  */
@@ -32,7 +37,7 @@ typedef struct {
     uint64_t secondary_key;     /* 次级混合密钥 */
     uint32_t access_count;      /* 访问计数 (侧信道防护) */
     uint32_t initialized;       /* 初始化标记 */
-} vm_stack_crypto_ctx_t;
+} vm_stack_obfuscation_ctx_t;
 
 /* 错误码 */
 typedef enum {
@@ -44,31 +49,31 @@ typedef enum {
     VM_STACK_ERROR_CORRUPTED = -5
 } vm_stack_error_t;
 
-/* 初始化栈加密上下文
+/* 初始化栈混淆上下文
  *
- * 从主密钥派生所有栈加密参数
+ * 从主密钥派生所有栈混淆参数
  */
-int vm_stack_crypto_init(vm_stack_crypto_ctx_t *ctx,
+int vm_stack_obfuscation_init(vm_stack_obfuscation_ctx_t *ctx,
                          uint64_t func_id,
                          const uint8_t master_key[32]);
 
-/* 加密压栈值
+/* 混淆压栈值
  *
  * 流程: value -> XOR -> ROTL -> ADD -> XOR_SECONDARY
  */
-uint64_t vm_stack_encrypt_push(const vm_stack_crypto_ctx_t *ctx, uint64_t value);
+uint64_t vm_stack_obfuscate_push(const vm_stack_obfuscation_ctx_t *ctx, uint64_t value);
 
-/* 解密出栈值
+/* 解混淆出栈值
  *
  * 流程: encrypted -> XOR_SECONDARY -> SUB -> ROTR -> XOR
  */
-uint64_t vm_stack_decrypt_pop(const vm_stack_crypto_ctx_t *ctx, uint64_t encrypted);
+uint64_t vm_stack_deobfuscate_pop(const vm_stack_obfuscation_ctx_t *ctx, uint64_t encrypted);
 
 /* 安全压栈操作
  *
- * 自动加密并存储到栈
+ * 自动混淆并存储到栈
  */
-int vm_stack_push_encrypted(vm_stack_crypto_ctx_t *ctx,
+int vm_stack_push_obfuscated(vm_stack_obfuscation_ctx_t *ctx,
                             uint64_t *stack,
                             uint32_t *sp,
                             uint32_t stack_size,
@@ -78,59 +83,59 @@ int vm_stack_push_encrypted(vm_stack_crypto_ctx_t *ctx,
  *
  * 从栈读取并自动解密
  */
-int vm_stack_pop_encrypted(vm_stack_crypto_ctx_t *ctx,
+int vm_stack_pop_obfuscated(vm_stack_obfuscation_ctx_t *ctx,
                            uint64_t *stack,
                            uint32_t *sp,
                            uint64_t *out_value);
 
 /* 窥视栈顶值 (不解密) */
-int vm_stack_peek_encrypted(const vm_stack_crypto_ctx_t *ctx,
+int vm_stack_peek_obfuscated(const vm_stack_obfuscation_ctx_t *ctx,
                             const uint64_t *stack,
                             uint32_t sp,
                             uint64_t *out_encrypted);
 
 /* 从中间位置读取并解密 (本地变量访问) */
-int vm_stack_load_encrypted(const vm_stack_crypto_ctx_t *ctx,
+int vm_stack_load_obfuscated(const vm_stack_obfuscation_ctx_t *ctx,
                             const uint64_t *stack,
                             uint32_t index,
                             uint64_t *out_value);
 
-/* 加密并存储到中间位置 (本地变量赋值) */
-int vm_stack_store_encrypted(vm_stack_crypto_ctx_t *ctx,
+/* 混淆并存储到中间位置 (本地变量赋值) */
+int vm_stack_store_obfuscated(vm_stack_obfuscation_ctx_t *ctx,
                              uint64_t *stack,
                              uint32_t index,
                              uint64_t value);
 
-/* 安全清除栈加密上下文 */
-void vm_stack_crypto_clear(vm_stack_crypto_ctx_t *ctx);
+/* 安全清除栈混淆上下文 */
+void vm_stack_obfuscation_clear(vm_stack_obfuscation_ctx_t *ctx);
 
-/* 批量加密/解密栈区域 */
-int vm_stack_encrypt_region(vm_stack_crypto_ctx_t *ctx,
+/* 批量混淆/解混淆栈区域 */
+int vm_stack_obfuscate_region(vm_stack_obfuscation_ctx_t *ctx,
                             uint64_t *stack,
                             uint32_t start,
                             uint32_t count);
-int vm_stack_decrypt_region(vm_stack_crypto_ctx_t *ctx,
+int vm_stack_deobfuscate_region(vm_stack_obfuscation_ctx_t *ctx,
                             uint64_t *stack,
                             uint32_t start,
                             uint32_t count);
 
 /* 验证栈完整性 */
-int vm_stack_verify_integrity(const vm_stack_crypto_ctx_t *ctx,
+int vm_stack_verify_integrity(const vm_stack_obfuscation_ctx_t *ctx,
                               const uint64_t *stack,
                               uint32_t sp);
 
 /* 便捷宏 */
-#define VM_STACK_PUSH(ctx, stack, sp, size, val) \
-    vm_stack_push_encrypted(ctx, stack, sp, size, val)
+#define VM_STACK_OBF_PUSH(ctx, stack, sp, size, val) \
+    vm_stack_push_obfuscated(ctx, stack, sp, size, val)
 
-#define VM_STACK_POP(ctx, stack, sp, out) \
-    vm_stack_pop_encrypted(ctx, stack, sp, out)
+#define VM_STACK_OBF_POP(ctx, stack, sp, out) \
+    vm_stack_pop_obfuscated(ctx, stack, sp, out)
 
-#define VM_STACK_LOAD(ctx, stack, idx, out) \
-    vm_stack_load_encrypted(ctx, stack, idx, out)
+#define VM_STACK_OBF_LOAD(ctx, stack, idx, out) \
+    vm_stack_load_obfuscated(ctx, stack, idx, out)
 
-#define VM_STACK_STORE(ctx, stack, idx, val) \
-    vm_stack_store_encrypted(ctx, stack, idx, val)
+#define VM_STACK_OBF_STORE(ctx, stack, idx, val) \
+    vm_stack_store_obfuscated(ctx, stack, idx, val)
 
 #ifdef __cplusplus
 }

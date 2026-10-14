@@ -54,7 +54,7 @@ int vm_integrity_init(vm_integrity_state_t *state, uint64_t vm_id) {
     state->execution_count = 0;
     state->checksum_chain = 0xCBF29CE484222325ULL;  /* FNV偏移基础 */
 
-    /* 初始化完整性标签 (简化HMAC) */
+    /* 初始化完整性标签 (简化CPRisk-MAC) */
     uint64_t tag_input = vm_id ^ state->version_seed;
     for (int i = 0; i < 8; i++) {
         state->integrity_tag[i] = (uint8_t)(tag_input >> (i * 8));
