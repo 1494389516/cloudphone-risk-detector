@@ -692,7 +692,7 @@ private struct DetectionResultPayload: Codable {
 }
 
 enum Version {
-    static let current = "7.3.0"
+    static let current = "9.0.0"
 }
 
 // MARK: - Signal Digest
