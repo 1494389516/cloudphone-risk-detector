@@ -1,6 +1,6 @@
 // ⚠️ LEGACY 只读快照 — 请勿修改本文件。
 // 本文件是 CloudPhoneRiskKit 6.5 时代的 gRPC/JSON 上报协议快照，仅作历史参考。
-// 现行 SDK 版本为 7.3.0（见 `RiskReport.swift` 的 `Version.current`）。
+// 现行 SDK 版本为 9.0.0（见 `RiskReport.swift` 的 `Version.current`）。
 // 现行契约由 Swift 侧 `ReportEnvelope` / `GrpcReportPayload` 定义；
 // 本文件的字段与现行契约不一致处以 Swift 侧为准，例如：
 //  - 现行 payload 使用紧凑键（如 GraphNodeDescriptor 编码为 `"gd"`），
