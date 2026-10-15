@@ -5,23 +5,20 @@ All notable changes to CloudPhoneRiskKit will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-> 版本真相：当前代码 `Version.current` = **7.3.0**（`RiskDetectorApp/Sources/CloudPhoneRiskKit/Risk/RiskReport.swift`）。
-> 7.4 条目标注为**未发布**（内容未随 `Version.current` 发布），不代表已发布版本。2026-10-04 之前记录的
-> 测试通过计数（如“385 测试全绿”）均为测试移除前的历史记录；现状态为测试已移除、CI 不跑测试。
+> 版本真相：当前代码 `Version.current` = **9.0.0**（`RiskDetectorApp/Sources/CloudPhoneRiskKit/Risk/RiskReport.swift`）。
+> 2026-10-04 之前记录的测试通过计数（如“385 测试全绿”）均为测试移除前的历史记录；现状态为测试已移除、CI 不跑测试。
 
 ## [Unreleased]
 
-### Security
+## [9.0] - 2026-10-15
 
-#### Armor / VMP 审计修复（原生验证待完成）
-- **行为变更**：当前 VM 不保留原函数 ABI / 完整指令语义，CLI 拒绝 Pass 13（含 `--all`）；库调用拒绝 full policy，partial 元数据不再视为有效代码保护。未自动降级标准 profile
-- 修复函数 ID 跳板 `BL; RET` 覆盖 LR 的返回死循环，改为保留调用方 LR 的尾跳转；此修复不代表任意 native 函数可被 VM 替换
-- 修正 13 Pass 拓扑：Pass 8/9/13 在完整性锚之前完成，Pass 4 先于 Pass 3/12，符号剥离后置，HeaderEncryptor 最后快照最终 load commands
-- 修正 producer/runtime loader key mini-VM XOR 不一致，并移除 VM self-check 对未来 session key 的不可满足绑定
-- 对齐 WhiteBox Domain 2/8/9 的 producer/runtime 输入；Import/Header 静态密文不再混入运行时环境绑定材料
-- `cprisk-armor` 对未知/缺值参数、零效果 Pass 8/9、VMP 元数据冒充代码保护改为 fail-closed
-- Xcode Release phase 共享 build seed；CPSH 自校验从 armored Mach-O + root key 验证并派生真实 runtime material，失败不再降级为 warning
-- 新增 `CPRISK_ARMOR_REQUIRED=1` 与 `CPRISK_HIKARI_REQUIRED=1`，供交付构建禁止静默回退
+> **Breaking**：本版本包含破坏性变更，升级前请先阅读本节。
+> - **v3 签名版本**：`trustLevel`、`sha256(attestationAssertion)`、`sha256(reAttestationAssertion)` 首次纳入 HMAC 签名域；服务端 MUST 拒绝 legacy 签名版本（`v1`/`v2`/`v2a`/`v2d`/`v2h`）的新上报，迁移窗口须有时限；即使 v3 也 MUST 经 Apple App Attest 流程独立验证 assertion，仅校验 envelope MAC 等价于零硬件信任根。
+> - **ABI v3**：per-string KDF domain label、Path-A counter、configDigest 格式为 breaking changes，Swift producer 与 C consumer 已锁步更新。
+> - **VM 行为**：当前 VM 不保留原函数 ABI / 完整指令语义，CLI 拒绝 Pass 13（含 `--all`）；库调用拒绝 full policy，partial 元数据不再视为有效代码保护。
+> - **测试已移除**：测试套件已于 2026-09-20、2026-10-04 两批移除，CI 仅执行 SDK／加固工具编译、Xcode 工程解析及生成契约一致性检查，不再执行自动化回归测试。历史版本中的测试统计不代表当前覆盖范围。
+
+### Security
 
 #### 签名域闭合 (SHA-256("") trap 修复)
 - **新增 v3 签名版本**：将 `trustLevel`、`sha256(attestationAssertion)`、`sha256(reAttestationAssertion)` 纳入 HMAC 输入域。此前这三个客户端自报字段虽在 envelope 顶级字段，但**不在签名域内**，攻击者持有签名密钥时可在签名后任意篡改而 HMAC 仍然通过（SHA-256("") 类漏洞）
@@ -30,23 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **OpenAPI 描述强化**：`attestationAssertion` 增加显式警告，要求服务端 MUST 调用 Apple App Attest 验证流程独立验证（仅校验 envelope HMAC 等价于零硬件信任根）；`trustLevel` 标注为客户端自报字段
 - 校正 v4.6 CHANGELOG 中 "attestation 入签名域" 措辞 — 当时仅 `attestationKeyId` 入域，assertion 字节内容直到 v3 才闭合
 - 新增 binding mode `self_reported_fields_bound_v3`
-- **服务端要求**：服务端 MUST 拒绝 legacy 签名版本（`v1`/`v2`/`v2a`/`v2d`/`v2h`）的新上报（迁移窗口须有时限，legacy 上报一律按不可信处理）；即使 v3 也 MUST 经 Apple App Attest 流程独立验证 assertion。**未独立验证 assertion、仅校验 envelope MAC 的服务端仍可被利用**——MAC 只证明签名后未被篡改，不证明 Apple 签发了 assertion，持有签名密钥者可伪造任意 `trustLevel`/assertion 声明（零硬件信任根）。
-
-### Added
-- XCFramework 构建文档 (`CloudPhoneRiskKit_文档/XCFRAMEWORK_BUILD.md`)
-- 集成指南 (`CloudPhoneRiskKit_文档/INTEGRATION_GUIDE.md`，含 CocoaPods 自建 podspec；仓库根目录不跟踪 `CloudPhoneRiskKit.podspec`)
-- 多租户密钥管理 (`TenantKeyManager`)
-- SLA 文档 (`CloudPhoneRiskKit_文档/SLA.md`)
-- 集成成本评估 (`CloudPhoneRiskKit_文档/INTEGRATION_COST.md`)
-- Objective-C 桥接层 (`CPRiskKitObjCBridge`)
-- SDK Portal 设计规范 (`CloudPhoneRiskKit_文档/SDK_PORTAL_SPEC.md`)
-- `ReportEnvelope.create()` 新增 `attestationAssertion` / `reAttestationAssertion` 参数（v3 签名版本必须在创建时传入）
-
----
-
-## [7.4] - 未发布（`Version.current` 仍为 7.3.0；原 2026-04-26 草稿）
-
-### Security
 
 #### 白盒密钥链重建（CPRISK_ARMOR_ABI_VERSION v3）
 - **WB#4（Critical）**: 字符串解密生产 Bug 修复 — Swift `StringEncryptor` 与 C `cprisk_string_decrypt` 现均执行 per-string KDF `HMAC(stringKey, "cprisk.str.key.v1" || sid_le4 || nonce)`；此前 Swift 端直接使用原始 `stringKey`，导致 C 运行时解密后得到乱码
@@ -79,18 +59,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `validate()` 冲突检测：构建时检查映射碰撞，防止隐式覆盖
 - `deriveSessionMapping(baseKeys:sessionKey:version:)` — 字段名由 `HMAC<SHA256>(sessionKey, "cprisk.field.v1" || keyName)[..8].hex` 会话派生，每会话映射均不同
 
+#### Armor / VMP 审计修复（原生验证待完成）
+- 修复函数 ID 跳板 `BL; RET` 覆盖 LR 的返回死循环，改为保留调用方 LR 的尾跳转；此修复不代表任意 native 函数可被 VM 替换
+- 修正 13 Pass 拓扑：Pass 8/9/13 在完整性锚之前完成，Pass 4 先于 Pass 3/12，符号剥离后置，HeaderEncryptor 最后快照最终 load commands
+- 修正 producer/runtime loader key mini-VM XOR 不一致，并移除 VM self-check 对未来 session key 的不可满足绑定
+- 对齐 WhiteBox Domain 2/8/9 的 producer/runtime 输入；Import/Header 静态密文不再混入运行时环境绑定材料
+- `cprisk-armor` 对未知/缺值参数、零效果 Pass 8/9、VMP 元数据冒充代码保护改为 fail-closed
+- Xcode Release phase 共享 build seed；CPSH 自校验从 armored Mach-O + root key 验证并派生真实 runtime material，失败不再降级为 warning
+- 新增 `CPRISK_ARMOR_REQUIRED=1` 与 `CPRISK_HIKARI_REQUIRED=1`，供交付构建禁止静默回退
+
+#### 完整性链封印
+- GF(2) + Secure Enclave 签名 + 跨会话漂移的完整性链封印
+
+#### 反枚举加固
+- 注入 8 个诱饵 Provider，挫败 `plan[]` 枚举
+- VMP dead handler 表打散：消除 `__const` 中的静态 dispatch 表，handler 引用以 ADRP+ADD 形式散布，消除 dref 枚举攻击面
+- VMP 24/24 opcode 变体池 + 白盒 DCA 加固
+
 ### Added
-- `cprisk_detection_attest.c` / `cprisk_detection_attest.h`：检测链 per-session HMAC 证明模块
-- `ABIConsistencyTests.swift`（5 tests）：Swift↔C 跨语言 ABI 一致性套件（域密钥、per-string KDF、configDigest、VM S-box、CFF 编码）
-- `DetectionAttestTests.swift`（5 tests）：证明链序列化、会话隔离、nonce 唯一性、方法标签注入验证
+- RootHide 越狱检测支持
+- 4 个受 Xiaohongshu libtiny.so 分析启发的检测器
+- 契约层：生成真实 wire DTO 并验证签名向量；attestation enrollment（服务端挑战 + 签名前完成证明）；transport proof、本地身份与服务端实体分离
+- IR-VMP 实验（gated）：隔离差分实验 + fail-closed 门控 + iPhone Release harness；非默认开启
+- VM：CPSV v2 严格校验 + 线程化 dispatch（gated 生产路由）；VM opcode 解码零 fault mask 保留
+- 本地评估边界：source-compatible 本地评估、风险信号词表抽取、异步评估策略刷新时保留自定义 Provider 与日志
+- App Attest：Keychain 失败 fail-closed、上传序列化、enrollment 配置失败明确标记为 unavailable
+- XCFramework 构建文档 (`CloudPhoneRiskKit_文档/XCFRAMEWORK_BUILD.md`)
+- 集成指南 (`CloudPhoneRiskKit_文档/INTEGRATION_GUIDE.md`，含 CocoaPods 自建 podspec；仓库根目录不跟踪 `CloudPhoneRiskKit.podspec`)
+- 多租户密钥管理 (`TenantKeyManager`)
+- SLA 文档 (`CloudPhoneRiskKit_文档/SLA.md`)
+- 集成成本评估 (`CloudPhoneRiskKit_文档/INTEGRATION_COST.md`)
+- Objective-C 桥接层 (`CPRiskKitObjCBridge`)
+- SDK Portal 设计规范 (`CloudPhoneRiskKit_文档/SDK_PORTAL_SPEC.md`)
+- `ReportEnvelope.create()` 新增 `attestationAssertion` / `reAttestationAssertion` 参数（v3 签名版本必须在创建时传入）
 
 ### Fixed
-- `StringEncryptorTests.swift`：per-string KDF roundtrip 验证对齐新格式
-- `WhiteBoxProfileTests.swift`：configDigest 格式对齐新标签+长度前缀格式
-- `CryptoTests.swift`：补充嵌套字段混淆 P2a 回归测试
+- 风险持久化：行为信号与组合规则加固、失败处理收紧
+- 白名单：IPv4-mapped IPv6 与异格式 IP 匹配
+- 审计发现：unsafe VMP fail-closed、payload 碰撞拒绝、challenge 配置遵从、Keychain 失败处理
+- iOS 14 demo 兼容恢复；桌面端专用代理 API 防护
+- Armor MAC 契约对齐：producer MAC 与 KDF 路径与部署运行时对齐、字符串密钥生命周期序列化、16 KiB 数据段隔离、完整对齐文本块
+- 内存页守护：运行时页大小 + 溢出安全对齐、解密字节保留、Mach VM region 全量权限校验、无锁通知 mailbox
+- PAC 签名 schema 保留；CFF 元数据校验与会话 token 状态同步；nonce 历史与设备 ID 保留、检测器状态与签名信号同步
+- 99 项 code-review 修复
 
 ### Changed
+- 测试套件已移除（2026-09-20、2026-10-04 两批）：CI 仅执行 SDK／加固工具编译、Xcode 工程解析及生成契约一致性检查，不再执行自动化回归测试
 - `CPRISK_ARMOR_ABI_VERSION` 升级至 v3（per-string KDF domain label、Path-A counter、configDigest 格式为 breaking changes，Swift producer 与 C consumer 已锁步更新）
+- 架构边界收紧：Collector transport 接入；CI 扩展 arm64e 编译门、Apple SDK 显式传递、quiet build 输出
 
 ---
 
@@ -416,7 +432,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [4.6] - 2025-02
 
 ### Fixed
-- App Attest TOCTOU 竞态消除 + **attestationKeyId** 入签名域（注：assertion 字节内容当时仍在签名域外，参见 Unreleased v3 签名版本修复）
+- App Attest TOCTOU 竞态消除 + **attestationKeyId** 入签名域（注：assertion 字节内容当时仍在签名域外，参见 9.0 v3 签名版本修复）
 - CallStack RTLD_NEXT 双路 + vm_region 交叉校验
 - 蜜罐三页分散 + handler/保护位自检
 - 金丝雀 DualPath 双路 + 随机探针池

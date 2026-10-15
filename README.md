@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-iOS%2014%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white" alt="Swift">
-  <img src="https://img.shields.io/badge/SDK-7.3-FF3B30?style=for-the-badge" alt="SDK">
+  <img src="https://img.shields.io/badge/SDK-9.0-FF3B30?style=for-the-badge" alt="SDK">
   <img src="https://img.shields.io/badge/SPM-Compatible-34C759?style=for-the-badge&logo=swift&logoColor=white" alt="SPM">
   <img src="https://img.shields.io/badge/License-MIT-34C759?style=for-the-badge" alt="License">
 </p>
@@ -19,6 +19,28 @@
 
 > ⚠️ 注意：Pass 13（VMProtector / VM 保护）在当前 CLI 中已被禁用，不计入可交付的安全承诺；可交付的加固为 Pass 1–12（或 appstore-safe profile）。不要把“13 Pass”理解为 13 道加固全部可用。
 
+> 🆕 **9.0 已发布**：签名域闭合（v3）、白盒密钥链重建、检测链 HMAC 证明、壳审计收口。含 Breaking 变更（服务端须拒绝旧签名上报），完整清单见 [`CloudPhoneRiskKit_文档/CHANGELOG.md`](CloudPhoneRiskKit_文档/CHANGELOG.md) 的 9.0 条目。另请注意：测试套件已移除，CI 只做编译 + 契约检查，不跑回归测试。
+
+---
+
+## 目录
+
+- [项目速览](#项目速览)
+- [开源发布入口](#开源发布入口)
+- [版本演进](#版本演进)
+- [架构总览](#架构总览)
+- [壳保护工作流](#壳保护工作流)
+- [SDK 工程架构](#sdk-工程架构)
+- [灰度与降级机制](#灰度与降级机制)
+- [服务端协议](#服务端协议)
+- [SLA 承诺](#sla-承诺)
+- [项目结构](#项目结构)
+- [集成方式](#集成方式)
+- [构建](#构建)
+- [验证范围](#验证范围)
+- [文档索引](#文档索引)
+- [免责声明](#免责声明)
+
 ---
 
 ## 项目速览
@@ -30,7 +52,7 @@
   - `RiskDetectorApp/Sources/CloudPhoneRiskAppCore/`：应用层编排（配置加载、检测流程、报告摘要）。
   - `RiskDetectorApp/App/`：SwiftUI 示例 App（Dashboard、配置、结果展示、历史页）。
 - **本地构建（SPM）**：在仓库根目录执行 `swift build --package-path RiskDetectorApp`。
-- **当前版本**：以代码 `Version.current` 为准，即 **7.3.0**（`RiskDetectorApp/Sources/CloudPhoneRiskKit/Risk/RiskReport.swift`）。文档中高于 7.3 的版本号（如 7.4 条目）为未随 `Version.current` 发布的内容，不代表已发布版本。
+- **当前版本**：以代码 `Version.current` 为准，即 **9.0.0**（`RiskDetectorApp/Sources/CloudPhoneRiskKit/Risk/RiskReport.swift`）。
 
 ## 开源发布入口
 
@@ -97,7 +119,7 @@
 | **7.1** | **VM 自校验链路对齐 + dispatcher 跨单元散布 + 合规文档收口** | VM self-check 改为优先消费 `__swift5_mdvsi` span map 驱动注入与运行时校验，`cprisk-vm-self-expect` 同时支持 CPSF/CPSH（FNV/HMAC）产物写入；解释器主 dispatcher 延续函数指针表架构，并将 22 个 `cprisk_vm_oph_*` handler 拆分到多个 `.c` 编译单元，减少单文件语义聚合；同步更新 SDK 隐私声明与 App Store 合规文档，明确 7.1 加固升级不扩大 collected data / Required Reason API 边界 |
 | **7.2** | **MIE/MTE 姿态接入 + iPhoneOS 26 SDK 构建兼容** | Release 构建接入 `CPRISK_MTE_COMPILE_SUPPORT` 与 `ENABLE_ENHANCED_SECURITY`，新增 `cprisk_mte_guard` / `MIEPostureDetector`，通过 sysctl + 本地快照 + region canary 保守感知 Apple Memory Integrity Enforcement 姿态，并补齐 `HoneypotMemoryDetector` 在 iPhoneOS 26 SDK 下的 `ucontext_t` / PC 字段兼容路径，使 `xcodebuild -sdk iphoneos` 恢复构建通过（历史表述；测试已移除） |
 | **7.3** | **工程产品化 + 文档体系收口** | 多实例进程隔离（IsolationContext）、ABI 语义化版本契约（v2.0.0，以 `cprisk_armor_abi.h` 为准）、主入口模块拆分（2928→395 行 + 6 extension）、OpenAPI/Protobuf 服务端协议标准化、性能基准测试套件、XCFramework 构建指南、CocoaPods 集成说明（文档）、多租户密钥管理与轮换（TenantKeyManager）、SLA 文档（TPR≥99.2% / FPR≤0.05%）、标准 CHANGELOG（Keep a Changelog）、接入工时评估（<2h/<4h/<8h 三路径）、Objective-C 完整桥接层、SDK Portal 控制台设计规范、文档归一化至 `CloudPhoneRiskKit_文档/`（现为 18 份 Markdown + api/ 下 2 个协议文件，共 20 个文件） |
-| **7.4（未发布）** | **白盒密钥链重建 + CFF 修复 + 反调试纵深 + 检测链证明** | WB#4 字符串解密生产 Bug 修复（per-string KDF 双端对齐）、WB#14 configDigest 格式锁定（标签+长度前缀）、WB#5 Path-A 计数器防密钥流重用、P0b 消除 BSS 明文神谕、S-box 模偏消除 + 8-bit 升级、CFF#23 B.cond 块边界修复、CFF#24 PACIASP/PACIBSP 序言探测、P1a Dispatcher 逐函数随机化（消除 TBZ#0 模板化特征）、Mach 端口基线 8 样本校准、反 Dump 探针 [2,9]s 随机抖动、SW BP 扫描 24 窗口扩展、Watchdog 启动失败异常标志、per-session 检测链 HMAC 证明（`cprisk_detection_attest`）、`DetectorID` 枚举化、PayloadFieldObfuscator DepthScope.all + 会话派生字段映射、ABI v3 跨语言一致性测试（17 项安全修复；未发布，`Version.current` 仍为 7.3.0） |
+| **9.0** | **签名域闭合 + 白盒密钥链重建 + 检测链证明 + 壳审计收口** | v3 签名域（trustLevel/attestation 摘要入 HMAC，服务端须拒旧上报）、白盒 per-string KDF 双端对齐 + configDigest 锁定 + S-box 8-bit、CFF#23/#24 + dispatcher 随机化、反调试纵深（[2,9]s 抖动、Mach 8 样本、24 窗口）、检测链 HMAC 证明、Armor/VMP 审计修复、完整性链封印、诱饵 Provider、RootHide + libtiny 检测器、IR-VMP/CPSV v2/VM 线程化（gated）、契约层、测试移除（CI 仅编译 + 契约检查） |
 
 ---
 
@@ -376,7 +398,7 @@ SDK 提供标准化的服务端对接规范：
 │   ├── 架构设计文档.md / 威胁模型文档.md
 │   ├── ABI_CONTRACT.md                          # C/Swift ABI 兼容性契约
 │   ├── SLA.md                                   # 服务等级协议
-│   ├── CHANGELOG.md                             # 变更日志（3.0→7.3 历史 + 7.4 未发布条目）
+│   ├── CHANGELOG.md                             # 变更日志（3.0→9.0）
 │   ├── PERFORMANCE_BENCHMARK.md                 # 性能基准报告
 │   ├── INTEGRATION_GUIDE.md                     # 集成指南
 │   ├── INTEGRATION_COST.md                      # 接入工时评估
@@ -486,4 +508,4 @@ cd RiskDetectorApp && xcodebuild \
 
 ---
 
-<p align="center"><sub>CloudPhoneRiskKit 7.3.0 · 223 Swift · 56 C · Pass 1–12（Pass 13 已禁用） · 约 60 Detectors · 20 Docs · ABI v3</sub></p>
+<p align="center"><sub>CloudPhoneRiskKit 9.0.0 · 223 Swift · 56 C · Pass 1–12（Pass 13 已禁用） · 约 60 Detectors · 20 Docs · ABI v3</sub></p>
